@@ -10,12 +10,12 @@ import {
 } from "@quincy/shared";
 
 /**
- * `kanban2` (#80) is the second Board (ReUI `kanban-board-3`), reachable at `view=kanban2`
- * alongside the original `kanban` for comparison before cutover (#76). It is reached only by a
- * route arrival — see `Dashboard.tsx`'s `routeDashboardView` effect — never by the View segmented
- * control, which stays List/Kanban/Calendar until cutover.
+ * The Board rendered at `view=kanban` (and the Dashboard's default) is `ProjectKanbanBoard2`
+ * (`components/kanban2/board.tsx`), ReUI `kanban-board-3`, cut over in #83. The original Board it
+ * replaced, and the `kanban2` comparison value this type and the route grammar once carried for
+ * #80, are both retired — see `docs/lessons.md` for the cutover.
  */
-export type DashboardView = "kanban" | "kanban2" | "list" | "calendar";
+export type DashboardView = "kanban" | "list" | "calendar";
 export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
 
 export const DASHBOARD_CALENDAR_SUBVIEW_KEY = "quincy:dashboard:calendar:subview";

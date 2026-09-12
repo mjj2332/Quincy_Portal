@@ -35,7 +35,6 @@ describe("Dashboard routing grammar", () => {
       { kind: "dashboard" },
       { kind: "dashboard", dashboardView: "list" },
       { kind: "dashboard", dashboardView: "kanban" },
-      { kind: "dashboard", dashboardView: "kanban2" },
       { kind: "dashboard", calendar: calendar() },
     ];
 
@@ -48,7 +47,6 @@ describe("Dashboard routing grammar", () => {
 
     expect(staffPathFor({ kind: "dashboard", dashboardView: "list" })).toBe("/?view=list");
     expect(staffPathFor({ kind: "dashboard", dashboardView: "kanban" })).toBe("/?view=kanban");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "kanban2" })).toBe("/?view=kanban2");
   });
 
   it("preserves the complete Calendar state", () => {
@@ -70,7 +68,7 @@ describe("Dashboard routing grammar", () => {
   });
 
   it("keeps the List/Kanban and Calendar allow-lists separate", () => {
-    for (const view of ["list", "kanban", "kanban2"]) {
+    for (const view of ["list", "kanban"]) {
       for (const parameter of ["date=2026-08-30", "sub=week", "layers=project", "q=search"]) {
         expect(parseStaffLocation(`/?view=${view}&${parameter}`), `${view} ${parameter}`).toEqual({ kind: "not-found" });
       }
@@ -129,12 +127,15 @@ describe("Dashboard routing grammar", () => {
   it("keeps Dashboard parsing ahead of the Calendar fallback and accepts collaboration", () => {
     expect(parseStaffLocation("/?view=list")).toEqual({ kind: "dashboard", dashboardView: "list" });
     expect(parseStaffLocation("/?view=kanban")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
-    expect(parseStaffLocation("/?view=kanban2")).toEqual({ kind: "dashboard", dashboardView: "kanban2" });
     expect(parseStaffLocation("/?view=unknown")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation("/admin?view=list")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation(`/?${retiredProjectParameter}=${projectId}`)).toEqual({ kind: "not-found" });
     expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, collaboration: "open" });
     expect(parseStaffLocation(`/projects/${projectId}?collaboration=closed`)).toEqual({ kind: "not-found" });
+  });
+
+  it("rejects the retired kanban2 view (#83)", () => {
+    expect(parseStaffLocation("/?view=kanban2")).toEqual({ kind: "not-found" });
   });
 
   it("round-trips Calendar searches through the canonical re-encode boundary", () => {

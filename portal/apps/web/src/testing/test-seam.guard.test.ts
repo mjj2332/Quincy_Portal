@@ -422,17 +422,17 @@ function assertBaselineHonest(findings: Finding[], baseline: Record<string, numb
 // ---------------------------------------------------------------------------
 
 /**
- * #50 drove this map down batch by batch to the one entry below, which is permanent — see the
- * note on it. NOTHING may be added, and the surviving entry may not be raised.
+ * #50 drove this map down batch by batch, and #83 emptied it. NOTHING may be added: a new
+ * class-based selector in a DOM test is a build failure, not a baseline entry.
  */
-const CLASS_SELECTOR_BASELINE: Record<string, number> = {
-  // The 2 remaining entries here are dnd-kit's <DragOverlay>, which accepts a fixed prop list
-  // (adjustScale | children | className | style | transition | dropAnimation | modifiers |
-  // wrapperElement | zIndex) and spreads nothing — a data-testid on it never reaches the DOM.
-  // `.kanban-overlay` is our own class on a vendor component, not Quincy markup a re-skin replaces,
-  // so it is the only identifier that element can carry. Batch B, #50.
-  "screens/Dashboard-stage-interactions.dom.test.tsx": 2,
-};
+// The last entry was 2 `.kanban-overlay` selectors in `screens/Dashboard-stage-interactions.dom.test.tsx`.
+// It was recorded as permanent because the old Board's overlay was dnd-kit's own <DragOverlay>,
+// which accepts a fixed prop list and spreads nothing, so a data-testid on it never reached the DOM
+// and a class was the only identifier that element could carry. #83 deleted that Board: the
+// replacement's overlay is a Quincy component (`kanban2/card.tsx`'s `kanban2-card-overlay`), the
+// suite selects that test id instead, and the entry went away with the selectors rather than being
+// waived. Permanent meant "while that overlay exists", not "forever".
+const CLASS_SELECTOR_BASELINE: Record<string, number> = {};
 
 describe("guard A: no DOM test selects an element by a Quincy class name", () => {
   it("adds no class-based selector beyond the #50 baseline", () => {

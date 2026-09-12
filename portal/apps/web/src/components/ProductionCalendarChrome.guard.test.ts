@@ -24,7 +24,7 @@
  * This is a `.test.ts` that reads component source as text and never touches the DOM, so it is
  * outside guard A's scope by construction — the same technique `test-seam.guard.test.ts`,
  * `src/config/reui-registry.guard.test.ts` and
- * `ProjectKanbanBoard.scroll-selector.guard.test.ts` already use for their own source-text checks.
+ * `Topbar.inset-focus.guard.test.ts` already use for their own source-text checks.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -68,7 +68,8 @@ export function countEventCardClassCalls(source: string): number {
  * nearest preceding `<` to the matching `>`, tracking `{…}` depth so a JSX expression container
  * holding a stray `>` (a generic, a comparison) cannot end the tag early. Does NOT hard-code a line
  * number: a line number in an assertion is a guard that breaks on reformatting rather than on the
- * defect it exists to catch. Copied from `ProjectKanbanBoard.scroll-selector.guard.test.ts`.
+ * defect it exists to catch. Originated in the now-retired `ProjectKanbanBoard.scroll-selector.
+ * guard.test.ts` (#83); this is this file's own copy, kept after that guard's deletion.
  */
 function findTagContaining(source: string, marker: string): string {
   const markerIndex = source.indexOf(marker);

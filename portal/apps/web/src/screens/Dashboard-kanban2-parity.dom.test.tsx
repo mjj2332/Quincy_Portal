@@ -3,12 +3,12 @@
 // focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance
 // items.
 //
-// This file is the `view=kanban2` Dashboard seam for #98: nothing else in the repo renders the
-// Dashboard at `view=kanban2`, so every gap in #98 that is a Dashboard-level behaviour (not a
-// standalone-Board behaviour covered by `kanban2/board.dom.test.tsx`) was unpinned until this file
-// existed. Routing is read-only history (`lib/staff-history.ts`) — `useNavigate`/`<Link>` do
-// nothing — so, like every other Dashboard DOM test, this sets the URL directly with
-// `window.history.replaceState` before render and restores it afterward.
+// This file is the Board-at-the-Dashboard seam for #98 (the filename keeps its `kanban2` spelling
+// post-cutover per #83, as an internal name only): every gap in #98 that is a Dashboard-level
+// behaviour (not a standalone-Board behaviour covered by `kanban2/board.dom.test.tsx`) was unpinned
+// until this file existed. Routing is read-only history (`lib/staff-history.ts`) —
+// `useNavigate`/`<Link>` do nothing — so, like every other Dashboard DOM test, this sets the URL
+// directly with `window.history.replaceState` before render and restores it afterward.
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -66,9 +66,9 @@ function projectFixture(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("Dashboard at view=kanban2 (#98)", () => {
+describe("Dashboard Board seam (#98)", () => {
   beforeEach(() => {
-    window.history.replaceState(null, "", "/?view=kanban2");
+    window.history.replaceState(null, "", "/");
     dnd.handlers.length = 0;
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({
@@ -96,19 +96,17 @@ describe("Dashboard at view=kanban2 (#98)", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("renders the new Board, not the old one, when the route requests view=kanban2", async () => {
+  it("renders the Board at the default view", async () => {
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-column"]')).not.toBeNull());
-    // Anti-vacuity anchor for the whole file: a Board that silently fell back to the old
-    // implementation would still satisfy a bare "kanban2-column exists" check if that id ever
-    // leaked onto the old Board, so this also asserts the old Board's own test id is absent.
-    expect(document.querySelector('[data-testid="kanban-card"]')).toBeNull();
+    // Anti-vacuity anchor for the whole file: content, not merely a test id existing — a Board
+    // that silently rendered no cards would still satisfy a bare "kanban2-column exists" check.
     expect(document.querySelector('[data-testid="kanban2-card-address"]')?.textContent).toBe("kb2-source Street");
   });
 
-  // AC 7. The old Board's equivalent regression lives in `Dashboard-kanban-sort.dom.test.tsx` and
-  // only ever proved a Priority control *exists*; it also renders the old Board, so it could never
-  // have failed for this Board. These assert an actual write reaches the Priority endpoint.
+  // AC 7. The equivalent regression in `Dashboard-kanban-sort.dom.test.tsx` only ever proved a
+  // Priority control *exists*, which is why #83 retired it and named these as its successor: these
+  // assert an actual write reaches the Priority endpoint.
   describe("Priority while the Board mutation flag is off", () => {
     function flagOffProjects() {
       apiGetMock.mockReset();
@@ -386,10 +384,10 @@ describe("Dashboard at view=kanban2 (#98)", () => {
   // in `Dashboard.tsx`, adding the focus identifiers above would rip focus off the star row on every
   // Priority change. The two changes are one unit; neither ships alone.
   //
-  // The equivalent old-Board assertion cannot carry this claim: `ProjectKanbanBoard.tsx:575` folds
-  // `!pendingOrdering.has(id)` into `canPrioritize`, so the old Board unmounts its own Priority
-  // control mid-write and focus is destroyed before any restore runs. This Board deliberately does
-  // not (pass 1), so the restore tiers are the only thing that can move focus here.
+  // The equivalent assertion on the Board this replaced (deleted in #83) could not carry this
+  // claim: that Board folded `!pendingOrdering.has(id)` into `canPrioritize`, so it unmounted its
+  // own Priority control mid-write and focus was destroyed before any restore ran. This Board
+  // deliberately does not, so the restore tiers are the only thing that can move focus here.
   describe("focus identifiers", () => {
     it("publishes the three restore tiers the Dashboard looks for", async () => {
       await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); });
