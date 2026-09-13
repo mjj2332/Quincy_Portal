@@ -1,11 +1,17 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation, type StaffNavigation } from "../../lib/staff-navigation";
 import { NAVIGATION_RAIL_FLAG } from "../../lib/feature-flags";
 import { parseStaffLocation } from "../../lib/router";
 import { NavigationRail } from "./NavigationRail";
+
+// Sign out cannot be exercised against a real session — it would destroy the session every other
+// check depends on — so the transport is mocked and the wiring asserted here instead. The handler
+// itself is a copy of the Topbar's, but the path through `MenuPrimitive.Item`'s `render` is new.
+const signOutMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock("../../lib/auth", () => ({ signOut: signOutMock }));
 
 /**
  * The rail's rendering — #111.
@@ -178,11 +184,43 @@ describe("NavigationRail", () => {
     expect(current).toEqual(["Admin"]);
   });
 
-  it("renders the wordmark, the identity and Sign out", async () => {
+  it("renders the wordmark and the identity", async () => {
     await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
     expect(testids("navigation-rail-brand")[0]?.getAttribute("href")).toBe("/");
     expect(testids("navigation-rail-identity")[0]?.textContent).toContain("Terry Lee");
-    expect(testids("navigation-rail-signout")[0]?.textContent?.trim()).toBe("Sign out");
+  });
+
+  it("keeps Sign out behind the account menu rather than on the rail", async () => {
+    // Sign out is destructive and irreversible, and it used to sit one stray click below the
+    // navigation. The reference shell puts it inside a menu opened from the footer identity, and
+    // this pins that: absent until the identity is activated, present after.
+    //
+    // Queried on `document`, not the host: Base UI's Menu portals its panel to `document.body`,
+    // so a host-scoped query would report the panel missing in both states and pass vacuously.
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+
+    expect(document.querySelector('[data-testid="navigation-rail-signout"]')).toBeNull();
+    expect(host.textContent).not.toContain("Sign out");
+
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]');
+    expect(trigger, "the footer identity must be the menu trigger").not.toBeNull();
+    await act(async () => {
+      trigger!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const signOut = document.querySelector('[data-testid="navigation-rail-signout"]');
+    expect(signOut?.textContent?.trim()).toBe("Sign out");
+  });
+
+  it("names the account menu trigger for screen readers", async () => {
+    // The trigger's visible content is a name and an email, which does not say what activating it
+    // does. The avatar is `aria-hidden`, so without an explicit label the control announces only
+    // the identity text.
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+    const trigger = document.querySelector('[data-testid="navigation-rail-account"]');
+    expect(trigger?.getAttribute("aria-label")).toBe("Account menu for Terry Lee");
   });
 
   it("names the flag nowhere in its output", async () => {
@@ -252,5 +290,46 @@ describe("NavigationRail", () => {
     await render(<NavigationRail navigation={navigation} user={USER} />);
     expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban"]);
     expect(host.textContent).not.toContain("Calendar");
+  });
+});
+
+describe("the account menu's sign out", () => {
+  it("calls signOut when the menu item is activated", async () => {
+    // Presence in the DOM is not the behaviour. This is the assertion that would catch the item
+    // rendering correctly while its `onClick` never reaches the transport — the failure mode of
+    // handing a handler to a primitive's `render` prop rather than to the element itself.
+    signOutMock.mockClear();
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]');
+    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
+
+    const signOut = document.querySelector<HTMLElement>('[data-testid="navigation-rail-signout"]');
+    expect(signOut, "the menu must be open before the item can be activated").not.toBeNull();
+    await act(async () => { signOut!.click(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(signOutMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a failure in the rail rather than swallowing it", async () => {
+    // The alert deliberately lives OUTSIDE the menu panel: `closeOnClick` unmounts the panel, so an
+    // error rendered inside it would vanish before it could be read.
+    signOutMock.mockClear();
+    signOutMock.mockImplementationOnce(() => Promise.reject(new Error("network down")));
+    await render(<NavigationRail navigation={navigationFor("/")} user={USER} />);
+
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]');
+    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
+    const signOut = document.querySelector<HTMLElement>('[data-testid="navigation-rail-signout"]');
+    await act(async () => {
+      signOut!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert, "a failed sign out must leave a visible alert in the rail").not.toBeNull();
+    expect(alert?.textContent).toBeTruthy();
   });
 });

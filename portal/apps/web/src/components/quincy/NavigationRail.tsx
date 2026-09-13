@@ -14,7 +14,9 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/reui/sidebar";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
+import { Menu } from "./menu";
 import { signOut } from "../../lib/auth";
 import { initials } from "../../lib/initials";
 import { cn } from "../../lib/utils";
@@ -111,6 +113,14 @@ const ACTIVE_PAINT = cn(
 
 const RAIL_ITEM = cn(LEADING_RULE, ACTIVE_PAINT, "gap-[var(--space-3)]");
 
+// The account menu's items. Mirrors the Topbar's own menu items (`MOBILE_ITEM` there) rather than
+// inventing a second menu-item look: same 44px minimum target, same label type, same hover lift.
+const ACCOUNT_MENU_ITEM = cn(
+  "min-h-[44px] w-full flex items-center px-[var(--space-3)] text-foreground text-left",
+  "no-underline [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] cursor-pointer",
+  "border-0 bg-transparent hover:bg-secondary",
+);
+
 export type NavigationRailProps = {
   navigation: StaffNavigation;
   user: { name?: string | null; email?: string | null };
@@ -182,26 +192,66 @@ export function NavigationRail({ navigation, user }: NavigationRailProps) {
       </SidebarContent>
 
       <SidebarFooter className="gap-[var(--space-3)] p-[var(--space-4)]">
-        <div className="flex items-center gap-[var(--space-3)]" data-testid="navigation-rail-identity">
-          <div
-            className="grid h-[32px] w-[32px] flex-none place-items-center rounded-[var(--radius-pill)] bg-[var(--ink-900)] text-[var(--paper-050)] [font:var(--weight-regular)_12px/1.2_var(--font-sans)] tracking-[0.02em]"
-            aria-hidden="true"
-          >
-            {initials(displayName)}
-          </div>
-          <div className="flex min-w-0 flex-col">
-            <strong className="truncate">{displayName}</strong>
-            {user.email && user.name && <span className="ey truncate">{user.email}</span>}
-          </div>
-        </div>
-        <button
-          type="button"
-          className="cursor-pointer rounded-md border-0 bg-transparent p-[var(--space-2)] text-left [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] hover:bg-sidebar-accent"
-          onClick={(event) => void handleSignOut(event)}
-          data-testid="navigation-rail-signout"
+        {/* Sign out sits BEHIND the identity, not beside it — the reference shell
+            (`tmp/ReUI-Test-2-tempo-v1.1.0`, `nav-workspace.tsx`) makes the footer identity a menu
+            trigger and puts Sign Out inside the panel. Two reasons it is the right shape here too:
+            a destructive, irreversible action should not be one stray click from the navigation it
+            sits under, and the footer is where per-account actions will accumulate (notification
+            preferences is already missing from the railed shell until #113).
+
+            Built on `quincy/menu.tsx` — Quincy-owned Base UI, the app's shared dropdown, and the
+            same primitive the Topbar uses for its own account menu. Deliberately NOT the vendor
+            `dropdown-menu` the reference imports: that component is not in `components/reui/`, and
+            CLAUDE.md keeps `quincy/menu.tsx` as the app's menu rather than restoring a registry
+            equivalent. `side="right"` because the rail is on the left edge, so a panel below or
+            left of the trigger would open off-canvas. */}
+        <Menu
+          triggerLabel={`Account menu for ${displayName}`}
+          label="Account"
+          side="right"
+          align="end"
+          triggerClassName="w-full rounded-md p-[var(--space-2)] text-left hover:bg-sidebar-accent"
+          triggerTestId="navigation-rail-account"
+          trigger={
+            <span className="flex w-full items-center gap-[var(--space-3)]" data-testid="navigation-rail-identity">
+              <span
+                className="grid h-[32px] w-[32px] flex-none place-items-center rounded-[var(--radius-pill)] bg-[var(--ink-900)] text-[var(--paper-050)] [font:var(--weight-regular)_12px/1.2_var(--font-sans)] tracking-[0.02em]"
+                aria-hidden="true"
+              >
+                {initials(displayName)}
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <strong className="truncate">{displayName}</strong>
+                {user.email && user.name && <span className="ey truncate">{user.email}</span>}
+              </span>
+              {/* Affordance: without it the identity reads as a label rather than a control. */}
+              <svg
+                className="ml-auto flex-none opacity-50"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
+                <path d="M5 12h.01M12 12h.01M19 12h.01" />
+              </svg>
+            </span>
+          }
         >
-          Sign out
-        </button>
+          <MenuPrimitive.Item
+            nativeButton
+            closeOnClick
+            render={<button type="button" className={ACCOUNT_MENU_ITEM} />}
+            onClick={(event) => { void handleSignOut(event as unknown as MouseEvent<HTMLButtonElement>); }}
+            data-testid="navigation-rail-signout"
+          >
+            Sign out
+          </MenuPrimitive.Item>
+        </Menu>
+        {/* Outside the menu on purpose: `closeOnClick` dismisses the panel, so an error rendered
+            inside it would unmount before it could be read. */}
         {signOutError && (
           <div role="alert" className="text-[length:var(--text-2xs)] text-[var(--signal-critical)]">
             {signOutError}

@@ -41,8 +41,30 @@ button { font-family: var(--font-sans); }
    the rail off its 250px. */
 .app--railed { flex-direction: row; align-items: stretch; }
 .app--railed > :not(.app__rail) { min-width: 0; flex: 1; }
+/* The rail is full-height and stays put while the page scrolls. This mirrors the reference shell
+   in `tmp/ReUI-Test-2-tempo-v1.1.0`, whose vendor rail is a `fixed inset-y-0 h-svh` container
+   beside an in-flow spacer, with the content column scrolling internally. `position: sticky`
+   reaches the same behaviour with no spacer element and no fixed positioning, so window scrolling
+   — and therefore every existing screen's scroll behaviour, including the sticky
+   ProjectOverviewRail below — is left exactly as it is.
+
+   Each declaration is load-bearing:
+   - `align-self: start` — `.app--railed` sets `align-items: stretch`, which sizes the rail to the
+     whole DOCUMENT (7447px on the Dashboard). A sticky item stretched to its container's height
+     has no room left to stick in.
+   - `height: 100dvh` — the primitive's own `h-full` is `height: 100%` resolved against `.app`,
+     which has `min-height: 100vh` but NO `height`, so it computed to `auto` and left the rail
+     content-tall: a 343px stub on a 900px viewport. `dvh` rather than `vh` so mobile browser
+     chrome cannot clip the footer.
+   - `top: 0` — `position: sticky` with the initial `top: auto` never sticks.
+
+   `SidebarContent` already carries `min-h-0 flex-1 overflow-auto`, so once the height is definite
+   the nav list scrolls inside the rail and the identity/sign-out footer stays pinned. */
+.app--railed > .app__rail { position: sticky; top: 0; align-self: start; height: 100dvh; }
 .app--impersonating { padding-top: 42px; }
 .app--impersonating .topbar { top: 42px; }
+/* Same 42px banner offset the topbar takes above — the rail must sit below it, not under it. */
+.app--impersonating.app--railed > .app__rail { top: 42px; height: calc(100dvh - 42px); }
 .app--impersonating .rail { top: 106px; max-height: calc(100vh - 106px); }
 .app--impersonating .worktools { top: 106px; }
 .app--impersonating .viewer { inset: 42px 0 0; }

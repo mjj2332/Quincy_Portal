@@ -96,3 +96,74 @@ describe("the railed shell layout", () => {
     expect(appCss).toContain(".app--impersonating .rail");
   });
 });
+
+/**
+ * The rail's height and stickiness — added after a live Chrome pass, not after a test failure.
+ *
+ * Measured on the running build: the rail computed `position: static`, `height: 343px` on a 900px
+ * viewport, and at `scrollY: 1200` its top was at `-1200` — the whole navigation scrolled off a
+ * 7447px Dashboard, leaving an empty 250px gutter. The Topbar it replaces is
+ * `position: sticky; top: 0` and never leaves, so this was a straight regression against the
+ * shipped chrome.
+ *
+ * Neither the two DOM tests nor the first two browser passes caught it: every one of them measured
+ * at `scrollY: 0`, where the top of the rail looks correct. These assertions exist so that the
+ * height and the stickiness cannot be lost again silently.
+ */
+describe("the rail is full-height and stays put", () => {
+  const railBody = ruleBody(appCss, ".app--railed > .app__rail") ?? "";
+
+  it("declares the rule at all", () => {
+    expect(
+      ruleBody(appCss, ".app--railed > .app__rail"),
+      ".app--railed > .app__rail must exist as a real rule in app.css",
+    ).not.toBeNull();
+  });
+
+  it("sticks to the top of the viewport", () => {
+    // `position: sticky` with the initial `top: auto` never sticks, so the offset is as
+    // load-bearing as the position and both are pinned here.
+    expect(railBody).toMatch(/position:\s*sticky/);
+    expect(railBody).toMatch(/top:\s*0/);
+  });
+
+  it("takes the full viewport height in dynamic viewport units", () => {
+    // `dvh`, not `vh`: mobile browser chrome would otherwise clip the identity/sign-out footer.
+    expect(railBody).toMatch(/height:\s*100dvh/);
+    expect(railBody, "vh would be clipped by mobile browser chrome").not.toMatch(/height:\s*100vh/);
+  });
+
+  it("opts out of the container's stretch so there is room to stick", () => {
+    // `.app--railed` sets `align-items: stretch`, which sizes the rail to the whole DOCUMENT. A
+    // sticky item stretched to its container's height has nothing to stick within — this is the
+    // declaration that makes the other two work, and the easiest one to delete as redundant.
+    expect(railBody).toMatch(/align-self:\s*start/);
+  });
+
+  it("does not rely on the primitive's h-full, which resolves to auto here", () => {
+    // `h-full` is `height: 100%` against `.app`, which has `min-height: 100vh` and no `height`,
+    // so it computed to `auto` and produced the 343px stub. The authored height is what fixes it;
+    // this pins that the fix lives in CSS rather than in a utility that would silently collapse.
+    expect(appCss).toMatch(/\.app--railed > \.app__rail\s*\{[^}]*height:/);
+  });
+
+  it("clears the impersonation banner instead of sitting under it", () => {
+    // Mirrors `.app--impersonating .topbar { top: 42px }`. Without this the banner overlaps the
+    // wordmark and the rail runs 42px past the bottom of the viewport.
+    const impersonating = ruleBody(appCss, ".app--impersonating.app--railed > .app__rail");
+    expect(impersonating, "the railed shell must offset the rail under impersonation").not.toBeNull();
+    expect(impersonating).toMatch(/top:\s*42px/);
+    expect(impersonating).toMatch(/height:\s*calc\(100dvh - 42px\)/);
+  });
+
+  it("declares both rules outside any @layer", () => {
+    for (const selector of [".app--railed > .app__rail ", ".app--impersonating.app--railed"]) {
+      const index = appCss.indexOf(selector);
+      expect(index, `${selector} not found`).toBeGreaterThan(-1);
+      const before = appCss.slice(0, index);
+      const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
+      const closed = (before.match(/\}/g) ?? []).length;
+      expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
+    }
+  });
+});
