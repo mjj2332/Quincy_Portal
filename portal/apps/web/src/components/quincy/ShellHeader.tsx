@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { PanelLeftIcon } from "lucide-react";
 
 import { Button } from "@/components/reui/button";
 import {
@@ -53,12 +54,9 @@ export type ShellHeaderProps = {
   onToggleRail: () => void;
 };
 
-function ToggleIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
-    </svg>
-  );
+// Tempo's `bullet-separator.tsx`: a short painted bar between crumbs instead of a chevron.
+function BulletSeparator() {
+  return <span className="inline-flex h-0.5 w-2 shrink-0 rounded-full bg-foreground/30" />;
 }
 
 export function ShellHeader({ mode, navigation, onToggleRail }: ShellHeaderProps) {
@@ -80,24 +78,24 @@ export function ShellHeader({ mode, navigation, onToggleRail }: ShellHeaderProps
             aria-label="Open navigation"
             render={<Button variant="ghost" size="icon" className="size-[44px]" />}
           >
-            <ToggleIcon />
+            <PanelLeftIcon />
           </SheetTrigger>
         : <Button
             variant="ghost"
-            size="icon"
+            size="icon-sm"
             aria-expanded={expanded}
             aria-label={expanded ? "Collapse navigation" : "Expand navigation"}
             onClick={onToggleRail}
             data-testid="shell-header-rail-toggle"
           >
-            <ToggleIcon />
+            <PanelLeftIcon />
           </Button>}
 
       <Breadcrumb aria-label="Breadcrumb" data-testid="shell-breadcrumb">
         <BreadcrumbList>
           {crumbs.map((segment, index) => (
             <Fragment key={`${segment.label}-${index}`}>
-              {index > 0 && <BreadcrumbSeparator />}
+              {index > 0 && <BreadcrumbSeparator className="flex items-center"><BulletSeparator /></BreadcrumbSeparator>}
               <BreadcrumbItem>
                 {segment.href === null
                   ? <BreadcrumbPage role={undefined} aria-disabled={undefined}>{segment.label}</BreadcrumbPage>

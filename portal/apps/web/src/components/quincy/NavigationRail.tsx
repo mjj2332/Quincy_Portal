@@ -220,10 +220,18 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
     >
       <SidebarHeader className={cn("p-[var(--space-4)]", isCollapsed && "items-center p-[var(--space-2)]")}>
         <div className={cn("flex items-center gap-[var(--space-3)]", isCollapsed ? "flex-col" : "justify-between")}>
-          {/* Hidden, not shrunk, at 48px — the settled #112 plan calls the wordmark "hidden" in
-              `collapsed`, not replaced; there is no room for a second brand mark's worth of
-              judgment call here beyond that. */}
-          {!isCollapsed && (
+          {/* At 48px the wordmark gives way to the Q mark on an ink tile, the shape of Tempo's
+              `logo.tsx` (the asset is white, so it needs the dark ground). */}
+          {isCollapsed ? (
+            <InternalLink
+              to="/"
+              aria-label="Quincy Portal home"
+              className="grid size-7 place-items-center rounded-md bg-[var(--ink-900)] no-underline"
+              data-testid="navigation-rail-brand"
+            >
+              <img src="/brand/Quincy-HERO-Q-WHITE-1.png" alt="" className="h-4 w-auto" />
+            </InternalLink>
+          ) : (
             <InternalLink
               to="/"
               aria-label="Quincy Portal home"

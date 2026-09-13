@@ -343,11 +343,15 @@ describe("NavigationRail variant — expanded (unchanged)", () => {
 });
 
 describe("NavigationRail variant — collapsed", () => {
-  it("is 48px wide, sr-only labels, and no wordmark", async () => {
+  it("is 48px wide, and swaps the wordmark for the Q mark as the home link", async () => {
     await render(<NavigationRail navigation={navigationFor("/")} user={USER} variant="collapsed" />);
     const rail = host.querySelector('[data-testid="navigation-rail"]')!;
     expect(rail.getAttribute("data-state")).toBe("collapsed");
-    expect(testids("navigation-rail-brand")).toEqual([]);
+    const brand = testids("navigation-rail-brand");
+    expect(brand).toHaveLength(1);
+    expect(brand[0]?.getAttribute("href")).toBe("/");
+    expect(accessibleName(brand[0]!)).toBe("Quincy Portal home");
+    expect(brand[0]?.querySelector("img")?.getAttribute("src")).toBe("/brand/Quincy-HERO-Q-WHITE-1.png");
   });
 
   it("keeps every icon link's accessible name even though the label is visually hidden", async () => {

@@ -326,6 +326,8 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     const allSegmentLis = crumb.querySelectorAll("li");
     const separators = crumb.querySelectorAll('li[aria-hidden="true"]');
     expect(separators.length).toBe(allSegmentLis.length - separators.length - 1);
+    // Tempo's bullet separator (a painted span), not the vendor's default chevron icon.
+    for (const separator of separators) expect(separator.querySelector("svg")).toBeNull();
 
     const dashboardLink = [...crumb.querySelectorAll("a")].find((a) => a.textContent?.trim() === "Dashboard")!;
     expect(dashboardLink.getAttribute("href")).toBe("/");
