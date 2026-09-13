@@ -167,3 +167,126 @@ describe("the rail is full-height and stays put", () => {
     }
   });
 });
+
+/**
+ * `--app-rail-inline-size` per `[data-rail-mode]` — #112. `RailedShell` resolves one JS-owned
+ * breakpoint (`lib/shell-rail.ts`) into `expanded | collapsed | sheet` and sets it as
+ * `data-rail-mode` on the content column; these three rules are the only place that resolved mode
+ * turns back into a pixel value, and `styles/shell-breakpoint.guard.test.ts` is what pins that
+ * neither rule sits inside an `@media` block of its own.
+ */
+describe("the rail's inline size follows data-rail-mode (#112)", () => {
+  it("sets 250px expanded, 48px collapsed, and 0px for the Sheet", () => {
+    expect(ruleBody(appCss, '[data-rail-mode="expanded"]')).toContain("--app-rail-inline-size: 250px");
+    expect(ruleBody(appCss, '[data-rail-mode="collapsed"]')).toContain("--app-rail-inline-size: 48px");
+    expect(ruleBody(appCss, '[data-rail-mode="sheet"]')).toContain("--app-rail-inline-size: 0px");
+  });
+
+  it("declares all three rules outside any @layer", () => {
+    for (const selector of ['[data-rail-mode="expanded"]', '[data-rail-mode="collapsed"]', '[data-rail-mode="sheet"]']) {
+      const index = appCss.indexOf(selector);
+      expect(index, `${selector} not found`).toBeGreaterThan(-1);
+      const before = appCss.slice(0, index);
+      const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
+      const closed = (before.match(/\}/g) ?? []).length;
+      expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
+    }
+  });
+});
+
+/**
+ * `.shell-header` z-index and impersonation offset — #112 review finding. `ShellHeader.tsx`'s
+ * `<header>` is `position: sticky; top: 0` with no z-index of its own, so it slides UNDER the
+ * impersonation banner (`.app--impersonating` adds `padding-top: 42px` to `.app`, but nothing
+ * pushes the header's own sticky offset down to clear it) and under whatever else in the stacking
+ * order reaches for a z-index. `.topbar`, the chrome this header replaces under the rail flag, is
+ * the precedent this mirrors exactly: `position: sticky; top: 0; z-index: 75` plus
+ * `.app--impersonating .topbar { top: 42px }`.
+ */
+describe("the shell header clears the impersonation banner and carries a z-index (#112)", () => {
+  it("declares z-index 75 on .shell-header, same stacking order as .topbar", () => {
+    const body = ruleBody(appCss, ".shell-header");
+    expect(body, ".shell-header must exist as a real rule in app.css").not.toBeNull();
+    expect(body).toMatch(/z-index:\s*75/);
+  });
+
+  it("offsets .shell-header under impersonation, same 42px banner offset as .topbar", () => {
+    const body = ruleBody(appCss, ".app--impersonating .shell-header");
+    expect(body, ".app--impersonating .shell-header must exist as a real rule in app.css").not.toBeNull();
+    expect(body).toMatch(/top:\s*42px/);
+  });
+
+  it("declares both rules outside any @layer", () => {
+    for (const selector of [".shell-header ", ".app--impersonating .shell-header "]) {
+      const index = appCss.indexOf(selector);
+      expect(index, `${selector} not found`).toBeGreaterThan(-1);
+      const before = appCss.slice(0, index);
+      const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
+      const closed = (before.match(/\}/g) ?? []).length;
+      expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
+    }
+  });
+});
+
+/**
+ * `.app--railed > .app__rail`'s z-index — #112 review finding. `position: sticky` creates a
+ * stacking context with z `auto`, which traps the collapsed flyout's `--z-popover` beneath any
+ * later-painted, positioned content — `.worktools` (z-index 20) and now `.shell-header` (z-index
+ * 75) both sit later in the DOM and both win. The rail needs a z-index ABOVE the header so the
+ * flyout clears page content, but still below `--z-popover`/`--z-dialog` so the Sheet — portalled,
+ * outside this stacking context entirely — still covers it regardless.
+ */
+describe("the rail's stacking context clears the header for the collapsed flyout (#112)", () => {
+  it("declares z-index 76 on .app--railed > .app__rail, above .shell-header's 75", () => {
+    const railBody = ruleBody(appCss, ".app--railed > .app__rail") ?? "";
+    expect(railBody).toMatch(/z-index:\s*76/);
+
+    const headerBody = ruleBody(appCss, ".shell-header") ?? "";
+    const headerZ = Number(headerBody.match(/z-index:\s*(\d+)/)?.[1]);
+    expect(headerZ).toBe(75);
+    const railZ = Number(railBody.match(/z-index:\s*(\d+)/)?.[1]);
+    expect(railZ).toBeGreaterThan(headerZ);
+  });
+});
+
+/**
+ * `--toast-inset-inline-start` must be REDECLARED by the `[data-rail-mode]` rules, not just read by
+ * them — #112 P3b. `tokens/spacing.css` declares it once, on `:root`, as
+ * `calc(var(--app-rail-inline-size) + …)`. A custom property's VALUE is substituted at the point it
+ * is declared, not re-evaluated wherever it is read, so overriding `--app-rail-inline-size` on the
+ * content column (which is what each `[data-rail-mode]` rule below does) never moves a toast whose
+ * own `--toast-inset-inline-start` was fixed at `:root`. Each `[data-rail-mode]` rule has to set
+ * this variable itself — either three times over, or once in a rule shared by all three selectors —
+ * so `ToastViewport` (mounted inside Dashboard/Admin, inside the content column) inherits the
+ * moved value.
+ */
+describe("--toast-inset-inline-start is redeclared per data-rail-mode (#112 P3b)", () => {
+  const EXPECTED_VALUE = "calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left)))";
+
+  it("redeclares the inset in each [data-rail-mode] rule, or in one shared rule after them", () => {
+    const perMode = ['[data-rail-mode="expanded"]', '[data-rail-mode="collapsed"]', '[data-rail-mode="sheet"]']
+      .map((selector) => ruleBody(appCss, selector) ?? "");
+    const perModeRedeclares = perMode.every((body) => body.includes(`--toast-inset-inline-start: ${EXPECTED_VALUE}`));
+
+    const shared = ruleBody(appCss, "[data-rail-mode]") ?? "";
+    const sharedRedeclares = shared.includes(`--toast-inset-inline-start: ${EXPECTED_VALUE}`);
+
+    expect(
+      perModeRedeclares || sharedRedeclares,
+      "either every [data-rail-mode=\"…\"] rule, or a shared [data-rail-mode] rule after them, must redeclare --toast-inset-inline-start",
+    ).toBe(true);
+  });
+
+  it("declares the shared rule (if any) outside any @layer, after the three per-mode rules", () => {
+    const sharedIndex = appCss.indexOf("[data-rail-mode]");
+    if (sharedIndex === -1) return; // No shared rule — the per-mode assertion above covers this shape instead.
+    const sheetIndex = appCss.indexOf('[data-rail-mode="sheet"]');
+    expect(sheetIndex, '[data-rail-mode="sheet"] not found').toBeGreaterThan(-1);
+    expect(sharedIndex, "the shared [data-rail-mode] rule must come after the three per-mode rules").toBeGreaterThan(sheetIndex);
+
+    const before = appCss.slice(0, sharedIndex);
+    const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
+    const closed = (before.match(/\}/g) ?? []).length;
+    expect(opened, "[data-rail-mode] sits inside an @layer block").toBeLessThanOrEqual(closed);
+  });
+});

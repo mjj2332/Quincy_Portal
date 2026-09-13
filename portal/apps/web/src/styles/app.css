@@ -60,11 +60,33 @@ button { font-family: var(--font-sans); }
 
    `SidebarContent` already carries `min-h-0 flex-1 overflow-auto`, so once the height is definite
    the nav list scrolls inside the rail and the identity/sign-out footer stays pinned. */
-.app--railed > .app__rail { position: sticky; top: 0; align-self: start; height: 100dvh; }
+/* z-index 76: above the header (75) so the collapsed flyout (#112) clears content painted after
+   it in the DOM — `position: sticky` makes this a stacking context with z `auto`, which otherwise
+   traps the flyout's `--z-popover` beneath it. Below `--z-popover`/`--z-dialog`, so the Sheet
+   (portalled, outside this stacking context) still covers it regardless. */
+.app--railed > .app__rail { position: sticky; top: 0; align-self: start; height: 100dvh; z-index: 76; }
 .app--impersonating { padding-top: 42px; }
 .app--impersonating .topbar { top: 42px; }
 /* Same 42px banner offset the topbar takes above — the rail must sit below it, not under it. */
 .app--impersonating.app--railed > .app__rail { top: 42px; height: calc(100dvh - 42px); }
+/* #112's `ShellHeader`: same stacking and banner offset as .topbar. */
+.shell-header { z-index: 75; }
+.app--impersonating .shell-header { top: 42px; }
+/* #112. `data-rail-mode` (set by `RailedShell` from `lib/shell-rail.ts`'s `SHELL_NARROW_QUERY`,
+   771px) is the only breakpoint signal CSS keys off, with no `@media` of its own
+   (`styles/shell-breakpoint.guard.test.ts`). `--app-rail-inline-size` only feeds the toast surface
+   (`--toast-inset-inline-start`) — the rail's own width comes from `NavigationRail`'s `variant`
+   classes, not this variable.
+
+   `--toast-inset-inline-start` is REDECLARED below rather than just read, because a custom
+   property's VALUE is substituted where it is DECLARED, not re-evaluated where it's later read: the
+   `:root` declaration stays fixed at `:root`'s own 0px `--app-rail-inline-size` regardless of a
+   descendant override, so redeclaring the composite here — on the element that overrides the
+   ingredient — is what lets `ToastViewport` inherit a moved value. */
+[data-rail-mode="expanded"] { --app-rail-inline-size: 250px; }
+[data-rail-mode="collapsed"] { --app-rail-inline-size: 48px; }
+[data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
+[data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
 .app--impersonating .rail { top: 106px; max-height: calc(100vh - 106px); }
 .app--impersonating .worktools { top: 106px; }
 .app--impersonating .viewer { inset: 42px 0 0; }

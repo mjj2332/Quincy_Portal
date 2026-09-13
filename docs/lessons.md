@@ -1812,32 +1812,24 @@ a union you do not own. Import the narrowed type, or the union itself, from its 
 operator that matches nothing degrades to `never` without complaint, and the error it eventually
 causes will point at the use site, not at the change that broke it.
 
-## A spec can tell you to install a component the registry does not have (#111, 2026-09-13)
+## A 404 on `@reui/<name>` sent two tickets looking in the wrong registry (#111, #112, 2026-09-13)
 
-Both #111 and its parent spec #109 said to install the ReUI sidebar. `components.json` in
-`portal/apps/web` points the shadcn CLI at ReUI's registry, and that registry has no `sidebar`
-component. `sidebar.json`, `sheet.json` and `tooltip.json` all return HTTP 404. `kanban.json` and
-`badge.json` return 200, using the same licence key. So the gap is in the registry's catalogue, not
-in the credentials, and not something a retry or a different key would fix.
+#111's spec said to install the ReUI sidebar. `@reui/sidebar`, `@reui/sheet` and `@reui/tooltip`
+all returned HTTP 404 while `@reui/kanban` and `@reui/badge` returned 200 on the same key, and #111
+concluded the components did not exist. That conclusion was wrong. `sidebar`, `sheet`, `tooltip`
+and `breadcrumb` are shadcn **base-nova** primitives: bare names served by shadcn's default registry,
+and the same bare names ReUI's own blocks list in `registryDependencies`. `npx shadcn@latest view
+sheet` resolves them.
 
-The comment block in `portal/apps/web/src/styles/tokens/reui.css` had already told a future reader
-to "read its variants and bridge the roles by hand" when installing `@reui/sidebar` — written on
-the assumption the component existed to be installed. It does not, so that instruction could never
-be carried out as written.
+The cost: #111 vendored shadcn's `new-york-v4` sidebar (the wrong style) into
+`components/reui/sidebar.tsx` by hand, and #112 planned a hand-rolled Sheet and breadcrumb on
+Base UI Dialog before the owner caught it. #112 moves both onto the base-nova `sheet` and
+`breadcrumb`, vendored through the sandbox per `docs/reui-reuse.md`. `sidebar.tsx` still carries
+the new-york-v4 lineage; reconciling it with base-nova is its own decision, recorded here rather
+than done silently.
 
-The resolution was to vendor shadcn's own `new-york-v4` sidebar into `tmp/` as a reference, and
-carry across by hand only the parts this app needs: 13 of its 24 exports survive in
-`portal/apps/web/src/components/reui/sidebar.tsx`. The header comment there records which exports
-were dropped and why, so nobody runs the shadcn CLI later to "complete" the set against a registry
-entry that still does not exist.
-
-Issue #112's mobile Sheet sits on the same missing `sheet.json` and will need the same decision:
-vendor a reference by hand, or scope the feature to what the registry actually has.
-
-**Rule.** Before starting build work from a spec that names a registry component, confirm the
-component resolves — fetch its JSON, do not assume the registry mirrors the vendor's own docs.
-If it 404s, that is a scope decision for the person who wrote the spec, not something to route
-around silently.
+**Rule.** A 404 on `@reui/<name>` sends you to the bare base-nova name, then to ReUI MCP `search`.
+Only when both miss is the component absent, and that is a scope decision for the spec's author.
 
 ## Three guards in one branch read documentation prose as code (#111, 2026-09-13)
 

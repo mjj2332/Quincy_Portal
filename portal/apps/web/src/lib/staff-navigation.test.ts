@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StaffRoute } from "./router";
-import { buildStaffNavigation, type StaffNavigationCapabilities, type StaffNavigationItem } from "./staff-navigation";
+import { buildStaffBreadcrumb, buildStaffNavigation, type StaffNavigationCapabilities, type StaffNavigationItem } from "./staff-navigation";
 
 const all: StaffNavigationCapabilities = { adminBackend: true, viewProductionCalendar: true };
 const noAdmin: StaffNavigationCapabilities = { adminBackend: false, viewProductionCalendar: true };
@@ -205,5 +205,54 @@ describe("an explicit Calendar location without the capability", () => {
     );
     const children = navigation.groups[0]!.items[0]!.children ?? [];
     expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Calendar"]);
+  });
+});
+
+describe("buildStaffBreadcrumb — #112, AC7", () => {
+  // Pure and derived from the model, never re-derived from the route: it consumes
+  // `buildStaffNavigation`'s own `active` flags, so it cannot disagree with the rail about what
+  // is active.
+  it("reads Home › Dashboard(href '/') › Kanban(null) on an explicit Kanban route", () => {
+    const navigation = buildStaffNavigation({ kind: "dashboard", dashboardView: "kanban" }, "list", all);
+    expect(buildStaffBreadcrumb(navigation)).toEqual([
+      { label: "Home", href: "/" },
+      { label: "Dashboard", href: "/" },
+      { label: "Kanban", href: null },
+    ]);
+  });
+
+  it("reads Home › Admin(null) — Admin has no children to descend into", () => {
+    const navigation = buildStaffNavigation({ kind: "admin" }, "kanban", all);
+    expect(buildStaffBreadcrumb(navigation)).toEqual([
+      { label: "Home", href: "/" },
+      { label: "Admin", href: null },
+    ]);
+  });
+
+  it("resolves a bare '/' from the remembered view, same as an explicit route", () => {
+    const navigation = buildStaffNavigation(bareDashboard, "list", all);
+    expect(buildStaffBreadcrumb(navigation)).toEqual([
+      { label: "Home", href: "/" },
+      { label: "Dashboard", href: "/" },
+      { label: "List", href: null },
+    ]);
+  });
+
+  it("falls back to Home › section label for a route outside the model", () => {
+    // `project` has no representation in `navigation.groups` — only Dashboard and Admin do — so
+    // there is no active item to descend into. The fallback names the section itself instead of
+    // producing a truncated, Home-only trail.
+    const navigation = buildStaffNavigation({ kind: "project", projectId }, "kanban", all);
+    expect(buildStaffBreadcrumb(navigation)).toEqual([
+      { label: "Home", href: "/" },
+      { label: "Project", href: null },
+    ]);
+  });
+
+  it("every segment but the last carries an href; the last is null", () => {
+    const navigation = buildStaffNavigation({ kind: "dashboard", dashboardView: "calendar" }, "kanban", all);
+    const segments = buildStaffBreadcrumb(navigation);
+    expect(segments.slice(0, -1).every((segment) => typeof segment.href === "string")).toBe(true);
+    expect(segments.at(-1)?.href).toBeNull();
   });
 });
