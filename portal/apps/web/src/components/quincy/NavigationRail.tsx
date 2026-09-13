@@ -106,8 +106,18 @@ const LEADING_RULE = "[border-inline-start:var(--border-width-bold)_solid_transp
 // Active overrides BOTH halves of the primitive's `data-[active=true]:` paint: the sunken ground
 // (the primitive reaches for `bg-sidebar-accent`, which is the HOVER lift) and the rule colour.
 // Same variant and same utility group in each case, so tailwind-merge keeps the later one.
+//
+// The ground reads `--bg-sunken` directly rather than through `bg-surface-sunken`. Identical paint
+// — `--surface-sunken` resolves to `var(--bg-sunken)` in the default scope, so this is the same
+// `--paper-200` either way — but `--surface-sunken` is one of the 21 properties `tokens/inverse.css`
+// re-scopes (to `--ink-700`), and `--bg-sunken` is not. `tokens/reui.css` promises the rail is
+// immune to an inverse scope "by construction"; three utilities here quietly were not, which the
+// standards axis of `/code-review` caught. Nothing was user-visible — the inverse subtrees (the
+// Lightbox dialog, the photo action bar) are descendants of the content column and never ancestors
+// of the rail, which a browser pass confirmed by measuring the rail unchanged with each raised —
+// so this closes a latent trap, not a live defect. `--border-strong` was already safe.
 const ACTIVE_PAINT = cn(
-  "data-[active=true]:bg-surface-sunken",
+  "data-[active=true]:bg-[var(--bg-sunken)]",
   "data-[active=true]:[border-inline-start-color:var(--border-strong)]",
 );
 
@@ -115,6 +125,13 @@ const RAIL_ITEM = cn(LEADING_RULE, ACTIVE_PAINT, "gap-[var(--space-3)]");
 
 // The account menu's items. Mirrors the Topbar's own menu items (`MOBILE_ITEM` there) rather than
 // inventing a second menu-item look: same 44px minimum target, same label type, same hover lift.
+//
+// These KEEP the shadcn role layer (`text-foreground`, `hover:bg-secondary`) where `ACTIVE_PAINT`
+// above deliberately avoids it, and the difference is the surface, not an oversight. This paints
+// inside `quincy/menu.tsx`'s panel, whose own ground is `bg-popover` — a role. Pinning the text and
+// hover to Quincy's aliases while the ground stays a role is what would actually break: the panel
+// would then half-follow an inverse scope. The panel is also portalled to `document.body`, outside
+// the rail and outside any `[data-surface]` subtree, so it cannot inherit one in the first place.
 const ACCOUNT_MENU_ITEM = cn(
   "min-h-[44px] w-full flex items-center px-[var(--space-3)] text-foreground text-left",
   "no-underline [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] cursor-pointer",
@@ -294,7 +311,7 @@ function RailItem({ item, expanded }: { item: StaffNavigationItem; expanded: boo
         <NavigationIcon icon={item.icon} />
         <span>{item.label}</span>
       </SidebarMenuButton>
-      {expanded && children.length > 0 && (
+      {showsChildren && (
         <SidebarMenuSub>
           {children.map((child) => (
             <SidebarMenuSubItem key={child.id}>

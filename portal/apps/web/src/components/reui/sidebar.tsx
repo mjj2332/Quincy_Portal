@@ -1,7 +1,6 @@
 import * as React from "react"
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
-import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
@@ -56,9 +55,15 @@ import { cn } from "@/lib/utils"
  *    tailwind-merge cannot collapse against it (`box-shadow` vs `outline`). This is the same
  *    correction already recorded in `reui/badge.tsx` (correction 2) and `reui/button.tsx`
  *    (divergence 5), and it is why `--sidebar-ring` is not among the bridged roles.
- * 4. `sidebarMenuButtonVariants`' `outline` variant is dropped: its only consumer would be a
- *    bordered nav button the design does not use, and it reads `bg-background` — a role
- *    `tokens/inverse.css` re-scopes, which AC6 of #111 forbids the rail from depending on.
+ * 4. The menu buttons' `cva` is gone with its variants. The `outline` variant was dropped first —
+ *    its only consumer would be a bordered nav button the design does not use, and it reads
+ *    `bg-background`, a role `tokens/inverse.css` re-scopes, which AC6 of #111 forbids the rail
+ *    from depending on. The `size` variants (`default`/`sm`/`lg`, and `sm`/`md` on the sub-button)
+ *    then went the same way: the rail asks for neither, so each variants object held one reachable
+ *    value and `cva` had nothing to choose between. The surviving values are folded into the class
+ *    strings, and `sidebarMenuButtonVariants` is no longer exported — nothing consumed it. Flagged
+ *    by the standards axis of `/code-review`: keeping a dead variant contradicts the very rule the
+ *    discarded exports above are justified by.
  * 5. `w-(--sidebar-width)` is dropped from the root. Width is layout, not a colour role, and the
  *    rail's 250px belongs to the rail. Dropping it also keeps `--sidebar-width` from becoming a
  *    phantom token that the CSS-only phantom guard could not see.
@@ -172,42 +177,31 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   )
 }
 
-const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
-  {
-    variants: {
-      size: {
-        default: "h-8 text-sm",
-        sm: "h-7 text-xs",
-        lg: "h-12 text-sm",
-      },
-    },
-    defaultVariants: {
-      size: "default",
-    },
-  }
-)
+// The menu button's paint. A plain string, not a `cva`: the vendor's `size` variant offered
+// `default`/`sm`/`lg` and its `outline` variant is already dropped (header item 4), so with the
+// rail only ever asking for `default` the variants object held one reachable value and `cva` had
+// nothing left to choose between. `h-8 text-sm` below IS that `default`. Trimming it keeps this
+// file honest against its own stated rule — carry only what the rail uses — which is the rule the
+// discarded exports in the header are justified by.
+const SIDEBAR_MENU_BUTTON = "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left transition-[width,height,padding] h-8 text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0";
 
 function SidebarMenuButton({
   className,
   isActive = false,
-  size = "default",
   render,
   ...props
-}: useRender.ComponentProps<"button"> &
-  VariantProps<typeof sidebarMenuButtonVariants> & { isActive?: boolean }) {
+}: useRender.ComponentProps<"button"> & { isActive?: boolean }) {
   // Hoisted rather than passed as a literal: `mergeProps<"button">`'s first parameter is a union,
   // so TypeScript's excess-property check rejects `data-*` keys on a FRESH object literal there
   // (TS2353) and accepts the same object through a variable. `reui/kanban.tsx` does the same.
   //
   // `data-active` is written explicitly and is deliberately NOT put in `state` below. Base UI's
   // default state mapping renders a boolean as a valueless attribute (`data-active=""`), which the
-  // `data-[active=true]:` variants in the cva string would not match — the active paint would
+  // `data-[active=true]:` variants in the class string would not match — the active paint would
   // vanish silently. React renders this prop as `data-active="true"` / `"false"`.
   const defaultProps = {
-    "data-size": size,
     "data-active": isActive,
-    className: cn(sidebarMenuButtonVariants({ size }), className),
+    className: cn(SIDEBAR_MENU_BUTTON, className),
   };
 
   return useRender({
@@ -244,22 +238,15 @@ function SidebarMenuSubItem({ className, ...props }: React.ComponentProps<"li">)
 function SidebarMenuSubButton({
   className,
   isActive = false,
-  size = "md",
   render,
   ...props
-}: useRender.ComponentProps<"a"> & {
-  isActive?: boolean
-  size?: "sm" | "md"
-}) {
+}: useRender.ComponentProps<"a"> & { isActive?: boolean }) {
   // Same two reasons as `SidebarMenuButton` above: TS2353 on a fresh literal, and `data-active`
   // kept out of `state` so the `data-[active=true]:` variants keep matching.
   const defaultProps = {
-    "data-size": size,
     "data-active": isActive,
     className: cn(
-      "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground",
-      size === "sm" && "text-xs",
-      size === "md" && "text-sm",
+      "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground",
       className
     ),
   };
@@ -286,5 +273,4 @@ export {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
-  sidebarMenuButtonVariants,
 }

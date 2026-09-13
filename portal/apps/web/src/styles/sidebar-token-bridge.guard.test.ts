@@ -580,3 +580,96 @@ describe("guard self-test: the detectors catch a planted violation", () => {
     ]);
   });
 });
+
+/**
+ * The rail surface must not paint from a role `tokens/inverse.css` re-scopes — #111.
+ *
+ * The checks above verify the BRIDGE: that every `--sidebar*` role the rail consumes is declared,
+ * aliased, and terminates in a value no inverse scope touches. They say nothing about a utility
+ * that skips the bridge entirely, which is the hole the standards axis of `/code-review` found:
+ * `ACTIVE_PAINT` read `bg-surface-sunken`, and `--surface-sunken` is one of the properties
+ * `inverse.css` re-scopes. The bridge was immune; the rail was not.
+ *
+ * So this reads the rail-surface class strings directly and derives the forbidden names from
+ * `inverse.css` rather than listing them, so the check cannot fall behind that file.
+ *
+ * `ACCOUNT_MENU_ITEM` is excluded on purpose. It paints inside `quincy/menu.tsx`'s panel, whose own
+ * ground is `bg-popover` — itself a role — and the panel is portalled to `document.body`, outside
+ * the rail and outside any `[data-surface]` subtree. Pinning its text and hover to Quincy's aliases
+ * while the ground stayed a role is what would actually break it.
+ */
+describe("guard: the rail surface avoids inverse-re-scoped roles", () => {
+  const railSurfaceSources = () => {
+    const inverseCss = readFileSync(join(stylesDir, "tokens", "inverse.css"), "utf8");
+    const rescoped = [...new Set(
+      [...stripCssComments(inverseCss).matchAll(/(?:^|\n)\s*--([A-Za-z0-9-]+)\s*:/g)]
+        .map((match) => match[1]!)
+        .filter(Boolean),
+    )];
+
+    const railPath = join(stylesDir, "..", "components", "quincy", "NavigationRail.tsx");
+    // Drop the account-menu constant before scanning — see the block comment above.
+    const rail = stripComments(readFileSync(railPath, "utf8"))
+      .replace(/const ACCOUNT_MENU_ITEM = cn\([\s\S]*?\);/, "");
+    const primitive = stripComments(readFileSync(primitivePath, "utf8"));
+
+    return { rescoped, sources: { "quincy/NavigationRail.tsx": rail, "reui/sidebar.tsx": primitive } };
+  };
+
+  it("derives the forbidden role names from inverse.css rather than listing them", () => {
+    const { rescoped } = railSurfaceSources();
+    // A sanity floor, not the list: if inverse.css is ever emptied or the extractor breaks, this
+    // whole describe block would pass vacuously.
+    expect(rescoped.length).toBeGreaterThan(10);
+    expect(rescoped).toContain("surface-sunken");
+    expect(rescoped).toContain("foreground");
+  });
+
+  it("finds no re-scoped role painted on the rail surface", () => {
+    const { rescoped, sources } = railSurfaceSources();
+    const offenders: string[] = [];
+
+    for (const [name, source] of Object.entries(sources)) {
+      for (const role of rescoped) {
+        // Same prefix vocabulary the bridge check uses, so a directional or offset form counts.
+        // A lookbehind, not `\b`: a hyphen is a word boundary too, so `\b(accent)-foreground`
+        // matched INSIDE `text-sidebar-accent-foreground` and reported a role that is not
+        // re-scoped at all. The utility must start the class token, not sit mid-name.
+        const pattern = new RegExp(
+          `(?<![-A-Za-z0-9])(?:${UTILITY_PREFIXES.join("|")})-${role}(?=$|[^a-zA-Z0-9-])`,
+          "g",
+        );
+        for (const match of source.matchAll(pattern)) offenders.push(`${name}: ${match[0]}`);
+      }
+    }
+
+    expect(
+      offenders,
+      "the rail must read Quincy's semantic aliases (--bg-sunken, --text-primary, …), not a role " +
+        "tokens/inverse.css re-scopes — otherwise the rail repaints inside an inverse subtree",
+    ).toEqual([]);
+  });
+
+  it("does not read a bridged sidebar role as a bare re-scoped one", () => {
+    // The false positive this guard failed on first: `accent` is a UTILITY_PREFIX and `foreground`
+    // is re-scoped, so a `\b` boundary matched the tail of `text-sidebar-accent-foreground` — a
+    // perfectly correct bridged consumer. The lookbehind is what rejects it.
+    const pattern = new RegExp(
+      `(?<![-A-Za-z0-9])(?:${UTILITY_PREFIXES.join("|")})-foreground(?=$|[^a-zA-Z0-9-])`,
+    );
+    expect(pattern.test("text-sidebar-accent-foreground")).toBe(false);
+    expect(pattern.test("text-sidebar-foreground")).toBe(false);
+    expect(pattern.test("text-foreground")).toBe(true);
+  });
+
+  it("catches a planted violation", () => {
+    // The detector, run against the utility that was actually there before this guard existed.
+    const rescoped = ["surface-sunken"];
+    const planted = 'const ACTIVE_PAINT = cn("data-[active=true]:bg-surface-sunken");';
+    const pattern = new RegExp(
+      `(?<![-A-Za-z0-9])(?:${UTILITY_PREFIXES.join("|")})-${rescoped[0]}(?=$|[^a-zA-Z0-9-])`,
+    );
+    expect(pattern.test(planted)).toBe(true);
+    expect(pattern.test('const ACTIVE_PAINT = cn("data-[active=true]:bg-[var(--bg-sunken)]");')).toBe(false);
+  });
+});
