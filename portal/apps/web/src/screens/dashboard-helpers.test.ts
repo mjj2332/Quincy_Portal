@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
+import { readRememberedDashboardView, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
 
 describe("dashboard view preferences", () => {
   it("keeps supported views and migrates grid, missing, and invalid values to kanban", () => {
@@ -124,5 +124,37 @@ describe("dashboard shoot dates", () => {
     expect(formatDashboardDate(null)).toBe("Shoot date pending");
     expect(formatDashboardDate("2025-02-29")).toBe("2025-02-29");
     expect(formatDashboardDate("20 January 2026")).toBe("20 January 2026");
+  });
+});
+
+describe("readRememberedDashboardView", () => {
+  // #111 gave the remembered preference a second caller: the shell reads it to resolve the
+  // navigation rail's active item. `initializeDashboardView` keeps its single caller and its single
+  // one-time migration WRITE; this is the pure read. So a storage failure now degrades navigation,
+  // not just the Dashboard, and these are the cases that reach it.
+  it("returns a canonical stored value unchanged", () => {
+    expect(readRememberedDashboardView({ read: () => "list" })).toBe("list");
+    expect(readRememberedDashboardView({ read: () => "calendar" })).toBe("calendar");
+  });
+
+  it("degrades a corrupt stored value to Kanban", () => {
+    expect(readRememberedDashboardView({ read: () => "not-a-dashboard-view" })).toBe("kanban");
+  });
+
+  it("degrades an absent value to Kanban", () => {
+    expect(readRememberedDashboardView({ read: () => null })).toBe("kanban");
+  });
+
+  it("keeps navigation alive when the storage accessor throws", () => {
+    // Private browsing, blocked site data, a quota error. The rail must still render.
+    expect(readRememberedDashboardView({ read: () => { throw new Error("storage disabled"); } })).toBe("kanban");
+  });
+
+  it("does not write", () => {
+    // The whole reason the read was split out of `initializeDashboardView`, which migrates a legacy
+    // "grid" value and writes it back. A second caller must not repeat that write.
+    const read = vi.fn(() => "list");
+    readRememberedDashboardView({ read });
+    expect(read).toHaveBeenCalledTimes(1);
   });
 });

@@ -63,7 +63,11 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 and Codex-as-peer goes through `/codex:rescue --background`.
 
 - **Codex (Sol/Luna/Terra/Astra): [codex-cli.md](codex-cli.md)** — invocation, flags, driving
-  Chrome for Luna's testing pass, and the MCP write-approval failure mode (§6).
+  Chrome for Luna's testing pass, and the MCP write-approval failure mode (§6). A Chrome
+  measurement pass defaults to `chrome-devtools-mcp`, not the native plugin: it measured 2.4x
+  faster on 22% of the tokens and was the only one of the two to finish the task. The
+  head-to-head numbers and each path's tradeoffs are in that doc, as is the reason a Lightbox
+  or photo-preview check cannot run on local dev at all.
 - **§3a — Agy (dormant, on-request): [agy-cli.md](agy-cli.md)** — invocation, the backgrounding and
   print-mode shutdown-hang failure modes (a long run whose report never lands, recoverable from the
   conversation DB), the silent-no-op failure modes (a cheerful "done" with zero effect and zero

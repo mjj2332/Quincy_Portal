@@ -1787,3 +1787,136 @@ the gate was green and green reads as working.
 "is it present" answer a different question than the one a duplicate-detection gate is asking — and
 running the mutation that should turn it red is the only thing that tells you which question you
 actually asked.
+
+## `Extract` on a union you do not own can quietly resolve to `never` (#111, 2026-09-13)
+
+`screens/Dashboard.tsx` re-derived a route type of its own, instead of importing the shared one:
+`Extract<DashboardRouteArm, { dashboardView: "list" | "kanban" }>`. That worked while the shared
+`dashboardView` union in `packages/shared/src/staff-routes.ts` held only those two literals. #111
+widened the union to add `"calendar"`. The local `Extract` did not raise an error at that point. It
+just stopped matching, and its result type silently became `never`.
+
+The failure did not show up where the union changed. It showed up far away, as
+`src/screens/Dashboard.tsx(166,123): error TS2339: Property 'dashboardView' does not exist on type
+'never'`. That is because `never` is a valid type, not an error condition. TypeScript accepts a
+narrowing operator that matches nothing, and only later code that tries to use the result finds
+out there is nothing left to use.
+
+The fix was to stop re-deriving the type and import the shared one directly, so a future widening
+of the union is reflected automatically instead of needing every local copy to be found and
+re-pinned. `Dashboard.tsx:140-144` now names this reasoning in a comment, so the next person who
+adds a `dashboardView` value does not rediscover it the same way.
+
+**Rule.** Do not re-derive a narrowing type (`Extract`, `Exclude`, a manual conditional type) over
+a union you do not own. Import the narrowed type, or the union itself, from its source. A type
+operator that matches nothing degrades to `never` without complaint, and the error it eventually
+causes will point at the use site, not at the change that broke it.
+
+## A spec can tell you to install a component the registry does not have (#111, 2026-09-13)
+
+Both #111 and its parent spec #109 said to install the ReUI sidebar. `components.json` in
+`portal/apps/web` points the shadcn CLI at ReUI's registry, and that registry has no `sidebar`
+component. `sidebar.json`, `sheet.json` and `tooltip.json` all return HTTP 404. `kanban.json` and
+`badge.json` return 200, using the same licence key. So the gap is in the registry's catalogue, not
+in the credentials, and not something a retry or a different key would fix.
+
+The comment block in `portal/apps/web/src/styles/tokens/reui.css` had already told a future reader
+to "read its variants and bridge the roles by hand" when installing `@reui/sidebar` — written on
+the assumption the component existed to be installed. It does not, so that instruction could never
+be carried out as written.
+
+The resolution was to vendor shadcn's own `new-york-v4` sidebar into `tmp/` as a reference, and
+carry across by hand only the parts this app needs: 13 of its 24 exports survive in
+`portal/apps/web/src/components/reui/sidebar.tsx`. The header comment there records which exports
+were dropped and why, so nobody runs the shadcn CLI later to "complete" the set against a registry
+entry that still does not exist.
+
+Issue #112's mobile Sheet sits on the same missing `sheet.json` and will need the same decision:
+vendor a reference by hand, or scope the feature to what the registry actually has.
+
+**Rule.** Before starting build work from a spec that names a registry component, confirm the
+component resolves — fetch its JSON, do not assume the registry mirrors the vendor's own docs.
+If it 404s, that is a scope decision for the person who wrote the spec, not something to route
+around silently.
+
+## Three guards in one branch read documentation prose as code (#111, 2026-09-13)
+
+`docs/lessons.md` already records one gate that scanned comment text as if it were the code it was
+checking. #111 hit the same trap three more times, in one branch.
+
+`portal/apps/web/src/styles/sidebar-token-bridge.guard.test.ts` failed on its first run. The header
+comment of `portal/apps/web/src/components/reui/sidebar.tsx` explains that `ring-sidebar-ring` was
+REMOVED from the vendor component. The guard's extractor read that sentence as a live consumption
+of the token, not as prose about its absence.
+
+`portal/apps/web/src/lib/routing-transport.guard.test.ts` rejected
+`portal/apps/web/src/components/quincy/NavigationRail.tsx`. That file's own doc comment spells out
+`useNavigate()` and `router.navigate()` by name, while explaining that neither one works in this
+app. The guard's matcher looks for call syntax anywhere in the file, including comments, so writing
+the forbidden call in prose was itself enough to trip it.
+
+`portal/apps/web/src/styles/app-railed.test.ts` failed on its own first run for a third, different
+reason. A `/* … */` comment block sitting between two CSS rules gets swallowed into the next rule's
+selector capture by a naive regex. The comment above `.app--railed` contains commas, so the
+selector list it produced never matched the intended selector.
+
+Two of the three were fixed by stripping comments out of the text before scanning it. The third —
+the routing-transport guard — was left as it is, and the comment in `NavigationRail.tsx` was
+reworded instead, because that guard is shared across the codebase and its "match anywhere,
+comments included" behaviour is correct on purpose.
+
+**Rule.** Documentation must be able to name the exact syntax it is warning against, without
+tripping the mechanism that forbids that syntax. When you write a guard that scans source text,
+decide up front whether it should see comments, and strip them if it should not — and when it
+should see them by design, say so where the guard is defined.
+
+## A lazy Suspense boundary does not retry after the update that made it reachable (#111, 2026-09-13)
+
+`screens/Dashboard-calendar-intent.dom.test.tsx` asserted the Calendar surface rendered after
+landing on the bare `/?view=calendar` intent. It never got past the Suspense fallback,
+`"Loading calendar…"`. Adding more settle time changed nothing, which is what proved the failure
+was not a timing problem.
+
+The real cause: the Dashboard only switches to the Calendar view AFTER the canonicalising URL
+replace commits, one render past the initial mount. React does not re-attempt a lazy boundary on
+its own; it needs a further update to retry, and the settle loop in the test never produced one
+that mattered, because the fallback had already committed and nothing invalidated it. This
+codebase has no `waitFor`; its DOM tests settle by awaiting two `Promise.resolve()` ticks inside
+`act`, and no number of those ticks makes a lazy chunk resolve if nothing prompts a retry.
+
+The fix was to narrow that test's claim: assert that the Calendar branch owns the viewport (no
+Kanban board mounted, the Calendar's own loading region present), and leave the assertion that the
+Calendar surface itself renders to `screens/Dashboard-calendar.dom.test.tsx`, which mounts with
+the calendar facet already in hand and so has the surface in its first commit.
+
+**Rule.** When a lazy boundary becomes reachable only as the RESULT of an update (a redirect, a
+canonicalising replace, a route change), do not expect it to resolve within that same settle loop.
+Split the assertion: one test for which branch became active, a separate test — one that mounts
+with the target state already present — for what that branch renders.
+
+## Vite only replaces `import.meta.env` when it sees a literal member access (#111, 2026-09-13)
+
+`portal/apps/web/src/lib/app-router.tsx` first read the navigation-rail flag by passing the whole
+`import.meta.env` object into a predicate that indexed it with a variable key. It worked in
+development and under Vitest. A production `vite build` behaves differently: it substitutes a
+literal `import.meta.env.VITE_X` with that variable's value, but an object indexed by a variable
+key cannot be substituted, so it emits the whole env object instead. The flag's NAME was therefore
+observable in the shipped bundle, twice, together with every other `VITE_`-prefixed value.
+
+Writing the key out literally dropped that to the one occurrence that is a named constant in
+`lib/feature-flags.ts`. Note what this did NOT buy: the value still reaches a function call, so
+neither form lets Vite fold the branch away and drop the unused chrome. Getting dead-code
+elimination as well would need the comparison inline at the branch, which would cost the pure,
+node-testable predicate. That trade was not taken.
+
+`vi.stubEnv` reaches the literal form under Vitest just as well, so the indirection had not been
+buying any testability either. Nothing was lost by removing it.
+
+Separately, the flag is compared with `=== "1"` rather than checked for truthiness. Env values
+arrive as strings, and a truthiness check would treat `"false"`, `"0"` and `"off"` as all
+equally on.
+
+**Rule.** Read `import.meta.env.VITE_X` with the literal, dotted key. Indexing the env object with
+a variable reads the same in development and ships the whole object, so what leaks is decided by a
+line that looks equivalent. And compare a string-valued env flag against its exact "on" string,
+never for truthiness.

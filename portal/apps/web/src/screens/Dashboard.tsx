@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -137,7 +137,10 @@ type DashboardProps = { currentUserId: string; role?: Parameters<typeof dashboar
 
 type DashboardRouteArm = Extract<DashboardRoute, { kind: "dashboard" }>;
 
-type DashboardViewRoute = Extract<DashboardRouteArm, { dashboardView: "list" | "kanban" }>;
+// Re-exported from `@quincy/shared` rather than re-derived with `Extract`: #111 added
+// `"calendar"` to the shared `dashboardView` union, and an `Extract` pinned to the old two
+// literals silently collapses to `never` instead of failing loudly at the source of the change.
+type DashboardViewRoute = SharedDashboardViewRoute;
 type DashboardCalendarRoute = Extract<DashboardRouteArm, { calendar: DashboardCalendarState }>;
 
 function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewRoute {
@@ -324,6 +327,20 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     if (routeDashboardView) {
       calendarFallbackLocationRef.current = false;
+      // #111's bare `/?view=calendar` intent carries no facet parameters — the rail links to it
+      // precisely so that the remembered subview and last date resolve in one place, here, rather
+      // than a second time in the rail. `calendarState` already holds them: it is initialised from
+      // `initializeDashboardCalendarState`, which reads both from storage with the phone/desktop
+      // and Sydney-today fallbacks. So this is the same canonicalising replace the stale-bare-
+      // arrival case below already performs, reached by a different route.
+      if (routeDashboardView === "calendar") {
+        // Archived scope forces List, and says so by not following the intent at all. Rewriting the
+        // URL here would fight the archived handling for an address the Staff member cannot see.
+        if (viewingArchived) return;
+        if (calendarState) history.replace(staffPathFor({ kind: "dashboard", calendar: calendarState }));
+        if (view !== "calendar") setView("calendar");
+        return;
+      }
       if (view !== routeDashboardView) setView(routeDashboardView);
       return;
     }
