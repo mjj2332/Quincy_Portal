@@ -9,11 +9,9 @@ import { cn } from "@/lib/utils"
  *
  * ## Where this came from, and why it is not a registry install
  *
- * The ReUI registry has no `sidebar` component. `sidebar`, `sheet` and `tooltip` all 404 against
- * the registry in `components.json`, while `kanban` and `badge` return 200 with the same key — so
- * this is a genuine gap in the registry, not a licence or URL problem. (`tokens/reui.css`'s header
- * says "whoever installs @reui/sidebar must read its variants and bridge the roles by hand"; that
- * instruction was written on the assumption the component existed. It does not.)
+ * `@reui/sidebar` 404s because `sidebar` is a shadcn base-nova primitive, not a ReUI item — see
+ * `docs/reui-reuse.md` and the #111/#112 entry in `docs/lessons.md`. This file was vendored from
+ * `new-york-v4` before that was known; reconciling it with base-nova is its own decision.
  *
  * The owner's decision was to vendor shadcn's `new-york-v4` sidebar into `tmp/` (gitignored) as a
  * REFERENCE and carry across only the parts this app needs, rather than re-invent the structure.
@@ -31,14 +29,18 @@ import { cn } from "@/lib/utils"
  * - `SidebarTrigger`, `SidebarRail`, `SidebarInset` — collapse affordances and the content-area
  *   wrapper, all of which read that context.
  * - Everything Sheet- or Tooltip-shaped — the mobile off-canvas branch of `Sidebar`, and
- *   `SidebarMenuButton`'s `tooltip` prop. Neither primitive exists in this app (see the 404 note
- *   above); the mobile presentation is its own ticket.
+ *   `SidebarMenuButton`'s `tooltip` prop. `tooltip` still has no primitive in this app. The Sheet
+ *   exists now (`reui/sheet.tsx`, composed by `quincy/RailSheet.tsx`); this file's own mobile
+ *   branch stays discarded because the rail composes the Sheet itself.
  * - `SidebarInput`, `SidebarSeparator`, `SidebarMenuSkeleton`, `SidebarGroupAction`,
  *   `SidebarMenuAction`, `SidebarMenuBadge` — no consumer in the rail this ticket builds. The
  *   orphan guard does not watch `reui/`, so nothing else would report them as dead weight.
  * - Every `group-data-[collapsible=icon]:…` variant. Those selectors only do anything under the
  *   provider's wrapper, which is discarded, so shipping them would mean shipping selectors that
- *   silently never match. The collapse ticket re-adds them where they can be tested.
+ *   silently never match. #112 (`components/quincy/RailedShell.tsx`) owns collapse, and it re-adds
+ *   it WITHOUT these selectors: `NavigationRail`'s own `variant` prop switches classes directly, so
+ *   the provider-scoped selectors this file discarded stay discarded, tested at their real seam
+ *   instead of resurrected here.
  *
  * ## Divergences from the reference, beyond the deletions
  *

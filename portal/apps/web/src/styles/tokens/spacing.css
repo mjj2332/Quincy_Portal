@@ -66,10 +66,10 @@
                          still hardcoding 95, which was --z-dialog's value by coincidence. */
 
   /* ---- Toast surface inset --------------------------------------------
-     #110. `--app-rail-inline-size` is 0 while only the Topbar exists; #112 sets it to the rail's
-     inline size (250px expanded / 48px collapsed) and the toast surface moves with it. Below
-     772px the rail becomes a Sheet overlaying the content (no inline size of its own), so this
-     stays 0px there too — that media query belongs to #112, not here. */
+     #110/#112. `--app-rail-inline-size` is 0 by default; `app.css`'s `[data-rail-mode]` rules
+     (set by `RailedShell`) override it per mode and REDECLARE this calc alongside it, so the toast
+     surface moves with the rail — see that block's own comment for why the redeclaration, not just
+     this default, is what makes it actually move. */
   --app-rail-inline-size: 0px;
   --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left)));
 

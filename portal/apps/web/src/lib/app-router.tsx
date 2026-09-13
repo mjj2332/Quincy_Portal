@@ -47,7 +47,7 @@ import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { NAVIGATION_RAIL_FLAG, navigationRailEnabled } from "./feature-flags";
 import { Topbar } from "../components/Topbar";
-import { NavigationRail } from "../components/quincy/NavigationRail";
+import { RailedShell } from "../components/quincy/RailedShell";
 import { InternalLink } from "../components/InternalLink";
 import { Dashboard } from "../screens/Dashboard";
 import { ProjectWorkspace } from "../screens/ProjectWorkspace";
@@ -205,14 +205,18 @@ function ShellRoute() {
     [NAVIGATION_RAIL_FLAG]: import.meta.env.VITE_QUINCY_NAV_RAIL,
   });
 
+  const routedContent = blocked
+    ? <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>
+    : <ShellStateContext value={shell}><Outlet /></ShellStateContext>;
+
   return (
     <div className={cn("app", impersonating && "app--impersonating", railed && "app--railed")}>
       {railed
-        ? <NavigationRail navigation={navigation} user={user} />
-        : <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />}
-      {blocked
-        ? <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>
-        : <ShellStateContext value={shell}><Outlet /></ShellStateContext>}
+        ? <RailedShell navigation={navigation} user={user}>{routedContent}</RailedShell>
+        : <>
+            <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
+            {routedContent}
+          </>}
     </div>
   );
 }

@@ -99,6 +99,14 @@ estimate the next one. Two decisions it settled are ADRs, not preferences — `c
 committed ReUI surface (`docs/adr/0002`), and the five-star priority control is Quincy-owned rather
 than the registry's `rating` (`docs/adr/0003`), so do not "restore" it to `components/reui/`.
 
+## Reuse ReUI before building UI
+
+Before building any UI element, load the ReUI skill (`.claude/skills/reui/SKILL.md`, with its
+`rules/`) for the find → read-the-API → adapt loop, and read `docs/reui-reuse.md` for how this repo
+installs: through the sandbox, since `shadcn add` in `portal/apps/web` overwrites Quincy's adapted
+`button` and `badge`. Where the two differ, the doc wins. A 404 on `@reui/<name>` points to the
+shadcn base-nova registry (`sheet`, `sidebar`, `breadcrumb`, `dialog`, …), not a missing component.
+
 ## Agent skills
 
 ### Issue tracker

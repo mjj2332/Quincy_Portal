@@ -166,3 +166,38 @@ export function buildStaffNavigation(
     expandedItemId: activeSectionId === "dashboard" ? "dashboard" : null,
   };
 }
+
+/** One crumb in the header breadcrumb (#112). The last crumb in a trail always has a `null` href. */
+export type StaffBreadcrumbSegment = { label: string; href: string | null };
+
+/**
+ * Humanizes a section id that has no representation in the navigation model — `project`,
+ * `create-project`, `edit-project`, `notifications`, `not-found` are none of them nav items (only
+ * `dashboard` and `admin` are), so there is no model label to read for them. This derives one from
+ * the id itself (`"create-project"` → `"Create project"`) rather than hardcoding a copy string per
+ * kind, so a new `StaffNavigationSectionId` needs no matching entry here.
+ */
+function sectionLabel(sectionId: StaffNavigationSectionId): string {
+  return sectionId.charAt(0).toUpperCase() + sectionId.slice(1).replace(/-/g, " ");
+}
+
+/**
+ * The header breadcrumb — issue #112, AC7. Pure, and derived from the navigation model rather than
+ * the route: it reads `buildStaffNavigation`'s own `active` flags instead of re-deriving them, so
+ * it cannot disagree with the rail about what is active.
+ *
+ * Home(`/`) › the active section › its active child, where one exists. Every segment but the last
+ * carries an href; the last gets `aria-current="page"` in the renderer and no link here (`href:
+ * null`). A route with no item in the model at all (`project`, `create-project`, `edit-project`,
+ * `notifications`, `not-found`) falls back to Home › the section's own label.
+ */
+export function buildStaffBreadcrumb(navigation: StaffNavigation): StaffBreadcrumbSegment[] {
+  const home: StaffBreadcrumbSegment = { label: "Home", href: "/" };
+  const activeItem = navigation.groups.flatMap((group) => group.items).find((item) => item.active);
+  if (!activeItem) return [home, { label: sectionLabel(navigation.activeSectionId), href: null }];
+
+  const activeChild = activeItem.children?.find((child) => child.active) ?? null;
+  if (!activeChild) return [home, { label: activeItem.label, href: null }];
+
+  return [home, { label: activeItem.label, href: activeItem.href }, { label: activeChild.label, href: null }];
+}
