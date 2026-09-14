@@ -24,9 +24,11 @@
 
    ## Two things deliberately NOT defined here
 
-   (This was three. The third was `--sidebar` and its siblings; #111 installed a sidebar, so
-   that entry has moved down the file into a real bridge. Its warning was right and is worth
-   keeping in view: the phantom-token guard scans authored CSS, so a `bg-sidebar` arriving as a
+   (This was three. The third was `--sidebar` and its siblings, declined on the grounds that
+   "Quincy's shell is a Topbar; no sidebar exists or is planned". #111 installed a sidebar, so
+   that entry moved down the file into a real bridge, and #113 deleted the Topbar: the rail is
+   the only shell (`docs/adr/0006-the-shell-is-a-rail-not-a-topbar.md`). The entry's warning was
+   right and is worth keeping in view: the phantom-token guard scans authored CSS, so a `bg-sidebar` arriving as a
    TSX class is invisible to it — which is exactly how `--focus` below was missed. The sidebar
    roles therefore get a guard of their own that reads the TSX,
    `styles/sidebar-token-bridge.guard.test.ts`.)
@@ -62,8 +64,9 @@
      here, and getting this wrong is invisible until you render something.
 
      shadcn core (tokens/tailwind.css) reads `-foreground` as "the light ink that
-     sits ON the solid fill" — Topbar.tsx:208 and ui/button.tsx:40 both rely on
-     --destructive-foreground being warm paper over a solid oxblood fill.
+     sits ON the solid fill" — quincy/NotificationBell.tsx's unread badge and
+     reui/button.tsx's destructive variant both rely on --destructive-foreground
+     being warm paper over a solid oxblood fill.
 
      ReUI's extended roles use the OPPOSITE convention. Its solid variants
      hardcode `text-white` and never read `-foreground` at all; the only consumer
@@ -77,7 +80,7 @@
      signals are already dark enough to serve as text on their own 10% wash.
 
      --destructive-foreground is still NOT redefined here — it is shared with the
-     light-on-solid consumer above (Topbar.tsx's unread badge), and remapping it
+     light-on-solid consumer above (NotificationBell.tsx's unread badge), and remapping it
      would be a visual regression. Instead the role is SPLIT (#72): the wash
      readers get their own --destructive-wash-foreground, carrying the ReUI
      convention (same deep tone as the fill) without disturbing the shadcn one.
