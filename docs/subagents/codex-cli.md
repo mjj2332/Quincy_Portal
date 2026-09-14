@@ -96,8 +96,9 @@ model the purpose, target environment, authentication state, and evidence to col
 
 The capabilities do not change task authorization. Follow `Subagent-Orchestration.md` for
 testing restrictions, and restate the applicable passive-only, local-dev, impersonation,
-authentication, and disclosure requirements in every browser/computer prompt. A real sign-in click
-remains a human action; report an auth or configuration blocker instead of routing around it.
+authentication, and disclosure requirements in every browser/computer prompt. Every session is
+human-made and secrets stay in the environment (`Subagent-Orchestration.md` §2): a missing session
+or a `.dev.vars` lookup is a blocker to report, never a gap to close by hand.
 
 Example invocation shape (select the model required by the task):
 

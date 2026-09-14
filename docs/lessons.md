@@ -2043,8 +2043,8 @@ Migration 0043 converts those `awaiting_raw` rows. To bound the resulting notifi
 (each advance to `raw_review` emails every active admin and the project's editors), the same
 release temporarily lowers `RECONCILE_AWAITING_RAW_BATCH_SIZE`
 (`workers/background/src/reconcile-awaiting-raw.ts`) from 100 to 15 so the backlog drains over
-several hourly runs instead of one; that constant must be restored to 100 once the backlog has
-drained.
+several hourly runs instead of one; the constant was restored to 100 once the backlog had drained
+(2026-09-14).
 
 ## A guard that checks a class is present cannot see that its layout rule was deleted (#113, 2026-09-15)
 

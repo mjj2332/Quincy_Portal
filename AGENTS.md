@@ -102,6 +102,10 @@ Also on this pipeline:
 - `.mcp.json` is gitignored because MCP client configs *cannot* expand `${VAR}` and so must carry
   a raw bearer token. The token-free equivalents in `.cursor/mcp.json` and `opencode.json` are
   committed. If you add an MCP config, check it for credentials before staging.
+- **Secrets stay in the environment.** `.dev.vars`, `.env*` and `.mcp.json` are read by the
+  runtime, never by an agent: no cat, grep, head, copy or session derived from them, in this session
+  or any subprocess. An authenticated session comes from a human sign-in
+  (`docs/subagents/Subagent-Orchestration.md` §2).
 - Style variant is `base-nova` — the one the owner evaluated and approved. Not `base-sera`.
 
 **Before adopting another ReUI block, read `docs/reui-block-adoption.md`.** The Board (#76, shipped
