@@ -133,7 +133,7 @@ describe("awaiting RAW reconciliation mutation", () => {
     });
     const store = { scan, advance };
 
-    await expect(reconcileAwaitingRaw(store, "2026-07-22")).resolves.toEqual({ attempted: 100, advanced: 100, skipped: 0, failures: 0 });
+    await expect(reconcileAwaitingRaw(store, "2026-07-22")).resolves.toEqual({ attempted: RECONCILE_AWAITING_RAW_BATCH_SIZE, advanced: RECONCILE_AWAITING_RAW_BATCH_SIZE, skipped: 0, failures: 0 });
     await expect(reconcileAwaitingRaw(store, "2026-07-22")).resolves.toEqual({ attempted: 2, advanced: 2, skipped: 0, failures: 0 });
     expect(scan).toHaveBeenCalledTimes(2);
     expect(projects.every((project) => project.stageKey === "raw_review")).toBe(true);
