@@ -336,7 +336,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
       {/* A real `nav` landmark, named. The retired Topbar had
           `<nav aria-label="Primary navigation">`, and the vendor `SidebarContent` is only a `div`
           — so rendering the rail without this would silently remove primary navigation from a
-          screen reader's landmark list. Reported independently by both reviewers. */}
+          screen reader's landmark list. */}
       <SidebarContent>
         {/* The search control sits above the nav landmark, not inside it — it is not a
             destination, only a trigger for `lib/shell-search.ts`'s focus request. */}

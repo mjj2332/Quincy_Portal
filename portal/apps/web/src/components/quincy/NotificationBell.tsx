@@ -131,8 +131,12 @@ const TOUCH_TARGET = "size-[44px]";
 // `scroll-area`: these rows are simple enough that native keyboard scrolling needs no extra
 // registry item.
 const PANEL = "max-h-[min(520px,var(--available-height))] gap-0 p-0 flex-col";
-const RAIL_PANEL_WIDTH = "w-[420px]";
-const HEADER_PANEL_WIDTH = "w-[var(--anchor-width)]";
+// The two fixed shapes the file header describes, as data. `alignOffset` is not here: the rail's
+// is a callback over live refs (see `railAlignOffset` in the component), the header's is 0.
+const PLACEMENT = {
+  rail: { side: "right", sideOffset: 8, collisionPadding: 8, width: "w-[420px]" },
+  header: { side: "bottom", sideOffset: 0, collisionPadding: { top: 0, left: 0, right: 0, bottom: 8 }, width: "w-[var(--anchor-width)]" },
+} as const;
 // `list-none` removes the `<ul>`'s marker, which also drops its implicit list semantics under
 // Safari/VoiceOver — the `role="list"` on the element itself restores them.
 const LIST = "min-h-0 flex-1 overflow-y-auto overscroll-contain m-0 p-0 list-none";
@@ -286,13 +290,13 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
           initialFocus={notificationsPopupRef}
           anchor={anchorRef}
           positionMethod="fixed"
-          side={placement === "rail" ? "right" : "bottom"}
+          side={PLACEMENT[placement].side}
           align="start"
-          sideOffset={placement === "rail" ? 8 : 0}
+          sideOffset={PLACEMENT[placement].sideOffset}
           alignOffset={placement === "rail" ? railAlignOffset : 0}
-          collisionPadding={placement === "rail" ? 8 : { top: 0, left: 0, right: 0, bottom: 8 }}
+          collisionPadding={PLACEMENT[placement].collisionPadding}
           collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
-          className={cn(PANEL, placement === "rail" ? RAIL_PANEL_WIDTH : HEADER_PANEL_WIDTH)}
+          className={cn(PANEL, PLACEMENT[placement].width)}
         >
           <div className={HEAD}>
             <PopoverTitle className={TITLE_WEIGHT}>Notifications</PopoverTitle>

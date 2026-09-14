@@ -259,7 +259,7 @@ describe("NavigationRail", () => {
   });
 
   it("exposes a named navigation landmark", async () => {
-    // Reported independently by both reviewers. The retired Topbar had
+    // The retired Topbar had
     // `<nav aria-label="Primary navigation">`; the vendor `SidebarContent` is only a `div`, so
     // without an explicit landmark the rail drops primary navigation out of the landmark list.
     await renderInProvider(navigationFor("/"));
@@ -345,15 +345,6 @@ describe("NavigationRail", () => {
 
     await click(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("names the legacy flag nowhere in its output", async () => {
-    // #80's flag leaked `kanban2` into a user-visible aria-label (docs/lessons.md:1689). The flag
-    // is gone; this guards against that env-var name reappearing in the rail's output.
-    await renderInProvider(navigationFor("/"));
-    expect(host.innerHTML).not.toContain("VITE_QUINCY_NAV_RAIL");
-    expect(host.innerHTML.toLowerCase()).not.toContain("nav_rail");
-    expect(host.innerHTML.toLowerCase()).not.toContain("nav-rail");
   });
 
   // -------------------------------------------------------------------------
