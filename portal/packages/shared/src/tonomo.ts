@@ -283,7 +283,7 @@ export function isCanonicalCalendarDate(value: string): boolean {
 
 const TONOMO_DISPLAY_DATE_WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 const TONOMO_DISPLAY_DATE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
-const TONOMO_DISPLAY_DATE_PATTERN = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec), (\d{4})$/;
+const TONOMO_DISPLAY_DATE_PATTERN = new RegExp(`^(${TONOMO_DISPLAY_DATE_WEEKDAYS.join("|")}), (\\d{2}) (${TONOMO_DISPLAY_DATE_MONTHS.join("|")}), (\\d{4})$`);
 
 /**
  * Tonomo's `created` webhook sometimes carries only a human-readable date such as

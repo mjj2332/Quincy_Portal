@@ -1,8 +1,6 @@
 import { isCanonicalCalendarDate } from "@quincy/shared";
 import { commitAutomaticStage, automaticBoardWritesEnabled } from "./lib/automatic-stage";
 
-export { isCanonicalCalendarDate };
-
 export type AwaitingRawProject = {
   id: string;
   shootDate: string | null;

@@ -15,7 +15,7 @@
 -- any `awaiting_raw` project whose `shoot_date` is on/before today's Sydney business date
 -- to `raw_review`. Converting a past-dated display string to ISO in this migration would
 -- make every one of those rows due in the same reconciliation run. Those rows are held for
--- a later, separately approved migration that accounts for that side effect.
+-- a later migration that accounts for that side effect.
 UPDATE `projects`
 SET `shoot_date` = (
   substr(`shoot_date`, -4, 4) || '-' ||
