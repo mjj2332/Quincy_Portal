@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { RECONCILE_AWAITING_RAW_SCAN_SQL } from "../../../workers/background/src/reconcile-awaiting-raw";
+import { RECONCILE_AWAITING_RAW_BATCH_SIZE, RECONCILE_AWAITING_RAW_SCAN_SQL } from "../../../workers/background/src/reconcile-awaiting-raw";
 
 type Statement = { all: (...values: unknown[]) => unknown[]; get: (...values: unknown[]) => unknown; run: (...values: unknown[]) => unknown };
 type SqliteDatabase = { close: () => void; exec: (source: string) => void; prepare: (source: string) => Statement };
@@ -151,7 +151,7 @@ describe("migration 0043 normalise remaining Tonomo display shoot dates", () => 
 
     apply0043(db);
 
-    const due = db.prepare(RECONCILE_AWAITING_RAW_SCAN_SQL).all("2026-09-14", 15) as { id: string }[];
+    const due = db.prepare(RECONCILE_AWAITING_RAW_SCAN_SQL).all("2026-09-14", RECONCILE_AWAITING_RAW_BATCH_SIZE) as { id: string }[];
     expect(due.map((row) => row.id)).toEqual(["tc3d-awaiting-raw"]);
 
     db.close();
@@ -163,5 +163,10 @@ describe("migration 0043 normalise remaining Tonomo display shoot dates", () => 
     const position = names.indexOf("0043_normalise_remaining_tonomo_display_shoot_dates.sql");
     expect(position).toBeGreaterThan(0);
     expect(names[position - 1]).toBe("0042_normalise_tonomo_display_shoot_dates.sql");
+
+    // The journal is what `wrangler d1 migrations apply` walks, so the filename order alone is not enough.
+    const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Record<string, unknown>[] };
+    expect(journal.entries.at(-1)).toEqual({ idx: 43, version: "6", when: 1789380000000, tag: "0043_normalise_remaining_tonomo_display_shoot_dates", breakpoints: true });
+    expect(journal.entries.at(-2)).toMatchObject({ idx: 42, tag: "0042_normalise_tonomo_display_shoot_dates" });
   });
 });
