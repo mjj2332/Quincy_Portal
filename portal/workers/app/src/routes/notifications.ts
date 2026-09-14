@@ -6,6 +6,8 @@ import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
 import { externalNotificationListResponseSchema } from "@quincy/shared";
 import { externalVisibleNotificationCte } from "../lib/external-notification-visibility";
+import { notificationProjectContext } from "../lib/notification-project-context";
+import { coverMaps, effectiveCoverAssetId } from "../lib/project-covers";
 
 const MAX_LIMIT = 50;
 
@@ -21,21 +23,37 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
   const db = createDb(c.env.DB);
   if (c.get("user").role === "external_editor") {
     const visibility = externalVisibleNotificationCte(userId);
-    const rows = await c.env.DB.prepare(`${visibility.sql} SELECT n.id, n.project_id AS projectId, n.type, n.title, n.body, n.read_at AS readAt, n.created_at AS createdAt FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id WHERE 1 = 1${cursor ? " AND n.created_at < ?" : ""} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`)
-      .bind(...visibility.bindings, ...(cursor ? [cursor.getTime()] : []), limit).all<{ id: string; projectId: string; type: string; title: string; body: string | null; readAt: number | null; createdAt: number }>();
+    const rows = await c.env.DB.prepare(`${visibility.sql} SELECT n.id, n.project_id AS projectId, n.type, n.title, n.body, n.read_at AS readAt, n.created_at AS createdAt, p.street AS projectStreet FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id INNER JOIN projects p ON p.id = n.project_id WHERE 1 = 1${cursor ? " AND n.created_at < ?" : ""} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`)
+      .bind(...visibility.bindings, ...(cursor ? [cursor.getTime()] : []), limit).all<{ id: string; projectId: string; type: string; title: string; body: string | null; readAt: number | null; createdAt: number; projectStreet: string }>();
     const unread = await c.env.DB.prepare(`${visibility.sql} SELECT COUNT(*) AS count FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id WHERE n.read_at IS NULL`).bind(...visibility.bindings).first<{ count: number }>();
-    return c.json(externalNotificationListResponseSchema.parse({ notifications: rows.results.map((row) => ({ ...row, readAt: row.readAt === null ? null : new Date(row.readAt).toISOString(), createdAt: new Date(row.createdAt).toISOString() })), unreadCount: Number(unread?.count ?? 0) }));
+    // External editors never see photographer-RAW restrictions; their stored-cover join already
+    // requires edited assets to be publish_status 'ready' (see project-covers.ts).
+    const maps = await coverMaps(db, [...new Set(rows.results.map((row) => row.projectId))], false);
+    return c.json(externalNotificationListResponseSchema.parse({
+      notifications: rows.results.map((row) => ({
+        ...row,
+        readAt: row.readAt === null ? null : new Date(row.readAt).toISOString(),
+        createdAt: new Date(row.createdAt).toISOString(),
+        coverAssetId: effectiveCoverAssetId(maps, row.projectId),
+      })),
+      unreadCount: Number(unread?.count ?? 0),
+    }));
   }
   const conditions = [eq(schema.notifications.userId, userId), cursor ? lt(schema.notifications.createdAt, cursor) : undefined];
   const [rows, unread] = await Promise.all([
     db.select().from(schema.notifications).where(and(...conditions)).orderBy(desc(schema.notifications.createdAt), desc(schema.notifications.id)).limit(limit).all(),
     db.select({ count: sql<number>`count(*)` }).from(schema.notifications).where(and(eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt))).get(),
   ]);
+  const context = await notificationProjectContext(db, c.get("user"), rows.map((row) => row.projectId));
   return c.json({
-    notifications: rows.map((row) => ({
-      id: row.id, projectId: row.projectId, type: row.type, title: row.title, body: row.body,
-      readAt: row.readAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(),
-    })),
+    notifications: rows.map((row) => {
+      const projectContext = row.projectId ? context.get(row.projectId) : undefined;
+      return {
+        id: row.id, projectId: row.projectId, type: row.type, title: row.title, body: row.body,
+        readAt: row.readAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(),
+        projectStreet: projectContext?.street ?? null, coverAssetId: projectContext?.coverAssetId ?? null,
+      };
+    }),
     unreadCount: unread?.count ?? 0,
   });
 }));

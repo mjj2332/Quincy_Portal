@@ -60,6 +60,12 @@ const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   { path: "components/reui/kbd.tsx", kind: "script" },
   { path: "components/quincy/ShellSearch.tsx", kind: "script" },
   { path: "lib/shell-search.ts", kind: "script" },
+  // #114: the bell's row grid (leading slot / text / thumbnail / dismiss) was extracted out of
+  // `NotificationBell.tsx` into its own file, which keys its thumbnail column off the
+  // `showThumbnails` prop rather than a breakpoint of its own — strengthening the guard's own
+  // coverage, not loosening it, since the extraction is exactly the kind of new shell file this
+  // list exists to catch uncovered.
+  { path: "components/quincy/NotificationList.tsx", kind: "script" },
 ];
 
 // ---------------------------------------------------------------------------

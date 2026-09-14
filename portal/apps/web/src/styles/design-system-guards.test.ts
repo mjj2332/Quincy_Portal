@@ -402,3 +402,98 @@ describe("guard: star colour comes from a token, never a literal", () => {
     ].join("\n")).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard 5 — caution text uses the caution TEXT token, never the brand value
+// ---------------------------------------------------------------------------
+/**
+ * `--signal-caution` is the brand value (a border/wash/icon colour); `--signal-caution-text` is
+ * the one contrast-checked for text (`tokens/colors.css`'s own comment: "Text only:
+ * --signal-caution stays the brand value for borders, washes and [ground X]; ... use
+ * --signal-caution-text"). Painting TEXT from `text-signal-caution` reaches for the wrong one —
+ * the brand value has no contrast guarantee on any particular ground.
+ *
+ * `--warning`/`bg-warning` is a second way to reach the same brand value indirectly
+ * (`tokens/reui.css`: `--warning: var(--signal-caution-text)`, `--color-warning: var(--warning)`)
+ * — `text-warning` is fine (it resolves to the TEXT-safe value), but `bg-warning` paints a
+ * *background* from a value chosen for text contrast, which is exactly the inverse of the
+ * `--signal-caution` mistake above: right role, wrong ground.
+ *
+ * `text-signal-caution` matched with a lookahead rather than a plain substring check, since
+ * `text-signal-caution-text` (the correct form) contains `text-signal-caution` as a prefix.
+ *
+ * `apps/web/src/components/reui/badge.tsx`'s `warning` variant is base-nova's own vendored
+ * naming for a badge appearance, not a Quincy caution-colour call site — recorded in the baseline
+ * below rather than treated as new. Do not add a second entry beside it.
+ */
+const CAUTION_TOKEN_BASELINE: Record<string, number> = {
+  // Three `bg-warning` hits: the plain `warning` variant, plus `bg-warning/10` and its
+  // `dark:bg-warning/15` sibling in the `warningOutline`-shaped variant beside it.
+  "components/reui/badge.tsx": 3,
+};
+
+describe("guard: caution text uses the caution TEXT token, never the brand value", () => {
+  function scannableFiles(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!/\.(?:tsx?|css)$/.test(entry.name)) continue;
+        if (/\.test\.tsx?$/.test(entry.name)) continue;
+        if (rel(full).startsWith("styles/tokens/")) continue;
+        out.push(full);
+      }
+    };
+    walk(srcDir);
+    return out.sort();
+  }
+
+  const BARE_SIGNAL_CAUTION = /text-signal-caution(?!-text)/;
+  const BG_WARNING = /bg-warning\b/;
+
+  function findCautionTokenOffences(text: string): { bareSignalCaution: boolean; bgWarning: boolean } {
+    return { bareSignalCaution: BARE_SIGNAL_CAUTION.test(text), bgWarning: BG_WARNING.test(text) };
+  }
+
+  function scan() {
+    const byFile = new Map<string, number>();
+    for (const file of scannableFiles()) {
+      const raw = readFileSync(file, "utf8");
+      const stripped = file.endsWith(".css") ? stripCssComments(raw) : stripComments(raw);
+      const { bareSignalCaution, bgWarning } = findCautionTokenOffences(stripped);
+      const count = (bareSignalCaution ? (stripped.match(new RegExp(BARE_SIGNAL_CAUTION, "g")) ?? []).length : 0)
+        + (bgWarning ? (stripped.match(new RegExp(BG_WARNING, "g")) ?? []).length : 0);
+      if (count > 0) byFile.set(rel(file), count);
+    }
+    return byFile;
+  }
+
+  it("has no bare --signal-caution text usage or bg-warning beyond the recorded baseline", () => {
+    const byFile = scan();
+    const over = [...byFile.entries()]
+      .filter(([file, count]) => count > (CAUTION_TOKEN_BASELINE[file] ?? 0))
+      .map(([file, count]) => `  ${file}: ${count} (baseline ${CAUTION_TOKEN_BASELINE[file] ?? 0})`);
+    expect(over, [
+      "Caution TEXT must read --signal-caution-text (`text-signal-caution-text`) or the",
+      "`text-warning` utility, never the bare `text-signal-caution` brand value or `bg-warning`.",
+      ...over,
+    ].join("\n")).toEqual([]);
+  });
+
+  it("keeps the baseline honest — no file is listed above its real count", () => {
+    const byFile = scan();
+    const stale = Object.entries(CAUTION_TOKEN_BASELINE)
+      .filter(([file, count]) => (byFile.get(file) ?? 0) < count)
+      .map(([file, count]) => `${file} (baseline ${count}, actual ${byFile.get(file) ?? 0})`);
+    expect(stale, `Improved — lower or delete these baseline entries: ${stale.join(", ")}`).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(findCautionTokenOffences('className="text-signal-caution"').bareSignalCaution).toBe(true);
+    expect(findCautionTokenOffences('className="text-signal-caution-text"').bareSignalCaution).toBe(false);
+    expect(findCautionTokenOffences('className="text-warning"').bareSignalCaution).toBe(false);
+    expect(findCautionTokenOffences('className="bg-warning"').bgWarning).toBe(true);
+    expect(findCautionTokenOffences('className="border-warning/15"').bgWarning).toBe(false);
+  });
+});

@@ -2070,3 +2070,20 @@ a trigger inside a taller anchor (the bell inside the rail), the callback has to
 `getBoundingClientRect()` itself. Happy-dom lays nothing out, so the DOM test can prove the callback
 runs and reads the trigger's rect, and the arithmetic is a pure exported function with its own
 tests; the pixel result is a browser check.
+
+## The bell's narrow-header grid keys off `placement`, not a breakpoint; a decorative thumbnail must silence its own placeholder's `role="status"` (#114, 2026-09-15)
+
+`shell-breakpoint.guard.test.ts` forbids `sm:`/`md:`/`lg:`/`max-[…]`/`min-[…]` in
+`NotificationBell.tsx` and its extracted `NotificationList.tsx` — "one collapse breakpoint, JS-owned"
+(AC11) — and happy-dom evaluates no `@media` query at all regardless, so a CSS breakpoint there
+would be untestable as well as a second source of truth. `"header"` placement already means
+`ShellHeader`'s own below-772px shell, so the notification row's narrower 3-track grid (no
+thumbnail column) keys off the `placement`/`showThumbnails` prop the component already threads
+through, not a width query of its own.
+
+Separately: `LazyImage`'s loading and failed states are each `role="status"` — correct for a single
+hero image reporting its own progress, wrong for up to 25 decorative row thumbnails all mounting at
+once when the panel opens, which would fire 25 live-region announcements. The thumbnail's wrapper
+`<span>` carries `aria-hidden="true"` for exactly that reason (and `LazyImage`'s own `alt=""` keeps
+a loaded `<img>` out of the tree the same way) — hiding the wrapper, not patching `LazyImage` itself,
+since other callers still want its live region.
