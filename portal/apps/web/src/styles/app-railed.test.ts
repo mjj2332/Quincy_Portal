@@ -115,12 +115,12 @@ describe("the shell applies the rule", () => {
     expect(appRouter).toContain("app--railed");
   });
 
-  it("applies it conditionally on the rail flag, in one expression", () => {
-    // Pins the pairing, not just the presence: the class must sit in the same className expression
-    // as the flag that gates the rail, so it cannot be left applied unconditionally or dropped.
+  it("applies it unconditionally, in the shell's root className expression", () => {
+    // The rail is the only shell (#113): the class must sit in the root className expression with
+    // no gating condition, rather than behind a flag/flag-derived boolean.
     const className = appRouter.match(/className=\{cn\((?:[^{}]|\{[^{}]*\})*\)\}/)?.[0] ?? "";
     expect(className, "the shell's root className expression").toContain("app--railed");
-    expect(className).toContain("railed &&");
+    expect(className).not.toContain("railed &&");
   });
 });
 
@@ -214,7 +214,7 @@ describe("ROW_PAINT's text colour survives the unlayered `a { color: inherit }` 
  * with it (the collapsed menu is now a portalled `quincy/menu.tsx` popup at `--z-popover`, not an
  * inline flyout that needed the rail's own stacking context raised above the header). The one thing
  * left for this file to own is the impersonation-banner offset, which the vendored primitive cannot
- * know about — mirroring `.app--impersonating .topbar { top: 42px }`.
+ * know about — the same 42px offset the deleted `.topbar` used to carry.
  */
 describe("the rail's impersonation offset (#122)", () => {
   it("declares the rule at all", () => {
@@ -299,18 +299,18 @@ describe("the rail's inline size follows data-rail-mode (#112)", () => {
  * `<header>` is `position: sticky; top: 0` with no z-index of its own, so it slides UNDER the
  * impersonation banner (`.app--impersonating` adds `padding-top: 42px` to `.app`, but nothing
  * pushes the header's own sticky offset down to clear it) and under whatever else in the stacking
- * order reaches for a z-index. `.topbar`, the chrome this header replaces under the rail flag, is
- * the precedent this mirrors exactly: `position: sticky; top: 0; z-index: 75` plus
- * `.app--impersonating .topbar { top: 42px }`.
+ * order reaches for a z-index. `.topbar`, the chrome this header replaced, was the precedent this
+ * mirrored exactly: `position: sticky; top: 0; z-index: 75` plus
+ * `.app--impersonating .topbar { top: 42px }` — now deleted along with the rest of the Topbar.
  */
 describe("the shell header clears the impersonation banner and carries a z-index (#112)", () => {
-  it("declares z-index 75 on .shell-header, same stacking order as .topbar", () => {
+  it("declares z-index 75 on .shell-header, the deleted .topbar's stacking order", () => {
     const body = ruleBody(appCss, ".shell-header");
     expect(body, ".shell-header must exist as a real rule in app.css").not.toBeNull();
     expect(body).toMatch(/z-index:\s*75/);
   });
 
-  it("offsets .shell-header under impersonation, same 42px banner offset as .topbar", () => {
+  it("offsets .shell-header under impersonation, the deleted .topbar's 42px banner offset", () => {
     const body = ruleBody(appCss, ".app--impersonating .shell-header");
     expect(body, ".app--impersonating .shell-header must exist as a real rule in app.css").not.toBeNull();
     expect(body).toMatch(/top:\s*42px/);

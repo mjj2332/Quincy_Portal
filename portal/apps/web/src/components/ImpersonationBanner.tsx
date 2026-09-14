@@ -11,9 +11,9 @@ export type ImpersonationBannerProps = {
 
 const EXIT_ERROR = "Could not automatically exit. Sign out completely and sign back in as Admin to restore your session.";
 
-// The banner is a fixed ink strip above the topbar. Its 42px height is load-bearing: five
-// app.css rules offset the topbar, rail, worktools, viewer and collaboration wrap by exactly
-// 42px under `.app--impersonating` (app.css:39-43, :823, :1074-1075). Do not change it here.
+// The banner is a fixed ink strip above the shell header. Its 42px height is load-bearing:
+// several app.css rules offset the header, rail, worktools, viewer and collaboration wrap by
+// exactly 42px under `.app--impersonating`. Do not change it here without updating those.
 const BANNER = "fixed inset-x-0 top-0 z-[76] flex items-center " +
   "gap-[var(--space-3)] h-[42px] overflow-hidden px-[var(--space-6)] " +
   "bg-surface-inverse text-on-inverse " +

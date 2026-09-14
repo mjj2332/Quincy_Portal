@@ -8,7 +8,7 @@ const sessionState = vi.hoisted(() => ({ value: { data: { user: { id: "u1", name
 const stopImpersonatingMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
 vi.mock("./lib/auth", () => ({ useSession: () => sessionState.value, stopImpersonating: stopImpersonatingMock, consumeSignInDestination: () => null }));
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unknown }) => children }));
-vi.mock("./components/Topbar", () => ({ Topbar: () => <header /> }));
+vi.mock("./components/quincy/RailedShell", () => ({ RailedShell: ({ children }: { children: ReactNode }) => <><header />{children}</> }));
 vi.mock("./screens/Dashboard", () => ({ Dashboard: ({ calendar }: { calendar?: unknown }) => <main>Dashboard<span data-calendar-route={calendar ? "present" : "absent"} /></main> }));
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId, collaborationOpenSignal, onCollaborationOpenSignalConsumed }: { projectId: string; collaborationOpenSignal?: number; onCollaborationOpenSignalConsumed?: (signal: number) => void }) => { seenSignals.push(collaborationOpenSignal); return <main><button type="button" onClick={() => collaborationOpenSignal !== undefined && onCollaborationOpenSignalConsumed?.(collaborationOpenSignal)}>consume {projectId}</button><span data-signal={String(collaborationOpenSignal)} /></main>; } }));
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>Sign in</main> }));

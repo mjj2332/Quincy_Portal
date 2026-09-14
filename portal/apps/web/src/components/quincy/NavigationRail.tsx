@@ -45,7 +45,7 @@ import type {
 
 /**
  * The left navigation rail — #111, re-platformed onto base-nova's full `sidebar.tsx` in #122
- * (`docs/adr/0005-…`). Behind `VITE_QUINCY_NAV_RAIL`.
+ * (`docs/adr/0005-…`). The only shell since #113 (`docs/adr/0006-…`).
  *
  * ## It renders the model and decides nothing
  *
@@ -197,8 +197,8 @@ const COLLAPSED_MENU_ITEM = cn(
 );
 
 // The account menu's items — the preferences link and the sign-out button share this look. Mirrors
-// the Topbar's own menu items (`MOBILE_ITEM` there) rather than inventing a second menu-item look:
-// same 44px minimum target, same hover lift.
+// the retired Topbar's own menu items (`MOBILE_ITEM` there) rather than inventing a second
+// menu-item look: same 44px minimum target, same hover lift.
 //
 // This KEEPS the shadcn role layer (`bg-secondary`) where `ACTIVE_PAINT`/`ROW_PAINT` above
 // deliberately avoid it, and the difference is the surface, not an oversight. This paints inside
@@ -248,10 +248,9 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
 
-  // The rail's own copy of the Topbar's sign-out handling. Deliberately duplicated rather than
-  // extracted: the Topbar ships and this does not, so the two must be able to diverge until the
-  // cutover ticket deletes one of them. Extracting now would couple the shipped chrome to chrome
-  // behind a flag.
+  // The rail's own sign-out handling, originally a duplicate of the retired Topbar's so the two
+  // could diverge independently while both shipped. The Topbar is gone now (#113), so this is the
+  // one copy left.
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
   async function handleSignOut(event: MouseEvent<HTMLButtonElement>) {
@@ -334,10 +333,10 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
         </div>
       </SidebarHeader>
 
-      {/* A real `nav` landmark, named. The Topbar this replaces has
-          `<nav aria-label="Primary navigation">` (Topbar.tsx:194), and the vendor `SidebarContent`
-          is only a `div` — so rendering the rail without this would silently remove primary
-          navigation from a screen reader's landmark list. Reported independently by both reviewers. */}
+      {/* A real `nav` landmark, named. The retired Topbar had
+          `<nav aria-label="Primary navigation">`, and the vendor `SidebarContent` is only a `div`
+          — so rendering the rail without this would silently remove primary navigation from a
+          screen reader's landmark list. Reported independently by both reviewers. */}
       <SidebarContent>
         {/* The search control sits above the nav landmark, not inside it — it is not a
             destination, only a trigger for `lib/shell-search.ts`'s focus request. */}
@@ -377,15 +376,15 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
             trigger and puts Sign Out inside the panel. Two reasons it is the right shape here too:
             a destructive, irreversible action should not be one stray click from the navigation it
             sits under, and the footer is where per-account actions accumulate — notification
-            preferences joins it below, restoring the parity the Topbar's own account menu already
-            has (#122 P3).
+            preferences joins it below, restoring the parity the retired Topbar's own account menu
+            already had (#122 P3).
 
             `SidebarFooter > SidebarMenu > SidebarMenuItem > Menu`, the same path the collapsed
             rail's own click-opened menu already takes (below) — `triggerRender` makes the whole
             `SidebarMenuButton` the trigger, so `size="lg"` supplies the 48px account row and its own
             collapsed-icon sizing, replacing what used to be hand-written padding here. Built on
             `quincy/menu.tsx` — Quincy-owned Base UI, the app's shared dropdown, and the same
-            primitive the Topbar uses for its own account menu. Deliberately NOT the vendor
+            primitive the retired Topbar used for its own account menu. Deliberately NOT the vendor
             `dropdown-menu` the reference imports: that component is not in `components/reui/`, and
             CLAUDE.md keeps `quincy/menu.tsx` as the app's menu rather than restoring a registry
             equivalent. `side="right"` because the rail is on the left edge, so a panel below or

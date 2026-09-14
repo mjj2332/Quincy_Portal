@@ -3,9 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The rail's collapse, header, breadcrumb and Sheet, mounted by the real shell, flag on — #112. A
- * separate file from `App-navigation-rail.dom.test.tsx` and `App.dom.test.tsx`, both of which mock
- * the real chrome away; this file needs it.
+ * The rail's collapse, header, breadcrumb and Sheet, mounted by the real shell — #112. A separate
+ * file from `App-navigation-rail.dom.test.tsx` and `App.dom.test.tsx`, both of which mock the real
+ * chrome away; this file needs it.
  *
  * `window.innerWidth = N` does not work under this vitest + happy-dom setup: `populateGlobal`
  * (vitest's environment glue) traps that setter into a side table on the OUTER global proxy, which
@@ -55,7 +55,6 @@ vi.mock("./lib/query-client", () => ({
 import App from "./App";
 import { apiGet } from "./lib/api";
 import { signOut } from "./lib/auth";
-import { NAVIGATION_RAIL_FLAG } from "./lib/feature-flags";
 import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
 import { consumeProjectSearchFocus } from "./lib/shell-search";
 
@@ -161,7 +160,6 @@ async function renderAt(path: string) {
   const host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  vi.stubEnv(NAVIGATION_RAIL_FLAG, "1");
   await act(async () => {
     root!.render(<App />);
     await Promise.resolve();
@@ -643,24 +641,6 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
     expect(rail(host)).toBeNull();
     expect(sheetTrigger(host)).not.toBeNull();
-  });
-
-  it("flag off: no header, and ⌘B leaves storage untouched", async () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    window.history.replaceState(null, "", "/");
-    await act(async () => {
-      root!.render(<App />);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
-    expect(host.querySelector('[data-testid="navigation-rail"]')).toBeNull();
-
-    await keydown(window, { key: "b", metaKey: true });
-    expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBeNull();
   });
 });
 

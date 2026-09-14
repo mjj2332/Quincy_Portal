@@ -158,7 +158,7 @@ describe("NotificationBell panel (Popover)", () => {
     return host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
   }
 
-  /** A native `.click()`, not a bare synthetic `MouseEvent("click")` — see `Topbar.dom.test.tsx`. */
+  /** A native `.click()`, not a bare synthetic `MouseEvent("click")` — Base UI reacts to the terminal click of a press-release pair. */
   async function click(element: Element) {
     await act(async () => { (element as HTMLElement).click(); await Promise.resolve(); await Promise.resolve(); });
     // Base UI's floating-focus-manager queues the initial-focus move via `requestAnimationFrame`
@@ -510,7 +510,7 @@ describe("NotificationBell panel (Popover)", () => {
     // Popover's own outside-press dismiss is `modal={false}` → `outsidePressEvent: "intentional"`
     // for mouse (Base UI's `PopoverRoot`), which only ever reacts to the terminal `click` event of
     // a press-release pair — unlike `quincy/menu.tsx`'s Menu, which stays "sloppy" (pointerdown
-    // alone, `Topbar.dom.test.tsx`'s own outside-click case) and needs no release. A bare
+    // alone, as `NavigationRail.dom.test.tsx`'s account-menu outside-press case shows) and needs no release. A bare
     // `pointerdown` is deliberately not enough here.
     await act(async () => { document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })); await Promise.resolve(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(20); });

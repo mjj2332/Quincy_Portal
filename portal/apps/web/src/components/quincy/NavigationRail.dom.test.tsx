@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation, type StaffNavigation } from "../../lib/staff-navigation";
-import { NAVIGATION_RAIL_FLAG } from "../../lib/feature-flags";
 import { parseStaffLocation } from "../../lib/router";
 import { initials } from "../../lib/initials";
 import { SidebarProvider } from "@/components/reui/sidebar";
@@ -14,13 +13,13 @@ import { RailSheet } from "./RailSheet";
 
 // Sign out cannot be exercised against a real session — it would destroy the session every other
 // check depends on — so the transport is mocked and the wiring asserted here instead. The handler
-// itself is a copy of the Topbar's, but the path through `MenuPrimitive.Item`'s `render` is new.
+// itself was copied from the retired Topbar, but the path through `MenuPrimitive.Item`'s `render` is new.
 const signOutMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("../../lib/auth", () => ({ signOut: signOutMock }));
 
 // #112 — the rail now mounts `NotificationBell` (`showBell` defaults to true) beside the wordmark,
 // which polls `apiGet` on mount. Unmocked, that is a real `fetch()` in every test in this file, not
-// just the ones below that care about the bell — mirrors `Topbar.dom.test.tsx`'s own mock, with an
+// just the ones below that care about the bell — same shape as `NotificationBell.dom.test.tsx`'s mock, with an
 // empty inbox as the default so tests that do not care about notifications see none.
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -61,7 +60,7 @@ let host: HTMLElement;
 async function render(value: ReactNode) {
   // Two ticks, not one — `NotificationBell`'s mount effect awaits `apiGet` before its first
   // `setState`, which needs a microtask beyond the mocked promise's own resolution to land inside
-  // this `act` boundary. Same shape as `Topbar.dom.test.tsx`'s own `render` helper.
+  // this `act` boundary. Same shape as `NotificationBell.dom.test.tsx`'s own `render` helper.
   await act(async () => { root!.render(value); await Promise.resolve(); await Promise.resolve(); });
 }
 
@@ -348,11 +347,11 @@ describe("NavigationRail", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("names the flag nowhere in its output", async () => {
-    // #80's flag leaked `kanban2` into a user-visible aria-label (docs/lessons.md:1689). The shell
-    // decides whether to mount the rail; the rail itself must not know the flag exists.
+  it("names the legacy flag nowhere in its output", async () => {
+    // #80's flag leaked `kanban2` into a user-visible aria-label (docs/lessons.md:1689). The flag
+    // is gone; this guards against that env-var name reappearing in the rail's output.
     await renderInProvider(navigationFor("/"));
-    expect(host.innerHTML).not.toContain(NAVIGATION_RAIL_FLAG);
+    expect(host.innerHTML).not.toContain("VITE_QUINCY_NAV_RAIL");
     expect(host.innerHTML.toLowerCase()).not.toContain("nav_rail");
     expect(host.innerHTML.toLowerCase()).not.toContain("nav-rail");
   });

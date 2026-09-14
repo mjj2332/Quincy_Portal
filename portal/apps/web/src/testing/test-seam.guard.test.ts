@@ -243,7 +243,7 @@ function nonLiteralFindings(): Finding[] {
 
 /**
  * An assertion that a class is ABSENT is not coupling: replacing the markup can only make it MORE
- * true, never break it. Those are retirement guards (Topbar pins that the brand link no longer
+ * true, never break it. Those are retirement guards (the shell suite pins that the brand link no longer
  * wears `button--text`) and must survive untouched.
  */
 function classAssertionFindings(): Finding[] {
@@ -544,8 +544,9 @@ describe("guard C: no DOM test asserts an element carries a Quincy class name", 
  * Issue #92. Guard A already tells you not to reach for `data-slot`, but its own baseline note
  * shows why a blanket ban is the wrong shape for the rule: across the DOM suite there are ~70
  * `[data-slot="…"]` selector call sites in 9 files, and all but one of them select a slot a
- * Quincy component authors — `notice-board-post` on `NoticeBoard.tsx`, `avatar` on `Topbar.tsx`,
- * `checkbox` on `quincy/Checkbox.tsx`, and so on. A Quincy-authored `data-slot` is exactly as
+ * Quincy component authors — `notice-board-post` on `NoticeBoard.tsx`, `avatar` on
+ * `NavigationRail.tsx`, `checkbox` on `quincy/Checkbox.tsx`, and so on. A Quincy-authored
+ * `data-slot` is exactly as
  * stable as a `data-testid`: same file, same repo, same blast radius on rename. Banning those
  * would cost ~60 baseline entries in a file whose law is "baselines shrink, never grow", for zero
  * safety gain.
