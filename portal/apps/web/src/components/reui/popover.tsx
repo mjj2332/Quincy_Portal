@@ -30,6 +30,16 @@ import { OverlayContainerContext } from "@/components/OverlayContainerContext"
  *    else needs to change alongside it.
  * 5. **Widen the `Pick`** on `PopoverContent`'s props to add `"collisionAvoidance" |
  *    "collisionPadding"` and forward both. Leaving either unset keeps Base UI's own defaults.
+ * 6. **Widen the `Pick` again, to add `"anchor"`.** `quincy/NotificationBell.tsx`'s rail placement
+ *    anchors its panel to the rail element (`NavigationRail`'s own `Sidebar`), not the bell's own
+ *    trigger — the panel needs to sit against the rail's right edge regardless of where inside the
+ *    rail header the trigger itself sits. Leaving it unset keeps Base UI's own default (position
+ *    against the trigger), so every other caller is unaffected.
+ * 7. **Widen the `Pick` a third time, to add `"positionMethod"`.** Both of `NotificationBell`'s
+ *    anchors — the rail and `ShellHeader`'s `<header>` — are themselves `position: fixed`/sticky
+ *    surfaces, so the panel must track them with `position: fixed` rather than Base UI's own
+ *    `"absolute"` default, which would resolve against the nearest positioned ancestor instead of
+ *    the viewport and drift out of alignment as the page scrolls.
  *
  * `bg-popover`, `text-popover-foreground` and `ring-foreground/10` are kept: the panel portals to
  * `document.body`, outside any `[data-surface]` subtree, and all three roles are bridged
@@ -57,11 +67,20 @@ function PopoverContent({
   sideOffset = 4,
   collisionAvoidance,
   collisionPadding,
+  anchor,
+  positionMethod,
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
     PopoverPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset" | "collisionAvoidance" | "collisionPadding"
+    | "align"
+    | "alignOffset"
+    | "side"
+    | "sideOffset"
+    | "collisionAvoidance"
+    | "collisionPadding"
+    | "anchor"
+    | "positionMethod"
   >) {
   const container = React.useContext(OverlayContainerContext) ?? undefined
   return (
@@ -73,6 +92,8 @@ function PopoverContent({
         sideOffset={sideOffset}
         collisionAvoidance={collisionAvoidance}
         collisionPadding={collisionPadding}
+        anchor={anchor}
+        positionMethod={positionMethod}
         className="isolate z-[var(--z-popover)]"
       >
         <PopoverPrimitive.Popup

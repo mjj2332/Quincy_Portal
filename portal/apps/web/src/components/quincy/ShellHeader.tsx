@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useRef } from "react";
 import { PanelLeftIcon } from "lucide-react";
 
 import { Button } from "@/components/reui/button";
@@ -64,9 +64,14 @@ function BulletSeparator() {
 export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
   const narrow = mode === "sheet";
   const crumbs = buildStaffBreadcrumb(navigation);
+  // The narrow bell's own anchor (#113) — the header itself, not its trigger, so the panel spans
+  // the header's own width (`w-[var(--anchor-width)]`, `NotificationBell.tsx`) rather than a fixed
+  // pixel value that would either overflow the viewport or float short of it.
+  const headerRef = useRef<HTMLElement>(null);
 
   return (
     <header
+      ref={headerRef}
       // `shell-header` (styles/app.css) — a real rule, not a utility, for the z-index and
       // impersonation-banner offset: an unlayered app.css rule is what wins the impersonation
       // banner's own stacking without touching this component's Tailwind classes.
@@ -98,7 +103,7 @@ export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      {narrow && <NotificationBell touchTarget align="end" />}
+      {narrow && <NotificationBell placement="header" anchorRef={headerRef} touchTarget />}
     </header>
   );
 }

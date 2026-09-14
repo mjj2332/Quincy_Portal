@@ -86,3 +86,65 @@ describe("PopoverContent — portals inside OverlayContainerContext (#122 P2)", 
     });
   });
 });
+
+describe("PopoverContent — anchor and positionMethod reach the Positioner (#113)", () => {
+  /**
+   * happy-dom cannot lay a real page out, so this does not assert final pixel coordinates —
+   * it proves the two PROPS actually reach `Popover.Positioner` rather than being silently
+   * dropped, the same way the container test above proves normalisation reaches the Portal. Both
+   * assertions read floating-ui's own inline `style` on the Positioner element, which is the
+   * thing that would stay wrong (default `absolute`, positioned against the trigger) if either
+   * prop were declared in the widened `Pick` but never forwarded.
+   */
+  it("forwards positionMethod, switching the Positioner's own CSS position", async () => {
+    await render(
+      <Popover open modal={false}>
+        <PopoverTrigger data-testid="trigger">Open</PopoverTrigger>
+        <PopoverContent data-testid="popover-content" positionMethod="fixed">Hello</PopoverContent>
+      </Popover>,
+    );
+
+    await waitFor(() => {
+      const content = document.querySelector('[data-testid="popover-content"]')!;
+      expect(content).not.toBeNull();
+      const positioner = content.parentElement!;
+      // Base UI's own default is "absolute" — an unforwarded prop would leave this unchanged.
+      expect(positioner.style.position).toBe("fixed");
+    });
+  });
+
+  it("forwards anchor, positioning against the given element rather than the trigger", async () => {
+    const anchorEl = document.createElement("div");
+    document.body.appendChild(anchorEl);
+    // happy-dom's default `getBoundingClientRect` is an all-zero rect (same as the trigger's own
+    // default) — an explicit, distinct rect on the anchor is what makes an unforwarded `anchor`
+    // prop distinguishable from a forwarded one that just happens to anchor at (0, 0).
+    anchorEl.getBoundingClientRect = () => ({
+      top: 500, left: 500, bottom: 520, right: 520, width: 20, height: 20, x: 500, y: 500,
+      toJSON() { return this; },
+    });
+
+    try {
+      await render(
+        <Popover open modal={false}>
+          <PopoverTrigger data-testid="trigger">Open</PopoverTrigger>
+          <PopoverContent data-testid="popover-content" anchor={{ current: anchorEl }} positionMethod="fixed">
+            Hello
+          </PopoverContent>
+        </Popover>,
+      );
+
+      await waitFor(() => {
+        const content = document.querySelector('[data-testid="popover-content"]')!;
+        expect(content).not.toBeNull();
+        const positioner = content.parentElement!;
+        // floating-ui's `transform: translate(x, y)` strategy places the popup at the anchor's
+        // own rect — (500, 500) — rather than the trigger's (0, 0). An unforwarded `anchor` prop
+        // would leave this at the trigger's coordinates instead.
+        expect(positioner.style.transform).toMatch(/translate\(500px, \d+px\)/);
+      });
+    } finally {
+      anchorEl.remove();
+    }
+  });
+});

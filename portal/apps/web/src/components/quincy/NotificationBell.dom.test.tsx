@@ -1,18 +1,35 @@
-import { act } from "react";
+import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation } from "../../lib/staff-navigation";
 import { parseStaffLocation } from "../../lib/router";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { NavigationRail } from "./NavigationRail";
-import { NotificationBell } from "./NotificationBell";
+import { NotificationBell, alignOffsetFor, type NotificationBellProps } from "./NotificationBell";
 
 /**
  * The rail's own bell — #112. Covers the trigger/badge (count, `99+` cap, absence at zero,
  * rendering inside a collapsed rail) and the panel itself: dialog semantics, focus handoff,
  * modifier/middle click, poll identity, collaboration deep links and the no-backdrop contract.
- * #113 owns porting the Topbar's own full parity suite and re-anchoring the panel at 420px.
+ * #113 ports the Topbar's own full parity suite across and re-anchors the panel to the caller's
+ * own chrome surface — the rail or the header, via `anchorRef` — rather than the trigger; every
+ * render below supplies a real anchor element for that reason (`AnchoredBell`, below).
  */
+
+/**
+ * A real anchor element for every render — `NotificationBell` now requires `placement`/`anchorRef`
+ * rather than an optional `align`, so a bare `<NotificationBell />` no longer typechecks. Defaults
+ * to `"rail"`, the shape the bare component used before #113.
+ */
+function AnchoredBell(props: Partial<NotificationBellProps>) {
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const { placement = "rail", poll, touchTarget } = props;
+  return (
+    <div ref={anchorRef} data-testid="bell-anchor-host">
+      <NotificationBell placement={placement} anchorRef={anchorRef} poll={poll} touchTarget={touchTarget} />
+    </div>
+  );
+}
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -95,21 +112,21 @@ const USER = { name: "Terry Lee", email: "terry@example.test" };
 describe("NotificationBell", () => {
   it("shows the unread count in the badge", async () => {
     apiGetMock.mockResolvedValue(notificationsResponse(3));
-    await render(<NotificationBell />);
+    await render(<AnchoredBell />);
     const badge = host.querySelector('[data-testid="rail-notification-badge"]');
     expect(badge?.textContent).toBe("3");
   });
 
   it("caps the badge at 99+ above 99 unread", async () => {
     apiGetMock.mockResolvedValue(notificationsResponse(140));
-    await render(<NotificationBell />);
+    await render(<AnchoredBell />);
     const badge = host.querySelector('[data-testid="rail-notification-badge"]');
     expect(badge?.textContent).toBe("99+");
   });
 
   it("shows no badge at zero unread", async () => {
     apiGetMock.mockResolvedValue(notificationsResponse(0));
-    await render(<NotificationBell />);
+    await render(<AnchoredBell />);
     expect(host.querySelector('[data-testid="rail-notification-badge"]')).toBeNull();
     expect(host.querySelector('[data-testid="rail-notification-trigger"]')?.getAttribute("aria-label")).toBe("Notifications");
   });
@@ -137,7 +154,7 @@ describe("NotificationBell panel (Popover)", () => {
   afterEach(() => { vi.useRealTimers(); });
 
   async function renderPanel(poll = 1_000) {
-    await render(<NotificationBell poll={poll} />);
+    await render(<AnchoredBell poll={poll} />);
     return host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
   }
 
@@ -171,8 +188,8 @@ describe("NotificationBell panel (Popover)", () => {
     const labelledBy = dialog!.getAttribute("aria-labelledby");
     expect(labelledBy).toBeTruthy();
     expect(document.getElementById(labelledBy!)?.textContent).toBe("Notifications");
-    // `NotificationBellProps.align` defaults to `"start"`; `renderPanel` above renders the bare
-    // `<NotificationBell />` the rail header uses, with no `align` passed.
+    // Every placement is `align="start"` (see `NotificationBell.tsx`'s own "Anchoring" section) —
+    // `renderPanel` above defaults `AnchoredBell` to `placement="rail"`.
     expect(dialog!.getAttribute("data-align")).toBe("start");
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.querySelector('[role="menuitem"]')).toBeNull();
@@ -470,9 +487,9 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.querySelector('[data-testid="rail-notifications-empty"]')).not.toBeNull();
   });
 
-  it("renders NotificationBell with align=\"end\" (ShellHeader's narrow bell), portalled to document.body, end-aligned", async () => {
+  it("renders the header placement's bell, touch-targeted, portalled to document.body", async () => {
     apiGetMock.mockResolvedValue(notificationsResponse(1));
-    await render(<NotificationBell touchTarget align="end" />);
+    await render(<AnchoredBell placement="header" poll={1_000} touchTarget />);
     const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
     expect(trigger.hasAttribute("data-touch-target")).toBe(false); // the seam sits on the inner span
     expect(host.querySelector('[data-touch-target]')).not.toBeNull();
@@ -481,8 +498,117 @@ describe("NotificationBell panel (Popover)", () => {
     expect(panel).not.toBeNull();
     expect(host.contains(panel)).toBe(false);
     expect(document.body.contains(panel)).toBe(true);
-    // `data-align` is Base UI's own Positioner/Popup state attribute, reflecting the resolved
-    // alignment directly (`PopoverPositionerDataAttributes`/`PopoverPopupDataAttributes`).
-    expect(panel!.getAttribute("data-align")).toBe("end");
+  });
+
+  describe("placement contracts (#113)", () => {
+    it("anchors the rail placement to the right of the rail, start-aligned, at a fixed 420px", async () => {
+      apiGetMock.mockResolvedValue(notificationsResponse(1));
+      const trigger = await renderPanel();
+      await click(trigger);
+      // `data-side`/`data-align` are Base UI's own Positioner/Popup state attributes, reflecting
+      // the resolved side/alignment directly (`PopoverPositionerDataAttributes`).
+      const panel = document.querySelector('[data-testid="rail-notifications-panel"]')!;
+      expect(panel.getAttribute("data-side")).toBe("right");
+      expect(panel.getAttribute("data-align")).toBe("start");
+      expect(panel.className).toContain("w-[420px]");
+    });
+
+    it("anchors the header placement below the header, start-aligned, spanning the anchor's own width", async () => {
+      apiGetMock.mockResolvedValue(notificationsResponse(1));
+      await render(<AnchoredBell placement="header" poll={1_000} touchTarget />);
+      const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
+      await click(trigger);
+      const panel = document.querySelector('[data-testid="rail-notifications-panel"]')!;
+      expect(panel.getAttribute("data-side")).toBe("bottom");
+      expect(panel.getAttribute("data-align")).toBe("start");
+      expect(panel.className).toContain("w-[var(--anchor-width)]");
+    });
+
+    it("reads live trigger and anchor rects to compute alignOffset — the callback is wired, not a constant", async () => {
+      // `anchor={anchorRef}` (`NotificationBell.tsx`) makes the RAIL, not the trigger, floating-ui's
+      // own positioning reference — nothing else in this component or in `reui/popover.tsx` has any
+      // reason to call `getBoundingClientRect` on the TRIGGER. So a call on the trigger element is
+      // itself the proof that `railAlignOffset` ran and read a live rect rather than the callback
+      // having been dropped in favour of a fixed `alignOffset={0}` (the pure arithmetic —
+      // `trigger.top − anchor.top`, floored at 0 — is `alignOffsetFor`'s own unit test, below).
+      // happy-dom does not lay anything out for real, and floating-ui's own `align: "shift"`
+      // collision correction (`collisionAvoidance` in `NotificationBell.tsx`) can still move the
+      // final pixel position independently of the manual offset once real content is involved — so
+      // this deliberately does not assert a final `transform` coordinate, which would be asserting
+      // happy-dom's own approximation of floating-ui's collision math, not this component's wiring.
+      apiGetMock.mockResolvedValue(notificationsResponse(1));
+      const trigger = await renderPanel();
+      const triggerRectSpy = vi.fn(trigger.getBoundingClientRect.bind(trigger));
+      trigger.getBoundingClientRect = triggerRectSpy;
+
+      await click(trigger);
+
+      expect(triggerRectSpy, "railAlignOffset must read the trigger's own rect").toHaveBeenCalled();
+    });
+  });
+
+  describe("polling (#113)", () => {
+    it("polls the notifications endpoint again after the configured interval", async () => {
+      apiGetMock.mockResolvedValue(notificationsResponse(0));
+      await renderPanel(1_000);
+      expect(apiGetMock).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(apiGetMock).toHaveBeenCalledTimes(2);
+      // Not yet a third — the interval has not elapsed again.
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(apiGetMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("trigger and badge utilities (#113)", () => {
+    it("gives the trigger a positioning wrapper and an explicit icon size", async () => {
+      apiGetMock.mockResolvedValue(notificationsResponse(1));
+      const trigger = await renderPanel();
+      expect(trigger.className).toContain("relative");
+      expect(trigger.className).toContain("[&_svg]:size-[19px]");
+    });
+
+    it("gives the badge the pill layout that positions it over the trigger's corner", async () => {
+      apiGetMock.mockResolvedValue(notificationsResponse(1));
+      await renderPanel();
+      const badge = host.querySelector('[data-testid="rail-notification-badge"]')!;
+      expect(badge.className).toContain("absolute");
+      expect(badge.className).toContain("min-w-[16px]");
+    });
+  });
+
+  describe("unread row paint (#113)", () => {
+    it("marks unread rows with the 3px leading rule, distinct from the row's own hover paint", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-unread", title: "Unread" }),
+        notification({ id: "n-read", title: "Read", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      const rows = [...document.querySelectorAll<HTMLLIElement>("li")];
+      const unreadRow = rows.find((row) => row.textContent?.includes("Unread"))!;
+      const readRow = rows.find((row) => row.textContent?.includes("Read"))!;
+      for (const row of [unreadRow, readRow]) {
+        expect(row.className).toContain("border-l-[length:var(--border-width-rule)]");
+        expect(row.className).toContain("data-[unread]:border-l-primary");
+        expect(row.className).toContain("hover:bg-secondary");
+      }
+      expect(unreadRow.hasAttribute("data-unread")).toBe(true);
+      expect(readRow.hasAttribute("data-unread")).toBe(false);
+    });
+  });
+});
+
+describe("alignOffsetFor (#113)", () => {
+  it("returns trigger.top − anchor.top when the trigger sits below the anchor's own top", () => {
+    expect(alignOffsetFor(150, 100)).toBe(50);
+  });
+
+  it("floors at 0 rather than going negative when the trigger sits above the anchor's top", () => {
+    expect(alignOffsetFor(50, 100)).toBe(0);
+  });
+
+  it("returns 0 when the trigger and anchor share the same top", () => {
+    expect(alignOffsetFor(100, 100)).toBe(0);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Bell, CheckCheck } from "lucide-react";
 import { apiDelete, apiGet, apiPost } from "../../lib/api";
 import { InternalLink } from "../InternalLink";
@@ -8,32 +8,15 @@ import { Button } from "@/components/reui/button";
 import { Badge } from "@/components/reui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/tooltip";
 import { cn } from "../../lib/utils";
-import { NOTIFICATION_POLL_MS } from "../Topbar";
 
 /**
- * The rail's own notification bell — #112, placed in `NavigationRail`'s header.
+ * The rail's own notification bell — #112, placed in `NavigationRail`'s header, and #113's own
+ * `ShellHeader` bell reuses the same component rather than a second copy.
  *
- * ## Copied, not extracted
- *
- * This is a COPY of `components/Topbar.tsx`'s bell (poll, trigger, unread badge with its own
- * `99+` cap, and the panel's read/dismiss/mark-all behaviour), with its own `rail-notification-*`
- * test ids. It is copied rather than shared for the same reason `NavigationRail` duplicates the
- * Topbar's sign-out handling (see that file's header comment): the Topbar ships today and this
- * does not, so the two must be free to diverge until the cutover ticket removes one of them.
- * `components/Topbar.tsx` itself is unchanged by this file — the only thing imported from it is
- * `NOTIFICATION_POLL_MS`, which it already exports.
- *
- * #113 re-anchors this panel (420px, wider than the Topbar's 360px, to match the rail's own
- * width budget), ports the Topbar's full notification parity suite across, and deletes the
- * Topbar original. Day buckets, thumbnails and a richer row layout are #114. Neither ticket's
- * scope is closed by this file.
- *
- * ## Where the paint differs from the Topbar's copy
- *
- * The trigger and panel classes below are copied verbatim from `Topbar.tsx` except for the
- * `touchTarget` addition, which the Topbar has no equivalent of — the Topbar's own mobile touch
- * target comes from a `max-[721px]:size-[44px]` breakpoint, which has no meaning in a rail that
- * never resizes by media query.
+ * #113 re-anchors the panel to the caller's own chrome surface (the rail or the header), not the
+ * bell's trigger, so the panel's edge lines up with that surface's own edge regardless of where
+ * inside it the trigger sits. Day buckets, thumbnails and a richer row layout are #114 — neither
+ * ticket's scope is closed by this file.
  *
  * ## Popover, not Menu
  *
@@ -62,11 +45,25 @@ import { NOTIFICATION_POLL_MS } from "../Topbar";
  * for a non-primary button — so it never reaches this handler: the panel stays open and the row
  * stays unread.
  *
- * `align` (below) differs by caller: the rail header bell keeps the default `"start"`, which
- * keeps the panel over the content rather than shifted off the rail's own left edge; `ShellHeader`
- * passes `"end"` for its narrow, right-aligned bell. `side="bottom"` and the collision settings
- * are shared by both — they sit at the top of the screen, so flipping to a side with even less
- * room never helps.
+ * ## Anchoring (#113)
+ *
+ * `placement` picks between two fixed shapes, each anchored to `anchorRef` — not the trigger — via
+ * `reui/popover.tsx`'s widened `anchor`/`positionMethod` forwarding:
+ *
+ * - `"rail"`: `side="right" align="start"`, offset out from the rail's own right edge
+ *   (`sideOffset={8}`), with `alignOffset` computed from `alignOffsetFor` (below) so the panel's
+ *   TOP lines up with the trigger's top rather than the rail's — the rail is much taller than the
+ *   trigger, and anchoring the align axis to the rail alone would float the panel up at the rail's
+ *   own top edge instead of beside the bell that opened it.
+ * - `"header"`: `side="bottom" align="start"`, flush against the header (`sideOffset={0}
+ *   alignOffset={0}`), `w-[var(--anchor-width)]` so the panel's own width tracks the header's
+ *   rather than a fixed pixel value — the narrow header spans the full viewport width, which a
+ *   fixed `420px` would either overflow or leave floating short of.
+ *
+ * Both anchors are themselves `position: fixed`/sticky surfaces (the rail, `ShellHeader`'s
+ * `<header>`), so `positionMethod="fixed"` is shared by both — Base UI's own `"absolute"` default
+ * would resolve against the nearest positioned ancestor instead of the viewport and drift out of
+ * alignment as the page scrolls.
  */
 
 type NotificationItem = {
@@ -79,6 +76,8 @@ type NotificationItem = {
   createdAt: string;
 };
 type NotificationsResponse = { notifications: NotificationItem[]; unreadCount: number };
+
+const NOTIFICATION_POLL_MS = 25_000;
 
 const ROW = "grid grid-cols-[minmax(0,1fr)_auto] border-b-[length:var(--border-width-hair)] " +
   "[border-bottom-style:solid] border-b-border bg-transparent hover:bg-secondary " +
@@ -113,19 +112,27 @@ const HEAD = "flex items-center justify-between gap-[var(--space-3)] px-[var(--s
 // beats a layered `font-medium` regardless of specificity, so it needs `!`.
 const TITLE_WEIGHT = "!font-medium";
 const EMPTY = "px-[var(--space-4)] py-[var(--space-5)] text-[length:var(--text-sm)] text-muted-foreground";
-const TRIGGER = "relative inline-grid place-items-center size-[34px] text-foreground hover:bg-secondary";
+// `shrink-0` — the trigger sits beside the wordmark/breadcrumb in a flex row, and a long identity
+// name or crumb trail must not squeeze the bell's own fixed box. `[&_svg]:size-[19px]` sizes the
+// `Bell` icon explicitly rather than relying on lucide's own default, the one source for the
+// icon's size (no second `size-*` set on `<Bell>` itself).
+const TRIGGER = "relative inline-grid place-items-center size-[34px] shrink-0 text-foreground hover:bg-secondary [&_svg]:size-[19px]";
 
 // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. Applied only when the
-// caller (`ShellHeader`, below 772px) asks for it via `touchTarget` — the desktop 250px/48px rail
-// keeps the trigger's own 34px box, same as the Topbar's default. Both axes: `size-`, so
-// tailwind-merge replaces TRIGGER's `size-[34px]` rather than leaving the width at 34.
+// caller (`ShellHeader`, below 772px) asks for it via `touchTarget` — the desktop rail keeps the
+// trigger's own 34px box. Both axes: `size-`, so tailwind-merge replaces TRIGGER's `size-[34px]`
+// rather than leaving the width at 34.
 const TOUCH_TARGET = "size-[44px]";
 
-// Today's width/height bounds, unchanged from the earlier Menu-based panel. #113 owns the final
-// 420px anchor. A plain overflow list, not `scroll-area`: these rows are simple enough that
-// native keyboard scrolling needs no extra registry item.
-const PANEL = "w-[min(360px,calc(100vw-var(--space-5)))] max-h-[min(520px,var(--available-height))] " +
-  "gap-0 p-0 flex-col";
+// Rail placement is a fixed 420px, wide enough to hold a full notification row without wrapping
+// its body text; header placement instead tracks the header's own width (`w-[var(--anchor-width)]`
+// below, set per-render in the component body) since the narrow header spans the full viewport and
+// a fixed pixel width would either overflow it or float short. A plain overflow list, not
+// `scroll-area`: these rows are simple enough that native keyboard scrolling needs no extra
+// registry item.
+const PANEL = "max-h-[min(520px,var(--available-height))] gap-0 p-0 flex-col";
+const RAIL_PANEL_WIDTH = "w-[420px]";
+const HEADER_PANEL_WIDTH = "w-[var(--anchor-width)]";
 // `list-none` removes the `<ul>`'s marker, which also drops its implicit list semantics under
 // Safari/VoiceOver — the `role="list"` on the element itself restores them.
 const LIST = "min-h-0 flex-1 overflow-y-auto overscroll-contain m-0 p-0 list-none";
@@ -140,16 +147,34 @@ function NotificationRowContent({ notification }: { notification: NotificationIt
   );
 }
 
+/**
+ * `trigger.top - anchor.top`, floored at 0 — the distance to shift the panel's start-aligned
+ * position down so it lines up with the bell that opened it rather than the top of a much taller
+ * anchor (the rail). Exported pure so it can be unit-tested without mounting a Positioner; a
+ * missing ref (either side) falls back to 0 at the call site, not here — this function only ever
+ * sees two numbers.
+ */
+export function alignOffsetFor(triggerTop: number, anchorTop: number): number {
+  return Math.max(0, triggerTop - anchorTop);
+}
+
 export type NotificationBellProps = {
-  /** Poll interval override, for tests — mirrors the Topbar's `notificationPollMs`. */
+  /** Poll interval override, for tests. */
   poll?: number;
   /** True in the narrow header, where every control must clear 44px. */
   touchTarget?: boolean;
-  /** `ShellHeader`'s narrow bell passes `"end"`; every other call site keeps the default `"start"`. */
-  align?: "start" | "end";
+  /**
+   * `"rail"` (`NavigationRail`'s own header) anchors the panel to the rail's right edge, offset
+   * down to the trigger; `"header"` (`ShellHeader`'s narrow bell) anchors flush under the header,
+   * spanning its width. Required — no silent fallback, since the two shapes are not interchangeable.
+   */
+  placement: "rail" | "header";
+  /** The rail or header element the panel is anchored to — not the trigger. See the file header. */
+  anchorRef: RefObject<HTMLElement | null>;
 };
 
-export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = false, align = "start" }: NotificationBellProps) {
+export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = false, placement, anchorRef }: NotificationBellProps) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -216,11 +241,22 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
 
   const cappedCount = unreadCount > 99 ? "99+" : String(unreadCount);
 
+  // The rail's own align axis — see the file header's "Anchoring" section. A plain function, not
+  // `useCallback`: `alignOffset` is read once per Positioner measurement, not on every render, so
+  // memoising it would buy nothing.
+  function railAlignOffset(): number {
+    const trigger = triggerRef.current;
+    const anchor = anchorRef.current;
+    if (!trigger || !anchor) return 0;
+    return alignOffsetFor(trigger.getBoundingClientRect().top, anchor.getBoundingClientRect().top);
+  }
+
   return (
     <div className="relative" data-testid="rail-notifications">
       <Popover open={notificationsOpen} onOpenChange={setNotificationsOpen} modal={false}>
         <PopoverTrigger
-          className={cn(TRIGGER, "[&_svg]:size-[19px]", touchTarget && TOUCH_TARGET)}
+          ref={triggerRef}
+          className={cn(TRIGGER, touchTarget && TOUCH_TARGET)}
           aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
           data-testid="rail-notification-trigger"
         >
@@ -231,7 +267,11 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
             <span className="sr-only">Notifications</span>
             {unreadCount > 0 && (
               <span
-                className="bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]"
+                className={cn(
+                  "absolute top-0 right-[-3px] min-w-[16px] h-[16px] px-1 rounded-[var(--radius-pill)]",
+                  "text-center leading-[16px] whitespace-nowrap tabular-nums",
+                  "bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]",
+                )}
                 aria-label={`${unreadCount} unread`}
                 data-testid="rail-notification-badge"
               >
@@ -244,12 +284,15 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
           ref={notificationsPopupRef}
           data-testid="rail-notifications-panel"
           initialFocus={notificationsPopupRef}
-          side="bottom"
-          align={align}
-          sideOffset={8}
-          collisionPadding={8}
+          anchor={anchorRef}
+          positionMethod="fixed"
+          side={placement === "rail" ? "right" : "bottom"}
+          align="start"
+          sideOffset={placement === "rail" ? 8 : 0}
+          alignOffset={placement === "rail" ? railAlignOffset : 0}
+          collisionPadding={placement === "rail" ? 8 : { top: 0, left: 0, right: 0, bottom: 8 }}
           collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
-          className={PANEL}
+          className={cn(PANEL, placement === "rail" ? RAIL_PANEL_WIDTH : HEADER_PANEL_WIDTH)}
         >
           <div className={HEAD}>
             <PopoverTitle className={TITLE_WEIGHT}>Notifications</PopoverTitle>

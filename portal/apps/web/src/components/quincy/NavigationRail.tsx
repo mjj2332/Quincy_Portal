@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 import {
   LayoutDashboard,
   List,
@@ -276,9 +276,15 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
   // to `"notifications"` (`lib/staff-navigation.ts`), so this is a single presence check, not a
   // route re-derivation, for both `data-active` and `aria-current` below.
   const preferencesActive = navigation.activeSectionId === "notifications";
+  // The bell's own anchor (#113) — the rail's fixed `sidebar-container` div, not the trigger, so
+  // the panel's right edge tracks the rail's regardless of where inside its header the trigger
+  // sits. `Sidebar` spreads its own rest props onto that div (`reui/sidebar.tsx`), so a plain
+  // `ref` here reaches it with no change to that file.
+  const railRef = useRef<HTMLDivElement>(null);
 
   return (
     <Sidebar
+      ref={railRef}
       collapsible={isSheet ? "none" : "icon"}
       variant="inset"
       className={cn("app__rail border-e border-e-[var(--border-hairline)]", isSheet && "w-[288px]")}
@@ -311,7 +317,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
           )}
           {/* Beside the wordmark when expanded; alone in the header when collapsed (there is no
               wordmark to sit beside). #113's narrow header owns it instead — see `showBell`. */}
-          {showBell && <NotificationBell touchTarget={isSheet} />}
+          {showBell && <NotificationBell placement="rail" anchorRef={railRef} touchTarget={isSheet} />}
           {/* #122: the rail's own collapse toggle moves here from `ShellHeader` — the wide header
               now shows only the breadcrumb, and the trigger reads `SidebarProvider` context
               directly rather than a prop threaded down from `RailedShell`. Never rendered in
@@ -396,6 +402,11 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
               side={isSheet ? "top" : "right"}
               align="end"
               sideOffset={8}
+              // Dims the page behind the account panel — a full navigation surface, not a small
+              // dropdown list (`menu.tsx`'s own `backdrop` doc comment) — everywhere but the Sheet,
+              // whose own scrim (`RailSheet.tsx`) already dims the page; a second one here would be
+              // a double scrim nested inside the first.
+              backdrop={!isSheet}
               triggerTestId="navigation-rail-account"
               triggerRender={
                 <SidebarMenuButton
