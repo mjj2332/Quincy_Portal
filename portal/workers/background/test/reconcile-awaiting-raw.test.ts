@@ -114,9 +114,9 @@ describe("awaiting RAW reconciliation mutation", () => {
     error.mockRestore();
   });
 
-  it("is throttled to 15 per run while the migration 0043 backlog of past-dated awaiting_raw projects drains", () => {
-    // Each advance emails every active admin and the project's editors; restore to 100 once the backlog is gone.
-    expect(RECONCILE_AWAITING_RAW_BATCH_SIZE).toBe(15);
+  it("processes up to 100 due projects per run", () => {
+    // Each advance emails every active admin and the project's editors; lower this before a migration releases a backlog.
+    expect(RECONCILE_AWAITING_RAW_BATCH_SIZE).toBe(100);
   });
 
   it("drains an existing eligible backlog in bounded hourly batches", async () => {
