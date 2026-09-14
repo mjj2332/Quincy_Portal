@@ -71,6 +71,13 @@ describe("processTonomoEvent shootDate upgrade", () => {
       .toEqual({ shoot_date: "2026-09-17" });
   });
 
+  it("does not overwrite an already-canonical shoot date with a different canonical incoming value", async () => {
+    const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
+    await processEvent(orderId, { when: { start_time: 1_789_516_800 }, property_address: { timezone: "UTC" } });
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-17" });
+  });
+
   it("upgrades a display shoot date when the event's only date is itself display text that now parses to ISO", async () => {
     const { projectId, orderId } = await seedProject({ shootDate: "Thursday, 17 Sep, 2026" });
     await processEvent(orderId, { date: "Saturday, 14 Feb, 2026" });

@@ -300,7 +300,10 @@ export function parseTonomoDisplayDate(value: string): string | null {
   const monthNumber = TONOMO_DISPLAY_DATE_MONTHS.indexOf(month as (typeof TONOMO_DISPLAY_DATE_MONTHS)[number]) + 1;
   const iso = `${year}-${String(monthNumber).padStart(2, "0")}-${day}`;
   if (!isCanonicalCalendarDate(iso)) return null;
-  const expectedWeekday = TONOMO_DISPLAY_DATE_WEEKDAYS[new Date(Date.UTC(Number(year), monthNumber - 1, Number(day))).getUTCDay()];
+  // setUTCFullYear keeps four-digit years literal; Date.UTC would remap 0000-0099 to 1900-1999.
+  const civil = new Date(0);
+  civil.setUTCFullYear(Number(year), monthNumber - 1, Number(day));
+  const expectedWeekday = TONOMO_DISPLAY_DATE_WEEKDAYS[civil.getUTCDay()];
   return weekday === expectedWeekday ? iso : null;
 }
 

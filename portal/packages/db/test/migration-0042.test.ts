@@ -35,7 +35,7 @@ describe("migration 0042 normalise Tonomo display shoot dates", () => {
       { id: "tc2-wrong-weekday", street: "Wrong Weekday Street", stageKey: "delivered", shootDate: "Monday, 17 Sep, 2026" },
       { id: "tc2-jan", street: "Jan Street", stageKey: "delivered", shootDate: "Thursday, 15 Jan, 2026" },
       { id: "tc2-dec", street: "Dec Street", stageKey: "delivered", shootDate: "Friday, 25 Dec, 2026" },
-      { id: "tc2-invalid-day", street: "Invalid Day Street", stageKey: "delivered", shootDate: "Tuesday, 31 Sep, 2026" },
+      { id: "tc2-invalid-day", street: "Invalid Day Street", stageKey: "delivered", shootDate: "Thursday, 31 Sep, 2026" },
     ];
     for (const row of rows) {
       db.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -59,7 +59,7 @@ describe("migration 0042 normalise Tonomo display shoot dates", () => {
       { id: "tc2-awaiting-raw", shoot_date: "Thursday, 17 Sep, 2026" },
       { id: "tc2-dec", shoot_date: "2026-12-25" },
       { id: "tc2-delivered", shoot_date: "2026-09-17" },
-      { id: "tc2-invalid-day", shoot_date: "Tuesday, 31 Sep, 2026" },
+      { id: "tc2-invalid-day", shoot_date: "Thursday, 31 Sep, 2026" },
       { id: "tc2-iso", shoot_date: "2026-09-17" },
       { id: "tc2-jan", shoot_date: "2026-01-15" },
       { id: "tc2-null", shoot_date: null },
