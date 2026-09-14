@@ -23,6 +23,10 @@ export interface Env {
   RENDITIONS_ENABLED?: boolean;
   DROPBOX_RAW_AUTOMATION_ENABLED?: string | boolean;
   DROPBOX_AUTOHDR_AUTOMATION_ENABLED?: string | boolean;
+  /** Enable only after the Editor mapping migration and a reviewed pilot mapping. */
+  DROPBOX_EDITOR_AUTOMATION_ENABLED?: string | boolean;
+  /** Millisecond cutover instant: earlier Projects require reviewed existing-folder linking. */
+  EDITOR_AUTOCREATE_AFTER_MS?: string;
   /** Production mutation is blocked unless this deployment-time flag is exactly "1". */
   ALLOW_PRODUCTION_RENDITION_BACKFILL?: string;
   APP_ORIGIN: string;

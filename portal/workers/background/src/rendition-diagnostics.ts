@@ -1,5 +1,5 @@
 export type SafeRenditionFailure = {
-  stage: "issue-signature" | "transform-fetch" | "validate-response" | "read-body" | "validate-body" | "write-r2" | "write-d1" | "unknown";
+  stage: "issue-signature" | "source-preview" | "transform-fetch" | "validate-response" | "read-body" | "validate-body" | "write-r2" | "write-d1" | "unknown";
   code: string;
   variant?: "thumb" | "web";
   status?: number;
@@ -22,6 +22,10 @@ function safeContentType(contentType: string): SafeRenditionFailure["contentType
  * error-object fields from lower layers that may contain credentials or source details.
  */
 export function safeRenditionFailure(error: unknown): SafeRenditionFailure {
+  if (error instanceof Error && error.name === "DngPreviewError" && "code" in error &&
+      typeof error.code === "string" && ["source-missing", "source-empty", "read-failed", "unsupported-bigtiff", "malformed-tiff", "metadata-limit", "preview-limit", "no-usable-preview"].includes(error.code)) {
+    return { stage: "source-preview", code: `dng-${error.code}` };
+  }
   const message = error instanceof Error ? error.message : "";
   if (message === "TRANSFORM_SOURCE_SECRET is required for rendition generation") {
     return { stage: "issue-signature", code: "missing-transform-source-secret" };

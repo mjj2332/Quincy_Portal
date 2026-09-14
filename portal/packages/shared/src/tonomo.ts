@@ -65,6 +65,61 @@ function requiredString(value: unknown, reason: string): string {
   return result;
 }
 
+const tonomoOrderIdKeys = ["order_id", "orderId", "id"] as const;
+const tonomoEnvelopeOrderIdKeys = ["order_id", "orderId"] as const;
+const tonomoOrderNoKeys = ["orderNo", "order_no", "reference"] as const;
+
+function consistentOrderId(source: UnknownRecord, keys: readonly string[], reason: string): string | null {
+  let identity: string | null = null;
+  for (const key of keys) {
+    if (source[key] === undefined || source[key] === null) continue;
+    const value = optionalString(source[key]);
+    if (!value) continue;
+    if (identity !== null && identity !== value) throw new TonomoParseError(reason);
+    identity = value;
+  }
+  return identity;
+}
+
+/**
+ * Unwraps the one provider envelope that changes the order shape. Tonomo's
+ * changed notification has an appointment id at the root, so only an object
+ * explicitly marked as changed may use its nested order as the source.
+ */
+export function normaliseTonomoPayload(payload: unknown): Record<string, unknown> {
+  const candidate = Array.isArray(payload) ? payload[0] : payload;
+  const source = record(candidate);
+  if (!source) throw new TonomoParseError("payload must contain an order object");
+  if (source.action !== "changed") return source;
+
+  const nestedOrder = record(source.order);
+  if (!nestedOrder) throw new TonomoParseError("changed webhook must contain an order object");
+  const outerOrderId = consistentOrderId(
+    source,
+    tonomoEnvelopeOrderIdKeys,
+    "changed webhook has conflicting outer order ids",
+  );
+  if (!outerOrderId) throw new TonomoParseError("changed webhook missing required order id");
+  const nestedOrderId = consistentOrderId(
+    nestedOrder,
+    tonomoOrderIdKeys,
+    "changed webhook has conflicting nested order ids",
+  );
+  if (!nestedOrderId) throw new TonomoParseError("changed webhook nested order missing required order id");
+  if (outerOrderId !== nestedOrderId) {
+    throw new TonomoParseError("changed webhook order id conflicts with nested order id");
+  }
+  return nestedOrder;
+}
+
+/** Returns the stable identity used by ingress deduplication for an order payload. */
+export function tonomoOrderKey(payload: unknown): string | undefined {
+  const source = normaliseTonomoPayload(payload);
+  return optionalString(valueFor(source, tonomoOrderIdKeys))
+    ?? optionalString(valueFor(source, tonomoOrderNoKeys))
+    ?? undefined;
+}
+
 function optionalNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -249,8 +304,7 @@ export function normaliseAddressKey(street: string, postcode: string | null | un
 }
 
 export function parseTonomoOrder(payload: unknown): TonomoOrder {
-  const source = record(Array.isArray(payload) ? payload[0] : payload);
-  if (!source) throw new TonomoParseError("payload must contain an order object");
+  const source = normaliseTonomoPayload(payload);
 
   const orderId = requiredString(valueFor(source, ["order_id", "orderId", "id"]), "missing required order id");
   const propertyAddress = record(source.property_address);

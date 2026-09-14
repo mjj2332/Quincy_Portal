@@ -90,7 +90,8 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
   // expires. The redirect is therefore a short-lived bearer with effective lifetime set by
   // Cloudflare's transform cache, not an auth-revocation mechanism. Remove this fallback only
   // once durable renditions are fully populated; do not proxy it (same-zone bypass recurs).
-  const headers: Record<string, string> = { "content-type": "image/jpeg", "cache-control": "private, no-store", "content-length": String(object.size), "x-content-type-options": "nosniff" };
+  const contentType = object.httpMetadata?.contentType ?? (/\.dng$/i.test(key) ? "image/x-adobe-dng" : "image/jpeg");
+  const headers: Record<string, string> = { "content-type": contentType, "cache-control": "private, no-store", "content-length": String(object.size), "x-content-type-options": "nosniff" };
   if (object.httpEtag) headers.etag = object.httpEtag;
   return new Response(object.body, { headers });
 }));

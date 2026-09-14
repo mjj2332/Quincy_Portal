@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { boardSchemaVariant } from "@quincy/db";
-import { assets, autoHdrFinalAssociations, autoHdrHandoffs, autoHdrOutputMappings, autoHdrPathClaims, collections, dropboxMonitorHealth, jobs, projects, renditionDlqEvents } from "@quincy/db/schema";
+import { assets, autoHdrFinalAssociations, autoHdrHandoffs, autoHdrOutputMappings, autoHdrPathClaims, collections, dropboxMonitorHealth, editorFolderMappings, jobs, projects, renditionDlqEvents } from "@quincy/db/schema";
 import { enqueueRenditionSafely, renditionsEnabled, type RenditionMessage } from "@quincy/shared";
 
 import { DropboxSyncDO } from "./do/dropbox-sync";
@@ -24,6 +24,11 @@ import { AutoHdrApiSend } from "./workflows/autohdr-api-send";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
 import { canonicalDropboxConnectionId } from "./dropbox/connection";
+import { enqueueEditorReconcile, editorAutoCreationAllowed } from "./editor-folders/queue";
+import { reconcileEditorFolder } from "./editor-folders/scaffold";
+import { syncProjectEditorOutput } from "./editor-folders/sync-output";
+import { automationFlag } from "./dropbox/monitor-state";
+import { previewEditorBackfill, applyEditorCandidate, type ReviewedEditorCandidate } from "./editor-folders/backfill";
 import { dropboxPathKey, monitorName } from "./dropbox/paths";
 import { claimAutoHdrFetch, claimAutoHdrHandoff, isWorkflowAlreadyExists, startClaimedFetch, type HandoffOwner } from "./autohdr/claims";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "./autohdr/mapping";
@@ -60,6 +65,24 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     // Warm the isolate-local variant memo before any scheduled handler can touch D1.
     if (this.env.DB) await boardSchemaVariant(this.env.DB);
     if (controller.cron === "* * * * *") {
+      if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
+        try {
+          const pending = await dbFor(this.env).select({ projectId: editorFolderMappings.projectId }).from(editorFolderMappings)
+            .innerJoin(projects, eq(projects.id, editorFolderMappings.projectId))
+            .where(sql`${editorFolderMappings.state} = 'ready' AND ${editorFolderMappings.initialSyncCompletedAt} IS NULL AND ${projects.archivedAt} IS NULL
+              AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_sync' AND j.status IN ('queued','running') AND j.updated_at > ${controller.scheduledTime - 20 * 60_000})`)
+            .orderBy(editorFolderMappings.updatedAt).limit(25);
+          for (const row of pending) {
+            await this.triggerEditorSync(row.projectId);
+            // Rotate attempted mappings behind unattempted ones; one permanently bad folder
+            // must not monopolize every bounded recovery page.
+            await dbFor(this.env).update(editorFolderMappings).set({ updatedAt: new Date(controller.scheduledTime) })
+              .where(and(eq(editorFolderMappings.projectId, row.projectId), eq(editorFolderMappings.state, "ready")));
+          }
+        } catch (error) {
+          console.error("Editor initial sync recovery failed", { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
       try {
         const result = await scanProjectDeadlineOccurrences(this.env, controller.scheduledTime);
         console.log("Project Deadline occurrence scan", result);
@@ -89,6 +112,21 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     if (controller.cron !== "0 * * * *") {
       console.warn("Ignored unknown Cron trigger", { cron: controller.cron });
       return;
+    }
+    if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
+      try {
+        const db = dbFor(this.env);
+        // Rotating bounded pages recover missed prerequisite triggers without flooding Dropbox.
+        const candidates = await db.select({ id: projects.id }).from(projects)
+          .where(sql`${projects.archivedAt} IS NULL AND ${projects.stageKey} != 'delivered'`).orderBy(projects.id);
+        const pageCount = Math.max(1, Math.ceil(candidates.length / 25));
+        const offset = (Math.floor(controller.scheduledTime / 3_600_000) % pageCount) * 25;
+        for (const candidate of candidates.slice(offset, offset + 25)) await enqueueEditorReconcile(this.env, candidate.id);
+        const connectionId = await canonicalDropboxConnectionId(db);
+        await this.env.DROPBOX_SYNC.getByName(monitorName(connectionId, "editor")).kick();
+      } catch (error) {
+        console.error("Editor reconciliation recovery failed", { error: error instanceof Error ? error.message : String(error) });
+      }
     }
     try {
       await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime, (projectId) => notifyProject(this.env, projectId, "raw_ready"));
@@ -126,6 +164,34 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     try {
       const message: DropboxSyncMessage = { type: "dropbox_sync", projectId, jobId, trigger: "manual_dropbox_sync" };
       await this.env.INGEST_QUEUE.send(message);
+      return { jobId };
+    } catch (error) {
+      await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async ensureEditorFolder(projectId: string): Promise<{ jobId: string } | null> {
+    return enqueueEditorReconcile(this.env, projectId);
+  }
+
+  async previewEditorFolders(cursor?: string): Promise<Record<string, unknown>> {
+    return previewEditorBackfill(this.env, cursor);
+  }
+
+  async linkEditorFolder(candidate: ReviewedEditorCandidate, actorId: string): Promise<Record<string, unknown>> {
+    const result = await applyEditorCandidate(this.env, candidate, actorId);
+    const initialSync = automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
+      ? await this.triggerEditorSync(candidate.projectId) : null;
+    return { ...result, initialSyncJobId: initialSync?.jobId ?? null, syncRequiredAfterActivation: !initialSync };
+  }
+
+  async triggerEditorSync(projectId: string): Promise<{ jobId: string }> {
+    if (!automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) throw new Error("Editor automation is disabled");
+    const db = dbFor(this.env);
+    const jobId = await createJob(db, { kind: "editor_sync", projectId });
+    try {
+      await this.env.INGEST_QUEUE.send({ type: "editor_sync", projectId, jobId });
       return { jobId };
     } catch (error) {
       await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
@@ -460,7 +526,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     const db = dbFor(this.env);
     const connectionId = await canonicalDropboxConnectionId(db);
     await fanOutDropboxKicks(
-      [monitorName(connectionId, "raw"), monitorName(connectionId, "autohdr")],
+      [monitorName(connectionId, "raw"), monitorName(connectionId, "autohdr"),
+        ...(automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED) ? [monitorName(connectionId, "editor")] : [])],
       async (name) => {
       const stub = this.env.DROPBOX_SYNC.getByName(name);
       await stub.kick();
@@ -468,7 +535,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     );
   }
 
-  async inspectDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>> {
+  async inspectDropboxMonitor(scope: "raw" | "autohdr" | "editor"): Promise<Record<string, unknown>> {
     const db = dbFor(this.env);
     const connectionId = await canonicalDropboxConnectionId(db);
     const durable = await this.env.DROPBOX_SYNC.getByName(monitorName(connectionId, scope)).inspect();
@@ -528,7 +595,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
     };
   }
 
-  async resetDropboxMonitor(scope: "raw" | "autohdr"): Promise<Record<string, unknown>> {
+  async resetDropboxMonitor(scope: "raw" | "autohdr" | "editor"): Promise<Record<string, unknown>> {
     const connectionId = await canonicalDropboxConnectionId(dbFor(this.env));
     const stub = this.env.DROPBOX_SYNC.getByName(monitorName(connectionId, scope));
     await stub.resetCursor();
@@ -714,6 +781,43 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         const parsed = parseQueueBody(batch.queue, message.body);
         if (!parsed) throw new Error(`Invalid queue body for ${batch.queue}`);
         switch (parsed.body.type) {
+          case "editor_reconcile":
+            if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
+              await setJobStatus(dbFor(this.env), parsed.body.jobId, "running");
+              try {
+                if (await editorAutoCreationAllowed(this.env, parsed.body.projectId)) await reconcileEditorFolder(this.env, parsed.body.projectId);
+                await setJobStatus(dbFor(this.env), parsed.body.jobId, "done");
+              } catch (error) {
+                await setJobStatus(dbFor(this.env), parsed.body.jobId, "failed", error instanceof Error ? error.message : String(error));
+                throw error;
+              }
+            } else {
+              await setJobStatus(dbFor(this.env), parsed.body.jobId, "failed", "Editor automation is disabled");
+            }
+            message.ack();
+            break;
+          case "editor_sync":
+            if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
+              try {
+                if (parsed.body.jobId) await setJobStatus(dbFor(this.env), parsed.body.jobId, "running");
+                const initialMapping = await dbFor(this.env).select({ id: editorFolderMappings.id, updatedAt: editorFolderMappings.updatedAt })
+                  .from(editorFolderMappings).where(and(eq(editorFolderMappings.projectId, parsed.body.projectId), eq(editorFolderMappings.state, "ready"))).get();
+                const raw = await syncProjectRawFolder(this.env, parsed.body.projectId, undefined, parsed.body.connectionId, "dropbox_delta");
+                const output = await syncProjectEditorOutput(this.env, parsed.body.projectId, parsed.body.connectionId);
+                if (initialMapping && raw.claimed && !raw.hasMore && !output.hasMore) {
+                  await dbFor(this.env).update(editorFolderMappings).set({ initialSyncCompletedAt: new Date() })
+                    .where(and(eq(editorFolderMappings.id, initialMapping.id), eq(editorFolderMappings.updatedAt, initialMapping.updatedAt), eq(editorFolderMappings.state, "ready")));
+                }
+                if (parsed.body.jobId) await setJobStatus(dbFor(this.env), parsed.body.jobId, "done");
+              } catch (error) {
+                if (parsed.body.jobId) await setJobStatus(dbFor(this.env), parsed.body.jobId, "failed", error instanceof Error ? error.message : String(error));
+                throw error;
+              }
+            } else if (parsed.body.jobId) {
+              await setJobStatus(dbFor(this.env), parsed.body.jobId, "failed", "Editor automation is disabled");
+            }
+            message.ack();
+            break;
           case "asset_ingested":
             // Kept for historic messages only. New writers enqueue the dedicated contract.
             message.ack();

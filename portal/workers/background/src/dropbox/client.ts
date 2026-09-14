@@ -613,6 +613,25 @@ export async function getMetadata(
   return entry;
 }
 
+/** Claim a new folder atomically. A conflict is not ownership evidence. */
+export async function createFolderStrict(
+  env: Env,
+  db: Database,
+  path: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxFolder> {
+  const value = await authorisedJson(env, db, "/files/create_folder_v2", {
+    path, autorename: false,
+  }, connectionId, client);
+  if (!value || typeof value !== "object" || !("metadata" in value)) throw new Error("Dropbox create folder response is missing metadata");
+  const metadata = value.metadata;
+  if (!metadata || typeof metadata !== "object") throw new Error("Dropbox create folder metadata is invalid");
+  const entry = parseEntry({ ...metadata, ".tag": "folder" });
+  if (entry[".tag"] !== "folder") throw new Error("Dropbox did not create a folder");
+  return entry;
+}
+
 /** Creates an AutoHDR destination folder; Dropbox reports an existing folder as a 409 conflict. */
 export async function createFolder(
   env: Env,

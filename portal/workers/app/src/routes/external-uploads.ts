@@ -20,6 +20,7 @@ import { ExternalEditedUploadCompletionRejectedError, finalizeExternalEditedUplo
 import { safeFilename } from "../lib/ids";
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
+import { editorFolderAvailability } from "../lib/editor-folders";
 
 const SESSION_TTL_MS = 60 * 60 * 1000;
 const LEASE_MS = 5 * 60 * 1000;
@@ -140,6 +141,18 @@ async function readSessionAsset(c: Context<AppEnv>, session: UploadSession) {
   return externalAsset(createDb(c.env.DB), session.assetId);
 }
 
+/** A mapped Editor project must have a reviewed Output root. Projects without a mapping retain
+ * the legacy Tonomo/RAW-folder prerequisite until their mapping is explicitly adopted. */
+async function editedUploadAvailable(c: Context<AppEnv>, projectId: string): Promise<boolean> {
+  const mapped = await editorFolderAvailability(c.env, projectId);
+  if (mapped) return mapped.outputReady;
+  const project = await createDb(c.env.DB).select({
+    rawFolderPath: schema.projects.rawFolderPath,
+    rawFolderLink: schema.projects.rawFolderLink,
+  }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return Boolean(project?.rawFolderPath || project?.rawFolderLink);
+}
+
 export const externalUploadsRoutes = new Hono<AppEnv>();
 
 externalUploadsRoutes.post("/external-uploads", terminalRoute("/external-uploads", async (c) => {
@@ -147,11 +160,11 @@ externalUploadsRoutes.post("/external-uploads", terminalRoute("/external-uploads
   if (c.get("user").role !== "external_editor") return errorResponse(c, "edited_upload_unavailable", 409);
   const data = await jsonInput(c, externalEditedUploadCreateRequestSchema); if (data instanceof Response) return errorResponse(c, "invalid_edited_upload", 400);
   const db = createDb(c.env.DB);
-  const project = await db.select({ projectId: schema.projects.id, collectionId: schema.collections.id, membershipCycleId: schema.projectMembers.id, editedUploadAvailable: sql<boolean>`(${schema.projects.rawFolderPath} IS NOT NULL OR ${schema.projects.rawFolderLink} IS NOT NULL)` })
+  const project = await db.select({ projectId: schema.projects.id, collectionId: schema.collections.id, membershipCycleId: schema.projectMembers.id })
     .from(schema.projects).innerJoin(schema.collections, and(eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "edited")))
     .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, c.get("user").id)))
     .where(and(eq(schema.projects.id, data.projectId), visibleProjectWhere(c.get("user")))).get();
-  if (!project?.membershipCycleId || !project.editedUploadAvailable) return errorResponse(c, "edited_upload_unavailable", 409);
+  if (!project?.membershipCycleId || !await editedUploadAvailable(c, data.projectId)) return errorResponse(c, "edited_upload_unavailable", 409);
   const partCount = Math.ceil(data.bytes / EXTERNAL_UPLOAD_PART_BYTES);
   if (partCount < 1 || partCount > 80 || data.bytes > EXTERNAL_UPLOAD_MAX_BYTES) return errorResponse(c, "invalid_edited_upload", 400);
   const assetId = crypto.randomUUID();
@@ -265,6 +278,9 @@ externalUploadsRoutes.post("/external-uploads/:sessionToken/complete", terminalR
     const asset = await readSessionAsset(c, session);
     return asset ? c.json(externalEditedCompleteResponseSchema.parse({ asset, workflow: { state: "processing" } }), 200) : errorResponse(c, "edited_upload_unavailable", 409);
   }
+  // The mapping/project can be revoked after session creation. Do not complete R2 or create a
+  // pending Edited row that the publisher can never make visible.
+  if (!await editedUploadAvailable(c, session.projectId)) return errorResponse(c, "edited_upload_unavailable", 409);
   const now = Date.now();
   let recoveredFinal: R2Object | null = null;
   if (session.status === "completing") {

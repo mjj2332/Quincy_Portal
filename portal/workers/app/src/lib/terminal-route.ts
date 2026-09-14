@@ -68,6 +68,8 @@ function securityContractForClass(routeClass: SecurityRouteClass): Omit<Security
  * entering both the actual and expected sets.
  */
 const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
+  { method: "GET", path: "/api/integrations/dropbox/editor-folders", class: "withheld" },
+  { method: "POST", path: "/api/integrations/dropbox/editor-folders/link", class: "withheld" },
   { method: "ALL", path: "/*", class: "terminal-fallback" },
   { method: "GET", path: "/__transform-source/*", class: "withheld" },
   { method: "ALL", path: "/__transform-source", class: "withheld" },

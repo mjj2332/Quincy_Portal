@@ -180,7 +180,7 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
     configureDropbox([moved]);
     await expect(syncProjectRawFolder(localEnv(), updateContext.projectId)).resolves.toMatchObject({ newlyImported: 0 });
     await expect(bindings.DB.prepare("SELECT source_path, source_path_key FROM assets WHERE id = ?").bind(updateContext.oldAssetId).first())
-      .resolves.toEqual({ source_path: movedPath, source_path_key: updateContext.sourcePathKey });
+      .resolves.toEqual({ source_path: movedPath, source_path_key: movedPath.toLowerCase() });
   });
 
   it("refuses an archived project without changing the current row or leaving an orphan", async () => {

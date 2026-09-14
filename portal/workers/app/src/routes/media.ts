@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { and, eq, isNull } from "drizzle-orm";
-import { RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION } from "@quincy/shared";
+import { DNG_CONTENT_TYPE, RENDITION_SPECS, RENDITION_SPEC_VERSION, TRANSFORM_CACHE_VERSION, dngPreviewKey, rawMediaContentType } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -12,6 +12,19 @@ import { isUserVisibleAsset, unpublishedAssetResponse } from "../lib/asset-visib
 import { visibleProjectWhere } from "../lib/visible-project-scope";
 
 export const mediaRoutes = new Hono<AppEnv>();
+
+function sourceContentType(kind: string, filename: string): string {
+  if (kind === "floorplan_pdf" || kind === "copy_pdf") return "application/pdf";
+  return rawMediaContentType(filename) ?? "image/jpeg";
+}
+
+function dngSourceKey(key: string, filename: string): string {
+  return rawMediaContentType(filename) === DNG_CONTENT_TYPE ? dngPreviewKey(key) : key;
+}
+
+function dngPreviewUnavailable(c: Context<AppEnv>): Response {
+  return c.json({ error: "DNG preview is still processing", code: "dng_preview_unavailable", renditionStatus: "processing" }, 409);
+}
 
 async function externalAsset(c: Context<AppEnv>, assetId: string) {
   const user = c.get("user");
@@ -63,7 +76,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
     if (variant === "original") {
       const object = await c.env.MEDIA.get(row.r2Key);
       if (!object) return c.json({ error: "Media object not found" }, 404);
-      const contentType = row.kind === "floorplan_pdf" || row.kind === "copy_pdf" ? "application/pdf" : "image/jpeg";
+      const contentType = sourceContentType(row.kind, row.originalFilename);
       const headers: Record<string, string> = { "content-type": contentType, "cache-control": "private, no-store", "content-length": String(object.size), "x-content-type-options": "nosniff" };
       if (contentType === "application/pdf") {
         const safeName = row.originalFilename.replace(/[\x00-\x1f"\\]/g, "");
@@ -87,7 +100,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
     const user = c.get("user"); if (row.collectionKind !== "raw" && user.role === "photographer") return c.json({ error: "Photographers may only view RAW assets" }, 403); if (row.collectionKind !== "raw" && !roleHasCapability(user.role, "viewEdited")) return c.json({ error: "Forbidden", capability: "viewEdited" }, 403);
     if (variant === "original") {
       const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404);
-      const contentType = row.asset.kind === "floorplan_pdf" || row.asset.kind === "copy_pdf" ? "application/pdf" : "image/jpeg";
+      const contentType = sourceContentType(row.asset.kind, row.asset.originalFilename);
       const headers: Record<string, string> = { "content-type": contentType, "cache-control": "private, no-store", "x-content-type-options": "nosniff" };
       if (contentType === "application/pdf") {
         const safeName = row.asset.originalFilename.replace(/[\x00-\x1f"\\]/g, "");
@@ -120,12 +133,14 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
     // transform fallbacks use the same source object after this check.
     const original = await c.env.MEDIA.head(row.asset.r2Key);
     if (!original) return c.json({ error: "Media object not found" }, 404);
+    const transformKey = dngSourceKey(row.asset.r2Key, row.asset.originalFilename);
+    if (transformKey !== row.asset.r2Key && !await c.env.MEDIA.head(transformKey)) return dngPreviewUnavailable(c);
     // Dev retains a practical direct-original fallback when a cache has not been generated.
     if (c.env.APP_ENV === "dev") {
-      const object = await c.env.MEDIA.get(row.asset.r2Key); if (!object) return c.json({ error: "Media object not found" }, 404);
+      const object = await c.env.MEDIA.get(transformKey); if (!object) return c.json({ error: "Media object not found" }, 404);
       return new Response(object.body, { headers: { "content-type": "image/jpeg", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
     }
-    const issued = await issueTransformSource(c.env, row.asset.r2Key, user.id, user.authorizationEpoch);
+    const issued = await issueTransformSource(c.env, transformKey, user.id, user.authorizationEpoch);
     if (!issued) return c.json({ error: "Image transformations are not configured" }, 503);
     // Redirect the authenticated client to the /cdn-cgi/image/ URL instead of proxying:
     // a Worker's same-zone subrequest skips the entire Cloudflare pipeline (loop
@@ -137,7 +152,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
     // expiry. The cache version makes prior cached 9401 failures a different URL after repair.
     // width+height+fit=scale-down is a bounding box that preserves aspect ratio without
     // upscaling — width alone lets a portrait exceed maxEdge on its long side.
-    const response = c.redirect(liveTransformLocation(c.req.url, row.asset.r2Key, variant as "web" | "thumb", { ...issued, principalId: user.id, authorizationEpoch: user.authorizationEpoch }), 302);
+    const response = c.redirect(liveTransformLocation(c.req.url, transformKey, variant as "web" | "thumb", { ...issued, principalId: user.id, authorizationEpoch: user.authorizationEpoch }), 302);
     response.headers.set("cache-control", "private, no-store");
     return response;
   }

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { tonomoOrderKey } from "@quincy/shared";
 
 import type { Env } from "./env";
 
@@ -82,11 +83,13 @@ async function readBodyWithinLimit(request: Request, limit: number): Promise<Arr
 }
 
 function firstOrderKey(payload: unknown): string | undefined {
-  const firstOrder = Array.isArray(payload) ? payload[0] : payload;
-  if (!firstOrder || typeof firstOrder !== "object" || Array.isArray(firstOrder)) return undefined;
-  const order = firstOrder as Record<string, unknown>;
-  const key = order.id ?? order.orderNo;
-  return typeof key === "string" || typeof key === "number" ? String(key) : undefined;
+  try {
+    return tonomoOrderKey(payload);
+  } catch {
+    // Keep accepting the event for durable storage; the processor will poison
+    // malformed payloads, while a body hash still gives redeliveries a stable key.
+    return undefined;
+  }
 }
 
 const app = new Hono<{ Bindings: Env }>();

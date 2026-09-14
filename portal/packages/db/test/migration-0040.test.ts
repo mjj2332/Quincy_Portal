@@ -116,7 +116,8 @@ describe("migration 0040 narrow project priority to 1-5", () => {
   it("applies as the 40th migration directly after 0039", () => {
     const directory = new URL("../migrations/", import.meta.url);
     const names = readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value)).sort();
-    expect(names.at(-2)).toBe("0039_notice_board_read_markers.sql");
-    expect(names.at(-1)).toBe("0040_project_priority_1_to_5.sql");
+    const position = names.indexOf("0040_project_priority_1_to_5.sql");
+    expect(position).toBeGreaterThan(0);
+    expect(names[position - 1]).toBe("0039_notice_board_read_markers.sql");
   });
 });

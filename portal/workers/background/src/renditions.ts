@@ -5,6 +5,7 @@ import {
   RENDITION_SPEC_VERSION,
   renditionR2Key,
   TRANSFORM_CACHE_VERSION,
+  isDngFilename,
   type RenditionVariant,
 } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
@@ -12,10 +13,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Env } from "./env";
 import { dbFor } from "./lib/db";
 import { user } from "@quincy/db/schema";
+import { DngPreviewError, ensureDngPreview } from "./dng-preview";
 
 const MAX_RENDITION_BYTES = 16 * 1024 * 1024;
 
-export type RenditionAsset = { id: string; r2Key: string; contentHash: string | null };
+export type RenditionAsset = { id: string; r2Key: string; contentHash: string | null; originalFilename?: string };
 export type StoredRendition = { variant: RenditionVariant; r2Key: string; specVersion: string };
 export type RenditionContentType = "image/webp" | "image/jpeg";
 export type MeasuredRendition = StoredRendition & { bytes: number; contentType: RenditionContentType; width: number | null; height: number | null };
@@ -29,7 +31,7 @@ export interface RenditionStore {
 export function createRenditionStore(env: Env): RenditionStore {
   const db = dbFor(env);
   return {
-    getAsset: (assetId) => db.select({ id: assets.id, r2Key: assets.r2Key, contentHash: assets.contentHash })
+    getAsset: (assetId) => db.select({ id: assets.id, r2Key: assets.r2Key, contentHash: assets.contentHash, originalFilename: assets.originalFilename })
       .from(assets).where(and(eq(assets.id, assetId), eq(assets.kind, "photo"))).get(),
     getRenditions: (assetId) => db.select({ variant: assetRenditions.variant, r2Key: assetRenditions.r2Key, specVersion: assetRenditions.specVersion })
       .from(assetRenditions).where(eq(assetRenditions.assetId, assetId)).all(),
@@ -177,10 +179,23 @@ export async function generateRenditions(
   const existing = new Map((await resolvedDependencies.store.getRenditions(assetId)).map((row) => [row.variant, row]));
   const principal = await resolveTransformPrincipal(env);
   const generated: RenditionVariant[] = []; const skipped: RenditionVariant[] = [];
+  let sourceKey: string | null = null;
   for (const variant of ["thumb", "web"] as const) {
     const previous = existing.get(variant);
     if (previous?.specVersion === RENDITION_SPEC_VERSION && await env.MEDIA.head(previous.r2Key)) { skipped.push(variant); continue; }
-    const response = await resolvedDependencies.fetch(await transformUrl(env.APP_ORIGIN, asset.r2Key, variant, env.TRANSFORM_SOURCE_SECRET, principal.id, principal.authorizationEpoch), { headers: { accept: "image/webp" } });
+    if (sourceKey === null) {
+      sourceKey = asset.r2Key;
+      if (isDngFilename(asset.originalFilename ?? asset.r2Key)) {
+        try {
+          sourceKey = (await ensureDngPreview(env.MEDIA, asset.r2Key)).key;
+        } catch (error) {
+          if (error instanceof DngPreviewError) throw error;
+          const detail = error instanceof Error ? error.message : "embedded JPEG preview is unavailable";
+          throw new Error(`DNG preview unavailable for ${assetId}: ${detail}`);
+        }
+      }
+    }
+    const response = await resolvedDependencies.fetch(await transformUrl(env.APP_ORIGIN, sourceKey, variant, env.TRANSFORM_SOURCE_SECRET, principal.id, principal.authorizationEpoch), { headers: { accept: "image/webp" } });
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     const resized = response.headers.get("cf-resized");
     if (!response.ok || (contentType !== "image/webp" && contentType !== "image/jpeg") || /(?:^|[;,\s])err=/i.test(resized ?? "") || !/(?:^|[;,\s])internal=ok/i.test(resized ?? "")) {

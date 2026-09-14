@@ -14,6 +14,13 @@ import { and, eq, sql } from "drizzle-orm";
 import { enqueueRenditionSafely, parseXmpRating, XMP_SCAN_BYTES, xmpRatingToStars } from "@quincy/shared";
 import type { Env } from "../env";
 import { audit, auditMeta, type AuditPrincipal } from "./audit";
+
+/** SQL alias p is the active Project at the final asset commit, not an earlier route read. */
+function editedDestinationPredicate(env: Env): string {
+  const legacy = "(length(trim(COALESCE(p.raw_folder_path, ''))) > 0 OR length(trim(COALESCE(p.raw_folder_link, ''))) > 0)";
+  if (env.DROPBOX_EDITOR_AUTOMATION_ENABLED !== "1" && env.DROPBOX_EDITOR_AUTOMATION_ENABLED !== true) return legacy;
+  return `((NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = p.id) AND ${legacy}) OR EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = p.id AND m.state = 'ready' AND json_array_length(m.output_roots_json) > 0))`;
+}
 import { notifyProject } from "./notifications";
 import { requireBoardSchemaReady } from "./board-schema";
 
@@ -69,6 +76,7 @@ export async function finalizeExternalEditedUpload(env: Env, input: FinalizeExte
     WHERE s.id = ? AND s.status = 'completing' AND s.completion_lease_token = ?
       AND s.project_id = ? AND s.collection_id = ? AND s.asset_id = ?
       AND s.r2_key = ? AND s.bytes = ? AND s.expires_at > ?
+      AND ${editedDestinationPredicate(env)}
     ON CONFLICT(id) DO NOTHING
     RETURNING id
   `).bind(now, now, input.sessionId, input.leaseToken, input.projectId, input.collectionId, input.assetId, input.key, input.bytes, now);
@@ -165,7 +173,7 @@ export async function finalizeIngest(
   const statements = [
     collectionKind === "raw"
       ? env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, manifest_id, rating_from_metadata, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'upload', ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) ON CONFLICT DO NOTHING").bind(input.assetId, targetCollection.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, input.manifestId ?? null, stars, now.getTime(), now.getTime(), input.projectId)
-      : env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, section, publish_status, rating_from_metadata, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, ?, ?, 'upload', NULL, 'Manual', 'pending', ?, ?, ?) ON CONFLICT DO NOTHING").bind(input.assetId, targetCollection.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, stars, now.getTime(), now.getTime()),
+      : env.DB.prepare(`INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_raw_asset_id, section, publish_status, rating_from_metadata, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'upload', NULL, 'Manual', 'pending', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects p WHERE p.id = ? AND p.archived_at IS NULL AND ${editedDestinationPredicate(env)}) ON CONFLICT DO NOTHING`).bind(input.assetId, targetCollection.id, input.key, input.originalFilename, object.size, input.contentHash ?? null, stars, now.getTime(), now.getTime(), input.projectId),
   ];
   if (rawIdentityKey) {
     statements.push(
@@ -214,7 +222,8 @@ export async function finalizeIngest(
   // background publisher is started by the caller after this durable pending row is committed.
   if (collectionKind === "edited") {
     const published = await db.select({ publishStatus: schema.assets.publishStatus }).from(schema.assets).where(eq(schema.assets.id, input.assetId)).get();
-    const publishStatus = published?.publishStatus ?? "pending";
+    if (!published) throw new Error("Project or edited upload destination changed before metadata could be committed");
+    const publishStatus = published.publishStatus;
     return {
       assetId: input.assetId,
       ratingFromMetadata: stars,

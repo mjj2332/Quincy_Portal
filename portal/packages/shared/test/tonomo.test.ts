@@ -1,9 +1,83 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { normaliseAddressKey, parseTonomoOrder, TonomoParseError } from "../src/tonomo";
+import { normaliseAddressKey, parseTonomoOrder, TonomoParseError, tonomoOrderKey } from "../src/tonomo";
+
+const changedWebhookFixture = {
+  action: "changed",
+  id: "appointment-event-001",
+  orderId: "tonomo-order-001",
+  address: {
+    street: "Appointment Venue Street",
+    formatted_address: "Appointment Venue Street, Exampleville NSW 2000, Australia",
+  },
+  order: {
+    id: "tonomo-order-001",
+    property_address: {
+      street: "42 Example Street",
+      formatted_address: "42 Example Street, Exampleville NSW 2000, Australia",
+      city: "Exampleville",
+      zipcode: "2000",
+    },
+  },
+} as const;
 
 describe("parseTonomoOrder", () => {
+  it("unwraps changed webhook envelopes before parsing the nested order", () => {
+    expect(parseTonomoOrder(changedWebhookFixture)).toMatchObject({
+      orderId: "tonomo-order-001",
+      street: "42 Example Street",
+      suburb: "Exampleville",
+      postcode: "2000",
+    });
+  });
+
+  it.each([
+    ["order_id", { order_id: "tonomo-order-001" }],
+    ["orderId", { orderId: "tonomo-order-001" }],
+  ] as const)("accepts the nested %s order identity alias", (_alias, identity) => {
+    const order = { ...changedWebhookFixture.order, id: undefined, ...identity };
+    expect(parseTonomoOrder({ ...changedWebhookFixture, order })).toMatchObject({
+      orderId: "tonomo-order-001",
+      street: "42 Example Street",
+    });
+  });
+
+  it("rejects malformed changed envelopes without a nested order", () => {
+    expect(() => parseTonomoOrder({ action: "changed", id: "appointment-event-001", orderId: "tonomo-order-001" }))
+      .toThrow(TonomoParseError);
+    expect(() => parseTonomoOrder({ ...changedWebhookFixture, order: null }))
+      .toThrow(TonomoParseError);
+  });
+
+  it("rejects changed envelopes with conflicting order identities", () => {
+    expect(() => parseTonomoOrder({
+      ...changedWebhookFixture,
+      order: { ...changedWebhookFixture.order, id: "different-order" },
+    })).toThrow(/conflicts with nested order id/);
+    expect(() => parseTonomoOrder({
+      ...changedWebhookFixture,
+      order: { ...changedWebhookFixture.order, orderId: "different-order" },
+    })).toThrow(/conflicting nested order ids/);
+  });
+
+  it("does not unwrap an arbitrary order property on a direct payload", () => {
+    expect(parseTonomoOrder({
+      id: "direct-order",
+      street: "1 Direct Street",
+      order: { id: "nested-order", street: "2 Nested Street" },
+    }).orderId).toBe("direct-order");
+  });
+
+  it("uses the normalized nested order identity for changed payloads", () => {
+    expect(tonomoOrderKey(changedWebhookFixture)).toBe("tonomo-order-001");
+    expect(tonomoOrderKey({
+      id: "direct-order",
+      street: "1 Direct Street",
+      order: { id: "nested-order" },
+    })).toBe("direct-order");
+  });
+
   it("parses a snake_case order with string services", () => {
     expect(parseTonomoOrder({
       order_id: 42, order_no: "Q-42", street: "4 McGowen Ave", suburb: "Richmond", postcode: "3121",

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { editorFolderAvailability } from "../lib/editor-folders";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
@@ -177,7 +178,7 @@ async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string
   }
   return sessions.length;
 }
-async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], variant: BoardSchemaVariant, contractEnabled: boolean, viewerSeesRawOnly = false) {
+async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectId: string, role: AppEnv["Variables"]["user"]["role"], variant: BoardSchemaVariant, contractEnabled: boolean, viewerSeesRawOnly = false, editorEnv?: AppEnv["Bindings"]) {
   // Do not replace this with select(). The post-0037 Drizzle schema contains board_revision.
   const project = await db.select(projectColumnsForVariant(variant)).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (!project) return null;
@@ -190,11 +191,12 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
   const deadlineSchedule = await readProjectDeadlineSchedule(d1, projectId);
+  const editorFolders = editorEnv ? await editorFolderAvailability(editorEnv, projectId) : null;
   return projectStageForRole({
     ...project,
     boardRevision: variant === "tb5a_0037" && "boardRevision" in project ? Number(project.boardRevision) : 0,
     contractEnabled,
-    editedUploadAvailable: Boolean(project.rawFolderPath || project.rawFolderLink),
+    editedUploadAvailable: editorFolders ? editorFolders.outputReady : Boolean(project.rawFolderPath || project.rawFolderLink),
     effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null,
     collections,
     members: memberDtos,
@@ -319,6 +321,7 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
   const publicationIds = [...memberTuples.notificationOutboxIds, ...broadIds];
   if (publicationIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
   if (data.rawFolderPath !== undefined) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(projectId).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId, error })));
+  if (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(projectId).catch((error) => console.error("Editor scaffold trigger failed", { projectId, error })));
   const collectionsForResponse = collectionRecords.map((collection) => ({ id: collection.id, projectId, kind: collection.kind, status: "empty", expectedCount: null, receivedCount: 0 }));
   const observedMemberships = memberTuples.memberships.map((membership, index) => {
     const observed = firstD1<{ name: string | null; email: string | null; globalRole: Role | null; active: number | null }>(result[index]);
@@ -540,7 +543,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     const currentCollections = await db.select({ kind: schema.collections.kind }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
     const projectMatches = currentProject?.archivedAt === null && Object.entries(projectUpdates).every(([key, value]) => (currentProject as unknown as Record<string, unknown>)[key] === (value ?? null));
     const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
-    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant)));
+    if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
     const currentCounts = await countsFor(removedCollections.map((collection) => collection.id));
     return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0 })) }, 409);
   }
@@ -549,7 +552,8 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
-  return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant)));
+  if (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(id).catch((error) => console.error("Editor scaffold trigger failed", { projectId: id, error })));
+  return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
 }));
 
 function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" | "delete") {
@@ -579,6 +583,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
       try {
         const result = await addProjectMemberWithAssignmentIntent(c.env.DB, { projectId, userId, roleOnProject, actorId: principal.id, auditPrincipal: principal });
         if (result.created && result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+        if (roleOnProject === "photographer" && (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true)) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(projectId).catch((error) => console.error("Editor scaffold trigger failed", { projectId, error })));
         return c.json({ outcome: result.created ? "created" : "unchanged", membership: result.membership }, result.created ? 201 : 200);
       } catch (error) {
         if (error instanceof ProjectMemberIneligibleError) return c.json({ error: "User is not eligible for this project role", code: "ineligible_project_member", roleOnProject }, 422);
@@ -626,7 +631,8 @@ projectsRoutes.post("/projects/:id/dropbox-sync", terminalRoute("/projects/:id/d
   if (!roleHasCapability(user.role, "uploadRaw")) return c.json({ error: "Forbidden", capability: "uploadRaw" }, 403);
   if (!(await hasProjectAccess(c, id))) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const project = await createDb(c.env.DB).select({ rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink }).from(schema.projects).where(eq(schema.projects.id, id)).get();
-  if (!project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: "No Dropbox folder configured for this project" }, 400);
+  const editorFolders = await editorFolderAvailability(c.env, id);
+  if (!editorFolders?.inputReady && !project?.rawFolderPath && !project?.rawFolderLink) return c.json({ error: editorFolders ? "No ready Dropbox Input folder configured for this project" : "No Dropbox folder configured for this project" }, 400);
   const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
   await audit(c.env, user, "project.dropbox_sync", "project", id, { jobId });
   return c.json({ ok: true, jobId });
@@ -647,11 +653,30 @@ projectsRoutes.post("/projects/:id/sync-dropbox", terminalRoute("/projects/:id/s
   if (!project) return c.json({ error: "Project not found" }, 404);
   if (project.archivedAt) return c.json({ error: "Project is archived" }, 409);
 
-  const hasRawFolder = Boolean(project.rawFolderPath || project.rawFolderLink);
+  const editorFolders = await editorFolderAvailability(c.env, id);
+  const hasRawFolder = Boolean(editorFolders?.inputReady || project.rawFolderPath || project.rawFolderLink);
   const result: DropboxSyncResult = {
     raw: { skipped: hasUploadRaw ? "no_raw_folder" : "not_permitted" },
     edited: { skipped: isAdmin ? "not_ready" : "not_admin" },
   };
+
+  if (editorFolders) {
+    if (!editorFolders.ready) {
+      if (!hasRawFolder || !hasUploadRaw) return c.json({ error: "Editor folders need review before synchronization" }, 409);
+      const { jobId } = await c.env.BACKGROUND.triggerDropboxSync(id);
+      result.raw = { jobId };
+      await audit(c.env, user, "project.dropbox_sync", "project", id, { jobId, scope: "legacy_raw_pending_editor" });
+      return c.json(result);
+    }
+    // The combined mapped operation does not initiate an AutoHDR handoff or client publication.
+    const { jobId } = isAdmin
+      ? await c.env.BACKGROUND.triggerEditorSync(id)
+      : await c.env.BACKGROUND.triggerDropboxSync(id);
+    result.raw = { jobId };
+    if (isAdmin) result.edited = { jobId };
+    await audit(c.env, user, "project.dropbox_sync", "project", id, { jobId, scope: "editor" });
+    return c.json(result);
+  }
 
   if (hasUploadRaw && hasRawFolder) {
     try {
@@ -926,7 +951,7 @@ projectsRoutes.get("/projects/:id/jobs", requireCapability("adminBackend"), term
     id: schema.jobs.id, kind: schema.jobs.kind, status: schema.jobs.status, error: schema.jobs.error,
     correlationId: schema.jobs.correlationId,
     createdAt: schema.jobs.createdAt, updatedAt: schema.jobs.updatedAt,
-  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr_api_send", "autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
+  }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.kind, ["autohdr_api_send", "autohdr", "fetch_edited", "autohdr_scaffold", "editor_reconcile", "editor_sync", "manual_edited_publish", "manual_raw_publish"]))).orderBy(desc(schema.jobs.createdAt)).limit(20).all();
   return c.json({ jobs: rows });
 }));
 
@@ -935,13 +960,21 @@ projectsRoutes.post("/jobs/:id/retry", requireCapability("adminBackend"), termin
   if (!idCheck(id)) return c.json({ error: "Invalid job id" }, 400);
   const job = await createDb(c.env.DB).select({ id: schema.jobs.id, projectId: schema.jobs.projectId, kind: schema.jobs.kind, status: schema.jobs.status, payloadJson: schema.jobs.payloadJson })
     .from(schema.jobs).where(eq(schema.jobs.id, id)).get();
-  if (!job || !job.projectId || !["autohdr", "fetch_edited", "autohdr_scaffold", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
+  if (!job || !job.projectId || !["autohdr", "fetch_edited", "autohdr_scaffold", "editor_reconcile", "editor_sync", "manual_edited_publish", "manual_raw_publish"].includes(job.kind)) return c.json({ error: "Background job not found" }, 404);
   if (["autohdr", "fetch_edited", "autohdr_scaffold"].includes(job.kind)) {
     const variant = await boardSchemaVariant(c.env.DB);
     if (variant === "pre_0037") return boardSchemaMaintenance(c);
   }
   if (!await hasProjectAccess(c, job.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   if (job.status !== "stuck" && job.status !== "failed") return c.json({ error: "Only stuck or failed background jobs can be retried" }, 409);
+  if (job.kind === "editor_reconcile" || job.kind === "editor_sync") {
+    const result = job.kind === "editor_reconcile"
+      ? await c.env.BACKGROUND.ensureEditorFolder(job.projectId)
+      : await c.env.BACKGROUND.triggerEditorSync(job.projectId);
+    if (!result) return c.json({ error: "Editor automation is disabled or this Project needs reviewed folder linking" }, 409);
+    await audit(c.env, c.get("user"), "job.retry", "job", job.id, { newJobId: result.jobId });
+    return c.json({ ok: true, jobId: result.jobId });
+  }
   const isManualPublish = job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish";
   const manualAssetId = isManualPublish ? (() => { try { const payload = JSON.parse(job.payloadJson ?? "{}"); return typeof payload.assetId === "string" ? payload.assetId : null; } catch { return null; } })() : null;
   if (isManualPublish && !manualAssetId) return c.json({ error: "Manual upload job has no asset" }, 409);
@@ -1144,6 +1177,6 @@ projectsRoutes.get("/projects/:id", terminalRoute("/projects/:id", async (c) => 
   }
   if (!await hasProjectAccess(c, id)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const variant = await boardSchemaVariant(c.env.DB);
-  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), c.get("user").role === "photographer");
+  const value = await details(createDb(c.env.DB), c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), c.get("user").role === "photographer", c.env);
   return value ? c.json(value) : c.json({ error: "Project not found" }, 404);
 }));

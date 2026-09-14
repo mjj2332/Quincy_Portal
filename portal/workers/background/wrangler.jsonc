@@ -77,6 +77,9 @@
     // provision them with `wrangler secret put`, never as committed vars.
     "RENDITIONS_ENABLED": true,
     "DROPBOX_RAW_AUTOMATION_ENABLED": "1",
-    "DROPBOX_AUTOHDR_AUTOMATION_ENABLED": "1"
+    "DROPBOX_AUTOHDR_AUTOMATION_ENABLED": "1",
+    // Enable after 0041 and a reviewed pilot; set the real cutover epoch before auto-creation.
+    "DROPBOX_EDITOR_AUTOMATION_ENABLED": "0",
+    "EDITOR_AUTOCREATE_AFTER_MS": "0"
   }
 }
