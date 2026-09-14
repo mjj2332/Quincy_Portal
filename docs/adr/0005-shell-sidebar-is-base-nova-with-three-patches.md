@@ -146,3 +146,16 @@ patches and the container conformance edit directly, against minimal `data-testi
 guard.test.ts`, `styles/sidebar-token-bridge.guard.test.ts` and `config/no-document-cookie.guard.
 test.ts` are the standing guards; a diff against the registry JSON (`npx shadcn@latest add sidebar
 tooltip` into a sandbox) is what step 1 of any future rebuild starts from.
+
+## P2 addendum — the notification bell's panel is base-nova's `popover.tsx`
+
+The rail's notification panel moved from `quincy/menu.tsx` (Base UI `Menu`) to base-nova's
+`components/reui/popover.tsx` (Base UI `Popover`), a non-modal dialog rather than a `role="menu"`
+— a notification list never really was one. Vendored the same way as `sidebar.tsx`/`tooltip.tsx`
+above; its conformance edits are recorded in `components/reui/popover.tsx`'s own header comment,
+not repeated here. It joins `SHELL_FILES` in `styles/shell-breakpoint.guard.test.ts`, the same
+growth pattern documented above.
+
+`components/reui/popover.dom.test.tsx` covers the container conformance edit;
+`NotificationBell.dom.test.tsx` covers the panel's own dialog semantics, focus handoff and click
+behaviour.

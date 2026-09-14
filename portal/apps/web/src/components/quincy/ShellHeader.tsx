@@ -98,7 +98,7 @@ export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      {narrow && <NotificationBell touchTarget />}
+      {narrow && <NotificationBell touchTarget align="end" />}
     </header>
   );
 }
