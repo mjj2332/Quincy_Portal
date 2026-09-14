@@ -2038,3 +2038,10 @@ win); and migration 0042 backfills the display text already sitting in productio
 ISO there would make every one of them due in the same reconciliation run at once. They're held
 for a separate, later migration that accounts for that side effect — rows still showing
 `needs_review` with "Invalid shoot date" in `awaiting_raw` are expected until then.
+
+Migration 0043 converts those `awaiting_raw` rows. To bound the resulting notification fan-out
+(each advance to `raw_review` emails every active admin and the project's editors), the same
+release temporarily lowers `RECONCILE_AWAITING_RAW_BATCH_SIZE`
+(`workers/background/src/reconcile-awaiting-raw.ts`) from 100 to 15 so the backlog drains over
+several hourly runs instead of one; that constant must be restored to 100 once the backlog has
+drained.

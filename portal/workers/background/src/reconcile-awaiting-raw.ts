@@ -17,7 +17,12 @@ type ReconciliationStore = {
 type ReconciliationNotifier = (projectId: string) => void | Promise<void>;
 
 const SYDNEY_TIME_ZONE = "Australia/Sydney";
-export const RECONCILE_AWAITING_RAW_BATCH_SIZE = 100;
+// Lowered from 100 while migration 0043 releases ~46 past-dated awaiting_raw projects at
+// once: each advance sends a raw_ready notification and email to every active admin and
+// the project's editors, and one cron invocation shares a 1000-subrequest budget with the
+// Editor recovery page and the stalled/subtask scans. Restore to 100 once the backlog has
+// drained (a few hourly runs).
+export const RECONCILE_AWAITING_RAW_BATCH_SIZE = 15;
 
 export function australiaSydneyBusinessDate(instant: Date | number): string {
   const values = new Intl.DateTimeFormat("en-CA", {
