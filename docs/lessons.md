@@ -2015,3 +2015,26 @@ Escape-returns-focus assertion going red the moment `RailSheet` gained a `finalF
 **P3, Sheet account menu:** a Menu inside a modal Dialog loses the return-focus race — the Dialog's own
 `restoreFocus: "popup"` reclaims it a frame later, so move focus to the trigger synchronously in
 `onOpenChange` instead. Root Menu collision avoidance has no axis fallback; pick `side` explicitly.
+
+## Tonomo's created webhook carries a display date, and null-fill never upgrades it (2026-09-14)
+
+**Symptom:** Editor folder candidate discovery treated every one of these projects as
+`needs_review` with "Invalid shoot date", and the hourly awaiting-RAW reconciliation silently
+skipped ~50 production rows — both readers require `projects.shoot_date` to already be ISO.
+
+**Cause:** Tonomo's `created` webhook often omits `when.start_time`; `shootDateFrom`
+(`packages/shared/src/tonomo.ts`) then fell back to the payload's human-readable text (e.g.
+"Thursday, 17 Sep, 2026") and stored it verbatim. A later `changed` event usually carries
+`when.start_time`, but `updateProject` (`workers/background/src/tonomo/process.ts`) only fills
+fields that are currently `NULL` — a non-null display string was never replaced.
+
+**Fix:** normalise at ingest (`parseTonomoDisplayDate` converts the exact weekday/day/month/year
+shape to ISO, validating the weekday against the calendar date so a malformed string is rejected
+rather than accepted); a narrow `updateProject` rule lets a canonical incoming `shootDate` replace
+a non-canonical stored one (and only that field — manual edits to every other snapshot field still
+win); and migration 0042 backfills the display text already sitting in production.
+
+`awaiting_raw` rows are excluded from 0042 on purpose: converting a past-dated display string to
+ISO there would make every one of them due in the same reconciliation run at once. They're held
+for a separate, later migration that accounts for that side effect — rows still showing
+`needs_review` with "Invalid shoot date" in `awaiting_raw` are expected until then.

@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant } from "@quincy/db";
 import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
-import { COLLECTION_KINDS, normaliseAddressKey, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
+import { COLLECTION_KINDS, isCanonicalCalendarDate, normaliseAddressKey, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
@@ -128,6 +128,13 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
     const incoming = order[field];
     if (project[field] === null && incoming !== null) changes[field] = incoming;
   }
+  // A `created` webhook without `when.start_time` stores its display text verbatim
+  // (parseTonomoOrder only recognises the exact canonical weekday/day/month/year shape); a
+  // later `changed` event carrying the real date must be allowed to upgrade that display
+  // text even though the field is already non-null, but never overwrite a manually edited
+  // or already-canonical value, and never write a non-canonical incoming value over it.
+  if (order.shootDate !== null && project.shootDate !== null
+    && !isCanonicalCalendarDate(project.shootDate) && isCanonicalCalendarDate(order.shootDate)) changes.shootDate = order.shootDate;
   if (order.invoiceAmount !== undefined) changes.invoiceAmount = order.invoiceAmount;
   if (order.paymentStatus !== undefined) changes.paymentStatus = order.paymentStatus;
   if (!project.rawFolderLink && order.rawFolderLink) changes.rawFolderLink = order.rawFolderLink;
