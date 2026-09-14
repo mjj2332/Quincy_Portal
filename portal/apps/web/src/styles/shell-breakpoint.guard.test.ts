@@ -47,6 +47,11 @@ const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   { path: "components/quincy/RailSheet.tsx", kind: "script" },
   { path: "components/quincy/NotificationBell.tsx", kind: "script" },
   { path: "styles/app.css", kind: "css" },
+  // #122: base-nova's `sidebar.tsx` now owns the mobile/desktop split itself (patch 2,
+  // `docs/adr/0005-…`), and `tooltip.tsx`'s container normalisation ships alongside it — both join
+  // the list the P1 build note above already sized for growth.
+  { path: "components/reui/sidebar.tsx", kind: "script" },
+  { path: "components/reui/tooltip.tsx", kind: "script" },
 ];
 
 // ---------------------------------------------------------------------------

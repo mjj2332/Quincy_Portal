@@ -1824,9 +1824,13 @@ sheet` resolves them.
 The cost: #111 vendored shadcn's `new-york-v4` sidebar (the wrong style) into
 `components/reui/sidebar.tsx` by hand, and #112 planned a hand-rolled Sheet and breadcrumb on
 Base UI Dialog before the owner caught it. #112 moves both onto the base-nova `sheet` and
-`breadcrumb`, vendored through the sandbox per `docs/reui-reuse.md`. `sidebar.tsx` still carries
-the new-york-v4 lineage; reconciling it with base-nova is its own decision, recorded here rather
-than done silently.
+`breadcrumb`, vendored through the sandbox per `docs/reui-reuse.md`.
+
+**The new-york-v4 lineage is closed.** #122 (`docs/adr/0005-…`) replaces `sidebar.tsx` with
+base-nova's own primitive, adopted whole with three behavioural patches, and vendors
+`tooltip.tsx` alongside it. A future reader finding `reui/sidebar.tsx` should find base-nova's
+shape there, not new-york-v4's — if it looks like the latter, something has regressed, not a
+decision still pending.
 
 **Rule.** A 404 on `@reui/<name>` sends you to the bare base-nova name, then to ReUI MCP `search`.
 Only when both miss is the component absent, and that is a scope decision for the spec's author.
@@ -1912,3 +1916,58 @@ equally on.
 a variable reads the same in development and ships the whole object, so what leaks is decided by a
 line that looks equivalent. And compare a string-valued env flag against its exact "on" string,
 never for truthiness.
+
+## Adopting base-nova's sidebar: five couplings to file names and comment text, not all of them guards (#122, 2026-09-14)
+
+#122 replaced `components/reui/sidebar.tsx` wholesale — #111's hand-trimmed, provider-less copy for
+base-nova's full primitive (`docs/adr/0005-…`). None of the guards this touches read intent; they
+read exact paths and exact prose, so a faithful re-vendor still needs to reproduce five couplings
+that have nothing to do with the primitive's actual behaviour.
+
+**(a) `config/no-document-cookie.guard.test.ts` requires `reui/sidebar.tsx` to CONTAIN the string
+`document.cookie`**, inside a comment, describing why the vendor's cookie write was removed. A
+header that documents patch 1 without ever spelling out the literal string it is patching away
+trips the guard's own negative-fixture test (`sidebarSource).toContain("document.cookie")`), not
+the positive one — deleting the cookie code is not enough; the prose has to name it.
+
+**(b) `styles/sidebar-token-bridge.guard.test.ts` hard-reads `components/quincy/NavigationRail.tsx`
+by path**, independent of the primitive, and asserts that file alone consumes at least one
+`*-sidebar*` role (`hover:bg-sidebar-accent` on the account-menu trigger, today). Move that last
+`-sidebar` utility out of the rail — say, by re-deriving every colour from Quincy's own aliases —
+and this specific assertion goes red even though nothing about the bridge itself broke.
+
+**(c) That same guard strips exactly `const ACCOUNT_MENU_ITEM = cn(…);` before scanning the rail**
+for re-scoped-role violations, by name and by that literal `cn(...)` shape. Renaming the constant,
+or refactoring the account-menu class string to a template literal or a second `cn()` call, moves it
+back into the scan — which would then flag `hover:bg-secondary` and friends as the rail depending on
+a role, when it is `quincy/menu.tsx`'s portalled panel that reads them, not the rail surface.
+
+**(d) `styles/shell-breakpoint.guard.test.ts`'s `SHELL_FILES` list is a fixed path+kind array,
+checked for an EXACT count and an exact path-by-path match**, not a floor. #122 appended
+`components/reui/sidebar.tsx` and `components/reui/tooltip.tsx` to it (patch 2's rewritten
+responsive variants live there now). The list only grows; renaming or deleting a shell file this
+guard already names is a deliberate edit to the guard itself, not a side effect of moving code.
+
+**(e) `styles/tokens/reui.css`'s own header prose (`:148-189`) explains, by name, why
+`--sidebar-ring` is absent** — the focus-ring removal correction, cross-referenced to
+`reui/badge.tsx` and `reui/button.tsx`. #122 kept the same correction and the same absence, so the
+comment needed no edit; a future change to WHY the ring is removed (not just re-vendoring the file
+it is removed from) would leave this comment naming the wrong reason.
+
+**Rule.** A vendored primitive's own diff is not the full change surface. Before re-vendoring
+`reui/sidebar.tsx` (or reading its guards as merely descriptive), grep this repo for the primitive's
+own path and for the literal strings its header names — `document.cookie`, `ACCOUNT_MENU_ITEM`,
+`--sidebar-ring` — and expect every hit to still be true after the edit, not just the file's own
+tests.
+
+**A third door on the unlayered-cascade trap: `a { color: inherit }`.** Luna's Chrome pass measured
+the rail's rows painting the wrong text colour — an inactive row computed `--text-primary` instead
+of `--text-secondary`. Every row here renders as `InternalLink`, a real `<a>`, and `styles/tokens/
+base.css:21` declares `a { color: inherit }`, imported UNLAYERED (`index.css`) the same way the
+outline shorthand and the focus ring already documented above (`docs/lessons.md:1181-1219`) are —
+so it beats any LAYERED `text-*` utility on an anchor regardless of merge order or specificity, and
+the row inherited the sidebar's own `--sidebar-foreground` instead. Same fix as those two: the `!`
+important modifier on the text-colour utilities, not moving `base.css` into a layer. A row rendered
+as a link is the tell — a `<button>`/`<div>` row has no inherited `color` fighting it, so this door
+only opens for the anchor-rendered rows a routing constraint (`InternalLink`, not `<button>`) forces
+into existence.

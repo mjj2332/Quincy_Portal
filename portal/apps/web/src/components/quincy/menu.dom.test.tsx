@@ -279,4 +279,41 @@ describe("Menu accessibility contract", () => {
     // lets the popup paint above its own scrim (§3.2).
     expect(backdrop.compareDocumentPosition(positioner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  it("12. triggerRender (#122) makes the rendered element the trigger itself, keeping aria-label, the test id, and opening on click", async () => {
+    // `NavigationRail`'s collapsed parents pass a `SidebarMenuButton` here so the item's own icon
+    // button becomes the menu's trigger, rather than `Menu` rendering a second, invisible wrapper
+    // button around it.
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+
+    await act(async () => {
+      root!.render(
+        <Menu
+          trigger="ignored — triggerRender wins"
+          triggerLabel="Open menu"
+          triggerTestId="custom-trigger"
+          label="Test menu"
+          triggerRender={<button type="button">Custom trigger</button>}
+        >
+          <MenuPrimitive.Item label="Alpha">Alpha</MenuPrimitive.Item>
+        </Menu>,
+      );
+      await Promise.resolve();
+    });
+
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!;
+    expect(trigger).not.toBeNull();
+    expect(trigger.tagName).toBe("BUTTON");
+    expect(trigger.textContent).toBe("Custom trigger");
+    expect(trigger.getAttribute("aria-label")).toBe("Open menu");
+    // Only one trigger element exists — `trigger`'s own content never renders as a second node.
+    expect(host.querySelectorAll('[aria-label="Open menu"]')).toHaveLength(1);
+
+    expect(menu()).toBeNull();
+    await click(trigger);
+    expect(menu()).not.toBeNull();
+    expect(items().map((item) => item.textContent)).toEqual(["Alpha"]);
+  });
 });

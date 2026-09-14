@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation } from "../../lib/staff-navigation";
 import { parseStaffLocation } from "../../lib/router";
+import { SidebarProvider } from "@/components/reui/sidebar";
 import { NavigationRail } from "./NavigationRail";
 import { NotificationBell } from "./NotificationBell";
 
@@ -95,7 +96,13 @@ describe("NotificationBell", () => {
       adminBackend: true,
       viewProductionCalendar: true,
     });
-    await render(<NavigationRail navigation={navigation} user={USER} variant="collapsed" />);
+    // #122: `NavigationRail` is built on base-nova's full `reui/sidebar.tsx`, whose primitives
+    // throw outside a `SidebarProvider` — see `NavigationRail.dom.test.tsx`'s own `renderInProvider`.
+    await render(
+      <SidebarProvider open={false} onOpenChange={() => {}}>
+        <NavigationRail navigation={navigation} user={USER} variant="collapsed" />
+      </SidebarProvider>,
+    );
     expect(host.querySelector('[data-testid="rail-notification-trigger"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="rail-notification-badge"]')?.textContent).toBe("2");
   });

@@ -1,16 +1,16 @@
-import { useEffect, useEffectEvent, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 import { Sheet } from "@/components/reui/sheet";
+import { SidebarProvider } from "@/components/reui/sidebar";
+import { cn } from "../../lib/utils";
 import { locationStore } from "../../lib/router";
 import { useMediaQuery } from "../../lib/use-media-query";
 import {
   SHELL_NARROW_QUERY,
-  isRailShortcut,
   railMode,
   readRailPreference,
   writeRailPreference,
   type RailPreference,
-  type RailShortcutTarget,
 } from "../../lib/shell-rail";
 import type { StaffNavigation } from "../../lib/staff-navigation";
 import { NavigationRail } from "./NavigationRail";
@@ -18,17 +18,15 @@ import { RailSheet } from "./RailSheet";
 import { ShellHeader } from "./ShellHeader";
 
 /**
- * Owns the rail's collapse preference, narrow/wide mode, the Sheet's open state and the ⌘B
- * listener — issue #112. Renders in place of the bare #111 `NavigationRail` when the flag is on.
+ * Owns the rail's collapse preference, narrow/wide mode and the Sheet's open state — issue #112,
+ * re-platformed onto base-nova's `SidebarProvider` in #122 (ADR 0005).
+ *
+ * `SidebarProvider` now owns the ⌘B listener itself (`reui/sidebar.tsx`'s patch 3, `isRailShortcut`)
+ * — the ⌘B effect #112 built here is DELETED, not duplicated. This component instead controls the
+ * provider (`open`/`onOpenChange`) and is what persists the resulting preference to `localStorage`.
  *
  * `safeLocalStorage` guards the `window.localStorage` accessor itself, which can throw under some
  * privacy settings before `readRailPreference`/`writeRailPreference`'s own try/catch is reached.
- *
- * `toggleRail` computes the next preference, calls `setPreference`, then writes storage as three
- * separate steps — not inside `setPreference`'s updater, which React 19 `StrictMode` double-
- * invokes and would double-write storage for one toggle. Its `mode === "sheet"` guard is redundant
- * with today's two call sites (the ⌘B listener, the header toggle) but stays as the one-line
- * invariant that keeps a future third caller from reopening the same defect.
  *
  * `sheetOpen` closes on a location change, on `mode` leaving `"sheet"`, and — a #112 review
  * finding — on a click on the link for the route already showing, which publishes the SAME
@@ -38,6 +36,19 @@ import { ShellHeader } from "./ShellHeader";
  * One `Sheet` Root (`reui/sheet.tsx`) wraps the rail slot and the content column in every mode —
  * it renders no DOM of its own, so this costs nothing while narrow, and it is what lets
  * `ShellHeader`'s trigger and `RailSheet`'s popup share a Root and use a real `Dialog.Trigger`.
+ *
+ * `SidebarProvider` wraps that `Sheet` Root in turn. Its own `data-slot="sidebar-wrapper"` div is
+ * `.app--railed`'s ONE in-flow child now (`styles/app.css`) — the Sheet root and `RailSheet`'s
+ * popup render no in-flow DOM of their own — so `className="min-w-0"` here is what stops a wide
+ * table inside a page from pushing it past the viewport, the job
+ * `.app--railed > :not(.app__rail) { min-width: 0 }` used to do before the rail owned its own
+ * fixed/full-height positioning (#122). `app__shell` is the Sol-review fix for the wrapper's own
+ * `min-h-svh`: `.app--impersonating`'s `padding-top: 42px` adds to that minimum rather than sharing
+ * it, so a short impersonated page renders 42px taller than the viewport — `.app--impersonating
+ * .app__shell { min-height: calc(100svh - 42px) }` (`styles/app.css`, unlayered, beside the
+ * `.app__rail` rule) claws it back. The content column carries its own `min-w-0 flex-1`
+ * directly, for the same reason: it is the provider wrapper's flex child now, not
+ * `.app--railed`'s.
  */
 
 function safeLocalStorage(): Storage | null {
@@ -73,50 +84,28 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
     if (mode !== "sheet") setSheetOpen(false);
   }, [mode]);
 
-  function toggleRail() {
-    if (mode === "sheet") return; // Below 772px the preference is never written — see the header comment.
-    const next: RailPreference = preference === "collapsed" ? "expanded" : "collapsed";
+  // `SidebarProvider`'s own `toggleSidebar` (⌘B, or the rail's `SidebarTrigger`) calls this with
+  // the next open value — persistence is this component's job, not the vendored primitive's
+  // (`reui/sidebar.tsx`'s patch 1: no cookie, ever).
+  function handleOpenChange(open: boolean) {
+    const next: RailPreference = open ? "expanded" : "collapsed";
     setPreference(next);
     const storage = safeLocalStorage();
     if (storage) writeRailPreference(storage, next);
   }
 
-  // `useEffectEvent` reads `mode`/`toggleRail` fresh on every call without being a reactive
-  // dependency itself, so the effect below only needs to resubscribe when the sheet boundary is
-  // crossed, not on every preference toggle in between.
-  const onRailShortcut = useEffectEvent((event: KeyboardEvent) => {
-    // `isRailShortcut` is duck-typed (`lib/router.ts`'s `LinkClick` shape) so a node test can pass
-    // a plain object; a real `KeyboardEvent`'s `target` is `EventTarget | null`, which TypeScript's
-    // weak-type check rejects passing directly, so the fields are read out explicitly.
-    const shortcutEvent = {
-      key: event.key,
-      metaKey: event.metaKey,
-      ctrlKey: event.ctrlKey,
-      altKey: event.altKey,
-      shiftKey: event.shiftKey,
-      repeat: event.repeat,
-      isComposing: event.isComposing,
-      defaultPrevented: event.defaultPrevented,
-      target: event.target as RailShortcutTarget | null,
-    };
-    if (!isRailShortcut(shortcutEvent)) return;
-    event.preventDefault();
-    toggleRail();
-  });
-
-  // An effect event is never a reactive value — React guarantees `onRailShortcut` always sees the
-  // latest render's `mode`/`toggleRail` without needing to be a dependency, so `isSheetMode` alone
-  // decides when to (re)subscribe.
-  const isSheetMode = mode === "sheet";
-  useEffect(() => {
-    if (isSheetMode) return undefined;
-    window.addEventListener("keydown", onRailShortcut);
-    return () => window.removeEventListener("keydown", onRailShortcut);
-  }, [isSheetMode]);
-
   const contentColumn = (
-    <div className="flex min-w-0 flex-1 flex-col" data-rail-mode={mode}>
-      <ShellHeader mode={mode} navigation={navigation} onToggleRail={toggleRail} />
+    <div
+      className={cn(
+        "flex min-w-0 flex-1 flex-col",
+        "peer-data-[variant=inset]:m-[var(--space-2)] peer-data-[variant=inset]:ml-0",
+        "peer-data-[variant=inset]:rounded-[var(--radius-card)]",
+        "peer-data-[variant=inset]:bg-[color:var(--bg-surface)] peer-data-[variant=inset]:shadow-[var(--shadow-sm)]",
+        "peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-[var(--space-2)]",
+      )}
+      data-rail-mode={mode}
+    >
+      <ShellHeader mode={mode} navigation={navigation} />
       {children}
     </div>
   );
@@ -141,9 +130,16 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
   );
 
   return (
-    <Sheet open={mode === "sheet" && sheetOpen} onOpenChange={setSheetOpen}>
-      {railSlot}
-      {contentColumn}
-    </Sheet>
+    <SidebarProvider
+      open={mode !== "sheet" && preference === "expanded"}
+      onOpenChange={handleOpenChange}
+      className="app__shell min-w-0"
+      style={{ "--quincy-rail-width": "260px" } as CSSProperties}
+    >
+      <Sheet open={mode === "sheet" && sheetOpen} onOpenChange={setSheetOpen}>
+        {railSlot}
+        {contentColumn}
+      </Sheet>
+    </SidebarProvider>
   );
 }

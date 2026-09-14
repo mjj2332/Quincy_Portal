@@ -25,8 +25,11 @@ import type { RailMode } from "../../lib/shell-rail";
  * would be a second, CSS-owned breakpoint (`styles/shell-breakpoint.guard.test.ts` forbids it), and
  * #112's AC needs the FULL trail regardless of width, not a hidden one.
  *
- * - **Wide** (`expanded`/`collapsed`): the rail's own collapse toggle, plus the breadcrumb. Nothing
- *   else — the bell lives in `NavigationRail`'s own header at this width (#112 AC4).
+ * - **Wide** (`expanded`/`collapsed`): the breadcrumb, and NOTHING else. #122 moves the rail's own
+ *   collapse toggle out of this header and into `NavigationRail`'s own header as a `SidebarTrigger`
+ *   (`data-testid="rail-toggle"`) — the bell already lived there (#112 AC4), and the toggle now
+ *   reads `SidebarProvider` context directly rather than a callback threaded down through this
+ *   component, so this file no longer needs an `onToggleRail` prop at all.
  * - **Narrow** (`sheet`): the Sheet's own `SheetTrigger` in place of the toggle, the same
  *   breadcrumb, and the bell — the one thing collapse below 772px must not cost is an unread count
  *   nobody can see, and there is no rail on screen to hold it there.
@@ -51,7 +54,6 @@ import type { RailMode } from "../../lib/shell-rail";
 export type ShellHeaderProps = {
   mode: RailMode;
   navigation: StaffNavigation;
-  onToggleRail: () => void;
 };
 
 // Tempo's `bullet-separator.tsx`: a short painted bar between crumbs instead of a chevron.
@@ -59,9 +61,8 @@ function BulletSeparator() {
   return <span className="inline-flex h-0.5 w-2 shrink-0 rounded-full bg-foreground/30" />;
 }
 
-export function ShellHeader({ mode, navigation, onToggleRail }: ShellHeaderProps) {
+export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
   const narrow = mode === "sheet";
-  const expanded = mode === "expanded";
   const crumbs = buildStaffBreadcrumb(navigation);
 
   return (
@@ -72,24 +73,15 @@ export function ShellHeader({ mode, navigation, onToggleRail }: ShellHeaderProps
       className="shell-header sticky top-0 h-[50px] flex items-center gap-2 bg-background"
       data-testid="shell-header"
     >
-      {narrow
-        ? <SheetTrigger
-            data-testid="shell-header-sheet-trigger"
-            aria-label="Open navigation"
-            render={<Button variant="ghost" size="icon" className="size-[44px]" />}
-          >
-            <PanelLeftIcon />
-          </SheetTrigger>
-        : <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse navigation" : "Expand navigation"}
-            onClick={onToggleRail}
-            data-testid="shell-header-rail-toggle"
-          >
-            <PanelLeftIcon />
-          </Button>}
+      {narrow && (
+        <SheetTrigger
+          data-testid="shell-header-sheet-trigger"
+          aria-label="Open navigation"
+          render={<Button variant="ghost" size="icon" className="size-[44px]" />}
+        >
+          <PanelLeftIcon />
+        </SheetTrigger>
+      )}
 
       <Breadcrumb aria-label="Breadcrumb" data-testid="shell-breadcrumb">
         <BreadcrumbList>

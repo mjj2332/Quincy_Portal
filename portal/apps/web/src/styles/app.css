@@ -37,54 +37,62 @@ button { font-family: var(--font-sans); }
    `@layer utilities` regardless of specificity — the utility would be a silent no-op, the same
    trap `tokens/reui.css` records for --radius and the type scale. The class is `app--railed`, not
    `app--rail`: `.rail` is already taken by ProjectOverviewRail (see `.app--impersonating .rail`
-   just below). `min-width: 0` on the content column stops a wide table inside a page from pushing
-   the rail off its 250px. */
+   just below).
+
+   #122 (ADR 0005): `.app`'s only in-flow child under the rail flag is now `SidebarProvider`'s own
+   `data-slot="sidebar-wrapper"` (`reui/sidebar.tsx`, `group/sidebar-wrapper flex min-h-svh
+   w-full`) — the Sheet root (`RailedShell`) and `RailSheet`'s popup render no in-flow DOM of
+   their own, so `.app--railed`'s row has exactly one child and there is no child-splitting rule
+   to write here any more. That one child is the provider wrapper, which carries `min-w-0`
+   (`RailedShell.tsx`) so a wide table cannot push it past the viewport; the content column carries
+   its own `min-w-0 flex-1` directly as Tailwind classes, because it is the PROVIDER wrapper's flex
+   child now, not `.app--railed`'s. The rail itself needs no sticky/height rule here either:
+   base-nova's `Sidebar` renders its own `fixed inset-y-0 h-svh` container (`sidebar-container`)
+   beside an in-flow width spacer (`sidebar-gap`), full height and pinned out of the box. */
 .app--railed { flex-direction: row; align-items: stretch; }
-.app--railed > :not(.app__rail) { min-width: 0; flex: 1; }
-/* The rail is full-height and stays put while the page scrolls. This mirrors the reference shell
-   in `tmp/ReUI-Test-2-tempo-v1.1.0`, whose vendor rail is a `fixed inset-y-0 h-svh` container
-   beside an in-flow spacer, with the content column scrolling internally. `position: sticky`
-   reaches the same behaviour with no spacer element and no fixed positioning, so window scrolling
-   — and therefore every existing screen's scroll behaviour, including the sticky
-   ProjectOverviewRail below — is left exactly as it is.
-
-   Each declaration is load-bearing:
-   - `align-self: start` — `.app--railed` sets `align-items: stretch`, which sizes the rail to the
-     whole DOCUMENT (7447px on the Dashboard). A sticky item stretched to its container's height
-     has no room left to stick in.
-   - `height: 100dvh` — the primitive's own `h-full` is `height: 100%` resolved against `.app`,
-     which has `min-height: 100vh` but NO `height`, so it computed to `auto` and left the rail
-     content-tall: a 343px stub on a 900px viewport. `dvh` rather than `vh` so mobile browser
-     chrome cannot clip the footer.
-   - `top: 0` — `position: sticky` with the initial `top: auto` never sticks.
-
-   `SidebarContent` already carries `min-h-0 flex-1 overflow-auto`, so once the height is definite
-   the nav list scrolls inside the rail and the identity/sign-out footer stays pinned. */
-/* z-index 76: above the header (75) so the collapsed flyout (#112) clears content painted after
-   it in the DOM — `position: sticky` makes this a stacking context with z `auto`, which otherwise
-   traps the flyout's `--z-popover` beneath it. Below `--z-popover`/`--z-dialog`, so the Sheet
-   (portalled, outside this stacking context) still covers it regardless. */
-.app--railed > .app__rail { position: sticky; top: 0; align-self: start; height: 100dvh; z-index: 76; }
 .app--impersonating { padding-top: 42px; }
 .app--impersonating .topbar { top: 42px; }
-/* Same 42px banner offset the topbar takes above — the rail must sit below it, not under it. */
-.app--impersonating.app--railed > .app__rail { top: 42px; height: calc(100dvh - 42px); }
+/* Same 42px banner offset the topbar takes above — the rail must sit below it, not under it.
+   `app__rail` (`components/quincy/NavigationRail.tsx`) lands on base-nova's `sidebar-container`
+   div (`reui/sidebar.tsx`'s `Sidebar`, the `fixed inset-y-0 h-svh` element) via the `className` it
+   spreads there, so this descendant selector reaches past the provider wrapper and the `group
+   peer` outer div straight to the fixed element itself — unlayered here beats the vendored
+   `top-0`/`h-svh` utilities the same way `.app` beats a `flex-row` utility above. */
+.app--impersonating .app__rail { top: 42px; height: calc(100dvh - 42px); }
+/* Sol review (#122 P1): `SidebarProvider`'s own `data-slot="sidebar-wrapper"` (`app__shell`,
+   `RailedShell.tsx`) is `min-h-svh` — a MINIMUM, not a height, so `.app--impersonating`'s own
+   `padding-top: 42px` on `.app` ADDS to that minimum rather than sharing it, and a short
+   impersonated page renders 42px taller than the viewport. Unlayered, so it beats the vendored
+   `min-h-svh` utility the same way the rest of this file beats Tailwind's `@layer utilities`. */
+.app--impersonating .app__shell { min-height: calc(100svh - 42px); }
 /* #112's `ShellHeader`: same stacking and banner offset as .topbar. */
 .shell-header { z-index: 75; }
 .app--impersonating .shell-header { top: 42px; }
 /* #112. `data-rail-mode` (set by `RailedShell` from `lib/shell-rail.ts`'s `SHELL_NARROW_QUERY`,
    771px) is the only breakpoint signal CSS keys off, with no `@media` of its own
    (`styles/shell-breakpoint.guard.test.ts`). `--app-rail-inline-size` only feeds the toast surface
-   (`--toast-inset-inline-start`) — the rail's own width comes from `NavigationRail`'s `variant`
-   classes, not this variable.
+   (`--toast-inset-inline-start`) — the rail's own width comes from base-nova's `Sidebar`/
+   `SidebarProvider` (#122), not this variable.
 
    `--toast-inset-inline-start` is REDECLARED below rather than just read, because a custom
    property's VALUE is substituted where it is DECLARED, not re-evaluated where it's later read: the
    `:root` declaration stays fixed at `:root`'s own 0px `--app-rail-inline-size` regardless of a
    descendant override, so redeclaring the composite here — on the element that overrides the
-   ingredient — is what lets `ToastViewport` inherit a moved value. */
-[data-rail-mode="expanded"] { --app-rail-inline-size: 250px; }
-[data-rail-mode="collapsed"] { --app-rail-inline-size: 48px; }
+   ingredient — is what lets `ToastViewport` inherit a moved value.
+
+   260px/collapsed-calc (#122) replace 250/48: the provider's rail width moved to
+   `--quincy-rail-width: 260px` (`RailedShell.tsx`). `--app-rail-inline-size` is meant to be where
+   the CONTENT COLUMN starts, not the rail's own rendered width — Luna's Chrome pass measured the
+   toast 24px off the content edge expanded (a coincidence: 260 + `--space-2` happened to read
+   close) and 18px off collapsed, which is where the original `calc(3rem + var(--space-4) + 2px)`
+   (base-nova's own `inset`-variant SIDEBAR width — the icon width, its padding, and the fixed
+   container's 2px border) gave the wrong quantity entirely: it is the rail's rendered width, not
+   the content edge. The content column starts at the sidebar GAP's width
+   (`--quincy-rail-width-icon` + the `inset` variant's own `--space-4` padding) plus the content
+   column's OWN `ml-[var(--space-2)]` (`RailedShell.tsx`'s inset classes) — so `--space-2`, not
+   `2px`, is the third term. */
+[data-rail-mode="expanded"] { --app-rail-inline-size: 260px; }
+[data-rail-mode="collapsed"] { --app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2)); }
 [data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
 [data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
 .app--impersonating .rail { top: 106px; max-height: calc(100vh - 106px); }
