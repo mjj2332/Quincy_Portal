@@ -40,21 +40,23 @@ system prompts.
 
 
 
-1. **Agents may self-mint a session**. Reading `BETTER_AUTH_SECRET`
-   from `.dev.vars` or Worker secrets, computing the HMAC, and writing a `session` row to reach an
-   authenticated page is a **sanctioned technique**. It is the standing answer to a missing session, and it exists so that no agent is ever cornered
-   into the one thing that stays off-limits: **running Google OAuth against the owner's real
-   account** — a human does every sign-in click (`feedback-no-autonomous-google-signin`).
+1. **Every authenticated session is human-made.** A human does every sign-in click
+   (`feedback-no-autonomous-google-signin`), and an agent borrows the session that click created:
 
-   Two rules bound it, and they carry the whole policy:
+   - **Local dev:** the owner starts a dedicated debugging Chrome and signs into
+     `http://localhost:8787` in it ([agy-cli.md §Option A](agy-cli.md)); Luna attaches over CDP on
+     that port. Mutate freely there.
+   - **Production:** the owner's already signed-in Chrome tab, **passive only**: read, measure,
+     screenshot, verify. Production writes stay on the YOLO-mode path (a human-authenticated Admin
+     plus impersonation), because that is what makes a mutation *attributable* in `audit_log`.
 
-   - **A self-minted production session is passive.** Read, measure, screenshot, verify. Writes on
-     production keep the YOLO-mode path — a human-authenticated Admin plus impersonation —
-     because that is what makes a mutation *attributable*. A self-minted session writing to
-     production would stamp `audit_log` rows with a real user's identity for an action no human
-     took, which is the integrity property the author-only annotation rules exist to protect.
-     Local dev has no such constraint: mint and mutate freely.
-   - **Say that you did it.** Name the technique in the final report, every time. 
+   **Secrets stay in the environment.** `.dev.vars`, `.env*`, `.mcp.json` and Worker secrets are
+   the runtime's to read; an agent never opens, prints, greps or copies their contents, and
+   never derives a session from them. A missing session is a blocker to report to the owner,
+   never a gap to close by hand.
+
+   **Say which session you used.** Name the tab or port in the final report, every time.
+
 ## 3. CLI mechanics
 
 Codex and Agy are **plain OS subprocesses spawned via `Bash`**, not the `Agent` tool — each with

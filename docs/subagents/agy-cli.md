@@ -242,8 +242,8 @@ Smoke test (navigate `example.com` → `take_snapshot` → report `h1`/`title`) 
 - Browser is persistent by default (`~/.cache/chrome-devtools-mcp/chrome-profile`, `--isolated`
   is false) but **logged into nothing**. Fine for public sites, `prototype.`/marketing pages,
   Lighthouse/perf audits, unauthenticated smoke checks. Does **not** close the Quincy local-auth
-  gap on its own — to reach an authenticated page here, self-mint a session and disclose it
-  ([Subagent-Orchestration.md](Subagent-Orchestration.md) §2.1).
+  gap on its own — to reach an authenticated page here, use the human-signed Chrome from Option A
+  below ([Subagent-Orchestration.md](Subagent-Orchestration.md) §2 has the session policy).
 - Coordinating a human sign-in *inside* one non-interactive `-p` turn is fragile — that's what
   Option A exists for.
 
