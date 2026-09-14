@@ -7,6 +7,7 @@ import { auditLog, collectionLinks, collections, projectMembers, projects, user,
 import type { Env } from "../env";
 import { dbFor } from "../lib/db";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
+import { enqueueEditorReconcile } from "../editor-folders/queue";
 
 type Project = Pick<typeof projects.$inferSelect, "id" | "street" | "postcode" | "archivedAt" | "orderId" | "orderNo" | "suburb" | "agencyName" | "agentName" | "agentEmail" | "agentPhone" | "shootDate" | "timeWindow" | "notes" | "rawFolderLink" | "rawFolderPath">;
 
@@ -172,6 +173,9 @@ async function applyOrder(env: Env, order: TonomoOrder): Promise<string | null> 
   await attachServiceLinks(env, order, collectionByKind);
   const photographers = await assignPhotographers(env, projectId, order.photographerEmails);
   await writeAudit(env, action, projectId, order.orderId, photographers.userIds);
+  // Assignment must be durable before the scaffold worker evaluates its prerequisites.
+  await enqueueEditorReconcile(env, projectId).catch((error) =>
+    console.error("Editor folder reconciliation trigger failed", { projectId, error }));
   return photographers.warning;
 }
 

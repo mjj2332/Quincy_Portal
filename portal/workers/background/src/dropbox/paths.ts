@@ -4,15 +4,16 @@ import { normalisePath } from "@quincy/shared";
  * it gates uploads. Re-exported here to keep every existing background import unchanged. */
 export { normalisePath } from "@quincy/shared";
 
-/** Canonical roots for the only two automated Dropbox intake scopes. */
+/** Independent roots retain their own durable cursors. */
 export const TONOMO_RAW_ROOT = "/Tonomo/Raw Files" as const;
 export const AUTOHDR_ROOT = "/AutoHDR" as const;
+export const EDITOR_ROOT = "/Editor/01_ACTIVE EDITS" as const;
 
-export type DropboxMonitorScope = "raw" | "autohdr";
+export type DropboxMonitorScope = "raw" | "autohdr" | "editor";
 export type DropboxMonitorIdentity = {
   connectionId: string;
   scope: DropboxMonitorScope;
-  watchedRoot: typeof TONOMO_RAW_ROOT | typeof AUTOHDR_ROOT;
+  watchedRoot: typeof TONOMO_RAW_ROOT | typeof AUTOHDR_ROOT | typeof EDITOR_ROOT;
 };
 
 export function dropboxPathKey(path: string): string {
@@ -43,10 +44,10 @@ export function parseDropboxMonitorIdentity(name: string | undefined): DropboxMo
   if (separator <= 0 || separator === name.length - 1) return null;
   const connectionId = name.slice(0, separator);
   const scope = name.slice(separator + 1);
-  if (!isBareConnectionId(connectionId) || (scope !== "raw" && scope !== "autohdr")) return null;
+  if (!isBareConnectionId(connectionId) || (scope !== "raw" && scope !== "autohdr" && scope !== "editor")) return null;
   return {
     connectionId,
     scope,
-    watchedRoot: scope === "raw" ? TONOMO_RAW_ROOT : AUTOHDR_ROOT,
+    watchedRoot: scope === "raw" ? TONOMO_RAW_ROOT : scope === "autohdr" ? AUTOHDR_ROOT : EDITOR_ROOT,
   };
 }

@@ -13,6 +13,7 @@ import { completeMultipart, createMultipartPresign } from "../lib/r2s3";
 import { jsonInput } from "./helpers";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
 import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "../lib/board-schema";
+import { editorFolderAvailability, editorFolderMappingState } from "../lib/editor-folders";
 
 const manifestInput = z.object({ filenames: z.array(z.string().min(1)).min(1).max(10_000) });
 const presignInput = z.object({ projectId: z.string().uuid(), filename: z.string().min(1), bytes: z.number().int().positive().max(5 * 1024 * 1024 * 1024), collection: z.enum(["raw", "edited"]).default("raw") });
@@ -25,6 +26,27 @@ async function uploadPrecondition(c: Context<AppEnv>, projectId: string, collect
   const project = await createDb(c.env.DB).select({ archivedAt: schema.projects.archivedAt, rawFolderPath: schema.projects.rawFolderPath, rawFolderLink: schema.projects.rawFolderLink })
     .from(schema.projects).where(eq(schema.projects.id, projectId)).get();
   if (project?.archivedAt) return c.json({ error: "Project is archived" }, 409);
+  const editorFolders = await editorFolderAvailability(c.env, projectId);
+  if (editorFolders) {
+    const ready = collection === "edited" ? editorFolders.outputReady : editorFolders.inputReady;
+    if (!ready) {
+      // During operator review, a project with a still-valid Tonomo RAW path keeps the legacy
+      // RAW upload route. A ready mapping with broken/missing Input roots must remain fail-closed;
+      // only pending/review mappings are eligible for this compatibility window.
+      if (collection === "raw") {
+        const mappingState = await editorFolderMappingState(c.env, projectId);
+        const legacy = rawFolderGate(project?.rawFolderPath, project?.rawFolderLink);
+        if ((mappingState === "pending" || mappingState === "needs_review") && legacy.ok) return null;
+      }
+      return c.json({
+        error: collection === "edited"
+          ? "No ready Dropbox Output folder configured for this project"
+          : "No ready Dropbox Input folder configured for this project",
+        code: "editor_folder_not_ready",
+      }, 409);
+    }
+    return null;
+  }
   if (collection !== "edited") return null;
   const gate = rawFolderGate(project?.rawFolderPath, project?.rawFolderLink);
   if (gate.ok) return null;
@@ -40,6 +62,7 @@ uploadsRoutes.post("/projects/:id/upload-manifest", requireCapability("uploadRaw
   if (projectState?.archivedAt) return c.json({ error: "Project is archived" }, 409);
   if (!await hasProjectAccess(c, projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); {
     const data = await jsonInput(c, manifestInput); if (data instanceof Response) return data;
+    const refused = await uploadPrecondition(c, projectId, "raw"); if (refused) return refused;
     if (data.filenames.some((name) => !isAcceptedPhotoFilename(name))) return c.json({ error: "RAW uploads must be .jpg or .jpeg files" }, 400);
     const db = createDb(c.env.DB);
     const raw = await db.select().from(schema.collections).where(and(eq(schema.collections.projectId, projectId), eq(schema.collections.kind, "raw"))).get(); if (!raw) return c.json({ error: "Project RAW collection not found" }, 404);

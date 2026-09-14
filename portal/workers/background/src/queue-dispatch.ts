@@ -28,6 +28,13 @@ export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
       : null;
   }
   if (queue === INGEST_QUEUE_NAME) {
+    if ((value.type === "editor_reconcile" || value.type === "editor_sync") &&
+        typeof value.projectId === "string" && value.projectId.length > 0 &&
+        (value.type !== "editor_reconcile" || (typeof value.jobId === "string" && value.jobId.length > 0)) &&
+        (value.jobId === undefined || (typeof value.jobId === "string" && value.jobId.length > 0)) &&
+        (value.connectionId === undefined || (typeof value.connectionId === "string" && value.connectionId.length > 0 && !/[:/\\\\\u0000-\u001f]/.test(value.connectionId)))) {
+      return { queue, body: value as IngestMessage };
+    }
     if (value.type === "asset_ingested" && typeof value.assetId === "string") return { queue, body: { type: "asset_ingested", assetId: value.assetId } };
     if (value.type === "dropbox_sync" &&
         typeof value.projectId === "string" &&

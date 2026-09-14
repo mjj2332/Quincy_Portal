@@ -13,22 +13,44 @@ import { jsonInput } from "./helpers";
 export const integrationsRoutes = new Hono<AppEnv>();
 const stateKey = (nonce: string) => `dropbox_oauth_state:${nonce}`;
 function dropboxState(): string { const bytes = crypto.getRandomValues(new Uint8Array(16)); return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
-function monitorScope(value: string): "raw" | "autohdr" | null { return value === "raw" || value === "autohdr" ? value : null; }
+function monitorScope(value: string): "raw" | "autohdr" | "editor" | null { return value === "raw" || value === "autohdr" || value === "editor" ? value : null; }
 
 // Scope to /integrations paths only: use("*") leaks onto sibling routers mounted at the same base.
 integrationsRoutes.use("/integrations", requireCapability("manageIntegrations"));
 integrationsRoutes.use("/integrations/*", requireCapability("manageIntegrations"));
+
+const editorSubtreeInput = z.object({ path: z.string().min(1).max(2000), section: z.string().max(200).nullable(), folderId: z.string().min(1).max(200) }).strict();
+const editorCandidateInput = z.object({
+  projectId: z.string().uuid(), connectionId: z.string().min(1).max(200),
+  expectedShootDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  expectedRawFolderPath: z.string().nullable(), expectedRawFolderLink: z.string().nullable(),
+  rootPath: z.string().min(1).max(2000), rootFolderId: z.string().min(1).max(200),
+  inputRoots: z.array(editorSubtreeInput).min(1).max(10), outputRoots: z.array(editorSubtreeInput).min(1).max(10),
+}).strict();
+
+integrationsRoutes.get("/integrations/dropbox/editor-folders", terminalRoute("/integrations/dropbox/editor-folders", async (c) => {
+  const cursor = c.req.query("cursor");
+  if (cursor && !z.string().uuid().safeParse(cursor).success) return c.json({ error: "Invalid cursor" }, 400);
+  return c.json(await c.env.BACKGROUND.previewEditorFolders(cursor));
+}));
+integrationsRoutes.post("/integrations/dropbox/editor-folders/link", terminalRoute("/integrations/dropbox/editor-folders/link", async (c) => {
+  const input = await jsonInput(c, z.object({ reviewed: z.literal(true), candidate: editorCandidateInput }).strict());
+  if (input instanceof Response) return input;
+  const result = await c.env.BACKGROUND.linkEditorFolder(input.candidate, c.get("user").id);
+  await audit(c.env, c.get("user"), "integration.editor_folder.link", "project", input.candidate.projectId, { mapping: result });
+  return c.json(result);
+}));
 // Keep the historical multi-row schema observable, but place the same deterministic canonical
 // Dropbox record first that workers use. Consolidation requires a separate migration decision.
 integrationsRoutes.get("/integrations", terminalRoute("/integrations", async (c) => c.json({ integrations: await createDb(c.env.DB).select({ id: schema.integrationConnections.id, provider: schema.integrationConnections.provider, status: schema.integrationConnections.status, expiresAt: schema.integrationConnections.expiresAt, scopes: schema.integrationConnections.scopes, lastEventAt: schema.integrationConnections.lastEventAt, lastError: schema.integrationConnections.lastError, updatedAt: schema.integrationConnections.updatedAt }).from(schema.integrationConnections).orderBy(asc(schema.integrationConnections.provider), asc(schema.integrationConnections.createdAt), asc(schema.integrationConnections.id)).all() })));
 integrationsRoutes.get("/integrations/dropbox/monitors/:scope", terminalRoute("/integrations/dropbox/monitors/:scope", async (c) => {
   const scope = monitorScope(c.req.param("scope"));
-  if (!scope) return c.json({ error: "Monitor scope must be raw or autohdr" }, 400);
+  if (!scope) return c.json({ error: "Monitor scope must be raw, autohdr or editor" }, 400);
   return c.json(await c.env.BACKGROUND.inspectDropboxMonitor(scope));
 }));
 integrationsRoutes.post("/integrations/dropbox/monitors/:scope/reset", terminalRoute("/integrations/dropbox/monitors/:scope/reset", async (c) => {
   const scope = monitorScope(c.req.param("scope"));
-  if (!scope) return c.json({ error: "Monitor scope must be raw or autohdr" }, 400);
+  if (!scope) return c.json({ error: "Monitor scope must be raw, autohdr or editor" }, 400);
   const result = await c.env.BACKGROUND.resetDropboxMonitor(scope);
   await audit(c.env, c.get("user"), "integration.dropbox_monitor_reset", "integration", "dropbox", { scope });
   return c.json(result);

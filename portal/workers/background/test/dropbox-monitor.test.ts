@@ -8,6 +8,7 @@ describe("root monitor cursor/alarm contract", () => {
   it("uses only fixed roots for first/reset scans and never an account root", () => {
     expect(parseDropboxMonitorIdentity("db-connection:raw")?.watchedRoot).toBe("/Tonomo/Raw Files");
     expect(parseDropboxMonitorIdentity("db-connection:autohdr")?.watchedRoot).toBe("/AutoHDR");
+    expect(parseDropboxMonitorIdentity("db-connection:editor")?.watchedRoot).toBe("/Editor/01_ACTIVE EDITS");
     expect(parseDropboxMonitorIdentity("db-connection")).toBeNull();
   });
 
@@ -28,6 +29,9 @@ describe("root monitor cursor/alarm contract", () => {
     const flags = { raw: "1", autohdr: "0" };
     expect(monitorAutomationEnabled("raw", flags)).toBe(true);
     expect(monitorAutomationEnabled("autohdr", flags)).toBe(false);
+    expect(monitorAutomationEnabled("editor", flags)).toBe(false);
+    expect(monitorAutomationEnabled("editor", { editor: "1" })).toBe(true);
+    expect(monitorAutomationEnabled("editor", { editor: "false" })).toBe(false);
   });
 
   it("does not let one healthy scope mask a missing or failed sibling", () => {
@@ -46,6 +50,13 @@ describe("root monitor cursor/alarm contract", () => {
     expect(alarmRetryDelay(new DropboxRateLimitError("rate limited", 120), 60_000)).toBe(120_000);
     expect(alarmRetryDelay(new DropboxRateLimitError("rate limited", 10), 60_000)).toBe(60_000);
     expect(alarmRetryDelay(new Error("network error"), 60_000)).toBe(60_000);
+  });
+
+  it("requires Editor health only when Editor automation is enabled", () => {
+    const healthy = [{ scope: "raw" as const, lastError: null }, { scope: "autohdr" as const, lastError: null }];
+    expect(canRecoverAggregateMonitorHealth(healthy, true)).toBe(false);
+    expect(canRecoverAggregateMonitorHealth([...healthy, { scope: "editor", lastError: null }], true)).toBe(true);
+    expect(canRecoverAggregateMonitorHealth([...healthy, { scope: "editor", lastError: "failed" }], true)).toBe(false);
   });
 
   it("caps an oversized Dropbox retry-after instead of stalling the monitor for hours", () => {

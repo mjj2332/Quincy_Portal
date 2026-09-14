@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { readProjectDeadlineSchedule } from "./project-deadline";
 import { activeEditorRefsByProject } from "./project-editors";
 import { visibleProjectWhere } from "./visible-project-scope";
+import { editorFolderAvailability } from "./editor-folders";
 
 type Db = ReturnType<typeof createDb>;
 
@@ -96,7 +97,7 @@ function toProjectRow(row: Awaited<ReturnType<typeof projectRows>>[number]): { p
   };
 }
 
-function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Awaited<ReturnType<typeof readProjectDeadlineSchedule>>, coverAsset: string | null, origin: string, editors: ProjectEditorRef[]): ExternalProjectSummaryDto {
+function summaryFields(project: ProjectRow, services: ServiceRow[], deadline: Awaited<ReturnType<typeof readProjectDeadlineSchedule>>, coverAsset: string | null, origin: string, editors: ProjectEditorRef[], editedUploadAvailable = project.editedUploadAvailable): ExternalProjectSummaryDto {
   return externalProjectSummarySchema.parse({
     id: project.id,
     address: { street: project.street, suburb: project.suburb, postcode: project.postcode },
@@ -167,7 +168,18 @@ export async function listExternalProjects(env: Env, userId: string, role: Role)
     grouped.set(project.id, current);
   }
   const editorsByProject = await activeEditorRefsByProject(db, [...grouped.keys()]);
-  const projects = await Promise.all([...grouped.values()].map(async ({ project, services }) => summaryFields(project, services, await readProjectDeadlineSchedule(env.DB, project.id), await coverFor(db, project), env.APP_ORIGIN, editorsByProject.get(project.id) ?? [])));
+  const projects = await Promise.all([...grouped.values()].map(async ({ project, services }) => {
+    const editorFolders = await editorFolderAvailability(env, project.id);
+    return summaryFields(
+      project,
+      services,
+      await readProjectDeadlineSchedule(env.DB, project.id),
+      await coverFor(db, project),
+      env.APP_ORIGIN,
+      editorsByProject.get(project.id) ?? [],
+      editorFolders?.outputReady ?? project.editedUploadAvailable,
+    );
+  }));
   return externalProjectListResponseSchema.parse({
     projects,
     board: {
@@ -198,7 +210,7 @@ export async function readExternalProjectDetail(env: Env, userId: string, role: 
   return externalProjectDetailSchema.parse({
     ...summary,
     contractEnabled: await boardContractEnabled(env.DB, variant),
-    editedUploadAvailable: first.project.editedUploadAvailable,
+    editedUploadAvailable: (await editorFolderAvailability(env, projectId))?.outputReady ?? first.project.editedUploadAvailable,
     collections: summary.services,
     members: members.map((member) => ({
       id: member.userId,

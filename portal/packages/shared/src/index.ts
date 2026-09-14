@@ -34,3 +34,4 @@ export * from "./external-upload";
 export * from "./external-notification";
 export * from "./external-project-policy";
 export * from "./board-projection";
+export * from "./raw-media";

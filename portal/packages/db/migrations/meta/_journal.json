@@ -288,6 +288,13 @@
       "when": 1788948080946,
       "tag": "0040_project_priority_1_to_5",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1789281661934,
+      "tag": "0041_editor_folder_mappings",
+      "breakpoints": true
     }
   ]
 }

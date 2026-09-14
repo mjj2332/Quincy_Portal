@@ -1,4 +1,5 @@
-import { env, SELF as workerSelf } from "cloudflare:test";
+import { env, SELF as workerSelf, createExecutionContext } from "cloudflare:test";
+import { editorFolderAvailability } from "../src/lib/editor-folders";
 import { makeSignature } from "better-auth/crypto";
 import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -3728,5 +3729,65 @@ describe("staff app API", () => {
     const path = `https://portal.test/api/projects/${crypto.randomUUID()}/documents/direct/${crypto.randomUUID()}/pdf`;
     expect((await SELF.fetch(path, { method: "PUT" })).status).toBe(401);
     expect((await SELF.fetch(path, { method: "PUT", headers: { cookie: await sessionCookie(adminToken) } })).status).toBe(404);
+  });
+
+  it("keeps Editor folder review and linking behind the integration capability", async () => {
+    for (const token of [photographerToken, editorToken, externalEditorToken]) {
+      const cookie = await sessionCookie(token);
+      expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders", { headers: { cookie } })).status).toBe(403);
+      expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/link", {
+        method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ reviewed: true }),
+      })).status).toBe(403);
+    }
+    const cookie = await sessionCookie(adminToken);
+    expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/link", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ reviewed: false }),
+    })).status).toBe(400);
+  });
+
+  it("gates Edited upload availability on a ready mapped Output instead of the Tonomo path", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    const connectionId = crypto.randomUUID();
+    const rootPath = `/Editor/01_ACTIVE EDITS/09. September/01/${projectId}`;
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
+      database.DB.prepare("INSERT INTO editor_folder_mappings (id, project_id, connection_id, root_path, root_path_key, shoot_date, project_folder_name, photographer_evidence_json, input_roots_json, output_roots_json, editing_notes_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '2026-09-01', ?, '{}', ?, ?, ?, 'needs_review', ?, ?)")
+        .bind(crypto.randomUUID(), projectId, connectionId, rootPath, rootPath.toLowerCase(), projectId, JSON.stringify([{ path: `${rootPath}/Input`, section: null }]), JSON.stringify([{ path: `${rootPath}/Output`, section: null }]), `${rootPath}/Editing Notes`, now, now),
+    ]);
+    const enabled: Env = { ...authEnv, APP_ENV: "dev", DROPBOX_EDITOR_AUTOMATION_ENABLED: "1" };
+    expect(await editorFolderAvailability(enabled, projectId)).toEqual({ ready: false, inputReady: false, outputReady: false });
+    const legacyRawPresign = await app.fetch(new Request("https://portal.test/api/uploads/presign", {
+      method: "POST", headers: { cookie: await sessionCookie(adminToken), origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ projectId, filename: "raw.jpg", bytes: 4, collection: "raw" }),
+    }), enabled, createExecutionContext());
+    expect(legacyRawPresign.status).toBe(200);
+    expect(await legacyRawPresign.json()).toMatchObject({ assetId: expect.any(String), key: expect.stringContaining(`/raw/`) });
+    const response = await app.fetch(new Request("https://portal.test/api/uploads/presign", {
+      method: "POST", headers: { cookie: await sessionCookie(adminToken), origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ projectId, filename: "edited.jpg", bytes: 4, collection: "edited" }),
+    }), enabled, createExecutionContext());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "editor_folder_not_ready" });
+    await database.DB.prepare("UPDATE editor_folder_mappings SET state = 'ready' WHERE project_id = ?").bind(projectId).run();
+    await database.DB.prepare("UPDATE projects SET raw_folder_path = NULL, raw_folder_link = NULL WHERE id = ?").bind(projectId).run();
+    expect(await editorFolderAvailability(enabled, projectId)).toEqual({ ready: true, inputReady: true, outputReady: true });
+    expect(await editorFolderAvailability({ ...enabled, DROPBOX_EDITOR_AUTOMATION_ENABLED: "0" }, projectId)).toBeNull();
+  });
+
+  it("fences an Edited upload when its destination disappears before metadata commit", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Committed destination");
+    const assetId = crypto.randomUUID();
+    const key = `projects/${projectId}/edited/${assetId}/race.jpg`;
+    await authEnv.MEDIA.put(key, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { httpMetadata: { contentType: "image/jpeg" } });
+    await expect(finalizeIngest(authEnv, {
+      actorId: seedAdminId, projectId, assetId, key, originalFilename: "race.jpg", collection: "edited",
+    }, { beforeMetadataBatch: async () => {
+      await database.DB.prepare("UPDATE projects SET raw_folder_path = NULL, raw_folder_link = NULL WHERE id = ?").bind(projectId).run();
+    } })).rejects.toThrow(/destination changed/);
+    expect(await database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(assetId).first()).toBeNull();
+    expect(await authEnv.MEDIA.head(key)).not.toBeNull();
   });
 });

@@ -3,17 +3,18 @@ export function automationFlag(value: string | boolean | undefined): boolean {
 }
 
 export function monitorAutomationEnabled(
-  scope: "raw" | "autohdr",
-  flags: { raw?: string | boolean; autohdr?: string | boolean },
+  scope: "raw" | "autohdr" | "editor",
+  flags: { raw?: string | boolean; autohdr?: string | boolean; editor?: string | boolean },
 ): boolean {
-  return automationFlag(scope === "raw" ? flags.raw : flags.autohdr);
+  return automationFlag(flags[scope]);
 }
 
 export function canRecoverAggregateMonitorHealth(
-  rows: readonly { scope: "raw" | "autohdr"; lastError: string | null }[],
+  rows: readonly { scope: "raw" | "autohdr" | "editor"; lastError: string | null }[],
+  editorEnabled = false,
 ): boolean {
   const healthy = new Set(rows.filter((row) => !row.lastError).map((row) => row.scope));
-  return healthy.has("raw") && healthy.has("autohdr");
+  return healthy.has("raw") && healthy.has("autohdr") && (!editorEnabled || healthy.has("editor"));
 }
 
 export function shouldKeepMonitorAlarm(

@@ -1,18 +1,19 @@
 import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, RAW_CLAIM_LEASE_MS, collectionReceivedCountBindings } from "@quincy/db";
 import { assetIngestIdentities, assets, collections, jobs, projects, rawReconciliationClaims } from "@quincy/db/schema";
-import { enqueueRenditionSafely, isAcceptedPhotoFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
+import { enqueueRenditionSafely, isAcceptedPhotoFilename, isDngFilename, isRawMediaFilename, parseXmpRating, projectActivityDeepLink, publishNotificationOutbox, rawMediaContentType, XMP_SCAN_BYTES, xmpRatingToStars, type ProjectActivityIntent } from "@quincy/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, recordDropboxSuccess, type DropboxClientContext, type DropboxFile } from "./client";
-import { normalisePath } from "./paths";
-import { dropboxPathKey } from "./paths";
+import { dropboxPathKey, normalisePath, pathEqualsOrIsBelow } from "./paths";
+import { automationFlag } from "./monitor-state";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { notifyProject } from "../notifications";
 import { requireBoardSchemaReady } from "../lib/board-schema";
 import { commitAutomaticStage } from "../lib/automatic-stage";
+import { getEditorFolderMapping, type EditorFolderMapping } from "../editor-folders/mapping";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
 // rendition enqueue, and several D1 statements) — 150 once overran the pre-2026 Free-tier
@@ -26,6 +27,23 @@ import { commitAutomaticStage } from "../lib/automatic-stage";
 // loop below). Larger backlogs are not lost — the continuation re-enqueues whatever a run did
 // not reach. See docs/plans/Dropbox-RAW-Fetch-Speedup-Plan.md for the sizing rationale.
 const MAX_DOWNLOADS_PER_RUN = 120;
+const EDITOR_REQUEST_PACING_MS = 150;
+
+function editorAutomationEnabled(value: string | boolean | undefined): boolean {
+  return automationFlag(value);
+}
+
+type RawSyncRoot = {
+  path: string;
+  section: string | null;
+  editorMapped: boolean;
+};
+
+type RawSyncPlan = {
+  roots: RawSyncRoot[];
+  legacyRawFolderPath: string | null;
+  editorMapping: EditorFolderMapping | null;
+};
 
 export { normalisePath } from "./paths";
 
@@ -82,6 +100,103 @@ async function allFolderFiles(env: Env, path: string, connectionId: string | und
   }
 }
 
+function isReservedManualUploadPath(path: string, root: string): boolean {
+  if (!pathEqualsOrIsBelow(path, root)) return false;
+  const relative = dropboxPathKey(path)
+    .slice(dropboxPathKey(root).length)
+    .replace(/^\/+/, "");
+  return relative.split("/").some((segment) => segment === "manual-uploads");
+}
+
+/** Keep reviewed root-section metadata while retaining semantic folders below that root. */
+function sectionForMappedFile(file: DropboxFile, root: { path: string; section: string | null }): string | null {
+  if (!pathEqualsOrIsBelow(file.path_lower, root.path)
+    || (file.path_display !== undefined && !pathEqualsOrIsBelow(file.path_display, root.path))) return null;
+  const relative = normalisePath(file.path_display ?? file.path_lower)
+    .slice(normalisePath(root.path).length)
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter(Boolean);
+  const nested = relative.slice(0, -1).join("/");
+  if (!root.section) return nested || null;
+  return nested ? `${root.section}/${nested}` : root.section;
+}
+
+function downloadedContentHash(response: Response): string | null {
+  const header = response.headers.get("Dropbox-API-Result");
+  if (!header) return null;
+  try {
+    const parsed: unknown = JSON.parse(header);
+    if (!parsed || typeof parsed !== "object" || typeof (parsed as { content_hash?: unknown }).content_hash !== "string") return null;
+    return (parsed as { content_hash: string }).content_hash;
+  } catch {
+    return null;
+  }
+}
+
+/** A mapped Input file must still be the exact Dropbox revision that list_folder observed. */
+function assertDownloadedEditorInputVersion(file: DropboxFile, response: Response): void {
+  if (!file.content_hash) return;
+  const downloadedHash = downloadedContentHash(response);
+  if (!downloadedHash || downloadedHash.toLowerCase() !== file.content_hash.toLowerCase()) {
+    throw new Error(`Dropbox file changed while downloading ${file.name}; list content hash no longer matches the downloaded object`);
+  }
+}
+
+async function allEditorInputFiles(
+  env: Env,
+  mapping: EditorFolderMapping,
+  client: DropboxClientContext,
+): Promise<Array<{ file: DropboxFile; section: string | null }>> {
+  const files = new Map<string, { file: DropboxFile; section: string | null }>();
+  for (const root of mapping.inputRoots) {
+    for (const file of await allFolderFiles(env, root.path, mapping.connectionId, client)) {
+      if (!pathEqualsOrIsBelow(file.path_lower, root.path)
+        || (file.path_display !== undefined && !pathEqualsOrIsBelow(file.path_display, root.path))
+        || !isRawMediaFilename(file.name)
+        || isReservedManualUploadPath(file.path_lower, root.path)) continue;
+      const key = dropboxPathKey(file.path_lower);
+      if (!files.has(key)) files.set(key, { file, section: sectionForMappedFile(file, root) });
+    }
+  }
+  return [...files.values()];
+}
+
+async function resolveRawSyncPlan(
+  env: Env,
+  projectId: string,
+  project: { rawFolderPath: string | null; rawFolderLink: string | null },
+  mapping: EditorFolderMapping | null,
+  client: DropboxClientContext,
+): Promise<RawSyncPlan> {
+  if (mapping?.state === "ready") {
+    if (!mapping.inputRoots.length) {
+      throw new Error(`Editor folder mapping for project ${projectId} has no ready Input roots`);
+    }
+    return {
+      roots: mapping.inputRoots.map((root) => ({ path: root.path, section: root.section, editorMapped: true })),
+      legacyRawFolderPath: null,
+      editorMapping: mapping,
+    };
+  }
+
+  // A pending/review mapping is not allowed to take over RAW ownership, but an existing
+  // Tonomo path remains a safe legacy source during the operator-review window.  Projects with
+  // no legacy path stay fail-closed instead of guessing a provider folder from the mapping.
+  const legacyRawFolderPath = project.rawFolderPath
+    ? normalisePath(project.rawFolderPath)
+    : normalisePath(await pathFromRawFolderLink(env, project.rawFolderLink, client.connectionId, client) ?? "");
+  if (!legacyRawFolderPath) {
+    if (mapping) throw new Error(`Editor folder mapping for project ${projectId} needs review before RAW synchronization`);
+    throw new Error(`Project ${projectId} has no resolvable Dropbox RAW folder path`);
+  }
+  return {
+    roots: [{ path: legacyRawFolderPath, section: null, editorMapped: false }],
+    legacyRawFolderPath,
+    editorMapping: mapping,
+  };
+}
+
 export const SKIP_DROPBOX_SECTION = Symbol("skip-dropbox-section");
 
 /** Root files are Captures; files may be grouped by up to two Dropbox subfolder levels. */
@@ -124,7 +239,7 @@ export async function syncProjectRawFolder(
   jobId?: string,
   connectionId?: string,
   trigger: "dropbox_delta" | "manual_dropbox_sync" | "queue_retry" = jobId ? "queue_retry" : "manual_dropbox_sync",
-): Promise<{ newlyImported: number; currentRawAvailable: boolean; claimed: boolean }> {
+): Promise<{ newlyImported: number; currentRawAvailable: boolean; claimed: boolean; hasMore: boolean }> {
   // Do not create a job, claim, asset, or legacy Stage statement on a pre-0037 database.
   await requireBoardSchemaReady(env);
   const db = dbFor(env);
@@ -167,7 +282,7 @@ export async function syncProjectRawFolder(
     const existingRaw = await db.select({ id: assets.id }).from(assets)
       .innerJoin(collections, eq(assets.collectionId, collections.id))
       .where(and(eq(collections.projectId, projectId), eq(collections.kind, "raw"), sql`${assets.supersededAt} IS NULL`)).get();
-    return { newlyImported: 0, currentRawAvailable: Boolean(existingRaw), claimed: false };
+    return { newlyImported: 0, currentRawAvailable: Boolean(existingRaw), claimed: false, hasMore: false };
   }
 
   try {
@@ -186,39 +301,61 @@ export async function syncProjectRawFolder(
     // slips in after its active-jobs check — refuse at the source, not just at the trigger.
     if (project.archivedAt) throw new Error(`Project ${projectId} is archived — Dropbox sync refused`);
 
-    const client = await createDropboxClientContext(env, db, connectionId);
-    const rawFolderPath = project.rawFolderPath ? normalisePath(project.rawFolderPath) : normalisePath(await pathFromRawFolderLink(env, project.rawFolderLink, connectionId, client) ?? "");
-    if (!rawFolderPath) throw new Error(`Project ${projectId} has no resolvable Dropbox RAW folder path`);
+    const editorMapping = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
+      ? await getEditorFolderMapping(db, projectId)
+      : null;
+    if (editorMapping?.state === "ready" && connectionId && connectionId !== editorMapping.connectionId) {
+      throw new Error(`Editor folder mapping for project ${projectId} requires Dropbox connection ${editorMapping.connectionId}`);
+    }
+    const client = await createDropboxClientContext(env, db, editorMapping?.state === "ready" ? editorMapping.connectionId : connectionId);
+    const syncPlan = await resolveRawSyncPlan(env, projectId, project, editorMapping, client);
+    const mappedInput = syncPlan.editorMapping?.state === "ready";
+    const sourceGuard = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
+      ? ` AND ${mappedInput ? "" : "NOT "}EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')` : "";
+    const sourceOwnerGuard = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
+      ? mappedInput
+        ? sql`EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready')`
+        : sql`NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready')`
+      : sql`1 = 1`;
 
     await assertLease();
     const collection = await ensureRawCollection(env, projectId);
-    const expectedCount = expectedCountFromFolder(rawFolderPath);
-    if (collection.expectedCount === null && expectedCount !== null) {
+    const expectedCount = syncPlan.legacyRawFolderPath ? expectedCountFromFolder(syncPlan.legacyRawFolderPath) : null;
+    if (!syncPlan.editorMapping || syncPlan.editorMapping.state !== "ready") {
+      if (collection.expectedCount === null && expectedCount !== null) {
       await db
         .update(collections)
         .set({ expectedCount, updatedAt: new Date() })
         .where(and(eq(collections.id, collection.id), isNull(collections.expectedCount)));
+      }
     }
 
-    const files = await allFolderFiles(env, rawFolderPath, connectionId, client);
+    const files = syncPlan.editorMapping?.state === "ready"
+      ? await allEditorInputFiles(env, syncPlan.editorMapping, client)
+      : (await allFolderFiles(env, syncPlan.roots[0]!.path, client.connectionId, client)).map((file) => ({ file, section: null }));
     let skippedSubfolderFiles = 0;
     let downloadsThisRun = 0;
     let contentCallsThisRun = 0;
     let continuationEnqueued = false;
     let newlyImported = 0;
-    for (const file of files) {
-      if (!isAcceptedPhotoFilename(file.name)) continue;
+    for (const { file, section: mappedSection } of files) {
+      const editorInput = syncPlan.editorMapping?.state === "ready";
+      if (editorInput ? !isRawMediaFilename(file.name) : !isAcceptedPhotoFilename(file.name)) continue;
       await assertLease();
-      const section = sectionForDropboxFile(file, rawFolderPath);
+      const section = editorInput ? mappedSection : sectionForDropboxFile(file, syncPlan.roots[0]!.path);
       if (section === SKIP_DROPBOX_SECTION) { skippedSubfolderFiles += 1; continue; }
       const sourcePath = file.path_display ?? file.path_lower;
       const sourcePathKey = dropboxPathKey(file.path_lower);
       const identityKey = file.content_hash ? `hash:${file.content_hash.toLowerCase()}` : `path:${sourcePathKey}`;
-      const identityOwner = await db.select({ assetId: assetIngestIdentities.assetId }).from(assetIngestIdentities)
+      const identityOwner = await db.select({ assetId: assetIngestIdentities.assetId, source: assets.source, supersededAt: assets.supersededAt })
+        .from(assetIngestIdentities)
+        .innerJoin(assets, eq(assets.id, assetIngestIdentities.assetId))
         .where(and(eq(assetIngestIdentities.collectionId, collection.id), eq(assetIngestIdentities.identityKey, identityKey))).get();
-      if (identityOwner) {
-        await db.update(assets).set({ sourcePath, sourcePathKey, section, isPremium: false, updatedAt: new Date() })
-          .where(eq(assets.id, identityOwner.assetId));
+      if (identityOwner && identityOwner.supersededAt === null) {
+        if (identityOwner.source === "dropbox") {
+          await db.update(assets).set({ sourcePath, sourcePathKey, section, isPremium: false, updatedAt: new Date() })
+            .where(and(eq(assets.id, identityOwner.assetId), isNull(assets.supersededAt), sourceOwnerGuard));
+        }
         await enqueueRenditionSafely(env, identityOwner.assetId, "dropbox-existing-asset");
         continue;
       }
@@ -226,13 +363,14 @@ export async function syncProjectRawFolder(
       // hashless files are still recognised on the next continuation run (otherwise the download
       // cap would re-fetch them forever and never advance past the cap).
       const [existing] = await db
-        .select({ id: assets.id, section: assets.section, isPremium: assets.isPremium, sourcePath: assets.sourcePath })
+        .select({ id: assets.id, source: assets.source, section: assets.section, isPremium: assets.isPremium, sourcePath: assets.sourcePath })
         .from(assets)
         .innerJoin(collections, eq(assets.collectionId, collections.id))
         .where(and(
           file.content_hash ? eq(assets.contentHash, file.content_hash) : eq(assets.sourcePath, sourcePath),
           eq(collections.projectId, projectId),
           eq(collections.kind, "raw"),
+          isNull(assets.supersededAt),
         ))
         .limit(1);
       if (existing) {
@@ -243,7 +381,7 @@ export async function syncProjectRawFolder(
         const statements = [env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime()))];
         // Keep source_path current (a Dropbox move keeps the same content hash but changes the
         // path); a stale path would later break AutoHDR's server-side copy.
-        if (existing.section !== section || existing.isPremium || existing.sourcePath !== sourcePath) statements.unshift(env.DB.prepare("UPDATE assets SET section = ?, is_premium = 0, source_path = ?, updated_at = ? WHERE id = ?").bind(section, sourcePath, now.getTime(), existing.id));
+        if (existing.source === "dropbox" && (existing.section !== section || existing.isPremium || existing.sourcePath !== sourcePath)) statements.unshift(env.DB.prepare(`UPDATE assets SET section = ?, is_premium = 0, source_path = ?, source_path_key = ?, updated_at = ? WHERE id = ? AND superseded_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL${sourceGuard})`).bind(section, sourcePath, sourcePathKey, now.getTime(), existing.id, projectId));
         await env.DB.batch(statements);
         await enqueueRenditionSafely(env, existing.id, "dropbox-existing-asset");
         continue;
@@ -258,25 +396,30 @@ export async function syncProjectRawFolder(
 
       const assetId = crypto.randomUUID();
       const stableSource = (file.content_hash ?? file.id).replace(/[^a-zA-Z0-9_-]/g, "_");
-      const r2Key = `projects/${projectId}/raw/dropbox/${stableSource}/${file.name}`;
+      const returningRevision = identityOwner && identityOwner.supersededAt !== null;
+      const r2Key = `projects/${projectId}/raw/dropbox/${stableSource}${returningRevision ? `/${assetId}` : ""}/${file.name}`;
       downloadsThisRun += 1;
-      if (contentCallsThisRun > 0) await new Promise<void>((resolve) => setTimeout(resolve, 150));
-      const source = await download(env, db, sourcePath, {}, connectionId, client);
+      if (contentCallsThisRun > 0) await new Promise<void>((resolve) => setTimeout(resolve, EDITOR_REQUEST_PACING_MS));
+      const source = await download(env, db, sourcePath, {}, client.connectionId, client);
       contentCallsThisRun += 1;
       if (!source.body) throw new Error(`Dropbox returned no body for ${file.name}`);
+      if (editorInput) assertDownloadedEditorInputVersion(file, source);
       await env.MEDIA.put(r2Key, source.body, {
-        httpMetadata: { contentType: "image/jpeg" },
+        httpMetadata: { contentType: rawMediaContentType(file.name) ?? "image/jpeg" },
       });
 
-      if (contentCallsThisRun > 0) await new Promise<void>((resolve) => setTimeout(resolve, 150));
-      const header = await download(env, db, sourcePath, { range: `bytes=0-${XMP_SCAN_BYTES - 1}` }, connectionId, client);
-      contentCallsThisRun += 1;
-      const rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
+      let rating: number | null = null;
+      if (!isDngFilename(file.name)) {
+        if (contentCallsThisRun > 0) await new Promise<void>((resolve) => setTimeout(resolve, EDITOR_REQUEST_PACING_MS));
+        const header = await download(env, db, sourcePath, { range: `bytes=0-${XMP_SCAN_BYTES - 1}` }, client.connectionId, client);
+        contentCallsThisRun += 1;
+        rating = xmpRatingToStars(parseXmpRating(await header.arrayBuffer()));
+      }
       await assertLease();
       const now = new Date();
       const results = await env.DB.batch([
-        env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, rating_from_metadata, section, is_premium, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?, 0, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) ON CONFLICT DO NOTHING").bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, sourcePath, sourcePathKey, rating, section, now.getTime(), now.getTime(), projectId),
-        env.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT DO NOTHING").bind(crypto.randomUUID(), collection.id, identityKey, assetId, now.getTime()),
+        env.DB.prepare(`INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, rating_from_metadata, section, is_premium, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?, 0, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL${sourceGuard}) ON CONFLICT DO NOTHING`).bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, sourcePath, sourcePathKey, rating, section, now.getTime(), now.getTime(), projectId),
+        env.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT(collection_id, identity_key) DO UPDATE SET asset_id = excluded.asset_id WHERE EXISTS (SELECT 1 FROM assets previous WHERE previous.id = asset_ingest_identities.asset_id AND previous.superseded_at IS NOT NULL)").bind(crypto.randomUUID(), collection.id, identityKey, assetId, now.getTime()),
         env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.ingested', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM asset_ingest_identities WHERE collection_id = ? AND identity_key = ? AND asset_id = ?)")
           .bind(crypto.randomUUID(), assetId, JSON.stringify({ projectId, trigger, jobId: trackingJobId, reconciliationClaimId: claimId, connectionId: client.connectionId, sourcePathKey }), now.getTime(), collection.id, identityKey, assetId),
         env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(collection.id, now.getTime())),
@@ -293,11 +436,11 @@ export async function syncProjectRawFolder(
         if (!staleOccupant) continue; // reconciliation already ran in this batch
 
         const retryResults = await env.DB.batch([
-          env.DB.prepare("UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ?, updated_at = ? WHERE id = ? AND collection_id = ? AND source_path_key = ? AND superseded_at IS NULL")
-            .bind(now.getTime(), assetId, now.getTime(), staleOccupant.id, collection.id, sourcePathKey),
-          env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, rating_from_metadata, section, is_premium, supersedes_asset_id, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?, 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) ON CONFLICT DO NOTHING")
+          env.DB.prepare(`UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ?, updated_at = ? WHERE id = ? AND collection_id = ? AND source_path_key = ? AND superseded_at IS NULL AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL${sourceGuard})`)
+            .bind(now.getTime(), assetId, now.getTime(), staleOccupant.id, collection.id, sourcePathKey, projectId),
+          env.DB.prepare(`INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, rating_from_metadata, section, is_premium, supersedes_asset_id, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, ?, 0, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL${sourceGuard}) ON CONFLICT DO NOTHING`)
             .bind(assetId, collection.id, r2Key, file.name, file.size, file.content_hash ?? null, sourcePath, sourcePathKey, rating, section, staleOccupant.id, now.getTime(), now.getTime(), projectId),
-          env.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT DO NOTHING")
+          env.DB.prepare("INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) SELECT ?, ?, ?, ?, ? WHERE changes() = 1 ON CONFLICT(collection_id, identity_key) DO UPDATE SET asset_id = excluded.asset_id WHERE EXISTS (SELECT 1 FROM assets previous WHERE previous.id = asset_ingest_identities.asset_id AND previous.superseded_at IS NOT NULL)")
             .bind(crypto.randomUUID(), collection.id, identityKey, assetId, now.getTime()),
           env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.ingested', 'asset', ?, ?, ? WHERE EXISTS (SELECT 1 FROM asset_ingest_identities WHERE collection_id = ? AND identity_key = ? AND asset_id = ?)")
             .bind(crypto.randomUUID(), assetId, JSON.stringify({ projectId, trigger, jobId: trackingJobId, reconciliationClaimId: claimId, connectionId: client.connectionId, sourcePathKey, supersedesAssetId: staleOccupant.id }), now.getTime(), collection.id, identityKey, assetId),
@@ -356,8 +499,8 @@ export async function syncProjectRawFolder(
         updatedAt: new Date(),
       }).where(eq(jobs.id, trackingJobId));
     }
-    if (project.rawFolderPath !== rawFolderPath) {
-      await db.update(projects).set({ rawFolderPath, updatedAt: new Date() }).where(eq(projects.id, projectId));
+    if (syncPlan.legacyRawFolderPath && project.rawFolderPath !== syncPlan.legacyRawFolderPath) {
+      await db.update(projects).set({ rawFolderPath: syncPlan.legacyRawFolderPath, updatedAt: new Date() }).where(eq(projects.id, projectId));
       await enqueueAutoHdrScaffold(env, projectId).catch((error) =>
         console.error("AutoHDR scaffold trigger failed", { projectId, error }));
     }
@@ -376,7 +519,9 @@ export async function syncProjectRawFolder(
           trigger,
           reconciliationClaimId: claimId,
           jobId: trackingJobId,
-          connectionId: connectionId ?? null,
+          connectionId: client.connectionId,
+          editorFolderMappingId: syncPlan.editorMapping?.state === "ready" ? syncPlan.editorMapping.id : null,
+          sourceScope: syncPlan.editorMapping?.state === "ready" ? "editor_input" : "tonomo_raw",
           durableRawEvidence: { newlyImported, currentRawAvailable },
         }),
         now: Date.now(),
@@ -420,7 +565,7 @@ export async function syncProjectRawFolder(
     await recordDropboxSuccess(db, client.connectionId, ["credentials", "current_account", "list_folder", "folder_path"]).catch((error) => {
       console.error("Dropbox sync succeeded but health recovery bookkeeping failed", error);
     });
-    return { newlyImported, currentRawAvailable, claimed: true };
+    return { newlyImported, currentRawAvailable, claimed: true, hasMore: continuationEnqueued };
   } catch (error) {
     await db.update(rawReconciliationClaims).set({ state: "failed", updatedAt: new Date() })
       .where(and(eq(rawReconciliationClaims.id, claimId), eq(rawReconciliationClaims.state, "running"))).catch(() => undefined);

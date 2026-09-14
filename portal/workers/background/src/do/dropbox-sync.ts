@@ -1,7 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@quincy/db";
-import { dropboxMonitorHealth, projects } from "@quincy/db/schema";
+import { dropboxMonitorHealth, projects, editorFolderMappings } from "@quincy/db/schema";
+import { getReadyEditorFolderMapping } from "../editor-folders/mapping";
+import { changedEditorProjectIds } from "../editor-folders/delta";
+import { automationFlag } from "../dropbox/monitor-state";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
@@ -108,7 +111,7 @@ export async function processManualSupplementRoutes(
   return { routedProjectCount, nextWorkIndex: workIndex };
 }
 
-/** Two named objects per connection: `<connection>:raw` and `<connection>:autohdr`. */
+/** Each scope has an independent named object and cursor. */
 export class DropboxSyncDO extends DurableObject<Env> {
   async kick(): Promise<void> {
     const identity = parseDropboxMonitorIdentity(this.ctx.id.name);
@@ -141,6 +144,7 @@ export class DropboxSyncDO extends DurableObject<Env> {
     if (!monitorAutomationEnabled(identity.scope, {
       raw: this.env.DROPBOX_RAW_AUTOMATION_ENABLED,
       autohdr: this.env.DROPBOX_AUTOHDR_AUTOMATION_ENABLED,
+      editor: this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED,
     })) {
       await this.ctx.storage.deleteAlarm();
       return;
@@ -168,7 +172,10 @@ export class DropboxSyncDO extends DurableObject<Env> {
       if (identity.scope === "raw") {
         const projectPaths = await db.select({ id: projects.id, rawFolderPath: projects.rawFolderPath })
           .from(projects).where(isNull(projects.archivedAt));
-        const affected = changedProjectIds(page.entries, projectPaths, identity.watchedRoot);
+        const editorMapped = automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
+          ? new Set((await db.select({ projectId: editorFolderMappings.projectId }).from(editorFolderMappings).where(eq(editorFolderMappings.state, "ready"))).map((row) => row.projectId))
+          : new Set<string>();
+        const affected = changedProjectIds(page.entries, projectPaths.filter((row) => !editorMapped.has(row.id)), identity.watchedRoot);
         matchedCount = affected.length;
         for (const [index, projectId] of affected.entries()) {
           if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 500));
@@ -191,6 +198,28 @@ export class DropboxSyncDO extends DurableObject<Env> {
               connectionId: identity.connectionId,
               trigger: "dropbox_delta",
             });
+          } catch (error) {
+            await setJobStatus(db, jobId, "failed", errorMessage(error));
+            throw error;
+          }
+          routedProjectCount += 1;
+        }
+      } else if (identity.scope === "editor") {
+        const rows = await db.select({ projectId: editorFolderMappings.projectId }).from(editorFolderMappings)
+          .innerJoin(projects, eq(projects.id, editorFolderMappings.projectId))
+          .where(and(eq(editorFolderMappings.connectionId, identity.connectionId), eq(editorFolderMappings.state, "ready"), isNull(projects.archivedAt)));
+        const mappings = [];
+        for (const row of rows) {
+          const mapping = await getReadyEditorFolderMapping(db, row.projectId);
+          if (mapping) mappings.push(mapping);
+        }
+        const affected = changedEditorProjectIds(page.entries, mappings);
+        matchedCount = affected.length;
+        for (const projectId of affected) {
+          const jobId = await createJob(db, { kind: "editor_sync", projectId,
+            correlationId: `editor_delta:${projectId}:${await cursorFingerprint(page.cursor)}` });
+          try {
+            await this.env.INGEST_QUEUE.send({ type: "editor_sync", projectId, jobId, connectionId: identity.connectionId });
           } catch (error) {
             await setJobStatus(db, jobId, "failed", errorMessage(error));
             throw error;
@@ -273,14 +302,14 @@ export class DropboxSyncDO extends DurableObject<Env> {
         scope: dropboxMonitorHealth.scope,
         lastError: dropboxMonitorHealth.lastError,
       }).from(dropboxMonitorHealth).where(eq(dropboxMonitorHealth.connectionId, identity.connectionId));
-      if (canRecoverAggregateMonitorHealth(scopeHealth)) {
+      if (canRecoverAggregateMonitorHealth(scopeHealth, automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED))) {
         await recordDropboxSuccess(db, identity.connectionId, ["credentials", "current_account", "list_folder"]);
       }
 
       // Re-read after cursor + health persistence. A kick arriving during the drain increments
       // this object-local generation and therefore survives alarm cleanup.
       const endGeneration = await this.ctx.storage.get<number>(KICK_GENERATION_KEY) ?? 0;
-      if (shouldKeepMonitorAlarm(page.has_more, startGeneration, endGeneration)) {
+      if (identity.scope === "editor" || shouldKeepMonitorAlarm(page.has_more, startGeneration, endGeneration)) {
         await this.ctx.storage.setAlarm(Date.now() + (page.has_more ? 0 : TICK_DELAY_MS));
       } else {
         await this.ctx.storage.deleteAlarm();

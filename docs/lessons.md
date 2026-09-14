@@ -1917,6 +1917,30 @@ a variable reads the same in development and ships the whole object, so what lea
 line that looks equivalent. And compare a string-valued env flag against its exact "on" string,
 never for truthiness.
 
+## Tonomo changed envelopes and Editor Dropbox cutover (2026-09-13)
+
+The recent missing-address poison events were not missing addresses: `action: "changed"`
+wraps a full order under `order`, while the outer `id` identifies the appointment rather than
+the order. Normalize the confirmed envelope before parsing and validate outer/nested order
+references; ingress deduplication must use the same identity contract. Payloads without any
+order identity remain invalid. The regression fixture reproduces the original missing-street
+failure before normalization.
+
+Editor folder mappings are separate from Tonomo RAW paths because the latter still determine
+AutoHDR identity. Cut over RAW intake only when the Editor mapping is ready, and explicitly
+sync existing files after reviewed linking: an already-consumed root cursor cannot discover
+unchanged historical files. Folder-create conflicts are not ownership proof; retain the
+reservation and request review when a root was not durably proven created by this mapping.
+
+`Error.message` is non-enumerable. A recursive JSON-field walker for Dropbox `not_found`
+responses does not detect an `Error` wrapping the same response; inspect the message/cause
+chain at that boundary. Otherwise normal absence aborts every attempt to create a new folder.
+
+Real DNG fixtures matter: the Canon EOS R5m2 sample's review-size previews use JPEG XL
+compression 52546, while its JPEG thumbnail is only 256×171. A synthetic JPEG-in-TIFF test
+cannot prove that these studio DNGs render. Keep original bytes immutable, validate the
+embedded encoding and size, and prove real preview decoding before activation.
+
 ## Adopting base-nova's sidebar: five couplings to file names and comment text, not all of them guards (#122, 2026-09-14)
 
 #122 replaced `components/reui/sidebar.tsx` wholesale — #111's hand-trimmed, provider-less copy for

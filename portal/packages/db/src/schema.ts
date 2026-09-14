@@ -860,7 +860,7 @@ export const dropboxMonitorHealth = sqliteTable(
   {
     id: id(),
     connectionId: text("connection_id").notNull().references(() => integrationConnections.id, { onDelete: "cascade" }),
-    scope: text("scope", { enum: ["raw", "autohdr"] }).notNull(),
+    scope: text("scope", { enum: ["raw", "autohdr", "editor"] }).notNull(),
     root: text("root").notNull(),
     cursorFingerprint: text("cursor_fingerprint"),
     cursorUpdatedAt: integer("cursor_updated_at", { mode: "timestamp_ms" }),
@@ -875,6 +875,59 @@ export const dropboxMonitorHealth = sqliteTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("dropbox_monitor_health_scope_unique").on(t.connectionId, t.scope)],
+);
+
+/**
+ * Stable ownership and Dropbox subtree mapping for the Portal-owned Editor workspace.
+ *
+ * `projects.rawFolderPath` deliberately remains the Tonomo/AutoHDR identity.  The placement
+ * date below is the date used when this mapping was first reserved; it must not be rewritten
+ * when a project is subsequently rescheduled.  Input/output roots are JSON because the existing
+ * September folders contain explicit legacy layouts (for example `Day/Input` and `Dusk/Input`)
+ * that cannot safely be inferred from a path convention.
+ */
+export const editorFolderMappings = sqliteTable(
+  "editor_folder_mappings",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").notNull().references(() => integrationConnections.id),
+    rootPath: text("root_path").notNull(),
+    rootPathKey: text("root_path_key").notNull(),
+    rootFolderId: text("root_folder_id"),
+    /** The civil shoot date at first reservation; never changed by a reschedule. */
+    shootDate: text("shoot_date").notNull(),
+    projectFolderName: text("project_folder_name").notNull(),
+    /** Snapshot of the Tonomo path used to derive projectFolderName; not an AutoHDR pointer. */
+    tonomoRawFolderPath: text("tonomo_raw_folder_path"),
+    photographerEvidenceJson: text("photographer_evidence_json").notNull(),
+    inputRootsJson: text("input_roots_json").notNull().default("[]"),
+    outputRootsJson: text("output_roots_json").notNull().default("[]"),
+    editingNotesPath: text("editing_notes_path").notNull(),
+    editingNotesFolderId: text("editing_notes_folder_id"),
+    state: text("state", { enum: ["pending", "ready", "needs_review"] as const }).notNull().default("pending"),
+    /** Ordered, JSON-safe evidence of external creates and partial failures. */
+    recoveryProofJson: text("recovery_proof_json"),
+    /** Short-lived claim used to serialize provider-side reconciliation attempts. */
+    provisionLeaseToken: text("provision_lease_token"),
+    provisionLeaseExpiresAt: integer("provision_lease_expires_at", { mode: "timestamp_ms" }),
+    initialSyncCompletedAt: integer("initial_sync_completed_at", { mode: "timestamp_ms" }),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" }),
+    reviewedBy: text("reviewed_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("editor_folder_mappings_connection_root_key_unique").on(t.connectionId, t.rootPathKey),
+    uniqueIndex("editor_folder_mappings_project_unique").on(t.projectId),
+    index("editor_folder_mappings_state_updated_idx").on(t.state, t.updatedAt, t.id),
+    index("editor_folder_mappings_connection_state_idx").on(t.connectionId, t.state),
+    check("editor_folder_mappings_state_check", sql`${t.state} IN ('pending', 'ready', 'needs_review')`),
+    check("editor_folder_mappings_input_roots_json_check", sql`json_valid(${t.inputRootsJson})`),
+    check("editor_folder_mappings_output_roots_json_check", sql`json_valid(${t.outputRootsJson})`),
+    check("editor_folder_mappings_photographer_evidence_json_check", sql`json_valid(${t.photographerEvidenceJson})`),
+    check("editor_folder_mappings_recovery_proof_json_check", sql`${t.recoveryProofJson} IS NULL OR json_valid(${t.recoveryProofJson})`),
+  ],
 );
 
 /** Singular QA state per asset (ratings / labels / decisions / photographer recommend). */

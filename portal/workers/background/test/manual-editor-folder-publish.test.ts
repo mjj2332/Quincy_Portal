@@ -1,0 +1,196 @@
+import { env } from "cloudflare:test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/dropbox/client", () => ({
+  createFolder: vi.fn(),
+  upload: vi.fn(),
+}));
+
+import type { Env } from "../src/env";
+import { createFolder, upload, type DropboxFile } from "../src/dropbox/client";
+import { ManualEditedPublish } from "../src/workflows/manual-edited-publish";
+
+declare const __PORTAL_MIGRATION_SQL__: string;
+
+const database = env as unknown as { DB: D1Database; MEDIA: R2Bucket };
+
+async function executeSql(source: string): Promise<void> {
+  for (const chunk of source.split("--> statement-breakpoint")) {
+    const statements = chunk
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n")
+      .split(";")
+      .map((statement) => statement.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    for (const statement of statements) await database.DB.exec(`${statement};`);
+  }
+}
+
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(createFolder).mockResolvedValue(undefined);
+  vi.mocked(upload).mockResolvedValue({
+    ".tag": "file",
+    id: "id:manual-upload",
+    name: "manual.jpg",
+    path_lower: "/editor/manual.jpg",
+    size: 4,
+  } satisfies DropboxFile);
+});
+
+function directStep(after?: (name: string) => Promise<void>) {
+  return {
+    do: async (name: string, callback: () => Promise<unknown>) => {
+      const result = await callback();
+      await after?.(name);
+      return result;
+    },
+    sleep: async () => undefined,
+  };
+}
+
+function workflow(envForRun: Env): ManualEditedPublish {
+  const instance = Object.create(ManualEditedPublish.prototype) as ManualEditedPublish;
+  Object.defineProperty(instance, "env", { value: envForRun, writable: true });
+  return instance;
+}
+
+async function fixture(options: { mappingState?: "pending" | "ready" | "needs_review"; withLegacyPath?: boolean } = {}) {
+  const now = Date.now();
+  const projectId = crypto.randomUUID();
+  const connectionId = crypto.randomUUID();
+  const mappingId = crypto.randomUUID();
+  const collectionId = crypto.randomUUID();
+  const assetId = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const root = `/Editor/01_ACTIVE EDITS/2026-10 October/02/${projectId}`;
+  const inputRoot = `${root}/Input`;
+  const legacyRoot = `/Tonomo/Raw Files/${projectId}`;
+  const mappingState = options.mappingState ?? "ready";
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, 'Mapped manual publication', 'awaiting_raw', ?, ?, ?)").bind(projectId, options.withLegacyPath ? legacyRoot : null, now, now),
+    database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
+    database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, source_path, publish_status, created_at, updated_at) VALUES (?, ?, ?, 'manual.jpg', 4, 'upload', NULL, 'ready', ?, ?)").bind(assetId, collectionId, `tests/${assetId}.jpg`, now, now),
+    database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, correlation_id, payload_json, created_at, updated_at) VALUES (?, 'manual_raw_publish', 'queued', ?, ?, ?, ?, ?)").bind(jobId, projectId, `manual_raw_publish:${assetId}`, JSON.stringify({ projectId, assetId }), now, now),
+    database.DB.prepare("INSERT INTO editor_folder_mappings (id, project_id, connection_id, root_path, root_path_key, root_folder_id, shoot_date, project_folder_name, photographer_evidence_json, input_roots_json, output_roots_json, editing_notes_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'id:root', '2026-10-02', ?, '{}', ?, ?, ?, ?, ?, ?)").bind(
+      mappingId,
+      projectId,
+      connectionId,
+      root,
+      root.toLowerCase(),
+      projectId,
+      JSON.stringify([{ path: inputRoot, section: null, folderId: "id:input" }]),
+      JSON.stringify([{ path: `${root}/Output`, section: null, folderId: "id:output" }]),
+      `${root}/Editing Notes`,
+      mappingState,
+      now,
+      now,
+    ),
+  ]);
+  await database.MEDIA.put(`tests/${assetId}.jpg`, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { httpMetadata: { contentType: "image/jpeg" } });
+  const localEnv = {
+    DB: database.DB,
+    MEDIA: database.MEDIA,
+    DROPBOX_EDITOR_AUTOMATION_ENABLED: "1",
+  } as unknown as Env;
+  return { projectId, connectionId, mappingId, collectionId, assetId, jobId, inputRoot, legacyRoot, localEnv };
+}
+
+async function tableExists(name: string): Promise<boolean> {
+  const row = await database.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .bind(name)
+    .first<{ name: string }>();
+  return row?.name === name;
+}
+
+describe("legacy manual Dropbox publication compatibility", () => {
+  it("publishes a RAW upload when Editor automation is disabled before the mapping table exists", async () => {
+    const data = await fixture({ withLegacyPath: true });
+    const legacyEnv = { ...data.localEnv, DROPBOX_EDITOR_AUTOMATION_ENABLED: "0" } as Env;
+    const renamedTable = "editor_folder_mappings_legacy_publish_regression";
+    const destination = `${data.legacyRoot}/Manual-Uploads/manual.jpg`;
+
+    await expect(tableExists("editor_folder_mappings")).resolves.toBe(true);
+    await database.DB.exec(`ALTER TABLE editor_folder_mappings RENAME TO ${renamedTable};`);
+    try {
+      await expect(tableExists("editor_folder_mappings")).resolves.toBe(false);
+      await workflow(legacyEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: "legacy-manual-test", workflowName: "manual-edited-publish" }, directStep() as never);
+    } finally {
+      await database.DB.exec(`ALTER TABLE ${renamedTable} RENAME TO editor_folder_mappings;`);
+    }
+
+    await expect(tableExists("editor_folder_mappings")).resolves.toBe(true);
+    expect(createFolder).toHaveBeenCalledTimes(1);
+    expect(createFolder.mock.calls[0]?.[2]).toBe(`${data.legacyRoot}/Manual-Uploads`);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[2]).toBe(destination);
+    await expect(database.DB.prepare("SELECT source_path FROM assets WHERE id = ?").bind(data.assetId).first())
+      .resolves.toEqual({ source_path: destination });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE id = ?").bind(data.jobId).first())
+      .resolves.toEqual({ status: "done" });
+  });
+});
+
+describe("mapped manual Dropbox publication", () => {
+  it("publishes a RAW upload to mapped Input/Manual-Uploads without a legacy path", async () => {
+    const data = await fixture();
+    await workflow(data.localEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: "mapped-manual-test", workflowName: "manual-edited-publish" }, directStep() as never);
+
+    const destination = `${data.inputRoot}/Manual-Uploads/${data.assetId}/manual.jpg`;
+    expect(createFolder).toHaveBeenCalledTimes(2);
+    expect(createFolder.mock.calls.map((call) => call[2])).toEqual([
+      `${data.inputRoot}/Manual-Uploads`,
+      `${data.inputRoot}/Manual-Uploads/${data.assetId}`,
+    ]);
+    expect(createFolder.mock.calls.every((call) => call[3] === data.connectionId)).toBe(true);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[2]).toBe(destination);
+    expect(upload.mock.calls[0]?.[4]).toBe(data.connectionId);
+    await expect(database.DB.prepare("SELECT source_path FROM assets WHERE id = ?").bind(data.assetId).first())
+      .resolves.toEqual({ source_path: destination });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE id = ?").bind(data.jobId).first())
+      .resolves.toEqual({ status: "done" });
+  });
+
+  it("refuses a cached legacy destination after the Editor mapping becomes ready", async () => {
+    const data = await fixture({ mappingState: "pending", withLegacyPath: true });
+    const steps = directStep(async (name) => {
+      if (name === "resolve-manual-destination") {
+        await database.DB.prepare("UPDATE editor_folder_mappings SET state = 'ready' WHERE id = ?").bind(data.mappingId).run();
+      }
+    });
+
+    await expect(workflow(data.localEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: "cached-legacy-destination", workflowName: "manual-edited-publish" }, steps as never))
+      .rejects.toThrow(/mapping .* changed before manual publishing/i);
+    expect(createFolder).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    await expect(database.DB.prepare("SELECT source_path FROM assets WHERE id = ?").bind(data.assetId).first())
+      .resolves.toEqual({ source_path: null });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE id = ?").bind(data.jobId).first())
+      .resolves.toEqual({ status: "failed" });
+  });
+
+  it("does not commit a legacy RAW mirror when the mapping becomes ready after Dropbox accepts it", async () => {
+    const data = await fixture({ mappingState: "pending", withLegacyPath: true });
+    const steps = directStep(async (name) => {
+      if (name === "publish-manual-upload") {
+        await database.DB.prepare("UPDATE editor_folder_mappings SET state = 'ready' WHERE id = ?").bind(data.mappingId).run();
+      }
+    });
+
+    await expect(workflow(data.localEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: "legacy-publish-cutover", workflowName: "manual-edited-publish" }, steps as never))
+      .rejects.toThrow(/could not record its Dropbox mirror/i);
+    expect(createFolder).toHaveBeenCalledTimes(1);
+    expect(upload).toHaveBeenCalledTimes(1);
+    await expect(database.DB.prepare("SELECT source_path FROM assets WHERE id = ?").bind(data.assetId).first())
+      .resolves.toEqual({ source_path: null });
+    await expect(database.DB.prepare("SELECT status FROM jobs WHERE id = ?").bind(data.jobId).first())
+      .resolves.toEqual({ status: "failed" });
+  });
+});

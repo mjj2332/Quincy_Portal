@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enqueueRenditionSafely, RENDITION_SPEC_VERSION, renditionR2Key } from "@quincy/shared";
+import { dngPreviewKey, enqueueRenditionSafely, RENDITION_SPEC_VERSION, renditionR2Key } from "@quincy/shared";
 import { generateRenditions, type MeasuredRendition, type RenditionStore, webpDimensions } from "../src/renditions";
 
 const asset = { id: "11111111-1111-4111-8111-111111111111", r2Key: "projects/test/raw/a/source.jpg", contentHash: "content-v1" };
@@ -15,6 +15,30 @@ function webp(width = 40, height = 30): Uint8Array {
 }
 
 const tinyJpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
+
+function dngWithJpegPreview(): Uint8Array {
+  const jpeg = Uint8Array.from([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x04, 0x4a, 0x46,
+    0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0xe0, 0x02, 0x80, 0x01, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x01,
+    0xff, 0xd9,
+  ]);
+  const bytes = new Uint8Array(8 + 18 + 2 + 4 * 12 + 4 + jpeg.byteLength);
+  const view = new DataView(bytes.buffer);
+  bytes.set([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00], 0);
+  view.setUint16(8, 0, true); view.setUint32(10, 26, true);
+  view.setUint16(26, 4, true);
+  const write = (index: number, tag: number, type: number, value: number) => {
+    const at = 28 + index * 12;
+    view.setUint16(at, tag, true); view.setUint16(at + 2, type, true); view.setUint32(at + 4, 1, true); view.setUint32(at + 8, value, true);
+  };
+  const previewOffset = 26 + 2 + 4 * 12 + 4;
+  write(0, 254, 4, 1); write(1, 259, 3, 7); write(2, 513, 4, previewOffset); write(3, 514, 4, jpeg.byteLength);
+  view.setUint32(26 + 2 + 4 * 12, 0, true);
+  bytes.set(jpeg, previewOffset);
+  return bytes;
+}
 
 function harness() {
   const saved: MeasuredRendition[] = []; const objects = new Set<string>(); const requests: string[] = []; let puts = 0;
@@ -114,5 +138,45 @@ describe("durable rendition generation", () => {
     expect(h.puts).toBe(2);
     expect(renditionR2Key(asset.id, asset.contentHash, "thumb", "a".repeat(64), "image/webp")).toContain("/" + "a".repeat(64) + ".webp");
     expect(renditionR2Key(asset.id, asset.contentHash, "web", "b".repeat(64), "image/jpeg")).toContain("/" + "b".repeat(64) + ".jpg");
+  });
+
+  it("extracts and caches a DNG preview before issuing both transform requests", async () => {
+    const dngAsset = { ...asset, originalFilename: "capture.DNG", r2Key: "projects/test/raw/a/capture.DNG" };
+    const source = dngWithJpegPreview();
+    const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>([[dngAsset.r2Key, { bytes: source, contentType: "image/x-adobe-dng" }]]);
+    const requests: string[] = [];
+    const saved: MeasuredRendition[] = [];
+    const store: RenditionStore = {
+      getAsset: async () => dngAsset,
+      getRenditions: async () => saved.map(({ variant, r2Key, specVersion }) => ({ variant, r2Key, specVersion })),
+      save: async (row) => { saved.push(row); },
+    };
+    const media = {
+      head: async (key: string) => {
+        const object = objects.get(key);
+        return object ? { size: object.bytes.byteLength, httpMetadata: object.contentType ? { contentType: object.contentType } : undefined, customMetadata: undefined } : null;
+      },
+      get: async (key: string, options?: { range?: { offset: number; length: number } }) => {
+        const object = objects.get(key); if (!object) return null;
+        const range = options?.range;
+        const bytes = range ? object.bytes.slice(range.offset, range.offset + range.length) : object.bytes.slice();
+        return { arrayBuffer: async () => bytes.buffer };
+      },
+      put: async (key: string, value: ArrayBuffer | ArrayBufferView, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }) => {
+        const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        objects.set(key, { bytes: new Uint8Array(bytes), contentType: options?.httpMetadata?.contentType });
+        return { key, size: bytes.byteLength };
+      },
+    };
+    const env = { APP_ORIGIN: "https://portal.test", TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes", MEDIA: media };
+    const result = await generateRenditions(env as never, dngAsset.id, {
+      store,
+      fetch: (async (url: string) => { requests.push(url); return new Response(webp(), { headers: { "content-type": "image/webp", "cf-resized": "internal=ok" } }); }) as typeof fetch,
+    });
+    expect(result).toEqual({ generated: ["thumb", "web"], skipped: [] });
+    expect(requests).toHaveLength(2);
+    expect(requests.every((url) => url.includes("capture.DNG.preview.jpg"))).toBe(true);
+    expect(objects.has(dngPreviewKey(dngAsset.r2Key))).toBe(true);
+    expect(objects.get(dngPreviewKey(dngAsset.r2Key))?.contentType).toBe("image/jpeg");
   });
 });

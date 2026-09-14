@@ -47,6 +47,15 @@ const baseEnv = {
 };
 
 const tonomoBody = JSON.stringify([{ id: "tonomo-order-123", orderNo: "000123", order_name: "Tonomo test order" }]);
+const changedTonomoBody = JSON.stringify({
+  action: "changed",
+  id: "appointment-event-001",
+  orderId: "tonomo-order-001",
+  order: {
+    id: "tonomo-order-001",
+    property_address: { street: "42 Example Street", city: "Exampleville", zipcode: "2000" },
+  },
+});
 
 function tonomoEnv(database: D1Database, processTonomoEvents = async () => {}) {
   return { ...baseEnv, DB: database, BACKGROUND: { processTonomoEvents } as Fetcher, TONOMO_WEBHOOK_TOKEN: "test-tonomo-token" };
@@ -60,6 +69,11 @@ async function dropboxSignature(secret: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
   return [...signature].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function dropboxEnv(database: D1Database, handleDropboxWebhook = async () => {}) {
@@ -164,6 +178,52 @@ describe("webhook ingress", () => {
     expect([...rows.values()]).toEqual([
       expect.objectContaining({ source: "tonomo", payloadJson: tonomoBody, status: "received" }),
     ]);
+  });
+
+  it("uses the nested order identity for a changed Tonomo envelope key", async () => {
+    const { database, rows } = createWebhookEventsDatabase();
+    const response = await request(
+      "https://webhook.test/webhooks/tonomo?token=test-tonomo-token",
+      { method: "POST", body: changedTonomoBody },
+      tonomoEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    const bodyHash = await sha256(changedTonomoBody);
+    expect([...rows.values()][0]?.eventId).toBe(await sha256(`order.created:tonomo-order-001:${bodyHash}`));
+  });
+
+  it("uses a body-hash key for a malformed changed envelope", async () => {
+    const { database, rows } = createWebhookEventsDatabase();
+    const body = JSON.stringify({ action: "changed", id: "appointment-event-002", orderId: "tonomo-order-002" });
+    const response = await request(
+      "https://webhook.test/webhooks/tonomo?token=test-tonomo-token",
+      { method: "POST", body },
+      tonomoEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    const bodyHash = await sha256(body);
+    expect([...rows.values()][0]?.eventId).toBe(await sha256(`order.created:${bodyHash}:${bodyHash}`));
+  });
+
+  it("uses a body-hash key for conflicting changed envelope identities", async () => {
+    const { database, rows } = createWebhookEventsDatabase();
+    const body = JSON.stringify({
+      action: "changed",
+      id: "appointment-event-003",
+      orderId: "tonomo-order-003",
+      order: { id: "different-order", street: "3 Conflict Street" },
+    });
+    const response = await request(
+      "https://webhook.test/webhooks/tonomo?token=test-tonomo-token",
+      { method: "POST", body },
+      tonomoEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    const bodyHash = await sha256(body);
+    expect([...rows.values()][0]?.eventId).toBe(await sha256(`order.created:${bodyHash}:${bodyHash}`));
   });
 
   it("deduplicates an identical Tonomo redelivery and wakes the processor", async () => {
