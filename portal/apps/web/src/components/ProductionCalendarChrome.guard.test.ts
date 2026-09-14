@@ -24,7 +24,7 @@
  * This is a `.test.ts` that reads component source as text and never touches the DOM, so it is
  * outside guard A's scope by construction — the same technique `test-seam.guard.test.ts`,
  * `src/config/reui-registry.guard.test.ts` and
- * `Topbar.inset-focus.guard.test.ts` already use for their own source-text checks.
+ * `quincy/NotificationBell.inset-focus.guard.test.ts` already use for their own source-text checks.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";

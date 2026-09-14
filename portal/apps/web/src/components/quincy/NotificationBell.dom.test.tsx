@@ -255,6 +255,7 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.querySelector('[aria-label="Dismiss notification: First notification"]')).toBeNull();
     expect(document.querySelector('[data-testid="rail-notifications-empty"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="rail-notification-badge"]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!.getAttribute("aria-label")).toBe("Notifications");
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notifications/n-1");
     expect(apiPostMock).not.toHaveBeenCalled();
     resolveDelete?.({ ok: true });
@@ -270,6 +271,7 @@ describe("NotificationBell panel (Popover)", () => {
     await click(document.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: Read notification"]')!);
     expect(document.querySelector('[aria-label="Dismiss notification: Unread notification"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="rail-notification-badge"]')?.textContent).toBe("1");
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!.getAttribute("aria-label")).toBe("1 unread notifications");
   });
 
   it("hands focus to the next dismiss button, then the panel when it becomes empty — synchronously", async () => {
@@ -336,6 +338,37 @@ describe("NotificationBell panel (Popover)", () => {
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/read-all", {});
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.activeElement).toBe(markAll);
+  });
+
+  it("native mark-all and dismiss activation leave the dialog open", async () => {
+    // Both are real `<button>`s with no `nativeButton`/roving-focus machinery of their own — a
+    // bare Enter keydown is not the browser's native keydown-to-click conversion (that happens on
+    // `keyup` for a real button, and jsdom/happy-dom never performs it for a synthetic keydown at
+    // all), so this proves the gap directly before falling back to `.click()`, the browser's own
+    // substitute action for the same key. Mirrors `Topbar.dom.test.tsx`'s retired version of this
+    // assertion, now against the dialog rather than a `role="menu"`.
+    apiGetMock.mockResolvedValue({ notifications: [
+      notification(),
+      notification({ id: "n-2", title: "Second notification", createdAt: "2026-07-28T01:00:00.000Z" }),
+    ], unreadCount: 2 });
+    const trigger = await renderPanel();
+    await click(trigger);
+
+    const markAllRead = document.querySelector<HTMLButtonElement>('[data-testid="rail-mark-all-read"]')!;
+    markAllRead.focus();
+    await act(async () => { markAllRead.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
+    expect(apiPostMock, "a raw Enter keydown alone does not activate it").not.toHaveBeenCalledWith("/api/notifications/read-all", {});
+    await act(async () => { markAllRead.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/read-all", {});
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+
+    const dismiss = document.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-1"]')!;
+    dismiss.focus();
+    await act(async () => { dismiss.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); await Promise.resolve(); });
+    expect(apiDeleteMock, "a raw Enter keydown alone does not activate it").not.toHaveBeenCalled();
+    await act(async () => { dismiss.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(apiDeleteMock).toHaveBeenCalledWith("/api/notifications/n-1");
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
   it("preserves native modified-click behavior and read semantics on ctrl, meta and middle click", async () => {
@@ -415,25 +448,38 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.activeElement).toBe(firstItemAfter);
   });
 
-  it("links every project notification, opening collaboration only for collaboration types, then marks them read", async () => {
+  it("links every project notification, opening collaboration only for collaboration types, then marks them read without waiting", async () => {
+    // The full 11-type fixture Topbar.dom.test.tsx's own version of this test used — every
+    // notification type the model routes, not just a sampled subset.
     const projectId = "11111111-1111-4111-8111-111111111111";
     apiGetMock.mockResolvedValue({ notifications: [
-      notification({ id: "project-mention", projectId, title: "You were mentioned", body: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
-      notification({ id: "board-mention", title: "You were mentioned", body: "Notice", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "project-mention", projectId, type: "mentioned", title: "You were mentioned", body: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "board-mention", projectId: null, type: "mentioned", title: "You were mentioned", body: "Notice", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-subtask", projectId, type: "subtask_assigned", title: "Subtask assigned", body: "Checklist", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-due", projectId, type: "subtask_due_today", title: "Due today", body: "Checklist", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-raw", projectId, type: "raw_ready", title: "RAW", createdAt: "2026-08-17T00:00:00.000Z" }),
-    ], unreadCount: 5 });
+      notification({ id: "project-edited", projectId, type: "edited_landed", title: "Edited", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "project-editing", projectId, type: "sent_to_editing", title: "Editing", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "project-stalled", projectId, type: "autohdr_stalled", title: "Stalled", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "project-delivered", projectId, type: "delivered", title: "Delivered", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "project-comment", projectId, type: "comment_added", title: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "project-assigned", projectId, type: "assigned_to_project", title: "Assigned", createdAt: "2026-08-17T00:00:00.000Z" }),
+    ], unreadCount: 11 });
+    // Held unresolved — proving the link activation navigates without waiting on the read POST.
+    let resolvePost: ((value: unknown) => void) | undefined;
+    apiPostMock.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
     const trigger = await renderPanel();
     await click(trigger);
     const collabLinks = document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`);
     expect(collabLinks).toHaveLength(3);
-    expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(1);
+    expect([...collabLinks].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned"), expect.stringContaining("Due today")]));
+    expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(7);
     expect(document.querySelectorAll('[data-testid="rail-notification-item"][data-notification-route="none"]')).toHaveLength(1);
     await click(collabLinks[0]!);
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/project-mention/read", {});
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+    resolvePost?.({ ok: true });
   });
 
   it("does not dim the page behind the notification panel and leaves it interactive", async () => {
@@ -444,6 +490,10 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.body.getAttribute("aria-hidden")).toBeNull();
     expect(document.body.hasAttribute("inert")).toBe(false);
     expect(host.hasAttribute("inert")).toBe(false);
+    // `reui/popover.tsx` renders no `Backdrop` at all (unlike `quincy/menu.tsx`'s optional one) —
+    // this proves that directly rather than only inferring it from `aria-hidden`/`inert`.
+    expect(document.querySelector('[data-testid="menu-backdrop"]')).toBeNull();
+    expect([...document.querySelectorAll('[role="presentation"]')].find((el) => !el.querySelector('[role="dialog"]'))).toBeUndefined();
   });
 
   it("returns focus to the trigger on Escape, and closes on an outside press", async () => {

@@ -655,6 +655,60 @@ describe("NavigationRail — showBell", () => {
   });
 });
 
+// -----------------------------------------------------------------------------
+// #113 — which of the rail's own two menus gets the backdrop: the account panel is a full
+// navigation surface and dims the page; the notification panel (`quincy/NotificationBell.tsx`'s
+// `reui/popover.tsx`) is a small dropdown list and does not. `menu-backdrop` is
+// `quincy/menu.tsx`'s own `MenuPrimitive.Backdrop` test seam.
+// -----------------------------------------------------------------------------
+
+describe("account vs notification backdrop (#113)", () => {
+  it("account navigation dims the page; the notification panel does not, and the rest of the page stays interactive", async () => {
+    const outsideButton = document.createElement("button");
+    outsideButton.textContent = "Outside";
+    const outsideClick = vi.fn();
+    outsideButton.addEventListener("click", outsideClick);
+    document.body.appendChild(outsideButton);
+
+    await renderInProvider(navigationFor("/"));
+    const accountTrigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(accountTrigger);
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(1);
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(0);
+
+    const bellTrigger = document.querySelector<HTMLElement>('[data-testid="rail-notification-trigger"]')!;
+    await click(bellTrigger);
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="rail-sheet-scrim"]')).toHaveLength(0);
+
+    await click(outsideButton);
+    expect(outsideClick).toHaveBeenCalledTimes(1);
+    outsideButton.remove();
+  });
+
+  it("the Sheet's own scrim is not doubled by its nested account menu", async () => {
+    await renderInSheet(navigationFor("/"));
+    expect(document.querySelectorAll('[data-testid="rail-sheet-scrim"]')).toHaveLength(1);
+
+    const accountTrigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(accountTrigger);
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+
+    // `backdrop={!isSheet}` (`NavigationRail.tsx`) — the Sheet's own scrim already dims the page,
+    // so the nested account menu must not add a second one.
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="rail-sheet-scrim"]')).toHaveLength(1);
+  });
+});
+
 describe("the account menu inside a modal Sheet — focus after Escape (#122 P3)", () => {
   it("returns focus to the account trigger synchronously, not the Sheet dialog popup", async () => {
     await renderInSheet(navigationFor("/"));

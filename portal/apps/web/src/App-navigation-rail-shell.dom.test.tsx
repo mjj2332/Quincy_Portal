@@ -54,6 +54,7 @@ vi.mock("./lib/query-client", () => ({
 
 import App from "./App";
 import { apiGet } from "./lib/api";
+import { signOut } from "./lib/auth";
 import { NAVIGATION_RAIL_FLAG } from "./lib/feature-flags";
 import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
 import { consumeProjectSearchFocus } from "./lib/shell-search";
@@ -134,6 +135,7 @@ beforeEach(() => {
   installMatchMediaShim();
   window.localStorage.clear();
   setViewportWidth(1024);
+  vi.mocked(signOut).mockClear();
   // Drains any request a previous test left latched — `lib/shell-search.ts` is a module-level
   // singleton, shared by every test in this file the same way `window.localStorage` would be.
   consumeProjectSearchFocus();
@@ -440,6 +442,100 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull();
     });
 
+    it("reaches Dashboard, Admin and Notification preferences inside the open Sheet (#113)", async () => {
+      // Each destination closes the Sheet on activation, so this is three separate renders, not
+      // one Sheet followed three times — each block unmounts its own root before the next
+      // `renderAt` reassigns the shared `root`/`host`, the same discipline the file's own
+      // remount test above uses, or the earlier renders' `⌘B` window listeners and storage
+      // effects leak into every later test in this file.
+      {
+        const host = await renderAt("/admin");
+        await resizeTo(600);
+        await tick();
+        await click(sheetTrigger(host)!);
+        const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+        const dashboardLink = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
+          .find((a) => a.textContent?.trim() === "Dashboard")! as HTMLAnchorElement;
+        expect(dashboardLink.getAttribute("href")).toBe("/");
+        await click(dashboardLink);
+        await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+        expect(window.location.pathname).toBe("/");
+        if (root) await act(async () => root!.unmount());
+        root = null;
+        document.body.replaceChildren();
+      }
+      {
+        const host = await renderAt("/");
+        await resizeTo(600);
+        await tick();
+        await click(sheetTrigger(host)!);
+        const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+        const adminLink = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
+          .find((a) => a.textContent?.trim() === "Admin")! as HTMLAnchorElement;
+        expect(adminLink.getAttribute("href")).toBe("/admin");
+        await click(adminLink);
+        await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+        expect(window.location.pathname).toBe("/admin");
+        if (root) await act(async () => root!.unmount());
+        root = null;
+        document.body.replaceChildren();
+      }
+      {
+        // Notification preferences sits behind the Sheet's own nested account menu, not the rail
+        // itself — #122 P3's account panel, reused unchanged inside the Sheet.
+        const host = await renderAt("/");
+        await resizeTo(600);
+        await tick();
+        await click(sheetTrigger(host)!);
+        const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+        const accountTrigger = sheet.querySelector<HTMLButtonElement>('[data-testid="navigation-rail-account"]')!;
+        await click(accountTrigger);
+        const preferences = document.querySelector<HTMLAnchorElement>('[data-testid="navigation-rail-preferences"]')!;
+        expect(preferences.getAttribute("href")).toBe("/settings/notifications");
+        await click(preferences);
+        await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+        expect(window.location.pathname).toBe("/settings/notifications");
+      }
+    });
+
+    it("gives Admin aria-current inside the Sheet when it is the active route (#113)", async () => {
+      const host = await renderAt("/admin");
+      await resizeTo(600);
+      await tick();
+      await click(sheetTrigger(host)!);
+      const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+      const adminLink = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
+        .find((a) => a.textContent?.trim() === "Admin")!;
+      expect(adminLink.getAttribute("aria-current")).toBe("page");
+    });
+
+    it("gives the Sheet's brand link the rail's own 44px touch-target utility, a real href and its accessible name (#113)", async () => {
+      const host = await renderAt("/");
+      await resizeTo(600);
+      await tick();
+      await click(sheetTrigger(host)!);
+      const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+      const brand = sheet.querySelector<HTMLAnchorElement>('[data-testid="navigation-rail-brand"]')!;
+      // `SHEET_TOUCH_TARGET` (`NavigationRail.tsx`) — the real utility the rail applies in
+      // `sheet`, not the retired Topbar's own `max-[721px]:min-h-[44px]`.
+      expect(brand.className).toContain("min-h-[44px]");
+      expect(brand.getAttribute("href")).toBe("/");
+      expect(brand.getAttribute("aria-label")).toBe("Quincy Portal home");
+    });
+
+    it("calls signOut once from the Sheet's own nested account menu (#113)", async () => {
+      const host = await renderAt("/");
+      await resizeTo(600);
+      await tick();
+      await click(sheetTrigger(host)!);
+      const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+      const accountTrigger = sheet.querySelector<HTMLButtonElement>('[data-testid="navigation-rail-account"]')!;
+      await click(accountTrigger);
+      const signOutButton = document.querySelector<HTMLButtonElement>('[data-testid="navigation-rail-signout"]')!;
+      await click(signOutButton);
+      expect(vi.mocked(signOut)).toHaveBeenCalledTimes(1);
+    });
+
     it("clicking the already-current Kanban link inside the Sheet closes it too", async () => {
       // The current route's link publishes the same location, so the close-on-location effect alone
       // would leave the Sheet open.
@@ -487,8 +583,23 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       expect(sheet.querySelector('[data-testid="rail-notification-badge"]')).toBeNull();
     });
 
-    it("is absent at 772 and present at 771", async () => {
+    it("is absent at 772 and present at 771 — a single-stage collapse, unlike the retired Topbar's two", async () => {
       const host = await renderAt("/");
+      // 1007px and 1008px were the Topbar's OWN first collapse stage (`identity`/`avatar` hiding
+      // independently of the Sheet trigger) — the rail replaces that two-stage collapse with one,
+      // so both leave the wide shell (rail present, no header trigger) entirely unchanged.
+      await resizeTo(1008);
+      await tick();
+      expect(sheetTrigger(host)).toBeNull();
+      expect(railToggle(host)).not.toBeNull();
+      expect(rail(host)).not.toBeNull();
+
+      await resizeTo(1007);
+      await tick();
+      expect(sheetTrigger(host)).toBeNull();
+      expect(railToggle(host)).not.toBeNull();
+      expect(rail(host)).not.toBeNull();
+
       await resizeTo(772);
       await tick();
       expect(sheetTrigger(host)).toBeNull();

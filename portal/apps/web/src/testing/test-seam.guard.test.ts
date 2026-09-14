@@ -610,10 +610,11 @@ describe("guard D: the seam guards actually scanned the DOM suite", () => {
         for (const slot of dataSlotsIn(match[2]!)) slots.add(slot);
       }
     }
-    // ~13 distinct values are selected across the DOM suite today (comfortably above this floor);
-    // if the slot extractor or the source-authorship scan breaks, guard F would silently pass over
-    // an empty set — this makes that a failure instead.
-    expect(slots.size, "far fewer distinct data-slot values than expected — is guard F's matcher still matching?").toBeGreaterThanOrEqual(12);
+    // ~12 distinct values are selected across the DOM suite today (comfortably above this floor;
+    // #113 retired `Topbar.dom.test.tsx`, whose own `[data-slot="avatar"]` query was one of the
+    // ~13 this used to count) — if the slot extractor or the source-authorship scan breaks, guard
+    // F would silently pass over an empty set — this makes that a failure instead.
+    expect(slots.size, "far fewer distinct data-slot values than expected — is guard F's matcher still matching?").toBeGreaterThanOrEqual(11);
   });
 });
 

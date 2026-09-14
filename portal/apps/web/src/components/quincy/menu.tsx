@@ -148,7 +148,9 @@ export function Menu({
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal container={container}>
         {backdrop && (
-          <MenuPrimitive.Backdrop className={cn(
+          <MenuPrimitive.Backdrop
+            data-testid="menu-backdrop"
+            className={cn(
             // Same z-index as the Positioner below, deliberately: the Backdrop is rendered first, and
             // equal z-index resolves by DOM order, so the panel paints above its own scrim without a
             // new stacking token. `tokens/spacing.css:58-63` defines only --z-popover (90), --z-dialog

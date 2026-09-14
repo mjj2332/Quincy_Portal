@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
 import { EditProject } from "../screens/EditProject";
-import { Topbar } from "./Topbar";
+import { buildStaffNavigation } from "../lib/staff-navigation";
+import { parseStaffLocation } from "../lib/router";
+import { SidebarProvider } from "./reui/sidebar";
+import { NavigationRail } from "./quincy/NavigationRail";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
 import { getProjectQueryRuntime } from "../lib/project-query-sync";
@@ -20,13 +23,15 @@ const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiDeleteMock = vi.fn<(path: string) => Promise<unknown>>();
 const activityQueryMock = vi.hoisted(() => vi.fn());
+const signOutMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 let capabilities = new Set<string>(["collaborateOnProject"]);
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body), apiPatch: (path: string, body: unknown) => apiPatchMock(path, body), apiDelete: (path: string) => apiDeleteMock(path) };
 });
-vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-me", role: "photographer" } }, isPending: false }) }));
+// `signOut` — `NavigationRail`'s own footer account menu needs it, the same way `Topbar` did.
+vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-me", role: "photographer" } }, isPending: false }), signOut: signOutMock }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "photographer", capabilities: [...capabilities], can: (capability: string) => capabilities.has(capability) }) }));
 vi.mock("../lib/project-activity", () => ({ useProjectActivityQuery: activityQueryMock }));
 
@@ -459,27 +464,39 @@ describe("ProjectCollaborationPanel", () => {
     expect(toggle.querySelector('[data-testid="project-collaboration-unread"]')?.textContent).toBe("99+"); expect(toggle.getAttribute("aria-label")).toContain("123 unread comments");
   });
 
-  it("keeps the panel open when Topbar user and notification menus consume Escape", async () => {
+  it("keeps the panel open when the rail's account and notification menus consume Escape", async () => {
     apiGetMock.mockImplementation((path) => path.startsWith("/api/notifications")
       ? Promise.resolve({ notifications: [], unreadCount: 0 })
       : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
     const host = mount();
-    await render(<><Topbar activeView="project" canAccessAdmin={false} user={{ name: "Ada" }} notificationPollMs={60_000} /><ProjectCollaborationPanel projectId={projectId} openSignal={1} /></>);
+    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", { adminBackend: true, viewProductionCalendar: true });
+    await render(
+      <>
+        <SidebarProvider open onOpenChange={() => {}}>
+          <NavigationRail navigation={navigation} user={{ name: "Ada" }} variant="expanded" />
+        </SidebarProvider>
+        <ProjectCollaborationPanel projectId={projectId} openSignal={1} />
+      </>,
+    );
     // Both menus are portaled to `document.body` (a sibling of `host`), not `host`'s own
-    // subtree — Base UI's `Menu.Portal` portals by default, like `FloatingPortal`. And Base
-    // UI's Escape dismissal listens on `document` (@floating-ui/react's `useDismiss`), not
-    // `window` — an event dispatched directly on `window` never reaches it.
-    const menuTrigger = host.querySelector<HTMLButtonElement>('[aria-label="Open account and navigation menu"]')!;
-    await click(menuTrigger); await waitForTimer();
-    expect(document.querySelector('[role="menu"][aria-label="Account and navigation menu"]')).not.toBeNull();
+    // subtree — Base UI's `Menu.Portal`/`reui/popover.tsx`'s `Popover.Portal` both portal by
+    // default. And Base UI's Escape dismissal listens on `document` (@floating-ui/react's
+    // `useDismiss`), not `window` — an event dispatched directly on `window` never reaches it.
+    const accountTrigger = document.querySelector<HTMLButtonElement>('[data-testid="navigation-rail-account"]')!;
+    await click(accountTrigger); await waitForTimer();
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForClose();
-    expect(document.querySelector('[role="menu"][aria-label="Account and navigation menu"]')).toBeNull(); expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(accountTrigger);
+    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
 
-    const notifications = host.querySelector<HTMLButtonElement>('button[aria-label="Notifications"]')!;
-    await click(notifications); await waitForTimer();
-    expect(document.querySelector('[role="menu"][aria-label="Notifications"]')).not.toBeNull();
+    const bellTrigger = document.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
+    await click(bellTrigger); await waitForTimer();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForClose();
-    expect(document.querySelector('[role="menu"][aria-label="Notifications"]')).toBeNull(); expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(bellTrigger);
+    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
   });
 
   it("posts comments, exposes edit/delete only to the author, cancels edits, and scopes mention lookup to the project", async () => {
