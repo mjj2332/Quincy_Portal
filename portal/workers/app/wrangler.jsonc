@@ -39,6 +39,6 @@
     "APP_ENV": "production",
     "APP_ORIGIN": "https://quincy.flamingfire.my",
     "RENDITIONS_ENABLED": true,
-    "DROPBOX_EDITOR_AUTOMATION_ENABLED": "0"
+    "DROPBOX_EDITOR_AUTOMATION_ENABLED": "1"
   }
 }
