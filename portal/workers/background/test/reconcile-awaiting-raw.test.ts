@@ -6,10 +6,10 @@ import {
   australiaSydneyBusinessDate,
   advanceAwaitingRawProject,
   dueAwaitingRawProjects,
-  isCanonicalCalendarDate,
   reconcileAwaitingRaw,
   scanAwaitingRawProjects,
 } from "../src/reconcile-awaiting-raw";
+import { isCanonicalCalendarDate } from "@quincy/shared";
 
 declare const __BACKGROUND_WRANGLER_CONFIG__: string;
 declare const __PORTAL_MIGRATION_SQL__: string;

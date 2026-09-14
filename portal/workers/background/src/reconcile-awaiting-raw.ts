@@ -1,3 +1,4 @@
+import { isCanonicalCalendarDate } from "@quincy/shared";
 import { commitAutomaticStage, automaticBoardWritesEnabled } from "./lib/automatic-stage";
 
 export type AwaitingRawProject = {
@@ -17,18 +18,6 @@ type ReconciliationNotifier = (projectId: string) => void | Promise<void>;
 
 const SYDNEY_TIME_ZONE = "Australia/Sydney";
 export const RECONCILE_AWAITING_RAW_BATCH_SIZE = 100;
-
-function daysInMonth(year: number, month: number): number {
-  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
-  return [4, 6, 9, 11].includes(month) ? 30 : 31;
-}
-
-export function isCanonicalCalendarDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
-  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
-}
 
 export function australiaSydneyBusinessDate(instant: Date | number): string {
   const values = new Intl.DateTimeFormat("en-CA", {
