@@ -10,6 +10,7 @@ export declare abstract class QuincyBackground extends WorkerEntrypoint {
   abstract ensureEditorFolder(projectId: string): Promise<{ jobId: string } | null>;
   abstract triggerEditorSync(projectId: string): Promise<{ jobId: string }>;
   abstract previewEditorFolders(cursor?: string): Promise<Record<string, unknown>>;
+  abstract inspectEditorFolder(projectId: string, rootPath: string): Promise<Record<string, unknown>>;
   abstract linkEditorFolder(candidate: ReviewedEditorCandidate, actorId: string): Promise<Record<string, unknown>>;
   abstract renewDropboxDeletionClaim(claimId: string, ownerJobId: string): Promise<boolean>;
   abstract deleteDropboxSourceFile(path: string, claimId: string, ownerJobId: string): Promise<
