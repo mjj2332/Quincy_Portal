@@ -28,7 +28,7 @@ import { enqueueEditorReconcile, editorAutoCreationAllowed } from "./editor-fold
 import { reconcileEditorFolder } from "./editor-folders/scaffold";
 import { syncProjectEditorOutput } from "./editor-folders/sync-output";
 import { automationFlag } from "./dropbox/monitor-state";
-import { previewEditorBackfill, applyEditorCandidate, type ReviewedEditorCandidate } from "./editor-folders/backfill";
+import { previewEditorBackfill, applyEditorCandidate, inspectEditorCandidate, type ReviewedEditorCandidate } from "./editor-folders/backfill";
 import { dropboxPathKey, monitorName } from "./dropbox/paths";
 import { claimAutoHdrFetch, claimAutoHdrHandoff, isWorkflowAlreadyExists, startClaimedFetch, type HandoffOwner } from "./autohdr/claims";
 import { routeAutoHdrDelta, type RoutedAutoHdrMapping } from "./autohdr/mapping";
@@ -177,6 +177,10 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
 
   async previewEditorFolders(cursor?: string): Promise<Record<string, unknown>> {
     return previewEditorBackfill(this.env, cursor);
+  }
+
+  async inspectEditorFolder(projectId: string, rootPath: string): Promise<Record<string, unknown>> {
+    return inspectEditorCandidate(this.env, projectId, rootPath);
   }
 
   async linkEditorFolder(candidate: ReviewedEditorCandidate, actorId: string): Promise<Record<string, unknown>> {

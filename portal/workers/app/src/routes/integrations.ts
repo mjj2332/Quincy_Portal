@@ -33,6 +33,12 @@ integrationsRoutes.get("/integrations/dropbox/editor-folders", terminalRoute("/i
   if (cursor && !z.string().uuid().safeParse(cursor).success) return c.json({ error: "Invalid cursor" }, 400);
   return c.json(await c.env.BACKGROUND.previewEditorFolders(cursor));
 }));
+integrationsRoutes.post("/integrations/dropbox/editor-folders/inspect", terminalRoute("/integrations/dropbox/editor-folders/inspect", async (c) => {
+  const input = await jsonInput(c, z.object({ projectId: z.string().uuid(), rootPath: z.string().min(1).max(2000) }).strict());
+  if (input instanceof Response) return input;
+  c.header("Cache-Control", "no-store");
+  return c.json(await c.env.BACKGROUND.inspectEditorFolder(input.projectId, input.rootPath));
+}));
 integrationsRoutes.post("/integrations/dropbox/editor-folders/link", terminalRoute("/integrations/dropbox/editor-folders/link", async (c) => {
   const input = await jsonInput(c, z.object({ reviewed: z.literal(true), candidate: editorCandidateInput }).strict());
   if (input instanceof Response) return input;

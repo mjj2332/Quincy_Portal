@@ -3735,6 +3735,9 @@ describe("staff app API", () => {
     for (const token of [photographerToken, editorToken, externalEditorToken]) {
       const cookie = await sessionCookie(token);
       expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders", { headers: { cookie } })).status).toBe(403);
+      expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/inspect", {
+        method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ projectId: crypto.randomUUID(), rootPath: "/x" }),
+      })).status).toBe(403);
       expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/link", {
         method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ reviewed: true }),
       })).status).toBe(403);
@@ -3742,6 +3745,12 @@ describe("staff app API", () => {
     const cookie = await sessionCookie(adminToken);
     expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/link", {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ reviewed: false }),
+    })).status).toBe(400);
+    expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/inspect", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ projectId: "nope", rootPath: "/x" }),
+    })).status).toBe(400);
+    expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/inspect", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ projectId: crypto.randomUUID() }),
     })).status).toBe(400);
   });
 

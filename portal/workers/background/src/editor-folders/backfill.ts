@@ -1,11 +1,12 @@
 import { and, eq, gt, isNull, ne } from "drizzle-orm";
 import { projects } from "@quincy/db/schema";
+import { normalisePath } from "@quincy/shared";
 import type { Env } from "../env";
 import { dbFor } from "../lib/db";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, listFolder, listFolderContinue, type DropboxFolder } from "../dropbox/client";
 import { pathFromRawFolderLink } from "../dropbox/sync";
-import { deriveEditorProjectFolderName, editorFolderPath, editorFolderPathKey, isEditorProjectFolderPath } from "./paths";
+import { deriveEditorProjectFolderName, editorFolderPath, editorFolderPathKey, isEditorProjectFolderPath, isEditorWorkspacePath, validateShootDate } from "./paths";
 import { getEditorFolderMapping, linkExistingEditorFolder } from "./mapping";
 
 export type ReviewedEditorCandidate = {
@@ -33,16 +34,37 @@ async function childFolders(env: Env, path: string, connectionId: string): Promi
   }
 }
 
+/** Derives the automatic Editor root for a Tonomo RAW path, or null if either input is unusable. */
+export function derivedEditorRootPath(project: { shootDate: string | null; rawFolderPath: string | null }, rawPath: string | null): string | null {
+  try {
+    const path = rawPath ?? project.rawFolderPath;
+    if (!path) return null;
+    return editorFolderPath({ shootDate: validateShootDate(project.shootDate), projectFolderName: deriveEditorProjectFolderName(path) });
+  } catch {
+    return null;
+  }
+}
+
 /** Inspect folder names only. No mutation, file download, or automatic fuzzy match. */
-export async function discoverEditorCandidate(env: Env, projectId: string): Promise<ReviewedEditorCandidate> {
+export async function discoverEditorCandidate(env: Env, projectId: string, options?: { rootPath?: string }): Promise<ReviewedEditorCandidate> {
   const db = dbFor(env);
   const project = await db.select({ shootDate: projects.shootDate, rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
     .from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
   if (!project?.shootDate) throw new Error("Active Project with a shoot date is required");
   const connectionId = await canonicalDropboxConnectionId(db);
-  const rawPath = project.rawFolderPath ?? await pathFromRawFolderLink(env, project.rawFolderLink, connectionId);
-  if (!rawPath) throw new Error("Tonomo folder identity is unavailable");
-  const rootPath = editorFolderPath({ shootDate: project.shootDate, projectFolderName: deriveEditorProjectFolderName(rawPath) });
+  let rootPath: string;
+  if (options?.rootPath === undefined) {
+    const rawPath = project.rawFolderPath ?? await pathFromRawFolderLink(env, project.rawFolderLink, connectionId);
+    if (!rawPath) throw new Error("Tonomo folder identity is unavailable");
+    rootPath = editorFolderPath({ shootDate: project.shootDate, projectFolderName: deriveEditorProjectFolderName(rawPath) });
+  } else {
+    const normalisedRoot = normalisePath(options.rootPath);
+    if (!isEditorWorkspacePath(normalisedRoot) || !isEditorProjectFolderPath(normalisedRoot)) {
+      throw new Error("Reviewed Editor root must be a project folder under /Editor/01_ACTIVE EDITS");
+    }
+    validateShootDate(project.shootDate);
+    rootPath = normalisedRoot;
+  }
   const root = await getMetadata(env, db, rootPath, connectionId);
   if (root[".tag"] !== "folder" || editorFolderPathKey(root.path_lower) !== editorFolderPathKey(rootPath)) throw new Error("Exact Project folder could not be verified");
   const inputRoots: ReviewedEditorCandidate["inputRoots"] = [];
@@ -65,9 +87,44 @@ export async function discoverEditorCandidate(env: Env, projectId: string): Prom
     expectedRawFolderLink: project.rawFolderLink, rootPath: root.path_display ?? root.path_lower, rootFolderId: root.id, inputRoots, outputRoots };
 }
 
+/**
+ * Inspect a human-reviewed alternate Editor root (hand-named legacy folders that the automatic
+ * derivation in `discoverEditorCandidate` cannot find). Read-only; the returned `candidate` is
+ * what `/editor-folders/link` requires.
+ */
+export async function inspectEditorCandidate(env: Env, projectId: string, rootPath: string): Promise<
+  | { status: "candidate"; candidate: ReviewedEditorCandidate; derivedRootPath: string | null; matchesDerived: boolean }
+  | { status: "needs_review"; reason: string; derivedRootPath: string | null }
+> {
+  const db = dbFor(env);
+  const project = await db.select({ shootDate: projects.shootDate, rawFolderPath: projects.rawFolderPath, rawFolderLink: projects.rawFolderLink })
+    .from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
+  let derivedRootPath: string | null = null;
+  if (project) {
+    let rawPath = project.rawFolderPath;
+    if (!rawPath) {
+      try {
+        const connectionId = await canonicalDropboxConnectionId(db);
+        rawPath = await pathFromRawFolderLink(env, project.rawFolderLink, connectionId);
+      } catch {
+        rawPath = null;
+      }
+    }
+    derivedRootPath = derivedEditorRootPath(project, rawPath);
+  }
+  try {
+    const candidate = await discoverEditorCandidate(env, projectId, { rootPath });
+    const matchesDerived = derivedRootPath !== null && editorFolderPathKey(derivedRootPath) === editorFolderPathKey(candidate.rootPath);
+    return { status: "candidate", candidate, derivedRootPath, matchesDerived };
+  } catch (error) {
+    return { status: "needs_review", reason: error instanceof Error ? error.message : String(error), derivedRootPath };
+  }
+}
+
 export async function previewEditorBackfill(env: Env, cursor?: string) {
   const db = dbFor(env);
-  const rows = await db.select({ id: projects.id }).from(projects)
+  const rows = await db.select({ id: projects.id, shootDate: projects.shootDate, rawFolderPath: projects.rawFolderPath })
+    .from(projects)
     .where(and(isNull(projects.archivedAt), ne(projects.stageKey, "delivered"), cursor ? gt(projects.id, cursor) : undefined))
     .orderBy(projects.id).limit(25);
   const items = [];
@@ -81,7 +138,10 @@ export async function previewEditorBackfill(env: Env, cursor?: string) {
       continue;
     }
     try { items.push({ projectId: row.id, status: "candidate" as const, candidate: await discoverEditorCandidate(env, row.id) }); }
-    catch (error) { items.push({ projectId: row.id, status: "needs_review" as const, reason: error instanceof Error ? error.message : String(error) }); }
+    catch (error) {
+      items.push({ projectId: row.id, status: "needs_review" as const, reason: error instanceof Error ? error.message : String(error),
+        derivedRootPath: derivedEditorRootPath(row, row.rawFolderPath) });
+    }
   }
   return { items, nextCursor: rows.length === 25 ? rows.at(-1)!.id : null, dryRun: true as const };
 }
