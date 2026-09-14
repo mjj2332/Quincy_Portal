@@ -612,8 +612,20 @@ describe("guard: the rail surface avoids inverse-re-scoped roles", () => {
     const rail = stripComments(readFileSync(railPath, "utf8"))
       .replace(/const ACCOUNT_MENU_ITEM = cn\([\s\S]*?\);/, "");
     const primitive = stripComments(readFileSync(primitivePath, "utf8"));
+    // #122 P3: `ShellSearch.tsx` is a second rail child (mounted by `NavigationRail.tsx`, above
+    // its own `<nav>`), the same extension pattern this scan already made once for
+    // `reui/sidebar.tsx` — a rail child gets covered here too, not just the rail file itself.
+    const shellSearchPath = join(stylesDir, "..", "components", "quincy", "ShellSearch.tsx");
+    const shellSearch = stripComments(readFileSync(shellSearchPath, "utf8"));
 
-    return { rescoped, sources: { "quincy/NavigationRail.tsx": rail, "reui/sidebar.tsx": primitive } };
+    return {
+      rescoped,
+      sources: {
+        "quincy/NavigationRail.tsx": rail,
+        "reui/sidebar.tsx": primitive,
+        "quincy/ShellSearch.tsx": shellSearch,
+      },
+    };
   };
 
   it("derives the forbidden role names from inverse.css rather than listing them", () => {

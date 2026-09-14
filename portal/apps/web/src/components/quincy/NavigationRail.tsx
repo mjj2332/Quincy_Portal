@@ -5,7 +5,9 @@ import {
   SquareKanban,
   Calendar,
   Shield,
-  EllipsisVertical,
+  ChevronsUpDown,
+  Settings,
+  LogOut,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -24,10 +26,13 @@ import {
   SidebarMenuSubItem,
   SidebarTrigger,
 } from "@/components/reui/sidebar";
+import { Avatar, AvatarFallback } from "@/components/reui/avatar";
+import { Separator } from "@/components/reui/separator";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
 import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
+import { ShellSearch } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
 import { initials } from "../../lib/initials";
 import { cn } from "../../lib/utils";
@@ -191,19 +196,27 @@ const COLLAPSED_MENU_ITEM = cn(
   RAIL_ITEM,
 );
 
-// The account menu's items. Mirrors the Topbar's own menu items (`MOBILE_ITEM` there) rather than
-// inventing a second menu-item look: same 44px minimum target, same label type, same hover lift.
+// The account menu's items — the preferences link and the sign-out button share this look. Mirrors
+// the Topbar's own menu items (`MOBILE_ITEM` there) rather than inventing a second menu-item look:
+// same 44px minimum target, same hover lift.
 //
-// These KEEP the shadcn role layer (`text-foreground`, `hover:bg-secondary`) where `ACTIVE_PAINT`
-// above deliberately avoids it, and the difference is the surface, not an oversight. This paints
-// inside `quincy/menu.tsx`'s panel, whose own ground is `bg-popover` — a role. Pinning the text and
-// hover to Quincy's aliases while the ground stays a role is what would actually break: the panel
-// would then half-follow an inverse scope. The panel is also portalled to `document.body`, outside
-// the rail and outside any `[data-surface]` subtree, so it cannot inherit one in the first place.
+// This KEEPS the shadcn role layer (`bg-secondary`) where `ACTIVE_PAINT`/`ROW_PAINT` above
+// deliberately avoid it, and the difference is the surface, not an oversight. This paints inside
+// `quincy/menu.tsx`'s panel, whose own ground is `bg-popover` — a role. Pinning the hover to
+// Quincy's aliases while the ground stays a role is what would actually break: the panel would then
+// half-follow an inverse scope. The panel is also portalled to `document.body`, outside the rail
+// and outside any `[data-surface]` subtree, so it cannot inherit one in the first place.
+//
+// `!text-foreground` is load-bearing, not decorative: the preferences item renders as
+// `InternalLink`, a real `<a>`, and `styles/tokens/base.css` declares `a { color: inherit }`
+// UNLAYERED — that beats any LAYERED Tailwind `text-*` utility regardless of merge order, the same
+// trap `docs/lessons.md:1181-1219` names twice already. `data-active`/`data-highlighted` are
+// presence-based, matching Base UI's own convention — never the string `"false"`.
 const ACCOUNT_MENU_ITEM = cn(
-  "min-h-[44px] w-full flex items-center px-[var(--space-3)] text-foreground text-left",
-  "no-underline [font:var(--type-label)] uppercase tracking-[var(--tracking-wide)] cursor-pointer",
-  "border-0 bg-transparent hover:bg-secondary",
+  "flex min-h-[44px] w-full items-center gap-[var(--space-2)] rounded-md border-0 bg-transparent",
+  "px-[var(--space-3)] py-[var(--space-2)] text-left text-sm !text-foreground no-underline cursor-pointer",
+  "hover:bg-secondary data-highlighted:bg-secondary data-active:bg-secondary data-active:font-medium",
+  "[&_svg]:size-4 [&_svg]:opacity-60",
 );
 
 /**
@@ -224,9 +237,14 @@ export type NavigationRailProps = {
    * window with a wide-window override is a call the shell makes, not the rail.
    */
   showBell?: boolean;
+  /**
+   * Runs `lib/shell-search.ts`'s activation from `ShellSearch` — the rail renders the control and
+   * decides nothing about where the request lands. Defaults to a no-op.
+   */
+  onSearch?: () => void;
 };
 
-export function NavigationRail({ navigation, user, variant = "expanded", showBell = true }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, onSearch = () => {} }: NavigationRailProps) {
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
 
@@ -249,6 +267,15 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
   }
 
   const displayName = user.name || user.email || "Signed in";
+  // A named intermediate, not an inline object literal at the `tooltip` prop — `TooltipContent`'s
+  // props type carries no index signature for `data-*`, so TypeScript's excess-property check
+  // (literals only, not a variable of a wider inferred type) would otherwise reject the testid, the
+  // same way `RailItem`'s own `tooltip` const (below) already dodges it.
+  const accountTooltip = { children: displayName, "data-testid": "rail-tooltip-account" };
+  // Read once, not once per attribute — `activeSectionId` already folds every notifications route
+  // to `"notifications"` (`lib/staff-navigation.ts`), so this is a single presence check, not a
+  // route re-derivation, for both `data-active` and `aria-current` below.
+  const preferencesActive = navigation.activeSectionId === "notifications";
 
   return (
     <Sidebar
@@ -306,6 +333,9 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
           is only a `div` — so rendering the rail without this would silently remove primary
           navigation from a screen reader's landmark list. Reported independently by both reviewers. */}
       <SidebarContent>
+        {/* The search control sits above the nav landmark, not inside it — it is not a
+            destination, only a trigger for `lib/shell-search.ts`'s focus request. */}
+        <ShellSearch variant={variant} onActivate={onSearch} />
         <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">
@@ -340,66 +370,119 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
             (`tmp/ReUI-Test-2-tempo-v1.1.0`, `nav-workspace.tsx`) makes the footer identity a menu
             trigger and puts Sign Out inside the panel. Two reasons it is the right shape here too:
             a destructive, irreversible action should not be one stray click from the navigation it
-            sits under, and the footer is where per-account actions will accumulate (notification
-            preferences is already missing from the railed shell until #113).
+            sits under, and the footer is where per-account actions accumulate — notification
+            preferences joins it below, restoring the parity the Topbar's own account menu already
+            has (#122 P3).
 
-            Built on `quincy/menu.tsx` — Quincy-owned Base UI, the app's shared dropdown, and the
-            same primitive the Topbar uses for its own account menu. Deliberately NOT the vendor
+            `SidebarFooter > SidebarMenu > SidebarMenuItem > Menu`, the same path the collapsed
+            rail's own click-opened menu already takes (below) — `triggerRender` makes the whole
+            `SidebarMenuButton` the trigger, so `size="lg"` supplies the 48px account row and its own
+            collapsed-icon sizing, replacing what used to be hand-written padding here. Built on
+            `quincy/menu.tsx` — Quincy-owned Base UI, the app's shared dropdown, and the same
+            primitive the Topbar uses for its own account menu. Deliberately NOT the vendor
             `dropdown-menu` the reference imports: that component is not in `components/reui/`, and
             CLAUDE.md keeps `quincy/menu.tsx` as the app's menu rather than restoring a registry
             equivalent. `side="right"` because the rail is on the left edge, so a panel below or
-            left of the trigger would open off-canvas. */}
-        <Menu
-          triggerLabel={`Account menu for ${displayName}`}
-          label="Account"
-          side="right"
-          align="end"
-          triggerClassName={cn(
-            "w-full rounded-md py-[var(--space-2)] text-left hover:bg-sidebar-accent",
-            isCollapsed ? "px-0" : "px-[var(--space-2)]",
-            isSheet && SHEET_TOUCH_TARGET,
-          )}
-          triggerTestId="navigation-rail-account"
-          trigger={
-            <span
-              className={cn("flex w-full items-center", isCollapsed ? "justify-center" : "gap-[var(--space-3)]")}
-              data-testid="navigation-rail-identity"
-              // `Menu`'s trigger is a fixed prop list with no passthrough to the rendered button
-              // (see `quincy/menu.tsx`), so the 44px seam sits on this span instead — it already
-              // fills the trigger's own box (`w-full`), so it is a faithful proxy for the control.
-              data-touch-target={isSheet ? true : undefined}
-            >
-              <span
-                className="grid h-[32px] w-[32px] flex-none place-items-center rounded-[var(--radius-pill)] bg-[var(--ink-900)] text-[var(--paper-050)] [font:var(--weight-regular)_12px/1.2_var(--font-sans)] tracking-[0.02em]"
-                aria-hidden="true"
-              >
-                {initials(displayName)}
-              </span>
-              {/* Collapsed shows initials only — there is no room at 48px for the name/email block
-                  or the chevron affordance below. */}
-              {!isCollapsed && (
-                <>
-                  <span className="flex min-w-0 flex-col">
-                    <strong className="truncate">{displayName}</strong>
-                    {user.email && user.name && <span className="ey truncate">{user.email}</span>}
+            left of the trigger would open off-canvas; `sideOffset={8}` clears the footer's own
+            padding. In `sheet`, `side="top"` instead: the root Menu's own collision avoidance
+            (`DROPDOWN_COLLISION_AVOIDANCE`, `fallbackAxisSide: "none"`) can only flip between left
+            and right, and neither fits beside a full-width trigger in the 288px Sheet — the same
+            mobile switch `@reui/app-shell-3`'s own `nav-workspace` reference makes. */}
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <Menu
+              triggerLabel={`Account menu for ${displayName}`}
+              label="Account"
+              side={isSheet ? "top" : "right"}
+              align="end"
+              sideOffset={8}
+              triggerTestId="navigation-rail-account"
+              triggerRender={
+                <SidebarMenuButton
+                  type="button"
+                  size="lg"
+                  // Passed unconditionally — `SidebarMenuButton`'s own tooltip self-hides while
+                  // expanded, and in `sheet` the provider's `open` is always `false` (RailedShell
+                  // sets it there for the Sheet's own reasons), so a conditional here would blank
+                  // it inside the 288px Sheet too.
+                  tooltip={accountTooltip}
+                  className="hover:bg-sidebar-accent"
+                  data-touch-target={isSheet ? true : undefined}
+                >
+                  <span
+                    className={cn("flex w-full items-center", isCollapsed ? "justify-center" : "gap-[var(--space-3)]")}
+                    data-testid="navigation-rail-identity"
+                  >
+                    <Avatar aria-hidden="true">
+                      <AvatarFallback
+                        className={cn(
+                          "bg-[var(--ink-900)] text-[color:var(--paper-050)]",
+                          "text-[length:12px] leading-[1.2] font-[family-name:var(--font-sans)] font-[var(--weight-regular)] tracking-[0.02em]",
+                        )}
+                      >
+                        {initials(displayName)}
+                      </AvatarFallback>
+                    </Avatar>
+                    {/* Collapsed shows the avatar only — there is no room at 48px for the
+                        name/email block or the chevron affordance below. */}
+                    {!isCollapsed && (
+                      <>
+                        <span className="flex min-w-0 flex-col">
+                          <strong className="truncate">{displayName}</strong>
+                          {user.email && user.name && <span className="ey truncate">{user.email}</span>}
+                        </span>
+                        {/* Affordance: without it the identity reads as a label rather than a
+                            control. */}
+                        <ChevronsUpDown className="ml-auto flex-none opacity-50" size={16} aria-hidden="true" />
+                      </>
+                    )}
                   </span>
-                  {/* Affordance: without it the identity reads as a label rather than a control. */}
-                  <EllipsisVertical className="ml-auto flex-none opacity-50" size={16} aria-hidden="true" />
-                </>
-              )}
-            </span>
-          }
-        >
-          <MenuPrimitive.Item
-            nativeButton
-            closeOnClick
-            render={<button type="button" className={ACCOUNT_MENU_ITEM} />}
-            onClick={(event) => { void handleSignOut(event as unknown as MouseEvent<HTMLButtonElement>); }}
-            data-testid="navigation-rail-signout"
-          >
-            Sign out
-          </MenuPrimitive.Item>
-        </Menu>
+                </SidebarMenuButton>
+              }
+            >
+              <MenuPrimitive.Group>
+                {/* Quincy's own text aliases below, not the `text-foreground`/`text-muted-foreground`
+                    ROLES `ACCOUNT_MENU_ITEM` (below) is separately exempted for
+                    (`styles/sidebar-token-bridge.guard.test.ts`'s rail-surface check scans this
+                    whole file otherwise) — each alias reads the identical value today and keeps
+                    this label outside that guard's rescoped-role list. */}
+                <MenuPrimitive.GroupLabel className="flex flex-col gap-[var(--space-1)] px-[var(--space-3)] py-[var(--space-2)]">
+                  <span className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-[color:var(--text-muted)]">
+                    Account
+                  </span>
+                  <strong className="truncate text-sm font-medium text-[color:var(--text-primary)]">{displayName}</strong>
+                  {user.email && user.name && <span className="truncate text-xs text-[color:var(--text-muted)]">{user.email}</span>}
+                </MenuPrimitive.GroupLabel>
+              </MenuPrimitive.Group>
+              <MenuPrimitive.LinkItem
+                closeOnClick
+                label="Notification preferences"
+                render={<InternalLink to="/settings/notifications" className={ACCOUNT_MENU_ITEM} />}
+                // Presence-based, matching Base UI's own `data-active` convention.
+                data-active={preferencesActive ? "" : undefined}
+                aria-current={preferencesActive ? "page" : undefined}
+                data-testid="navigation-rail-preferences"
+              >
+                <Settings aria-hidden="true" />
+                Notification preferences
+              </MenuPrimitive.LinkItem>
+              {/* Base UI's Menu has no separator part of its own (verified against
+                  `@base-ui/react/menu`'s exports) — `reui/separator.tsx` is a real `role="separator"`,
+                  not a bare `<div>`. */}
+              <Separator className="my-[var(--space-1)]" />
+              <MenuPrimitive.Item
+                nativeButton
+                closeOnClick
+                render={<button type="button" className={ACCOUNT_MENU_ITEM} />}
+                onClick={(event) => { void handleSignOut(event as unknown as MouseEvent<HTMLButtonElement>); }}
+                data-testid="navigation-rail-signout"
+              >
+                <LogOut aria-hidden="true" />
+                Sign out
+              </MenuPrimitive.Item>
+            </Menu>
+          </SidebarMenuItem>
+        </SidebarMenu>
         {/* Outside the menu on purpose: `closeOnClick` dismisses the panel, so an error rendered
             inside it would unmount before it could be read. */}
         {signOutError && (

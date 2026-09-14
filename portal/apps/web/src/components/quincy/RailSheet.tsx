@@ -21,12 +21,19 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
  * the identical problem with an `OverlayContainerContext.Provider` wrapping a plain `<div>` ref
  * inside the popup; this does the same, so the account menu portals inside the Sheet instead of
  * past it.
+ *
+ * `finalFocus` (#122 P3) forwards straight through to `SheetContent`'s own `...props` spread onto
+ * `SheetPrimitive.Popup` — `Dialog.Popup` already accepts it (`@base-ui/react/dialog`), so no edit
+ * to `reui/sheet.tsx` is needed. `RailedShell` uses it to suppress the Sheet's own close-focuses-
+ * the-trigger behaviour for exactly one close: a ⌘K search tap inside the Sheet needs the
+ * Dashboard's own input focused instead, once it mounts, not the (about to vanish) sheet trigger.
  */
 export type RailSheetProps = {
   children: ReactNode;
+  finalFocus?: React.ComponentProps<typeof SheetContent>["finalFocus"];
 };
 
-export function RailSheet({ children }: RailSheetProps) {
+export function RailSheet({ children, finalFocus }: RailSheetProps) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
 
   return (
@@ -35,6 +42,7 @@ export function RailSheet({ children }: RailSheetProps) {
       showCloseButton={false}
       data-testid="rail-sheet"
       className="z-[var(--z-dialog)] gap-0 bg-sidebar p-0 text-sidebar-foreground border-sidebar-border data-[side=left]:w-[288px]"
+      finalFocus={finalFocus}
       overlayProps={{
         "data-testid": "rail-sheet-scrim",
         // The token plus a 3px blur — the same scrim `Modal.tsx`'s own `SCRIM` reaches for, not an

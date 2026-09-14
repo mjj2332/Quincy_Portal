@@ -55,6 +55,11 @@ const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   // #122 P2: the notification bell's panel is base-nova's `popover.tsx`, carrying the same
   // z-token and container conformance edits as `tooltip.tsx` above.
   { path: "components/reui/popover.tsx", kind: "script" },
+  // #122 P3: the account menu's ⌘K hint (`kbd.tsx`) and the rail's own search control and its
+  // focus-request store join the same list.
+  { path: "components/reui/kbd.tsx", kind: "script" },
+  { path: "components/quincy/ShellSearch.tsx", kind: "script" },
+  { path: "lib/shell-search.ts", kind: "script" },
 ];
 
 // ---------------------------------------------------------------------------
