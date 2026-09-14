@@ -92,6 +92,7 @@ describe("groupNotifications", () => {
       item({ id: "d", createdAt: "2026-09-13T10:00:00+10:00" }),
     ];
     const buckets = groupNotifications(items, now);
+    expect(buckets.map((bucket) => bucket.key)).toEqual(["2026-09-15", "2026-09-14", "2026-09-13"]);
     expect(buckets.map((bucket) => bucket.label)).toEqual(["Today", "Yesterday", "13 Sep 2026"]);
     expect(buckets[0]!.notifications.map((entry) => entry.id)).toEqual(["a", "c"]);
     expect(buckets[1]!.notifications.map((entry) => entry.id)).toEqual(["b"]);

@@ -23,7 +23,7 @@ import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-sche
 import { moveProjectStage } from "../lib/project-stage";
 import { moveProjectBoardOrder } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
-import { coverMaps } from "../lib/project-covers";
+import { chunked, coverMaps } from "../lib/project-covers";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -55,12 +55,6 @@ type DropboxSyncResult = {
   raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
   edited: { jobId: string } | { skipped: "not_ready" | "not_admin" | "error"; message?: string } | { blocked: { code: string; message: string } };
 };
-
-function chunked<T>(items: T[], size = 80): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
-  return chunks;
-}
 
 type DownloadSelectionEntry = {
   id: string;

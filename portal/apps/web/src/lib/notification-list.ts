@@ -1,4 +1,4 @@
-import { SYDNEY_TIME_ZONE } from "@quincy/shared";
+import { sydneyCivilParts } from "@quincy/shared";
 
 /**
  * The presentation-layer shape #114 groups, formats and filters — a superset of the wire type,
@@ -27,30 +27,9 @@ export type NotificationBucket<T = NotificationListItem> = {
   notifications: T[];
 };
 
-// Read via `formatToParts`, the same pattern `sydney-civil-time.ts`'s own `partsFor` uses — a
-// locale string is never parsed back out of, it is only ever taken apart into named fields.
-const SYDNEY_DAY_FORMATTER = new Intl.DateTimeFormat("en-AU", {
-  timeZone: SYDNEY_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
-
-type SydneyParts = { year: number; month: number; day: number; hour: number; minute: number };
-
-function sydneyParts(instant: Date): SydneyParts {
-  const parts = Object.fromEntries(SYDNEY_DAY_FORMATTER.formatToParts(instant).map(({ type, value }) => [type, value]));
-  return {
-    year: Number(parts.year),
-    month: Number(parts.month),
-    day: Number(parts.day),
-    hour: Number(parts.hour),
-    minute: Number(parts.minute),
-  };
-}
+// The Sydney wall-clock fields come from shared's `sydneyCivilParts` — one formatter for every
+// caller that needs a Sydney calendar day, never a locale string parsed back apart.
+const sydneyParts = sydneyCivilParts;
 
 function toDate(instant: Date | string | number): Date {
   return instant instanceof Date ? instant : new Date(instant);

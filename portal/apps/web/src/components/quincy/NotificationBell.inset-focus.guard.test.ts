@@ -50,7 +50,7 @@ function notificationListSource(): string {
  * Exported so the fixtures below can exercise it directly, per this repo's rule (lessons.md,
  * "A grep gate that cannot fail is not a gate — twice in two releases").
  */
-export function highlightStateInitialiser(source: string): string | null {
+export function dismissInitialiser(source: string): string | null {
   const match = /const DISMISS\s*=[\s\S]*?;/.exec(source);
   return match ? match[0] : null;
 }
@@ -62,13 +62,13 @@ export function focusUtilities(initialiser: string): string[] {
 
 describe("NotificationList DISMISS inset focus ring", () => {
   it("declares an inward offset", () => {
-    const initialiser = highlightStateInitialiser(notificationListSource());
+    const initialiser = dismissInitialiser(notificationListSource());
     expect(initialiser, "DISMISS initialiser not found").not.toBeNull();
     expect(focusUtilities(initialiser!)).toContain("focus-visible:!outline-offset-[-2px]");
   });
 
   it("marks EVERY focus utility important, so none of them loses to the unlayered global rule", () => {
-    const initialiser = highlightStateInitialiser(notificationListSource());
+    const initialiser = dismissInitialiser(notificationListSource());
     const unimportant = focusUtilities(initialiser!).filter((utility) => !utility.startsWith("focus-visible:!"));
     expect(unimportant, `these lose to tokens/base.css:25's unlayered :focus-visible: ${unimportant.join(", ")}`)
       .toEqual([]);
@@ -83,19 +83,19 @@ describe("NotificationList DISMISS inset focus ring", () => {
       '  "focus-visible:!outline-solid focus-visible:!outline-ring focus-visible:!outline-offset-[-2px]";';
 
     it("flags the unimportant form that actually shipped", () => {
-      const utilities = focusUtilities(highlightStateInitialiser(BROKEN)!);
+      const utilities = focusUtilities(dismissInitialiser(BROKEN)!);
       expect(utilities.filter((u) => !u.startsWith("focus-visible:!"))).not.toEqual([]);
       expect(utilities).not.toContain("focus-visible:!outline-offset-[-2px]");
     });
 
     it("accepts the corrected form", () => {
-      const utilities = focusUtilities(highlightStateInitialiser(FIXED)!);
+      const utilities = focusUtilities(dismissInitialiser(FIXED)!);
       expect(utilities.filter((u) => !u.startsWith("focus-visible:!"))).toEqual([]);
       expect(utilities).toContain("focus-visible:!outline-offset-[-2px]");
     });
 
     it("returns null when the constant is gone, so a rename cannot silently pass the guard", () => {
-      expect(highlightStateInitialiser("const SOMETHING_ELSE = \"x\";")).toBeNull();
+      expect(dismissInitialiser("const SOMETHING_ELSE = \"x\";")).toBeNull();
     });
   });
 });

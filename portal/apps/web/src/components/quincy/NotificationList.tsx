@@ -2,7 +2,6 @@ import { useId } from "react";
 import { SYDNEY_TIME_ZONE, isCautionNotificationType, projectNotificationRoute, staffPathFor } from "@quincy/shared";
 import { InternalLink } from "../InternalLink";
 import { LazyImage } from "../LazyImage";
-import { Skeleton } from "@/components/reui/skeleton";
 import { formatNotificationTimestamp, type NotificationBucket, type NotificationListItem } from "../../lib/notification-list";
 import { Eyebrow } from "./Eyebrow";
 import { cn } from "../../lib/utils";
@@ -142,7 +141,9 @@ export function NotificationRow({ notification, now, showThumbnail, onActivate, 
           {coverAssetId ? (
             <LazyImage preload="background" assetId={coverAssetId} alt="" className="size-full object-cover" />
           ) : (
-            <Skeleton data-testid="rail-notification-thumb-placeholder" className="size-full" />
+            /* A project with no RAW frame yet has no cover to resolve to — a still, sunken swatch, not
+               a `Skeleton`: a pulse reads as "loading", and nothing is coming. */
+            <span data-testid="rail-notification-thumb-placeholder" className="block size-full bg-surface-sunken" />
           )}
         </span>
       )}

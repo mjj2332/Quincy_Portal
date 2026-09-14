@@ -15,6 +15,8 @@ const tokenA = `notifications-a-${crypto.randomUUID()}`;
 const tokenB = `notifications-b-${crypto.randomUUID()}`;
 const photographer = crypto.randomUUID();
 const tokenPhotographer = `notifications-photographer-${crypto.randomUUID()}`;
+const externalEditor = crypto.randomUUID();
+const tokenExternalEditor = `notifications-external-${crypto.randomUUID()}`;
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string) {
@@ -42,8 +44,8 @@ beforeAll(async () => {
   const now = Date.now();
   const projectId = crypto.randomUUID();
   await database.DB.batch([
-    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Notification A', ?, 1, 'editor', 1, ?, ?), (?, 'Notification B', ?, 1, 'editor', 1, ?, ?), (?, 'Notification Photographer', ?, 1, 'photographer', 1, ?, ?)").bind(userA, `${userA}@example.test`, now, now, userB, `${userB}@example.test`, now, now, photographer, `${photographer}@example.test`, now, now),
-    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, tokenA, userA, now, now, crypto.randomUUID(), now + 3_600_000, tokenB, userB, now, now, crypto.randomUUID(), now + 3_600_000, tokenPhotographer, photographer, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Notification A', ?, 1, 'editor', 1, ?, ?), (?, 'Notification B', ?, 1, 'editor', 1, ?, ?), (?, 'Notification Photographer', ?, 1, 'photographer', 1, ?, ?), (?, 'Notification External', ?, 1, 'external_editor', 1, ?, ?)").bind(userA, `${userA}@example.test`, now, now, userB, `${userB}@example.test`, now, now, photographer, `${photographer}@example.test`, now, now, externalEditor, `${externalEditor}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, tokenA, userA, now, now, crypto.randomUUID(), now + 3_600_000, tokenB, userB, now, now, crypto.randomUUID(), now + 3_600_000, tokenPhotographer, photographer, now, now, crypto.randomUUID(), now + 3_600_000, tokenExternalEditor, externalEditor, now, now),
     database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Comment Street', 'edited_review', ?, ?)").bind(projectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userA, now, crypto.randomUUID(), projectId, userB, now),
   ]);
@@ -282,5 +284,40 @@ describe("notification list per-row project street and cover", () => {
     const body = await response.json() as { notifications: Array<Record<string, unknown>> };
     expect(body.notifications.filter((row) => row.title === title)).toHaveLength(1);
     expect(notificationRow(body, title)).toMatchObject({ projectStreet: "Multi Membership Street", coverAssetId: rawAssetId });
+  });
+
+  it("returns the effective cover asset on the external-editor notification branch", async () => {
+    const { projectId, editedCollectionId } = await makeProject("External Cover Street", "editing");
+    const coverAssetId = await makeAsset(editedCollectionId, "ready");
+    await database.DB.prepare("UPDATE projects SET cover_asset_id = ? WHERE id = ?").bind(coverAssetId, projectId).run();
+    const membershipId = crypto.randomUUID();
+    const startedAt = Date.now();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+      .bind(membershipId, projectId, externalEditor, startedAt).run();
+
+    const title = "External cover notification";
+    const notificationId = crypto.randomUUID();
+    const outboxId = crypto.randomUUID();
+    const sourceKey = `external-cover:${crypto.randomUUID()}`;
+    const now = Date.now();
+    const payload = JSON.stringify({
+      schemaVersion: 1,
+      event: { type: "project.external_safe.direct", sourceKey, recipientId: externalEditor },
+      authorizationAtOccurrence: { kind: "project_editor_membership", membershipCycle: membershipId, startedAt },
+      legacy: { type: "raw_ready", projectId, sourceId: sourceKey },
+    });
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'raw_ready', ?, 'Body', ?, ?)")
+        .bind(notificationId, externalEditor, projectId, title, sourceKey, now),
+      database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, recipient_membership_cycle_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(outboxId, 1, "project.external_safe.direct", sourceKey, projectId, externalEditor, externalEditor, 0, payload, "completed", now, membershipId, now, now),
+      database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'in_app', 'sent', ?, ?, ?)")
+        .bind(crypto.randomUUID(), outboxId, "project.external_safe.direct", sourceKey, externalEditor, notificationId, now, now),
+    ]);
+
+    const response = await request("/api/notifications", tokenExternalEditor);
+    expect(response.status).toBe(200);
+    const row = notificationRow(await response.json(), title);
+    expect(row).toMatchObject({ projectStreet: "External Cover Street", coverAssetId });
   });
 });

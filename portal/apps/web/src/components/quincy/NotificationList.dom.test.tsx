@@ -180,6 +180,8 @@ describe("NotificationList", () => {
     const readRow = rows.find((row) => !row.hasAttribute("data-unread"))!;
     expect(unreadRow.className).toContain("data-[unread]:border-l-primary");
     expect(unreadRow.className).toContain("hover:bg-secondary");
+    // Hover tints; it never paints a leading rule of its own — a hovered read row must not look unread.
+    expect(readRow.className).not.toMatch(/hover:border-l/);
     expect(readRow.className).toContain("data-[unread]:border-l-primary");
     expect(readRow.hasAttribute("data-unread")).toBe(false);
   });

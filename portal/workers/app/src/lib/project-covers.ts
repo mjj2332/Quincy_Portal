@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 
-function chunked<T>(items: T[], size = 80): T[][] {
+export function chunked<T>(items: T[], size = 80): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
   return chunks;

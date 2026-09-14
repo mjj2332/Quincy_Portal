@@ -60,6 +60,18 @@ function partsFor(date: Date): Record<string, string> {
   return Object.fromEntries(SYDNEY_FORMATTER.formatToParts(date).map(({ type, value }) => [type, value]));
 }
 
+export type SydneyCivilParts = { year: number; month: number; day: number; hour: number; minute: number };
+
+/**
+ * The Sydney wall-clock fields of an instant, as numbers — the one `formatToParts` read every
+ * caller that needs a Sydney calendar day (deadlines, the calendar, notification day buckets)
+ * shares, so none of them re-declares the formatter or parses a locale string back apart.
+ */
+export function sydneyCivilParts(date: Date): SydneyCivilParts {
+  const values = partsFor(date);
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day), hour: Number(values.hour), minute: Number(values.minute) };
+}
+
 function offsetAt(epochMs: number): number {
   const projected = partsFor(new Date(epochMs));
   const projectedEpoch = epochFromCivil(Number(projected.year), Number(projected.month), Number(projected.day), Number(projected.hour), Number(projected.minute));
