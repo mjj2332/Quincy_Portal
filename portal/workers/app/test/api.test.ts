@@ -3752,6 +3752,14 @@ describe("staff app API", () => {
     expect((await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/inspect", {
       method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ projectId: crypto.randomUUID() }),
     })).status).toBe(400);
+    const projectId = crypto.randomUUID();
+    const rootPath = "/Editor/01_ACTIVE EDITS/09. September/11/X";
+    const inspectResponse = await SELF.fetch("https://portal.test/api/integrations/dropbox/editor-folders/inspect", {
+      method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ projectId, rootPath }),
+    });
+    expect(inspectResponse.status).toBe(200);
+    expect(inspectResponse.headers.get("cache-control")).toBe("no-store");
+    await expect(inspectResponse.json()).resolves.toEqual({ status: "needs_review", reason: `stub ${projectId} ${rootPath}`, derivedRootPath: null });
   });
 
   it("gates Edited upload availability on a ready mapped Output instead of the Tonomo path", async () => {

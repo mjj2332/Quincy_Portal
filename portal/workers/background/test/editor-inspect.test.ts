@@ -5,10 +5,11 @@ vi.mock("../src/dropbox/client", () => ({
   getMetadata: vi.fn(),
   listFolder: vi.fn(),
   listFolderContinue: vi.fn(),
+  getSharedLinkMetadata: vi.fn(),
 }));
 
 import type { Env } from "../src/env";
-import { getMetadata, listFolder, listFolderContinue, type DropboxFolder } from "../src/dropbox/client";
+import { getMetadata, getSharedLinkMetadata, listFolder, listFolderContinue, type DropboxFolder } from "../src/dropbox/client";
 import { derivedEditorRootPath, discoverEditorCandidate, inspectEditorCandidate, previewEditorBackfill } from "../src/editor-folders/backfill";
 import { EDITOR_ROOT, editorFolderPathKey } from "../src/editor-folders/paths";
 
@@ -45,21 +46,22 @@ const SHOOT_DATE = "2026-09-11";
 const RAW_FOLDER_PATH = "/tonomo/raw files/x/11-09-2026/22-16-18 rosemont ave, woollahra nsw 2025, australia";
 const RAW_LEAF = "22-16-18 rosemont ave, woollahra nsw 2025, australia";
 
-type Fixture = { projectId: string; connectionId: string; shootDate: string; rawFolderPath: string };
+type Fixture = { projectId: string; connectionId: string; shootDate: string; rawFolderPath: string | null };
 
-async function fixture(overrides: { shootDate?: string; rawFolderPath?: string | null } = {}): Promise<Fixture> {
+async function fixture(overrides: { shootDate?: string; rawFolderPath?: string | null; rawFolderLink?: string | null } = {}): Promise<Fixture> {
   const suffix = crypto.randomUUID();
   const connectionId = `connection-${suffix}`;
   const projectId = `project-${suffix}`;
   const shootDate = overrides.shootDate ?? SHOOT_DATE;
   const rawFolderPath = overrides.rawFolderPath === undefined ? RAW_FOLDER_PATH : overrides.rawFolderPath;
+  const rawFolderLink = overrides.rawFolderLink ?? null;
   const now = Date.now();
   await bindings.DB.batch([
     bindings.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
-    bindings.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, raw_folder_path, created_at, updated_at) VALUES (?, '123 Example St', ?, 'awaiting_raw', ?, ?, ?)")
-      .bind(projectId, shootDate, rawFolderPath, now, now),
+    bindings.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, raw_folder_path, raw_folder_link, created_at, updated_at) VALUES (?, '123 Example St', ?, 'awaiting_raw', ?, ?, ?, ?)")
+      .bind(projectId, shootDate, rawFolderPath, rawFolderLink, now, now),
   ]);
-  return { projectId, connectionId, shootDate, rawFolderPath: rawFolderPath ?? "" };
+  return { projectId, connectionId, shootDate, rawFolderPath };
 }
 
 type FolderSpec = { name: string; id?: string };
@@ -98,22 +100,24 @@ function configureDropbox(root: { path: string; id: string; pathLowerOverride?: 
 }
 
 describe("inspectEditorCandidate", () => {
-  it("accepts a reviewed alternate root with plain Input/Output", async () => {
+  it("accepts a reviewed alternate root with plain Input/Output, echoing Dropbox's own path_display", async () => {
     const data = await fixture();
-    const rootPath = `${EDITOR_ROOT}/09. September/11/22 16-18 Rosemont Avenue, Woollahra`;
-    configureDropbox({ path: rootPath, id: "id:root" }, {
-      [rootPath]: [{ name: "Input" }, { name: "Output" }, { name: "Quincy Edits" }, { name: "extras" }],
+    const properCaseRoot = `${EDITOR_ROOT}/09. September/11/22 16-18 Rosemont Avenue, Woollahra`;
+    const requestRoot = `${EDITOR_ROOT}/09. September/11/22 16-18 rosemont avenue, woollahra`;
+    configureDropbox({ path: properCaseRoot, id: "id:root" }, {
+      [properCaseRoot]: [{ name: "Input" }, { name: "Output" }, { name: "Quincy Edits" }, { name: "extras" }],
     });
-    const result = await inspectEditorCandidate(localEnv(), data.projectId, rootPath);
+    const result = await inspectEditorCandidate(localEnv(), data.projectId, requestRoot);
     expect(result.status).toBe("candidate");
     if (result.status !== "candidate") throw new Error("unreachable");
     expect(result.matchesDerived).toBe(false);
     expect(result.derivedRootPath).not.toBeNull();
     expect(result.derivedRootPath?.endsWith(RAW_LEAF)).toBe(true);
     expect(result.candidate.expectedShootDate).toBe("2026-09-11");
-    expect(result.candidate.rootPath).toBe(rootPath);
-    expect(result.candidate.inputRoots).toEqual([{ path: `${rootPath}/Input`, section: null, folderId: "id:Input" }]);
-    expect(result.candidate.outputRoots).toEqual([{ path: `${rootPath}/Output`, section: null, folderId: "id:Output" }]);
+    // rootPath comes from Dropbox's path_display, not the caller's request casing.
+    expect(result.candidate.rootPath).toBe(properCaseRoot);
+    expect(result.candidate.inputRoots).toEqual([{ path: `${requestRoot}/Input`, section: null, folderId: "id:Input" }]);
+    expect(result.candidate.outputRoots).toEqual([{ path: `${requestRoot}/Output`, section: null, folderId: "id:Output" }]);
   });
 
   it("accepts the 0. Input / 1. Output naming variant", async () => {
@@ -207,12 +211,41 @@ describe("inspectEditorCandidate", () => {
     if (result.status !== "needs_review") throw new Error("unreachable");
     expect(result.reason).toBe("Ambiguous Input/Output variants require manual review");
   });
+
+  it("rejects an invalid root for a link-only Project without resolving the link", async () => {
+    const data = await fixture({ rawFolderPath: null, rawFolderLink: "https://www.dropbox.com/scl/fo/abc123/h?rlkey=x" });
+    const result = await inspectEditorCandidate(localEnv(), data.projectId, "/Editor/_ARCHIVE/2020/09/Old Project");
+    expect(result.status).toBe("needs_review");
+    if (result.status !== "needs_review") throw new Error("unreachable");
+    expect(result.reason).toBe("Reviewed Editor root must be a project folder under /Editor/01_ACTIVE EDITS");
+    expect(result.derivedRootPath).toBeNull();
+    expect(getSharedLinkMetadata).not.toHaveBeenCalled();
+    expect(getMetadata).not.toHaveBeenCalled();
+    expect(listFolder).not.toHaveBeenCalled();
+  });
+
+  it("derives the root from a RAW link that resolves without Dropbox", async () => {
+    const data = await fixture({
+      rawFolderPath: null,
+      rawFolderLink: "https://www.dropbox.com/home/tonomo/raw%20files/x/11-09-2026/22-16-18%20rosemont%20ave%2C%20woollahra%20nsw%202025%2C%20australia",
+    });
+    const rootPath = `${EDITOR_ROOT}/09. September/11/22 16-18 Rosemont Avenue, Woollahra`;
+    configureDropbox({ path: rootPath, id: "id:root" }, {
+      [rootPath]: [{ name: "Input" }, { name: "Output" }],
+    });
+    const result = await inspectEditorCandidate(localEnv(), data.projectId, rootPath);
+    expect(result.status).toBe("candidate");
+    if (result.status !== "candidate") throw new Error("unreachable");
+    expect(result.derivedRootPath).not.toBeNull();
+    expect(result.derivedRootPath?.endsWith(RAW_LEAF)).toBe(true);
+    expect(getSharedLinkMetadata).not.toHaveBeenCalled();
+  });
 });
 
 describe("discoverEditorCandidate without an override", () => {
   it("still inspects the derived path", async () => {
     const data = await fixture();
-    const derivedRootPath = derivedEditorRootPath({ shootDate: data.shootDate, rawFolderPath: data.rawFolderPath }, data.rawFolderPath);
+    const derivedRootPath = derivedEditorRootPath(data.shootDate, data.rawFolderPath);
     expect(derivedRootPath).not.toBeNull();
     configureDropbox({ path: derivedRootPath!, id: "id:root" }, {
       [derivedRootPath!]: [{ name: "Input" }, { name: "Output" }],
@@ -225,10 +258,8 @@ describe("discoverEditorCandidate without an override", () => {
 describe("previewEditorBackfill", () => {
   it("includes derivedRootPath on a needs_review item from a Dropbox conflict", async () => {
     const data = await fixture();
-    const derivedRootPath = derivedEditorRootPath({ shootDate: data.shootDate, rawFolderPath: data.rawFolderPath }, data.rawFolderPath);
-    // No Dropbox mock configured for this path: getMetadata throws the mocked 409 from
-    // configureDropbox's default `throw` branch — simulate directly instead, since no
-    // configureDropbox() call has been made for this describe block.
+    const derivedRootPath = derivedEditorRootPath(data.shootDate, data.rawFolderPath);
+    // An unconfigured mock resolves undefined; force the 409 so the row lands in needs_review.
     vi.mocked(getMetadata).mockRejectedValue(new Error("Dropbox /files/get_metadata failed (409): path/conflict"));
     vi.mocked(listFolder).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
     vi.mocked(listFolderContinue).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
@@ -236,5 +267,23 @@ describe("previewEditorBackfill", () => {
     const item = result.items.find((entry) => entry.projectId === data.projectId);
     expect(item).toBeDefined();
     expect(item).toMatchObject({ status: "needs_review", derivedRootPath });
+  });
+
+  it("preview carries derivedRootPath for a link-only Project when inspection fails", async () => {
+    const linkOnlyRawPath = "/tonomo/raw files/x/11-09-2026/22-16-18 rosemont ave, woollahra nsw 2025, australia";
+    const data = await fixture({
+      rawFolderPath: null,
+      rawFolderLink: `https://www.dropbox.com/home/tonomo/raw%20files/x/11-09-2026/${encodeURIComponent(RAW_LEAF)}`,
+    });
+    const derivedRootPath = derivedEditorRootPath(data.shootDate, linkOnlyRawPath);
+    expect(derivedRootPath).not.toBeNull();
+    vi.mocked(getMetadata).mockRejectedValue(new Error("Dropbox /files/get_metadata failed (409): path/conflict"));
+    vi.mocked(listFolder).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
+    vi.mocked(listFolderContinue).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
+    const result = await previewEditorBackfill(localEnv());
+    const item = result.items.find((entry) => entry.projectId === data.projectId);
+    expect(item).toBeDefined();
+    expect(item).toMatchObject({ status: "needs_review", derivedRootPath });
+    expect((item as { derivedRootPath: string | null }).derivedRootPath?.endsWith(RAW_LEAF)).toBe(true);
   });
 });
