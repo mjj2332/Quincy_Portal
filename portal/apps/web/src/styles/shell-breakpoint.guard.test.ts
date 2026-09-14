@@ -52,6 +52,9 @@ const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   // the list the P1 build note above already sized for growth.
   { path: "components/reui/sidebar.tsx", kind: "script" },
   { path: "components/reui/tooltip.tsx", kind: "script" },
+  // #122 P2: the notification bell's panel is base-nova's `popover.tsx`, carrying the same
+  // z-token and container conformance edits as `tooltip.tsx` above.
+  { path: "components/reui/popover.tsx", kind: "script" },
 ];
 
 // ---------------------------------------------------------------------------

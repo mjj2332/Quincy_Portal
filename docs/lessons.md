@@ -1971,3 +1971,12 @@ important modifier on the text-colour utilities, not moving `base.css` into a la
 as a link is the tell — a `<button>`/`<div>` row has no inherited `color` fighting it, so this door
 only opens for the anchor-rendered rows a routing constraint (`InternalLink`, not `<button>`) forces
 into existence.
+
+**P2 (notifications popover):** two more findings. **A fourth door on the same unlayered-cascade
+trap:** `tokens/base.css`'s unlayered `h1..h4 { font-weight: regular }` beats a Popover's own
+`font-medium` the same way the outline shorthand, the focus ring and `a { color: inherit }` do
+above — `NotificationBell.tsx`'s `TITLE_WEIGHT = "!font-medium"` is the fix. **Base UI's Popover
+outside-press is `"intentional"` for a mouse when `modal={false}`** (`PopoverRoot`'s `useDismiss`),
+reacting only to the terminal `click` of a press-release pair, unlike `quincy/menu.tsx`'s Menu
+(`"sloppy"`, a bare `pointerdown`) — a DOM test for the popover's outside-dismiss needs a real
+`click` event, not the `pointerdown` that sufficed for the Menu-based panel it replaced.
