@@ -269,8 +269,51 @@ function notesFrom(source: UnknownRecord): string | null {
   return notes.length ? notes.join("\n") : null;
 }
 
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+export function isCanonicalCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
+}
+
+const TONOMO_DISPLAY_DATE_WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const TONOMO_DISPLAY_DATE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+const TONOMO_DISPLAY_DATE_PATTERN = new RegExp(`^(${TONOMO_DISPLAY_DATE_WEEKDAYS.join("|")}), (\\d{2}) (${TONOMO_DISPLAY_DATE_MONTHS.join("|")}), (\\d{4})$`);
+
+/**
+ * Tonomo's `created` webhook sometimes carries only a human-readable date such as
+ * "Thursday, 17 Sep, 2026" instead of a `when.start_time` epoch. Parses that exact shape
+ * into a canonical `YYYY-MM-DD`, validating both the calendar date and the weekday against
+ * each other so a malformed or fabricated display string is rejected rather than silently
+ * accepted. Returns null for anything else — including single-digit days, lowercase
+ * months, or free text like "tomorrow" — so callers can fall back to keeping the raw text.
+ */
+export function parseTonomoDisplayDate(value: string): string | null {
+  const match = TONOMO_DISPLAY_DATE_PATTERN.exec(value);
+  if (!match) return null;
+  const [, weekday, day, month, year] = match;
+  const monthNumber = TONOMO_DISPLAY_DATE_MONTHS.indexOf(month as (typeof TONOMO_DISPLAY_DATE_MONTHS)[number]) + 1;
+  const iso = `${year}-${String(monthNumber).padStart(2, "0")}-${day}`;
+  if (!isCanonicalCalendarDate(iso)) return null;
+  // setUTCFullYear keeps four-digit years literal; Date.UTC would remap 0000-0099 to 1900-1999.
+  const civil = new Date(0);
+  civil.setUTCFullYear(Number(year), monthNumber - 1, Number(day));
+  const expectedWeekday = TONOMO_DISPLAY_DATE_WEEKDAYS[civil.getUTCDay()];
+  return weekday === expectedWeekday ? iso : null;
+}
+
 function shootDateFrom(source: UnknownRecord, propertyAddress: UnknownRecord | null): string | null {
-  const fallback = () => optionalString(valueFor(source, ["shoot_date", "shootDate", "date"]));
+  const fallback = () => {
+    const text = optionalString(valueFor(source, ["shoot_date", "shootDate", "date"]));
+    if (text === null) return null;
+    if (isCanonicalCalendarDate(text)) return text;
+    return parseTonomoDisplayDate(text) ?? text;
+  };
   const when = record(source.when);
   if (!when) return fallback();
   const startTime = optionalNumber(when.start_time);

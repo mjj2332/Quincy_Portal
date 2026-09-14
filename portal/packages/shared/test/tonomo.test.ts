@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { normaliseAddressKey, parseTonomoOrder, TonomoParseError, tonomoOrderKey } from "../src/tonomo";
+import { normaliseAddressKey, parseTonomoDisplayDate, parseTonomoOrder, TonomoParseError, tonomoOrderKey } from "../src/tonomo";
 
 const changedWebhookFixture = {
   action: "changed",
@@ -220,5 +220,79 @@ describe("normaliseAddressKey", () => {
 
   it("keeps punctuation-separated address components distinct", () => {
     expect(normaliseAddressKey("1/23 Smith St", null)).not.toBe(normaliseAddressKey("123 Smith St", null));
+  });
+});
+
+describe("parseTonomoDisplayDate", () => {
+  it.each([
+    ["Thursday, 15 Jan, 2026", "2026-01-15"],
+    ["Saturday, 14 Feb, 2026", "2026-02-14"],
+    ["Tuesday, 17 Mar, 2026", "2026-03-17"],
+    ["Monday, 20 Apr, 2026", "2026-04-20"],
+    ["Thursday, 21 May, 2026", "2026-05-21"],
+    ["Friday, 12 Jun, 2026", "2026-06-12"],
+    ["Saturday, 04 Jul, 2026", "2026-07-04"],
+    ["Saturday, 08 Aug, 2026", "2026-08-08"],
+    ["Thursday, 17 Sep, 2026", "2026-09-17"],
+    ["Saturday, 31 Oct, 2026", "2026-10-31"],
+    ["Thursday, 26 Nov, 2026", "2026-11-26"],
+    ["Friday, 25 Dec, 2026", "2026-12-25"],
+  ])("parses %s as %s", (display, iso) => {
+    expect(parseTonomoDisplayDate(display)).toBe(iso);
+  });
+
+  it("rejects a weekday that does not match the calendar date", () => {
+    expect(parseTonomoDisplayDate("Monday, 17 Sep, 2026")).toBeNull();
+  });
+
+  it("rejects a single-digit day", () => {
+    expect(parseTonomoDisplayDate("Thursday, 7 Sep, 2026")).toBeNull();
+  });
+
+  it("rejects a lowercase month abbreviation", () => {
+    expect(parseTonomoDisplayDate("Thursday, 17 sep, 2026")).toBeNull();
+  });
+
+  it("rejects free text", () => {
+    expect(parseTonomoDisplayDate("tomorrow")).toBeNull();
+  });
+});
+
+describe("parseTonomoOrder shootDate normalisation", () => {
+  it("normalises a Tonomo display date to ISO", () => {
+    const order = parseTonomoOrder({ id: "display-date", street: "1 Test St", shoot_date: "Thursday, 17 Sep, 2026" });
+    expect(order.shootDate).toBe("2026-09-17");
+  });
+
+  it("passes an already-ISO shoot date through unchanged", () => {
+    const order = parseTonomoOrder({ id: "iso-date", street: "1 Test St", shoot_date: "2026-09-17" });
+    expect(order.shootDate).toBe("2026-09-17");
+  });
+
+  it("keeps unrecognised shoot date text as-is", () => {
+    const order = parseTonomoOrder({ id: "unknown-date", street: "1 Test St", shoot_date: "Monday, 17 Sep, 2026" });
+    expect(order.shootDate).toBe("Monday, 17 Sep, 2026");
+  });
+
+  it("prefers when.start_time (integer epoch seconds) over a conflicting date field", () => {
+    const order = parseTonomoOrder({
+      id: "start-time-integer",
+      street: "1 Test St",
+      date: "Monday, 17 Sep, 2026",
+      when: { start_time: 1_789_516_800 },
+      property_address: { timezone: "UTC" },
+    });
+    expect(order.shootDate).toBe("2026-09-16");
+  });
+
+  it("prefers when.start_time (numeric string epoch seconds) over a conflicting date field", () => {
+    const order = parseTonomoOrder({
+      id: "start-time-string",
+      street: "1 Test St",
+      date: "Monday, 17 Sep, 2026",
+      when: { start_time: "1789516800" },
+      property_address: { timezone: "UTC" },
+    });
+    expect(order.shootDate).toBe("2026-09-16");
   });
 });
