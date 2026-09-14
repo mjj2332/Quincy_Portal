@@ -1,12 +1,13 @@
+import { useState, type MouseEvent } from "react";
 import {
-  useId,
-  useRef,
-  useState,
-  type FocusEvent,
-  type KeyboardEvent,
-  type MouseEvent,
-  type PointerEvent,
-} from "react";
+  LayoutDashboard,
+  List,
+  SquareKanban,
+  Calendar,
+  Shield,
+  EllipsisVertical,
+  type LucideIcon,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,6 +22,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  SidebarTrigger,
 } from "@/components/reui/sidebar";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
@@ -37,7 +39,8 @@ import type {
 } from "../../lib/staff-navigation";
 
 /**
- * The left navigation rail — #111, behind `VITE_QUINCY_NAV_RAIL`.
+ * The left navigation rail — #111, re-platformed onto base-nova's full `sidebar.tsx` in #122
+ * (`docs/adr/0005-…`). Behind `VITE_QUINCY_NAV_RAIL`.
  *
  * ## It renders the model and decides nothing
  *
@@ -62,6 +65,27 @@ import type {
  * above deliberately names those APIs without writing them as calls. See CLAUDE.md and
  * `docs/lessons.md:1368-1380`.
  *
+ * ## Collapsed children are a click-opened menu, not a hover flyout (#122)
+ *
+ * #112 built the collapsed rail's children as a hand-rolled hover/focus flyout with its own
+ * Escape/blur/suppress-ref bookkeeping. base-nova's `SidebarMenuButton` already knows how to be a
+ * `quincy/menu.tsx` trigger (`triggerRender`, #122), and `quincy/menu.tsx`'s own header explains
+ * why Base UI's `Menu.Root` needs none of that hand-assembly: the full `role="menu"` keyboard
+ * contract — roving focus, wrap-around, Home/End, typeahead, Escape-with-focus-return,
+ * outside-dismiss — ships complete. So a collapsed parent with children is a `Menu` whose trigger
+ * IS the item's own `SidebarMenuButton` and whose items are `MenuPrimitive.LinkItem`s over
+ * `InternalLink`, opened by a click rather than a hover.
+ *
+ * ## `data-state` on the rail
+ *
+ * `reui/sidebar.tsx`'s vendored `Sidebar` puts its OWN internal `data-state` (expanded/collapsed,
+ * from `SidebarProvider` context) on a different DOM node than the one `className`/`data-testid`
+ * land on (`sidebar-container`, not the outer wrapper — see that file's header). This component
+ * threads its own `data-state={variant}` alongside them so the externally-visible
+ * `[data-testid="navigation-rail"]` contract (`App-navigation-rail-shell.dom.test.tsx`) keeps
+ * reading "expanded"/"collapsed"/"sheet" exactly as it did under #111/#112 — independent of, and
+ * not to be confused with, the provider's own internal state.
+ *
  * ## Paint
  *
  * Card paper on the canvas paper with a hairline divider — raised, not dark (the #109 canvas). A
@@ -69,10 +93,11 @@ import type {
  * (#57) is out of scope here; `tokens/reui.css` records why the sidebar roles read Quincy's
  * semantic aliases instead of the re-scoped role layer.
  *
- * Active is sunken paper plus a 2px ink rule on the LEADING edge: the vertical translation of the
- * Topbar's bottom border, which does not read at rail width. `border-inline-start`, not
- * `border-left` — the rule follows the writing direction, and every item carries the same border
- * transparently so activating one shifts no text.
+ * Active is a raised row: a hairline border, canvas-raised ground and a soft shadow, keyed off
+ * base-nova's own boolean-presence `data-active` attribute (`ROW_PAINT`, below) — not the leading
+ * ink rule #112 shipped, which read a string-valued `data-[active=true]` the vendored primitive
+ * never writes (Sol review, #122 P1). Every row carries a transparent border so activating one
+ * shifts no layout.
  *
  * ## The flag name is not in this file
  *
@@ -81,57 +106,65 @@ import type {
  * DOM test asserts the rendered output contains neither the flag name nor `nav-rail`.
  */
 
-/**
- * Icons, by the model's `icon` name.
- *
- * Inline SVG rather than `lucide-react`, which is not a dependency of this app — the vendor
- * sidebar's `PanelLeftIcon` import was one of the things trimmed. Every glyph is `aria-hidden`:
- * the adjacent label is the accessible name, so announcing the icon would double it.
- *
- * Items carry an icon each because the collapsed rail (a later ticket) has nothing else to show.
- * Note this is the OPPOSITE of the decision for notification rows, which deliberately have no type
- * icon — different component, different constraint.
- */
-const ICON_PATHS: Record<StaffNavigationIcon, string> = {
-  dashboard: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
-  list: "M4 6h16M4 12h16M4 18h16",
-  kanban: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z",
-  calendar: "M4 6h16v14H4zM4 10h16M9 3v4M15 3v4",
-  admin: "M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z",
+/** Icons, by the model's `icon` name — lucide-react, already an app dependency (`ShellHeader.tsx`). */
+const NAVIGATION_ICONS: Record<StaffNavigationIcon, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  list: List,
+  kanban: SquareKanban,
+  calendar: Calendar,
+  admin: Shield,
 };
 
 function NavigationIcon({ icon }: { icon: StaffNavigationIcon }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      <path d={ICON_PATHS[icon]} />
-    </svg>
-  );
+  const Icon = NAVIGATION_ICONS[icon];
+  // The label is the accessible name; an announced icon would double it.
+  return <Icon aria-hidden="true" />;
 }
 
-// The leading rule, carried transparently by every item so that becoming active changes only the
-// colour and never the text position. `border-inline-start` is written as an arbitrary property
-// because the width is a token (`--border-width-bold`, 2px) rather than one of Tailwind's rungs.
-const LEADING_RULE = "[border-inline-start:var(--border-width-bold)_solid_transparent]";
-
-// Active overrides BOTH halves of the primitive's `data-[active=true]:` paint: the sunken ground
-// (the primitive reaches for `bg-sidebar-accent`, which is the HOVER lift) and the rule colour.
-// Same variant and same utility group in each case, so tailwind-merge keeps the later one.
+// Sol review (#122 P1): base-nova's `SidebarMenuButton`/`SidebarMenuSubButton` map `isActive`
+// through Base UI's own `state`, which renders a VALUELESS boolean attribute — `data-active=""`
+// when true, absent when false — never the string `"true"`/`"false"` #111's trimmed primitive used
+// to write explicitly. The original `ACTIVE_PAINT`/`LEADING_RULE` pair here were written for that
+// old string-valued attribute (`data-[active=true]:…`), which never matches the vendored
+// primitive's real output, so the active row silently fell through to base-nova's own
+// `data-active:bg-sidebar-accent`/`data-active:text-sidebar-accent-foreground` — the HOVER accent,
+// not a distinct active paint. Retired along with the leading ink rule (plan §3 replaces it with a
+// bordered/raised row, not a rule on the leading edge).
 //
-// The ground reads `--bg-sunken` directly rather than through `bg-surface-sunken`. Identical paint
-// — `--surface-sunken` resolves to `var(--bg-sunken)` in the default scope, so this is the same
-// `--paper-200` either way — but `--surface-sunken` is one of the 21 properties `tokens/inverse.css`
-// re-scopes (to `--ink-700`), and `--bg-sunken` is not. `tokens/reui.css` promises the rail is
-// immune to an inverse scope "by construction"; three utilities here quietly were not, which the
-// standards axis of `/code-review` caught. Nothing was user-visible — the inverse subtrees (the
-// Lightbox dialog, the photo action bar) are descendants of the content column and never ancestors
-// of the rail, which a browser pass confirmed by measuring the rail unchanged with each raised —
-// so this closes a latent trap, not a live defect. `--border-strong` was already safe.
-const ACTIVE_PAINT = cn(
-  "data-[active=true]:bg-[var(--bg-sunken)]",
-  "data-[active=true]:[border-inline-start-color:var(--border-strong)]",
+// Every row carries a transparent border so activating one shifts no layout; `data-active:` (the
+// Tailwind boolean-presence variant, matching Base UI's own convention, NOT `data-[active=true]:`)
+// repaints it raised: a hairline border, canvas-raised ground and a soft shadow. Every value below
+// is a `color:`/bare-value TYPE HINT on an arbitrary utility, which is what makes tailwind-merge
+// recognise `bg-[color:var(--bg-surface)]` as the SAME utility group as base-nova's own
+// `bg-sidebar-accent` (both `bg-*`) and keep only the later one — ours, since `RAIL_ITEM` is passed
+// as this component's own `className`, which `reui/sidebar.tsx`'s `cn(sidebarMenuButtonVariants(…),
+// className)` always merges last.
+//
+// Text follows the same rule: `--text-secondary` at rest, `--text-primary` on `hover:`/`data-active:`
+// — both `text-*`, both merged over base-nova's own `text-sidebar-accent-foreground`. The icon dims
+// to 60% at rest and returns to full opacity on the same two states, so the active/hovered row reads
+// as more present without a second colour.
+//
+// The three text-colour utilities carry `!` (Luna's Chrome pass, #122 P1) — every row here renders
+// as `InternalLink`, a real `<a>`, and `styles/tokens/base.css:21` declares `a { color: inherit }`
+// UNLAYERED (`index.css`), so it beats any LAYERED Tailwind `text-*` utility regardless of merge
+// order or specificity: a measured inactive row computed `--text-primary` (inherited from the
+// sidebar's own `--sidebar-foreground`) instead of `--text-secondary`. This is a third door on the
+// same unlayered-cascade trap `docs/lessons.md:1181-1219` already names twice (an outline shorthand,
+// then a focus ring) — the fix is the same one: the important modifier, not moving `base.css` into
+// a layer, which is cross-cutting and out of scope here.
+const ROW_PAINT = cn(
+  "border border-transparent",
+  "!text-[color:var(--text-secondary)]",
+  "hover:!text-[color:var(--text-primary)]",
+  "data-active:!text-[color:var(--text-primary)]",
+  "data-active:border-[color:var(--border-hairline)]",
+  "data-active:bg-[color:var(--bg-surface)]",
+  "data-active:shadow-[var(--shadow-sm)]",
+  "[&_svg]:opacity-60 hover:[&_svg]:opacity-100 data-active:[&_svg]:opacity-100",
 );
 
-const RAIL_ITEM = cn(LEADING_RULE, ACTIVE_PAINT, "gap-[var(--space-3)]");
+const RAIL_ITEM = cn(ROW_PAINT, "gap-[var(--space-3)]");
 
 // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. Added only in the `sheet`
 // variant (288px, nothing competing for space) via `cn`, which is how the primitive's own fixed
@@ -139,13 +172,23 @@ const RAIL_ITEM = cn(LEADING_RULE, ACTIVE_PAINT, "gap-[var(--space-3)]");
 // forces the rendered height past either default regardless of which rung the primitive picked.
 const SHEET_TOUCH_TARGET = "min-h-[44px]";
 
-// The collapsed rail's flyout (#112) — inline, never portalled, so Tab moves from the Dashboard
-// link into its children in DOM order. `left-full`/`top-0` position against `SidebarMenuItem`'s
-// own `relative`. `bg-sidebar`/`border-sidebar-border`, not `bg-popover`/`border-border`, keeps
-// this immune to an inverse scope "by construction" (`styles/sidebar-token-bridge.guard.test.ts`).
-const FLYOUT_POSITION = cn(
-  "absolute left-full top-0 z-[var(--z-popover)] mx-0 min-w-[168px] translate-x-0",
-  "border border-solid border-sidebar-border bg-sidebar p-[var(--space-2)] shadow-[var(--shadow-md)]",
+// The collapsed rail's children, opened as a `quincy/menu.tsx` popup (#122) rather than an inline
+// list — plain rows, not `SidebarMenuSub`/`SidebarMenuSubButton` (those style an INLINE list inside
+// the rail's own box; this list is portalled). `RAIL_ITEM` carries the same `data-active:` row
+// paint every other rail row uses, keyed off an explicit, PRESENCE-based `data-active` —
+// `MenuPrimitive.LinkItem` has no active concept of its own to map through Base UI's `state`, so
+// the caller writes the attribute directly, and must write it the same way the primitive does:
+// `""` (present) when active, `undefined` (absent) otherwise — never the string `"false"`, which
+// `data-active:` would still match (Tailwind's boolean-presence variant matches ANY value, not just
+// `""`).
+const COLLAPSED_MENU_ITEM = cn(
+  "flex min-h-8 w-full items-center gap-[var(--space-2)] rounded-md px-[var(--space-2)] py-[var(--space-1)]",
+  "text-sm no-underline",
+  // `text-sidebar-foreground`/`hover:text-sidebar-accent-foreground` were dropped here (/code-review,
+  // #122): `RAIL_ITEM`'s own `!text-[color:…]` utilities always win (the `!` beats a plain `text-*`
+  // regardless of merge order), so both were dead weight, not a second, competing colour.
+  "hover:bg-sidebar-accent",
+  RAIL_ITEM,
 );
 
 // The account menu's items. Mirrors the Topbar's own menu items (`MOBILE_ITEM` there) rather than
@@ -166,8 +209,6 @@ const ACCOUNT_MENU_ITEM = cn(
 /**
  * The three shapes the rail can take (#112) — the same union as `lib/shell-rail.ts`'s `RailMode`,
  * aliased under this name since every call site here imports it as `NavigationRailVariant`.
- * `data-state` on the root carries this exact value — not a derived boolean — so a future fourth
- * variant costs a new string, not a new attribute.
  */
 export type NavigationRailVariant = RailMode;
 
@@ -211,16 +252,15 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
 
   return (
     <Sidebar
-      className={cn(
-        "app__rail flex-none border-e border-e-[var(--border-hairline)]",
-        isCollapsed ? "w-[48px]" : isSheet ? "w-[288px]" : "w-[250px]",
-      )}
+      collapsible={isSheet ? "none" : "icon"}
+      variant="inset"
+      className={cn("app__rail border-e border-e-[var(--border-hairline)]", isSheet && "w-[288px]")}
       data-testid="navigation-rail"
       data-state={variant}
     >
       <SidebarHeader className={cn("p-[var(--space-4)]", isCollapsed && "items-center p-[var(--space-2)]")}>
         <div className={cn("flex items-center gap-[var(--space-3)]", isCollapsed ? "flex-col" : "justify-between")}>
-          {/* At 48px the wordmark gives way to the Q mark on an ink tile, the shape of Tempo's
+          {/* At 48px/66px the wordmark gives way to the Q mark on an ink tile, the shape of Tempo's
               `logo.tsx` (the asset is white, so it needs the dark ground). */}
           {isCollapsed ? (
             <InternalLink
@@ -245,6 +285,19 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
           {/* Beside the wordmark when expanded; alone in the header when collapsed (there is no
               wordmark to sit beside). #113's narrow header owns it instead — see `showBell`. */}
           {showBell && <NotificationBell touchTarget={isSheet} />}
+          {/* #122: the rail's own collapse toggle moves here from `ShellHeader` — the wide header
+              now shows only the breadcrumb, and the trigger reads `SidebarProvider` context
+              directly rather than a prop threaded down from `RailedShell`. Never rendered in
+              `sheet` — the Sheet's own trigger (`ShellHeader`'s `SheetTrigger`) is what opens/closes
+              it there, and this rail has no separate "collapse" concept while narrow. */}
+          {!isSheet && (
+            <SidebarTrigger
+              data-testid="rail-toggle"
+              aria-expanded={!isCollapsed}
+              aria-label={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+              className="in-data-[state=collapsed]:[&_svg]:rotate-180"
+            />
+          )}
         </div>
       </SidebarHeader>
 
@@ -252,10 +305,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
           `<nav aria-label="Primary navigation">` (Topbar.tsx:194), and the vendor `SidebarContent`
           is only a `div` — so rendering the rail without this would silently remove primary
           navigation from a screen reader's landmark list. Reported independently by both reviewers. */}
-      <SidebarContent className={isCollapsed ? "overflow-visible" : undefined}>
-        {/* `overflow-visible` only in `collapsed`: the primitive's default `overflow-auto` would
-            clip the flyout, which is deliberately positioned OUTSIDE this element's own box
-            (`left-full`). `expanded`/`sheet` keep the default — nothing they render escapes it. */}
+      <SidebarContent>
         <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">
@@ -334,18 +384,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
                     {user.email && user.name && <span className="ey truncate">{user.email}</span>}
                   </span>
                   {/* Affordance: without it the identity reads as a label rather than a control. */}
-                  <svg
-                    className="ml-auto flex-none opacity-50"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    aria-hidden="true"
-                  >
-                    <path d="M5 12h.01M12 12h.01M19 12h.01" />
-                  </svg>
+                  <EllipsisVertical className="ml-auto flex-none opacity-50" size={16} aria-hidden="true" />
                 </>
               )}
             </span>
@@ -374,18 +413,12 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
 }
 
 /**
- * One navigation item, plus its children when the model says the item is expanded, or (in the
- * `collapsed` variant) when a flyout beside its icon is open.
+ * One navigation item, plus its children when the model says the item is expanded (`expanded`/
+ * `sheet`), or — in `collapsed` — behind a click-opened `quincy/menu.tsx` popup keyed off the
+ * item's own icon button.
  *
  * Children come from `item.children` as a LIST — a fourth Dashboard view is one more model entry
- * and no change here. In `expanded`/`sheet`, `expanded` is still the model's own `expandedItemId`
- * decision: the Dashboard group opens on a Dashboard route and closes off it, with no toggle and
- * no persistence, so there is no state in which an active child hides inside a collapsed parent.
- *
- * `collapsed` is different: a 48px rail has no room for indented children at all, so `expanded`
- * (the model flag) is ignored there and the children instead open in a flyout beside the icon,
- * driven by local `flyoutOpen` state — #112's own reachability requirement, independent of which
- * route is current.
+ * and no change here.
  */
 function RailItem({
   item,
@@ -400,107 +433,75 @@ function RailItem({
   const hasChildren = children.length > 0;
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
-  // Named once: every flyout-only branch below (open/close, the blur/Escape guards, the ARIA
-  // wiring) is this same condition, not a fresh restatement of "collapsed with children" each time.
-  const hasFlyout = isCollapsed && hasChildren;
-
-  // Flyout state lives on THIS item, not lifted to the rail: today only Dashboard has children,
-  // and the model may grow a second item with children later without this needing to become
-  // shared state. Focus returns here (the item's own link) when the flyout closes on Escape.
-  const [flyoutOpen, setFlyoutOpen] = useState(false);
-  const linkRef = useRef<HTMLAnchorElement>(null);
-  // Only the `collapsed` flyout is a disclosure widget — `expanded`/`sheet` show a child list that
-  // is always inline (the model's own `expandedItemId`), so only THIS variant's parent link needs
-  // `aria-expanded`/`aria-controls` at all.
-  const flyoutId = useId();
-  // Escape closes the flyout AND returns focus to the Dashboard link — but that link is itself
-  // inside this `<li>`, so focusing it re-fires the very `onFocus` that opens the flyout. This
-  // ref (not state, so it is read synchronously inside the same handler that sets it) tells the
-  // very next `openFlyout` call to be a no-op once, rather than undo the Escape it followed.
-  const suppressNextOpenRef = useRef(false);
-
-  // `aria-current="page"` belongs to exactly ONE element: the current page itself. When this
-  // item's children are showing — inline in `expanded`/`sheet`, or in an open flyout in
-  // `collapsed` — the active CHILD is the destination and this item is merely its ancestor, so the
-  // parent must not also claim it. When nothing is showing beneath it (Admin, a collapsed group
-  // with the model's group closed, or a collapsed item whose flyout is not open), this item IS the
-  // leaf and carries it.
   const showsInlineChildren = !isCollapsed && expanded && hasChildren;
-  const showsFlyout = hasFlyout && flyoutOpen;
-  const showsChildren = showsInlineChildren || showsFlyout;
+  // The collapsed menu's own open state — needed (not merely local to `Menu`) so the trigger's own
+  // `aria-current` can be suppressed exactly while an active child is ALSO showing one inside the
+  // open popup, the same "only one element claims the current page" rule `showsInlineChildren`
+  // already enforces for the expanded/sheet inline case.
+  const [collapsedMenuOpen, setCollapsedMenuOpen] = useState(false);
+  const showsChildren = showsInlineChildren || (isCollapsed && hasChildren && collapsedMenuOpen);
 
-  function openFlyout() {
-    if (suppressNextOpenRef.current) { suppressNextOpenRef.current = false; return; }
-    if (hasFlyout) setFlyoutOpen(true);
-  }
-  // A pointer merely passing over the item must not evict a keyboard user still tabbed into it —
-  // `event.currentTarget` is the `<li>` this handler is attached to, so `contains` is true for
-  // both the parent link and any flyout child the same way `handleBlur` below reads it.
-  function closeFlyout(event: PointerEvent<HTMLLIElement>) {
-    if (!hasFlyout) return;
-    if (event.currentTarget.contains(document.activeElement)) return;
-    setFlyoutOpen(false);
-  }
-  // React's `onBlur` bubbles the way native `focusout` does, and `event.currentTarget` is always
-  // the element the handler is attached to (this `<li>`) regardless of which descendant lost
-  // focus — so this closes only when focus leaves the ITEM, not merely a child within it.
-  function handleBlur(event: FocusEvent<HTMLLIElement>) {
-    if (!hasFlyout) return;
-    const next = event.relatedTarget;
-    if (!next || !event.currentTarget.contains(next)) setFlyoutOpen(false);
-  }
-  // Escape returns focus to the Dashboard link itself — a keyboard user who opened the flyout by
-  // tabbing onto that link should end up back where they started, not stranded on whichever child
-  // they had tabbed into. `linkRef.current?.focus()` is itself inside this `<li>`, so it re-fires
-  // `openFlyout` (focus bubbles as `focusin`) before this function even returns — the suppress
-  // ref is what keeps that from silently reopening what Escape just closed.
-  //
-  // Only arm the ref when focus is actually about to MOVE. If the Dashboard link is already the
-  // focused element (Escape pressed on the parent itself, not a child), `focus()` fires no focus
-  // event at all — so an unconditional arm here would stay armed forever and silently swallow the
-  // next REAL focus (tab away, tab back).
-  function handleKeyDown(event: KeyboardEvent<HTMLLIElement>) {
-    if (!hasFlyout || !flyoutOpen || event.key !== "Escape") return;
-    event.preventDefault();
-    if (document.activeElement !== linkRef.current) suppressNextOpenRef.current = true;
-    setFlyoutOpen(false);
-    linkRef.current?.focus();
-  }
+  const tooltip = { children: item.label, "data-testid": `rail-tooltip-${item.id}` };
 
   return (
-    <SidebarMenuItem
-      data-testid="navigation-rail-item"
-      onPointerEnter={openFlyout}
-      onPointerLeave={closeFlyout}
-      onFocus={openFlyout}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-    >
-      <SidebarMenuButton
-        isActive={item.active}
-        className={cn(RAIL_ITEM, isSheet && SHEET_TOUCH_TARGET)}
-        render={<InternalLink to={item.href} ref={linkRef} />}
-        // `data-active` is a STYLING hook, not an accessibility state — nothing announces it. The
-        // active destination needs `aria-current` as well, or a screen-reader user is never told
-        // which one they are on.
-        aria-current={item.active && !showsChildren ? "page" : undefined}
-        // Only `collapsed` treats this link as a disclosure trigger over a flyout — `expanded`/
-        // `sheet` never mount the flyout, so `aria-controls` there would point at nothing.
-        aria-expanded={hasFlyout ? flyoutOpen : undefined}
-        aria-controls={showsFlyout ? flyoutId : undefined}
-        data-testid="navigation-rail-link"
-        data-touch-target={isSheet ? true : undefined}
-      >
-        <NavigationIcon icon={item.icon} />
-        {/* `sr-only`, not removed — the link's accessible name still comes from this text even
-            when the rail is too narrow to show it, so `collapsed` icon links keep their names. */}
-        <span className={isCollapsed ? "sr-only" : undefined}>{item.label}</span>
-      </SidebarMenuButton>
-      {showsChildren && (
-        <SidebarMenuSub
-          id={isCollapsed ? flyoutId : undefined}
-          className={isCollapsed ? FLYOUT_POSITION : undefined}
+    <SidebarMenuItem data-testid="navigation-rail-item">
+      {isCollapsed && hasChildren ? (
+        <Menu
+          open={collapsedMenuOpen}
+          onOpenChange={setCollapsedMenuOpen}
+          triggerLabel={item.label}
+          label={`${item.label} views`}
+          side="right"
+          align="start"
+          triggerTestId="navigation-rail-link"
+          triggerRender={
+            <SidebarMenuButton
+              isActive={item.active}
+              aria-current={item.active && !showsChildren ? "page" : undefined}
+              className={RAIL_ITEM}
+              tooltip={tooltip}
+            >
+              <NavigationIcon icon={item.icon} />
+              <span className="sr-only">{item.label}</span>
+            </SidebarMenuButton>
+          }
         >
+          {children.map((child) => (
+            <MenuPrimitive.LinkItem
+              key={child.id}
+              render={<InternalLink to={child.href} className={COLLAPSED_MENU_ITEM} />}
+              closeOnClick
+              label={child.label}
+              data-active={child.active ? "" : undefined}
+              aria-current={child.active ? "page" : undefined}
+              data-testid="navigation-rail-child-link"
+            >
+              <NavigationIcon icon={child.icon} />
+              <span>{child.label}</span>
+            </MenuPrimitive.LinkItem>
+          ))}
+        </Menu>
+      ) : (
+        <SidebarMenuButton
+          isActive={item.active && !showsInlineChildren}
+          className={cn(RAIL_ITEM, isSheet && SHEET_TOUCH_TARGET)}
+          render={<InternalLink to={item.href} />}
+          // `data-active` is a STYLING hook, not an accessibility state — nothing announces it. The
+          // active destination needs `aria-current` as well, or a screen-reader user is never told
+          // which one they are on.
+          aria-current={item.active && !showsInlineChildren ? "page" : undefined}
+          data-testid="navigation-rail-link"
+          data-touch-target={isSheet ? true : undefined}
+          tooltip={tooltip}
+        >
+          <NavigationIcon icon={item.icon} />
+          {/* `sr-only`, not removed — the link's accessible name still comes from this text even
+              when the rail is too narrow to show it, so `collapsed` icon links keep their names. */}
+          <span className={isCollapsed ? "sr-only" : undefined}>{item.label}</span>
+        </SidebarMenuButton>
+      )}
+      {showsInlineChildren && (
+        <SidebarMenuSub>
           {children.map((child) => (
             <SidebarMenuSubItem key={child.id}>
               <SidebarMenuSubButton

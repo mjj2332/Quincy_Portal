@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Bell } from "lucide-react";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { apiDelete, apiGet, apiPost } from "../../lib/api";
 import { InternalLink } from "../InternalLink";
@@ -158,7 +159,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
           // without changing the trigger's own layout box (see the header comment: the Topbar has
           // no equivalent seam, so there is nothing to diverge from here).
           <span className="contents" data-touch-target={touchTarget ? true : undefined}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <Bell aria-hidden="true" />
             <span className="sr-only">Notifications</span>
             {unreadCount > 0 && <span className="bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]" aria-label={`${unreadCount} unread`} data-testid="rail-notification-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
           </span>

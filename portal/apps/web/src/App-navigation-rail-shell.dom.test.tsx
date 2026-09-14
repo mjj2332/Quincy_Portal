@@ -250,7 +250,9 @@ function rail(host: ParentNode) {
   return host.querySelector<HTMLElement>('[data-testid="navigation-rail"]');
 }
 function railToggle(host: ParentNode) {
-  return host.querySelector<HTMLButtonElement>('[data-testid="shell-header-rail-toggle"]');
+  // #122: the toggle moved from `ShellHeader` into `NavigationRail`'s own header as a
+  // `SidebarTrigger` (`reui/sidebar.tsx`) — `rail-toggle`, not `shell-header-rail-toggle`.
+  return host.querySelector<HTMLButtonElement>('[data-testid="rail-toggle"]');
 }
 function sheetTrigger(host: ParentNode) {
   return host.querySelector<HTMLButtonElement>('[data-testid="shell-header-sheet-trigger"]');
@@ -302,11 +304,13 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     input.remove();
   });
 
-  it("wide: the header contains only the toggle and the breadcrumb nav", async () => {
+  it("wide: the header contains only the breadcrumb nav — no toggle button of its own (#122)", async () => {
     const host = await renderAt("/");
     const header = host.querySelector('[data-testid="shell-header"]')!;
     expect(header).not.toBeNull();
-    expect(header.querySelector('[data-testid="shell-header-rail-toggle"]')).not.toBeNull();
+    // #122: the toggle moved into NavigationRail's own header — ShellHeader carries no button
+    // at all while wide.
+    expect(header.querySelectorAll("button")).toHaveLength(0);
     expect(header.querySelector('[data-testid="shell-breadcrumb"]')).not.toBeNull();
     expect(header.querySelector('[data-testid="shell-header-sheet-trigger"]')).toBeNull();
     expect(header.querySelector('[data-testid="rail-notifications"]')).toBeNull();
@@ -341,10 +345,12 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
     expect(host.querySelectorAll('nav[aria-label="Primary navigation"]')).toHaveLength(1);
   });
 
-  it("wide header contains exactly one button and one nav, and every a sits inside the nav", async () => {
+  it("wide header contains no button and exactly one nav, and every a sits inside the nav (#122)", async () => {
     const host = await renderAt("/?view=kanban");
     const header = host.querySelector('[data-testid="shell-header"]')!;
-    expect(header.querySelectorAll("button")).toHaveLength(1);
+    // #122: the toggle moved into NavigationRail's own header — the breadcrumb nav is the only
+    // interactive landmark left in ShellHeader while wide.
+    expect(header.querySelectorAll("button")).toHaveLength(0);
     expect(header.querySelectorAll("nav")).toHaveLength(1);
     const nav = header.querySelector("nav")!;
     const anchors = [...header.querySelectorAll("a")];

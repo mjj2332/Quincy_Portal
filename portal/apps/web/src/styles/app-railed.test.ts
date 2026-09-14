@@ -47,6 +47,69 @@ const appRouter = readFileSync(
   "utf8",
 );
 
+/**
+ * #122 (ADR 0005): `.app--railed`'s one in-flow child is now `SidebarProvider`'s wrapper
+ * (`RailedShell.tsx`), which is where `min-w-0` moved once app.css stopped splitting
+ * `.app--railed`'s children itself — see the "no longer splits" test below.
+ */
+const railedShell = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "components", "quincy", "RailedShell.tsx"),
+  "utf8",
+);
+
+/**
+ * Sol review (#122 P1): base-nova's `SidebarMenuButton`/`SidebarMenuSubButton` map `isActive`
+ * through Base UI's own `state`, which renders a VALUELESS `data-active=""` when true and OMITS
+ * the attribute when false — never the string `"true"`/`"false"` #111's trimmed primitive used to
+ * write. `data-[active=true]:` (an exact-value Tailwind arbitrary variant) never matches that real
+ * output, so the active row's paint silently fell through to base-nova's own
+ * `data-active:bg-sidebar-accent` — a happy-dom DOM test cannot see this (it does not compute
+ * Tailwind), so this reads the component SOURCE instead, the same way the rest of this file reads
+ * `app.css`/`app-router.tsx`/`RailedShell.tsx`.
+ */
+const navigationRail = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "components", "quincy", "NavigationRail.tsx"),
+  "utf8",
+);
+
+function stripJsCommentsForRail(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
+
+const strippedNavigationRail = stripJsCommentsForRail(navigationRail);
+
+/**
+ * `/code-review` (#122 P1): `quincy/menu.tsx`'s `TRIGGER` reset class hardcodes `border-0` (and
+ * `bg-transparent`, `justify-center`, …) for the DEFAULT `<button>` trigger. When a caller supplies
+ * `triggerRender` instead — `NavigationRail`'s collapsed parents pass a whole `SidebarMenuButton`
+ * — Base UI concatenates `className={cn(TRIGGER, triggerClassName)}` onto THAT element, so
+ * `TRIGGER`'s `border-0` competes with `ROW_PAINT`'s own `border`/`data-active:border-…` (the
+ * active hairline on a collapsed Dashboard trigger can vanish). `TRIGGER` is a reset for the
+ * primitive's own bare `<button>`; a caller-supplied element owns its own chrome and needs none of
+ * it. A happy-dom DOM test cannot see a class-string collision like this (and
+ * `testing/test-seam.guard.test.ts` guard C forbids asserting a class is present in a DOM test
+ * either way), so this reads the component SOURCE instead, the same way the rest of this file does.
+ */
+const menuSource = stripJsCommentsForRail(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "components", "quincy", "menu.tsx"), "utf8"),
+);
+
+describe("Menu's TRIGGER reset class is conditional on triggerRender (#122 code review)", () => {
+  const triggerTag = menuSource.match(/<MenuPrimitive\.Trigger[\s\S]*?>/)?.[0] ?? "";
+
+  it("finds the MenuPrimitive.Trigger element to scan", () => {
+    expect(triggerTag).not.toBe("");
+  });
+
+  it("does not unconditionally apply TRIGGER (and its border-0) to a caller-supplied triggerRender", () => {
+    expect(triggerTag).not.toMatch(/className=\{cn\(TRIGGER,\s*triggerClassName\)\}/);
+  });
+
+  it("applies TRIGGER only when there is no triggerRender", () => {
+    expect(triggerTag).toMatch(/triggerRender\s*\?\s*triggerClassName\s*:\s*cn\(TRIGGER,\s*triggerClassName\)/);
+  });
+});
+
 describe("the shell applies the rule", () => {
   it("names the same class the CSS defines", () => {
     expect(appRouter).toContain("app--railed");
@@ -85,10 +148,15 @@ describe("the railed shell layout", () => {
     }
   });
 
-  it("lets the content column shrink so the rail keeps its width", () => {
-    // Without `min-width: 0` a wide table inside a page sets the flex item's minimum to its content
-    // width and pushes the 250px rail off the viewport.
-    expect(appCss).toMatch(/\.app--railed > :not\(\.app__rail\)\s*\{[^}]*min-width:\s*0/);
+  it("no longer splits .app--railed's children — the provider wrapper is its only in-flow child now", () => {
+    // #122 (ADR 0005): `SidebarProvider`'s own `data-slot="sidebar-wrapper"` is `.app--railed`'s
+    // one child now (the Sheet root and `RailSheet`'s popup render no in-flow DOM), so there is no
+    // rail/content split left for app.css to author. `min-w-0` moved to the provider itself, so a
+    // wide table still cannot push it past the viewport.
+    expect(appCss).not.toMatch(/\.app--railed\s*>\s*/);
+    const providerTag = railedShell.match(/<SidebarProvider[\s\S]*?>/)?.[0] ?? "";
+    expect(providerTag, "RailedShell must render <SidebarProvider>").toBeTruthy();
+    expect(providerTag).toContain('className="app__shell min-w-0"');
   });
 
   it("does not reuse the .rail class, which ProjectOverviewRail already owns", () => {
@@ -97,74 +165,104 @@ describe("the railed shell layout", () => {
   });
 });
 
-/**
- * The rail's height and stickiness — added after a live Chrome pass, not after a test failure.
- *
- * Measured on the running build: the rail computed `position: static`, `height: 343px` on a 900px
- * viewport, and at `scrollY: 1200` its top was at `-1200` — the whole navigation scrolled off a
- * 7447px Dashboard, leaving an empty 250px gutter. The Topbar it replaces is
- * `position: sticky; top: 0` and never leaves, so this was a straight regression against the
- * shipped chrome.
- *
- * Neither the two DOM tests nor the first two browser passes caught it: every one of them measured
- * at `scrollY: 0`, where the top of the rail looks correct. These assertions exist so that the
- * height and the stickiness cannot be lost again silently.
- */
-describe("the rail is full-height and stays put", () => {
-  const railBody = ruleBody(appCss, ".app--railed > .app__rail") ?? "";
+describe("the rail's active-row paint matches base-nova's boolean-presence data-active (#122 Sol review)", () => {
+  it("never selects on data-[active=true], which the primitive's real output cannot match", () => {
+    expect(strippedNavigationRail).not.toMatch(/data-\[active=true\]/);
+  });
 
+  it("selects on the presence-based data-active: variant instead", () => {
+    expect(strippedNavigationRail).toMatch(/data-active:/);
+  });
+});
+
+/**
+ * Luna fix (#122 P1, live Chrome pass): the rail's rows render as `InternalLink` — real `<a>`
+ * elements — and `styles/tokens/base.css:21`'s `a { color: inherit }` is imported UNLAYERED
+ * (`index.css`), so it beats every LAYERED Tailwind `text-*` utility on an anchor regardless of
+ * specificity — a third door on the same unlayered-cascade trap `docs/lessons.md:1181-1219`
+ * already names two of (an outline shorthand, then a focus ring). Measured: an inactive row
+ * computed `--text-primary` (inherited from the sidebar's own `--sidebar-foreground`) instead of
+ * `--text-secondary`. The fix is the same one that trap already prescribes — the `!` important
+ * modifier — not moving `base.css` into a layer (cross-cutting, out of scope here).
+ */
+describe("ROW_PAINT's text colour survives the unlayered `a { color: inherit }` cascade (Luna fix)", () => {
+  const rowPaint = strippedNavigationRail.match(/const ROW_PAINT = cn\(([\s\S]*?)\n\);/)?.[1] ?? "";
+
+  it("finds the ROW_PAINT declaration to scan", () => {
+    expect(rowPaint).not.toBe("");
+  });
+
+  it("uses the important modifier on all three text colour utilities", () => {
+    expect(rowPaint).toContain("!text-[color:var(--text-secondary)]");
+    expect(rowPaint).toContain("hover:!text-[color:var(--text-primary)]");
+    expect(rowPaint).toContain("data-active:!text-[color:var(--text-primary)]");
+  });
+
+  it("leaves no non-important text-[color:var(--text- utility behind", () => {
+    // A negative lookbehind for `!` immediately before `text-[color:var(--text-` — every match
+    // that survives is a colour utility an unlayered `a { color: inherit }` would still beat.
+    expect(rowPaint).not.toMatch(/(?<!!)text-\[color:var\(--text-/);
+  });
+});
+
+/**
+ * The rail's impersonation offset — #122 (ADR 0005).
+ *
+ * base-nova's `Sidebar` now owns positioning and full-height sizing itself (`sidebar-container` is
+ * `fixed inset-y-0 h-svh`), so app.css no longer authors a sticky/height/z-index rule for the rail
+ * at all — the P1 build deleted `.app--railed > .app__rail` and its z-76 flyout-clearing rule along
+ * with it (the collapsed menu is now a portalled `quincy/menu.tsx` popup at `--z-popover`, not an
+ * inline flyout that needed the rail's own stacking context raised above the header). The one thing
+ * left for this file to own is the impersonation-banner offset, which the vendored primitive cannot
+ * know about — mirroring `.app--impersonating .topbar { top: 42px }`.
+ */
+describe("the rail's impersonation offset (#122)", () => {
   it("declares the rule at all", () => {
     expect(
-      ruleBody(appCss, ".app--railed > .app__rail"),
-      ".app--railed > .app__rail must exist as a real rule in app.css",
+      ruleBody(appCss, ".app--impersonating .app__rail"),
+      ".app--impersonating .app__rail must exist as a real rule in app.css",
     ).not.toBeNull();
   });
 
-  it("sticks to the top of the viewport", () => {
-    // `position: sticky` with the initial `top: auto` never sticks, so the offset is as
-    // load-bearing as the position and both are pinned here.
-    expect(railBody).toMatch(/position:\s*sticky/);
-    expect(railBody).toMatch(/top:\s*0/);
+  it("offsets 42px under impersonation, with a matching 42px-reduced height", () => {
+    const body = ruleBody(appCss, ".app--impersonating .app__rail") ?? "";
+    expect(body).toMatch(/top:\s*42px/);
+    expect(body).toMatch(/height:\s*calc\(100dvh - 42px\)/);
   });
 
-  it("takes the full viewport height in dynamic viewport units", () => {
-    // `dvh`, not `vh`: mobile browser chrome would otherwise clip the identity/sign-out footer.
-    expect(railBody).toMatch(/height:\s*100dvh/);
-    expect(railBody, "vh would be clipped by mobile browser chrome").not.toMatch(/height:\s*100vh/);
+  it("declares the rule outside any @layer", () => {
+    const selector = ".app--impersonating .app__rail ";
+    const index = appCss.indexOf(selector);
+    expect(index, `${selector} not found`).toBeGreaterThan(-1);
+    const before = appCss.slice(0, index);
+    const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
+    const closed = (before.match(/\}/g) ?? []).length;
+    expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
   });
 
-  it("opts out of the container's stretch so there is room to stick", () => {
-    // `.app--railed` sets `align-items: stretch`, which sizes the rail to the whole DOCUMENT. A
-    // sticky item stretched to its container's height has nothing to stick within — this is the
-    // declaration that makes the other two work, and the easiest one to delete as redundant.
-    expect(railBody).toMatch(/align-self:\s*start/);
+  // Sol review (#122 P1): `SidebarProvider`'s own `min-h-svh` (`reui/sidebar.tsx`'s
+  // `data-slot="sidebar-wrapper"`) is a MINIMUM, and `.app--impersonating`'s `padding-top: 42px`
+  // on `.app` adds to it rather than sharing it, so a short impersonated page renders 42px taller
+  // than the viewport. `app__shell` is the class `RailedShell.tsx` gives the provider for this.
+  it("carries app__shell on the SidebarProvider, for the impersonation min-height fix", () => {
+    const providerTag = railedShell.match(/<SidebarProvider[\s\S]*?>/)?.[0] ?? "";
+    expect(providerTag).toContain('className="app__shell min-w-0"');
   });
 
-  it("does not rely on the primitive's h-full, which resolves to auto here", () => {
-    // `h-full` is `height: 100%` against `.app`, which has `min-height: 100vh` and no `height`,
-    // so it computed to `auto` and produced the 343px stub. The authored height is what fixes it;
-    // this pins that the fix lives in CSS rather than in a utility that would silently collapse.
-    expect(appCss).toMatch(/\.app--railed > \.app__rail\s*\{[^}]*height:/);
+  it("declares .app--impersonating .app__shell with a 42px-reduced min-height", () => {
+    const body = ruleBody(appCss, ".app--impersonating .app__shell");
+    expect(body, ".app--impersonating .app__shell must exist as a real rule in app.css").not.toBeNull();
+    expect(body).toMatch(/min-height:\s*calc\(100svh - 42px\)/);
   });
 
-  it("clears the impersonation banner instead of sitting under it", () => {
-    // Mirrors `.app--impersonating .topbar { top: 42px }`. Without this the banner overlaps the
-    // wordmark and the rail runs 42px past the bottom of the viewport.
-    const impersonating = ruleBody(appCss, ".app--impersonating.app--railed > .app__rail");
-    expect(impersonating, "the railed shell must offset the rail under impersonation").not.toBeNull();
-    expect(impersonating).toMatch(/top:\s*42px/);
-    expect(impersonating).toMatch(/height:\s*calc\(100dvh - 42px\)/);
-  });
-
-  it("declares both rules outside any @layer", () => {
-    for (const selector of [".app--railed > .app__rail ", ".app--impersonating.app--railed"]) {
-      const index = appCss.indexOf(selector);
-      expect(index, `${selector} not found`).toBeGreaterThan(-1);
-      const before = appCss.slice(0, index);
-      const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
-      const closed = (before.match(/\}/g) ?? []).length;
-      expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
-    }
+  it("declares the app__shell impersonation rule outside any @layer", () => {
+    const selector = ".app--impersonating .app__shell ";
+    const index = appCss.indexOf(selector);
+    expect(index, `${selector} not found`).toBeGreaterThan(-1);
+    const before = appCss.slice(0, index);
+    const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
+    const closed = (before.match(/\}/g) ?? []).length;
+    expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
   });
 });
 
@@ -176,9 +274,11 @@ describe("the rail is full-height and stays put", () => {
  * neither rule sits inside an `@media` block of its own.
  */
 describe("the rail's inline size follows data-rail-mode (#112)", () => {
-  it("sets 250px expanded, 48px collapsed, and 0px for the Sheet", () => {
-    expect(ruleBody(appCss, '[data-rail-mode="expanded"]')).toContain("--app-rail-inline-size: 250px");
-    expect(ruleBody(appCss, '[data-rail-mode="collapsed"]')).toContain("--app-rail-inline-size: 48px");
+  it("sets 260px expanded, the icon-width calc collapsed, and 0px for the Sheet (#122)", () => {
+    expect(ruleBody(appCss, '[data-rail-mode="expanded"]')).toContain("--app-rail-inline-size: 260px");
+    expect(ruleBody(appCss, '[data-rail-mode="collapsed"]')).toContain(
+      "--app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2))",
+    );
     expect(ruleBody(appCss, '[data-rail-mode="sheet"]')).toContain("--app-rail-inline-size: 0px");
   });
 
@@ -225,27 +325,6 @@ describe("the shell header clears the impersonation banner and carries a z-index
       const closed = (before.match(/\}/g) ?? []).length;
       expect(opened, `${selector} sits inside an @layer block`).toBeLessThanOrEqual(closed);
     }
-  });
-});
-
-/**
- * `.app--railed > .app__rail`'s z-index — #112 review finding. `position: sticky` creates a
- * stacking context with z `auto`, which traps the collapsed flyout's `--z-popover` beneath any
- * later-painted, positioned content — `.worktools` (z-index 20) and now `.shell-header` (z-index
- * 75) both sit later in the DOM and both win. The rail needs a z-index ABOVE the header so the
- * flyout clears page content, but still below `--z-popover`/`--z-dialog` so the Sheet — portalled,
- * outside this stacking context entirely — still covers it regardless.
- */
-describe("the rail's stacking context clears the header for the collapsed flyout (#112)", () => {
-  it("declares z-index 76 on .app--railed > .app__rail, above .shell-header's 75", () => {
-    const railBody = ruleBody(appCss, ".app--railed > .app__rail") ?? "";
-    expect(railBody).toMatch(/z-index:\s*76/);
-
-    const headerBody = ruleBody(appCss, ".shell-header") ?? "";
-    const headerZ = Number(headerBody.match(/z-index:\s*(\d+)/)?.[1]);
-    expect(headerZ).toBe(75);
-    const railZ = Number(railBody.match(/z-index:\s*(\d+)/)?.[1]);
-    expect(railZ).toBeGreaterThan(headerZ);
   });
 });
 

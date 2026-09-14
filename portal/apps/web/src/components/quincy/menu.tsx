@@ -39,7 +39,11 @@ const PANEL = cn(
 );
 
 export type MenuProps = {
-  trigger: React.ReactNode;
+  /**
+   * Required unless `triggerRender` is given — #122's `triggerRender` supplies its own content
+   * (e.g. a full `SidebarMenuButton`), so a second, redundant `trigger` node has nothing to add.
+   */
+  trigger?: React.ReactNode;
   triggerLabel: string;
   label: string;
   children: React.ReactNode;
@@ -49,6 +53,21 @@ export type MenuProps = {
   disabled?: boolean;
   triggerClassName?: string;
   triggerTestId?: string;
+  /**
+   * #122: renders the trigger AS this element (Base UI's `render` prop) instead of the default
+   * `<button>` — how `NavigationRail`'s collapsed parents make the whole `SidebarMenuButton` the
+   * menu's own trigger, so `Menu`'s own focus/aria/data-testid props (`triggerLabel`,
+   * `triggerTestId`, `triggerClassName`) still land where they always did, merged onto whatever
+   * `triggerRender` provides. Additive — every existing caller that omits it keeps the default
+   * `<button>` unchanged.
+   *
+   * `TRIGGER` (below) is a reset for the primitive's own bare `<button>` — `border-0`,
+   * `bg-transparent`, `justify-center`, … — and is deliberately NOT applied when `triggerRender` is
+   * given (`/code-review`, #122): a caller-supplied element owns its own chrome, and `TRIGGER`'s
+   * `border-0` would otherwise compete with that element's own border utilities (e.g.
+   * `NavigationRail`'s `ROW_PAINT`, whose active-row hairline border can vanish under it).
+   */
+  triggerRender?: React.ReactElement;
   panelClassName?: string;
   side?: MenuSide;
   align?: MenuAlign;
@@ -78,6 +97,7 @@ export function Menu({
   disabled,
   triggerClassName,
   triggerTestId,
+  triggerRender,
   panelClassName,
   side = "bottom",
   align = "end",
@@ -92,7 +112,12 @@ export function Menu({
   const container = React.useContext(OverlayContainerContext) ?? undefined;
   return (
     <MenuPrimitive.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange} modal={false} disabled={disabled}>
-      <MenuPrimitive.Trigger className={cn(TRIGGER, triggerClassName)} aria-label={triggerLabel} data-testid={triggerTestId}>
+      <MenuPrimitive.Trigger
+        className={triggerRender ? triggerClassName : cn(TRIGGER, triggerClassName)}
+        aria-label={triggerLabel}
+        data-testid={triggerTestId}
+        render={triggerRender}
+      >
         {trigger}
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal container={container}>
