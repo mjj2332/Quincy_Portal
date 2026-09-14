@@ -21,7 +21,7 @@ const sessionState = vi.hoisted(() => ({ value: { data: { user: { id: "u1", name
 
 vi.mock("./lib/auth", () => ({ useSession: () => sessionState.value, stopImpersonating: vi.fn(), consumeSignInDestination: () => null }));
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: ReactNode }) => children }));
-vi.mock("./components/Topbar", () => ({ Topbar: () => <header /> }));
+vi.mock("./components/quincy/RailedShell", () => ({ RailedShell: ({ children }: { children: ReactNode }) => <><header />{children}</> }));
 vi.mock("./lib/query-client", () => ({ QuincyQueryProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("./screens/Dashboard", () => ({ Dashboard: () => <main>DASHBOARD SCREEN</main> }));
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId }: { projectId: string }) => <main>PROJECT SCREEN {projectId}</main> }));
@@ -98,7 +98,7 @@ describe("the parser overrules the router's matcher, and the URL is left alone",
       expect(host.textContent).toContain("That page is not available.");
       expect(`${window.location.pathname}${window.location.search}`).toBe(path);
       // Not-found is rendered inside the application chrome, as it always has been -- the root
-      // route's notFoundComponent sits under the same Shell that mounts the Topbar.
+      // route's notFoundComponent sits under the same Shell that mounts the RailedShell.
       expect(host.querySelector("header")).not.toBeNull();
     },
   );

@@ -115,12 +115,12 @@ describe("the shell applies the rule", () => {
     expect(appRouter).toContain("app--railed");
   });
 
-  it("applies it conditionally on the rail flag, in one expression", () => {
-    // Pins the pairing, not just the presence: the class must sit in the same className expression
-    // as the flag that gates the rail, so it cannot be left applied unconditionally or dropped.
+  it("applies it unconditionally, in the shell's root className expression", () => {
+    // The rail is the only shell (#113): the class must sit in the root className expression with
+    // no gating condition, rather than behind a flag/flag-derived boolean.
     const className = appRouter.match(/className=\{cn\((?:[^{}]|\{[^{}]*\})*\)\}/)?.[0] ?? "";
     expect(className, "the shell's root className expression").toContain("app--railed");
-    expect(className).toContain("railed &&");
+    expect(className).not.toContain("railed &&");
   });
 });
 
@@ -214,7 +214,7 @@ describe("ROW_PAINT's text colour survives the unlayered `a { color: inherit }` 
  * with it (the collapsed menu is now a portalled `quincy/menu.tsx` popup at `--z-popover`, not an
  * inline flyout that needed the rail's own stacking context raised above the header). The one thing
  * left for this file to own is the impersonation-banner offset, which the vendored primitive cannot
- * know about — mirroring `.app--impersonating .topbar { top: 42px }`.
+ * know about — the same 42px offset the deleted `.topbar` used to carry.
  */
 describe("the rail's impersonation offset (#122)", () => {
   it("declares the rule at all", () => {
@@ -299,18 +299,18 @@ describe("the rail's inline size follows data-rail-mode (#112)", () => {
  * `<header>` is `position: sticky; top: 0` with no z-index of its own, so it slides UNDER the
  * impersonation banner (`.app--impersonating` adds `padding-top: 42px` to `.app`, but nothing
  * pushes the header's own sticky offset down to clear it) and under whatever else in the stacking
- * order reaches for a z-index. `.topbar`, the chrome this header replaces under the rail flag, is
- * the precedent this mirrors exactly: `position: sticky; top: 0; z-index: 75` plus
- * `.app--impersonating .topbar { top: 42px }`.
+ * order reaches for a z-index. `.topbar`, the chrome this header replaced, was the precedent this
+ * mirrored exactly: `position: sticky; top: 0; z-index: 75` plus
+ * `.app--impersonating .topbar { top: 42px }` — now deleted along with the rest of the Topbar.
  */
 describe("the shell header clears the impersonation banner and carries a z-index (#112)", () => {
-  it("declares z-index 75 on .shell-header, same stacking order as .topbar", () => {
+  it("declares z-index 75 on .shell-header, the deleted .topbar's stacking order", () => {
     const body = ruleBody(appCss, ".shell-header");
     expect(body, ".shell-header must exist as a real rule in app.css").not.toBeNull();
     expect(body).toMatch(/z-index:\s*75/);
   });
 
-  it("offsets .shell-header under impersonation, same 42px banner offset as .topbar", () => {
+  it("offsets .shell-header under impersonation, the deleted .topbar's 42px banner offset", () => {
     const body = ruleBody(appCss, ".app--impersonating .shell-header");
     expect(body, ".app--impersonating .shell-header must exist as a real rule in app.css").not.toBeNull();
     expect(body).toMatch(/top:\s*42px/);
@@ -367,5 +367,27 @@ describe("--toast-inset-inline-start is redeclared per data-rail-mode (#112 P3b)
     const opened = (before.match(/@layer[^;{]*\{/g) ?? []).length;
     const closed = (before.match(/\}/g) ?? []).length;
     expect(opened, "[data-rail-mode] sits inside an @layer block").toBeLessThanOrEqual(closed);
+  });
+});
+
+/**
+ * Every rule that sticks or sizes something relative to the shell header reads
+ * `--shell-header-height` (50px, set once on `.app`) rather than a literal. The deleted Topbar was
+ * 64px wide and 58px on phones; its offsets outlived it in `.rail`, `.worktools` and the
+ * collaboration wrap and left a 14px gap under the 50px header once the rail became the shell.
+ */
+describe("header-relative offsets derive from --shell-header-height (#113)", () => {
+  it("declares the variable on .app", () => {
+    expect(ruleBody(appCss, ".app")).toMatch(/--shell-header-height:\s*50px/);
+  });
+
+  it("uses the variable, not a Topbar literal, wherever a rule sits under the header", () => {
+    for (const selector of [".rail", ".worktools", ".app--impersonating .rail", ".app--impersonating .worktools"]) {
+      const body = ruleBody(appCss, selector);
+      expect(body, `${selector} must exist as a real rule`).not.toBeNull();
+      expect(body, `${selector} top`).toMatch(/top:\s*(var\(--shell-header-height\)|calc\(var\(--shell-header-height\) \+ 42px\))/);
+    }
+    expect(appCss).not.toMatch(/top:\s*(64|58|106|100)px/);
+    expect(appCss).not.toMatch(/calc\((64|58)px \+ env/);
   });
 });

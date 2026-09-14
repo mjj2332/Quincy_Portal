@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation, type StaffNavigation } from "../../lib/staff-navigation";
-import { NAVIGATION_RAIL_FLAG } from "../../lib/feature-flags";
 import { parseStaffLocation } from "../../lib/router";
 import { initials } from "../../lib/initials";
 import { SidebarProvider } from "@/components/reui/sidebar";
@@ -14,13 +13,13 @@ import { RailSheet } from "./RailSheet";
 
 // Sign out cannot be exercised against a real session — it would destroy the session every other
 // check depends on — so the transport is mocked and the wiring asserted here instead. The handler
-// itself is a copy of the Topbar's, but the path through `MenuPrimitive.Item`'s `render` is new.
+// itself was copied from the retired Topbar, but the path through `MenuPrimitive.Item`'s `render` is new.
 const signOutMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("../../lib/auth", () => ({ signOut: signOutMock }));
 
 // #112 — the rail now mounts `NotificationBell` (`showBell` defaults to true) beside the wordmark,
 // which polls `apiGet` on mount. Unmocked, that is a real `fetch()` in every test in this file, not
-// just the ones below that care about the bell — mirrors `Topbar.dom.test.tsx`'s own mock, with an
+// just the ones below that care about the bell — same shape as `NotificationBell.dom.test.tsx`'s mock, with an
 // empty inbox as the default so tests that do not care about notifications see none.
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -61,7 +60,7 @@ let host: HTMLElement;
 async function render(value: ReactNode) {
   // Two ticks, not one — `NotificationBell`'s mount effect awaits `apiGet` before its first
   // `setState`, which needs a microtask beyond the mocked promise's own resolution to land inside
-  // this `act` boundary. Same shape as `Topbar.dom.test.tsx`'s own `render` helper.
+  // this `act` boundary. Same shape as `NotificationBell.dom.test.tsx`'s own `render` helper.
   await act(async () => { root!.render(value); await Promise.resolve(); await Promise.resolve(); });
 }
 
@@ -260,7 +259,7 @@ describe("NavigationRail", () => {
   });
 
   it("exposes a named navigation landmark", async () => {
-    // Reported independently by both reviewers. The Topbar this replaces has
+    // The retired Topbar had
     // `<nav aria-label="Primary navigation">`; the vendor `SidebarContent` is only a `div`, so
     // without an explicit landmark the rail drops primary navigation out of the landmark list.
     await renderInProvider(navigationFor("/"));
@@ -346,15 +345,6 @@ describe("NavigationRail", () => {
 
     await click(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("names the flag nowhere in its output", async () => {
-    // #80's flag leaked `kanban2` into a user-visible aria-label (docs/lessons.md:1689). The shell
-    // decides whether to mount the rail; the rail itself must not know the flag exists.
-    await renderInProvider(navigationFor("/"));
-    expect(host.innerHTML).not.toContain(NAVIGATION_RAIL_FLAG);
-    expect(host.innerHTML.toLowerCase()).not.toContain("nav_rail");
-    expect(host.innerHTML.toLowerCase()).not.toContain("nav-rail");
   });
 
   // -------------------------------------------------------------------------
@@ -652,6 +642,60 @@ describe("NavigationRail — showBell", () => {
 
     await renderInProvider(navigationFor("/"), { showBell: false });
     expect(host.querySelector('[data-testid="rail-notifications"]')).toBeNull();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #113 — which of the rail's own two menus gets the backdrop: the account panel is a full
+// navigation surface and dims the page; the notification panel (`quincy/NotificationBell.tsx`'s
+// `reui/popover.tsx`) is a small dropdown list and does not. `menu-backdrop` is
+// `quincy/menu.tsx`'s own `MenuPrimitive.Backdrop` test seam.
+// -----------------------------------------------------------------------------
+
+describe("account vs notification backdrop (#113)", () => {
+  it("account navigation dims the page; the notification panel does not, and the rest of the page stays interactive", async () => {
+    const outsideButton = document.createElement("button");
+    outsideButton.textContent = "Outside";
+    const outsideClick = vi.fn();
+    outsideButton.addEventListener("click", outsideClick);
+    document.body.appendChild(outsideButton);
+
+    await renderInProvider(navigationFor("/"));
+    const accountTrigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(accountTrigger);
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(1);
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(0);
+
+    const bellTrigger = document.querySelector<HTMLElement>('[data-testid="rail-notification-trigger"]')!;
+    await click(bellTrigger);
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="rail-sheet-scrim"]')).toHaveLength(0);
+
+    await click(outsideButton);
+    expect(outsideClick).toHaveBeenCalledTimes(1);
+    outsideButton.remove();
+  });
+
+  it("the Sheet's own scrim is not doubled by its nested account menu", async () => {
+    await renderInSheet(navigationFor("/"));
+    expect(document.querySelectorAll('[data-testid="rail-sheet-scrim"]')).toHaveLength(1);
+
+    const accountTrigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(accountTrigger);
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+
+    // `backdrop={!isSheet}` (`NavigationRail.tsx`) — the Sheet's own scrim already dims the page,
+    // so the nested account menu must not add a second one.
+    expect(document.querySelectorAll('[data-testid="menu-backdrop"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="rail-sheet-scrim"]')).toHaveLength(1);
   });
 });
 

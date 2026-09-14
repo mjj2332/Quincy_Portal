@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useRef } from "react";
 import { PanelLeftIcon } from "lucide-react";
 
 import { Button } from "@/components/reui/button";
@@ -20,7 +20,8 @@ import type { RailMode } from "../../lib/shell-rail";
  * The content column's header — issue #112. Built on base-nova's `breadcrumb` and
  * `sheet` (`reui/breadcrumb.tsx`, `reui/sheet.tsx`), from Tempo's `app-header.tsx`
  * (`tmp/ReUI-Test-2-tempo-v1.1.0/src/features/app-shell/components/app-header.tsx`): `sticky top-0
- * h-[50px] flex items-center gap-2 bg-background`, the trigger then the breadcrumb on the left. NOT
+ * h-[var(--shell-header-height)] flex items-center gap-2 bg-background` (50px, set once on `.app` in
+ * app.css so every sticky offset below the header derives from it), the trigger then the breadcrumb on the left. NOT
  * Tempo's `hidden md:flex` crumb-hiding, its right-hand toolbar, or `useIsMobile` — a `md:` variant
  * would be a second, CSS-owned breakpoint (`styles/shell-breakpoint.guard.test.ts` forbids it), and
  * #112's AC needs the FULL trail regardless of width, not a hidden one.
@@ -64,13 +65,18 @@ function BulletSeparator() {
 export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
   const narrow = mode === "sheet";
   const crumbs = buildStaffBreadcrumb(navigation);
+  // The narrow bell's own anchor (#113) — the header itself, not its trigger, so the panel spans
+  // the header's own width (`w-[var(--anchor-width)]`, `NotificationBell.tsx`) rather than a fixed
+  // pixel value that would either overflow the viewport or float short of it.
+  const headerRef = useRef<HTMLElement>(null);
 
   return (
     <header
+      ref={headerRef}
       // `shell-header` (styles/app.css) — a real rule, not a utility, for the z-index and
       // impersonation-banner offset: an unlayered app.css rule is what wins the impersonation
       // banner's own stacking without touching this component's Tailwind classes.
-      className="shell-header sticky top-0 h-[50px] flex items-center gap-2 bg-background"
+      className="shell-header sticky top-0 h-[var(--shell-header-height)] flex items-center gap-2 bg-background"
       data-testid="shell-header"
     >
       {narrow && (
@@ -98,7 +104,7 @@ export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      {narrow && <NotificationBell touchTarget align="end" />}
+      {narrow && <NotificationBell placement="header" anchorRef={headerRef} touchTarget />}
     </header>
   );
 }

@@ -45,8 +45,6 @@ import { buildStaffNavigation } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
-import { NAVIGATION_RAIL_FLAG, navigationRailEnabled } from "./feature-flags";
-import { Topbar } from "../components/Topbar";
 import { RailedShell } from "../components/quincy/RailedShell";
 import { InternalLink } from "../components/InternalLink";
 import { Dashboard } from "../screens/Dashboard";
@@ -176,15 +174,14 @@ function ShellRoute() {
   }
 
   // The navigation model replaces `viewFor` (#111). It is computed here, once, from the route the
-  // shell already parsed — the Topbar reads its coarse `activeSectionId` today, and the rail behind
-  // the flag reads the whole tree. Re-resolved on every location change rather than snapshotted:
-  // the Dashboard writes the view preference and then navigates, so a mount-time read goes stale.
+  // shell already parsed, and the rail reads the whole tree. Re-resolved on every location change
+  // rather than snapshotted: the Dashboard writes the view preference and then navigates, so a
+  // mount-time read goes stale.
   const navigation = useMemo(() => buildStaffNavigation(
     route,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
     { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar") },
   ), [canAccessAdmin, route, user.role]);
-  const activeView = navigation.activeSectionId;
   const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
@@ -192,31 +189,13 @@ function ShellRoute() {
     dashboardCalendar, collaborationIntent, acknowledgeCollaborationSignal,
   };
 
-  // #111. The ONE read of the flag in the app — `navigationRailEnabled` is a pure function over an
-  // injected env precisely so this is the only place `import.meta.env` is touched for it, and so
-  // the node suite can test the predicate without Vite's env. Flagged off, the Topbar renders
-  // exactly as before: this expression is the whole difference.
-  // The key is written OUT, not looked up with a variable: Vite statically replaces
-  // `import.meta.env.VITE_*` only when it sees the literal member access, so indexing the whole env
-  // object instead would inline every VITE_ value into the bundle and defeat dead-code elimination
-  // for whichever chrome is switched off. `vi.stubEnv` still reaches this form under Vitest, which
-  // is how `App-navigation-rail.dom.test.tsx` drives it.
-  const railed = navigationRailEnabled({
-    [NAVIGATION_RAIL_FLAG]: import.meta.env.VITE_QUINCY_NAV_RAIL,
-  });
-
   const routedContent = blocked
     ? <main className="page"><div className="empty" role="status"><span className="serif">Returning to dashboard.</span></div></main>
     : <ShellStateContext value={shell}><Outlet /></ShellStateContext>;
 
   return (
-    <div className={cn("app", impersonating && "app--impersonating", railed && "app--railed")}>
-      {railed
-        ? <RailedShell navigation={navigation} user={user}>{routedContent}</RailedShell>
-        : <>
-            <Topbar activeView={activeView} canAccessAdmin={canAccessAdmin} user={user} />
-            {routedContent}
-          </>}
+    <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
+      <RailedShell navigation={navigation} user={user}>{routedContent}</RailedShell>
     </div>
   );
 }

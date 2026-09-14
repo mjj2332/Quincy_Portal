@@ -2045,3 +2045,28 @@ release temporarily lowers `RECONCILE_AWAITING_RAW_BATCH_SIZE`
 (`workers/background/src/reconcile-awaiting-raw.ts`) from 100 to 15 so the backlog drains over
 several hourly runs instead of one; the constant was restored to 100 once the backlog had drained
 (2026-09-14).
+
+## A guard that checks a class is present cannot see that its layout rule was deleted (#113, 2026-09-15)
+
+**Symptom:** the rail bell's unread badge rendered as an inline pill beside the icon rather than
+overlaid on its corner, with the whole DOM suite green.
+
+**Cause:** c5e246f deleted the `.topbar__notification-badge` rule from `app.css` (position,
+min-width, height, padding, radius, line-height) when the bell moved to Tailwind utilities, but
+the badge span only received the colour utilities. Every test that touched the badge asserted its
+text, its `99+` cap, or its absence at zero; nothing asserted the layout utilities, so the loss of
+the rule was invisible to the suite and only visible in a browser.
+
+**Fix:** the badge carries `absolute top-0 right-[-3px] min-w-[16px] h-[16px] …` again, and
+`NotificationBell.dom.test.tsx` asserts `absolute` and `min-w-[16px]` on it. The general rule: when
+an `app.css` rule is deleted in favour of utilities, the commit that deletes it must show where each
+declaration went, and a test should pin the utilities that carry layout, not just paint.
+
+## The Positioner's OffsetFunction gets sizes, not positions (#113, 2026-09-15)
+
+Base UI's `sideOffset`/`alignOffset` callbacks receive `{ side, align, anchor: { width, height },
+positioner: { width, height } }` and nothing about where the anchor is. To align a panel's top with
+a trigger inside a taller anchor (the bell inside the rail), the callback has to read both elements'
+`getBoundingClientRect()` itself. Happy-dom lays nothing out, so the DOM test can prove the callback
+runs and reads the trigger's rect, and the arithmetic is a pure exported function with its own
+tests; the pixel result is a browser check.

@@ -105,17 +105,17 @@ export function Menu({
   popupRef,
   backdrop = false,
 }: MenuProps) {
-  // §4.2a nested-overlay container: null at page level — both Topbar menus render there today,
-  // so this is wiring for a future candidate (notification bell/preferences/Admin delivery UI)
-  // that puts a menu inside a dialog, not a behavior change here. Normalised to `undefined` —
+  // §4.2a nested-overlay container: null at page level — the rail's account menu renders there
+  // today, so this is wiring for a future candidate (preferences/Admin delivery UI) that puts a
+  // menu inside a dialog, not a behavior change here. Normalised to `undefined` —
   // the portal treats an explicit `null` as "wait forever", never falling back to `body`.
   const container = React.useContext(OverlayContainerContext) ?? undefined;
   // Internal only — no `triggerRef` prop exists on `MenuProps`. Base UI merges a `ref` onto
   // whatever `render`/`triggerRender` produces, the same way it merges every other prop, so this
   // reaches the real trigger element regardless of which form is in play (#122 P3).
   const triggerRef = React.useRef<HTMLButtonElement>(null);
-  // `popupRef` is a caller-facing prop (`Topbar.tsx`'s notification menu already supplies one) —
-  // this merges our own internal read alongside it rather than replacing it.
+  // `popupRef` is a caller-facing prop — this merges our own internal read alongside a caller's
+  // own ref rather than replacing it.
   const internalPopupRef = React.useRef<HTMLDivElement>(null);
   const setPopupRef = React.useCallback(
     (node: HTMLDivElement | null) => {
@@ -148,7 +148,9 @@ export function Menu({
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal container={container}>
         {backdrop && (
-          <MenuPrimitive.Backdrop className={cn(
+          <MenuPrimitive.Backdrop
+            data-testid="menu-backdrop"
+            className={cn(
             // Same z-index as the Positioner below, deliberately: the Backdrop is rendered first, and
             // equal z-index resolves by DOM order, so the panel paints above its own scrim without a
             // new stacking token. `tokens/spacing.css:58-63` defines only --z-popover (90), --z-dialog

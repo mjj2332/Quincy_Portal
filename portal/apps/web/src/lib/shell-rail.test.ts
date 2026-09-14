@@ -43,7 +43,7 @@ describe("shell-rail — the constants", () => {
     expect(RAIL_PREFERENCE_KEY).toBe("quincy:shell:rail");
   });
 
-  it("folds at 771px, the boundary the Topbar already folds at — not 1007/1008", () => {
+  it("folds at 771px, the boundary the retired Topbar already folded at — not 1007/1008", () => {
     expect(SHELL_NARROW_QUERY).toBe("(max-width: 771px)");
   });
 });

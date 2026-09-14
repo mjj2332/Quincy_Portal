@@ -6,15 +6,16 @@
  * browser global, which is why its test is a node test: a stray `window` would throw there rather
  * than quietly pass.
  *
- * It exists before any new chrome does, and the Topbar consumes it today. `viewFor` — the switch
- * that used to live in `app-router.tsx` and fold every route to a coarse screen identity — retires
- * into `activeSectionId` here, so the model ships tested and in production use rather than as
- * scaffolding for a rail that is still behind a flag.
+ * It existed before the rail did, and the Topbar consumed it before its own retirement. `viewFor`
+ * — the switch that used to live in `app-router.tsx` and fold every route to a coarse screen
+ * identity — retired into `activeSectionId` here, so the model shipped tested and in production
+ * use rather than as scaffolding for a rail that was still behind a flag.
  *
  * ## Two kinds of "active", deliberately
  *
- * `activeSectionId` is the coarse screen identity the Topbar has always used: every Dashboard
- * route, whatever its view, folds to `"dashboard"`. Each item's own `active` is the fine-grained
+ * `activeSectionId` is the coarse screen identity the shell has always used (the Topbar before
+ * the rail, the rail's account menu today): every Dashboard route, whatever its view, folds to
+ * `"dashboard"`. Each item's own `active` is the fine-grained
  * one the rail needs, and it follows the **resolved view**, not the pathname — a bare `/` carries
  * no view, but the remembered preference resolves to one, so the rail marks that child active.
  *

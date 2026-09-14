@@ -29,9 +29,9 @@ img { display: block; max-width: 100%; }
 button { font-family: var(--font-sans); }
 
 /* ---------------------------------------------------------------------
-   App shell + top bar
+   App shell
    --------------------------------------------------------------------- */
-.app { min-height: 100vh; display: flex; flex-direction: column; }
+.app { --shell-header-height: 50px; min-height: 100vh; display: flex; flex-direction: column; }
 /* #111, the navigation rail. This has to be a real rule rather than a `flex-row` utility on the
    element: `.app` above is UNLAYERED, and an unlayered declaration beats anything in Tailwind's
    `@layer utilities` regardless of specificity — the utility would be a silent no-op, the same
@@ -39,7 +39,7 @@ button { font-family: var(--font-sans); }
    `app--rail`: `.rail` is already taken by ProjectOverviewRail (see `.app--impersonating .rail`
    just below).
 
-   #122 (ADR 0005): `.app`'s only in-flow child under the rail flag is now `SidebarProvider`'s own
+   #122 (ADR 0005): `.app`'s only in-flow child under the rail is now `SidebarProvider`'s own
    `data-slot="sidebar-wrapper"` (`reui/sidebar.tsx`, `group/sidebar-wrapper flex min-h-svh
    w-full`) — the Sheet root (`RailedShell`) and `RailSheet`'s popup render no in-flow DOM of
    their own, so `.app--railed`'s row has exactly one child and there is no child-splitting rule
@@ -51,8 +51,7 @@ button { font-family: var(--font-sans); }
    beside an in-flow width spacer (`sidebar-gap`), full height and pinned out of the box. */
 .app--railed { flex-direction: row; align-items: stretch; }
 .app--impersonating { padding-top: 42px; }
-.app--impersonating .topbar { top: 42px; }
-/* Same 42px banner offset the topbar takes above — the rail must sit below it, not under it.
+/* Same 42px banner offset the shell header takes below — the rail must sit below it, not under it.
    `app__rail` (`components/quincy/NavigationRail.tsx`) lands on base-nova's `sidebar-container`
    div (`reui/sidebar.tsx`'s `Sidebar`, the `fixed inset-y-0 h-svh` element) via the `className` it
    spreads there, so this descendant selector reaches past the provider wrapper and the `group
@@ -65,7 +64,7 @@ button { font-family: var(--font-sans); }
    impersonated page renders 42px taller than the viewport. Unlayered, so it beats the vendored
    `min-h-svh` utility the same way the rest of this file beats Tailwind's `@layer utilities`. */
 .app--impersonating .app__shell { min-height: calc(100svh - 42px); }
-/* #112's `ShellHeader`: same stacking and banner offset as .topbar. */
+/* #112's `ShellHeader`: sticky stacking and impersonation banner offset. */
 .shell-header { z-index: 75; }
 .app--impersonating .shell-header { top: 42px; }
 /* #112. `data-rail-mode` (set by `RailedShell` from `lib/shell-rail.ts`'s `SHELL_NARROW_QUERY`,
@@ -95,31 +94,9 @@ button { font-family: var(--font-sans); }
 [data-rail-mode="collapsed"] { --app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2)); }
 [data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
 [data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
-.app--impersonating .rail { top: 106px; max-height: calc(100vh - 106px); }
-.app--impersonating .worktools { top: 106px; }
+.app--impersonating .rail { top: calc(var(--shell-header-height) + 42px); max-height: calc(100vh - var(--shell-header-height) - 42px); }
+.app--impersonating .worktools { top: calc(var(--shell-header-height) + 42px); }
 .app--impersonating .viewer { inset: 42px 0 0; }
-
-.topbar {
-  position: sticky; top: 0; z-index: 75;
-  display: flex; align-items: center; gap: var(--space-6);
-  padding: 0 var(--space-7); height: 64px;
-  background: color-mix(in srgb, var(--paper-050) 88%, transparent);
-  backdrop-filter: saturate(1.1) blur(10px);
-  border-bottom: 1px solid var(--border-hairline);
-}
-.topbar.is-ink { background: color-mix(in srgb, var(--ink-900) 90%, transparent); border-bottom-color: rgba(246,244,239,.14); }
-.topbar.is-ink .ey, .topbar.is-ink .topnav a { color: var(--text-on-inverse-muted); }
-.topbar__divider { width: 1px; height: 22px; background: var(--border-hairline); }
-.topnav { display: flex; align-items: center; gap: var(--space-6); }
-.topnav a, .topnav button {
-  font: var(--type-label); text-transform: uppercase; letter-spacing: var(--tracking-wide);
-  color: var(--text-secondary); text-decoration: none; cursor: pointer; padding: 4px 0;
-  border-top: 0; border-right: 0; border-left: 0; background: transparent;
-  border-bottom: 1.5px solid transparent; transition: color var(--dur-fast), border-color var(--dur-fast);
-}
-.topnav a:hover, .topnav button:hover { color: var(--text-primary); }
-.topnav a.is-active, .topnav button.is-active { color: var(--text-primary); border-bottom-color: var(--ink-900); }
-.topbar__signout-error { margin-left: auto; color: var(--signal-critical); font-size: 12px; }
 
 /* ---------------------------------------------------------------------
    Icon buttons / chips
@@ -264,7 +241,7 @@ button { font-family: var(--font-sans); }
    Review workspace layout
    --------------------------------------------------------------------- */
 .work { display: grid; grid-template-columns: 288px 1fr; flex: 1; min-height: 0; }
-.rail { border-right: 1px solid var(--border-hairline); background: var(--paper-000); position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 64px); overflow: auto; }
+.rail { border-right: 1px solid var(--border-hairline); background: var(--paper-000); position: sticky; top: var(--shell-header-height); align-self: start; max-height: calc(100vh - var(--shell-header-height)); overflow: auto; }
 /* Panel-level properties (z-index, width, border, background, shadow) now owned by
    `AnchoredPopover` (§7.3/§7.4) — this class stays only as the content wrapper / test hook. */
 .project-team-picker > input { display: block; width: calc(100% - var(--space-4)); margin: var(--space-2); padding: var(--space-2) var(--space-3); border: var(--border-width-hair) solid var(--border-hairline); border-radius: var(--radius-sm); background: var(--paper-000); color: var(--text-primary); font: var(--type-body); font-size: var(--text-sm); }
@@ -291,7 +268,7 @@ button { font-family: var(--font-sans); }
 .kv .vv { text-align: right; }
 .project-deadline__overdue { display: block; margin-top: 3px; font-size: 11px; color: var(--signal-critical); }
 .workmain { min-width: 0; display: flex; flex-direction: column; }
-.worktools { position: sticky; top: 64px; z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
+.worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }
 .workgrid { padding: var(--space-6); }
@@ -485,15 +462,7 @@ button { font-family: var(--font-sans); }
 }
 @media (max-width: 720px) {
   .page { padding: var(--space-6) var(--space-4) var(--space-9); }
-  .topbar { padding: 0 var(--space-4); gap: var(--space-4); height: 58px; }
-  .topnav, .topbar__divider { display: none; }
-  /* `.topbar__notification-menu`'s position is Base UI's Positioner now (§8), collision-aware
-     at every viewport — a hardcoded phone-width fixed position would fight it (unlayered
-     app.css always outranks Tailwind's utilities regardless of source order). */
-  .topbar__mobile-identity { display: grid; gap: 3px; padding: 10px 12px 12px; border-bottom: 1px solid var(--border-hairline); color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-  .topbar__mobile-identity strong { color: var(--text-primary); font-size: 14px; font-weight: 500; }
   .legacy-grid { --cols: 2 !important; --gap: 8px; }
-  .worktools { top: 58px; }
   /* `.project-team-picker`'s panel geometry (position, width, max-height, corners) is
      `AnchoredPopover`'s shared panel now (§7.3/§7.4) — a fixed-bottom-sheet override here,
      `!important` or not, would win over the new Tailwind panel utilities regardless (unlayered
@@ -505,7 +474,6 @@ button { font-family: var(--font-sans); }
      subtask popover's own equivalent override is `buttonClasses`' `max-[721px]:min-h-[44px]`
      now — TB8-07 slice 4b — not a hand-written rule here.) Not repeated here. */
   .project-team-picker > input { min-height: 44px; } /* 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token */
-  .app--impersonating .worktools { top: 100px; }
   .vpanel { left: 0; right: 0; top: auto; bottom: 0; width: auto; height: auto; max-height: 85vh; border-left: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; transform: translateY(calc(100% - 72px)); overflow: hidden; }
   .vpanel.open { transform: translateY(0); }
   .vpanel__head { padding: calc(var(--space-6) + 10px) var(--space-5) var(--space-4); }
@@ -588,9 +556,6 @@ button { font-family: var(--font-sans); }
 .upload-rejected { max-width: 600px; margin: 15px auto 0; padding: 10px; background: color-mix(in srgb, var(--signal-critical) 7%, var(--paper-050)); color: var(--signal-critical); font-size: 12.5px; text-align: left; }
 .filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .filter-chips .chip { padding: 6px 10px; }
-.topbar__user { display: flex; align-items: center; gap: var(--space-3); }
-.topbar__identity { min-width: 0; text-align: right; }
-.topbar__identity strong { display: block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 /* Administration ------------------------------------------------------ */
@@ -619,13 +584,13 @@ button { font-family: var(--font-sans); }
    and would lose the single-point-of-change the custom properties give it. This is the roadmap's
    "specialized CSS remains where evidence shows it is clearer", claimed once and on purpose.
    The vertical toggle tab is likewise kept as the signature it already is. */
-.project-collaboration__wrap { display: contents; --project-collaboration-top: calc(64px + env(safe-area-inset-top) + 22px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 12px); --project-collaboration-max-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px); }
+.project-collaboration__wrap { display: contents; --project-collaboration-top: calc(var(--shell-header-height) + env(safe-area-inset-top) + 22px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 12px); --project-collaboration-max-height: calc(100dvh - var(--shell-header-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px); }
 .project-collaboration__toggle { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); z-index: 70; max-height: var(--project-collaboration-max-height); writing-mode: vertical-rl; padding: 14px 9px; border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-sm); color: var(--text-primary); font: var(--type-label); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; cursor: pointer; }
 .project-collaboration { position: fixed; top: var(--project-collaboration-top); right: calc(env(safe-area-inset-right) + 12px); bottom: var(--project-collaboration-bottom); z-index: 70; width: min(460px, calc(100vw - env(safe-area-inset-right) - 24px)); max-height: var(--project-collaboration-max-height); border: 1px solid var(--border-hairline); background: var(--paper-050); box-shadow: var(--shadow-lg); }
 .project-collaboration--overlay { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .project-collaboration--standalone { position: static; display: grid; align-content: start; gap: var(--space-4); width: auto; max-height: none; min-height: 0; overflow: auto; padding: var(--space-5); box-shadow: var(--shadow-sm); }
 @media (min-width: 1080px) { .project-collaboration:not(.project-collaboration--standalone) { width: min(560px, calc(100vw - env(safe-area-inset-right) - 24px)); } }
-@media (max-width: 720px) { .project-collaboration__wrap { --project-collaboration-top: calc(58px + env(safe-area-inset-top) + 12px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 10px); --project-collaboration-max-height: calc(100dvh - 58px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px); } .project-collaboration__toggle { min-width: 44px; } }
-.app--impersonating .project-collaboration__wrap { --project-collaboration-top: calc(64px + env(safe-area-inset-top) + 22px + 42px); --project-collaboration-max-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px - 42px); }
-@media (max-width: 720px) { .app--impersonating .project-collaboration__wrap { --project-collaboration-top: calc(58px + env(safe-area-inset-top) + 12px + 42px); --project-collaboration-max-height: calc(100dvh - 58px - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px - 42px); } }
+@media (max-width: 720px) { .project-collaboration__wrap { --project-collaboration-top: calc(var(--shell-header-height) + env(safe-area-inset-top) + 12px); --project-collaboration-bottom: calc(env(safe-area-inset-bottom) + 10px); --project-collaboration-max-height: calc(100dvh - var(--shell-header-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px); } .project-collaboration__toggle { min-width: 44px; } }
+.app--impersonating .project-collaboration__wrap { --project-collaboration-top: calc(var(--shell-header-height) + env(safe-area-inset-top) + 22px + 42px); --project-collaboration-max-height: calc(100dvh - var(--shell-header-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 34px - 42px); }
+@media (max-width: 720px) { .app--impersonating .project-collaboration__wrap { --project-collaboration-top: calc(var(--shell-header-height) + env(safe-area-inset-top) + 12px + 42px); --project-collaboration-max-height: calc(100dvh - var(--shell-header-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 22px - 42px); } }
 .impersonation-invalidated { min-height: 100vh; padding: 42px var(--space-6) var(--space-6); display: grid; place-items: center; color: var(--signal-critical); font: var(--type-body-lg); text-align: center; }

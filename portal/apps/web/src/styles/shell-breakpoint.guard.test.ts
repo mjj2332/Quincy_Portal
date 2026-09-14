@@ -5,12 +5,12 @@
  * The settled design (see `112-plan-final.md` in the #112 build's scratchpad) is one JS-owned
  * breakpoint, `SHELL_NARROW_QUERY = "(max-width: 771px)"` in `lib/shell-rail.ts`, read through
  * `lib/use-media-query.ts`. The JS result sets `data-rail-mode="expanded|collapsed|sheet"` on the
- * content wrapper, and CSS keys off that attribute with **no `@media` of its own**. 771px is
- * inherited from the Topbar's own fold point; the Topbar's *second* stage at 1007/1008px exists
- * only because its identity block competes for horizontal room, and does not carry over to a rail
- * footer — so neither literal may appear anywhere in the shell, and 771 may appear nowhere BUT
- * `shell-rail.ts`. A Tailwind responsive variant (`sm:`/`md:`/`lg:`/`max-[…]`/`min-[…]`) on any of
- * these files would be a second, independent breakpoint hiding beside the JS-owned one.
+ * content wrapper, and CSS keys off that attribute with **no `@media` of its own**. 771px was
+ * inherited from the retired Topbar's own fold point; the Topbar's *second* stage at 1007/1008px
+ * existed only because its identity block competed for horizontal room, and does not carry over to
+ * a rail footer — so neither literal may appear anywhere in the shell, and 771 may appear nowhere
+ * BUT `shell-rail.ts`. A Tailwind responsive variant (`sm:`/`md:`/`lg:`/`max-[…]`/`min-[…]`) on any
+ * of these files would be a second, independent breakpoint hiding beside the JS-owned one.
  *
  * ## The file list, tightened in P3
  *
@@ -85,7 +85,7 @@ function digitBoundedLiteral(literal: string): RegExp {
   return new RegExp(`(?<!\\d)${literal}(?!\\d)`);
 }
 
-/** The Topbar's own second, unrelated stage — must never leak into a #112 shell file. */
+/** The retired Topbar's own second, unrelated stage — must never leak into a #112 shell file. */
 export function hasForbiddenTopbarBreakpoint(strippedSource: string): boolean {
   return digitBoundedLiteral("1007").test(strippedSource) || digitBoundedLiteral("1008").test(strippedSource);
 }

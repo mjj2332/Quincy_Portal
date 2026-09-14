@@ -5,10 +5,10 @@ import { Menu } from "./menu";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
 // The accessibility contract for the app's shared `Menu` primitive (TB8-02 §8, criterion 14),
-// matching the rigor TB8-01 §2.2 demanded of `Select`. Consumer-specific behavior (the
-// notification menu's dynamic rows, anchor semantics, dismiss focus-continuity, the mobile
-// menu's items) is covered in Topbar.dom.test.tsx instead — this file exercises the primitive
-// itself, independent of any one consumer.
+// matching the rigor TB8-01 §2.2 demanded of `Select`. Consumer-specific behavior (the rail's
+// account menu items and dismiss focus-continuity) is covered in NavigationRail.dom.test.tsx and
+// App-navigation-rail-shell.dom.test.tsx instead — this file exercises the primitive itself,
+// independent of any one consumer.
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -249,7 +249,8 @@ describe("Menu accessibility contract", () => {
   });
 
   // §3/§8a (D-01): the opt-in backdrop prop, exercised on the shared primitive itself —
-  // consumer wiring (which of the app's two menus passes it) is Topbar.dom.test.tsx's job.
+  // consumer wiring (the rail's account menu passing it in wide mode) is
+  // NavigationRail.dom.test.tsx's job.
   it("9. renders a backdrop when asked", async () => {
     const host = mount();
     const trigger = await render(host, undefined, false, true);

@@ -140,7 +140,7 @@ describe("the staff navigation model", () => {
     });
   });
 
-  describe("activeSectionId — what the Topbar reads", () => {
+  describe("activeSectionId — the coarse screen identity the shell reads", () => {
     it.each([
       ["dashboard", bareDashboard, "dashboard"],
       ["an explicit view", { kind: "dashboard", dashboardView: "list" } as StaffRoute, "dashboard"],

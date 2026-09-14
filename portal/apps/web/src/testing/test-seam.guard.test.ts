@@ -243,7 +243,7 @@ function nonLiteralFindings(): Finding[] {
 
 /**
  * An assertion that a class is ABSENT is not coupling: replacing the markup can only make it MORE
- * true, never break it. Those are retirement guards (Topbar pins that the brand link no longer
+ * true, never break it. Those are retirement guards (the shell suite pins that the brand link no longer
  * wears `button--text`) and must survive untouched.
  */
 function classAssertionFindings(): Finding[] {
@@ -544,8 +544,9 @@ describe("guard C: no DOM test asserts an element carries a Quincy class name", 
  * Issue #92. Guard A already tells you not to reach for `data-slot`, but its own baseline note
  * shows why a blanket ban is the wrong shape for the rule: across the DOM suite there are ~70
  * `[data-slot="…"]` selector call sites in 9 files, and all but one of them select a slot a
- * Quincy component authors — `notice-board-post` on `NoticeBoard.tsx`, `avatar` on `Topbar.tsx`,
- * `checkbox` on `quincy/Checkbox.tsx`, and so on. A Quincy-authored `data-slot` is exactly as
+ * Quincy component authors — `notice-board-post` on `NoticeBoard.tsx`, `avatar` on
+ * `NavigationRail.tsx`, `checkbox` on `quincy/Checkbox.tsx`, and so on. A Quincy-authored
+ * `data-slot` is exactly as
  * stable as a `data-testid`: same file, same repo, same blast radius on rename. Banning those
  * would cost ~60 baseline entries in a file whose law is "baselines shrink, never grow", for zero
  * safety gain.
@@ -610,10 +611,11 @@ describe("guard D: the seam guards actually scanned the DOM suite", () => {
         for (const slot of dataSlotsIn(match[2]!)) slots.add(slot);
       }
     }
-    // ~13 distinct values are selected across the DOM suite today (comfortably above this floor);
-    // if the slot extractor or the source-authorship scan breaks, guard F would silently pass over
-    // an empty set — this makes that a failure instead.
-    expect(slots.size, "far fewer distinct data-slot values than expected — is guard F's matcher still matching?").toBeGreaterThanOrEqual(12);
+    // ~12 distinct values are selected across the DOM suite today (comfortably above this floor;
+    // #113 retired `Topbar.dom.test.tsx`, whose own `[data-slot="avatar"]` query was one of the
+    // ~13 this used to count) — if the slot extractor or the source-authorship scan breaks, guard
+    // F would silently pass over an empty set — this makes that a failure instead.
+    expect(slots.size, "far fewer distinct data-slot values than expected — is guard F's matcher still matching?").toBeGreaterThanOrEqual(11);
   });
 });
 

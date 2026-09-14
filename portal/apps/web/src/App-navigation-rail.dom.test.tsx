@@ -3,15 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The rail, mounted by the real shell, with the flag on — #111, AC7 and AC8.
+ * The rail, mounted by the real shell — #111, AC7 and AC8.
  *
  * A separate file from `App.dom.test.tsx` because that file may not be edited, and because it
- * mocks the Topbar away — this one needs the real chrome to check which of the two mounts.
- *
- * The flag is stubbed per-test rather than set in the environment: `navigationRailEnabled` reads
- * the env it is GIVEN, and `lib/app-router.tsx` passes `import.meta.env` at render time, so
- * `vi.stubEnv` reaches it. `lib/feature-flags.test.ts` covers the predicate itself in the node
- * suite; what is left for here is that the shell honours it.
+ * mocks the shell chrome away — this one needs the real chrome to check what mounts.
  *
  * Calendar's URL canonicalisation is deliberately NOT re-asserted here — the Dashboard owns it and
  * `screens/Dashboard-calendar-intent.dom.test.tsx` proves it with the real screen. This file mocks
@@ -34,7 +29,7 @@ vi.mock("./lib/auth", () => ({
   consumeSignInDestination: () => null,
   signOut: vi.fn<() => Promise<void>>(),
 }));
-// The flag-off cases mount the REAL Topbar, which polls the notifications endpoint. Without this
+// The rail mounts the real NotificationBell, which polls the notifications endpoint. Without this
 // the poll reaches the network and fills the run with ECONNREFUSED noise.
 vi.mock("./lib/api", () => ({
   apiGet: vi.fn(async () => ({ notifications: [], unreadCount: 0 })),
@@ -53,7 +48,6 @@ vi.mock("./lib/query-client", () => ({
 }));
 
 import App from "./App";
-import { NAVIGATION_RAIL_FLAG } from "./lib/feature-flags";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -95,25 +89,8 @@ async function click(element: Element) {
   });
 }
 
-describe("the navigation rail behind its flag", () => {
-  it("mounts the Topbar and no rail when the flag is absent (AC8)", async () => {
-    const host = await renderAt("/");
-    expect(host.querySelector('[data-testid="navigation-rail"]')).toBeNull();
-    expect(host.querySelector('[data-testid="topbar-identity"]')).not.toBeNull();
-  });
-
-  it.each(["0", "false", "true", "yes", ""])(
-    "still mounts the Topbar for the truthy-but-not-\"1\" value %o",
-    async (value) => {
-      vi.stubEnv(NAVIGATION_RAIL_FLAG, value);
-      const host = await renderAt("/");
-      expect(host.querySelector('[data-testid="navigation-rail"]')).toBeNull();
-      expect(host.querySelector('[data-testid="topbar-identity"]')).not.toBeNull();
-    },
-  );
-
-  it("mounts the rail instead of the Topbar when the flag is exactly \"1\"", async () => {
-    vi.stubEnv(NAVIGATION_RAIL_FLAG, "1");
+describe("the navigation rail", () => {
+  it("mounts the rail unconditionally", async () => {
     const host = await renderAt("/");
     expect(host.querySelector('[data-testid="navigation-rail"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="topbar-identity"]')).toBeNull();
@@ -124,7 +101,6 @@ describe("the navigation rail behind its flag", () => {
   });
 
   it("navigates to every destination the rail offers (AC7)", async () => {
-    vi.stubEnv(NAVIGATION_RAIL_FLAG, "1");
     const host = await renderAt("/");
 
     const destinations = [
@@ -149,7 +125,6 @@ describe("the navigation rail behind its flag", () => {
   });
 
   it("reaches the Calendar through the bare intent URL, not a facet the rail composed", async () => {
-    vi.stubEnv(NAVIGATION_RAIL_FLAG, "1");
     const host = await renderAt("/");
     const calendar = [
       ...host.querySelectorAll('[data-testid="navigation-rail-child-link"]'),
@@ -163,8 +138,7 @@ describe("the navigation rail behind its flag", () => {
     expect(host.textContent).not.toContain("That page is not available.");
   });
 
-  it("hides Admin from a role without the capability, with the flag on", async () => {
-    vi.stubEnv(NAVIGATION_RAIL_FLAG, "1");
+  it("hides Admin from a role without the capability", async () => {
     sessionState.value = {
       data: { user: { id: "p1", name: "Photographer", role: "photographer" } },
       isPending: false,

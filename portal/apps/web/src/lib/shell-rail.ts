@@ -10,17 +10,17 @@
  * `read`/`write` try/catch around the storage call, since it can be unavailable or throw under
  * privacy settings; a write failure leaves the caller's in-memory state untouched.
  *
- * `SHELL_NARROW_QUERY` is 771px, the Topbar's own fold point, and the ONLY place 771 appears —
- * `styles/shell-breakpoint.guard.test.ts` enforces that, and that neither 1007 nor 1008 (the
- * Topbar's second, unrelated stage) ever leaks into the shell.
+ * `SHELL_NARROW_QUERY` is 771px, the retired Topbar's own fold point, and the ONLY place 771
+ * appears — `styles/shell-breakpoint.guard.test.ts` enforces that, and that neither 1007 nor 1008
+ * (the Topbar's second, unrelated stage) ever leaks into the shell.
  */
 
 export const RAIL_PREFERENCE_KEY = "quincy:shell:rail";
 
 /**
- * 771px is inherited, not invented — the Topbar's own fold point. The Topbar's *second* stage at
- * 1007px exists because its identity block competes for horizontal room; a rail footer has no such
- * competition, so the shell gets one stage rather than two.
+ * 771px is inherited, not invented — the retired Topbar's own fold point. The Topbar's *second*
+ * stage at 1007px existed because its identity block competed for horizontal room; a rail footer
+ * has no such competition, so the shell gets one stage rather than two.
  */
 export const SHELL_NARROW_QUERY = "(max-width: 771px)";
 
