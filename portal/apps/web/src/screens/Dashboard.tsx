@@ -52,6 +52,7 @@ import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // Photographer dashboard.
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
+import { consumeProjectSearchFocus, getProjectSearchFocusToken, subscribeProjectSearchFocus } from "../lib/shell-search";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
@@ -174,6 +175,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   };
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   const [query, setQuery] = useState("");
+  // The rail's search control and ⌘K (`lib/shell-search.ts`) never touch `query` — only where the
+  // caret lands. `useSyncExternalStore` on the store's own token, not a plain `useEffect` on mount,
+  // is what makes this work both when the request precedes this component's mount (the token this
+  // component first reads is already the one the request bumped) and when it arrives while already
+  // mounted (the token changes again, re-running the layout effect below). `useLayoutEffect`, not
+  // `useEffect`, so the caret lands before the browser paints a frame with the field still unfocused.
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchFocusToken = useSyncExternalStore(subscribeProjectSearchFocus, getProjectSearchFocusToken, getProjectSearchFocusToken);
+  useLayoutEffect(() => {
+    if (consumeProjectSearchFocus()) searchInputRef.current?.focus();
+  }, [searchFocusToken]);
   const [view, setView] = useState<DashboardView>(() => {
     if (routeDashboardView) return routeDashboardView;
     if (effectiveRouteCalendar && canViewProductionCalendar) return "calendar";
@@ -954,7 +966,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <InputGroupAddon>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
             </InputGroupAddon>
-            <InputGroupInput data-testid="dashboard-search-input" aria-label="Search projects" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
+            <InputGroupInput ref={searchInputRef} data-testid="dashboard-search-input" aria-label="Search projects" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
           </InputGroup>
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>

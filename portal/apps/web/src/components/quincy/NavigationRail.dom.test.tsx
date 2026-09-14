@@ -8,7 +8,9 @@ import { parseStaffLocation } from "../../lib/router";
 import { initials } from "../../lib/initials";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
+import { Sheet } from "@/components/reui/sheet";
 import { NavigationRail, type NavigationRailVariant } from "./NavigationRail";
+import { RailSheet } from "./RailSheet";
 
 // Sign out cannot be exercised against a real session — it would destroy the session every other
 // check depends on — so the transport is mocked and the wiring asserted here instead. The handler
@@ -81,6 +83,28 @@ async function renderInProvider(
     <SidebarProvider open={variant !== "collapsed"} onOpenChange={() => {}}>
       <TooltipProvider delay={0}>
         <NavigationRail navigation={navigation} user={user} variant={variant} showBell={showBell} />
+      </TooltipProvider>
+    </SidebarProvider>,
+  );
+}
+
+/**
+ * The `sheet` variant mounted inside a REAL modal Dialog — `RailSheet`'s own `<Sheet>`, not a bare
+ * `OverlayContainerContext.Provider` probe. The account menu's Escape-focus behaviour (#122) is
+ * specifically a `DialogPopup` focus-restoration race, so only a real `Dialog.Popup`
+ * (`RailSheet.tsx`'s own composition, mirroring `RailSheet.dom.test.tsx`) actually exercises it —
+ * a synthetic container with no Dialog behind it would pass regardless of whether the fix exists.
+ */
+async function renderInSheet(navigation: StaffNavigation, options: { user?: { name?: string | null; email?: string | null } } = {}) {
+  const { user = USER } = options;
+  await render(
+    <SidebarProvider open={false} onOpenChange={() => {}}>
+      <TooltipProvider delay={0}>
+        <Sheet open onOpenChange={() => {}}>
+          <RailSheet>
+            <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} />
+          </RailSheet>
+        </Sheet>
       </TooltipProvider>
     </SidebarProvider>,
   );
@@ -314,6 +338,16 @@ describe("NavigationRail", () => {
     expect(trigger?.getAttribute("aria-label")).toBe("Account menu for Terry Lee");
   });
 
+  it("advertises the account menu as a menu popup and reflects its open state", async () => {
+    await renderInProvider(navigationFor("/"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    await click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("names the flag nowhere in its output", async () => {
     // #80's flag leaked `kanban2` into a user-visible aria-label (docs/lessons.md:1689). The shell
     // decides whether to mount the rail; the rail itself must not know the flag exists.
@@ -542,7 +576,10 @@ describe("NavigationRail variant — sheet", () => {
     for (const link of [...testids("navigation-rail-link"), ...testids("navigation-rail-child-link")]) {
       expect(link.getAttribute("data-touch-target")).toBe("true");
     }
-    expect(host.querySelector('[data-testid="navigation-rail-identity"]')?.getAttribute("data-touch-target")).toBe("true");
+    // #122 P3: the seam moved from the identity span onto the trigger it sits inside
+    // (`navigation-rail-account`, the real `SidebarMenuButton` now that `triggerRender` makes it
+    // the menu's own trigger) — the identity span is no longer the touch target's proxy.
+    expect(host.querySelector('[data-testid="navigation-rail-account"]')?.getAttribute("data-touch-target")).toBe("true");
     expect(host.querySelector('[data-testid="navigation-rail-brand"]')?.getAttribute("data-touch-target")).toBe("true");
     expect(document.querySelector('[data-touch-target="true"] svg')).not.toBeNull();
   });
@@ -618,6 +655,66 @@ describe("NavigationRail — showBell", () => {
   });
 });
 
+describe("the account menu inside a modal Sheet — focus after Escape (#122 P3)", () => {
+  it("returns focus to the account trigger synchronously, not the Sheet dialog popup", async () => {
+    await renderInSheet(navigationFor("/"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+    const menuItem = document.querySelector<HTMLElement>('[data-testid="navigation-rail-signout"]')!;
+    await act(async () => { menuItem.focus(); await Promise.resolve(); });
+    expect(document.activeElement).toBe(menuItem);
+
+    // Synchronous, in the SAME act as the Escape dispatch — no transition wait. happy-dom removes
+    // the popup synchronously here and never reproduces the Dialog's `restoreFocus: "popup"`
+    // refocus, so this asserts the fix's mechanism (the trigger focused before unmount), not the
+    // defect itself.
+    await act(async () => {
+      menuItem.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.activeElement).toBe(trigger);
+    // Focus landing on the Sheet's OWN dialog popup (not merely "inside" it, which the trigger
+    // always legitimately is here) is `restoreFocus: "popup"`'s own refocus target.
+    expect(document.activeElement).not.toBe(document.querySelector('[data-testid="rail-sheet"]'));
+  });
+
+  it("leaves the plain expanded rail's own Escape-returns-focus behaviour unchanged", async () => {
+    // No `container` (page-level) — `renderInProvider`'s existing collapsed-menu Escape test
+    // above already covers this path directly; this just confirms the account menu's own trigger
+    // does the same outside any Sheet.
+    await renderInProvider(navigationFor("/"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+
+    expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe("the account menu's side, by variant (#122 P3)", () => {
+  it("opens above the trigger in the Sheet — the root Menu's own collision avoidance has no left/right fallback in a 288px container", async () => {
+    await renderInProvider(navigationFor("/"), { variant: "sheet" });
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+    // Base UI's Popup (`role="menu"`) carries `data-side` directly — no positioner traversal needed.
+    expect(document.querySelector('[role="menu"]')?.getAttribute("data-side")).toBe("top");
+  });
+
+  it("opens to the right of the trigger while expanded, unchanged", async () => {
+    await renderInProvider(navigationFor("/"), { variant: "expanded" });
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+    expect(document.querySelector('[role="menu"]')?.getAttribute("data-side")).toBe("right");
+  });
+});
+
 describe("the account menu's sign out", () => {
   it("calls signOut when the menu item is activated", async () => {
     // Presence in the DOM is not the behaviour. This is the assertion that would catch the item
@@ -656,5 +753,73 @@ describe("the account menu's sign out", () => {
     const alert = host.querySelector('[role="alert"]');
     expect(alert, "a failed sign out must leave a visible alert in the rail").not.toBeNull();
     expect(alert?.textContent).toBeTruthy();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #122 P3 — the account panel's nav-workspace shape: preferences, a separator, then sign out
+// -----------------------------------------------------------------------------
+
+describe("the account menu panel — order and the preferences item", () => {
+  it("orders the panel as Account label, then preferences, then a separator, then sign out", async () => {
+    await renderInProvider(navigationFor("/"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+
+    const menu = document.querySelector('[role="menu"]')!;
+    // The ARIA association Base UI's `Group`/`GroupLabel` actually build, not a raw tag scan:
+    // `role="group"` wraps the labelled content, and `aria-labelledby` points at the label's own
+    // id. The labelled element's accessible text leads with "Account" but also carries the name and
+    // email lines GroupLabel wraps alongside the eyebrow (`toContain`, not an exact match).
+    const group = menu.querySelector('[role="group"]')!;
+    const labelId = group.getAttribute("aria-labelledby")!;
+    const eyebrow = document.getElementById(labelId)!;
+    const preferences = menu.querySelector('[data-testid="navigation-rail-preferences"]')!;
+    const separator = menu.querySelector('[role="separator"]')!;
+    const signOut = menu.querySelector('[data-testid="navigation-rail-signout"]')!;
+
+    expect(eyebrow, "the group's aria-labelledby must resolve to a real element").not.toBeNull();
+    expect(eyebrow.textContent).toContain("Account");
+    expect(preferences.getAttribute("href")).toBe("/settings/notifications");
+    // `compareDocumentPosition`, not a flattened text scan — the separator carries no text of its
+    // own, and a structural check is what actually pins the four in document order.
+    expect(group.compareDocumentPosition(preferences) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(preferences.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(separator.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("marks preferences current only on the notifications route", async () => {
+    await renderInProvider(navigationFor("/settings/notifications"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+
+    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]')!;
+    expect(preferences.hasAttribute("data-active")).toBe(true);
+    expect(preferences.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("leaves preferences with neither attribute off the notifications route", async () => {
+    await renderInProvider(navigationFor("/"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+
+    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]')!;
+    expect(preferences.hasAttribute("data-active")).toBe(false);
+    expect(preferences.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("Escape closes the menu and returns focus to the account trigger", async () => {
+    await renderInProvider(navigationFor("/"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+
+    expect(document.activeElement).toBe(trigger);
   });
 });

@@ -110,9 +110,35 @@ export function Menu({
   // that puts a menu inside a dialog, not a behavior change here. Normalised to `undefined` —
   // the portal treats an explicit `null` as "wait forever", never falling back to `body`.
   const container = React.useContext(OverlayContainerContext) ?? undefined;
+  // Internal only — no `triggerRef` prop exists on `MenuProps`. Base UI merges a `ref` onto
+  // whatever `render`/`triggerRender` produces, the same way it merges every other prop, so this
+  // reaches the real trigger element regardless of which form is in play (#122 P3).
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  // `popupRef` is a caller-facing prop (`Topbar.tsx`'s notification menu already supplies one) —
+  // this merges our own internal read alongside it rather than replacing it.
+  const internalPopupRef = React.useRef<HTMLDivElement>(null);
+  const setPopupRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      internalPopupRef.current = node;
+      if (typeof popupRef === "function") popupRef(node);
+      else if (popupRef) (popupRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    },
+    [popupRef],
+  );
+  // Inside a modal Dialog (the narrow Sheet), `DialogPopup`'s own `FloatingFocusManager` runs
+  // `restoreFocus: "popup"` — removing the focused menu item leaves `activeElement` briefly
+  // homeless, and its NEXT frame refocuses the Sheet itself, after this Menu's own return-focus.
+  // Moving focus to the trigger first means that never happens; page-level menus are unaffected.
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && container && internalPopupRef.current?.contains(document.activeElement)) {
+      triggerRef.current?.focus();
+    }
+    onOpenChange?.(nextOpen);
+  }
   return (
-    <MenuPrimitive.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange} modal={false} disabled={disabled}>
+    <MenuPrimitive.Root open={open} defaultOpen={defaultOpen} onOpenChange={handleOpenChange} modal={false} disabled={disabled}>
       <MenuPrimitive.Trigger
+        ref={triggerRef}
         className={triggerRender ? triggerClassName : cn(TRIGGER, triggerClassName)}
         aria-label={triggerLabel}
         data-testid={triggerTestId}
@@ -142,7 +168,7 @@ export function Menu({
           positionMethod={container ? "fixed" : "absolute"}
           className="z-[var(--z-popover)] outline-none"
         >
-          <MenuPrimitive.Popup ref={popupRef} className={cn(PANEL, panelClassName)} aria-label={label}>
+          <MenuPrimitive.Popup ref={setPopupRef} className={cn(PANEL, panelClassName)} aria-label={label}>
             {children}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>

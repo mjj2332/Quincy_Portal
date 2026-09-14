@@ -159,3 +159,14 @@ growth pattern documented above.
 `components/reui/popover.dom.test.tsx` covers the container conformance edit;
 `NotificationBell.dom.test.tsx` covers the panel's own dialog semantics, focus handoff and click
 behaviour.
+
+## P3 addendum — the account menu keeps its nav-workspace shape; search is a latched focus request
+
+The footer identity moved onto `SidebarMenuButton size="lg"` as `quincy/menu.tsx`'s own
+`triggerRender`, unchanged as the app's menu primitive; its panel gained a preferences link
+(`MenuPrimitive.LinkItem`/`GroupLabel`) and `reui/separator.tsx` — Base UI's Menu has no separator
+part. In `sheet`, that menu opens `side="top"` rather than `"right"` (`docs/lessons.md`'s #122
+entry has why). The rail's search control is a `SidebarMenuButton` that looks like an input but is
+not one; activating it (click, or ⌘K) runs `lib/shell-search.ts`'s one-shot, latched focus request
+onto the Dashboard's own existing search field — no dialog, no endpoint, `query` untouched. `kbd`
+(the ⌘K hint) is vendored through the sandbox; its only edit is in its own header.

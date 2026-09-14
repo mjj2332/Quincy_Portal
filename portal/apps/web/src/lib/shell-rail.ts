@@ -95,16 +95,23 @@ function isEditableTarget(target: RailShortcutTarget | null): boolean {
 }
 
 /**
- * ⌘B (Meta+B) or Ctrl+B toggles the rail. Alt or Shift held alongside it, a held-key repeat, an
+ * ⌘<key> (Meta+<key>) or Ctrl+<key>. Alt or Shift held alongside it, a held-key repeat, an
  * in-progress IME composition, an already-handled event, and an editable target (input, textarea,
  * select, or `isContentEditable` — Tiptap binds Mod-B to bold) all reject the shortcut, so the
- * shell never fights an editor's own bold binding or a form field's native behaviour.
+ * shell never fights an editor's own bold binding or a form field's native behaviour. Shared by
+ * `isRailShortcut` (below) and `lib/shell-search.ts`'s `isSearchShortcut` — same predicate, a
+ * different letter.
  */
-export function isRailShortcut(event: RailShortcutEvent): boolean {
-  if (event.key.toLowerCase() !== "b") return false;
+export function isShellShortcut(event: RailShortcutEvent, key: string): boolean {
+  if (event.key.toLowerCase() !== key) return false;
   if (!(event.metaKey || event.ctrlKey)) return false;
   if (event.altKey || event.shiftKey) return false;
   if (event.repeat || event.isComposing || event.defaultPrevented) return false;
   if (isEditableTarget(event.target)) return false;
   return true;
+}
+
+/** ⌘B (Meta+B) or Ctrl+B toggles the rail. */
+export function isRailShortcut(event: RailShortcutEvent): boolean {
+  return isShellShortcut(event, "b");
 }

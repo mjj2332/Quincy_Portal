@@ -5,6 +5,7 @@ import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, t
 import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
+import { requestProjectSearchFocus } from "../lib/shell-search";
 import { confirmStore } from "../lib/confirm";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -231,6 +232,25 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith+street");
     expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+  });
+
+  it("focuses the shared search input on a request latched before this component mounts", async () => {
+    // #122 P3: the rail's search control / ⌘K (`lib/shell-search.ts`) can fire before the
+    // Dashboard exists at all — the request must still land once it does.
+    requestProjectSearchFocus();
+    await render();
+    expect(host.querySelector('[data-testid="dashboard-search-input"]')).toBe(document.activeElement);
+  });
+
+  it("focuses the shared search input on a request made while already mounted, without touching query", async () => {
+    await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith" } });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')!;
+    expect(document.activeElement).not.toBe(input);
+
+    await act(async () => { requestProjectSearchFocus(); await Promise.resolve(); });
+
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("smith");
   });
 
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {

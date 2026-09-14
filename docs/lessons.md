@@ -2004,3 +2004,14 @@ outside-press is `"intentional"` for a mouse when `modal={false}`** (`PopoverRoo
 reacting only to the terminal `click` of a press-release pair, unlike `quincy/menu.tsx`'s Menu
 (`"sloppy"`, a bare `pointerdown`) — a DOM test for the popover's outside-dismiss needs a real
 `click` event, not the `pointerdown` that sufficed for the Menu-based panel it replaced.
+
+**P3 (account/search):** `Dialog.Popup`'s `finalFocus` callback treats a `void`/`undefined` return
+IDENTICALLY to `false` (`FloatingFocusManager.mjs`'s `getReturnElement`), not as "use the default".
+A callback that returns `undefined` for the closes it does not care about therefore disables
+Base UI's own return-focus for every one of them — the callback must return `true` to opt back
+into default behaviour, confirmed by `App-navigation-rail-shell.dom.test.tsx`'s existing
+Escape-returns-focus assertion going red the moment `RailSheet` gained a `finalFocus` prop.
+
+**P3, Sheet account menu:** a Menu inside a modal Dialog loses the return-focus race — the Dialog's own
+`restoreFocus: "popup"` reclaims it a frame later, so move focus to the trigger synchronously in
+`onOpenChange` instead. Root Menu collision avoidance has no axis fallback; pick `side` explicitly.

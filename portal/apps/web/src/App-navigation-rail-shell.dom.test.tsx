@@ -56,6 +56,7 @@ import App from "./App";
 import { apiGet } from "./lib/api";
 import { NAVIGATION_RAIL_FLAG } from "./lib/feature-flags";
 import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
+import { consumeProjectSearchFocus } from "./lib/shell-search";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -133,6 +134,9 @@ beforeEach(() => {
   installMatchMediaShim();
   window.localStorage.clear();
   setViewportWidth(1024);
+  // Drains any request a previous test left latched — `lib/shell-search.ts` is a module-level
+  // singleton, shared by every test in this file the same way `window.localStorage` would be.
+  consumeProjectSearchFocus();
 });
 
 afterEach(async () => {
@@ -546,5 +550,105 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
 
     await keydown(window, { key: "b", metaKey: true });
     expect(window.localStorage.getItem(RAIL_PREFERENCE_KEY)).toBeNull();
+  });
+});
+
+describe("⌘K project search (#122 P3)", () => {
+  it("wide, from Admin: pushes the Dashboard href and latches a focus request", async () => {
+    await renderAt("/admin");
+    expect(window.location.pathname).toBe("/admin");
+
+    await keydown(window, { key: "k", metaKey: true });
+
+    expect(window.location.pathname).toBe("/");
+    expect(consumeProjectSearchFocus()).toBe(true);
+  });
+
+  it("wide, already on a Dashboard view: requests focus without touching the URL", async () => {
+    await renderAt("/?view=kanban");
+
+    await keydown(window, { key: "k", metaKey: true });
+
+    expect(window.location.search).toBe("?view=kanban");
+    expect(consumeProjectSearchFocus()).toBe(true);
+  });
+
+  it("is inert below 772px — no push, no latched request", async () => {
+    await renderAt("/admin");
+    await resizeTo(600);
+    await tick();
+
+    await keydown(window, { key: "k", metaKey: true });
+
+    expect(window.location.pathname).toBe("/admin");
+    expect(consumeProjectSearchFocus()).toBe(false);
+  });
+
+  it("ignores an editable target and a held-key repeat", async () => {
+    await renderAt("/admin");
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+
+    await keydown(input, { key: "k", metaKey: true });
+    expect(window.location.pathname).toBe("/admin");
+    expect(consumeProjectSearchFocus()).toBe(false);
+
+    await keydown(window, { key: "k", metaKey: true, repeat: true });
+    expect(window.location.pathname).toBe("/admin");
+    expect(consumeProjectSearchFocus()).toBe(false);
+
+    input.remove();
+  });
+
+  it("a Sheet search tap closes the Sheet and navigates", async () => {
+    const host = await renderAt("/admin");
+    await resizeTo(600);
+    await tick();
+
+    await click(sheetTrigger(host)!);
+    const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+    const searchControl = sheet.querySelector<HTMLButtonElement>('[data-testid="shell-search"]')!;
+
+    await click(searchControl);
+
+    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+    expect(window.location.pathname).toBe("/");
+    expect(consumeProjectSearchFocus()).toBe(true);
+    // `finalFocus → false` for this one close — the point of suppressing it is that the
+    // (about to vanish) sheet trigger does NOT reclaim focus from the Dashboard input.
+    expect(document.activeElement).not.toBe(sheetTrigger(host));
+  });
+
+  it("does not leave a stale suppression latched across a reopened Sheet", async () => {
+    // Regression cover for the ref-goes-stale bug: `FloatingFocusManager`'s return-focus cleanup
+    // only runs once the popup finishes unmounting after its exit transition, so reopening the
+    // Sheet before that completes could otherwise leave `suppressSheetFinalFocusRef` latched
+    // `true` from the previous search-triggered close, skipping focus restoration on the NEXT
+    // close too. If happy-dom unmounts the popup synchronously (no real exit transition to race),
+    // this cannot reproduce the leak pre-fix — it stays as regression cover for the real browser
+    // timing regardless.
+    const host = await renderAt("/admin");
+    await resizeTo(600);
+    await tick();
+
+    await click(sheetTrigger(host)!);
+    const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+    const searchControl = sheet.querySelector<HTMLButtonElement>('[data-testid="shell-search"]')!;
+    await click(searchControl);
+    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+
+    await click(sheetTrigger(host)!);
+    expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull();
+    await keydown(document.querySelector('[data-testid="rail-sheet"]')!, { key: "Escape" });
+    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+
+    expect(document.activeElement).toBe(sheetTrigger(host));
+  });
+
+  it("leaves ⌘B untouched", async () => {
+    const host = await renderAt("/");
+    await keydown(window, { key: "b", metaKey: true });
+    expect(rail(host)?.getAttribute("data-state")).toBe("collapsed");
   });
 });
