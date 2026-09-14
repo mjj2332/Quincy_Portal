@@ -474,7 +474,9 @@ describe("NotificationBell panel (Popover)", () => {
     expect(collabLinks).toHaveLength(3);
     expect([...collabLinks].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned"), expect.stringContaining("Due today")]));
     expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(7);
-    expect(document.querySelectorAll('[data-testid="rail-notification-item"][data-notification-route="none"]')).toHaveLength(1);
+    const unrouted = [...document.querySelectorAll('[data-testid="rail-notification-item"][data-notification-route="none"]')];
+    // The board mention has no project, so it stays a plain row — but keeps its fixed copy.
+    expect(unrouted.map((row) => row.textContent)).toEqual([expect.stringContaining("You were mentioned")]);
     await click(collabLinks[0]!);
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/project-mention/read", {});
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -499,6 +501,7 @@ describe("NotificationBell panel (Popover)", () => {
   it("returns focus to the trigger on Escape, and closes on an outside press", async () => {
     apiGetMock.mockResolvedValue(notificationsResponse(1));
     const trigger = await renderPanel();
+    expect(host.querySelector('[data-testid="bell-anchor-host"]')).not.toBe(trigger);
     await click(trigger);
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
@@ -561,6 +564,7 @@ describe("NotificationBell panel (Popover)", () => {
       expect(panel.getAttribute("data-side")).toBe("right");
       expect(panel.getAttribute("data-align")).toBe("start");
       expect(panel.className).toContain("w-[420px]");
+      expect(panel.parentElement?.style.position).toBe("fixed");
     });
 
     it("anchors the header placement below the header, start-aligned, spanning the anchor's own width", async () => {
@@ -590,10 +594,16 @@ describe("NotificationBell panel (Popover)", () => {
       const trigger = await renderPanel();
       const triggerRectSpy = vi.fn(trigger.getBoundingClientRect.bind(trigger));
       trigger.getBoundingClientRect = triggerRectSpy;
+      const anchor = host.querySelector<HTMLElement>('[data-testid="bell-anchor-host"]')!;
+      const anchorRectSpy = vi.fn(anchor.getBoundingClientRect.bind(anchor));
+      anchor.getBoundingClientRect = anchorRectSpy;
 
       await click(trigger);
 
       expect(triggerRectSpy, "railAlignOffset must read the trigger's own rect").toHaveBeenCalled();
+      // floating-ui reads the anchor's rect too, so this alone would not prove the callback; the
+      // trigger read above is the discriminating one. Both together pin the pair the offset needs.
+      expect(anchorRectSpy, "railAlignOffset must read the anchor's rect").toHaveBeenCalled();
     });
   });
 
@@ -602,11 +612,25 @@ describe("NotificationBell panel (Popover)", () => {
       apiGetMock.mockResolvedValue(notificationsResponse(0));
       await renderPanel(1_000);
       expect(apiGetMock).toHaveBeenCalledTimes(1);
+      expect(apiGetMock).toHaveBeenCalledWith("/api/notifications?limit=25");
       await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
       expect(apiGetMock).toHaveBeenCalledTimes(2);
+      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25");
       // Not yet a third — the interval has not elapsed again.
       await act(async () => { await vi.advanceTimersByTimeAsync(500); });
       expect(apiGetMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("cleans up the poll interval when the bell unmounts", async () => {
+      apiGetMock.mockResolvedValue(notificationsResponse(0));
+      await renderPanel(1_000);
+      expect(apiGetMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => { root!.unmount(); await Promise.resolve(); });
+      root = null;
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+
+      expect(apiGetMock).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -369,3 +369,25 @@ describe("--toast-inset-inline-start is redeclared per data-rail-mode (#112 P3b)
     expect(opened, "[data-rail-mode] sits inside an @layer block").toBeLessThanOrEqual(closed);
   });
 });
+
+/**
+ * Every rule that sticks or sizes something relative to the shell header reads
+ * `--shell-header-height` (50px, set once on `.app`) rather than a literal. The deleted Topbar was
+ * 64px wide and 58px on phones; its offsets outlived it in `.rail`, `.worktools` and the
+ * collaboration wrap and left a 14px gap under the 50px header once the rail became the shell.
+ */
+describe("header-relative offsets derive from --shell-header-height (#113)", () => {
+  it("declares the variable on .app", () => {
+    expect(ruleBody(appCss, ".app")).toMatch(/--shell-header-height:\s*50px/);
+  });
+
+  it("uses the variable, not a Topbar literal, wherever a rule sits under the header", () => {
+    for (const selector of [".rail", ".worktools", ".app--impersonating .rail", ".app--impersonating .worktools"]) {
+      const body = ruleBody(appCss, selector);
+      expect(body, `${selector} must exist as a real rule`).not.toBeNull();
+      expect(body, `${selector} top`).toMatch(/top:\s*(var\(--shell-header-height\)|calc\(var\(--shell-header-height\) \+ 42px\))/);
+    }
+    expect(appCss).not.toMatch(/top:\s*(64|58|106|100)px/);
+    expect(appCss).not.toMatch(/calc\((64|58)px \+ env/);
+  });
+});

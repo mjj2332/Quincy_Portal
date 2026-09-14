@@ -64,9 +64,9 @@
      here, and getting this wrong is invisible until you render something.
 
      shadcn core (tokens/tailwind.css) reads `-foreground` as "the light ink that
-     sits ON the solid fill" — quincy/NotificationBell.tsx's unread badge and
-     reui/button.tsx's destructive variant both rely on --destructive-foreground
-     being warm paper over a solid oxblood fill.
+     sits ON the solid fill" — quincy/NotificationBell.tsx's unread badge relies
+     on --destructive-foreground being warm paper over a solid oxblood fill
+     (reui/button.tsx's `destructive` is a wash variant and reads `!text-destructive`).
 
      ReUI's extended roles use the OPPOSITE convention. Its solid variants
      hardcode `text-white` and never read `-foreground` at all; the only consumer

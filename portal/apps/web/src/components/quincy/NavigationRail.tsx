@@ -276,8 +276,8 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
   // route re-derivation, for both `data-active` and `aria-current` below.
   const preferencesActive = navigation.activeSectionId === "notifications";
   // The bell's own anchor (#113) — the rail's fixed `sidebar-container` div, not the trigger, so
-  // the panel's right edge tracks the rail's regardless of where inside its header the trigger
-  // sits. `Sidebar` spreads its own rest props onto that div (`reui/sidebar.tsx`), so a plain
+  // the panel's left edge sits 8px off the rail's right edge regardless of where inside the rail
+  // header the trigger sits. `Sidebar` spreads its own rest props onto that div (`reui/sidebar.tsx`), so a plain
   // `ref` here reaches it with no change to that file.
   const railRef = useRef<HTMLDivElement>(null);
 

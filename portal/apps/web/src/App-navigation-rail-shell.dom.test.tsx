@@ -505,6 +505,10 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       const adminLink = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
         .find((a) => a.textContent?.trim() === "Admin")!;
       expect(adminLink.getAttribute("aria-current")).toBe("page");
+      expect(adminLink.getAttribute("data-active")).toBe("");
+      const dashboardLink = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
+        .find((a) => a.textContent?.trim() === "Dashboard")!;
+      expect(dashboardLink.hasAttribute("data-active")).toBe(false);
     });
 
     it("gives the Sheet's brand link the rail's own 44px touch-target utility, a real href and its accessible name (#113)", async () => {
@@ -517,6 +521,7 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       // `SHEET_TOUCH_TARGET` (`NavigationRail.tsx`) — the real utility the rail applies in
       // `sheet`, not the retired Topbar's own `max-[721px]:min-h-[44px]`.
       expect(brand.className).toContain("min-h-[44px]");
+      expect(brand.classList.contains("button--text")).toBe(false);
       expect(brand.getAttribute("href")).toBe("/");
       expect(brand.getAttribute("aria-label")).toBe("Quincy Portal home");
     });
@@ -607,6 +612,24 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       await tick();
       expect(sheetTrigger(host)).not.toBeNull();
       expect(railToggle(host)).toBeNull();
+    });
+
+    it("keeps the narrow header bell mounted at 771px under an impersonation banner", async () => {
+      sessionState.value = {
+        data: { user: { id: "target", name: "Editor Target", role: "editor" }, session: { impersonatedBy: "u1" } },
+        isPending: false,
+        refetch: vi.fn<() => Promise<void>>(),
+      } as unknown as typeof sessionState.value;
+      const host = await renderAt("/");
+      await resizeTo(771);
+      await tick();
+
+      expect(host.querySelector('aside[aria-label="Impersonation status"]')).not.toBeNull();
+      expect(rail(host)).toBeNull();
+      const header = host.querySelector('[data-testid="shell-header"]')!;
+      expect(header.querySelector('[data-testid="shell-header-sheet-trigger"]')).not.toBeNull();
+      expect(header.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
+      expect(header.querySelector('[data-testid="rail-notification-trigger"]')).not.toBeNull();
     });
   });
 

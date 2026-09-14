@@ -259,7 +259,7 @@ describe("NavigationRail", () => {
   });
 
   it("exposes a named navigation landmark", async () => {
-    // Reported independently by both reviewers. The Topbar this replaces has
+    // Reported independently by both reviewers. The retired Topbar had
     // `<nav aria-label="Primary navigation">`; the vendor `SidebarContent` is only a `div`, so
     // without an explicit landmark the rail drops primary navigation out of the landmark list.
     await renderInProvider(navigationFor("/"));
