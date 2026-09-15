@@ -10,6 +10,12 @@ describe("Dropbox health classification", () => {
     expect(formatDropboxError(new Error("Dropbox token refresh failed (401)"))).toMatch(/^\[dropbox:credentials\]/);
   });
 
+  it("files a Dropbox malformed_path response as configuration, not credentials", () => {
+    expect(classifyDropboxError(new Error('Dropbox /files/get_metadata failed (409): {"error_summary":"path/malformed_path/.."}'))).toBe("configuration");
+    expect(classifyDropboxError(new Error("Dropbox credentials are malformed"))).toBe("credentials");
+    expect(classifyDropboxError(new Error("Dropbox credentials are malformed after concurrent refresh"))).toBe("credentials");
+  });
+
   it("only clears a sticky error after a success exercised that capability", () => {
     const sharingError = "[dropbox:sharing_read] Dropbox shared-link resolution failed";
     expect(canRecoverDropboxError(sharingError, ["credentials", "current_account", "list_folder"])).toBe(false);
