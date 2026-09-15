@@ -105,6 +105,11 @@ function dependencies(data: Awaited<ReturnType<typeof fixture>>, options: {
   metadata.set(data.rawFolderPath, folder(data.rawFolderPath, `id:raw-${data.suffix}`));
   if (options.rootExists) metadata.set(rootPath, folder(rootPath, `id:root-existing-${data.suffix}`));
   const getMetadata = async (_env: unknown, _db: typeof db, path: string) => {
+    if (path.startsWith("id:")) {
+      const id = path.slice("id:".length);
+      for (const value of metadata.values()) if (value.id === `id:${id}`) return value;
+      throw new Error("Dropbox path/not_found");
+    }
     const value = metadata.get(path);
     if (!value) throw new Error("Dropbox path/not_found");
     return value;
@@ -124,6 +129,15 @@ function dependencies(data: Awaited<ReturnType<typeof fixture>>, options: {
     metadata.set(path, value);
     return value;
   };
+  // No files ever land mid-test, so the Editor tree move's quiet-period check never defers here.
+  const listFolderRecursive = async () => [];
+  const moveFolderStrict = async (_env: unknown, _db: typeof db, from: string, to: string) => {
+    const existing = metadata.get(from);
+    metadata.delete(from);
+    const value = folder(to, existing?.id ?? `id:${to.split("/").at(-1)!.toLowerCase()}-${data.suffix}`);
+    metadata.set(to, value);
+    return value;
+  };
   if (options.inputConflict) metadata.set(inputPath, folder(inputPath, `id:input-existing-${data.suffix}`));
   return {
     created,
@@ -131,6 +145,8 @@ function dependencies(data: Awaited<ReturnType<typeof fixture>>, options: {
     getMetadata,
     createFolder,
     createFolderStrict,
+    listFolderRecursive,
+    moveFolderStrict,
     canonicalDropboxConnectionId: async () => data.connectionId,
     now: () => new Date("2026-10-02T00:00:00.000Z"),
   };
@@ -145,23 +161,31 @@ describe("Editor folder reconciliation", () => {
     expect(ops.created).toEqual([]);
   });
 
-  it("keeps the claimed folder after a reschedule and says on the job that it was not moved", async () => {
+  it("moves a ready tree onto the new day folder when the shoot date changes, and reports it on the job", async () => {
     const data = await fixture();
     const ops = dependencies(data, {});
     const first = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
     await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
-    const again = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
-    expect(again).toMatchObject({ status: "skipped", reason: "editor_folder_not_moved", mapping: { state: "ready", rootPath: first?.rootPath, shootDate: "2026-10-02" } });
-    expect(editorReconcileNote(again)).toBe(`editor_folder_not_moved: Shoot date changed from 2026-10-02 to 2027-01-15; the Editor tree is still at ${first?.rootPath}. The mapping cannot be re-pointed until moving Editor trees is supported, so leave the folder where it is; files keep syncing from the stored path`);
-    expect(ops.created).toHaveLength(2);
-    // The same date again is a plain ready tree, and a date that is not a calendar date says nothing.
-    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-10-02' WHERE id = ?").bind(data.projectId).run();
-    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped" });
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: data.suffix });
+    const moved = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
+    expect(moved).toMatchObject({
+      status: "moved", from: first?.rootPath, to: newRoot, previousShootDate: "2026-10-02",
+      mapping: { state: "ready", rootPath: newRoot, shootDate: "2027-01-15", movedFromPath: first?.rootPath },
+    });
+    expect(editorReconcileNote(moved)).toBe(`editor_folder_moved: Moved the Editor tree from ${first?.rootPath} to ${newRoot} after the shoot date changed from 2026-10-02 to 2027-01-15`);
+    expect(ops.created).toEqual([
+      first!.rootPath.split("/").slice(0, -2).join("/"),
+      first!.rootPath.split("/").slice(0, -1).join("/"),
+      newRoot.split("/").slice(0, -2).join("/"),
+      newRoot.split("/").slice(0, -1).join("/"),
+    ]);
+    // The same date again is a plain ready tree at the new root, and a date that is not a calendar date says nothing.
+    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped", mapping: { rootPath: newRoot } });
     await database.DB.prepare("UPDATE projects SET shoot_date = 'Thursday, 15 Jan, 2027' WHERE id = ?").bind(data.projectId).run();
-    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped" });
+    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped", mapping: { rootPath: newRoot } });
   });
 
-  it("leaves a hand-linked root alone after a reschedule", async () => {
+  it("moves a hand-linked root after a reschedule, keeping its leaf casing and review fields", async () => {
     const data = await fixture("2026-09-01");
     const rootPath = `${EDITOR_ROOT}/${editorMonthFolderName("2026-09-01")}/${editorDayFolderName("2026-09-01")}/Legacy ${data.suffix}`;
     const ops = dependencies(data, {});
@@ -172,8 +196,14 @@ describe("Editor folder reconciliation", () => {
       outputRoots: [{ path: `${rootPath}/1. Output`, section: null, folderId: "id:output", metadata: folder(`${rootPath}/1. Output`, "id:output") }],
     });
     expect(linked.state).toBe("ready");
+    ops.metadata.set(rootPath, folder(rootPath, `id:legacy-${data.suffix}`));
     await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
-    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped", mapping: { rootPath } });
+    const newRoot = `${EDITOR_ROOT}/${editorMonthFolderName("2027-01-15")}/${editorDayFolderName("2027-01-15")}/Legacy ${data.suffix}`;
+    const moved = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
+    expect(moved).toMatchObject({
+      status: "moved", from: rootPath, to: newRoot,
+      mapping: { rootPath: newRoot, reviewedBy: data.userId, reviewedAt: expect.any(Date) },
+    });
   });
 
   it("re-points a reserved tree that created nothing at the new day folder, and marks a held new root for review", async () => {
@@ -238,6 +268,93 @@ describe("Editor folder reconciliation", () => {
     expect(await acquireEditorFolderProvisionLease(db, reserved.id)).not.toBeNull();
     expect(await acquireEditorFolderProvisionLease(db, reserved.id)).toBeNull();
     await expect(reserveEditorFolderMapping(db, { ...input, projectId: second.projectId })).rejects.toThrow(/already mapped/);
+  });
+
+  describe("refusing another mapping's in-flight move target", () => {
+    async function claimAsMoveTarget(holderProjectId: string, targetPath: string): Promise<void> {
+      const holder = await getEditorFolderMapping(db, holderProjectId);
+      await database.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving', move_target_path = ?, move_target_path_key = ? WHERE id = ?")
+        .bind(targetPath, targetPath.toLowerCase(), holder!.id).run();
+    }
+
+    it("refuses to reserve a root another mapping is already moving to", async () => {
+      const holderData = await fixture();
+      const holder = await reserveEditorFolderMapping(db, { projectId: holderData.projectId, connectionId: holderData.connectionId, shootDate: "2026-10-02", projectFolderName: holderData.suffix });
+      const contested = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: "Contested" });
+      await claimAsMoveTarget(holderData.projectId, contested);
+
+      const other = await fixture();
+      await expect(reserveEditorFolderMapping(db, {
+        projectId: other.projectId, connectionId: holderData.connectionId, shootDate: "2027-01-15", projectFolderName: "Contested",
+      })).rejects.toThrow(/already mapped/);
+      expect((await getEditorFolderMapping(db, other.projectId))).toBeNull();
+      expect((await getEditorFolderMapping(db, holderData.projectId))?.id).toBe(holder.id);
+    });
+
+    it("holds a retarget when the new root is another mapping's move target on the same connection", async () => {
+      const holderData = await fixture();
+      await reserveEditorFolderMapping(db, { projectId: holderData.projectId, connectionId: holderData.connectionId, shootDate: "2026-10-02", projectFolderName: holderData.suffix });
+      const contested = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: "Contested" });
+      await claimAsMoveTarget(holderData.projectId, contested);
+
+      const victimData = await fixture();
+      const reserved = await reserveEditorFolderMapping(db, { projectId: victimData.projectId, connectionId: holderData.connectionId, shootDate: "2026-10-02", projectFolderName: "Contested" });
+      const lease = await acquireEditorFolderProvisionLease(db, reserved.id);
+      const result = await retargetPendingEditorFolderMapping(db, reserved.id, { shootDate: "2027-01-15", leaseToken: lease!.token });
+      expect(result).toEqual({ status: "held", rootPath: contested });
+      expect((await getEditorFolderMapping(db, victimData.projectId))?.shootDate).toBe("2026-10-02");
+    });
+
+    it("refuses to link an existing folder onto another mapping's move target", async () => {
+      const holderData = await fixture();
+      await reserveEditorFolderMapping(db, { projectId: holderData.projectId, connectionId: holderData.connectionId, shootDate: "2026-10-02", projectFolderName: holderData.suffix });
+      const contested = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: "Contested" });
+      await claimAsMoveTarget(holderData.projectId, contested);
+
+      const other = await fixture();
+      await expect(linkExistingEditorFolder(db, {
+        projectId: other.projectId, connectionId: holderData.connectionId, rootPath: contested, shootDate: "2027-01-15", reviewed: true, reviewedBy: other.userId,
+        rootFolder: folder(contested, "id:contested-root"),
+        inputRoots: [{ path: `${contested}/0. Input`, section: null, folderId: "id:input", metadata: folder(`${contested}/0. Input`, "id:input") }],
+        outputRoots: [{ path: `${contested}/1. Output`, section: null, folderId: "id:output", metadata: folder(`${contested}/1. Output`, "id:output") }],
+      })).rejects.toThrow(/already mapped/);
+      expect(await getEditorFolderMapping(db, other.projectId)).toBeNull();
+    });
+  });
+
+  describe("carrying the move fields safely", () => {
+    it("round-trips a consistent move target and shoot date", async () => {
+      const data = await fixture();
+      const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+      const target = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: data.suffix });
+      await database.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving', move_target_path = ?, move_target_path_key = ?, move_target_shoot_date = ? WHERE id = ?")
+        .bind(target, target.toLowerCase(), "2027-01-15", reserved.id).run();
+      const mapping = await getEditorFolderMapping(db, data.projectId);
+      expect(mapping).toMatchObject({ moveStatus: "moving", moveTargetPath: target, moveTargetPathKey: target.toLowerCase(), moveTargetShootDate: "2027-01-15", rootRevision: 0 });
+    });
+
+    it("refuses a move target path key that does not match the move target path", async () => {
+      const data = await fixture();
+      const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+      const target = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: data.suffix });
+      await database.DB.prepare("UPDATE editor_folder_mappings SET move_target_path = ?, move_target_path_key = ? WHERE id = ?")
+        .bind(target, "/not/the/right/key", reserved.id).run();
+      await expect(getEditorFolderMapping(db, data.projectId)).rejects.toThrow(/move target path key is not canonical/);
+    });
+
+    it("refuses a move target path key set without a move target path", async () => {
+      const data = await fixture();
+      const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+      await database.DB.prepare("UPDATE editor_folder_mappings SET move_target_path_key = ? WHERE id = ?").bind("/some/key", reserved.id).run();
+      await expect(getEditorFolderMapping(db, data.projectId)).rejects.toThrow(/move target path key is set without a move target path/);
+    });
+
+    it("refuses a move target shoot date that is not a real calendar date", async () => {
+      const data = await fixture();
+      const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+      await database.DB.prepare("UPDATE editor_folder_mappings SET move_target_shoot_date = ? WHERE id = ?").bind("2026-02-30", reserved.id).run();
+      await expect(getEditorFolderMapping(db, data.projectId)).rejects.toThrow(/Invalid shoot date/);
+    });
   });
 
   it("links reviewed legacy roots using exact folder identity without a create", async () => {

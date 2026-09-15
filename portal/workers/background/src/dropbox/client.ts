@@ -30,6 +30,9 @@ export interface DropboxFile {
   id: string;
   size: number;
   content_hash?: string;
+  /** ISO 8601 timestamp of the file's last content change; used to detect a still-uploading
+   * folder during the Editor tree move's quiet period. */
+  server_modified?: string;
 }
 
 export interface DropboxFolder {
@@ -87,6 +90,10 @@ export class DropboxCursorResetError extends Error {}
 
 /** A metadata lookup for a path that does not exist: a fact about the path, not the connection. */
 export class DropboxPathNotFoundError extends Error {}
+
+/** `/files/move_v2` found something already at the destination: a fact about that path, not the
+ * connection, and the caller (the Editor tree move) decides whether to re-check and continue. */
+export class DropboxRelocationConflictError extends Error {}
 
 export class DropboxRateLimitError extends Error {
   constructor(message: string, readonly retryAfterSeconds: number | undefined) {
@@ -194,6 +201,7 @@ function parseEntry(value: unknown): DropboxEntry {
       id: asString(value.id, "id"),
       size: asNumber(value.size, "size"),
       content_hash: typeof contentHash === "string" ? contentHash : undefined,
+      server_modified: typeof value.server_modified === "string" ? value.server_modified : undefined,
     };
   }
   if (tag === "folder") {
@@ -540,6 +548,16 @@ async function authorisedJson(
         // for the caller to judge and never written to the connection's sticky last_error.
         throw new DropboxPathNotFoundError(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
       }
+      if (endpoint === "/files/move_v2" && response.status === 409 && /\bto\/conflict\b/i.test(body)) {
+        // Something already occupies the destination. The Editor tree move re-checks by folder ID
+        // and decides whether that is recovery (already moved) or a real conflict; not a
+        // connection-level fault, so it is never written to the sticky last_error either.
+        throw new DropboxRelocationConflictError(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
+      }
+      if (endpoint === "/files/move_v2" && response.status === 409 && /\bfrom_lookup\/not_found\b|\bto\/not_found\b/i.test(body)) {
+        // The source folder (or the destination's parent) is gone. Also a fact about the path.
+        throw new DropboxPathNotFoundError(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
+      }
       if (response.status === 429) {
         const retryAfter = retryAfterSeconds(response, body);
         throw new DropboxRateLimitError(rateLimitMessage(endpoint, retryAfter, body), retryAfter);
@@ -548,7 +566,7 @@ async function authorisedJson(
     }
     return await response.json() as unknown;
   } catch (error) {
-    if (error instanceof DropboxCursorResetError || error instanceof DropboxPathNotFoundError) throw error;
+    if (error instanceof DropboxCursorResetError || error instanceof DropboxPathNotFoundError || error instanceof DropboxRelocationConflictError) throw error;
     await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
   }
@@ -608,6 +626,24 @@ export async function listFolderIfExists(
   return page === null ? null : parseFolderPage(page);
 }
 
+/** Every entry (files and folders) under `path`, following `has_more`/continue to the end. Used
+ * by the Editor tree move's quiet-period check, which needs every file's `server_modified`. */
+export async function listFolderRecursive(
+  env: Env,
+  db: Database,
+  path: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxEntry[]> {
+  let page = await listFolder(env, db, path, { recursive: true }, connectionId, client);
+  const entries: DropboxEntry[] = [...page.entries];
+  while (page.has_more) {
+    page = await listFolderContinue(env, db, page.cursor, connectionId, client);
+    entries.push(...page.entries);
+  }
+  return entries;
+}
+
 export async function listFolderContinue(
   env: Env,
   db: Database,
@@ -650,6 +686,29 @@ export async function createFolderStrict(
   if (!metadata || typeof metadata !== "object") throw new Error("Dropbox create folder metadata is invalid");
   const entry = parseEntry({ ...metadata, ".tag": "folder" });
   if (entry[".tag"] !== "folder") throw new Error("Dropbox did not create a folder");
+  return entry;
+}
+
+/** Moves a folder atomically. A destination conflict is not evidence of where the source ended up
+ * (`DropboxRelocationConflictError`); the caller re-checks by folder ID before deciding. */
+export async function moveFolderStrict(
+  env: Env,
+  db: Database,
+  fromPath: string,
+  toPath: string,
+  connectionId?: string,
+  client?: DropboxClientContext,
+): Promise<DropboxFolder> {
+  const value = await authorisedJson(env, db, "/files/move_v2", {
+    from_path: fromPath, to_path: toPath, autorename: false, allow_ownership_transfer: false,
+  }, connectionId, client);
+  if (!value || typeof value !== "object" || !("metadata" in value)) throw new Error("Dropbox move folder response is missing metadata");
+  const metadata = value.metadata;
+  if (!metadata || typeof metadata !== "object") throw new Error("Dropbox move folder metadata is invalid");
+  // `/files/move_v2` returns a Metadata UNION, unlike create_folder_v2's always-a-folder result:
+  // parse the tag Dropbox actually sent, so relocating a file is caught rather than mistyped.
+  const entry = parseEntry(metadata);
+  if (entry[".tag"] !== "folder") throw new Error("Dropbox did not move a folder");
   return entry;
 }
 

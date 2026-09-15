@@ -80,6 +80,34 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         } catch (error) {
           console.error("Editor initial sync recovery failed", { error: error instanceof Error ? error.message : String(error) });
         }
+        try {
+          // Bounded selection of ready mappings that need a move-related editor_reconcile pass:
+          // an expired move lease (takeover), a shoot date that has drifted from the mapping's own
+          // placement date (a fresh move, or a stale block worth re-checking), or a completed move
+          // whose orphan-upload watch is due its +30-minute check. Throttled the same way as any
+          // other reconcile trigger, so a project already mid-pass is not re-enqueued on top of itself.
+          const dueForMove = await dbFor(this.env).select({ projectId: editorFolderMappings.projectId }).from(editorFolderMappings)
+            .innerJoin(projects, eq(projects.id, editorFolderMappings.projectId))
+            .where(sql`${editorFolderMappings.state} = 'ready'
+              AND (
+                (${editorFolderMappings.moveStatus} = 'moving' AND ${editorFolderMappings.moveExpiresAt} < ${controller.scheduledTime})
+                OR (
+                  ${projects.archivedAt} IS NULL AND ${projects.stageKey} != 'delivered'
+                  AND ${projects.shootDate} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+                  AND ${projects.shootDate} != ${editorFolderMappings.shootDate}
+                  AND (${editorFolderMappings.moveStatus} IS NULL OR (${editorFolderMappings.moveStatus} = 'blocked' AND ${editorFolderMappings.moveTargetShootDate} IS NOT ${projects.shootDate}))
+                )
+                OR (${editorFolderMappings.movedFromPath} IS NOT NULL AND ${editorFolderMappings.moveCompletedAt} <= ${controller.scheduledTime - 30 * 60_000})
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'
+                  AND (j.status IN ('queued','running') OR j.created_at > ${controller.scheduledTime - 10 * 60_000})
+              )`)
+            .orderBy(editorFolderMappings.updatedAt).limit(10);
+          for (const row of dueForMove) await enqueueEditorReconcile(this.env, row.projectId);
+        } catch (error) {
+          console.error("Editor folder move recovery failed", { error: error instanceof Error ? error.message : String(error) });
+        }
       }
       try {
         const result = await scanProjectDeadlineOccurrences(this.env, controller.scheduledTime);

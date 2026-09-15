@@ -897,7 +897,9 @@ export const editorFolderMappings = sqliteTable(
     rootPath: text("root_path").notNull(),
     rootPathKey: text("root_path_key").notNull(),
     rootFolderId: text("root_folder_id"),
-    /** The civil shoot date at first reservation; never changed by a reschedule. */
+    /** The civil date the CURRENT root is placed for: first reservation, then whatever a pending
+     * retarget or a ready move most recently landed the tree at. Never rewritten except by one
+     * of those two paths. */
     shootDate: text("shoot_date").notNull(),
     projectFolderName: text("project_folder_name").notNull(),
     /** Snapshot of the Tonomo path used to derive projectFolderName; not an AutoHDR pointer. */
@@ -916,12 +918,31 @@ export const editorFolderMappings = sqliteTable(
     initialSyncCompletedAt: integer("initial_sync_completed_at", { mode: "timestamp_ms" }),
     reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" }),
     reviewedBy: text("reviewed_by").references(() => user.id, { onDelete: "set null" }),
+    /** Bumped on every completed Editor tree move; fences a scaffold/sync pass reading the root
+     * mid-move against the batch that rebases it. */
+    rootRevision: integer("root_revision").notNull().default(0),
+    /** Set while a ready mapping's tree is being relocated for a reschedule, or when a move
+     * attempt could not proceed and needs an operator to look at `moveNote`. */
+    moveStatus: text("move_status", { enum: ["moving", "blocked"] as const }),
+    moveTargetPath: text("move_target_path"),
+    moveTargetPathKey: text("move_target_path_key"),
+    /** The Project's shoot date this move (or blocked attempt) is targeting. */
+    moveTargetShootDate: text("move_target_shoot_date"),
+    /** Claims the in-flight move so a takeover only happens after `moveExpiresAt`. */
+    moveToken: text("move_token"),
+    moveExpiresAt: integer("move_expires_at", { mode: "timestamp_ms" }),
+    /** `<code>: <sentence>` shown to an operator when `moveStatus` is `blocked`. */
+    moveNote: text("move_note"),
+    /** The now-empty former root, kept only so the orphan-upload sweep can watch it. */
+    movedFromPath: text("moved_from_path"),
+    moveCompletedAt: integer("move_completed_at", { mode: "timestamp_ms" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("editor_folder_mappings_connection_root_key_unique").on(t.connectionId, t.rootPathKey),
     uniqueIndex("editor_folder_mappings_project_unique").on(t.projectId),
+    uniqueIndex("editor_folder_mappings_connection_move_target_key_unique").on(t.connectionId, t.moveTargetPathKey).where(sql`${t.moveTargetPathKey} IS NOT NULL`),
     index("editor_folder_mappings_state_updated_idx").on(t.state, t.updatedAt, t.id),
     index("editor_folder_mappings_connection_state_idx").on(t.connectionId, t.state),
     check("editor_folder_mappings_state_check", sql`${t.state} IN ('pending', 'ready', 'needs_review')`),
@@ -929,6 +950,7 @@ export const editorFolderMappings = sqliteTable(
     check("editor_folder_mappings_output_roots_json_check", sql`json_valid(${t.outputRootsJson})`),
     check("editor_folder_mappings_photographer_evidence_json_check", sql`json_valid(${t.photographerEvidenceJson})`),
     check("editor_folder_mappings_recovery_proof_json_check", sql`${t.recoveryProofJson} IS NULL OR json_valid(${t.recoveryProofJson})`),
+    check("editor_folder_mappings_move_status_check", sql`${t.moveStatus} IS NULL OR ${t.moveStatus} IN ('moving', 'blocked')`),
   ],
 );
 

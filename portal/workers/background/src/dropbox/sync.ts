@@ -311,13 +311,36 @@ export async function syncProjectRawFolder(
     const client = await createDropboxClientContext(env, db, editorMapping?.state === "ready" ? editorMapping.connectionId : connectionId);
     const syncPlan = await resolveRawSyncPlan(env, projectId, project, editorMapping, client);
     const mappedInput = syncPlan.editorMapping?.state === "ready";
+    const mappedInputRevision = mappedInput ? syncPlan.editorMapping!.rootRevision : null;
+    // Not-moving is part of the same fence as the mapping/revision check below: a mapping mid-move
+    // is still `state = 'ready'`, but its root is about to be rebased by the move's own commit, so
+    // a write bound to the pre-move revision must not land underneath it.
     const sourceGuard = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
-      ? ` AND ${mappedInput ? "" : "NOT "}EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')` : "";
+      ? mappedInput
+        ? ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready' AND m.root_revision = ${mappedInputRevision} AND (m.move_status IS NULL OR m.move_status != 'moving'))`
+        : " AND NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')"
+      : "";
     const sourceOwnerGuard = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
       ? mappedInput
-        ? sql`EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready')`
+        ? sql`EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready' AND m.root_revision = ${mappedInputRevision} AND (m.move_status IS NULL OR m.move_status != 'moving'))`
         : sql`NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready')`
       : sql`1 = 1`;
+
+    if (mappedInput && syncPlan.editorMapping!.moveStatus === "moving") {
+      // Same no-op as Editor Output while a mapping is mid-move: release this run's claim and job
+      // cleanly instead of leaving either stuck `running` for the move's own blocking-job check.
+      await db.update(rawReconciliationClaims).set({ state: "done", updatedAt: new Date() })
+        .where(and(eq(rawReconciliationClaims.id, claimId), eq(rawReconciliationClaims.state, "running")));
+      await db.update(jobs).set({
+        status: "done",
+        payloadJson: JSON.stringify({ note: "editor_folder_move_in_flight: RAW input is mapped to an Editor folder that is currently moving; this sync resumes once the move settles" }),
+        updatedAt: new Date(),
+      }).where(eq(jobs.id, trackingJobId));
+      const existingRaw = await db.select({ id: assets.id }).from(assets)
+        .innerJoin(collections, eq(assets.collectionId, collections.id))
+        .where(and(eq(collections.projectId, projectId), eq(collections.kind, "raw"), sql`${assets.supersededAt} IS NULL`)).get();
+      return { newlyImported: 0, currentRawAvailable: Boolean(existingRaw), claimed: false, hasMore: false };
+    }
 
     await assertLease();
     const collection = await ensureRawCollection(env, projectId);
