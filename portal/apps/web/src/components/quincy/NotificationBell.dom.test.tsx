@@ -63,6 +63,8 @@ function notificationsResponse(unreadCount: number) {
       body: null,
       readAt: null,
       createdAt: "2026-08-17T00:00:00.000Z",
+      projectStreet: null,
+      coverAssetId: null,
     })),
   };
 }
@@ -75,6 +77,8 @@ type NotificationOverrides = Partial<{
   body: string | null;
   readAt: string | null;
   createdAt: string;
+  projectStreet: string | null;
+  coverAssetId: string | null;
 }>;
 
 function notification(overrides: NotificationOverrides = {}) {
@@ -86,6 +90,8 @@ function notification(overrides: NotificationOverrides = {}) {
     body: null,
     readAt: null,
     createdAt: "2026-07-28T00:00:00.000Z",
+    projectStreet: null,
+    coverAssetId: null,
     ...overrides,
   };
 }
@@ -204,13 +210,20 @@ describe("NotificationBell panel (Popover)", () => {
     expect(list!.querySelector('[data-testid="rail-notification-item"]')).not.toBeNull();
 
     const markAll = document.querySelector<HTMLButtonElement>('[data-testid="rail-mark-all-read"]')!;
+    const allTab = document.querySelector<HTMLButtonElement>('[role="tab"]')!;
     const item = document.querySelector<HTMLAnchorElement>('[data-testid="rail-notification-item"]')!;
     const dismiss = document.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-1"]')!;
     expect(item.tagName).toBe("A");
-    // Tab order: mark-all, then the row's link, then its dismiss — the same DOM order the old
-    // Menu-based panel used, now with no roving-focus machinery behind it.
-    const focusable = [...dialog!.querySelectorAll<HTMLElement>("button, a")];
-    expect(focusable.indexOf(markAll)).toBeLessThan(focusable.indexOf(item));
+    // Tab order: mark-all, the selected tab, the scrolling tabpanel itself (`tabIndex={0}`, so
+    // the keyboard can scroll a long list without landing on a row), then the row's link, then
+    // its dismiss — the same DOM order the old Menu-based panel used for the first/last pair,
+    // with the #114 tab strip and panel now between them and still no roving-focus machinery.
+    const panel = dialog!.querySelector<HTMLElement>('[role="tabpanel"]')!;
+    expect(panel.tabIndex).toBe(0);
+    const focusable = [...dialog!.querySelectorAll<HTMLElement>('button, a, [tabindex="0"]')].filter((el) => el.tabIndex >= 0);
+    expect(focusable.indexOf(markAll)).toBeLessThan(focusable.indexOf(allTab));
+    expect(focusable.indexOf(allTab)).toBeLessThan(focusable.indexOf(panel));
+    expect(focusable.indexOf(panel)).toBeLessThan(focusable.indexOf(item));
     expect(focusable.indexOf(item)).toBeLessThan(focusable.indexOf(dismiss));
   });
 
@@ -228,7 +241,7 @@ describe("NotificationBell panel (Popover)", () => {
     ], unreadCount: 1 });
     const trigger = await renderPanel();
     await click(trigger);
-    const rows = [...document.querySelectorAll<HTMLLIElement>("li")];
+    const rows = [...document.querySelectorAll<HTMLLIElement>('[data-testid="rail-notification-row"]')];
     const unreadRow = rows.find((row) => row.textContent?.includes("Unread"))!;
     const readRow = rows.find((row) => row.textContent?.includes("Read"))!;
     expect(unreadRow.hasAttribute("data-unread")).toBe(true);
@@ -524,11 +537,14 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("shows the caught-up empty state when there are no notifications", async () => {
+  it("shows the All-tab empty state when there are no notifications at all", async () => {
     apiGetMock.mockResolvedValue({ notifications: [], unreadCount: 0 });
     const trigger = await renderPanel();
     await click(trigger);
-    expect(document.querySelector('[data-testid="rail-notifications-empty"]')).not.toBeNull();
+    const empty = document.querySelector('[data-testid="rail-notifications-empty"]');
+    expect(empty).not.toBeNull();
+    expect(empty!.getAttribute("data-notification-empty")).toBe("all");
+    expect(empty!.textContent).toContain("No notifications.");
   });
 
   it("leaves the bell usable after a failed poll", async () => {
@@ -669,6 +685,189 @@ describe("NotificationBell panel (Popover)", () => {
       }
       expect(unreadRow.hasAttribute("data-unread")).toBe(true);
       expect(readRow.hasAttribute("data-unread")).toBe(false);
+    });
+  });
+
+  describe("tabs and empty states (#114)", () => {
+    function tabButton(label: "All" | "Unread") {
+      return [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.startsWith(label))!;
+    }
+
+    it("defaults to All without a count and shows the server unread count on the Unread tab", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 7 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      const allTab = tabButton("All");
+      const unreadTab = tabButton("Unread");
+      expect(allTab.getAttribute("aria-selected")).toBe("true");
+      // All has NO count — the list is capped at 25, so its own length is not a total.
+      expect(allTab.textContent).toBe("All");
+      expect(unreadTab.textContent).toBe("Unread 7");
+    });
+
+    it("filters to unread on the Unread tab without another API request, and back on All", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-unread", title: "Unread row" }),
+        notification({ id: "n-read", title: "Read row", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      expect(apiGetMock).toHaveBeenCalledTimes(1);
+      await click(tabButton("Unread"));
+      expect(apiGetMock).toHaveBeenCalledTimes(1);
+      expect(document.body.textContent).toContain("Unread row");
+      expect(document.body.textContent).not.toContain("Read row");
+      await click(tabButton("All"));
+      expect(apiGetMock).toHaveBeenCalledTimes(1);
+      expect(document.body.textContent).toContain("Read row");
+    });
+
+    it("shows the caught-up copy with a way back to All on Unread, and focuses the All tab when taking it", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-read", title: "Read row", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+      ], unreadCount: 0 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      await click(tabButton("Unread"));
+      const empty = document.querySelector('[data-testid="rail-notifications-empty"]')!;
+      expect(empty.getAttribute("data-notification-empty")).toBe("unread");
+      expect(empty.textContent).toContain("You’re all caught up.");
+      const showAll = document.querySelector<HTMLButtonElement>('[data-testid="rail-notifications-show-all"]')!;
+      await click(showAll);
+      expect(tabButton("All").getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(tabButton("All"));
+    });
+
+    it("explains unread notifications outside the recent list when the page shows none", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-read", title: "Read row", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+      ], unreadCount: 3 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      await click(tabButton("Unread"));
+      const empty = document.querySelector('[data-testid="rail-notifications-empty"]')!;
+      expect(empty.textContent).toContain("Older unread notifications may be outside this recent list.");
+    });
+
+    it("hands focus to the next rendered row when dismissing on the Unread tab, and to the panel when it empties", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-unread-1", title: "Unread one" }),
+        notification({ id: "n-read", title: "Read row", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+        notification({ id: "n-unread-2", title: "Unread two", createdAt: "2026-07-28T02:00:00.000Z" }),
+      ], unreadCount: 2 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      await click(tabButton("Unread"));
+      await clickNoAdvance(document.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification: Unread one"]')!);
+      const secondDismiss = document.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-unread-2"]')!;
+      expect(document.activeElement).toBe(secondDismiss);
+      await clickNoAdvance(secondDismiss);
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(document.activeElement).toBe(dialog);
+      expect(document.querySelector('[data-testid="rail-notifications-empty"]')?.getAttribute("data-notification-empty")).toBe("unread");
+    });
+
+    it("preserves a focused row's DOM identity when a poll adds another day group", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-1", title: "First notification", createdAt: "2026-07-28T00:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      const firstItem = document.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+      firstItem.focus();
+      expect(document.activeElement).toBe(firstItem);
+
+      // A second notification arrives a day later than the tracked one, opening a new day bucket
+      // ahead of it, while the panel stays open.
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-2", title: "Second notification", createdAt: "2026-07-29T00:00:00.000Z" }),
+        notification({ id: "n-1", title: "First notification", createdAt: "2026-07-28T00:00:00.000Z" }),
+      ], unreadCount: 2 });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      expect(document.querySelectorAll('[data-notification-bucket]')).toHaveLength(2);
+      const firstItemAfter = [...document.querySelectorAll<HTMLElement>('[data-testid="rail-notification-item"]')].find((el) => el.textContent === "First notification")!;
+      // React's `key={n.id}` keeps this the SAME DOM node across the regroup.
+      expect(firstItemAfter).toBe(firstItem);
+      expect(document.activeElement).toBe(firstItemAfter);
+    });
+
+    it("keeps a focused row's DOM identity and bucket key when the clock crosses Sydney midnight", async () => {
+      // 23:30 Sydney (AEST, +10) on 28 July; the row was written half an hour earlier.
+      vi.setSystemTime(new Date("2026-07-28T13:30:00.000Z"));
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-1", title: "First notification", createdAt: "2026-07-28T13:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel(30 * 60_000);
+      await click(trigger);
+      const bucketBefore = document.querySelector<HTMLElement>("[data-notification-bucket]")!;
+      const labelBefore = document.getElementById(bucketBefore.getAttribute("aria-labelledby")!)!;
+      expect(bucketBefore.getAttribute("data-notification-bucket")).toBe("2026-07-28");
+      expect(labelBefore.textContent).toBe("Today");
+      const firstItem = document.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+      firstItem.focus();
+
+      // Two polls later it is 00:30 on 29 July: the bucket's KEY is the Sydney day the row was
+      // written on and does not move; only its label reads "Yesterday" now.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60 * 60_000); });
+      const bucketAfter = document.querySelector<HTMLElement>("[data-notification-bucket]")!;
+      expect(bucketAfter.getAttribute("data-notification-bucket")).toBe("2026-07-28");
+      expect(document.getElementById(bucketAfter.getAttribute("aria-labelledby")!)!.textContent).toBe("Yesterday");
+      const firstItemAfter = document.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+      expect(firstItemAfter).toBe(firstItem);
+      expect(document.activeElement).toBe(firstItemAfter);
+    });
+
+    it("asks TabStrip for 44px tabs at header placement only — the narrow shell is a placement, not TabStrip's own breakpoint", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
+      await render(<AnchoredBell placement="header" poll={1_000} touchTarget />);
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!);
+      expect(document.querySelector<HTMLElement>('[role="tablist"]')!.className).toContain("[&_[role=tab]]:min-h-[44px]");
+    });
+
+    it("moves between All and Unread with the arrow keys inside the popover, and the panel follows", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-unread", title: "Unread", readAt: null }),
+        notification({ id: "n-read", title: "Read", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      const [allTab, unreadTab] = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+      allTab!.focus();
+      await act(async () => { allTab!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); await Promise.resolve(); });
+      expect(unreadTab!.getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(unreadTab);
+      expect([...document.querySelectorAll('[data-testid="rail-notification-item"]')].map((el) => el.textContent)).toEqual(["Unread"]);
+      await act(async () => { unreadTab!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })); await Promise.resolve(); });
+      expect(allTab!.getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(allTab);
+      expect(document.querySelectorAll('[data-testid="rail-notification-item"]')).toHaveLength(2);
+    });
+
+    it("leaves TabStrip's own 38px tabs alone at rail placement", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      expect(document.querySelector<HTMLElement>('[role="tablist"]')!.className).not.toContain("min-h-[44px]");
+    });
+
+    it("renders no thumbnail and requests no image at header placement", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ coverAssetId: "asset-1" }),
+      ], unreadCount: 1 });
+      await render(<AnchoredBell placement="header" poll={1_000} touchTarget />);
+      const trigger = host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
+      await click(trigger);
+      expect(document.querySelector('[data-notification-thumb]')).toBeNull();
+      expect(document.querySelector("img")).toBeNull();
+    });
+
+    it("carries no menu role on any row", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      expect(document.querySelector('[role="menuitem"]')).toBeNull();
+      expect([...document.querySelectorAll('[data-testid="rail-notification-row"]')].every((row) => row.getAttribute("role") !== "menuitem")).toBe(true);
     });
   });
 });

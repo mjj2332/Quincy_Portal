@@ -182,7 +182,7 @@ export const externalCommentReadStateSchema = z.object({
   unreadCount: z.number().int().nonnegative(),
 }).strict();
 export const externalMentionableUserSchema = externalPersonSchema;
-export const externalNotificationListItemSchema = z.object({ id: uuid, projectId: uuid, type: z.string(), title: z.string(), body: z.string().nullable(), readAt: iso.nullable(), createdAt: iso }).strict();
+export const externalNotificationListItemSchema = z.object({ id: uuid, projectId: uuid, type: z.string(), title: z.string(), body: z.string().nullable(), readAt: iso.nullable(), createdAt: iso, projectStreet: z.string(), coverAssetId: uuid.nullable() }).strict();
 
 export const externalProjectExportSchema = z.object({
   schemaVersion: z.literal(1), generatedAt: iso,

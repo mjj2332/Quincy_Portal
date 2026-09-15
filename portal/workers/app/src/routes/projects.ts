@@ -23,6 +23,7 @@ import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-sche
 import { moveProjectStage } from "../lib/project-stage";
 import { moveProjectBoardOrder } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
+import { chunked, coverMaps } from "../lib/project-covers";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -54,12 +55,6 @@ type DropboxSyncResult = {
   raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string };
   edited: { jobId: string } | { skipped: "not_ready" | "not_admin" | "error"; message?: string } | { blocked: { code: string; message: string } };
 };
-
-function chunked<T>(items: T[], size = 80): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
-  return chunks;
-}
 
 type DownloadSelectionEntry = {
   id: string;
@@ -131,32 +126,6 @@ async function validateDownloadSelection(c: Context<AppEnv>, projectId: string, 
   }
   if (totalBytes > DOWNLOAD_SELECTION_MAX_BYTES) return c.json({ error: "Selected assets exceed the 256 MiB download limit" }, 413);
   return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role, impersonatedBy: c.get("user").impersonatedBy } };
-}
-
-async function coverMaps(db: ReturnType<typeof createDb>, projectIds: string[], photographersOnlySeeRaw = false) {
-  const storedByProject = new Map<string, string>();
-  const automaticByProject = new Map<string, string>();
-  for (const ids of chunked(projectIds)) {
-    // Mirror media.ts: photographers may only view RAW assets.
-    const storedCollectionJoin = photographersOnlySeeRaw
-      ? and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), eq(schema.collections.kind, "raw"), sql`${schema.assets.supersededAt} IS NULL`)
-      : and(eq(schema.assets.collectionId, schema.collections.id), eq(schema.collections.projectId, schema.projects.id), sql`(${schema.collections.kind} <> 'edited' OR ${schema.assets.publishStatus} = 'ready')`, sql`${schema.assets.supersededAt} IS NULL`);
-    // D1/Drizzle mis-renders correlated scalar subqueries. Keep both lookups set-based;
-    // the grouped RAW query uses SQLite's bare-column-with-min() behaviour for its asset id.
-    const [storedCovers, automaticCovers] = await Promise.all([
-      db.select({ projectId: schema.projects.id, assetId: schema.assets.id }).from(schema.projects)
-        .innerJoin(schema.assets, eq(schema.projects.coverAssetId, schema.assets.id))
-        .innerJoin(schema.collections, storedCollectionJoin)
-        .where(inArray(schema.projects.id, ids)).all(),
-      db.select({ projectId: schema.collections.projectId, assetId: schema.assets.id, filename: sql<string>`min(${schema.assets.originalFilename})` }).from(schema.assets)
-        .innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id))
-        .where(and(inArray(schema.collections.projectId, ids), eq(schema.collections.kind, "raw"), sql`${schema.assets.supersededAt} IS NULL`))
-        .groupBy(schema.collections.projectId).all(),
-    ]);
-    for (const row of storedCovers) storedByProject.set(row.projectId, row.assetId);
-    for (const row of automaticCovers) automaticByProject.set(row.projectId, row.assetId);
-  }
-  return { storedByProject, automaticByProject };
 }
 
 async function addCollections(db: ReturnType<typeof createDb>, projectId: string, orderedServices: CollectionKind[] | undefined) {
