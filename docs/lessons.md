@@ -2109,3 +2109,23 @@ plain `Input` child, and asserts the resumed tree keeps it and never creates `0.
 
 **Rule:** anything the scaffold records durably must be re-found by identity (role + recorded
 path), never by re-deriving the path from a constant that can change between deploys.
+
+## Cookie-session scripts must send an `Origin` header or every mutation is a 403 (2026-09-15)
+
+**Symptom:** `scripts/bulk-archive-delete-sep-2026.mjs --live`, modelled line for line on the July
+2026 script, passed its dry run (GETs only) and then stopped on the very first archive POST with
+`403 {"error":"Forbidden: invalid request origin"}`. Nothing was mutated, because the script stops
+on first failure.
+
+**Cause:** `workers/app/src/middleware/origin.ts` (`requireAppOrigin`) rejects any
+POST/PUT/PATCH/DELETE outside `/api/auth/` whose `Origin` header is not exactly `APP_ORIGIN`. It is
+the CSRF guard for cookie sessions and was added after the July script, so the precedent silently
+stopped being a working template. A dry run cannot catch it: GETs are exempt.
+
+**Fix:** the script's `api()` helper sends `origin` (the same value it fetches against) beside the
+cookie, which is exactly what the browser does.
+
+**Rule:** any script that reuses an admin browser session must send `Origin: <APP_ORIGIN>` on
+mutating requests, and a dry run that only issues GETs does not prove the live path is authorised.
+Copy the `api()` helper from the September script, not the July one.
+
