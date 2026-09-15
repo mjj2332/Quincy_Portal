@@ -25,6 +25,9 @@ function item(overrides: Partial<NotificationListItem> = {}): NotificationListIt
     createdAt: "2026-07-28T00:00:00.000Z",
     projectStreet: null,
     coverAssetId: null,
+    actor: null,
+    subject: null,
+    assetId: null,
     ...overrides,
   };
 }

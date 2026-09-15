@@ -57,6 +57,9 @@ function item(overrides: Partial<NotificationListItem> = {}): NotificationListIt
     createdAt: "2026-09-15T01:00:00.000Z",
     projectStreet: null,
     coverAssetId: null,
+    actor: null,
+    subject: null,
+    assetId: null,
     ...overrides,
   };
 }
@@ -225,6 +228,57 @@ describe("NotificationList", () => {
     const meta = host.querySelector("[data-notification-meta]")!;
     expect(meta.textContent?.startsWith(" · ")).toBe(false);
     expect(meta.textContent?.includes("·")).toBe(false);
+  });
+
+  it("renders an actor's initials in the leading slot and requests the specific asset over the cover", async () => {
+    await renderList([
+      item({
+        id: "comment",
+        title: "Morgan Reyes commented on IMG_0042.jpg",
+        actor: { id: "u-1", name: "Morgan Reyes" },
+        assetId: "asset-comment",
+        coverAssetId: "asset-cover",
+      }),
+    ]);
+    const row = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
+    const leading = row.querySelector<HTMLElement>("[data-notification-leading][data-notification-actor]")!;
+    expect(leading).not.toBeNull();
+    expect(leading.getAttribute("aria-hidden")).toBe("true");
+    expect(leading.textContent).toBe("MR");
+    expect(lazyImage.calls).toEqual([{ assetId: "asset-comment", alt: "" }]);
+    const link = row.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+    expect(link.textContent).toBe("Morgan Reyes commented on IMG_0042.jpg");
+  });
+
+  it("shows an actor's initials and falls back to the cover when the row has no specific asset", async () => {
+    await renderList([
+      item({
+        id: "assigned",
+        actor: { id: "u-2", name: "Alex Chen" },
+        assetId: null,
+        coverAssetId: "asset-cover",
+      }),
+    ]);
+    const leading = host.querySelector<HTMLElement>("[data-notification-leading][data-notification-actor]")!;
+    expect(leading.textContent).toBe("AC");
+    expect(lazyImage.calls).toEqual([{ assetId: "asset-cover", alt: "" }]);
+  });
+
+  it("keeps an empty 28px leading slot with no text and no avatar for a system row (actor null)", async () => {
+    await renderList([item({ id: "system", actor: null })]);
+    const row = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
+    const leading = row.firstElementChild as HTMLElement;
+    expect(leading.getAttribute("data-notification-leading")).toBe("true");
+    expect(leading.hasAttribute("data-notification-actor")).toBe(false);
+    expect(leading.textContent).toBe("");
+    expect(leading.children.length).toBe(0);
+    expect(leading.className).toContain("size-[28px]");
+  });
+
+  it("clamps the body to two lines", async () => {
+    await renderList([item({ body: "A very long body that should be visually clamped to two lines by CSS." })]);
+    const body = host.querySelector<HTMLElement>("[data-notification-body]")!;
+    expect(body.className).toContain("line-clamp-[2]");
   });
 
   it("lays out four tracks with thumbnails and three without", async () => {

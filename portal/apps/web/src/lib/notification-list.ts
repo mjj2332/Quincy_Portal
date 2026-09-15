@@ -1,4 +1,4 @@
-import { sydneyCivilParts } from "@quincy/shared";
+import { sydneyCivilParts, type NotificationActor, type NotificationSubject } from "@quincy/shared";
 
 /**
  * The presentation-layer shape #114 groups, formats and filters — a superset of the wire type,
@@ -15,6 +15,11 @@ export type NotificationListItem = {
   createdAt: string;
   projectStreet: string | null;
   coverAssetId: string | null;
+  // #116 — the staff-only enrichment parts, typed from the shared zod schema. External payloads
+  // never carry them; `NotificationBell` normalises them to `null` on fetch.
+  actor: NotificationActor | null;
+  subject: NotificationSubject | null;
+  assetId: string | null;
 };
 
 export type NotificationFilter = "all" | "unread";

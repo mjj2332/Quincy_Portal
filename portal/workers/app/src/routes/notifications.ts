@@ -4,9 +4,10 @@ import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
-import { externalNotificationListResponseSchema } from "@quincy/shared";
+import { externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { externalVisibleNotificationCte } from "../lib/external-notification-visibility";
 import { notificationProjectContext } from "../lib/notification-project-context";
+import { notificationEnrichment } from "../lib/notification-enrichment";
 import { coverMaps, effectiveCoverAssetId } from "../lib/project-covers";
 
 const MAX_LIMIT = 50;
@@ -45,17 +46,27 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
     db.select({ count: sql<number>`count(*)` }).from(schema.notifications).where(and(eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt))).get(),
   ]);
   const context = await notificationProjectContext(db, c.get("user"), rows.map((row) => row.projectId));
-  return c.json({
+  const enrichment = await notificationEnrichment(
+    db,
+    c.get("user"),
+    rows.map((row) => ({ id: row.id, type: row.type, projectId: row.projectId, sourceKey: row.sourceKey })),
+    new Set(context.keys()),
+  );
+  return c.json(staffNotificationListResponseSchema.parse({
     notifications: rows.map((row) => {
       const projectContext = row.projectId ? context.get(row.projectId) : undefined;
+      const enriched = enrichment.get(row.id);
       return {
-        id: row.id, projectId: row.projectId, type: row.type, title: row.title, body: row.body,
+        id: row.id, projectId: row.projectId, type: row.type,
+        title: enriched?.title ?? row.title,
+        body: enriched?.body ?? row.body,
         readAt: row.readAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(),
         projectStreet: projectContext?.street ?? null, coverAssetId: projectContext?.coverAssetId ?? null,
+        actor: enriched?.actor ?? null, subject: enriched?.subject ?? null, assetId: enriched?.assetId ?? null,
       };
     }),
     unreadCount: unread?.count ?? 0,
-  });
+  }));
 }));
 
 notificationsRoutes.post("/notifications/:id/read", terminalRoute("/notifications/:id/read", async (c) => {

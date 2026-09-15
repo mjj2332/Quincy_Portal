@@ -5,6 +5,7 @@ import { LazyImage } from "../LazyImage";
 import { formatNotificationTimestamp, type NotificationBucket, type NotificationListItem } from "../../lib/notification-list";
 import { Eyebrow } from "./Eyebrow";
 import { cn } from "../../lib/utils";
+import { InitialsAvatar } from "./InitialsAvatar";
 
 /**
  * Extracted from `NotificationBell.tsx` (#114) — the day-bucketed list, its row grid, thumbnails
@@ -55,7 +56,11 @@ const ROW = cn(
 // regardless of specificity, so the title link/button's OWN outline needs `!` to actually
 // disappear; the ring itself is drawn by the row's `has-[…]:` selector below instead.
 const ITEM_TITLE_BASE = "text-[length:var(--text-sm)] font-normal !outline-none text-left cursor-pointer no-underline bg-transparent border-0 p-0";
-const ITEM_BODY = "text-[length:var(--text-xs)] leading-[var(--leading-normal)] text-foreground-secondary";
+// `line-clamp-[2]` — the arbitrary-value form, not the plain `line-clamp-2` scale utility: the
+// test-seam guard's `isUtilityClass` recognises punctuation (`[`/`]`) as a Tailwind utility but
+// does not (yet) list the `line-clamp-` family among its bare-scale prefixes, so the plain form
+// would read as a Quincy BEM name to guard C and fail it. Same computed style either way.
+const ITEM_BODY = "text-[length:var(--text-xs)] leading-[var(--leading-normal)] text-foreground-secondary line-clamp-[2]";
 const ITEM_META = "text-[length:var(--text-2xs)] text-muted-foreground";
 const DISMISS = cn(
   "relative z-[1] size-[44px] border-0 bg-transparent text-foreground-secondary cursor-pointer",
@@ -86,8 +91,9 @@ export type NotificationRowProps = {
 };
 
 export function NotificationRow({ notification, now, showThumbnail, onActivate, onDismiss }: NotificationRowProps) {
-  const { id, projectId, type, title, body, readAt, createdAt, projectStreet, coverAssetId } = notification;
+  const { id, projectId, type, title, body, readAt, createdAt, projectStreet, coverAssetId, actor, assetId } = notification;
   const route = projectNotificationRoute(projectId, type);
+  const thumbnailAssetId = assetId ?? coverAssetId;
   const caution = isCautionNotificationType(type);
   const titleClassName = cn(ITEM_TITLE_BASE, caution ? "!text-warning" : "!text-foreground");
 
@@ -98,9 +104,19 @@ export function NotificationRow({ notification, now, showThumbnail, onActivate, 
       data-notification-tone={caution ? "caution" : undefined}
       className={cn(ROW, showThumbnail ? GRID_WITH_THUMB : GRID_NO_THUMB)}
     >
-      {/* Reserved, empty leading slot — no actor avatar exists until #116. Always the first
-          child so every row reserves the same 28px column whether or not a slot is filled yet. */}
-      <span data-notification-leading aria-hidden="true" className="size-[28px]" />
+      {/* Leading slot — #116. When the row has a resolved actor, an initials avatar; otherwise a
+          reserved, empty 28px box (a system row, or an actor the resolver could not name). Always
+          the first child, and always the same 28px box in both branches, so every row reserves the
+          same column whether or not it is filled. `aria-hidden` on the whole slot: the actor's
+          name is already spoken as part of the row's title/body text, so the avatar's initials
+          would only repeat it. */}
+      {actor ? (
+        <span data-notification-leading data-notification-actor aria-hidden="true" className="size-[28px]">
+          <InitialsAvatar name={actor.name} className="size-[28px]" />
+        </span>
+      ) : (
+        <span data-notification-leading aria-hidden="true" className="size-[28px]" />
+      )}
       <div className="grid gap-1 min-w-0">
         {route?.kind === "project" ? (
           <InternalLink
@@ -138,8 +154,8 @@ export function NotificationRow({ notification, now, showThumbnail, onActivate, 
       </div>
       {showThumbnail && (
         <span data-notification-thumb aria-hidden="true" className="w-[64px] h-[44px] bg-surface-sunken overflow-hidden">
-          {coverAssetId ? (
-            <LazyImage preload="background" assetId={coverAssetId} alt="" className="size-full object-cover" />
+          {thumbnailAssetId ? (
+            <LazyImage preload="background" assetId={thumbnailAssetId} alt="" className="size-full object-cover" />
           ) : (
             /* A project with no RAW frame yet has no cover to resolve to — a still, sunken swatch, not
                a `Skeleton`: a pulse reads as "loading", and nothing is coming. */
