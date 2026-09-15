@@ -28,6 +28,8 @@ export const user = sqliteTable("user", {
     .notNull()
     .default("photographer"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+  // #135: added as an editor on every Project created while set (and while active + editor-eligible).
+  defaultEditor: integer("default_editor", { mode: "boolean" }).notNull().default(false),
   authorizationEpoch: integer("authorization_epoch").notNull().default(0),
   banned: integer("banned", { mode: "boolean" }).notNull().default(false),
   banReason: text("ban_reason"),

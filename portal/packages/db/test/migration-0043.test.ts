@@ -166,7 +166,9 @@ describe("migration 0043 normalise remaining Tonomo display shoot dates", () => 
 
     // The journal is what `wrangler d1 migrations apply` walks, so the filename order alone is not enough.
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Record<string, unknown>[] };
-    expect(journal.entries.at(-1)).toEqual({ idx: 43, version: "6", when: 1789380000000, tag: "0043_normalise_remaining_tonomo_display_shoot_dates", breakpoints: true });
-    expect(journal.entries.at(-2)).toMatchObject({ idx: 42, tag: "0042_normalise_tonomo_display_shoot_dates" });
+    // Located by idx, not by position from the end, so later migrations do not break this test.
+    const at = journal.entries.findIndex((entry) => entry.idx === 43);
+    expect(journal.entries[at]).toEqual({ idx: 43, version: "6", when: 1789380000000, tag: "0043_normalise_remaining_tonomo_display_shoot_dates", breakpoints: true });
+    expect(journal.entries[at - 1]).toMatchObject({ idx: 42, tag: "0042_normalise_tonomo_display_shoot_dates" });
   });
 });

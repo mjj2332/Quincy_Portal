@@ -118,6 +118,7 @@ Full detail in **`Personas.md`**. Four internal-production roles + the external 
 **Resolved decisions:**
 - A Photographer **cannot** see the client delivery page — they are scoped to RAW on their assigned shoots only.
 - **Project creation is Admin-only.** Editor/QA work within projects Admin sets up.
+- **Default editors (#135).** An Admin can mark users as default editors on Admin → Users. Every Project created afterwards, by hand or from Tonomo, gets each active, editor-eligible default editor as an `editor` member, with the normal assignment notification. It is applied only at creation: removing a default editor from one Project sticks, restoring an archived Project adds nobody, and default editors play no part in the Editor Dropbox folder prerequisite (an active Photographer). Existing Projects were covered by a one-off, silent backfill (one audit row per Project).
 - **Video, floorplan and copywriting** can be managed by **both Admin and Editor/QA** (`canManageExtras`).
 - **AutoHDR is an internal, Admin-only workflow.** Editor/QA can select RAWs for editing, but only Admin can execute the AutoHDR handoff. Non-admin staff see the neutral **Editing** stage and status; AutoHDR's name, provider details, watch-folder details, and handoff metadata are not part of their API projections. This privacy boundary must be enforced by API authorization and response projection, not by hiding controls in the UI.
 

@@ -2258,3 +2258,21 @@ mapping that created nothing is re-pointed inside its provisioning lease.
 overwritten; fence the write on both the value read and the event's age, since webhook redelivery
 is ordered by processing, not by when Tonomo made the change. Moving a Dropbox tree is not a path
 update: anything keyed by path (Edited assets, pinned publish destinations) must follow first.
+
+## #147 fixed only future Tonomo reschedules; the historic ones needed a one-off backfill (2026-09-15)
+
+**Symptom:** after #147 shipped, 10 active Projects still showed shoot dates that their latest
+Tonomo event had already moved.
+
+**Cause:** the fix changes how the processor applies an event. Events processed before it were
+already `processed`, so nothing replays them, and the frozen dates stayed frozen.
+
+**Fix:** an owner-approved operator backfill (2026-09-15 ~12:15Z, backup first) set the 10 dates
+through a fenced batch (only while still the old date and with no Editor mapping) with one
+`project.shoot_date.changed` audit each, meta `actor: "operator_backfill"` and `eventReceivedAt: 0`
+so any real Tonomo reschedule still wins the stale-event guard.
+
+**Rule:** a fix to how events are applied needs a separate look at what the old behaviour already
+wrote. Say in the PR whether historic rows need a backfill, and give it an age that loses to real
+events.
+

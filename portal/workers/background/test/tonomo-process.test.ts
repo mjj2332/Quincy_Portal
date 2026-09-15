@@ -350,3 +350,110 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
   });
 });
+
+describe("processTonomoEvent create — default editors (#135)", () => {
+  async function insertUser(id: string, name: string, email: string, role: "admin" | "photographer" | "editor" | "external_editor", active: boolean, defaultEditor: boolean) {
+    const now = Date.now();
+    await database.DB.prepare(
+      "INSERT INTO user (id, name, email, email_verified, role, active, default_editor, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+    ).bind(id, name, email, role, active ? 1 : 0, defaultEditor ? 1 : 0, now, now).run();
+  }
+
+  async function processCreateEvent(order: Record<string, unknown>): Promise<{ orderId: string; projectId: string }> {
+    const suffix = crypto.randomUUID();
+    const orderId = `order-${suffix}`;
+    const street = `${suffix} Default Editor Ave`;
+    const eventId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ id: orderId, street, ...order });
+    await database.DB.prepare(
+      "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)",
+    ).bind(eventId, `event-${eventId}`, payloadJson, Date.now()).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+    const project = await database.DB.prepare("SELECT id FROM projects WHERE order_id = ?").bind(orderId).first<{ id: string }>();
+    return { orderId, projectId: project!.id };
+  }
+
+  it("adds every flagged, active, editor-eligible user as an editor with audit + outbox + ledger provenance", async () => {
+    const flaggedEditorId = crypto.randomUUID();
+    const flaggedAdminId = crypto.randomUUID();
+    const unflaggedEditorId = crypto.randomUUID();
+    const flaggedInactiveEditorId = crypto.randomUUID();
+    const flaggedPhotographerId = crypto.randomUUID();
+    await insertUser(flaggedEditorId, "TB135 Tonomo Flagged Editor", `tb135-tonomo-editor-${flaggedEditorId}@example.test`, "editor", true, true);
+    await insertUser(flaggedAdminId, "TB135 Tonomo Flagged Admin", `tb135-tonomo-admin-${flaggedAdminId}@example.test`, "admin", true, true);
+    await insertUser(unflaggedEditorId, "TB135 Tonomo Unflagged Editor", `tb135-tonomo-unflagged-${unflaggedEditorId}@example.test`, "editor", true, false);
+    await insertUser(flaggedInactiveEditorId, "TB135 Tonomo Inactive Editor", `tb135-tonomo-inactive-${flaggedInactiveEditorId}@example.test`, "editor", false, true);
+    await insertUser(flaggedPhotographerId, "TB135 Tonomo Flagged Photographer", `tb135-tonomo-photographer-${flaggedPhotographerId}@example.test`, "photographer", true, true);
+
+    const before = Date.now();
+    const { orderId, projectId } = await processCreateEvent({});
+
+    // The project row itself still goes in with ms timestamps, awaiting_raw, a stage-bottom position and revision 0.
+    const created = await database.DB.prepare("SELECT stage_key AS stageKey, board_position AS boardPosition, board_revision AS boardRevision, created_at AS createdAt, updated_at AS updatedAt FROM projects WHERE id = ?").bind(projectId).first<{ stageKey: string; boardPosition: number; boardRevision: number; createdAt: number; updatedAt: number }>();
+    const maxOther = await database.DB.prepare("SELECT COALESCE(MAX(board_position), -1024) AS maxPosition FROM projects WHERE stage_key = 'awaiting_raw' AND archived_at IS NULL AND id != ?").bind(projectId).first<{ maxPosition: number }>();
+    expect(created).toMatchObject({ stageKey: "awaiting_raw", boardRevision: 0, boardPosition: maxOther!.maxPosition + 1024 });
+    expect(created!.createdAt).toBeGreaterThanOrEqual(before);
+    expect(created!.updatedAt).toBe(created!.createdAt);
+
+    for (const userId of [flaggedEditorId, flaggedAdminId]) {
+      const membership = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, userId).first<{ id: string }>();
+      expect(membership).not.toBeNull();
+      const auditRow = await database.DB.prepare("SELECT actor_id AS actorId, meta_json AS metaJson FROM audit_log WHERE action = 'project.member.add' AND target_type = 'project_member' AND target_id = ?").bind(membership!.id).first<{ actorId: string | null; metaJson: string }>();
+      expect(auditRow?.actorId).toBeNull();
+      expect(JSON.parse(auditRow!.metaJson)).toMatchObject({ actor: "tonomo", source: "default_editor", orderId, projectId, userId, roleOnProject: "editor", membershipCycle: membership!.id });
+      const outboxRow = await database.DB.prepare("SELECT id, actor_id AS actorId, event_type AS eventType FROM notification_outbox WHERE project_id = ? AND recipient_id = ? AND event_type = 'project.assignment.created'").bind(projectId, userId).first<{ id: string; actorId: string; eventType: string }>();
+      expect(outboxRow).not.toBeNull();
+      expect(outboxRow!.actorId).toBe("00000000-0000-4000-8000-000000000000");
+      const ledgerRows = await database.DB.prepare("SELECT channel FROM notification_delivery_ledger WHERE outbox_id = ?").bind(outboxRow!.id).all<{ channel: string }>();
+      expect(ledgerRows.results.map((row) => row.channel).sort()).toEqual(["email", "in_app"]);
+      const activityRow = await database.DB.prepare("SELECT id FROM project_activity_events WHERE project_id = ? AND source_id = ?").bind(projectId, membership!.id).first();
+      expect(activityRow).toBeNull();
+    }
+
+    const notAdded = await database.DB.prepare(
+      "SELECT user_id AS userId FROM project_members WHERE project_id = ? AND role_on_project = 'editor' AND user_id IN (?, ?, ?)",
+    ).bind(projectId, unflaggedEditorId, flaggedInactiveEditorId, flaggedPhotographerId).all<{ userId: string }>();
+    expect(notAdded.results).toEqual([]);
+  });
+
+  it("does not re-add a default editor removed from an existing project on update", async () => {
+    const flaggedEditorId = crypto.randomUUID();
+    await insertUser(flaggedEditorId, "TB135 Tonomo Update Editor", `tb135-tonomo-update-${flaggedEditorId}@example.test`, "editor", true, true);
+    const { orderId, projectId } = await processCreateEvent({});
+    const membership = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, flaggedEditorId).first<{ id: string }>();
+    expect(membership).not.toBeNull();
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(membership!.id).run();
+
+    const eventId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ id: orderId, street: "An updated street name", notes: "trigger an update" });
+    await database.DB.prepare(
+      "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)",
+    ).bind(eventId, `event-${eventId}`, payloadJson, Date.now()).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+
+    const stillMissing = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, flaggedEditorId).first();
+    expect(stillMissing).toBeNull();
+  });
+
+  it("does not add default editors when an order links to an existing project by address (update path)", async () => {
+    const flaggedEditorId = crypto.randomUUID();
+    await insertUser(flaggedEditorId, "TB135 Tonomo Address Link Editor", `tb135-tonomo-address-${flaggedEditorId}@example.test`, "editor", true, true);
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare(
+      "INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)",
+    ).bind(projectId, "1 Address Link Way", now, now).run();
+    const eventId = crypto.randomUUID();
+    const orderId = `order-${crypto.randomUUID()}`;
+    const payloadJson = JSON.stringify({ id: orderId, street: "1 Address Link Way" });
+    await database.DB.prepare(
+      "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)",
+    ).bind(eventId, `event-${eventId}`, payloadJson, Date.now()).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+
+    const linked = await database.DB.prepare("SELECT order_id AS orderId FROM projects WHERE id = ?").bind(projectId).first<{ orderId: string }>();
+    expect(linked?.orderId).toBe(orderId);
+    const membership = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, flaggedEditorId).first();
+    expect(membership).toBeNull();
+  });
+});

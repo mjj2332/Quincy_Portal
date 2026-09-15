@@ -4,6 +4,7 @@ import * as schema from "./schema";
 export * as schema from "./schema";
 export { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "./collection-count";
 export { RAW_CLAIM_LEASE_MS } from "./raw-reconciliation-claims";
+export { effectiveDefaultEditorSql, selectEffectiveDefaultEditorIds } from "./default-editors";
 export { buildProjectActivityStatements, type ProjectActivityStatementBundle } from "./project-activity";
 export {
   BOARD_CONTRACT_FLAG,

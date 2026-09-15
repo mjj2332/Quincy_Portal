@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { ROLES, type Role } from "@quincy/shared";
+import { isProjectAssignmentEligible, ROLES, type Role } from "@quincy/shared";
 import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
@@ -25,7 +25,7 @@ import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincySelectField } from "@/components/quincy/QuincySelectField";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
-type User = { id: string; name: string; email: string; role: Role; active: boolean; createdAt: string | null };
+type User = { id: string; name: string; email: string; role: Role; active: boolean; defaultEditor: boolean; createdAt: string | null };
 type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
 type Integration = { provider: string; status: IntegrationStatus; expiresAt: string | null; lastEventAt: string | null; lastError: string | null };
 type UsersResponse = { users: User[] };
@@ -323,13 +323,13 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     }
   }
 
-  async function updateUser(user: User, patch: { role?: Role; active?: boolean; name?: string }) {
+  async function updateUser(user: User, patch: { role?: Role; active?: boolean; name?: string; defaultEditor?: boolean }) {
     setUpdatingUserId(user.id);
     try {
       await apiPatch<{ ok: true }, typeof patch>(`/api/users/${user.id}`, patch);
       if (patch.name !== undefined && queryClient) await invalidateActiveProjectDetails(queryClient);
       await loadUsers();
-      toast(patch.active === false ? `${user.name} has been deactivated and signed out everywhere.` : patch.active === true ? `${user.name} has been reactivated.` : patch.name !== undefined ? "Name updated." : "Role updated.");
+      toast(patch.active === false ? `${user.name} has been deactivated and signed out everywhere.` : patch.active === true ? `${user.name} has been reactivated.` : patch.name !== undefined ? "Name updated." : patch.defaultEditor === true ? `${user.name} will be added to new projects as an editor.` : patch.defaultEditor === false ? `${user.name} will no longer be added to new projects.` : "Role updated.");
       return true;
     } catch (reason) {
       toast(reason instanceof Error ? reason.message : "The user could not be updated.", "error");
@@ -515,17 +515,19 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><input type="checkbox" className={CHECKBOX_INPUT} checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
         {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table>
-          <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
+          <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Default editor</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>
           <TableBody>{users.map((user) => {
           const isSelf = user.id === currentUserId;
           const isUpdating = updatingUserId === user.id;
           const isEditingName = editingUserId === user.id;
           const canImpersonate = impersonationEnabled && user.active && user.role !== "admin" && !isSelf;
+          const isDefaultEditorIneligible = !user.active || !isProjectAssignmentEligible("editor", user.role);
           return <TableRow key={user.id} data-testid="admin-user-row">
             <TableCell data-label="Name">{isEditingName ? <Input className="min-w-[130px] border-[var(--field-border)]" value={userNameDraft} onChange={(event) => setUserNameDraft(event.target.value)} aria-label={`Name for ${user.name}`} /> : <strong>{user.name}</strong>}</TableCell>
             <TableCell data-label="Email">{user.email}</TableCell>
             <TableCell data-label="Role"><label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label><NativeSelect id={`role-${user.id}`} className="min-w-[128px]" value={user.role} disabled={isUpdating} onChange={(event) => void updateUser(user, { role: event.target.value as Role })}>{ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}</NativeSelect></TableCell>
             <TableCell data-label="Access"><StatusPill tone={user.active ? "positive" : "neutral"}>{user.active ? "Active" : "Inactive"}</StatusPill></TableCell>
+            <TableCell data-label="Default editor"><input type="checkbox" className={CHECKBOX_INPUT} checked={user.defaultEditor} disabled={isUpdating || isDefaultEditorIneligible} title={isDefaultEditorIneligible ? "Only active editors, external editors and admins can be default editors" : undefined} onChange={() => void updateUser(user, { defaultEditor: !user.defaultEditor })} aria-label={`Default editor: ${user.name}`} /></TableCell>
             <TableCell data-label="Created">{formatDate(user.createdAt)}</TableCell>
             <TableCell className="min-[721px]:text-right min-[721px]:[&>button+button]:ml-[var(--space-3)] max-[721px]:flex max-[721px]:flex-wrap max-[721px]:gap-[var(--space-3)] max-[721px]:pt-[var(--space-3)]" data-testid="admin-user-actions">{isEditingName ? <><Button type="button" variant="outline" disabled={isUpdating} onClick={() => void saveUserName(user)}>Save</Button><Button type="button" variant="ghost" className={TEXT_BUTTON} onClick={() => setEditingUserId(undefined)}>Cancel</Button></> : <><Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => startEditingUserName(user)}>Edit</Button><Button type="button" variant="outline" disabled={isUpdating || isSelf} title={isSelf ? "You cannot deactivate your own account." : undefined} onClick={() => void toggleActive(user)}>{user.active ? "Deactivate" : "Reactivate"}</Button>{canImpersonate && <Button type="button" variant="ghost" className={TEXT_BUTTON} disabled={isUpdating} onClick={() => void actAs(user)}>Act as</Button>}</>}</TableCell>
           </TableRow>;

@@ -274,42 +274,48 @@ export async function removeProjectMemberCycle(
   return { outcome: "removed", subtaskAssignmentsCleared: rows<{ id: string }>(result[7] as D1Rows<{ id: string }>).length, notificationOutboxIds: rows<{ id: string }>(result[9 + activityStatements.broadOutboxIndex] as D1Rows<{ id: string }>).map((row) => row.id) };
 }
 
-export type InitialProjectMemberSlot = { userId: string; roleOnProject: ProjectMemberRole; name: string; email: string; globalRole: Role; active: boolean };
+export type InitialProjectMemberSlot = {
+  userId: string; roleOnProject: ProjectMemberRole; name: string; email: string; globalRole: Role; active: boolean;
+  /** #135: this slot is a Default Editor auto-add, not an explicit assignment the creator chose. */
+  source?: "default_editor";
+};
 
 export function buildInitialProjectMemberStatementTuples(
   db: D1Database,
   input: { projectId: string; projectMarkerId: string; slots: InitialProjectMemberSlot[]; actorId: string; auditPrincipal: AuditPrincipal; now?: number },
-): { statements: D1PreparedStatement[]; memberships: ProjectMembershipDto[]; notificationOutboxIds: string[]; broadResultOffsets: number[] } {
+): { statements: D1PreparedStatement[]; memberships: ProjectMembershipDto[]; outboxResultOffsets: number[]; broadResultOffsets: number[] } {
   const now = input.now ?? Date.now();
   const statements: D1PreparedStatement[] = [];
   const memberships: ProjectMembershipDto[] = [];
-  const notificationOutboxIds: string[] = [];
+  const outboxResultOffsets: number[] = [];
   const activityBundles: Array<{ statements: D1PreparedStatement[]; broadOutboxIndex: number }> = [];
   for (const slot of input.slots) {
     const membershipCycle = newId(); const auditId = newId(); const outboxId = newId();
-    notificationOutboxIds.push(outboxId);
+    const isDefaultEditor = slot.source === "default_editor";
     memberships.push({ id: membershipCycle, userId: slot.userId, roleOnProject: slot.roleOnProject, name: slot.name, email: slot.email, globalRole: slot.globalRole, active: slot.active, assignedSubtaskCount: 0 });
     const eligibleRoles = roleBindings(slot.roleOnProject); const placeholders = eligibleRoles.map(() => "?").join(", ");
     statements.push(db.prepare(`
       INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at)
       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
-        AND EXISTS (SELECT 1 FROM user WHERE id = ? AND active = 1 AND role IN (${placeholders}))
+        AND EXISTS (SELECT 1 FROM user WHERE id = ? AND active = 1 AND role IN (${placeholders})${isDefaultEditor ? " AND default_editor = 1" : ""})
       ON CONFLICT(project_id, user_id, role_on_project) DO NOTHING
     `).bind(membershipCycle, input.projectId, slot.userId, slot.roleOnProject, now, input.projectMarkerId, slot.userId, ...eligibleRoles));
     statements.push(db.prepare(`
       INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?, ?, 'project.member.add', 'project_member', ?, ?, ?
       WHERE EXISTS (SELECT 1 FROM project_members WHERE id = ? AND project_id = ? AND user_id = ? AND role_on_project = ?)
-    `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, membershipCycle, auditMeta(input.auditPrincipal, { projectId: input.projectId, userId: slot.userId, roleOnProject: slot.roleOnProject, membershipCycle }), now, membershipCycle, input.projectId, slot.userId, slot.roleOnProject));
+    `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, membershipCycle, auditMeta(input.auditPrincipal, { projectId: input.projectId, userId: slot.userId, roleOnProject: slot.roleOnProject, membershipCycle, ...(isDefaultEditor ? { source: "default_editor" as const } : {}) }), now, membershipCycle, input.projectId, slot.userId, slot.roleOnProject));
     const payload: ProjectAssignmentCreatedPayload = {
       schemaVersion: 1,
       event: { type: NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, sourceKey: membershipCycle, recipientId: slot.userId },
       assignment: { projectId: input.projectId, userId: slot.userId, roleOnProject: slot.roleOnProject, membershipCycle },
     };
+    outboxResultOffsets.push(statements.length);
     statements.push(db.prepare(`
       INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at)
       SELECT ?, 1, ?, ?, ?, ?, ?, (SELECT authorization_epoch FROM user WHERE id = ?), ?, 'pending', ?, ?, ?
       WHERE EXISTS (SELECT 1 FROM project_members WHERE id = ? AND project_id = ? AND user_id = ? AND role_on_project = ?)
+      RETURNING id
     `).bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectAssignmentCreated, membershipCycle, input.projectId, input.actorId, slot.userId, slot.userId, JSON.stringify(payload), now, now, now, membershipCycle, input.projectId, slot.userId, slot.roleOnProject));
     for (const channel of ["in_app", "email"] as const) statements.push(db.prepare(`
       INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at)
@@ -329,5 +335,5 @@ export function buildInitialProjectMemberStatementTuples(
     broadResultOffsets.push(statements.length + bundle.broadOutboxIndex);
     statements.push(...bundle.statements);
   }
-  return { statements, memberships, notificationOutboxIds, broadResultOffsets };
+  return { statements, memberships, outboxResultOffsets, broadResultOffsets };
 }
