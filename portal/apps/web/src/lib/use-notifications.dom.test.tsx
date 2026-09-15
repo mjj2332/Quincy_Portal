@@ -393,6 +393,25 @@ describe("useNotificationFeed", () => {
       expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
     });
 
+    it("a head fetch that replaces the cursor clears a previous Load more error", async () => {
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+      await render(<Harness poll={null} paged />);
+      apiGetMock.mockRejectedValueOnce(new Error("offline"));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(host.querySelector('[data-testid="load-more-error"]')?.textContent).toBe("true");
+
+      apiGetMock.mockRejectedValueOnce(new Error("offline"));
+      await click(host.querySelector('[data-testid="mark-all-read"]')!);
+      await flush();
+
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1", readAt: "2026-07-28T01:00:00.000Z" })], 0, null));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(host.querySelector('[data-testid="load-more-error"]')?.textContent).toBe("false");
+      expect(host.querySelector('[data-testid="has-more"]')?.textContent).toBe("false");
+    });
+
     it("a load more that lands after the reconcile already applied drops its rows and ends busy", async () => {
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
       await render(<Harness poll={null} paged />);

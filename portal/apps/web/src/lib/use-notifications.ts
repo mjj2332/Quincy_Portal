@@ -194,7 +194,11 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
       updateNotifications(() => rows);
       setUnreadCount(response.unreadCount);
       setNow(Date.now());
-      if (paged) updateCursor(response.nextCursor);
+      if (paged) {
+        updateCursor(response.nextCursor);
+        // A failed Load more's error described a cursor this response has just replaced.
+        setLoadMoreError(false);
+      }
       viewEpochRef.current += 1;
       appliedGenerationRef.current = startGeneration;
       setLoading(false);
