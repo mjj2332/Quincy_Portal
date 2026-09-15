@@ -54,6 +54,13 @@ _Avoid_: Retoucher, post
 An Editor outside the studio. Sees a deliberately narrowed view of a Project.
 _Avoid_: Contractor, freelancer, outsourcer
 
+**Default editor**:
+A user an Admin has marked on Admin → Users to be added as an Editor of every Project created
+afterwards, by hand or from Tonomo, while their account is active and their role can hold an Editor
+membership (editor, external editor, admin). Applied once, at creation: removing them from one
+Project sticks, and restoring an archived Project adds nobody.
+_Avoid_: Auto-assign, sticky editor
+
 **Photographer**:
 Someone assigned to a Project to capture its RAW media. Assigned Projects only, and
 only while the Project remains in the early Stages.

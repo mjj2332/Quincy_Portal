@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { editorFolderAvailability } from "../lib/editor-folders";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
 import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
@@ -228,6 +228,11 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
   const projectId = newId();
   const services = [...new Set<CollectionKind>(["raw", ...(data.orderedServices ?? [])])];
   const raw = c.env.DB;
+  // #135: pre-read the effective-default-editor set once. Default slots are appended below but
+  // deliberately excluded from `diagnostics`/`eligibilityPredicates` — a default editor going
+  // stale between this read and the batch just isn't added, it never fails project creation.
+  const explicitEditorIds = new Set(slots.filter((slot) => slot.roleOnProject === "editor").map((slot) => slot.userId));
+  const defaultEditorIds = (await selectEffectiveDefaultEditorIds(raw)).filter((id) => !explicitEditorIds.has(id));
   const diagnostics = slots.map((slot) => {
     const eligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]];
     return raw.prepare(`
@@ -273,26 +278,40 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     const candidate = list.find((item) => item.id === slot.userId);
     return { userId: slot.userId, roleOnProject: slot.roleOnProject, name: candidate?.name ?? "", email: candidate?.email ?? "", globalRole: candidate?.globalRole ?? "photographer", active: candidate?.active ?? false };
   });
-  const memberTuples = buildInitialProjectMemberStatementTuples(raw, { projectId, projectMarkerId: projectId, slots: initialSlots, actorId: c.get("user").id, auditPrincipal: c.get("user"), now });
+  // Display fields are placeholders: the response reads default memberships back from the batch below.
+  const defaultSlots: InitialProjectMemberSlot[] = defaultEditorIds.map((userId) => ({ userId, roleOnProject: "editor", name: "", email: "", globalRole: "editor", active: false, source: "default_editor" }));
+  const memberTuples = buildInitialProjectMemberStatementTuples(raw, { projectId, projectMarkerId: projectId, slots: [...initialSlots, ...defaultSlots], actorId: c.get("user").id, auditPrincipal: c.get("user"), now });
+  // #135: default memberships are not in `initialSlots`' 1:1 diagnostics alignment, so their
+  // observed name/email/active come from this dedicated post-member-statements SELECT instead —
+  // it only returns rows for defaults that actually got a project_members row.
+  const defaultMembershipsSelect = defaultEditorIds.length
+    ? raw.prepare(`
+      SELECT pm.id, pm.user_id AS userId, pm.role_on_project AS roleOnProject, u.name, u.email, u.role AS globalRole, u.active, 0 AS assignedSubtaskCount
+      FROM project_members pm JOIN user u ON u.id = pm.user_id
+      WHERE pm.project_id = ? AND pm.role_on_project = 'editor' AND pm.user_id IN (${defaultEditorIds.map(() => "?").join(", ")})
+    `).bind(projectId, ...defaultEditorIds)
+    : null;
   const projectAudit = raw.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.create', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?)
   `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { orderedServices: services }), now, projectId);
   const memberStatementStart = diagnostics.length + 1 + collectionStatements.length;
-  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, projectAudit]);
+  const defaultMembershipsIndex = memberStatementStart + memberTuples.statements.length;
+  const result = await raw.batch([...diagnostics, projectInsert, ...collectionStatements, ...memberTuples.statements, ...(defaultMembershipsSelect ? [defaultMembershipsSelect] : []), projectAudit]);
   const projectIndex = diagnostics.length;
   const created = rowsFromD1<{ id: string }>(result[projectIndex]).length > 0;
   if (!created) {
     const ineligibleSlots = diagnostics.map((_, index) => firstD1<{ userId: string; roleOnProject: ProjectMemberRole; eligible: number }>(result[index])).filter((row): row is { userId: string; roleOnProject: ProjectMemberRole; eligible: number } => Boolean(row && row.eligible !== 1)).map(({ userId, roleOnProject }) => ({ userId, roleOnProject }));
     return { created: false as const, ineligibleSlots: ineligibleSlots.sort((left, right) => left.roleOnProject.localeCompare(right.roleOnProject) || left.userId.localeCompare(right.userId)) };
   }
+  const outboxIds = memberTuples.outboxResultOffsets.map((offset) => firstD1<{ id: string }>(result[memberStatementStart + offset])?.id).filter((id): id is string => Boolean(id));
   const broadIds = memberTuples.broadResultOffsets.flatMap((offset) => rowsFromD1<{ id: string }>(result[memberStatementStart + offset]).map((row) => row.id));
-  const publicationIds = [...memberTuples.notificationOutboxIds, ...broadIds];
+  const publicationIds = [...outboxIds, ...broadIds];
   if (publicationIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
   if (data.rawFolderPath !== undefined) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(projectId).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId, error })));
   if (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(projectId).catch((error) => console.error("Editor scaffold trigger failed", { projectId, error })));
   const collectionsForResponse = collectionRecords.map((collection) => ({ id: collection.id, projectId, kind: collection.kind, status: "empty", expectedCount: null, receivedCount: 0 }));
-  const observedMemberships = memberTuples.memberships.map((membership, index) => {
+  const observedExplicitMemberships = memberTuples.memberships.slice(0, initialSlots.length).map((membership, index) => {
     const observed = firstD1<{ name: string | null; email: string | null; globalRole: Role | null; active: number | null }>(result[index]);
     return {
       ...membership,
@@ -302,6 +321,12 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
       active: observed?.active === 1,
     };
   });
+  const observedDefaultMemberships: ProjectMembershipDto[] = defaultMembershipsSelect
+    ? rowsFromD1<{ id: string; userId: string; roleOnProject: ProjectMemberRole; name: string; email: string; globalRole: Role; active: number; assignedSubtaskCount: number }>(result[defaultMembershipsIndex]).map((row) => ({
+      id: row.id, userId: row.userId, roleOnProject: row.roleOnProject, name: row.name, email: row.email, globalRole: row.globalRole, active: row.active === 1, assignedSubtaskCount: 0,
+    }))
+    : [];
+  const observedMemberships = [...observedExplicitMemberships, ...observedDefaultMemberships];
   return { created: true as const, response: { ...createProjectResponse(data, projectId, observedMemberships), collections: collectionsForResponse } };
 }
 

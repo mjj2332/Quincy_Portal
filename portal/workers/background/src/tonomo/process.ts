@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
-import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
-import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
+import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
+import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
@@ -11,6 +11,7 @@ import { enqueueEditorReconcile } from "../editor-folders/queue";
 import { getEditorFolderMapping } from "../editor-folders/mapping";
 import type { DropboxMetadataOperation } from "../editor-folders/scaffold";
 import { automationFlag } from "../dropbox/monitor-state";
+import { buildDefaultEditorAssignmentStatements } from "../projects/default-editors";
 import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
 import { commitShootDateChange, recordShootDateDecline } from "../projects/shoot-date";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
@@ -117,17 +118,33 @@ async function findProject(env: Env, order: TonomoOrder, variant: BoardSchemaVar
 }
 
 async function createProject(env: Env, order: TonomoOrder): Promise<string> {
-  const db = dbFor(env);
   const id = crypto.randomUUID();
-  const now = new Date();
-  await db.insert(projects).values({
+  const now = Date.now();
+  // #135: pre-read the effective-default-editor set once, then add every one of them as an
+  // editor in the SAME batch as the project INSERT. Each add re-checks the full predicate in
+  // SQL, so a default disabled or deactivated between the read and this batch is just skipped.
+  const defaultEditorIds = await selectEffectiveDefaultEditorIds(env.DB);
+  // Built with drizzle and run through D1 so it shares one batch with the default-editor adds.
+  const insert = dbFor(env).insert(projects).values({
     id, street: order.street, suburb: order.suburb, postcode: order.postcode, agencyName: order.agencyName,
     agentName: order.agentName, agentEmail: order.agentEmail, agentPhone: order.agentPhone,
     shootDate: order.shootDate, timeWindow: order.timeWindow, orderNo: order.orderNo, orderId: order.orderId,
     invoiceAmount: order.invoiceAmount, paymentStatus: order.paymentStatus, notes: order.notes,
     rawFolderLink: order.rawFolderLink, rawFolderPath: order.rawFolderPath,
-    stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), boardRevision: 0, createdAt: now, updatedAt: now,
-  });
+    stageKey: "awaiting_raw", boardPosition: appendToStageBottomExpr("awaiting_raw", id), boardRevision: 0, createdAt: new Date(now), updatedAt: new Date(now),
+  }).toSQL();
+  const projectInsert = env.DB.prepare(insert.sql).bind(...insert.params);
+  const assignments = buildDefaultEditorAssignmentStatements(env.DB, { projectId: id, orderId: order.orderId, userIds: defaultEditorIds, now });
+  const result = await env.DB.batch([projectInsert, ...assignments.statements]);
+  const outboxIds = assignments.outboxResultOffsets
+    .map((offset) => (result[1 + offset]?.results as Array<{ id: string }> | undefined)?.[0]?.id)
+    .filter((outboxId): outboxId is string => Boolean(outboxId));
+  if (outboxIds.length) {
+    // The per-minute recoverNotificationOutbox republishes pending rows anyway, so a failed
+    // publish here is logged, not retried inline.
+    await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, outboxIds).catch((error) =>
+      console.error("Default editor outbox publication failed", { projectId: id, error: errorMessage(error) }));
+  }
   await enqueueAutoHdrScaffold(env, id).catch((error) =>
     console.error("AutoHDR scaffold trigger failed", { projectId: id, error }));
   return id;

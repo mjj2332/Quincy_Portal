@@ -1,8 +1,8 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { createDb, schema } from "@quincy/db";
 import { desc, eq } from "drizzle-orm";
-import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, ROLES } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, ROLES } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { requireCapability } from "../middleware/capability";
@@ -12,7 +12,7 @@ import { USER_IMPERSONATION_FLAG } from "../lib/impersonation";
 import { jsonInput } from "./helpers";
 
 const input = z.object({ email: z.string().email(), name: z.string().min(1).max(200), role: z.enum(ROLES) });
-const patchInput = input.partial().omit({ email: true }).extend({ active: z.boolean().optional() });
+const patchInput = input.partial().omit({ email: true }).extend({ active: z.boolean().optional(), defaultEditor: z.boolean().optional() });
 const impersonationSettingsInput = z.object({ enabled: z.boolean() }).strict();
 const EXTERNAL_PROVISIONING_FROZEN_FLAG = "external_editor_provisioning_frozen";
 export const usersRoutes = new Hono<AppEnv>();
@@ -25,6 +25,7 @@ usersRoutes.get("/users", terminalRoute("/users", async (c) => c.json({ users: a
   email: schema.user.email,
   role: schema.user.role,
   active: schema.user.active,
+  defaultEditor: schema.user.defaultEditor,
   createdAt: schema.user.createdAt,
 }).from(schema.user).orderBy(desc(schema.user.createdAt)).all() })));
 usersRoutes.get("/users/impersonation-settings", terminalRoute("/users/impersonation-settings", async (c) => {
@@ -61,9 +62,42 @@ usersRoutes.post("/users", terminalRoute("/users", async (c) => {
   await audit(c.env, c.get("user"), "user.provision", "user", id, { email: data.email, role: data.role });
   return c.json({ id, ...data, active: true }, 201);
 }));
+/**
+ * "Effective default editor" (#135) is re-checked in SQL on every write, so a default disabled or
+ * deactivated mid-request is fenced out here rather than in application code. Disable has no
+ * active/role fence: turning the flag off must always succeed once it is on.
+ */
+async function setDefaultEditor(c: Context<AppEnv>, id: string, enable: boolean) {
+  const now = Date.now();
+  const eligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor];
+  const diagnostic = c.env.DB.prepare("SELECT active, role, default_editor AS defaultEditor FROM user WHERE id = ?").bind(id);
+  const update = enable
+    ? c.env.DB.prepare(`
+      UPDATE user SET default_editor = 1, updated_at = ?
+      WHERE id = ? AND default_editor = 0 AND active = 1 AND role IN (${eligibleRoles.map(() => "?").join(", ")})
+    `).bind(now, id, ...eligibleRoles)
+    : c.env.DB.prepare("UPDATE user SET default_editor = 0, updated_at = ? WHERE id = ? AND default_editor = 1").bind(now, id);
+  const auditStatement = c.env.DB.prepare(`
+    INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+    SELECT ?, ?, ?, 'user', ?, ?, ? WHERE changes() = 1
+  `).bind(newId(), c.get("user").id, enable ? "user.default_editor.enabled" : "user.default_editor.disabled", id, auditMeta(c.get("user"), {}), now);
+  const result = await c.env.DB.batch([diagnostic, update, auditStatement]);
+  const row = (result[0]?.results as Array<{ active: number; role: string; defaultEditor: number }> | undefined)?.[0];
+  if (!row) return c.json({ error: "User not found" }, 404);
+  if ((result[1]?.meta.changes ?? 0) === 1) return c.json({ ok: true, defaultEditor: enable });
+  if (row.defaultEditor === (enable ? 1 : 0)) return c.json({ ok: true, defaultEditor: enable });
+  return c.json({ error: "User is not eligible to be a default editor", code: "default_editor_ineligible" }, 409);
+}
+
 usersRoutes.patch("/users/:id", terminalRoute("/users/:id", async (c) => {
   const id = c.req.param("id"); if (!z.string().uuid().safeParse(id).success) return c.json({ error: "Invalid user id" }, 400);
   const data = await jsonInput(c, patchInput); if (data instanceof Response) return data;
+  if (data.defaultEditor !== undefined) {
+    if (data.name !== undefined || data.role !== undefined || data.active !== undefined) {
+      return c.json({ error: "Default editor must be changed in a separate request", code: "default_editor_separate_request" }, 400);
+    }
+    return setDefaultEditor(c, id, data.defaultEditor);
+  }
   const db = createDb(c.env.DB); const existing = await db.select().from(schema.user).where(eq(schema.user.id, id)).get();
   if (!existing) return c.json({ error: "User not found" }, 404);
   const didRename = data.name !== undefined && data.name !== existing.name;
@@ -98,18 +132,21 @@ usersRoutes.patch("/users/:id", terminalRoute("/users/:id", async (c) => {
         (SELECT COUNT(*) FROM notification_outbox o WHERE o.recipient_id = ? AND o.status IN ('pending', 'queued')) AS pendingOutboxCount
     `).bind(id, id, id).first<{ sessionCount: number; pendingDeliveryCount: number; pendingOutboxCount: number }>();
     const winnerAuditId = newId();
+    const editorEligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor];
     const roleOrActiveUpdate = roleChanged
       ? c.env.DB.prepare(`
-        UPDATE user SET role = ?, name = COALESCE(?, name), authorization_epoch = authorization_epoch + 1, updated_at = ?
+        UPDATE user SET role = ?, name = COALESCE(?, name), authorization_epoch = authorization_epoch + 1, updated_at = ?,
+          default_editor = CASE WHEN ? IN (${editorEligibleRoles.map(() => "?").join(", ")}) THEN default_editor ELSE 0 END
         WHERE id = ? AND role = ? AND active = ? AND authorization_epoch = ? AND updated_at = ?
           ${blockerRole ? "AND NOT EXISTS (SELECT 1 FROM project_members WHERE user_id = ? AND role_on_project = ?)" : ""}
         RETURNING id, authorization_epoch
-      `).bind(nextRole, data.name ?? null, now, id, existing.role, existing.active ? 1 : 0, existing.authorizationEpoch, existing.updatedAt.getTime(), ...(blockerRole ? [id, blockerRole] : []))
+      `).bind(nextRole, data.name ?? null, now, nextRole, ...editorEligibleRoles, id, existing.role, existing.active ? 1 : 0, existing.authorizationEpoch, existing.updatedAt.getTime(), ...(blockerRole ? [id, blockerRole] : []))
       : c.env.DB.prepare(`
-        UPDATE user SET active = ?, name = COALESCE(?, name), authorization_epoch = authorization_epoch + 1, updated_at = ?
+        UPDATE user SET active = ?, name = COALESCE(?, name), authorization_epoch = authorization_epoch + 1, updated_at = ?,
+          default_editor = CASE WHEN ? = 1 THEN default_editor ELSE 0 END
         WHERE id = ? AND role = ? AND active = ? AND authorization_epoch = ? AND updated_at = ?
         RETURNING id, authorization_epoch
-      `).bind(nextActive ? 1 : 0, data.name ?? null, now, id, existing.role, existing.active ? 1 : 0, existing.authorizationEpoch, existing.updatedAt.getTime());
+      `).bind(nextActive ? 1 : 0, data.name ?? null, now, nextActive ? 1 : 0, id, existing.role, existing.active ? 1 : 0, existing.authorizationEpoch, existing.updatedAt.getTime());
     const action = roleChanged ? "user.role_change" : nextActive ? "user.reactivate" : "user.deactivate";
     const auditMetaJson = auditMeta(c.get("user"), {
       previousRole: existing.role,

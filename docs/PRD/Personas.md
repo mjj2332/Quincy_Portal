@@ -25,7 +25,7 @@ assigns photographers, keeps projects moving, and is accountable for what reache
 **What they need to do**
 - See **every** project and its pipeline stage at a glance.
 - Create / configure / archive projects; assign photographer & editor.
-- Manage users and their roles.
+- Manage users and their roles, including which users are **default editors** added to every new project.
 - Step into any stage (RAW, editing, edited QA, delivery) when needed.
 - Publish to client and manage the client link.
 
