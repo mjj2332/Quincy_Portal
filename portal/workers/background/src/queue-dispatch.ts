@@ -1,6 +1,6 @@
 import type { RenditionMessage } from "@quincy/shared";
 import { NOTIFICATION_DLQ_QUEUE_NAME, NOTIFICATION_QUEUE_NAME, parseNotificationOutboxMessage, type NotificationOutboxMessage } from "@quincy/shared";
-import type { IngestMessage } from "./messages";
+import { DROPBOX_SYNC_TRIGGERS, type IngestMessage } from "./messages";
 
 export const INGEST_QUEUE_NAME = "quincy-ingest";
 export const RENDITION_QUEUE_NAME = "quincy-renditions";
@@ -40,7 +40,7 @@ export function parseQueueBody(queue: string, body: unknown): QueueBody | null {
         typeof value.projectId === "string" &&
         (value.jobId === undefined || typeof value.jobId === "string") &&
         (value.connectionId === undefined || (typeof value.connectionId === "string" && value.connectionId.length > 0 && !/[:/]/.test(value.connectionId))) &&
-        (value.trigger === undefined || ["dropbox_delta", "manual_dropbox_sync", "queue_retry"].includes(String(value.trigger)))) {
+        (value.trigger === undefined || (DROPBOX_SYNC_TRIGGERS as readonly string[]).includes(String(value.trigger)))) {
       return { queue, body: value as IngestMessage };
     }
     if (value.type === "autohdr_scaffold" &&

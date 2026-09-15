@@ -101,3 +101,10 @@ _Avoid_: Object, entity, item
 The grouping unit of the notification centre: one calendar day in the studio's timezone,
 labelled Today, Yesterday, or the date. Keyed by the day, never by the label.
 _Avoid_: Group, section, date header
+
+### Editor folder provenance
+
+- **Reconcile skip reason** (`jobs.error` on a done `editor_reconcile` job; `lastReconcile.reason` on the candidate endpoint): a stable code plus a sentence saying why an automatic pass created no Editor tree. The pass did not fail; something about the Project stops the tree (no shoot date, no active photographer, RAW folder outside the Tonomo root, a RAW sync still in flight, ...).
+- **RAW source** (`rawSource` on an Editor folder mapping): where the Project's Tonomo RAW folder was when the Editor tree was reserved. `tonomo` (the stored path existed), `missing` (gone; RAW arrives only through the Editor Input root). When the RAW shared link finds the folder elsewhere under the Tonomo RAW root, the Project is re-pointed first (audit action `project.raw_folder_path.changed`, actor `editor_scaffold`), the folder is scanned, and the next reconcile records `tonomo`.
+- **Name source** (`nameSource`): which original-cased text named the Editor project folder. `tonomo_path_display` (Dropbox's own casing), `tonomo_formatted_address` (the order's formatted address from the latest Tonomo payload, "/" replaced by "-", Tonomo's numeric suffix kept), `project_address` (the Project's street and suburb).
+

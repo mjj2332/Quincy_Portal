@@ -2155,3 +2155,63 @@ client and fixed it properly: an opaque cursor over both fields and the keyset p
 already used. Two rules. The cursor covers every column in the ORDER BY, or it is wrong. And the
 regression fixture must share a timestamp on purpose — with distinct timestamps the bug is
 unobservable, which is exactly why it survived.
+
+## Tonomo's RAW folder path is not stable, and the Portal froze its first copy (2026-09-15)
+
+**Symptom:** 26 active projects reported `path/not_found` for their stored `raw_folder_path` on the
+day Editor auto-creation went live. For 12 of them Tonomo's later webhooks carried a different
+`rawFolderPath`; the Portal never applied it.
+
+**Cause:** Tonomo's path encodes the assigned photographer and the shoot date
+(`/tonomo/raw files/<photographer>/<dd-mm-yyyy>/<address>`), so it changes on reassignment or
+reschedule. `updateProject` in `tonomo/process.ts` only null-filled `rawFolderPath` (and still
+freezes `shootDate` the same way). Tonomo also sometimes recomputes the string without moving the
+folder (Rosemont: folder and 67 assets at the stored path, Tonomo reporting another), so blindly
+accepting the newer path would have broken a working project.
+
+**Fix:** a differing incoming path is adopted only after `get_metadata` confirms it is a folder,
+never when an Editor mapping is `ready` (RAW intake has moved to the Editor tree), and never when
+the address leaf differs (Editor and AutoHDR names derive from it). The write is a guarded UPDATE
+fenced on the path this event read, with the audit row in the same D1 batch, plus an explicit
+`dropbox_sync` job (a D1-only edit produces no Dropbox delta) and an AutoHDR re-scaffold.
+
+**Rule:** a third party's path string is a claim, not a fact. Verify it against Dropbox before
+writing it, fence the write on the value you read, and nudge every consumer that only wakes on
+Dropbox deltas.
+
+## A ready Editor mapping owns RAW intake, so a missing Tonomo folder is not a reason to skip the tree (2026-09-15)
+
+**Symptom:** 26 active projects were silently skipped by the scaffold because `get_metadata` on
+their stored Tonomo RAW path returned `path/not_found`; the reconcile job finished "done" with no
+mapping and no error. The first plan said "an Editor tree for a project with no RAW serves nobody".
+
+**Cause:** that reading missed `resolveRawSyncPlan` (`dropbox/sync.ts`): once a mapping is `ready`,
+RAW intake comes only from the Editor Input roots and the RAW monitor stops watching the Tonomo
+folder for that project. The Tonomo folder is identity and name source, not the working folder.
+
+**Fix:** `resolveRawIdentity` in `scaffold.ts` resolves the RAW shared link when the stored path
+is gone (Dropbox follows moves), adopts a folder found under the RAW root, reports one found
+elsewhere, and otherwise creates the tree from Tonomo's original-cased `formatted_address` (the
+stored path is `path_lower`, so its casing is gone). The mapping records `rawSource` and
+`nameSource` in `photographer_evidence_json`, which the candidate endpoint surfaces.
+
+The same ownership rule cuts the other way, which Sol's review caught: adopting the recovered
+path, queueing a RAW sync and creating the tree in one pass lets the tree go `ready` before the
+sync runs, and the sync then reads the Editor Input root instead of the folder it was queued for.
+So link recovery re-points the Project, queues the scan and returns without a mapping; the
+reconcile also refuses to provision while a `dropbox_sync` job for the project is queued or running.
+
+A silent skip was the original symptom: `reconcileEditorFolder` returned `null` for a dozen
+different reasons and the queue consumer marked the job `done`. The fix is not a new job status
+but a typed outcome (`reconcileEditorFolderOutcome`) whose reason lands in `jobs.error` with
+status `done`, so retry gates (which key on `failed|stuck`) are untouched and the workspace job
+list simply shows the text. The candidate endpoint reads that latest job rather than re-running
+the classification, because classification is not read-only (link recovery re-points the Project).
+
+**Rule:** before deciding a tree is pointless, check which side owns intake after the mapping goes
+ready, and never let the tree go ready while a scan of the old side is still queued. A background
+pass that ends without its expected side effect must say why somewhere durable. Never derive
+a user-visible folder name from `path_lower`; find the original-cased source or use the Portal's
+own address. Tonomo webhook payloads are stored as posted, and Tonomo posts a one-element array
+as often as a bare object, so any SQL over `webhook_events.payload_json` unwraps `$[0]` first.
+

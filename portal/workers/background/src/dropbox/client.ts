@@ -304,6 +304,16 @@ export function parseDeleteBatchCheckResult(value: unknown): DropboxDeleteBatchC
 }
 
 /** Dropbox may wrap path_lookup/not_found at several union levels. Keep this parser permissive. */
+/** True when the error, or any Error in its cause chain, is a Dropbox path/not_found. Error.message is
+ * non-enumerable, so the JSON union walker in isDropboxPathNotFound cannot see it on its own. */
+export function isDropboxPathNotFoundError(error: unknown): boolean {
+  if (isDropboxPathNotFound(error)) return true;
+  for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
+    if (isDropboxPathNotFound(cause.message)) return true;
+  }
+  return false;
+}
+
 export function isDropboxPathNotFound(value: unknown): boolean {
   if (typeof value === "string") return /(?:path_lookup[\\/])?not_found|path[\\/]not_found/i.test(value);
   if (!isRecord(value)) return false;

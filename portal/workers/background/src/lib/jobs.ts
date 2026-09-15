@@ -1,5 +1,5 @@
 import { jobs } from "@quincy/db/schema";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "@quincy/db";
 
 export type JobDatabase = Database;
@@ -19,6 +19,16 @@ export async function createJob(
     payloadJson: input.payload === undefined ? null : JSON.stringify(input.payload),
   });
   return id;
+}
+
+export type LatestJob = { jobId: string; status: JobStatus; at: string; error: string | null };
+
+/** Most recently created job of one kind for a project; `at` is its last status change. */
+export async function latestJobForProject(db: JobDatabase, projectId: string, kind: string): Promise<LatestJob | null> {
+  const row = await db.select({ id: jobs.id, status: jobs.status, error: jobs.error, updatedAt: jobs.updatedAt })
+    .from(jobs).where(and(eq(jobs.projectId, projectId), eq(jobs.kind, kind)))
+    .orderBy(desc(jobs.createdAt)).limit(1).get();
+  return row ? { jobId: row.id, status: row.status, at: row.updatedAt.toISOString(), error: row.error } : null;
 }
 
 export async function setJobStatus(
