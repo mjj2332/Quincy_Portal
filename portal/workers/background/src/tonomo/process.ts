@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
 import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
-import { COLLECTION_KINDS, isCanonicalCalendarDate, normaliseAddressKey, normalisePath, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
+import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
@@ -12,6 +12,7 @@ import { getEditorFolderMapping } from "../editor-folders/mapping";
 import type { DropboxMetadataOperation } from "../editor-folders/scaffold";
 import { automationFlag } from "../dropbox/monitor-state";
 import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
+import { commitShootDateChange, recordShootDateDecline } from "../projects/shoot-date";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, isDropboxPathNotFoundError } from "../dropbox/client";
 
@@ -196,7 +197,7 @@ async function verifiedRawFolderPathChange(
   }
 }
 
-async function updateProject(env: Env, project: Project, linkedByAddress: boolean, order: TonomoOrder, dependencies: TonomoProcessDependencies): Promise<string> {
+async function updateProject(env: Env, project: Project, linkedByAddress: boolean, order: TonomoOrder, dependencies: TonomoProcessDependencies, context: TonomoEventContext): Promise<string> {
   const db = dbFor(env);
   const changes: {
     orderId?: string; orderNo?: string; suburb?: string; postcode?: string; agencyName?: string;
@@ -216,6 +217,15 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   // or already-canonical value, and never write a non-canonical incoming value over it.
   if (order.shootDate !== null && project.shootDate !== null
     && !isCanonicalCalendarDate(project.shootDate) && isCanonicalCalendarDate(order.shootDate)) changes.shootDate = order.shootDate;
+  // A reschedule: the stored date is canonical and Tonomo sent something else. Adopted only from a
+  // source that identifies a real calendar date (structured start_time, ISO text, or the
+  // weekday-checked display text), and written through its own fenced batch below rather than
+  // through `changes`, so the audit row and the stale-event guard travel with it. Unparsed text
+  // never overwrites a canonical date; it is declined and recorded instead.
+  const reschedule = order.shootDate !== null && project.shootDate !== null
+    && isCanonicalCalendarDate(project.shootDate) && order.shootDate !== project.shootDate
+    ? { previous: project.shootDate, next: order.shootDate }
+    : null;
   if (order.invoiceAmount !== undefined) changes.invoiceAmount = order.invoiceAmount;
   if (order.paymentStatus !== undefined) changes.paymentStatus = order.paymentStatus;
   if (!project.rawFolderLink && order.rawFolderLink) changes.rawFolderLink = order.rawFolderLink;
@@ -239,6 +249,15 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   } else if (changes.rawFolderPath !== undefined) {
     await enqueueAutoHdrScaffold(env, project.id).catch((error) =>
       console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
+  }
+  if (reschedule) {
+    if (isVerifiedTonomoShootDateSource(order.shootDateSource) && isCanonicalCalendarDate(reschedule.next)) {
+      // applyOrder enqueues the Editor reconcile after this returns; that pass records what the
+      // date change means for an existing Editor tree.
+      await commitShootDateChange(env, { projectId: project.id, previous: reschedule.previous, next: reschedule.next, orderId: order.orderId, receivedAt: context.receivedAt });
+    } else {
+      await recordShootDateDecline(env, { projectId: project.id, orderId: order.orderId, stored: reschedule.previous, incoming: reschedule.next, reason: "incoming shoot date is unparsed text, not a verified calendar date; keeping stored date" });
+    }
   }
   return project.id;
 }
@@ -264,13 +283,16 @@ async function assignPhotographers(env: Env, projectId: string, emails: string[]
   return { userIds, warning: unmatched.length ? `No active user matches photographers: ${unmatched.join(", ")}` : null };
 }
 
-async function applyOrder(env: Env, order: TonomoOrder, dependencies: TonomoProcessDependencies): Promise<string | null> {
+/** Facts about the stored webhook event itself, as opposed to the order it carries. */
+export type TonomoEventContext = { receivedAt: Date };
+
+async function applyOrder(env: Env, order: TonomoOrder, dependencies: TonomoProcessDependencies, context: TonomoEventContext): Promise<string | null> {
   const variant = await boardSchemaVariant(env.DB);
   if (variant === "pre_0037") throw TonomoApplyError.boardSchemaMaintenance();
   const match = await findProject(env, order, variant);
   const action = match ? "project.update" : "project.create";
   const projectId = match
-    ? await updateProject(env, match.project, match.linkedByAddress, order, dependencies)
+    ? await updateProject(env, match.project, match.linkedByAddress, order, dependencies, context)
     : await createProject(env, order);
   const collectionByKind = await ensureCollections(env, projectId, order);
   await attachServiceLinks(env, order, collectionByKind);
@@ -287,10 +309,13 @@ export function isDeterministicTonomoError(error: unknown): error is TonomoParse
 }
 
 /** Processes one stored event. The fixed-ID TonomoProcessorDO owns all draining and retries. */
-export async function processTonomoEvent(env: Env, event: Pick<typeof webhookEvents.$inferSelect, "id" | "payloadJson">, dependencies: TonomoProcessDependencies = {}): Promise<void> {
+export async function processTonomoEvent(env: Env, event: Pick<typeof webhookEvents.$inferSelect, "id" | "payloadJson"> & Partial<Pick<typeof webhookEvents.$inferSelect, "receivedAt">>, dependencies: TonomoProcessDependencies = {}): Promise<void> {
   const db = dbFor(env);
   const order = parseTonomoOrder(JSON.parse(event.payloadJson));
-  const photographerWarning = await applyOrder(env, order, dependencies);
+  const receivedAt = event.receivedAt
+    ?? (await db.select({ receivedAt: webhookEvents.receivedAt }).from(webhookEvents).where(eq(webhookEvents.id, event.id)).get())?.receivedAt
+    ?? new Date();
+  const photographerWarning = await applyOrder(env, order, dependencies, { receivedAt });
   const warnings = [
     order.unrecognisedServices.length ? `Unrecognised services: ${order.unrecognisedServices.join(", ")}` : null,
     photographerWarning,

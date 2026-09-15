@@ -2203,3 +2203,25 @@ a user-visible folder name from `path_lower`; find the original-cased source or 
 own address. Tonomo webhook payloads are stored as posted, and Tonomo posts a one-element array
 as often as a bare object, so any SQL over `webhook_events.payload_json` unwraps `$[0]` first.
 
+## A canonical shoot date was frozen, so Tonomo reschedules never reached the Portal (2026-09-15)
+
+**Symptom:** a Project rescheduled in Tonomo kept its original `shoot_date`, and its Editor tree sat
+under the old day folder with a `done` reconcile job and no note.
+
+**Cause:** the Tonomo processor only upgraded a non-canonical date to a canonical one; a canonical
+stored date was never overwritten, by design, because the parser passes unrecognised text through
+verbatim and a bad parse must not clobber a good date. The guard could not tell a real reschedule
+from noise because the parsed order did not say where its date came from.
+
+**Fix:** `parseTonomoOrder` now returns `shootDateSource` (`start_time`, `iso`, weekday-checked
+`display`, or `text`). A verified source moves the date through one fenced D1 batch
+(`projects/shoot-date.ts`): the UPDATE is guarded on the date the processor read and on no
+`project.shoot_date.changed` audit whose `eventReceivedAt` is later than this event's `received_at` (receipt time, not processing time, or a lagging newer event would be refused), and the audit INSERT fires
+only if that UPDATE landed. `text` is declined and audited once. The Editor tree is not moved: a
+ready mapping reports `editor_folder_not_moved`, and a pending mapping that created nothing is
+re-pointed inside its provisioning lease.
+
+**Rule:** a field that is "never overwritten" needs a provenance tag before it can be safely
+overwritten; fence the write on both the value read and the event's age, since webhook redelivery
+is ordered by processing, not by when Tonomo made the change. Moving a Dropbox tree is not a path
+update: anything keyed by path (Edited assets, pinned publish destinations) must follow first.

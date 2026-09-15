@@ -440,6 +440,47 @@ export type MarkEditorNeedsReviewInput = {
   at?: Date;
 };
 
+/**
+ * Re-points a pending mapping that has created nothing in Dropbox yet at the root its Project's
+ * current shoot date derives to. Fenced on state, lease, no recorded root folder and the old key,
+ * so a mapping that already provisioned keeps its tree (moving a tree is a separate, deliberate
+ * operation). Returns null when the fence lost or the new key is held by another mapping.
+ */
+export async function retargetPendingEditorFolderMapping(
+  db: Database,
+  mappingId: string,
+  input: { shootDate: string; leaseToken: string; at?: Date },
+): Promise<EditorFolderMapping | null> {
+  const current = await getEditorFolderMappingById(db, mappingId);
+  if (!current || current.state !== "pending" || current.rootFolderId || (current.recoveryProof?.created.length ?? 0) > 0) return null;
+  parseShootDate(input.shootDate);
+  const rootPath = editorFolderPath({ shootDate: input.shootDate, projectFolderName: current.projectFolderName });
+  const rootPathKey = editorFolderPathKey(rootPath);
+  const holder = await findEditorFolderMappingByPath(db, { connectionId: current.connectionId, path: rootPath });
+  if (holder && holder.id !== mappingId) return null;
+  const at = input.at ?? new Date();
+  const proof = nextProof(current, {
+    rootPath,
+    rootPathKey,
+    diagnostics: [...(current.recoveryProof?.diagnostics ?? []), `Retargeted from ${current.rootPath} to ${rootPath} after the shoot date changed to ${input.shootDate}`].slice(-20),
+  });
+  try {
+    const result = await db.run(sql`
+      UPDATE editor_folder_mappings
+      SET shoot_date = ${input.shootDate}, root_path = ${rootPath}, root_path_key = ${rootPathKey},
+          editing_notes_path = ${editorFolderChildPath(rootPath, EDITOR_NOTES_FOLDER)},
+          recovery_proof_json = ${JSON.stringify(proof)}, updated_at = ${at.getTime()}
+      WHERE id = ${mappingId} AND state = 'pending' AND provision_lease_token = ${input.leaseToken}
+        AND root_folder_id IS NULL AND root_path_key = ${current.rootPathKey}
+    `);
+    if ((result.meta?.changes ?? 0) !== 1) return null;
+  } catch (error) {
+    if (isUniqueConflict(error)) return null;
+    throw error;
+  }
+  return getEditorFolderMappingById(db, mappingId);
+}
+
 export async function markEditorFolderNeedsReview(
   db: Database,
   mappingId: string,
