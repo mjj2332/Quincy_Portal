@@ -1,16 +1,9 @@
+import { effectiveDefaultEditorSql } from "@quincy/db";
 import {
-  effectiveDefaultEditorSql,
   NOTIFICATION_OUTBOX_EVENT_TYPES,
   PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
   type ProjectAssignmentCreatedPayload,
 } from "@quincy/shared";
-
-/** "Effective default editor" (#135): pre-read once, before the create batch. */
-export async function selectEffectiveDefaultEditorIds(db: D1Database): Promise<string[]> {
-  const predicate = effectiveDefaultEditorSql("user");
-  const result = await db.prepare(`SELECT id FROM user WHERE ${predicate.sql}`).bind(...predicate.bindings).all<{ id: string }>();
-  return (result.results ?? []).map((row) => row.id);
-}
 
 /**
  * Per-editor member/audit/outbox/ledger statements for Tonomo's create batch. Every statement

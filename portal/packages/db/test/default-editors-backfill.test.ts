@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { buildBackfillSql } from "../../../scripts/default-editors-backfill.mjs";
+import { describe, expect, it, vi } from "vitest";
+import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "@quincy/shared";
+import { BACKFILL_EDITOR_ROLES, buildBackfillSql, extractManifestRows } from "../../../scripts/default-editors-backfill.mjs";
 
 type Statement = { all: (...values: unknown[]) => unknown[]; get: (...values: unknown[]) => unknown; run: (...values: unknown[]) => unknown };
 type SqliteDatabase = { close: () => void; exec: (source: string) => void; prepare: (source: string) => Statement };
@@ -75,7 +76,11 @@ function seedUsersAndProjects(db: SqliteDatabase): void {
 }
 
 function runDryrun(db: SqliteDatabase): Array<{ project_id: string; street: string; user_id: string; user_email: string }> {
-  return db.prepare(DRYRUN_SQL).all() as Array<{ project_id: string; street: string; user_id: string; user_email: string }>;
+  const rows = db.prepare(DRYRUN_SQL).all() as Array<{ project_id: string; street: string; user_id: string; user_email: string }>;
+  // The guide sends the file through `--command "$(grep -v '^--' …)"`; that form must mean the same query.
+  const stripped = DRYRUN_SQL.split("\n").filter((line) => !line.startsWith("--")).join("\n");
+  expect(db.prepare(stripped).all()).toEqual(rows);
+  return rows;
 }
 
 function counts(db: SqliteDatabase) {
@@ -115,9 +120,22 @@ describe("default editors backfill (#135)", () => {
 
     const projectsBefore = db.prepare("SELECT id, updated_at FROM projects ORDER BY id").all();
     const rows = runDryrun(db);
-    const applySql = buildBackfillSql(rows, { runAt: NOW });
+    // Generated long before it is applied (owner review): rows must carry the time the file ran, not the time it was generated.
+    const generatedAt = vi.spyOn(Date, "now").mockReturnValue(NOW);
+    const applySql = buildBackfillSql(rows);
+    generatedAt.mockRestore();
+    const appliedAfter = Date.now();
 
     db.exec(applySql);
+    const appliedBefore = Date.now();
+
+    const stamped = db.prepare("SELECT created_at FROM project_members WHERE id <> 'existing-membership-alpha-admin' UNION ALL SELECT created_at FROM audit_log WHERE action = 'project.default_editors.backfilled'").all() as Array<{ created_at: number }>;
+    expect(stamped).toHaveLength(7);
+    for (const row of stamped) {
+      expect(Number.isInteger(row.created_at)).toBe(true);
+      expect(row.created_at).toBeGreaterThanOrEqual(appliedAfter - 1000);
+      expect(row.created_at).toBeLessThanOrEqual(appliedBefore + 1000);
+    }
 
     const members = db.prepare("SELECT id, project_id, user_id FROM project_members ORDER BY project_id, user_id").all() as Array<{ id: string; project_id: string; user_id: string }>;
     expect(members.map(({ project_id, user_id }) => ({ project_id, user_id }))).toEqual([
@@ -186,8 +204,8 @@ describe("default editors backfill (#135)", () => {
     // resume rather than a coincidentally-compatible re-generation.
     const makeSeq = () => { let n = 0; return () => { n += 1; return `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`; }; };
 
-    const fullSql = buildBackfillSql(rows, { runAt: NOW, newId: makeSeq() });
-    const firstProjectOnlySql = buildBackfillSql(rows.filter((row) => row.project_id === PROJECT.alpha), { runAt: NOW, newId: makeSeq() });
+    const fullSql = buildBackfillSql(rows, { newId: makeSeq() });
+    const firstProjectOnlySql = buildBackfillSql(rows.filter((row) => row.project_id === PROJECT.alpha), { newId: makeSeq() });
 
     const interrupted = localSqlite();
     interrupted.exec("PRAGMA foreign_keys = ON");
@@ -220,7 +238,7 @@ describe("default editors backfill (#135)", () => {
     seedUsersAndProjects(db);
 
     const rows = runDryrun(db);
-    const applySql = buildBackfillSql(rows, { runAt: NOW });
+    const applySql = buildBackfillSql(rows);
     db.exec(applySql);
 
     // Simulate a manual post-apply removal of Charlie/flaggedAdmin as an editor: the app would
@@ -248,6 +266,48 @@ describe("default editors backfill (#135)", () => {
     const charlieAudits = db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'project.default_editors.backfilled' AND target_id = ?").get(PROJECT.charlie) as { n: number };
     expect(charlieAudits.n).toBe(1);
 
+    db.close();
+  });
+});
+
+describe("default editors backfill manifest and later runs", () => {
+  it("keeps the generated role list in step with PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor and the dry run", () => {
+    expect([...BACKFILL_EDITOR_ROLES].sort()).toEqual([...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor].sort());
+    expect(DRYRUN_SQL).toContain(`u.role IN (${BACKFILL_EDITOR_ROLES.map((role: string) => `'${role}'`).join(", ")})`);
+  });
+
+  it("reads `wrangler d1 execute --command --json` output and refuses a `--file` import summary", () => {
+    const row = { project_id: PROJECT.alpha, street: "Alpha Street", user_id: USER.flaggedEditor, user_email: "flagged-editor@example.test" };
+    expect(extractManifestRows([{ results: [row], success: true, meta: {} }])).toEqual([row]);
+    expect(extractManifestRows([row])).toEqual([row]);
+    // Shape of a remote `--file` run: the import endpoint reports counts, not SELECT rows.
+    expect(() => extractManifestRows([{ results: [{ "Total queries executed": 1, "Rows read": 12, "Rows written": 0 }], success: true }]))
+      .toThrow(/--command/);
+  });
+
+  it("audits a later run for a newly flagged user even though an earlier run already audited that project", () => {
+    const db = localSqlite();
+    db.exec("PRAGMA foreign_keys = ON");
+    applyMigrations(db, 44);
+    seedUsersAndProjects(db);
+    db.exec(buildBackfillSql(runDryrun(db)));
+
+    db.prepare("UPDATE user SET default_editor = 1 WHERE id = ?").run(USER.unflaggedEditor);
+    const laterRows = runDryrun(db);
+    expect(laterRows.map((row) => row.user_id)).toEqual([USER.unflaggedEditor, USER.unflaggedEditor, USER.unflaggedEditor]);
+    const laterSql = buildBackfillSql(laterRows);
+    db.exec(laterSql);
+    db.exec(laterSql);
+
+    const audits = db.prepare("SELECT target_id, meta_json FROM audit_log WHERE action = 'project.default_editors.backfilled' ORDER BY target_id, created_at").all() as Array<{ target_id: string; meta_json: string }>;
+    expect(audits).toHaveLength(6);
+    for (const projectId of [PROJECT.alpha, PROJECT.bravo, PROJECT.charlie]) {
+      const later = audits.filter((row) => row.target_id === projectId).map((row) => JSON.parse(row.meta_json) as { userIds: string[]; runId: string });
+      expect(later).toHaveLength(2);
+      expect(later.some((meta) => meta.userIds.length === 1 && meta.userIds[0] === USER.unflaggedEditor)).toBe(true);
+      expect(new Set(later.map((meta) => meta.runId)).size).toBe(2);
+    }
+    expect(runDryrun(db)).toEqual([]);
     db.close();
   });
 });

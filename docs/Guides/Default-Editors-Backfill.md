@@ -15,7 +15,10 @@ audit row per Project it touched.
 3. Back up D1:
    `npx wrangler d1 export quincy-portal --remote --output ~/quincy-d1-backups/quincy-portal-<date>-pre-default-editors.sql`
 4. Dry run (SELECT only), from `portal/`:
-   `npx wrangler d1 execute quincy-portal --remote --json --file scripts/default-editors-backfill-dryrun.sql --config workers/app/wrangler.jsonc > <scratch>/default-editors-dryrun.json`
+   `npx wrangler d1 execute quincy-portal --remote --json --config workers/app/wrangler.jsonc --command "$(grep -v '^--' scripts/default-editors-backfill-dryrun.sql)" > <scratch>/default-editors-dryrun.json`
+   Use `--command`, not `--file`: a remote `--file` run goes through D1's import endpoint and returns
+   query counts rather than rows, and the generator refuses that output. The `grep` strips the
+   header comments so they are not sent as statements.
    Review the pairs (Project, street, user email) with the owner. Projects where a default editor is
    already a member, was removed by hand, or was backfilled before do not appear.
 5. Generate the apply file from that exact reviewed manifest:
@@ -29,10 +32,10 @@ audit row per Project it touched.
 - Every membership INSERT re-checks, at apply time, that the Project is still non-archived, the user
   is still an active, editor-eligible default editor, the pair was not removed by hand, and it was not
   backfilled before; conflicts on the existing unique index do nothing.
-- If the apply is interrupted, re-run **the same apply file**. Do not regenerate it mid-run: the
+- Each generated file carries a `runId`; a Project's audit row is keyed on it. If the apply is interrupted, re-run **the same apply file**. Do not regenerate it mid-run: the
   membership ids in the file are what ties each Project's audit row to the rows it inserted.
 - Membership ids are UUIDs, so backfilled editors can be removed in the Project team UI like any other.
-- `created_at` is the real run time, so the backfilled editors receive Project activity notifications
+- `created_at` is computed by D1 when the apply file runs, not when it was generated, so the backfilled editors receive Project activity notifications
   from then on and nothing from before.
 
 ## Limits

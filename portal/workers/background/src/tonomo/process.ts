@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
-import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings } from "@quincy/db";
+import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
 import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
@@ -11,7 +11,7 @@ import { enqueueEditorReconcile } from "../editor-folders/queue";
 import { getEditorFolderMapping } from "../editor-folders/mapping";
 import type { DropboxMetadataOperation } from "../editor-folders/scaffold";
 import { automationFlag } from "../dropbox/monitor-state";
-import { buildDefaultEditorAssignmentStatements, selectEffectiveDefaultEditorIds } from "../projects/default-editors";
+import { buildDefaultEditorAssignmentStatements } from "../projects/default-editors";
 import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
 import { commitShootDateChange, recordShootDateDecline } from "../projects/shoot-date";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";

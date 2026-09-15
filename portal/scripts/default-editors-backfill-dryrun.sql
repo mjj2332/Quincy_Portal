@@ -4,7 +4,9 @@
 -- manifest into an `apply.sql` you actually execute. Before running anything against production:
 --   1. Back up first: `wrangler d1 export ...`.
 --   2. Get the owner's explicit approval to proceed.
---   3. Dry-run first — this file — and read the output before generating apply.sql.
+--   3. Dry-run first with this file, passed through `--command` (not `--file`, which returns
+--      import counts on a remote run), and read the output before generating apply.sql.
+--      See docs/Guides/Default-Editors-Backfill.md for the exact command.
 --   4. apply.sql is idempotent: if a run is interrupted partway through, re-run the SAME
 --      apply.sql again rather than regenerating it from a fresh dry-run. Never regenerate
 --      mid-run — a fresh dry-run after a partial apply will omit pairs the interrupted run

@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { editorFolderAvailability } from "../lib/editor-folders";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
-import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
+import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, effectiveDefaultEditorSql, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -232,9 +232,7 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
   // deliberately excluded from `diagnostics`/`eligibilityPredicates` — a default editor going
   // stale between this read and the batch just isn't added, it never fails project creation.
   const explicitEditorIds = new Set(slots.filter((slot) => slot.roleOnProject === "editor").map((slot) => slot.userId));
-  const defaultEditorPredicate = effectiveDefaultEditorSql("user");
-  const defaultEditorRows = await raw.prepare(`SELECT id FROM user WHERE ${defaultEditorPredicate.sql}`).bind(...defaultEditorPredicate.bindings).all<{ id: string }>();
-  const defaultEditorIds = (defaultEditorRows.results ?? []).map((row) => row.id).filter((id) => !explicitEditorIds.has(id));
+  const defaultEditorIds = (await selectEffectiveDefaultEditorIds(raw)).filter((id) => !explicitEditorIds.has(id));
   const diagnostics = slots.map((slot) => {
     const eligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[slot.roleOnProject]];
     return raw.prepare(`
@@ -280,10 +278,8 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
     const candidate = list.find((item) => item.id === slot.userId);
     return { userId: slot.userId, roleOnProject: slot.roleOnProject, name: candidate?.name ?? "", email: candidate?.email ?? "", globalRole: candidate?.globalRole ?? "photographer", active: candidate?.active ?? false };
   });
-  const defaultSlots: InitialProjectMemberSlot[] = defaultEditorIds.map((userId) => {
-    const candidate = candidates.editors.find((item) => item.id === userId);
-    return { userId, roleOnProject: "editor" as const, name: candidate?.name ?? "", email: candidate?.email ?? "", globalRole: candidate?.globalRole ?? "editor", active: candidate?.active ?? false, source: "default_editor" as const };
-  });
+  // Display fields are placeholders: the response reads default memberships back from the batch below.
+  const defaultSlots: InitialProjectMemberSlot[] = defaultEditorIds.map((userId) => ({ userId, roleOnProject: "editor", name: "", email: "", globalRole: "editor", active: false, source: "default_editor" }));
   const memberTuples = buildInitialProjectMemberStatementTuples(raw, { projectId, projectMarkerId: projectId, slots: [...initialSlots, ...defaultSlots], actorId: c.get("user").id, auditPrincipal: c.get("user"), now });
   // #135: default memberships are not in `initialSlots`' 1:1 diagnostics alignment, so their
   // observed name/email/active come from this dedicated post-member-statements SELECT instead —

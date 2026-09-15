@@ -6,8 +6,9 @@
  * is exactly two: the app's manual `POST /api/projects` (workers/app/src/routes/projects.ts) and
  * Tonomo's webhook create (workers/background/src/tonomo/process.ts). A third INSERT site added
  * later (a new import path, a script, a migration-adjacent backfill route, etc.) would silently
- * skip default editors unless it also calls into `effectiveDefaultEditorSql` /
- * `buildDefaultEditorAssignmentStatements`. This guard fails the build the moment a new
+ * skip default editors unless it also calls `selectEffectiveDefaultEditorIds` and inserts editor
+ * memberships guarded by `effectiveDefaultEditorSql` (packages/db/src/default-editors.ts). This
+ * guard fails the build the moment a new
  * production `INSERT INTO projects` / `insert(projects)` site appears, so it becomes a design
  * decision (extend the known-creators list *and* wire default editors into it) instead of a
  * silent gap. **Never add a new file to the allow-list without also adding default editors to
@@ -63,7 +64,7 @@ describe("guard: every `projects` row creator is a known one (#135 default edito
     expect(
       matchingFiles(),
       "A new `INSERT INTO projects` / `insert(projects)` site appeared. #135 default editors " +
-        "must be wired into it (see packages/shared/src/project-members.ts effectiveDefaultEditorSql) " +
+        "must be wired into it (see packages/db/src/default-editors.ts) " +
         "before adding it to KNOWN_CREATORS in this guard.",
     ).toEqual(KNOWN_CREATORS);
   });
