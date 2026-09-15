@@ -1,5 +1,5 @@
-import { and, eq, isNull } from "drizzle-orm";
-import { editorFolderMappings, projectMembers, projects, user } from "@quincy/db/schema";
+import { and, eq, gte, inArray, isNull, ne } from "drizzle-orm";
+import { editorFolderMappings, jobs, projectMembers, projects, user } from "@quincy/db/schema";
 import type { Database } from "@quincy/db";
 
 import type { DropboxFile, DropboxFolder } from "../dropbox/client";
@@ -11,9 +11,12 @@ import {
   recordDropboxSuccess,
 } from "../dropbox/client";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
+import { dropboxPathKey, pathEqualsOrIsBelow, TONOMO_RAW_ROOT } from "../dropbox/paths";
+import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
+import { latestTonomoFormattedAddress } from "../tonomo/formatted-address";
 import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
-import { dbFor } from "../lib/db";
+import { dbFor, errorMessage } from "../lib/db";
 import {
   EDITOR_INPUT_FOLDER,
   EDITOR_INPUT_NAME_PATTERN,
@@ -26,6 +29,9 @@ import {
   editorFolderPathKey,
   deriveEditorProjectFolderName,
   parseShootDate,
+  fallbackEditorProjectFolderName,
+  type EditorNameSource,
+  type EditorRawSource,
 } from "./paths";
 import {
   acquireEditorFolderProvisionLease,
@@ -87,10 +93,6 @@ const CHILD_SPECS: readonly ChildSpec[] = [
   { role: "output", name: EDITOR_OUTPUT_FOLDER, pattern: EDITOR_OUTPUT_NAME_PATTERN },
   { role: "editing_notes", name: EDITOR_NOTES_FOLDER, pattern: null },
 ];
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function isDropboxConflict(error: unknown): boolean {
   for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
@@ -246,6 +248,126 @@ async function persistDiagnostic(db: Database, mappingId: string, leaseToken: st
   }
 }
 
+function addressLeaf(path: string): string | undefined {
+  return path.split("/").filter(Boolean).at(-1)?.toLowerCase();
+}
+
+type RawIdentity = {
+  rawFolderPath: string;
+  projectFolderName: string;
+  tonomoFolderId?: string;
+  rawSource: EditorRawSource;
+  nameSource: EditorNameSource;
+};
+
+type RawIdentityProject = {
+  id: string;
+  rawFolderPath: string | null;
+  rawFolderLink: string | null;
+  orderId: string | null;
+  street: string;
+  suburb: string | null;
+};
+
+/**
+ * Where the Project's RAW folder is, and what to call its Editor tree, in this order:
+ * 1. the stored Tonomo path still exists: name from Dropbox path_display (original casing);
+ * 2. it does not, but the RAW shared link resolves to a folder under the Tonomo RAW root: Tonomo
+ *    moved it (photographer or date change); adopt the new path on the Project and name from it;
+ *    a link that resolves OUTSIDE the RAW root is reported and never adopted: that project was
+ *    completed and delivered outside the Portal, so an admin should mark it delivered/archived;
+ * 3. neither: the folder is gone; keep the stored path as the identity and name the tree from
+ *    Tonomo's original-cased formatted address (else the Project's own address). RAW then arrives
+ *    through the Editor tree's Input root, which is what a ready mapping does anyway.
+ */
+/**
+ * Queued or running `dropbox_sync` jobs touched within the last two hours; older ones are stuck,
+ * not in flight. Measured on the wall clock because `jobs.updated_at` is written by the queue
+ * consumer's clock, not the caller's injected `now`.
+ */
+async function rawSyncInFlight(db: Database, projectId: string): Promise<boolean> {
+  const since = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const job = await db.select({ id: jobs.id }).from(jobs).where(and(
+    eq(jobs.projectId, projectId),
+    eq(jobs.kind, "dropbox_sync"),
+    inArray(jobs.status, ["queued", "running"]),
+    gte(jobs.updatedAt, since),
+  )).get();
+  return Boolean(job);
+}
+
+async function resolveRawIdentity(
+  env: Env,
+  db: Database,
+  project: RawIdentityProject,
+  connectionId: string,
+  operations: { getMetadata: DropboxMetadataOperation; resolveRawFolderPath: RawFolderPathOperation },
+): Promise<RawIdentity | null> {
+  const storedPath = project.rawFolderPath;
+  const rawFolderPath = storedPath || await operations.resolveRawFolderPath(env, project.rawFolderLink, connectionId);
+  if (!rawFolderPath) return null;
+  const tonomoMetadata = await getExactMetadata(env, db, operations.getMetadata, rawFolderPath, connectionId);
+  if (isFolder(tonomoMetadata)) {
+    return {
+      rawFolderPath,
+      projectFolderName: deriveEditorProjectFolderName(tonomoMetadata.path_display ?? rawFolderPath),
+      tonomoFolderId: tonomoMetadata.id,
+      rawSource: "tonomo",
+      nameSource: "tonomo_path_display",
+    };
+  }
+
+  if (storedPath && project.rawFolderLink) {
+    let linkPath: string | null = null;
+    try {
+      linkPath = await operations.resolveRawFolderPath(env, project.rawFolderLink, connectionId);
+    } catch (error) {
+      // A deleted target or a link outside the studio account is a fact about the folder; anything
+      // else (auth, rate limit, outage) is an error and must not be mistaken for "gone".
+      if (!isDropboxPathNotFoundError(error) && !errorMessage(error).includes("Shared link is not owned by")) throw error;
+      console.log("Editor scaffold: RAW shared link did not resolve", { projectId: project.id, error: errorMessage(error) });
+    }
+    if (linkPath && dropboxPathKey(linkPath) !== dropboxPathKey(storedPath)) {
+      const linkMetadata = await getExactMetadata(env, db, operations.getMetadata, linkPath, connectionId);
+      if (isFolder(linkMetadata)) {
+        if (addressLeaf(linkPath) !== addressLeaf(storedPath)) {
+          // Same rule as the Tonomo processor: Editor and AutoHDR names derive from the address leaf.
+          console.log("Editor scaffold skipped: RAW folder found under a different address leaf; needs manual review", { projectId: project.id, storedPath, linkPath });
+          return null;
+        }
+        if (!pathEqualsOrIsBelow(linkPath, TONOMO_RAW_ROOT) || dropboxPathKey(linkPath) === dropboxPathKey(TONOMO_RAW_ROOT)) {
+          console.log("Editor scaffold skipped: RAW folder found outside the Tonomo RAW root", {
+            projectId: project.id,
+            reason: `RAW folder now lives at ${linkMetadata.path_display ?? linkPath}, outside ${TONOMO_RAW_ROOT}. This project was completed and delivered outside the Portal; mark it delivered or archived instead of chasing the folder.`,
+          });
+          return null;
+        }
+        const adopted = await commitRawFolderPathChange(env, {
+          projectId: project.id, previousPath: storedPath, previousLink: project.rawFolderLink,
+          path: linkPath, link: null, dropboxFolderId: linkMetadata.id, actor: "editor_scaffold",
+        });
+        if (!adopted) return null;
+        await followRawFolderPathChange(env, db, project.id, "editor_scaffold_raw_path_recovered");
+        // Stop here: a ready mapping hands RAW intake to the Editor Input root, so the recovered
+        // Tonomo folder must be scanned before any tree exists. The queued sync scans it, and the
+        // next reconcile (hourly recovery or the sync's own follow-up) finds the stored path and
+        // creates the tree from its path_display like any other project.
+        console.log("Editor scaffold deferred: RAW folder path recovered from the shared link; scanning it before creating the tree", { projectId: project.id, storedPath, linkPath });
+        return null;
+      }
+    }
+  }
+
+  const fallback = fallbackEditorProjectFolderName({
+    storedRawFolderPath: rawFolderPath,
+    formattedAddress: await latestTonomoFormattedAddress(env, project.orderId),
+    street: project.street,
+    suburb: project.suburb,
+  });
+  console.log("Editor scaffold: Tonomo RAW folder is missing; creating the Editor tree from the fallback name", { projectId: project.id, rawFolderPath, nameSource: fallback.source });
+  return { rawFolderPath, projectFolderName: fallback.name, rawSource: "missing", nameSource: fallback.source };
+}
+
 /**
  * Reconciles the Portal-owned Editor folder tree for one active Project.
  *
@@ -272,7 +394,10 @@ export async function reconcileEditorFolder(
     shootDate: projects.shootDate,
     rawFolderPath: projects.rawFolderPath,
     rawFolderLink: projects.rawFolderLink,
-  }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt))).get();
+    orderId: projects.orderId,
+    street: projects.street,
+    suburb: projects.suburb,
+  }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
   if (!project) return null;
 
   let mapping = await getEditorFolderMapping(db, projectId);
@@ -294,22 +419,21 @@ export async function reconcileEditorFolder(
     if (!photographer) return null;
     connectionId = await connectionOperation(db);
 
-    const rawFolderPath = project.rawFolderPath || await rawFolderPathOperation(env, project.rawFolderLink, connectionId);
-    if (!rawFolderPath) return null;
-    const tonomoMetadata = await getExactMetadata(env, db, getMetadataOperation, rawFolderPath, connectionId);
-    if (!isFolder(tonomoMetadata)) return null;
-    const projectFolderName = deriveEditorProjectFolderName(tonomoMetadata.path_display ?? rawFolderPath);
+    const identity = await resolveRawIdentity(env, db, project, connectionId, { getMetadata: getMetadataOperation, resolveRawFolderPath: rawFolderPathOperation });
+    if (!identity) return null;
     mapping = await reserveEditorFolderMapping(db, {
       projectId,
       connectionId,
       shootDate: project.shootDate,
-      projectFolderName,
-      tonomoRawFolderPath: rawFolderPath,
+      projectFolderName: identity.projectFolderName,
+      tonomoRawFolderPath: identity.rawFolderPath,
       photographerEvidence: {
         userId: photographer.userId,
         roleOnProject: "photographer",
         active: true,
-        tonomoFolderId: tonomoMetadata.id,
+        ...(identity.tonomoFolderId ? { tonomoFolderId: identity.tonomoFolderId } : {}),
+        rawSource: identity.rawSource,
+        nameSource: identity.nameSource,
       },
       now: now(),
     });
@@ -318,6 +442,13 @@ export async function reconcileEditorFolder(
   }
 
   if (!mapping) return null;
+  // A ready tree takes RAW intake away from the Tonomo folder, so never finish one while a RAW
+  // sync of that folder is queued or running (a Tonomo path change or link recovery just nudged
+  // one). The hourly recovery pass retries once the sync has settled.
+  if (await rawSyncInFlight(db, projectId)) {
+    console.log("Editor scaffold deferred: a RAW sync for the project is still in flight", { projectId, mappingId: mapping.id });
+    return mapping;
+  }
   const lease = await acquireEditorFolderProvisionLease(db, mapping.id, now(), dependencies.leaseMs);
   if (!lease) return (await getEditorFolderMapping(db, projectId)) ?? mapping;
   mapping = lease.mapping;
@@ -334,6 +465,7 @@ export async function reconcileEditorFolder(
         eq(projectMembers.roleOnProject, "photographer"),
         eq(user.active, true),
         isNull(projects.archivedAt),
+        ne(projects.stageKey, "delivered"),
       )).get();
     if (!stillProvisionable) return (await getEditorFolderMapping(db, projectId)) ?? mapping;
     const monthPath = mapping.rootPath.split("/").slice(0, -2).join("/");

@@ -2167,3 +2167,31 @@ fenced on the path this event read, with the audit row in the same D1 batch, plu
 writing it, fence the write on the value you read, and nudge every consumer that only wakes on
 Dropbox deltas.
 
+## A ready Editor mapping owns RAW intake, so a missing Tonomo folder is not a reason to skip the tree (2026-09-15)
+
+**Symptom:** 26 active projects were silently skipped by the scaffold because `get_metadata` on
+their stored Tonomo RAW path returned `path/not_found`; the reconcile job finished "done" with no
+mapping and no error. The first plan said "an Editor tree for a project with no RAW serves nobody".
+
+**Cause:** that reading missed `resolveRawSyncPlan` (`dropbox/sync.ts`): once a mapping is `ready`,
+RAW intake comes only from the Editor Input roots and the RAW monitor stops watching the Tonomo
+folder for that project. The Tonomo folder is identity and name source, not the working folder.
+
+**Fix:** `resolveRawIdentity` in `scaffold.ts` resolves the RAW shared link when the stored path
+is gone (Dropbox follows moves), adopts a folder found under the RAW root, reports one found
+elsewhere, and otherwise creates the tree from Tonomo's original-cased `formatted_address` (the
+stored path is `path_lower`, so its casing is gone). The mapping records `rawSource` and
+`nameSource` in `photographer_evidence_json`, which the candidate endpoint surfaces.
+
+The same ownership rule cuts the other way, which Sol's review caught: adopting the recovered
+path, queueing a RAW sync and creating the tree in one pass lets the tree go `ready` before the
+sync runs, and the sync then reads the Editor Input root instead of the folder it was queued for.
+So link recovery re-points the Project, queues the scan and returns without a mapping; the
+reconcile also refuses to provision while a `dropbox_sync` job for the project is queued or running.
+
+**Rule:** before deciding a tree is pointless, check which side owns intake after the mapping goes
+ready, and never let the tree go ready while a scan of the old side is still queued. Never derive
+a user-visible folder name from `path_lower`; find the original-cased source or use the Portal's
+own address. Tonomo webhook payloads are stored as posted, and Tonomo posts a one-element array
+as often as a bare object, so any SQL over `webhook_events.payload_json` unwraps `$[0]` first.
+
