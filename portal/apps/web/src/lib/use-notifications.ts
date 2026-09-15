@@ -54,7 +54,8 @@ type NotificationsResponse = Pick<
  * copy of the list and count. Without this channel a mutation on one leaves the other showing the
  * pre-mutation state until its next poll (25s for the Bell; never for the non-polling page). Each
  * optimistic mutation is published once and applied by every other instance through the same pure
- * reducer; the network call is still issued only by the originating instance.
+ * reducer; the network call is still issued only by the originating instance, which publishes a
+ * second `settled` event under the same key once that call finishes (success or failure).
  */
 type NotificationMutation =
   | { kind: "read"; id: string; readAt: string; wasUnread: boolean }
@@ -63,14 +64,17 @@ type NotificationMutation =
 
 type FeedState = { notifications: NotificationListItem[]; unreadCount: number };
 
+/** One fetch: the log position it started at and the keys of mutations whose write was unsettled then. */
+type RequestHandle = { since: number; pending: Set<number>; done: boolean };
+
 /**
  * Applies one mutation to a list and its count. `unreadCount` is the server's global count, so a
  * row this instance holds decides the decrement by its own `readAt` (the originating instance's
  * copy may be staler than a receiver that has polled since). For a row this instance does not hold:
  *
  * - `live` (the mutation is happening now): the originator's `wasUnread` is the only evidence.
- * - replay onto a response that was in flight when the mutation happened: whether the server had
- *   already applied it when it computed that count is unknowable, so the count is left alone. The
+ * - replay onto a response that may predate the mutation's write: whether the server had already
+ *   applied it when it computed that count is unknowable, so the count is left alone. The
  *   error is then at most an unread shown too many, which the next poll or reload corrects,
  *   rather than an unread hidden.
  */
@@ -89,9 +93,18 @@ function reduceMutation(state: FeedState, mutation: NotificationMutation, mode: 
 
 const mutationChannel = new EventTarget();
 const MUTATION_EVENT = "notification-mutation";
+const SETTLED_EVENT = "notification-mutation-settled";
+// Module-wide so a key names one mutation across every instance that applied it.
+let lastMutationKey = 0;
 
-function publishMutation(source: symbol, mutation: NotificationMutation) {
-  mutationChannel.dispatchEvent(new CustomEvent(MUTATION_EVENT, { detail: { source, mutation } }));
+type MutationDetail = { source: symbol; key: number; mutation: NotificationMutation };
+
+function publishMutation(detail: MutationDetail) {
+  mutationChannel.dispatchEvent(new CustomEvent(MUTATION_EVENT, { detail }));
+}
+
+function publishSettled(key: number) {
+  mutationChannel.dispatchEvent(new CustomEvent(SETTLED_EVENT, { detail: { key } }));
 }
 
 function normaliseRow(row: NotificationWireRow): NotificationListItem {
@@ -153,30 +166,45 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   const dismissedIdsRef = useRef<Set<string>>(new Set());
   // Identifies this instance's own broadcasts so it does not apply a mutation twice.
   const instanceRef = useRef(Symbol("notification-feed"));
-  // Every mutation this instance applies (its own or received), numbered, kept only while a request
-  // that started before it is still in flight. A response computed before a mutation reached the
-  // server would otherwise restore the pre-mutation rows and count when it lands.
-  const mutationLogRef = useRef<{ seq: number; mutation: NotificationMutation }[]>([]);
+  // Every mutation this instance applies (its own or received), in order. A response the server
+  // computed before a mutation's write committed would otherwise restore the pre-mutation rows and
+  // count when it lands. That covers two cases a request must replay: mutations applied while it
+  // was in flight (`seq > since`), and mutations applied before it started whose write had not
+  // settled yet (`pending`). Replay is safe when the server did commit first, because the reducer
+  // decides from the rows in the response. An entry is dropped once its write has settled and no
+  // request that started before it is still in flight.
+  const mutationLogRef = useRef<{ seq: number; key: number; mutation: NotificationMutation; settled: boolean }[]>([]);
   const mutationSeqRef = useRef(0);
-  const inFlightSinceRef = useRef<number[]>([]);
+  const inFlightRef = useRef<RequestHandle[]>([]);
 
-  function beginRequest(): number {
-    const since = mutationSeqRef.current;
-    inFlightSinceRef.current.push(since);
-    return since;
+  function pruneLog() {
+    const starts = inFlightRef.current.map((request) => request.since);
+    const oldest = starts.length ? Math.min(...starts) : mutationSeqRef.current;
+    mutationLogRef.current = mutationLogRef.current.filter((entry) => !entry.settled || entry.seq > oldest);
   }
 
-  // Settles a request exactly once: the `try` path settles before any post-response work, so a
-  // throw after that must not reach the `catch` path's call and remove another request's start.
-  function endRequest(since: number, settled: { done: boolean }): NotificationMutation[] {
-    if (settled.done) return [];
-    settled.done = true;
-    const late = mutationLogRef.current.filter((entry) => entry.seq > since).map((entry) => entry.mutation);
-    const starts = inFlightSinceRef.current;
-    starts.splice(starts.indexOf(since), 1);
-    const oldest = starts.length ? Math.min(...starts) : mutationSeqRef.current;
-    mutationLogRef.current = mutationLogRef.current.filter((entry) => entry.seq > oldest);
-    return late;
+  function beginRequest(): RequestHandle {
+    const request = { since: mutationSeqRef.current, pending: new Set(mutationLogRef.current.filter((entry) => !entry.settled).map((entry) => entry.key)), done: false };
+    inFlightRef.current.push(request);
+    return request;
+  }
+
+  // Ends a request exactly once: the `try` path ends it before any post-response work, so a throw
+  // after that must not reach the `catch` path's call and end it again.
+  function endRequest(request: RequestHandle): NotificationMutation[] {
+    if (request.done) return [];
+    request.done = true;
+    const replay = mutationLogRef.current.filter((entry) => entry.seq > request.since || request.pending.has(entry.key)).map((entry) => entry.mutation);
+    inFlightRef.current = inFlightRef.current.filter((other) => other !== request);
+    pruneLog();
+    return replay;
+  }
+
+  function settleMutation(key: number) {
+    const entry = mutationLogRef.current.find((candidate) => candidate.key === key);
+    if (!entry) return;
+    entry.settled = true;
+    pruneLog();
   }
 
   useEffect(() => {
@@ -186,35 +214,39 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
 
   useEffect(() => {
     const onMutation = (event: Event) => {
-      const { source, mutation } = (event as CustomEvent<{ source: symbol; mutation: NotificationMutation }>).detail;
+      const { source, key, mutation } = (event as CustomEvent<MutationDetail>).detail;
       if (source === instanceRef.current) return;
-      applyMutation(mutation);
+      applyMutation(key, mutation);
     };
+    const onSettled = (event: Event) => settleMutation((event as CustomEvent<{ key: number }>).detail.key);
     mutationChannel.addEventListener(MUTATION_EVENT, onMutation);
-    return () => mutationChannel.removeEventListener(MUTATION_EVENT, onMutation);
+    mutationChannel.addEventListener(SETTLED_EVENT, onSettled);
+    return () => {
+      mutationChannel.removeEventListener(MUTATION_EVENT, onMutation);
+      mutationChannel.removeEventListener(SETTLED_EVENT, onSettled);
+    };
   }, []);
 
   useEffect(() => {
     let active = true;
     const loadNotifications = async () => {
-      const since = beginRequest();
-      const settled = { done: false };
+      const request = beginRequest();
       try {
         // No `cursor` param on the first page — a Bell test asserts this exact URL.
         const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}`);
-        const late = endRequest(since, settled);
+        const replay = endRequest(request);
         if (!active) return;
         // Replay before the dismissed-id filter: a dismissed row still present in the response is the
         // evidence that the server had not deleted it yet, so its unread state must still decrement.
         const fetched: FeedState = { notifications: response.notifications.map(normaliseRow), unreadCount: response.unreadCount };
-        const replayed = late.reduce((state, mutation) => reduceMutation(state, mutation, "replay"), fetched);
+        const replayed = replay.reduce((state, mutation) => reduceMutation(state, mutation, "replay"), fetched);
         // An earlier dismiss whose delete the server has not applied yet must not resurrect the row either.
         const dismissed = dismissedIdsRef.current;
         setFeed({ ...replayed, notifications: replayed.notifications.filter((row) => !dismissed.has(row.id)) });
         setNow(Date.now());
         if (paged) setNextCursor(response.nextCursor);
       } catch {
-        endRequest(since, settled);
+        endRequest(request);
         /* The bell/page are best effort and should not disrupt the app shell. */
       } finally {
         if (active) setLoading(false);
@@ -236,32 +268,36 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   }
 
   // Only state setters and refs are touched, so the listener registered once on mount stays correct.
-  function applyMutation(mutation: NotificationMutation) {
+  function applyMutation(key: number, mutation: NotificationMutation) {
     if (mutation.kind === "dismiss") dismissedIdsRef.current.add(mutation.id);
-    if (inFlightSinceRef.current.length) mutationLogRef.current.push({ seq: ++mutationSeqRef.current, mutation });
-    else mutationSeqRef.current += 1;
+    mutationLogRef.current.push({ seq: ++mutationSeqRef.current, key, mutation, settled: false });
     setFeed((current) => reduceMutation(current, mutation, "live"));
   }
 
-  function mutate(mutation: NotificationMutation) {
-    applyMutation(mutation);
-    publishMutation(instanceRef.current, mutation);
+  // Applies and publishes the mutation, runs its write, then marks it settled everywhere. A failed
+  // write settles too: the next poll or reload restores server state.
+  async function mutate(mutation: NotificationMutation, write: () => Promise<unknown>) {
+    const key = ++lastMutationKey;
+    applyMutation(key, mutation);
+    publishMutation({ source: instanceRef.current, key, mutation });
+    try { await write(); } catch { /* See above. */ }
+    settleMutation(key);
+    publishSettled(key);
   }
 
   async function markRead(notification: NotificationListItem) {
     if (notification.readAt) return;
-    mutate({ kind: "read", id: notification.id, readAt: new Date().toISOString(), wasUnread: true });
-    try { await apiPost("/api/notifications/" + encodeURIComponent(notification.id) + "/read", {}); } catch { /* The next poll/reload restores server state. */ }
+    await mutate({ kind: "read", id: notification.id, readAt: new Date().toISOString(), wasUnread: true },
+      () => apiPost("/api/notifications/" + encodeURIComponent(notification.id) + "/read", {}));
   }
 
   async function markAllRead() {
-    mutate({ kind: "read-all", readAt: new Date().toISOString() });
-    try { await apiPost("/api/notifications/read-all", {}); } catch { /* The next poll/reload restores server state. */ }
+    await mutate({ kind: "read-all", readAt: new Date().toISOString() }, () => apiPost("/api/notifications/read-all", {}));
   }
 
   async function dismiss(notification: NotificationListItem) {
-    mutate({ kind: "dismiss", id: notification.id, wasUnread: !notification.readAt });
-    try { await apiDelete("/api/notifications/" + encodeURIComponent(notification.id)); } catch { /* The next poll/reload restores server state. */ }
+    await mutate({ kind: "dismiss", id: notification.id, wasUnread: !notification.readAt },
+      () => apiDelete("/api/notifications/" + encodeURIComponent(notification.id)));
   }
 
   async function loadMore() {
@@ -269,21 +305,20 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
     loadMoreInFlightRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
-    const since = beginRequest();
-    const settled = { done: false };
+    const request = beginRequest();
     try {
       const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}&cursor=${encodeURIComponent(nextCursor)}`);
-      const late = endRequest(since, settled);
+      const replay = endRequest(request);
       if (!mountedRef.current) return;
-      // Replay onto the page's rows alone: a mark-all-read that happened in flight must not leave the
+      // Replay onto the page's rows alone: a mark-all-read the server may not have committed must not leave the
       // appended rows unread. The count stays the one already on screen (see below).
-      const page = late.reduce((state, mutation) => reduceMutation(state, mutation, "replay"), { notifications: response.notifications.map(normaliseRow), unreadCount: 0 }).notifications;
+      const page = replay.reduce((state, mutation) => reduceMutation(state, mutation, "replay"), { notifications: response.notifications.map(normaliseRow), unreadCount: 0 }).notifications;
       setFeed((current) => ({ ...current, notifications: mergeNotificationPages(current.notifications, page, dismissedIdsRef.current) }));
       // `unreadCount` is deliberately NOT refreshed from a further page: an optimistic mark-read or
       // dismiss in flight would be undone by the count the server computed before it landed.
       setNextCursor(response.nextCursor);
     } catch {
-      endRequest(since, settled);
+      endRequest(request);
       // The cursor is untouched — a retry targets the same page rather than skipping ahead.
       if (mountedRef.current) setLoadMoreError(true);
     } finally {

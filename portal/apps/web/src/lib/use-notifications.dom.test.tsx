@@ -351,4 +351,46 @@ describe("useNotificationFeed", () => {
     expect(host.querySelector('[data-testid="id-n-1"]')).toBeNull();
     expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("1");
   });
+
+  it("replays a markAllRead whose write is still pending onto a loadMore that starts after it", async () => {
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 2, "cursor-1"));
+    await render(<Harness poll={null} paged />);
+    let resolveWrite!: (value: unknown) => void;
+    apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveWrite = resolve; }));
+    await click(host.querySelector('[data-testid="mark-all-read"]')!);
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-2" })], 2, null));
+    await click(host.querySelector('[data-testid="load-more"]')!);
+    expect(host.querySelector('[data-testid="read-n-2"]')?.getAttribute("data-read")).toBe("true");
+    expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
+    await act(async () => { resolveWrite({ ok: true }); await Promise.resolve(); });
+  });
+
+  it("does not replay a settled mutation onto a request that starts after the write finished", async () => {
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+    await render(<Harness poll={null} paged />);
+    await click(host.querySelector('[data-testid="mark-all-read"]')!);
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-2" })], 1, null));
+    await click(host.querySelector('[data-testid="load-more"]')!);
+    expect(host.querySelector('[data-testid="read-n-2"]')?.getAttribute("data-read")).toBe("false");
+  });
+
+  it("replays onto both of two overlapping polls when they settle out of order", async () => {
+    vi.useFakeTimers();
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" }), row({ id: "n-2" })], 2));
+    await render(<Harness poll={1_000} />);
+    const resolvers: ((value: unknown) => void)[] = [];
+    apiGetMock.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    await click(host.querySelector('[data-testid="dismiss-n-1"]')!);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(resolvers).toHaveLength(2);
+    const [resolveFirstPoll, resolveSecondPoll] = resolvers as [(value: unknown) => void, (value: unknown) => void];
+    // The second poll started after the delete settled, so the server's response already omits the row.
+    await act(async () => { resolveSecondPoll(response([row({ id: "n-2" })], 1)); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("1");
+    // The first poll was in flight during the dismiss and settles last with the pre-delete state.
+    await act(async () => { resolveFirstPoll(response([row({ id: "n-1" }), row({ id: "n-2" })], 2)); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="id-n-1"]')).toBeNull();
+    expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("1");
+  });
 });
