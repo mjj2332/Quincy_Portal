@@ -5,8 +5,7 @@ import { LazyImage } from "../LazyImage";
 import { formatNotificationTimestamp, type NotificationBucket, type NotificationListItem } from "../../lib/notification-list";
 import { Eyebrow } from "./Eyebrow";
 import { cn } from "../../lib/utils";
-import { Avatar, AvatarFallback } from "../reui/avatar";
-import { initials } from "../../lib/initials";
+import { InitialsAvatar } from "./InitialsAvatar";
 
 /**
  * Extracted from `NotificationBell.tsx` (#114) — the day-bucketed list, its row grid, thumbnails
@@ -113,16 +112,7 @@ export function NotificationRow({ notification, now, showThumbnail, onActivate, 
           would only repeat it. */}
       {actor ? (
         <span data-notification-leading data-notification-actor aria-hidden="true" className="size-[28px]">
-          <Avatar className="size-[28px]">
-            <AvatarFallback
-              className={cn(
-                "bg-[var(--ink-900)] text-[color:var(--paper-050)]",
-                "text-[length:12px] leading-[1.2] font-[family-name:var(--font-sans)] font-[var(--weight-regular)] tracking-[0.02em]",
-              )}
-            >
-              {initials(actor.name)}
-            </AvatarFallback>
-          </Avatar>
+          <InitialsAvatar name={actor.name} className="size-[28px]" />
         </span>
       ) : (
         <span data-notification-leading aria-hidden="true" className="size-[28px]" />

@@ -25,26 +25,33 @@ records where that copy is assembled, and why it is not the write path.
 2. **Enrichment resolves at read, from the row's own `source_key`.** `comment_added` joins the
    annotation (author, Asset, note); a Project mention joins the comment; a Notice Board mention joins
    the post; subtasks join `project_subtasks`. Where no source row names the actor —
-   `assigned_to_project`, the two activity types, and external `subtask_assigned` — the resolver walks
+   `assigned_to_project`, the two activity types, and `subtask_assigned` — the resolver walks
    `notification_delivery_ledger → notification_outbox.actor_id`. Denormalising at emit was declined:
    it would freeze a name and a filename that later change, need a backfill for every existing row, and
    put presentation copy inside an outbox whose payloads are an authorization contract
    (`external-notification-visibility.ts` matches on them).
 3. **Enrichment is per field and degrades per type.** `NOTIFICATION_ENRICHMENT` in
    `packages/shared/src/notification-enrichment.ts` declares every one of the thirteen types, and a
-   test enumerates them. Seven are system events that gain nothing, and that is the design: their
-   leading slot stays reserved and empty, their titles stay as they are. A resolvable actor still fills
-   the avatar when the title cannot be composed.
+   test enumerates them, and a route test holds every returned row against the declaration. Seven
+   have no actor and that is the design: their leading slot stays reserved and empty and their titles
+   stay as they are (`subtask_due_today` still gains the subtask's title as its subject and body; the
+   other six change nothing). A resolvable actor still fills the avatar when the title cannot be
+   composed.
 4. **The stored copy is the durable record, not a cache.** A deleted annotation, comment, subtask or
-   membership, or a source that fails a visibility gate, leaves the map without an entry and the row
-   goes out with its stored `title`/`body` and three `null`s. One fallback path, whether the reason is
-   "gone" or "not permitted".
-5. **Every returned `assetId` is one the media route will serve.** The resolver applies the same gate
-   as `/media/asset/:id/thumb`: `isUserVisibleAsset`, `superseded_at IS NULL`, and RAW-only for
-   photographers. The web never has to second-guess a thumbnail request.
-6. **The page is enriched in at most five batched queries**, each chunked at 80 ids like
-   `lib/project-covers.ts`, each skipped when its type group is empty. A test asserts the prepared
-   statement count is the same for a one-row and a thirty-row page.
+   membership, a source whose provenance does not add up (an annotated Asset in another project, a
+   mention addressed to someone else), or a source that fails a visibility gate, degrades to the stored
+   `title`/`body`. Each part degrades on its own: a comment whose Asset a photographer may not see
+   keeps its actor and loses the filename, the note and the thumbnail together. One fallback path,
+   whether the reason is "gone" or "not permitted".
+5. **Every enriched fact is gated by the route that already exposes it.** A returned `assetId` is one
+   `/media/asset/:id/thumb` will serve (`isUserVisibleAsset`, `superseded_at IS NULL`, RAW-only for
+   photographers). Comment text and subtask titles need collaboration access — an admin, or an explicit
+   `project_members` row — because the comment and subtask routes answer 403 to a non-member editor
+   even though `viewAllProjects` shows them the project. Notice Board text needs the Notice Board
+   capability. The web never has to second-guess any of it.
+6. **The page is enriched in at most six batched queries** (five source lookups and one membership
+   check), each chunked at 80 ids like `lib/project-covers.ts`, each skipped when its group is empty.
+   A test asserts the prepared statement count is the same for a one-row and a thirty-row page.
 7. **Coalescing is untouched.** Leading-edge suppression stays; a burst produces one notification and
    there is no aggregated "3 new comments" row.
 

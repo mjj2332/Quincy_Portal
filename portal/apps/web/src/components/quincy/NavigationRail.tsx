@@ -26,7 +26,7 @@ import {
   SidebarMenuSubItem,
   SidebarTrigger,
 } from "@/components/reui/sidebar";
-import { Avatar, AvatarFallback } from "@/components/reui/avatar";
+import { InitialsAvatar } from "./InitialsAvatar";
 import { Separator } from "@/components/reui/separator";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
@@ -34,7 +34,6 @@ import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
 import { ShellSearch } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
-import { initials } from "../../lib/initials";
 import { cn } from "../../lib/utils";
 import type { RailMode } from "../../lib/shell-rail";
 import type {
@@ -423,16 +422,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
                     className={cn("flex w-full items-center", isCollapsed ? "justify-center" : "gap-[var(--space-3)]")}
                     data-testid="navigation-rail-identity"
                   >
-                    <Avatar aria-hidden="true">
-                      <AvatarFallback
-                        className={cn(
-                          "bg-[var(--ink-900)] text-[color:var(--paper-050)]",
-                          "text-[length:12px] leading-[1.2] font-[family-name:var(--font-sans)] font-[var(--weight-regular)] tracking-[0.02em]",
-                        )}
-                      >
-                        {initials(displayName)}
-                      </AvatarFallback>
-                    </Avatar>
+                    <InitialsAvatar name={displayName} />
                     {/* Collapsed shows the avatar only — there is no room at 48px for the
                         name/email block or the chevron affordance below. */}
                     {!isCollapsed && (

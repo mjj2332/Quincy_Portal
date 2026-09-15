@@ -6,6 +6,7 @@ import {
   NOTIFICATION_ENRICHMENT,
   parseNotificationSource,
   staffNotificationListItemSchema,
+  staffNotificationListResponseSchema,
 } from "../src/notification-enrichment";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -148,5 +149,13 @@ describe("staffNotificationListItemSchema", () => {
   it("rejects an unknown field on the nested actor and subject objects", () => {
     expect(() => staffNotificationListItemSchema.parse({ ...base, actor: { id: OTHER_ID, name: "Ada", initials: "A" } })).toThrow();
     expect(() => staffNotificationListItemSchema.parse({ ...base, subject: { kind: "asset", label: "frame.jpg", extra: 1 } })).toThrow();
+  });
+
+  it("rejects an unknown field on the response wrapper", () => {
+    expect(() => staffNotificationListResponseSchema.parse({
+      notifications: [base],
+      unreadCount: 0,
+      extra: "nope",
+    })).toThrow();
   });
 });

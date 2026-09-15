@@ -59,7 +59,7 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
       return {
         id: row.id, projectId: row.projectId, type: row.type,
         title: enriched?.title ?? row.title,
-        body: enriched && "body" in enriched ? enriched.body : row.body,
+        body: enriched?.body ?? row.body,
         readAt: row.readAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(),
         projectStreet: projectContext?.street ?? null, coverAssetId: projectContext?.coverAssetId ?? null,
         actor: enriched?.actor ?? null, subject: enriched?.subject ?? null, assetId: enriched?.assetId ?? null,

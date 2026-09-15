@@ -160,13 +160,13 @@ export type NotificationBellProps = {
 // #116 — the wire shape a `NotificationsResponse` row arrives in. `actor`/`subject`/`assetId` are
 // staff-only enrichment: an external payload (the same endpoint's other branch) never carries
 // them, so they are typed optional here and normalised to `null` below rather than assumed present.
-type NotificationRow = Omit<NotificationListItem, "actor" | "subject" | "assetId"> & {
+type NotificationWireRow = Omit<NotificationListItem, "actor" | "subject" | "assetId"> & {
   actor?: NotificationListItem["actor"];
   subject?: NotificationListItem["subject"];
   assetId?: NotificationListItem["assetId"];
 };
 
-type NotificationsResponse = { notifications: NotificationRow[]; unreadCount: number };
+type NotificationsResponse = { notifications: NotificationWireRow[]; unreadCount: number };
 
 export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = false, placement, anchorRef }: NotificationBellProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);

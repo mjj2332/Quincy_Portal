@@ -6,10 +6,16 @@ const isoString = z.string().min(1);
 
 export const notificationActorSchema = z.object({ id: uuid, name: z.string().min(1) }).strict();
 
+export const NOTIFICATION_SUBJECT_KINDS = ["asset", "subtask", "project_comment", "notice_board_post"] as const;
+export type NotificationSubjectKind = (typeof NOTIFICATION_SUBJECT_KINDS)[number];
+
 export const notificationSubjectSchema = z.object({
-  kind: z.enum(["asset", "subtask", "project_comment", "notice_board_post"]),
+  kind: z.enum(NOTIFICATION_SUBJECT_KINDS),
   label: z.string().min(1),
 }).strict();
+export type NotificationActor = z.infer<typeof notificationActorSchema>;
+export type NotificationSubject = z.infer<typeof notificationSubjectSchema>;
+export type StaffNotificationListItem = z.infer<typeof staffNotificationListItemSchema>;
 
 // initials are computed in the web via the existing apps/web/src/lib/initials.ts — not carried
 // in the payload.
@@ -96,30 +102,60 @@ export function parseNotificationSource(type: string, projectId: string | null, 
 }
 
 /**
- * Declares, per type, which read-time facts the resolver may fill in. This is a documentation +
- * enumeration table (see notification-enrichment.test.ts's enumeration test): the resolver's
- * actual per-type behaviour is implemented directly in workers/app/src/lib/notification-enrichment.ts,
- * including the runtime project-comment vs notice-board branch of `mentioned` that a single
- * declared `subject` kind can't represent.
+ * The enriched form every notification type may take — the upper bound the resolver in
+ * workers/app/src/lib/notification-enrichment.ts works within, and what its conformance test
+ * checks each returned row against:
+ * - `actor`: where an actor comes from — the source row itself ("source"), the delivery
+ *   ledger's outbox row ("ledger"), or nowhere ("none", a system event).
+ * - `subject`: the subject kinds a row of this type may carry (empty = never).
+ * - `asset`: whether the row may name a specific Asset of its own.
+ * - `title`: "composed" means the title is rewritten when the actor (and Asset, for a comment)
+ *   resolves, and stays stored otherwise; "unchanged" is never rewritten.
+ * - `body`: "subject" means the body becomes the subject's own text when it resolves.
+ * Every part degrades independently to the stored copy; nothing here promises a part resolves.
  */
-export const NOTIFICATION_ENRICHMENT: Record<NotificationType, {
+export type NotificationEnrichmentDeclaration = {
   actor: "none" | "source" | "ledger";
-  subject: "none" | "asset" | "subtask" | "project_comment" | "notice_board_post";
+  subject: readonly NotificationSubjectKind[];
   asset: boolean;
   title: "unchanged" | "composed";
-  body: "unchanged" | "subject" | "composed";
-}> = {
-  comment_added: { actor: "source", subject: "asset", asset: true, title: "composed", body: "subject" },
-  mentioned: { actor: "source", subject: "project_comment", asset: false, title: "composed", body: "subject" },
-  subtask_assigned: { actor: "ledger", subject: "subtask", asset: false, title: "composed", body: "subject" },
-  subtask_due_today: { actor: "none", subject: "subtask", asset: false, title: "unchanged", body: "subject" },
-  assigned_to_project: { actor: "ledger", subject: "none", asset: false, title: "composed", body: "unchanged" },
-  project_activity: { actor: "ledger", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  project_collaboration_activity: { actor: "ledger", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  raw_ready: { actor: "none", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  edited_landed: { actor: "none", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  sent_to_editing: { actor: "none", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  autohdr_stalled: { actor: "none", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  delivered: { actor: "none", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
-  project_deadline_reminder: { actor: "none", subject: "none", asset: false, title: "unchanged", body: "unchanged" },
+  body: "unchanged" | "subject";
 };
+const SYSTEM: NotificationEnrichmentDeclaration = { actor: "none", subject: [], asset: false, title: "unchanged", body: "unchanged" };
+export const NOTIFICATION_ENRICHMENT: Record<NotificationType, NotificationEnrichmentDeclaration> = {
+  comment_added: { actor: "source", subject: ["asset"], asset: true, title: "composed", body: "subject" },
+  mentioned: { actor: "source", subject: ["project_comment", "notice_board_post"], asset: false, title: "composed", body: "subject" },
+  // Only external recipients have an outbox row for this type today, so for the staff branch the
+  // actor never resolves and the title stays stored — see ADR 0007's consequences.
+  subtask_assigned: { actor: "ledger", subject: ["subtask"], asset: false, title: "composed", body: "subject" },
+  subtask_due_today: { actor: "none", subject: ["subtask"], asset: false, title: "unchanged", body: "subject" },
+  assigned_to_project: { actor: "ledger", subject: [], asset: false, title: "composed", body: "unchanged" },
+  // The stored body already leads with the actor's name (renderProjectActivityNotification).
+  project_activity: { actor: "ledger", subject: [], asset: false, title: "unchanged", body: "unchanged" },
+  project_collaboration_activity: { actor: "ledger", subject: [], asset: false, title: "unchanged", body: "unchanged" },
+  raw_ready: SYSTEM,
+  edited_landed: SYSTEM,
+  sent_to_editing: SYSTEM,
+  autohdr_stalled: SYSTEM,
+  delivered: SYSTEM,
+  project_deadline_reminder: SYSTEM,
+};
+
+/**
+ * Whether one enriched row stays inside its type's declaration. Pure, so the worker's route test
+ * can hold every returned row against the table without knowing how the resolver got there.
+ */
+export function conformsToNotificationEnrichment(
+  type: string,
+  row: { title: string; body: string | null; actor: unknown; subject: NotificationSubject | null; assetId: string | null },
+  stored: { title: string; body: string | null },
+): boolean {
+  const declared = (NOTIFICATION_ENRICHMENT as Record<string, NotificationEnrichmentDeclaration | undefined>)[type];
+  if (!declared) return row.actor === null && row.subject === null && row.assetId === null && row.title === stored.title && row.body === stored.body;
+  if (declared.actor === "none" && row.actor !== null) return false;
+  if (row.subject !== null && !declared.subject.includes(row.subject.kind)) return false;
+  if (!declared.asset && row.assetId !== null) return false;
+  if (declared.title === "unchanged" && row.title !== stored.title) return false;
+  if (declared.body === "unchanged" && row.body !== stored.body) return false;
+  return true;
+}
