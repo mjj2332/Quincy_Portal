@@ -2144,3 +2144,26 @@ cookie, which is exactly what the browser does.
 mutating requests, and a dry run that only issues GETs does not prove the live path is authorised.
 Copy the `api()` helper from the September script, not the July one.
 
+## Tonomo's RAW folder path is not stable, and the Portal froze its first copy (2026-09-15)
+
+**Symptom:** 26 active projects reported `path/not_found` for their stored `raw_folder_path` on the
+day Editor auto-creation went live. For 12 of them Tonomo's later webhooks carried a different
+`rawFolderPath`; the Portal never applied it.
+
+**Cause:** Tonomo's path encodes the assigned photographer and the shoot date
+(`/tonomo/raw files/<photographer>/<dd-mm-yyyy>/<address>`), so it changes on reassignment or
+reschedule. `updateProject` in `tonomo/process.ts` only null-filled `rawFolderPath` (and still
+freezes `shootDate` the same way). Tonomo also sometimes recomputes the string without moving the
+folder (Rosemont: folder and 67 assets at the stored path, Tonomo reporting another), so blindly
+accepting the newer path would have broken a working project.
+
+**Fix:** a differing incoming path is adopted only after `get_metadata` confirms it is a folder,
+never when an Editor mapping is `ready` (RAW intake has moved to the Editor tree), and never when
+the address leaf differs (Editor and AutoHDR names derive from it). The write is a guarded UPDATE
+fenced on the path this event read, with the audit row in the same D1 batch, plus an explicit
+`dropbox_sync` job (a D1-only edit produces no Dropbox delta) and an AutoHDR re-scaffold.
+
+**Rule:** a third party's path string is a claim, not a fact. Verify it against Dropbox before
+writing it, fence the write on the value you read, and nudge every consumer that only wakes on
+Dropbox deltas.
+

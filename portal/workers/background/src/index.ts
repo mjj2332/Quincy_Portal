@@ -9,7 +9,7 @@ import { TonomoProcessorDO } from "./do/tonomo-processor";
 import type { Env } from "./env";
 import { dbFor } from "./lib/db";
 import { createJob, setJobStatus } from "./lib/jobs";
-import type { IngestMessage } from "./messages";
+import type { DropboxSyncMessage, IngestMessage } from "./messages";
 import { generateRenditions } from "./renditions";
 import { publishStatusAfterWorkflowCreateFailure } from "./manual-edited-renditions";
 import { deleteBatch, deleteBatchCheck, isDropboxPathNotFound, type DropboxDeleteBatchCheckResult, type DropboxDeleteBatchResult } from "./dropbox/client";
@@ -50,7 +50,6 @@ import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/bo
 
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
 
-type DropboxSyncMessage = Extract<IngestMessage, { type: "dropbox_sync" }>;
 const INGEST_QUEUE_MAX_ATTEMPTS = 4;
 export type RenditionBackfillInput = { dryRun?: boolean; cursor?: string; limit?: number; confirmProduction?: boolean };
 export type RenditionBackfillResult = { scanned: number; wouldEnqueue: number; enqueued: number; skipped: number; nextCursor: string | null; dryRun: boolean };

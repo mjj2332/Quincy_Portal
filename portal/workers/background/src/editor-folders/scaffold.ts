@@ -7,7 +7,7 @@ import {
   createFolder,
   createFolderStrict,
   getMetadata,
-  isDropboxPathNotFound,
+  isDropboxPathNotFoundError,
   recordDropboxSuccess,
 } from "../dropbox/client";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
@@ -40,7 +40,7 @@ import {
   type EditorFolderSubtree,
 } from "./mapping";
 
-type DropboxMetadataOperation = (
+export type DropboxMetadataOperation = (
   env: Env,
   db: Database,
   path: string,
@@ -183,11 +183,7 @@ async function getExactMetadata(
   try {
     return await operation(env, db, path, connectionId);
   } catch (error) {
-    if (isDropboxPathNotFound(error)) return undefined;
-    // Error.message is non-enumerable; the JSON union walker cannot see it.
-    for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
-      if (isDropboxPathNotFound(cause.message)) return undefined;
-    }
+    if (isDropboxPathNotFoundError(error)) return undefined;
     throw error;
   }
 }
