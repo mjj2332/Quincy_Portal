@@ -70,6 +70,12 @@ export type StaffNavigation = {
   groups: readonly StaffNavigationGroup[];
   activeSectionId: StaffNavigationSectionId;
   /**
+   * The account menu's "Notification preferences" item is current on its own leaf only (#115):
+   * `activeSectionId` folds the list at `/settings/notifications` and the preferences leaf to
+   * one coarse section, which is right for the shell and wrong for `aria-current` on the item.
+   */
+  preferencesActive: boolean;
+  /**
    * The item whose children are showing, or `null`. Opens on a Dashboard route and closes
    * elsewhere — no toggle and no persistence, which is what guarantees there is no state in which
    * an active child hides inside a closed group.
@@ -89,7 +95,11 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
     case "project": return "project";
     case "edit-project": return "edit-project";
     case "admin": return "admin";
+    // Both notification kinds fold to the same coarse section (#115) — the list at
+    // `/settings/notifications` and its preferences leaf are one screen identity to the shell,
+    // same as every Dashboard view folding to "dashboard".
     case "notifications": return "notifications";
+    case "notification-preferences": return "notifications";
     default: return "not-found";
   }
 }
@@ -164,6 +174,7 @@ export function buildStaffNavigation(
   return {
     groups: [{ id: "primary", label: "Primary navigation", items }],
     activeSectionId,
+    preferencesActive: route.kind === "notification-preferences",
     expandedItemId: activeSectionId === "dashboard" ? "dashboard" : null,
   };
 }

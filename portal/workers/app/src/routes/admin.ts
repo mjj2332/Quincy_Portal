@@ -65,11 +65,11 @@ type NotificationDeliveryApiRow = {
 
 type NotificationDeliveryCursor = { updatedAt: number; id: string };
 
-function encodeNotificationCursor(row: { updatedAt: number; outboxId: string }): string {
+function encodeDeliveryLedgerCursor(row: { updatedAt: number; outboxId: string }): string {
   return btoa(JSON.stringify({ updatedAt: row.updatedAt, id: row.outboxId }));
 }
 
-function decodeNotificationCursor(value: string | undefined): NotificationDeliveryCursor | null {
+function decodeDeliveryLedgerCursor(value: string | undefined): NotificationDeliveryCursor | null {
   if (!value) return null;
   try {
     const parsed = JSON.parse(atob(value)) as Record<string, unknown>;
@@ -167,7 +167,7 @@ adminRoutes.get("/admin/notification-deliveries", terminalRoute("/admin/notifica
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const parsed = notificationDeliveryQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: "Invalid query", details: parsed.error.flatten() }, 400);
-  const cursor = decodeNotificationCursor(parsed.data.cursor);
+  const cursor = decodeDeliveryLedgerCursor(parsed.data.cursor);
   if (parsed.data.cursor && !cursor) return c.json({ error: "Invalid cursor" }, 400);
   const now = Date.now();
   const clause = notificationViewSql(parsed.data.view);
@@ -195,7 +195,7 @@ adminRoutes.get("/admin/notification-deliveries", terminalRoute("/admin/notifica
   return c.json({
     view: parsed.data.view,
     items,
-    nextCursor: last && rows.results.length === parsed.data.limit ? encodeNotificationCursor({ updatedAt: last.updatedAt, outboxId: last.outboxId }) : null,
+    nextCursor: last && rows.results.length === parsed.data.limit ? encodeDeliveryLedgerCursor({ updatedAt: last.updatedAt, outboxId: last.outboxId }) : null,
     counts: await notificationDeliveryCounts(c, now),
   });
 }));

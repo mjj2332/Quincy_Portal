@@ -39,6 +39,7 @@ export const staffNotificationListItemSchema = z.object({
 export const staffNotificationListResponseSchema = z.object({
   notifications: z.array(staffNotificationListItemSchema),
   unreadCount: z.number().int().nonnegative(),
+  nextCursor: z.string().max(512).nullable(),
 }).strict();
 
 /** Server clamp for enriched bodies: comment/annotation/post text can run to ~10k chars. */

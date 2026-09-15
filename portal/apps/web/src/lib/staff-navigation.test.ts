@@ -120,6 +120,7 @@ describe("the staff navigation model", () => {
       ["admin", { kind: "admin" } as StaffRoute],
       ["a project", { kind: "project", projectId } as StaffRoute],
       ["notifications", { kind: "notifications" } as StaffRoute],
+      ["notification-preferences", { kind: "notification-preferences" } as StaffRoute],
       ["not-found", { kind: "not-found" } as StaffRoute],
     ])("closes on %s", (_label, route) => {
       expect(buildStaffNavigation(route, "kanban", all).expandedItemId).toBeNull();
@@ -149,6 +150,7 @@ describe("the staff navigation model", () => {
       ["edit-project", { kind: "edit-project", projectId } as StaffRoute, "edit-project"],
       ["admin", { kind: "admin" } as StaffRoute, "admin"],
       ["notifications", { kind: "notifications" } as StaffRoute, "notifications"],
+      ["notification-preferences", { kind: "notification-preferences" } as StaffRoute, "notifications"],
       ["not-found", { kind: "not-found" } as StaffRoute, "not-found"],
     ])("folds %s to %s", (_label, route, expected) => {
       expect(buildStaffNavigation(route, "kanban", all).activeSectionId).toBe(expected);

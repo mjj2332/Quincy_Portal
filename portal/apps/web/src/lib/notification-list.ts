@@ -157,3 +157,37 @@ export function dismissFocusTarget<T extends { id: string }>(
   if (index < 0) return null;
   return visible[index + 1]?.id ?? visible[index - 1]?.id ?? null;
 }
+
+/**
+ * Appends a `loadMore` page onto the notifications already held — #115's paged mode. Dropping
+ * `dismissedIds` first means a row the user already dismissed cannot be resurrected by a page that
+ * still carries a stale copy of it (the server's own delete is best-effort/optimistic on this
+ * side, same as `dismiss` elsewhere in this file); the id-keyed merge then keeps EXISTING's own
+ * copy on a collision (its `readAt` may already carry an optimistic mark-read the incoming page
+ * would otherwise clobber) rather than the incoming one. The result is re-sorted by createdAt DESC
+ * then id DESC — the same keyset order the server's own cursor walks — so `groupNotifications`
+ * over the union produces exactly one bucket per Sydney day even when that day's rows arrived
+ * split across two pages, rather than two adjacent same-label buckets that never merge because
+ * `groupNotifications` keys strictly off array order within a day.
+ */
+export function mergeNotificationPages(
+  existing: readonly NotificationListItem[],
+  incoming: readonly NotificationListItem[],
+  dismissedIds: ReadonlySet<string>,
+): NotificationListItem[] {
+  const byId = new Map<string, NotificationListItem>();
+  for (const item of existing) {
+    if (dismissedIds.has(item.id)) continue;
+    byId.set(item.id, item);
+  }
+  for (const item of incoming) {
+    if (dismissedIds.has(item.id)) continue;
+    if (byId.has(item.id)) continue; // keep the existing copy on a collision
+    byId.set(item.id, item);
+  }
+  return [...byId.values()].sort((a, b) => {
+    const delta = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    if (delta !== 0) return delta;
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  });
+}
