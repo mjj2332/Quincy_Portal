@@ -26,6 +26,12 @@ function encodeNextCursor(c: Context<AppEnv>, boundary: { createdAt: number; id:
   }
 }
 
+/** Splits a `limit + 1` fetch into the page and the row that proves a further page exists. */
+function pageOf<T>(fetched: readonly T[], limit: number): { rows: T[]; boundary: T | null } {
+  const rows = fetched.slice(0, limit);
+  return { rows, boundary: fetched.length > limit ? rows.at(-1)! : null };
+}
+
 export const notificationsRoutes = new Hono<AppEnv>();
 
 notificationsRoutes.get("/notifications", terminalRoute("/notifications", async (c) => {
@@ -48,12 +54,9 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
     const rows = await c.env.DB.prepare(`${visibility.sql} SELECT n.id, n.project_id AS projectId, n.type, n.title, n.body, n.read_at AS readAt, n.created_at AS createdAt, p.street AS projectStreet FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id INNER JOIN projects p ON p.id = n.project_id WHERE 1 = 1${cursorClause} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`)
       .bind(...bindings).all<{ id: string; projectId: string; type: string; title: string; body: string | null; readAt: number | null; createdAt: number; projectStreet: string }>();
     const unread = await c.env.DB.prepare(`${visibility.sql} SELECT COUNT(*) AS count FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id WHERE n.read_at IS NULL`).bind(...visibility.bindings).first<{ count: number }>();
-    const fetchedRows = rows.results ?? [];
-    const hasNext = fetchedRows.length > limit;
-    const pageRows = fetchedRows.slice(0, limit);
+    const { rows: pageRows, boundary } = pageOf(rows.results ?? [], limit);
     let nextCursor: string | null = null;
-    if (hasNext) {
-      const boundary = pageRows.at(-1)!;
+    if (boundary) {
       const encoded = encodeNextCursor(c, { createdAt: boundary.createdAt, id: boundary.id }, "external");
       if (encoded instanceof Response) return encoded;
       nextCursor = encoded;
@@ -80,11 +83,9 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
     db.select().from(schema.notifications).where(and(...conditions)).orderBy(desc(schema.notifications.createdAt), desc(schema.notifications.id)).limit(limit + 1).all(),
     db.select({ count: sql<number>`count(*)` }).from(schema.notifications).where(and(eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt))).get(),
   ]);
-  const hasNext = fetchedRows.length > limit;
-  const rows = fetchedRows.slice(0, limit);
+  const { rows, boundary } = pageOf(fetchedRows, limit);
   let nextCursor: string | null = null;
-  if (hasNext) {
-    const boundary = rows.at(-1)!;
+  if (boundary) {
     const encoded = encodeNextCursor(c, { createdAt: boundary.createdAt.getTime(), id: boundary.id }, "staff");
     if (encoded instanceof Response) return encoded;
     nextCursor = encoded;

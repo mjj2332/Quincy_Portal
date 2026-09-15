@@ -1182,6 +1182,7 @@ describe("notification paging", () => {
       "2026-09-15T00:00:00.000Z",
       base64Url('{"id":"x"}'),
       base64Url('{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","createdAt":0}'),
+      base64Url('{"createdAt":1e100,"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'),
       "",
     ];
     for (const [label, token] of [["staff", staffToken], ["external", externalToken]] as const) {

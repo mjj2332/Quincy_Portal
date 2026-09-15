@@ -3,11 +3,13 @@ import { CANONICAL_LOWERCASE_UUID_REGEX } from "./staff-routes";
 
 const CURSOR_MAX_ENCODED_BYTES = 512;
 const CURSOR_MAX_DECODED_BYTES = 256;
+/** ECMAScript's own `Date` range: a larger integer is still an int but `new Date(n)` is Invalid Date. */
+const MAX_DATE_MS = 8_640_000_000_000_000;
 
 export type NotificationCursor = { createdAt: number; id: string };
 
 export const notificationCursorSchema = z.object({
-  createdAt: z.number().int().nonnegative(),
+  createdAt: z.number().int().nonnegative().max(MAX_DATE_MS),
   id: z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX),
 }).strict();
 

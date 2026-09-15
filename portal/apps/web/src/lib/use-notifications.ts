@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import type { z } from "zod";
+import type { externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { apiDelete, apiGet, apiPost } from "./api";
 import {
   filterNotifications,
@@ -40,14 +42,12 @@ type NotificationWireRow = Omit<NotificationListItem, "actor" | "subject" | "ass
   assetId?: NotificationListItem["assetId"];
 };
 
-// `nextCursor` is WP-A's addition to the shared response schemas (`notification-enrichment.ts` /
-// `external-project-dto.ts`) — typed locally here until `@quincy/shared` ships it, per the #115
-// common contract. Optional/nullable: a non-paged caller's response may omit it entirely.
-type NotificationsResponse = {
-  notifications: NotificationWireRow[];
-  unreadCount: number;
-  nextCursor?: string | null;
-};
+// The endpoint's two strict response shapes (`@quincy/shared`): the row union is what `normaliseRow`
+// flattens, and `nextCursor` is required-nullable on both — the hook never guesses its presence.
+type NotificationsResponse = Pick<
+  z.infer<typeof staffNotificationListResponseSchema> | z.infer<typeof externalNotificationListResponseSchema>,
+  "unreadCount" | "nextCursor"
+> & { notifications: NotificationWireRow[] };
 
 function normaliseRow(row: NotificationWireRow): NotificationListItem {
   return { ...row, actor: row.actor ?? null, subject: row.subject ?? null, assetId: row.assetId ?? null };
@@ -64,6 +64,9 @@ export type UseNotificationFeedOptions = {
 };
 
 export type UseNotificationFeedResult = {
+  /** `true` until the first fetch settles (success or failure) — the page keeps its "Load more"
+   *  foot out of the end state until it knows whether there is an end. */
+  loading: boolean;
   notifications: NotificationListItem[];
   unreadCount: number;
   /** Captured per response, not read live — every row in one render agrees on "now". */
@@ -94,9 +97,20 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  // `loadingMore` state is a render-time lock only; two clicks before a rerender would issue the
+  // same cursor twice. The ref is the synchronous one.
+  const loadMoreInFlightRef = useRef(false);
+  // Cleared on unmount so a `loadMore` that settles after navigation runs no setters.
+  const mountedRef = useRef(true);
   // Session-only record of ids the user dismissed — pruned out of a `loadMore` page (or a future
   // poll) so a race with a stale response cannot resurrect a row already removed on this side.
   const dismissedIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -105,11 +119,15 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
         // No `cursor` param on the first page — a Bell test asserts this exact URL.
         const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}`);
         if (!active) return;
-        setNotifications(response.notifications.map(normaliseRow));
+        // A poll that started before a dismiss must not resurrect the row it raced.
+        const dismissed = dismissedIdsRef.current;
+        setNotifications(response.notifications.map(normaliseRow).filter((row) => !dismissed.has(row.id)));
         setUnreadCount(response.unreadCount);
         setNow(Date.now());
-        if (paged) setNextCursor(response.nextCursor ?? null);
-      } catch { /* The bell/page are best effort and should not disrupt the app shell. */ }
+        if (paged) setNextCursor(response.nextCursor);
+      } catch { /* The bell/page are best effort and should not disrupt the app shell. */ } finally {
+        if (active) setLoading(false);
+      }
     };
     void loadNotifications();
     if (poll === null) return () => { active = false; };
@@ -147,27 +165,29 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   }
 
   async function loadMore() {
-    if (!paged || nextCursor === null || loadingMore) return;
+    if (!paged || nextCursor === null || loadMoreInFlightRef.current) return;
+    loadMoreInFlightRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
     try {
       const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}&cursor=${encodeURIComponent(nextCursor)}`);
+      if (!mountedRef.current) return;
       const incoming = response.notifications.map(normaliseRow);
       setNotifications((current) => mergeNotificationPages(current, incoming, dismissedIdsRef.current));
-      // The endpoint returns the same global `unreadCount` on every page — refreshed here too, the
-      // same as the initial/polled fetch, so a `loadMore` taken well after mount does not leave a
-      // stale total on screen.
-      setUnreadCount(response.unreadCount);
-      setNextCursor(response.nextCursor ?? null);
+      // `unreadCount` is deliberately NOT refreshed from a further page: an optimistic mark-read or
+      // dismiss in flight would be undone by the count the server computed before it landed.
+      setNextCursor(response.nextCursor);
     } catch {
       // The cursor is untouched — a retry targets the same page rather than skipping ahead.
-      setLoadMoreError(true);
+      if (mountedRef.current) setLoadMoreError(true);
     } finally {
-      setLoadingMore(false);
+      loadMoreInFlightRef.current = false;
+      if (mountedRef.current) setLoadingMore(false);
     }
   }
 
   return {
+    loading,
     notifications,
     unreadCount,
     now,

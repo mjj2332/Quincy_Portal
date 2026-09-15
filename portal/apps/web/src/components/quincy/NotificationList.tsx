@@ -65,8 +65,8 @@ const SCALE = {
     gridNoThumb: "grid-cols-[32px_minmax(0,1fr)_44px]",
     row: "gap-[var(--space-4)] py-[var(--space-4)]",
     title: "text-[length:var(--text-base)]",
-    body: "text-sm",
-    meta: "text-xs",
+    body: "text-[length:var(--text-sm)]",
+    meta: "text-[length:var(--text-xs)]",
   },
 } as const;
 

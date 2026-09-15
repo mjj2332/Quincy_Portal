@@ -137,6 +137,43 @@ describe("useNotificationFeed", () => {
     expect(host.querySelector('[data-testid="has-more"]')?.textContent).toBe("false");
   });
 
+  it("leaves unreadCount alone on loadMore so an optimistic mark-read in flight is not undone", async () => {
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 5, "cursor-1"));
+    await render(<Harness poll={null} paged />);
+    await click(host.querySelector('[data-testid="mark-all-read"]')!);
+    expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
+
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-2" })], 5, null));
+    await click(host.querySelector('[data-testid="load-more"]')!);
+    expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
+  });
+
+  it("issues one request for two loadMore calls before a rerender", async () => {
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+    await render(<Harness poll={null} paged />);
+    const before = apiGetMock.mock.calls.length;
+    apiGetMock.mockResolvedValue(response([row({ id: "n-2" })], 1, null));
+    await act(async () => {
+      const button = host.querySelector<HTMLButtonElement>('[data-testid="load-more"]')!;
+      button.click(); button.click();
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(apiGetMock.mock.calls.length - before).toBe(1);
+  });
+
+  it("drops a row dismissed while a poll was in flight instead of resurrecting it", async () => {
+    vi.useFakeTimers();
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1));
+    await render(<Harness poll={1000} />);
+    let resolvePoll: ((value: unknown) => void) | undefined;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve; }));
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve(); });
+    await click(host.querySelector('[data-testid="dismiss-n-1"]')!);
+    await act(async () => { resolvePoll!(response([row({ id: "n-1" })], 1)); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="id-n-1"]')).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("reports hasMore false when the response's nextCursor is null", async () => {
     apiGetMock.mockResolvedValue(response([row()], 1, null));
     await render(<Harness poll={null} paged />);
@@ -175,6 +212,18 @@ describe("useNotificationFeed", () => {
     expect(host.querySelector('[data-testid="id-n-1"]')).toBeNull();
     expect(host.querySelector('[data-testid="id-n-2"]')).not.toBeNull();
     expect(apiDeleteMock).toHaveBeenCalledWith("/api/notifications/n-1");
+  });
+
+  it("does not resurrect a dismissed row when a later page contains a stale duplicate", async () => {
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+    await render(<Harness poll={null} paged />);
+
+    await click(host.querySelector('[data-testid="dismiss-n-1"]')!);
+    apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" }), row({ id: "n-2" })], 1, null));
+    await click(host.querySelector('[data-testid="load-more"]')!);
+
+    expect(host.querySelector('[data-testid="id-n-1"]')).toBeNull();
+    expect(host.querySelector('[data-testid="id-n-2"]')).not.toBeNull();
   });
 
   it("zeroes unreadCount on markAllRead", async () => {

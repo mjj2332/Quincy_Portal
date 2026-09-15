@@ -40,6 +40,13 @@ describe("notification cursor contract", () => {
     expect(() => encodeNotificationCursor({ createdAt: -1, id })).toThrow();
   });
 
+  it("rejects a createdAt beyond the Date range, which would otherwise reach the query as an Invalid Date", () => {
+    expect(decodeNotificationCursor(encodedJson('{"createdAt":1e100,"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'))).toBeNull();
+    expect(decodeNotificationCursor(encodedJson('{"createdAt":8640000000000001,"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'))).toBeNull();
+    expect(() => encodeNotificationCursor({ createdAt: 8_640_000_000_000_001, id })).toThrow();
+    expect(decodeNotificationCursor(encodeNotificationCursor({ createdAt: 8_640_000_000_000_000, id }))).toEqual({ createdAt: 8_640_000_000_000_000, id });
+  });
+
   it("rejects a float createdAt", () => {
     expect(decodeNotificationCursor(encodedJson('{"createdAt":1.5,"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'))).toBeNull();
   });

@@ -53,7 +53,7 @@ const FOOT = "mt-[var(--space-6)] flex justify-center";
 export function Notifications() {
   const idPrefix = useId();
   const {
-    notifications, unreadCount, now, tab, setTab, filtered, buckets, visible,
+    loading, notifications, unreadCount, now, tab, setTab, filtered, buckets, visible,
     hasMore, loadingMore, loadMoreError, loadMore, markRead, markAllRead, dismiss,
   } = useNotificationFeed({ poll: null, paged: true });
 
@@ -82,9 +82,15 @@ export function Notifications() {
     if (!loadMoreRequestedRef.current || loadingMore) return;
     loadMoreRequestedRef.current = false;
     if (loadMoreError) return; // The button's own "Try again" label already carries this state.
-    const added = notifications.length - countBeforeLoadMoreRef.current;
-    setAnnouncement(hasMore ? `Loaded ${added} more notifications` : "No more notifications");
-  }, [loadingMore, loadMoreError, hasMore, notifications.length]);
+    // Counted on the active tab's rows, not the raw page: on Unread a page of read rows adds nothing
+    // visible, and saying "Loaded 25 more" there would be a lie.
+    const added = filtered.length - countBeforeLoadMoreRef.current;
+    setAnnouncement(
+      !hasMore ? "No more notifications"
+        : added > 0 ? `Loaded ${added} more notifications`
+        : "Nothing new to show on this tab",
+    );
+  }, [loadingMore, loadMoreError, hasMore, filtered.length]);
 
   function selectTab(next: NotificationFilter) {
     // A pending dismiss handoff from the tab just left no longer refers to a row this tab shows.
@@ -113,16 +119,18 @@ export function Notifications() {
     void dismiss(notification);
   }
 
-  const isEnd = !hasMore && !loadingMore && !loadMoreError;
+  // Not the end until the first page has answered: before that `hasMore` is merely unknown.
+  const isEnd = !loading && !hasMore && !loadingMore && !loadMoreError;
+  const busy = loading || loadingMore;
 
   function handleLoadMoreClick() {
-    if (isEnd || loadingMore) return;
-    countBeforeLoadMoreRef.current = notifications.length;
+    if (isEnd || busy) return;
+    countBeforeLoadMoreRef.current = filtered.length;
     loadMoreRequestedRef.current = true;
     void loadMore();
   }
 
-  const loadMoreLabel = loadingMore ? "Loading…" : loadMoreError ? "Try again" : hasMore ? "Load more" : "No more notifications";
+  const loadMoreLabel = busy ? "Loading…" : loadMoreError ? "Try again" : hasMore ? "Load more" : "No more notifications";
 
   return (
     <main className={PAGE}>
@@ -190,7 +198,7 @@ export function Notifications() {
           type="button"
           variant="outline"
           data-testid="notifications-load-more"
-          aria-busy={loadingMore ? "true" : undefined}
+          aria-busy={busy ? "true" : undefined}
           aria-disabled={isEnd ? "true" : undefined}
           onClick={handleLoadMoreClick}
         >

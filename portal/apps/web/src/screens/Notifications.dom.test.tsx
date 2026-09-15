@@ -141,6 +141,29 @@ describe("Notifications", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it("shows Loading…, not the end state, until the first page has answered", async () => {
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+    await render();
+    const button = loadMoreButton();
+    expect(button.textContent).toBe("Loading…");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+
+    await act(async () => { resolveFirst!(response([notification({ id: "a" })], 1, "cursor-1")); await Promise.resolve(); await Promise.resolve(); });
+    expect(loadMoreButton().textContent).toBe("Load more");
+  });
+
+  it("announces that a page added nothing to the Unread tab instead of counting read rows", async () => {
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "a", readAt: null })], 1, "cursor-1"));
+    await render();
+    await click(document.getElementById(document.querySelector('[role="tab"][id$="-tab-unread"]')!.id)!);
+
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "b", readAt: "2026-07-28T00:00:00.000Z" })], 1, "cursor-2"));
+    await click(loadMoreButton());
+    expect(host.querySelector('[aria-live="polite"]')?.textContent).toBe("Nothing new to show on this tab");
+  });
+
   it("shows Loading… with aria-busy while a page is in flight", async () => {
     apiGetMock.mockResolvedValueOnce(response([notification({ id: "a" })], 1, "cursor-1"));
     await render();
@@ -169,6 +192,33 @@ describe("Notifications", () => {
     expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25&cursor=cursor-1");
     expect(loadMoreButton().textContent).toBe("No more notifications");
     expect(host.querySelector('[data-notification-dismiss="b"]')).not.toBeNull();
+  });
+
+  it("announces the number loaded and then announces the end of the feed", async () => {
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "a" })], 1, "cursor-1"));
+    await render();
+
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "b" })], 1, "cursor-2"));
+    await click(loadMoreButton());
+    expect(host.querySelector('[aria-live="polite"]')?.textContent).toBe("Loaded 1 more notifications");
+
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "c" })], 1, null));
+    await click(loadMoreButton());
+    expect(host.querySelector('[aria-live="polite"]')?.textContent).toBe("No more notifications");
+  });
+
+  it("keeps Mark all read mounted and aria-disabled at zero unread", async () => {
+    apiGetMock.mockResolvedValue(response([], 0, null));
+    await render();
+    const button = markAllButton();
+    expect(button).not.toBeNull();
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.disabled).toBe(false);
+
+    button.focus();
+    await click(button);
+    expect(apiPostMock).not.toHaveBeenCalledWith("/api/notifications/read-all", {});
+    expect(document.activeElement).toBe(button);
   });
 
   it("zeroes the Unread tab's count and disables Mark all read after marking all read", async () => {
@@ -233,5 +283,20 @@ describe("Notifications", () => {
     const secondDismiss = host.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-2"]');
     expect(secondDismiss).not.toBeNull();
     expect(document.activeElement).toBe(secondDismiss);
+  });
+
+  it("hands dismiss focus to the previous row, then to the tabpanel when it becomes empty", async () => {
+    apiGetMock.mockResolvedValue(response([
+      notification({ id: "n-1", title: "First notification", createdAt: "2026-07-28T02:00:00.000Z" }),
+      notification({ id: "n-2", title: "Second notification", createdAt: "2026-07-28T01:00:00.000Z" }),
+    ], 2, null));
+    await render();
+
+    const firstDismiss = host.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-1"]')!;
+    await click(host.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-2"]')!);
+    expect(document.activeElement).toBe(firstDismiss);
+
+    await click(firstDismiss);
+    expect(document.activeElement).toBe(host.querySelector('[role="tabpanel"]'));
   });
 });

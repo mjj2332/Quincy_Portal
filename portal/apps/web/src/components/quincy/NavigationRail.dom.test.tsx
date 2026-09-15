@@ -842,6 +842,16 @@ describe("the account menu panel — order and the preferences item", () => {
     expect(preferences.getAttribute("aria-current")).toBe("page");
   });
 
+  it("does not mark preferences current on the notifications LIST route, which shares its coarse section (#115)", async () => {
+    await renderInProvider(navigationFor("/settings/notifications"));
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
+    await click(trigger);
+
+    const preferences = document.querySelector('[data-testid="navigation-rail-preferences"]')!;
+    expect(preferences.hasAttribute("data-active")).toBe(false);
+    expect(preferences.hasAttribute("aria-current")).toBe(false);
+  });
+
   it("leaves preferences with neither attribute off the notifications route", async () => {
     await renderInProvider(navigationFor("/"));
     const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
