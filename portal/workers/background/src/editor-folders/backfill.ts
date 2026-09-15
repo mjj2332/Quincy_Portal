@@ -7,7 +7,7 @@ import { dbFor } from "../lib/db";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, listFolder, listFolderContinue, type DropboxFolder } from "../dropbox/client";
 import { pathFromRawFolderLink } from "../dropbox/sync";
-import { deriveEditorProjectFolderName, editorFolderPath, editorFolderPathKey, isEditorProjectFolderPath, isEditorWorkspacePath, validateShootDate } from "./paths";
+import { deriveEditorProjectFolderName, editorFolderPath, editorFolderPathKey, EDITOR_INPUT_NAME_PATTERN, EDITOR_OUTPUT_NAME_PATTERN, isEditorProjectFolderPath, isEditorWorkspacePath, validateShootDate } from "./paths";
 import { getEditorFolderMapping, linkExistingEditorFolder } from "./mapping";
 
 export type ReviewedEditorCandidate = {
@@ -73,8 +73,8 @@ async function verifyEditorRoot(env: Env, db: Database, projectId: string, proje
   const inputRoots: ReviewedEditorCandidate["inputRoots"] = [];
   const outputRoots: ReviewedEditorCandidate["outputRoots"] = [];
   const inspect = (folders: DropboxFolder[], section: string | null) => {
-    const inputs = folders.filter((folder) => /^(?:0\. )?Input$/i.test(folder.name));
-    const outputs = folders.filter((folder) => /^(?:1\. )?Output$/i.test(folder.name));
+    const inputs = folders.filter((folder) => EDITOR_INPUT_NAME_PATTERN.test(folder.name));
+    const outputs = folders.filter((folder) => EDITOR_OUTPUT_NAME_PATTERN.test(folder.name));
     if (inputs.length > 1 || outputs.length > 1) throw new Error("Ambiguous Input/Output variants require manual review");
     inputRoots.push(...inputs.map((folder) => ({ path: folder.path_display ?? folder.path_lower, section, folderId: folder.id })));
     outputRoots.push(...outputs.map((folder) => ({ path: folder.path_display ?? folder.path_lower, section, folderId: folder.id })));
@@ -189,7 +189,7 @@ export async function applyEditorCandidate(env: Env, candidate: ReviewedEditorCa
   const fresh = candidate;
   for (const [role, roots] of [["input", fresh.inputRoots], ["output", fresh.outputRoots]] as const) {
     if (!roots.length || new Set(roots.map((item) => editorFolderPathKey(item.path))).size !== roots.length) throw new Error("Reviewed folder roots must be nonempty and distinct");
-    const allowed = role === "input" ? /^(?:0\. )?input$/i : /^(?:1\. )?output$/i;
+    const allowed = role === "input" ? EDITOR_INPUT_NAME_PATTERN : EDITOR_OUTPUT_NAME_PATTERN;
     if (roots.some((item) => !allowed.test(item.path.split("/").at(-1) ?? ""))) throw new Error("Reviewed subtree does not match its Input/Output role");
   }
   const verifiedRoots = async (roots: ReviewedEditorCandidate["inputRoots"]) => Promise.all(roots.map(async (root) => {

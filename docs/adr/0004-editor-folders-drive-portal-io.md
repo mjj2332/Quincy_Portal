@@ -7,3 +7,7 @@ Existing active Projects are included: link verified matches to their manually c
 Import support includes DNG originals in `Input` for Portal RAW review, as confirmed by the owner. A JPEG-only import would omit most of the source material in the existing Editor folders.
 
 The confirmed new-folder convention is `2026-10 October/01/<Tonomo folder name>` using the scheduled shoot's civil date. An established Project folder stays at its original path after rescheduling; the date in the path records its initial placement, not necessarily its current schedule.
+
+## Amendment 2026-09-15
+
+Portal-created `Input`/`Output` children are now named `0. Input` and `1. Output`, so the numbered pair sorts ahead of `Editing Notes` in Dropbox's default listing. This is a naming change only: an established mapping keeps whichever spelling it holds, reviewed linking recognises both, and no existing folder is renamed in Dropbox.

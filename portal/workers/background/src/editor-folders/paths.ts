@@ -4,10 +4,19 @@ import { normalisePath } from "@quincy/shared";
 export const EDITOR_ROOT = "/Editor/01_ACTIVE EDITS" as const;
 /** Descriptive alias used by callers that distinguish the active workspace from `/Editor`. */
 export const EDITOR_ACTIVE_ROOT = EDITOR_ROOT;
-export const EDITOR_INPUT_FOLDER = "Input" as const;
-export const EDITOR_OUTPUT_FOLDER = "Output" as const;
+export const EDITOR_INPUT_FOLDER = "0. Input" as const;
+export const EDITOR_OUTPUT_FOLDER = "1. Output" as const;
 export const EDITOR_NOTES_FOLDER = "Editing Notes" as const;
 export const EDITOR_CHILD_FOLDERS = [EDITOR_INPUT_FOLDER, EDITOR_OUTPUT_FOLDER, EDITOR_NOTES_FOLDER] as const;
+
+/**
+ * How an Input or Output child is recognised by name, whether during reviewed linking or when
+ * the scaffold resumes a tree it already started: the plain spelling the studio's hand-made
+ * folders use and the numbered spelling `EDITOR_INPUT_FOLDER`/`EDITOR_OUTPUT_FOLDER` create.
+ * A mapping keeps whichever spelling it was established with; nothing is renamed to match.
+ */
+export const EDITOR_INPUT_NAME_PATTERN = /^(?:0\. )?input$/iu;
+export const EDITOR_OUTPUT_NAME_PATTERN = /^(?:1\. )?output$/iu;
 
 const MONTH_NAMES = [
   "January",

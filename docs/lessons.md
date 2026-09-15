@@ -2087,3 +2087,25 @@ once when the panel opens, which would fire 25 live-region announcements. The th
 `<span>` carries `aria-hidden="true"` for exactly that reason (and `LazyImage`'s own `alt=""` keeps
 a loaded `<img>` out of the tree the same way) — hiding the wrapper, not patching `LazyImage` itself,
 since other callers still want its live region.
+
+## Renaming the scaffold's child folders broke resume of a half-built tree (2026-09-15)
+
+**Symptom (caught in review, not production):** with `EDITOR_INPUT_FOLDER` changed from `Input`
+to `0. Input`, a mapping still `pending` that had already recorded `<root>/Input` would, on its
+next reconcile, strict-create `<root>/0. Input` beside it and go `ready` with BOTH paths in
+`inputRoots`, so `delta.ts` would route DNGs from two folders and manual publish would pick the
+first. Three reviewers (the /code-review pair and Sol) found it independently; the first draft had
+only documented it as a deploy-window rule.
+
+**Cause:** `scaffold.ts` looked up an already-recorded child by the exact path it was about to
+create (`existingChildId(mapping, role, path)`), so a rename of the constant made every recorded
+child invisible to the resume path.
+
+**Fix:** `CHILD_SPECS` carries a `pattern` beside each `name`, and `persistedChild()` finds the
+recorded child for a role by pattern directly below the root (`EDITOR_INPUT_NAME_PATTERN` /
+`EDITOR_OUTPUT_NAME_PATTERN` in `paths.ts`, the same two patterns reviewed linking uses). `name`
+is only consulted when nothing is recorded. The regression test reserves a mapping, records a
+plain `Input` child, and asserts the resumed tree keeps it and never creates `0. Input`.
+
+**Rule:** anything the scaffold records durably must be re-found by identity (role + recorded
+path), never by re-deriving the path from a constant that can change between deploys.
