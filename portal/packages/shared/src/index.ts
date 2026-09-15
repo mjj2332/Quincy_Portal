@@ -15,6 +15,7 @@ export * from "./rich-text";
 export * from "./email-text";
 export * from "./notification-outbox";
 export * from "./notification-types";
+export * from "./notification-enrichment";
 export * from "./project-members";
 export * from "./project-deadline";
 export * from "./production-calendar";

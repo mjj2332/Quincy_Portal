@@ -2109,3 +2109,18 @@ plain `Input` child, and asserts the resumed tree keeps it and never creates `0.
 
 **Rule:** anything the scaffold records durably must be re-found by identity (role + recorded
 path), never by re-deriving the path from a constant that can change between deploys.
+
+## Two write paths reach `notifications`, so `ledger → outbox.actor_id` exists only for some types (#116, 2026-09-15)
+
+`packages/db/src/notifications.ts#emitNotifications` inserts a `notifications` row directly, with no
+`notification_outbox` row and no ledger row; the durable path (`workers/background/src/notification-delivery.ts`)
+inserts with a ledger row linking `notification_id → outbox_id`. Which path a type takes depends on the
+emitter *and* the recipient: `packages/db/src/external-notifications.ts` only writes outbox rows for
+`external_editor` recipients of `comment_added`, `subtask_*` and the stage events, so a staff
+`comment_added` has no outbox row while an external one does. Anything that wants the actor at read
+time therefore cannot assume the ledger walk: #116's resolver joins the *source* row where it names
+the actor (annotation author, comment author, post author) and uses the ledger only for
+`assigned_to_project` and the activity types, which are durable for everyone. Staff `subtask_assigned`
+has neither — no outbox row and no assigner column on `project_subtasks` — so its actor is
+unrecoverable without a write-path change. Rule: before promising an actor for a type, find the
+`INSERT INTO notification_outbox` for that type *and* that recipient role.

@@ -2,6 +2,7 @@ import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationCopy } from "@quincy/db";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { notifyProject, notifySubtaskAssignee } from "../src/lib/notifications";
@@ -17,6 +18,8 @@ const photographer = crypto.randomUUID();
 const tokenPhotographer = `notifications-photographer-${crypto.randomUUID()}`;
 const externalEditor = crypto.randomUUID();
 const tokenExternalEditor = `notifications-external-${crypto.randomUUID()}`;
+const admin = crypto.randomUUID();
+const tokenAdmin = `notifications-admin-${crypto.randomUUID()}`;
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string) {
@@ -44,8 +47,12 @@ beforeAll(async () => {
   const now = Date.now();
   const projectId = crypto.randomUUID();
   await database.DB.batch([
-    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Notification A', ?, 1, 'editor', 1, ?, ?), (?, 'Notification B', ?, 1, 'editor', 1, ?, ?), (?, 'Notification Photographer', ?, 1, 'photographer', 1, ?, ?), (?, 'Notification External', ?, 1, 'external_editor', 1, ?, ?)").bind(userA, `${userA}@example.test`, now, now, userB, `${userB}@example.test`, now, now, photographer, `${photographer}@example.test`, now, now, externalEditor, `${externalEditor}@example.test`, now, now),
-    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, tokenA, userA, now, now, crypto.randomUUID(), now + 3_600_000, tokenB, userB, now, now, crypto.randomUUID(), now + 3_600_000, tokenPhotographer, photographer, now, now, crypto.randomUUID(), now + 3_600_000, tokenExternalEditor, externalEditor, now, now),
+    // This fixture's role is 'editor', not 'admin': projectNotificationRecipients() (see
+    // packages/db/src/notifications.ts) treats every *active admin* user as an implicit recipient
+    // of every project's notifyProject() call, so a literal admin-role fixture here would silently
+    // add a recipient to the pre-existing tests above that assert an exact recipient set.
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Notification A', ?, 1, 'editor', 1, ?, ?), (?, 'Notification B', ?, 1, 'editor', 1, ?, ?), (?, 'Notification Photographer', ?, 1, 'photographer', 1, ?, ?), (?, 'Notification External', ?, 1, 'external_editor', 1, ?, ?), (?, 'Notification Admin', ?, 1, 'editor', 1, ?, ?)").bind(userA, `${userA}@example.test`, now, now, userB, `${userB}@example.test`, now, now, photographer, `${photographer}@example.test`, now, now, externalEditor, `${externalEditor}@example.test`, now, now, admin, `${admin}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, tokenA, userA, now, now, crypto.randomUUID(), now + 3_600_000, tokenB, userB, now, now, crypto.randomUUID(), now + 3_600_000, tokenPhotographer, photographer, now, now, crypto.randomUUID(), now + 3_600_000, tokenExternalEditor, externalEditor, now, now, crypto.randomUUID(), now + 3_600_000, tokenAdmin, admin, now, now),
     database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Comment Street', 'edited_review', ?, ?)").bind(projectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userA, now, crypto.randomUUID(), projectId, userB, now),
   ]);
@@ -358,5 +365,486 @@ describe("notification list per-row project street and cover", () => {
     const body = await externalList();
     expect(notificationRow(body, title)).toBeUndefined();
     expect(body.unreadCount).toBe(body.notifications.filter((row) => row.readAt === null).length);
+  });
+});
+
+describe("notification read-model enrichment", () => {
+  async function makeProject(street: string, stageKey = "editing") {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    const rawCollectionId = crypto.randomUUID();
+    const editedCollectionId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").bind(projectId, street, stageKey, now, now),
+      database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?), (?, ?, 'edited', 'empty', 0, ?, ?)").bind(rawCollectionId, projectId, now, now, editedCollectionId, projectId, now, now),
+    ]);
+    return { projectId, rawCollectionId, editedCollectionId };
+  }
+
+  async function makeAsset(collectionId: string, filename = "frame.jpg", publishStatus: "pending" | "ready" = "ready") {
+    const assetId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'upload', ?, ?, ?)")
+      .bind(assetId, collectionId, `assets/${assetId}.jpg`, filename, publishStatus, now, now).run();
+    return assetId;
+  }
+
+  async function makeAnnotation(assetId: string, authorId: string, noteText: string | null) {
+    const annotationId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, note_text, created_at) VALUES (?, ?, ?, 'editor', 'raw', ?, ?)")
+      .bind(annotationId, assetId, authorId, noteText, Date.now()).run();
+    return annotationId;
+  }
+
+  async function makeStaffMember(projectId: string, userId: string, roleOnProject: "editor" | "photographer" = "editor") {
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), projectId, userId, roleOnProject, Date.now()).run();
+  }
+
+  async function makeNotification(input: { userId: string; projectId: string | null; type: string; title?: string; body?: string | null; sourceKey?: string | null }) {
+    const id = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, input.userId, input.projectId, input.type, input.title ?? "Stored title", input.body ?? "Stored body", input.sourceKey ?? null, Date.now()).run();
+    return id;
+  }
+
+  async function makeProjectComment(projectId: string, authorId: string, body: string) {
+    const commentId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, '{}', ?)")
+      .bind(commentId, projectId, authorId, body, Date.now()).run();
+    return commentId;
+  }
+
+  async function makeProjectCommentMention(commentId: string, mentionedUserId: string) {
+    const mentionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at) VALUES (?, ?, ?, ?)")
+      .bind(mentionId, commentId, mentionedUserId, Date.now()).run();
+    return mentionId;
+  }
+
+  async function makeNoticeBoardPost(authorId: string, body: string) {
+    const postId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO notice_board_posts (id, author_id, body, created_at) VALUES (?, ?, ?, ?)")
+      .bind(postId, authorId, body, Date.now()).run();
+    return postId;
+  }
+
+  async function makeNoticeBoardMention(postId: string, mentionedUserId: string) {
+    const mentionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO notice_board_post_mentions (id, post_id, mentioned_user_id, created_at) VALUES (?, ?, ?, ?)")
+      .bind(mentionId, postId, mentionedUserId, Date.now()).run();
+    return mentionId;
+  }
+
+  async function makeSubtask(projectId: string, title: string, assigneeId: string | null, assignmentVersion = 1) {
+    const subtaskId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?)")
+      .bind(subtaskId, projectId, title, assigneeId, assignmentVersion, admin, now, now).run();
+    return subtaskId;
+  }
+
+  /** A staff-visible ledger row: notification_delivery_ledger -> notification_outbox -> user (actor). */
+  async function makeLedgerActor(notificationId: string, recipientId: string, actorId: string) {
+    const outboxId = crypto.randomUUID();
+    const sourceKey = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare(
+        "INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, created_at, updated_at) VALUES (?, 1, 'project.assignment.created', ?, ?, ?, ?, '{}', 'completed', ?, ?, ?)",
+      ).bind(outboxId, sourceKey, crypto.randomUUID(), actorId, recipientId, now, now, now),
+      database.DB.prepare(
+        "INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, 'project.assignment.created', ?, ?, 'in_app', 'sent', ?, ?, ?)",
+      ).bind(crypto.randomUUID(), outboxId, sourceKey, recipientId, notificationId, now, now),
+    ]);
+    // A fresh random sourceKey per call keeps every test's ledger row independent of the
+    // (event_type, source_key, recipient_id, channel) unique constraint.
+  }
+
+  async function fetchAsAdmin() {
+    const response = await request("/api/notifications", tokenAdmin);
+    expect(response.status).toBe(200);
+    return await response.json() as { notifications: Array<Record<string, unknown>>; unreadCount: number };
+  }
+
+  async function fetchAs(token: string) {
+    const response = await request("/api/notifications", token);
+    expect(response.status).toBe(200);
+    return await response.json() as { notifications: Array<Record<string, unknown>>; unreadCount: number };
+  }
+
+  function rowFor(body: { notifications: Array<Record<string, unknown>> }, id: string) {
+    return body.notifications.find((row) => row.id === id);
+  }
+
+  it("enriches comment_added title/body/actor/subject/assetId for a staff recipient", async () => {
+    const { projectId, rawCollectionId } = await makeProject("Enrichment Comment Street");
+    const assetId = await makeAsset(rawCollectionId, "frame.jpg");
+    const annotationId = await makeAnnotation(assetId, userA, "Please re-crop this shot.");
+    const notificationId = await makeNotification({ userId: admin, projectId, type: "comment_added", sourceKey: `annotation:${annotationId}` });
+    const row = rowFor(await fetchAsAdmin(), notificationId);
+    expect(row).toMatchObject({
+      title: "Notification A commented on frame.jpg",
+      body: "Please re-crop this shot.",
+      actor: { id: userA, name: "Notification A" },
+      subject: { kind: "asset", label: "frame.jpg" },
+      assetId,
+    });
+  });
+
+  it("gives a photographer recipient the actor but neither the EDITED asset, its filename, nor the note about it", async () => {
+    const { projectId, editedCollectionId } = await makeProject("Enrichment Photographer Street", "raw_review");
+    await makeStaffMember(projectId, photographer, "photographer");
+    const assetId = await makeAsset(editedCollectionId, "edit.jpg", "ready");
+    const annotationId = await makeAnnotation(assetId, userA, "Edited note.");
+    const notificationId = await makeNotification({ userId: photographer, projectId, type: "comment_added", title: "Stored comment title", body: "Stored comment body", sourceKey: `annotation:${annotationId}` });
+    const body = await fetchAs(tokenPhotographer);
+    const row = rowFor(body, notificationId);
+    expect(row).toMatchObject({
+      title: "Stored comment title",
+      body: "Stored comment body",
+      actor: { id: userA, name: "Notification A" },
+      subject: null,
+      assetId: null,
+    });
+    expect(JSON.stringify(body)).not.toContain("edit.jpg");
+    expect(JSON.stringify(body)).not.toContain("Edited note.");
+  });
+
+  it("falls back to the stored copy with nulls when the annotation has been deleted", async () => {
+    const { projectId } = await makeProject("Enrichment Deleted Annotation Street");
+    const notificationId = await makeNotification({ userId: admin, projectId, type: "comment_added", title: "Stored deleted-annotation title", body: "Stored deleted-annotation body", sourceKey: `annotation:${crypto.randomUUID()}` });
+    const row = rowFor(await fetchAsAdmin(), notificationId);
+    expect(row).toMatchObject({ title: "Stored deleted-annotation title", body: "Stored deleted-annotation body", actor: null, subject: null, assetId: null });
+  });
+
+  it("enriches a project-comment mention (actor = comment author, body = comment text clamped)", async () => {
+    const { projectId } = await makeProject("Enrichment Project Mention Street");
+    const commentId = await makeProjectComment(projectId, userA, "Please review the collection order.");
+    const mentionId = await makeProjectCommentMention(commentId, userB);
+    const notificationId = await makeNotification({ userId: userB, projectId, type: "mentioned", sourceKey: mentionId });
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({
+      title: "Notification A mentioned you",
+      body: "Please review the collection order.",
+      actor: { id: userA, name: "Notification A" },
+      subject: { kind: "project_comment", label: "Please review the collection order." },
+      assetId: null,
+    });
+  });
+
+  it("enriches a notice-board mention", async () => {
+    const postId = await makeNoticeBoardPost(userA, "Studio closed Friday for stocktake.");
+    const mentionId = await makeNoticeBoardMention(postId, userB);
+    const notificationId = await makeNotification({ userId: userB, projectId: null, type: "mentioned", sourceKey: mentionId });
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({
+      title: "Notification A mentioned you on the Notice Board",
+      body: "Studio closed Friday for stocktake.",
+      actor: { id: userA, name: "Notification A" },
+      subject: { kind: "notice_board_post", label: "Studio closed Friday for stocktake." },
+      assetId: null,
+    });
+  });
+
+  it("resolves assigned_to_project's actor for a staff recipient via the ledger, not the sourceKey", async () => {
+    const { projectId } = await makeProject("Enrichment Assigned Street");
+    const notificationId = await makeNotification({ userId: userB, projectId, type: "assigned_to_project", title: "Project assigned", body: "You were assigned to a project.", sourceKey: crypto.randomUUID() });
+    await makeLedgerActor(notificationId, userB, userA);
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({
+      title: "Notification A assigned you to this project",
+      body: "You were assigned to a project.",
+      actor: { id: userA, name: "Notification A" },
+      subject: null,
+      assetId: null,
+    });
+  });
+
+  it("never resolves an actor for project_activity's system outbox sentinel", async () => {
+    const { projectId } = await makeProject("Enrichment System Activity Street");
+    const notificationId = await makeNotification({ userId: userB, projectId, type: "project_activity", title: "System — did a thing", body: "Unchanged body" });
+    await makeLedgerActor(notificationId, userB, PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID);
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({ title: "System — did a thing", body: "Unchanged body", actor: null, subject: null, assetId: null });
+  });
+
+  it("resolves a real actor for project_collaboration_activity when the outbox actor is a user", async () => {
+    const { projectId } = await makeProject("Enrichment Collaboration Activity Street");
+    const notificationId = await makeNotification({ userId: userB, projectId, type: "project_collaboration_activity", title: "Notification A — added a comment", body: "Unchanged body" });
+    await makeLedgerActor(notificationId, userB, userA);
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({ title: "Notification A — added a comment", body: "Unchanged body", actor: { id: userA, name: "Notification A" }, subject: null, assetId: null });
+  });
+
+  it("gives a staff subtask_assigned recipient an unchanged title, the subtask title as body, and no actor", async () => {
+    const { projectId } = await makeProject("Enrichment Subtask Street");
+    const subtaskId = await makeSubtask(projectId, "Retouch the hero shot", userB);
+    const notificationId = await makeNotification({ userId: userB, projectId, type: "subtask_assigned", title: "Subtask assigned", body: "You have been assigned a project subtask.", sourceKey: `subtask-assignment:${subtaskId}:1` });
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({
+      title: "Subtask assigned",
+      body: "Retouch the hero shot",
+      actor: null,
+      subject: { kind: "subtask", label: "Retouch the hero shot" },
+      assetId: null,
+    });
+  });
+
+  it("clamps a 10k-character comment body to 280 characters ending in an ellipsis", async () => {
+    const { projectId, rawCollectionId } = await makeProject("Enrichment Clamp Street");
+    const assetId = await makeAsset(rawCollectionId, "long-note.jpg");
+    const longNote = "a".repeat(10_000);
+    const annotationId = await makeAnnotation(assetId, userA, longNote);
+    const notificationId = await makeNotification({ userId: admin, projectId, type: "comment_added", sourceKey: `annotation:${annotationId}` });
+    const row = rowFor(await fetchAsAdmin(), notificationId);
+    expect((row?.body as string)).toHaveLength(280);
+    expect((row?.body as string).endsWith("…")).toBe(true);
+  });
+
+  it("enriches nothing for a notification whose project the recipient can no longer see", async () => {
+    const { projectId, rawCollectionId } = await makeProject("Enrichment Revoked Street");
+    const membershipId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)")
+      .bind(membershipId, projectId, photographer, Date.now()).run();
+    const assetId = await makeAsset(rawCollectionId, "revoked.jpg");
+    const annotationId = await makeAnnotation(assetId, userA, "Revoked note.");
+    const notificationId = await makeNotification({ userId: photographer, projectId, type: "comment_added", title: "Stored revoked title", body: "Stored revoked body", sourceKey: `annotation:${annotationId}` });
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(membershipId).run();
+    const row = rowFor(await fetchAs(tokenPhotographer), notificationId);
+    expect(row).toMatchObject({ title: "Stored revoked title", body: "Stored revoked body", actor: null, subject: null, assetId: null, projectStreet: null });
+  });
+
+  it("passes a row of a type this build no longer knows through unchanged instead of failing the list", async () => {
+    const { projectId } = await makeProject("Enrichment Retired Type Street");
+    const retiredId = await makeNotification({ userId: userB, projectId, type: "retired_type", title: "Retired title", body: "Retired body", sourceKey: `annotation:${crypto.randomUUID()}` });
+    const body = await fetchAs(tokenB);
+    expect(rowFor(body, retiredId)).toMatchObject({ type: "retired_type", title: "Retired title", body: "Retired body", actor: null, subject: null, assetId: null });
+  });
+
+  it("leaves every one of the seven no-actor types with a null actor and the six purely-passthrough types with an untouched title and body", async () => {
+    const { projectId } = await makeProject("Enrichment No-Actor Types Street");
+    const passthroughTypes = ["raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "project_deadline_reminder"] as const;
+    const passthroughIds = await Promise.all(passthroughTypes.map((type) => makeNotification({ userId: userB, projectId, type, title: `${type} title`, body: `${type} body` })));
+
+    const dueSubtaskId = await makeSubtask(projectId, "Deliver the gallery link", userB);
+    const dueNotificationId = await makeNotification({ userId: userB, projectId, type: "subtask_due_today", title: "Subtask due today", body: "An assigned checklist item is due today.", sourceKey: `subtask-due:${dueSubtaskId}:2026-09-15` });
+
+    const body = await fetchAs(tokenB);
+    for (const [index, type] of passthroughTypes.entries()) {
+      const row = rowFor(body, passthroughIds[index]);
+      expect(row).toMatchObject({ title: `${type} title`, body: `${type} body`, actor: null, subject: null, assetId: null });
+    }
+    const dueRow = rowFor(body, dueNotificationId);
+    expect(dueRow).toMatchObject({
+      title: "Subtask due today",
+      body: "Deliver the gallery link",
+      actor: null,
+      subject: { kind: "subtask", label: "Deliver the gallery link" },
+      assetId: null,
+    });
+  });
+
+  it("issues no more prepared statements for a 30-row comment_added page than for a 1-row page", async () => {
+    const { projectId, rawCollectionId } = await makeProject("Enrichment Query Count Street");
+    async function seedRow() {
+      const assetId = await makeAsset(rawCollectionId, "count.jpg");
+      const annotationId = await makeAnnotation(assetId, userA, "Count me.");
+      return makeNotification({ userId: admin, projectId, type: "comment_added", sourceKey: `annotation:${annotationId}` });
+    }
+    await seedRow();
+
+    async function countPreparedStatements(limit: number): Promise<number> {
+      for (let i = 1; i < limit; i += 1) await seedRow();
+      let calls = 0;
+      const originalPrepare = database.DB.prepare.bind(database.DB);
+      database.DB.prepare = ((sql: string) => {
+        calls += 1;
+        return originalPrepare(sql);
+      }) as typeof database.DB.prepare;
+      try {
+        const response = await request(`/api/notifications?limit=${limit}`, tokenAdmin);
+        expect(response.status).toBe(200);
+        await response.json();
+      } finally {
+        database.DB.prepare = originalPrepare;
+      }
+      return calls;
+    }
+
+    const onePageCalls = await countPreparedStatements(1);
+    const { projectId: projectId2, rawCollectionId: rawCollectionId2 } = await makeProject("Enrichment Query Count Street 2");
+    async function seedRow2() {
+      const assetId = await makeAsset(rawCollectionId2, "count2.jpg");
+      const annotationId = await makeAnnotation(assetId, userA, "Count me too.");
+      return makeNotification({ userId: admin, projectId: projectId2, type: "comment_added", sourceKey: `annotation:${annotationId}` });
+    }
+    await seedRow2();
+    let calls30 = 0;
+    {
+      for (let i = 1; i < 30; i += 1) await seedRow2();
+      const originalPrepare = database.DB.prepare.bind(database.DB);
+      database.DB.prepare = ((sql: string) => {
+        calls30 += 1;
+        return originalPrepare(sql);
+      }) as typeof database.DB.prepare;
+      try {
+        const response = await request("/api/notifications?limit=30", tokenAdmin);
+        expect(response.status).toBe(200);
+        const parsed = await response.json() as { notifications: unknown[] };
+        expect(parsed.notifications.length).toBeGreaterThanOrEqual(30);
+      } finally {
+        database.DB.prepare = originalPrepare;
+      }
+    }
+    expect(calls30).toBe(onePageCalls);
+  });
+});
+
+describe("notification enrichment — external boundary (staff-only)", () => {
+  async function makeProject(street: string) {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'editing', ?, ?)").bind(projectId, street, now, now).run();
+    return projectId;
+  }
+
+  async function externalList() {
+    const response = await request("/api/notifications", tokenExternalEditor);
+    expect(response.status).toBe(200);
+    return await response.json() as { notifications: Array<Record<string, unknown>>; unreadCount: number };
+  }
+
+  async function staffList(token: string) {
+    const response = await request("/api/notifications", token);
+    expect(response.status).toBe(200);
+    return await response.json() as { notifications: Array<Record<string, unknown>>; unreadCount: number };
+  }
+
+  /**
+   * Wires a `mentioned` notification an external editor is legitimately allowed to see
+   * (EXTERNAL_LEGACY_NOTIFICATION_POLICY's `project.comment.mentioned` durable event), matching
+   * every predicate `externalVisibleNotificationWhere` checks.
+   */
+  async function seedExternalMention(projectId: string, commentId: string, mentionedUserId: string) {
+    const membershipId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+      .bind(membershipId, projectId, mentionedUserId, now).run();
+    const mentionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at) VALUES (?, ?, ?, ?)")
+      .bind(mentionId, commentId, mentionedUserId, now).run();
+    const notificationId = crypto.randomUUID();
+    const outboxId = crypto.randomUUID();
+    const payload = JSON.stringify({
+      schemaVersion: 1,
+      event: { type: "project.comment.mentioned", sourceKey: mentionId, recipientId: mentionedUserId },
+      authorizationAtOccurrence: { kind: "project_member", membershipIds: [membershipId] },
+      projectCommentActivity: { activity: { projectId, safePayload: { commentId } } },
+    });
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'mentioned', 'You were mentioned', 'You were mentioned in a project comment.', ?, ?)")
+        .bind(notificationId, mentionedUserId, projectId, mentionId, now),
+      database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at) VALUES (?, 1, 'project.comment.mentioned', ?, ?, ?, ?, 0, ?, 'completed', ?, ?, ?)")
+        .bind(outboxId, mentionId, projectId, mentionedUserId, mentionedUserId, payload, now, now, now),
+      database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, 'project.comment.mentioned', ?, ?, 'in_app', 'sent', ?, ?, ?)")
+        .bind(crypto.randomUUID(), outboxId, mentionId, mentionedUserId, notificationId, now, now),
+    ]);
+    return notificationId;
+  }
+
+  /** A second, independently-visible external row (the direct-legacy arm) so the leak test can
+   * prove enrichment absence doesn't come at the cost of dropping rows. */
+  async function seedExternalDirectRow(projectId: string) {
+    const now = Date.now();
+    const existing = await database.DB.prepare("SELECT id, created_at FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(projectId, externalEditor).first<{ id: string; created_at: number }>();
+    const membershipId = existing?.id ?? crypto.randomUUID();
+    const membershipStartedAt = existing?.created_at ?? now;
+    if (!existing) {
+      await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+        .bind(membershipId, projectId, externalEditor, membershipStartedAt).run();
+    }
+    const notificationId = crypto.randomUUID();
+    const outboxId = crypto.randomUUID();
+    const sourceKey = `external-direct:${crypto.randomUUID()}`;
+    const payload = JSON.stringify({
+      schemaVersion: 1,
+      event: { type: "project.external_safe.direct", sourceKey, recipientId: externalEditor },
+      authorizationAtOccurrence: { kind: "project_editor_membership", membershipCycle: membershipId, startedAt: membershipStartedAt },
+      legacy: { type: "raw_ready", projectId, sourceId: sourceKey },
+    });
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'raw_ready', 'RAW media ready', 'RAW media is ready for review.', ?, ?)")
+        .bind(notificationId, externalEditor, projectId, sourceKey, now),
+      database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, recipient_membership_cycle_id, created_at, updated_at) VALUES (?, 1, 'project.external_safe.direct', ?, ?, ?, ?, 0, ?, 'completed', ?, ?, ?, ?)")
+        .bind(outboxId, sourceKey, projectId, externalEditor, externalEditor, payload, now, membershipId, now, now),
+      database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, 'project.external_safe.direct', ?, ?, 'in_app', 'sent', ?, ?, ?)")
+        .bind(crypto.randomUUID(), outboxId, sourceKey, externalEditor, notificationId, now, now),
+    ]);
+    return notificationId;
+  }
+
+  it("never leaks a staff colleague's name, an Asset filename, or comment text to an external editor, while both rows stay present", async () => {
+    const projectId = await makeProject("Boundary Leak Street");
+    const rawCollectionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(rawCollectionId, projectId, Date.now(), Date.now()).run();
+    const assetId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, publish_status, created_at, updated_at) VALUES (?, ?, ?, 'super-secret-filename.jpg', 1, 'upload', 'ready', ?, ?)")
+      .bind(assetId, rawCollectionId, `assets/${assetId}.jpg`, Date.now(), Date.now()).run();
+
+    const commentId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, 'a very private staff-only comment', '{}', ?)")
+      .bind(commentId, projectId, userA, Date.now()).run();
+
+    const externalNotificationId = await seedExternalMention(projectId, commentId, externalEditor);
+    const directNotificationId = await seedExternalDirectRow(projectId);
+
+    const body = await externalList();
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("Notification A");
+    expect(serialized).not.toContain("super-secret-filename.jpg");
+    expect(serialized).not.toContain("a very private staff-only comment");
+    expect(body.notifications.some((row) => row.id === externalNotificationId)).toBe(true);
+    expect(body.notifications.some((row) => row.id === directNotificationId)).toBe(true);
+  });
+
+  it("keeps the external response strict — exactly the existing key set, no enrichment fields", async () => {
+    const projectId = await makeProject("Boundary Schema Street");
+    const commentId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, 'schema check', '{}', ?)").bind(commentId, projectId, userA, Date.now()).run();
+    const notificationId = await seedExternalMention(projectId, commentId, externalEditor);
+    const body = await externalList();
+    const row = body.notifications.find((r) => r.id === notificationId)!;
+    expect(Object.keys(row).sort()).toEqual(["body", "coverAssetId", "createdAt", "id", "projectId", "projectStreet", "readAt", "title", "type"].sort());
+  });
+
+  it("enriches the same mentioned event for a staff recipient while the external recipient's row stays un-enriched", async () => {
+    const projectId = await makeProject("Boundary Same Event Street");
+    const commentId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, 'shared mention body', '{}', ?)").bind(commentId, projectId, userA, Date.now()).run();
+
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, userB, Date.now()).run();
+    const staffMentionId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at) VALUES (?, ?, ?, ?)").bind(staffMentionId, commentId, userB, Date.now()).run();
+    const staffNotificationId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'mentioned', 'You were mentioned', 'You were mentioned in a project comment.', ?, ?)")
+      .bind(staffNotificationId, userB, projectId, staffMentionId, Date.now()).run();
+
+    const externalNotificationId = await seedExternalMention(projectId, commentId, externalEditor);
+
+    const staffRow = staffList(tokenB).then((body) => body.notifications.find((row) => row.id === staffNotificationId));
+    const [resolvedStaffRow, externalBody] = await Promise.all([staffRow, externalList()]);
+    expect(resolvedStaffRow).toMatchObject({
+      title: "Notification A mentioned you",
+      body: "shared mention body",
+      actor: { id: userA, name: "Notification A" },
+      subject: { kind: "project_comment", label: "shared mention body" },
+    });
+    const externalRow = externalBody.notifications.find((row) => row.id === externalNotificationId)!;
+    expect(externalRow).not.toHaveProperty("actor");
+    expect(externalRow).not.toHaveProperty("subject");
+    expect(externalRow).not.toHaveProperty("assetId");
+    expect(externalRow.title).toBe("You were mentioned");
+    expect(externalRow.body).toBe("You were mentioned in a project comment.");
   });
 });

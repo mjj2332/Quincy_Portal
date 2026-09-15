@@ -157,7 +157,16 @@ export type NotificationBellProps = {
   anchorRef: RefObject<HTMLElement | null>;
 };
 
-type NotificationsResponse = { notifications: NotificationListItem[]; unreadCount: number };
+// #116 — the wire shape a `NotificationsResponse` row arrives in. `actor`/`subject`/`assetId` are
+// staff-only enrichment: an external payload (the same endpoint's other branch) never carries
+// them, so they are typed optional here and normalised to `null` below rather than assumed present.
+type NotificationRow = Omit<NotificationListItem, "actor" | "subject" | "assetId"> & {
+  actor?: NotificationListItem["actor"];
+  subject?: NotificationListItem["subject"];
+  assetId?: NotificationListItem["assetId"];
+};
+
+type NotificationsResponse = { notifications: NotificationRow[]; unreadCount: number };
 
 export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = false, placement, anchorRef }: NotificationBellProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -179,7 +188,18 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
     const loadNotifications = async () => {
       try {
         const response = await apiGet<NotificationsResponse>("/api/notifications?limit=25");
-        if (active) { setNotifications(response.notifications); setUnreadCount(response.unreadCount); setNow(Date.now()); }
+        if (active) {
+          // #116: external payloads lack `actor`/`subject`/`assetId` entirely — normalise here so
+          // the rest of the app only ever sees the full `NotificationListItem` shape.
+          setNotifications(response.notifications.map((n) => ({
+            ...n,
+            actor: n.actor ?? null,
+            subject: n.subject ?? null,
+            assetId: n.assetId ?? null,
+          })));
+          setUnreadCount(response.unreadCount);
+          setNow(Date.now());
+        }
       } catch { /* The bell is best effort and should not disrupt the app shell. */ }
     };
     void loadNotifications();

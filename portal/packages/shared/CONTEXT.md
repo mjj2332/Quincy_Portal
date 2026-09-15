@@ -58,3 +58,46 @@ _Avoid_: Contractor, freelancer, outsourcer
 Someone assigned to a Project to capture its RAW media. Assigned Projects only, and
 only while the Project remains in the early Stages.
 _Avoid_: Shooter, creative
+
+### Notifications
+
+**Notification**:
+The record a Recipient reads in the notification centre. Carries its own title and body,
+written at delivery; the stored copy is the durable record, and enrichment at read only
+ever adds to it or falls back to it.
+_Avoid_: Alert, message, toast
+
+**Notification outbox**:
+The queued intent to notify one Recipient about one occurrence, written in the same
+transaction as the thing that happened. Not yet a Notification.
+_Avoid_: Queue, job, event log
+
+**Delivery ledger**:
+The per-channel record of what became of one outbox intent — sent, suppressed or failed —
+and which Notification it produced. The audit trail of delivery, not of the occurrence.
+_Avoid_: Receipt, delivery log
+
+**Project activity event**:
+The durable, Project-scoped record of something that happened, from which broad
+Notifications are derived. Outlives any Notification being dismissed.
+_Avoid_: Feed item, history row
+
+**Actor**:
+Who caused the thing a Notification is about. Never the Recipient: a Notification is not
+sent to its own Actor. System occurrences have no Actor.
+_Avoid_: Sender, author, user
+
+**Recipient**:
+Who is being told. Conflating Recipient with Actor produces "You commented on your own
+Asset".
+_Avoid_: Target, receiver, subscriber
+
+**Subject**:
+The thing a Notification is about — the Asset a comment names, the subtask assigned, the
+comment that mentions someone. Not every Notification has one.
+_Avoid_: Object, entity, item
+
+**Day bucket**:
+The grouping unit of the notification centre: one calendar day in the studio's timezone,
+labelled Today, Yesterday, or the date. Keyed by the day, never by the label.
+_Avoid_: Group, section, date header

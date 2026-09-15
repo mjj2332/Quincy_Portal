@@ -65,6 +65,9 @@ function notificationsResponse(unreadCount: number) {
       createdAt: "2026-08-17T00:00:00.000Z",
       projectStreet: null,
       coverAssetId: null,
+      actor: null,
+      subject: null,
+      assetId: null,
     })),
   };
 }
@@ -79,6 +82,9 @@ type NotificationOverrides = Partial<{
   createdAt: string;
   projectStreet: string | null;
   coverAssetId: string | null;
+  actor: { id: string; name: string } | null;
+  subject: { kind: "asset" | "subtask" | "project_comment" | "notice_board_post"; label: string } | null;
+  assetId: string | null;
 }>;
 
 function notification(overrides: NotificationOverrides = {}) {
@@ -92,6 +98,9 @@ function notification(overrides: NotificationOverrides = {}) {
     createdAt: "2026-07-28T00:00:00.000Z",
     projectStreet: null,
     coverAssetId: null,
+    actor: null,
+    subject: null,
+    assetId: null,
     ...overrides,
   };
 }
@@ -246,6 +255,26 @@ describe("NotificationBell panel (Popover)", () => {
     const readRow = rows.find((row) => row.textContent?.includes("Read"))!;
     expect(unreadRow.hasAttribute("data-unread")).toBe(true);
     expect(readRow.hasAttribute("data-unread")).toBe(false);
+  });
+
+  it("renders a payload missing the enrichment fields entirely, as an external row would", async () => {
+    // #116 — external rows never carry `actor`/`subject`/`assetId`; the bell must still render
+    // rather than throw or drop the row when those keys are entirely absent from the wire shape.
+    apiGetMock.mockResolvedValue({ notifications: [{
+      id: "n-external",
+      projectId: null,
+      type: "raw_ready",
+      title: "External notification",
+      body: null,
+      readAt: null,
+      createdAt: "2026-07-28T00:00:00.000Z",
+      projectStreet: null,
+      coverAssetId: null,
+    }], unreadCount: 1 });
+    const trigger = await renderPanel();
+    await click(trigger);
+    expect(document.querySelector('[data-testid="rail-notification-row"]')?.textContent).toContain("External notification");
+    expect(document.querySelector('[data-notification-actor]')).toBeNull();
   });
 
   it("marks a row read and closes the panel on activation", async () => {

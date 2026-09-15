@@ -15,6 +15,13 @@ export type NotificationListItem = {
   createdAt: string;
   projectStreet: string | null;
   coverAssetId: string | null;
+  // #116 — staff-only enrichment fields (WP-A's shared schema is the eventual source; typed
+  // locally here rather than imported so this file does not reach into `packages/shared` before
+  // that schema lands). External payloads never carry these; `NotificationBell` normalises them
+  // to `null` on fetch.
+  actor: { id: string; name: string } | null;
+  subject: { kind: "asset" | "subtask" | "project_comment" | "notice_board_post"; label: string } | null;
+  assetId: string | null;
 };
 
 export type NotificationFilter = "all" | "unread";
