@@ -4,6 +4,7 @@ import { enqueueRenditionSafely, isAcceptedPhotoFilename, isDngFilename, isRawMe
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Env } from "../env";
+import type { DropboxSyncTrigger } from "../messages";
 import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import { createDropboxClientContext, download, getSharedLinkMetadata, listFolder, listFolderContinue, recordDropboxSuccess, type DropboxClientContext, type DropboxFile } from "./client";
@@ -238,7 +239,7 @@ export async function syncProjectRawFolder(
   projectId: string,
   jobId?: string,
   connectionId?: string,
-  trigger: "dropbox_delta" | "manual_dropbox_sync" | "queue_retry" = jobId ? "queue_retry" : "manual_dropbox_sync",
+  trigger: DropboxSyncTrigger = jobId ? "queue_retry" : "manual_dropbox_sync",
 ): Promise<{ newlyImported: number; currentRawAvailable: boolean; claimed: boolean; hasMore: boolean }> {
   // Do not create a job, claim, asset, or legacy Stage statement on a pre-0037 database.
   await requireBoardSchemaReady(env);

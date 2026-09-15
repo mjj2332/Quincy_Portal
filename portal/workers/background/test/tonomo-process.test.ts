@@ -153,7 +153,7 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ raw_folder_path: NEWER_RAW_FOLDER_PATH, raw_folder_link: "https://www.dropbox.com/scl/fo/new" });
 
     const auditRow = await database.DB.prepare(
-      "SELECT meta_json FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.raw_folder_path.update'",
+      "SELECT meta_json FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.raw_folder_path.changed'",
     ).bind(projectId).first<{ meta_json: string }>();
     expect(auditRow).toBeTruthy();
     const meta = JSON.parse(auditRow!.meta_json);
@@ -177,8 +177,20 @@ describe("processTonomoEvent RAW folder path update", () => {
 
     expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(projectId).first())
       .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
-    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.raw_folder_path.update'").bind(projectId).first())
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.raw_folder_path.changed'").bind(projectId).first())
       .toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
+      .toEqual({ count: 0 });
+  });
+
+  it("keeps the stored path when Tonomo's newer path exists but is a file, not a folder", async () => {
+    const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
+    const getMetadata = async (): Promise<DropboxFile | DropboxFolder> => ({
+      ".tag": "file", id: "id:file", name: "x.jpg", path_lower: NEWER_RAW_FOLDER_PATH, path_display: NEWER_RAW_FOLDER_PATH,
+    } as unknown as DropboxFile);
+    await processEvent(orderId, { rawFolderPath: NEWER_RAW_FOLDER_PATH }, { getMetadata });
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
       .toEqual({ count: 0 });
   });

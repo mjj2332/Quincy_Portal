@@ -5,20 +5,29 @@ import { COLLECTION_KINDS, isCanonicalCalendarDate, normaliseAddressKey, normali
 import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
-import { dbFor } from "../lib/db";
+import { dbFor, errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { enqueueEditorReconcile } from "../editor-folders/queue";
 import { getEditorFolderMapping } from "../editor-folders/mapping";
+import type { DropboxMetadataOperation } from "../editor-folders/scaffold";
+import { automationFlag } from "../dropbox/monitor-state";
+import type { DropboxSyncMessage } from "../messages";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
-import { getMetadata, isDropboxPathNotFound, type DropboxFile, type DropboxFolder } from "../dropbox/client";
+import { getMetadata, isDropboxPathNotFoundError } from "../dropbox/client";
 
 type Project = Pick<typeof projects.$inferSelect, "id" | "street" | "postcode" | "archivedAt" | "orderId" | "orderNo" | "suburb" | "agencyName" | "agentName" | "agentEmail" | "agentPhone" | "shootDate" | "timeWindow" | "notes" | "rawFolderLink" | "rawFolderPath">;
 
 /** Optional dependency seam so tests can substitute Dropbox metadata verification without a live connection. */
 export type TonomoProcessDependencies = {
-  getMetadata?: (env: Env, db: Database, path: string, connectionId?: string) => Promise<DropboxFile | DropboxFolder>;
+  getMetadata?: DropboxMetadataOperation;
 };
+
+type VerifiedRawFolder = { path: string; folderId: string };
+
+function addressLeaf(path: string): string | undefined {
+  return path.split("/").filter(Boolean).at(-1)?.toLowerCase();
+}
 
 export class TonomoApplyError extends Error {
   code?: "board_schema_maintenance";
@@ -136,61 +145,79 @@ async function verifiedRawFolderPathChange(
   project: Project,
   order: TonomoOrder,
   dependencies: TonomoProcessDependencies,
-): Promise<{ path: string; folderId: string } | null> {
+): Promise<VerifiedRawFolder | null> {
   const db = dbFor(env);
   const decline = (reason: string) => {
     console.log("Tonomo raw folder path change declined", { projectId: project.id, orderId: order.orderId, reason });
     return null;
   };
 
-  const mapping = await getEditorFolderMapping(db, project.id);
-  if (mapping?.state === "ready") {
-    return decline("editor mapping ready; RAW intake already moved to the Editor tree");
+  // Same gate as the RAW monitor: a ready Editor mapping owns RAW intake only while editor automation is on.
+  if (automationFlag(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
+    const mapping = await getEditorFolderMapping(db, project.id);
+    if (mapping?.state === "ready") return decline("editor mapping ready; RAW intake already moved to the Editor tree");
   }
 
   const incomingPath = normalisePath(order.rawFolderPath as string);
   const storedPath = normalisePath(project.rawFolderPath as string);
-  const incomingLeaf = incomingPath.split("/").filter(Boolean).at(-1)?.toLowerCase();
-  const storedLeaf = storedPath.split("/").filter(Boolean).at(-1)?.toLowerCase();
-  if (incomingLeaf !== storedLeaf) {
-    return decline("address leaf changed; needs manual review");
-  }
+  if (addressLeaf(incomingPath) !== addressLeaf(storedPath)) return decline("address leaf changed; needs manual review");
 
   let connectionId: string;
   try {
     connectionId = await canonicalDropboxConnectionId(db);
   } catch (error) {
-    return decline(error instanceof Error ? error.message : String(error));
+    return decline(errorMessage(error));
   }
 
   const getMetadataOperation = dependencies.getMetadata ?? getMetadata;
   try {
     const entry = await getMetadataOperation(env, db, incomingPath, connectionId);
-    if (entry[".tag"] !== "folder") {
-      return decline("Tonomo path is not a folder in Dropbox; keeping stored path");
-    }
+    if (entry[".tag"] !== "folder") return decline("Tonomo path is not a folder in Dropbox; keeping stored path");
     return { path: incomingPath, folderId: entry.id };
   } catch (error) {
-    if (isDropboxPathNotFound(error)) {
-      return decline("Tonomo path not found in Dropbox; keeping stored path");
-    }
-    // Error.message is non-enumerable; the JSON union walker cannot see it.
-    for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
-      if (isDropboxPathNotFound(cause.message)) {
-        return decline("Tonomo path not found in Dropbox; keeping stored path");
-      }
-    }
-    return decline(error instanceof Error ? error.message : String(error));
+    if (isDropboxPathNotFoundError(error)) return decline("Tonomo path not found in Dropbox; keeping stored path");
+    return decline(errorMessage(error));
   }
 }
 
-async function enqueueRawFolderPathSync(env: Env, db: Database, projectId: string): Promise<void> {
+/**
+ * Guarded write of the verified path with its audit row in one D1 batch: the UPDATE is fenced on
+ * the raw_folder_path this event read, and the audit INSERT only fires when that UPDATE landed
+ * (matched by the unique updated_at it stamps). Zero changes means another writer (PATCH, the RAW
+ * monitor) moved the path first; the next Tonomo event re-reads and decides again.
+ */
+async function commitRawFolderPathChange(
+  env: Env,
+  project: Project,
+  order: TonomoOrder,
+  verified: VerifiedRawFolder,
+): Promise<boolean> {
+  const at = Date.now();
+  const link = order.rawFolderLink && order.rawFolderLink !== project.rawFolderLink ? order.rawFolderLink : null;
+  const meta = JSON.stringify({ actor: "tonomo", orderId: order.orderId, previousRawFolderPath: project.rawFolderPath, rawFolderPath: verified.path, dropboxFolderId: verified.folderId });
+  const [update] = await env.DB.batch([
+    env.DB.prepare("UPDATE projects SET raw_folder_path = ?, raw_folder_link = COALESCE(?, raw_folder_link), updated_at = ? WHERE id = ? AND raw_folder_path = ? AND archived_at IS NULL")
+      .bind(verified.path, link, at, project.id, project.rawFolderPath),
+    env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.raw_folder_path.changed', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND raw_folder_path = ? AND updated_at = ?)")
+      .bind(crypto.randomUUID(), project.id, meta, at, project.id, verified.path, at),
+  ]);
+  if ((update?.meta.changes ?? 0) === 0) {
+    console.log("Tonomo raw folder path change lost the race; another writer moved the path first", { projectId: project.id, orderId: order.orderId });
+    return false;
+  }
+  return true;
+}
+
+/** A D1-only path edit produces no Dropbox delta, so the monitor never notices the new location on its own. */
+async function enqueueRawFolderPathSync(env: Env, db: Database, projectId: string): Promise<{ jobId: string }> {
   const jobId = await createJob(db, { kind: "dropbox_sync", projectId, correlationId: `dropbox_sync:${projectId}` });
   try {
-    await env.INGEST_QUEUE.send({ type: "dropbox_sync", projectId, jobId, trigger: "manual_dropbox_sync" });
+    const message: DropboxSyncMessage = { type: "dropbox_sync", projectId, jobId, trigger: "tonomo_raw_path_changed" };
+    await env.INGEST_QUEUE.send(message);
+    return { jobId };
   } catch (error) {
-    await setJobStatus(db, jobId, "failed", error instanceof Error ? error.message : String(error));
-    console.error("RAW folder path sync trigger failed", { projectId, error });
+    await setJobStatus(db, jobId, "failed", errorMessage(error));
+    throw error;
   }
 }
 
@@ -219,32 +246,20 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   if (!project.rawFolderLink && order.rawFolderLink) changes.rawFolderLink = order.rawFolderLink;
   if (!project.rawFolderPath && order.rawFolderPath) changes.rawFolderPath = order.rawFolderPath;
 
-  let verifiedChange: { path: string; folderId: string } | null = null;
+  let verified: VerifiedRawFolder | null = null;
   if (order.rawFolderPath && project.rawFolderPath && normalisePath(order.rawFolderPath) !== normalisePath(project.rawFolderPath)) {
-    verifiedChange = await verifiedRawFolderPathChange(env, project, order, dependencies);
-    if (verifiedChange) {
-      changes.rawFolderPath = verifiedChange.path;
-      if (order.rawFolderLink && order.rawFolderLink !== project.rawFolderLink) changes.rawFolderLink = order.rawFolderLink;
-    }
+    verified = await verifiedRawFolderPathChange(env, project, order, dependencies);
   }
 
-  const previousRawFolderPath = project.rawFolderPath;
   await db.update(projects).set(changes).where(eq(projects.id, project.id));
-  if (verifiedChange) {
-    await db.insert(auditLog).values({
-      id: crypto.randomUUID(), actorId: null, action: "project.raw_folder_path.update", targetType: "project", targetId: project.id,
-      metaJson: JSON.stringify({ actor: "tonomo", orderId: order.orderId, previousRawFolderPath, rawFolderPath: verifiedChange.path, dropboxFolderId: verifiedChange.folderId }),
-      createdAt: new Date(),
-    });
-  }
-  if (changes.rawFolderPath !== undefined) {
+  const moved = verified ? await commitRawFolderPathChange(env, project, order, verified) : false;
+  if (changes.rawFolderPath !== undefined || moved) {
     await enqueueAutoHdrScaffold(env, project.id).catch((error) =>
       console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
   }
-  if (verifiedChange) {
-    // A D1-only edit produces no Dropbox delta, so the monitor never notices the new location on
-    // its own; nudge it explicitly.
-    await enqueueRawFolderPathSync(env, db, project.id);
+  if (moved) {
+    await enqueueRawFolderPathSync(env, db, project.id).catch((error) =>
+      console.error("RAW folder path sync trigger failed", { projectId: project.id, error }));
   }
   return project.id;
 }
