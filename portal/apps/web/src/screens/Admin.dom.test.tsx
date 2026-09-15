@@ -238,6 +238,78 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(window.location.pathname).toBe("/");
   });
 
+  it("renders the Default editor checkbox checked per user, disabled for photographer and inactive roles", async () => {
+    const users = [
+      { id: "flagged", name: "Flagged Editor", email: "flagged@example.test", role: "editor", active: true, defaultEditor: true, createdAt: null },
+      { id: "unflagged", name: "Unflagged Editor", email: "unflagged@example.test", role: "editor", active: true, defaultEditor: false, createdAt: null },
+      { id: "photographer", name: "Active Photographer", email: "photographer@example.test", role: "photographer", active: true, defaultEditor: false, createdAt: null },
+      { id: "inactive", name: "Inactive Editor", email: "inactive@example.test", role: "editor", active: false, defaultEditor: false, createdAt: null },
+    ];
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+
+    const flagged = userRow(host, "Flagged Editor").querySelector<HTMLInputElement>('[aria-label="Default editor: Flagged Editor"]')!;
+    const unflagged = userRow(host, "Unflagged Editor").querySelector<HTMLInputElement>('[aria-label="Default editor: Unflagged Editor"]')!;
+    const photographer = userRow(host, "Active Photographer").querySelector<HTMLInputElement>('[aria-label="Default editor: Active Photographer"]')!;
+    const inactive = userRow(host, "Inactive Editor").querySelector<HTMLInputElement>('[aria-label="Default editor: Inactive Editor"]')!;
+
+    expect(flagged.checked).toBe(true);
+    expect(unflagged.checked).toBe(false);
+    expect(flagged.disabled).toBe(false);
+    expect(unflagged.disabled).toBe(false);
+    expect(photographer.disabled).toBe(true);
+    expect(photographer.title).toBe("Only active editors, external editors and admins can be default editors");
+    expect(inactive.disabled).toBe(true);
+    expect(inactive.title).toBe("Only active editors, external editors and admins can be default editors");
+  });
+
+  it("PATCHes defaultEditor on toggle and shows the added-to-projects toast", async () => {
+    const users = [
+      { id: "editor", name: "Active Editor", email: "editor@example.test", role: "editor", active: true, defaultEditor: false, createdAt: null },
+    ];
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    apiPatchMock.mockResolvedValueOnce({ ok: true, defaultEditor: true });
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+
+    const checkbox = userRow(host, "Active Editor").querySelector<HTMLInputElement>('[aria-label="Default editor: Active Editor"]')!;
+    await click(checkbox);
+    await flush();
+
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/users/editor", { defaultEditor: true });
+    expect(host.textContent).toContain("Active Editor will be added to new projects as an editor.");
+  });
+
+  it("shows the removed-from-projects toast when turning Default editor off, and the existing error toast on a 409", async () => {
+    const users = [
+      { id: "editor", name: "Active Editor", email: "editor@example.test", role: "editor", active: true, defaultEditor: true, createdAt: null },
+    ];
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    apiPatchMock.mockResolvedValueOnce({ ok: true, defaultEditor: false });
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+
+    await click(userRow(host, "Active Editor").querySelector<HTMLInputElement>('[aria-label="Default editor: Active Editor"]')!);
+    await flush();
+
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/users/editor", { defaultEditor: false });
+    expect(host.textContent).toContain("Active Editor will no longer be added to new projects.");
+
+    // React replaces controlled-checkbox DOM nodes across this reload, so re-query rather than
+    // reuse the reference from before the first click.
+    apiPatchMock.mockRejectedValueOnce(new Error("Request failed (409)."));
+    await click(userRow(host, "Active Editor").querySelector<HTMLInputElement>('[aria-label="Default editor: Active Editor"]')!);
+    await flush();
+    expect(host.textContent).toContain("Request failed (409).");
+  });
+
   it("keeps the Admin screen on an Act as API failure and shows the existing error toast", async () => {
     apiGetMock.mockImplementation((path) => path === "/api/users"
       ? Promise.resolve({ users: [{ id: "editor", name: "Active Editor", email: "editor@example.test", role: "editor", active: true, createdAt: null }] })

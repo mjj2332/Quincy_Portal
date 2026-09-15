@@ -3807,4 +3807,72 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(assetId).first()).toBeNull();
     expect(await authEnv.MEDIA.head(key)).not.toBeNull();
   });
+
+  describe("default editors — project creation (#135)", () => {
+    const flaggedEditorId = "a1000000-0000-4000-8000-000000000001";
+    const flaggedAdminId = "a1000000-0000-4000-8000-000000000002";
+    const unflaggedEditorId = "a1000000-0000-4000-8000-000000000003";
+    const flaggedInactiveEditorId = "a1000000-0000-4000-8000-000000000004";
+    const flaggedPhotographerId = "a1000000-0000-4000-8000-000000000005";
+
+    beforeAll(async () => {
+      const now = Date.now();
+      for (const [id, name, email, role, active, defaultEditorFlag] of [
+        [flaggedEditorId, "TB135 Flagged Editor", "tb135-flagged-editor@example.test", "editor", 1, 1],
+        [flaggedAdminId, "TB135 Flagged Admin", "tb135-flagged-admin@example.test", "admin", 1, 1],
+        [unflaggedEditorId, "TB135 Unflagged Editor", "tb135-unflagged-editor@example.test", "editor", 1, 0],
+        [flaggedInactiveEditorId, "TB135 Flagged Inactive Editor", "tb135-flagged-inactive-editor@example.test", "editor", 0, 1],
+        [flaggedPhotographerId, "TB135 Flagged Photographer", "tb135-flagged-photographer@example.test", "photographer", 1, 1],
+      ] as const) {
+        await database.DB.prepare(
+          "INSERT INTO user (id, name, email, email_verified, role, active, default_editor, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+        ).bind(id, name, email, role, active, defaultEditorFlag, now, now).run();
+      }
+    });
+
+    it("adds every flagged, active, editor-eligible user as an editor with default_editor provenance", async () => {
+      const adminCookie = await sessionCookie(adminToken);
+      const response = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST",
+        headers: { cookie: adminCookie, "content-type": "application/json" },
+        body: JSON.stringify({ street: `Default editors ${crypto.randomUUID()}`, orderedServices: [] }),
+      });
+      expect(response.status).toBe(201);
+      const project = await response.json() as { id: string; members: Array<{ userId: string; roleOnProject: string; name: string; email: string; active: boolean }> };
+
+      expect(project.members.find((m) => m.userId === flaggedEditorId)).toMatchObject({ roleOnProject: "editor", name: "TB135 Flagged Editor", email: "tb135-flagged-editor@example.test", active: true });
+      expect(project.members.find((m) => m.userId === flaggedAdminId)).toMatchObject({ roleOnProject: "editor", name: "TB135 Flagged Admin", email: "tb135-flagged-admin@example.test", active: true });
+      expect(project.members.some((m) => m.userId === unflaggedEditorId)).toBe(false);
+      expect(project.members.some((m) => m.userId === flaggedInactiveEditorId)).toBe(false);
+      expect(project.members.some((m) => m.userId === flaggedPhotographerId)).toBe(false);
+
+      for (const userId of [flaggedEditorId, flaggedAdminId]) {
+        const membership = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(project.id, userId).first<{ id: string }>();
+        expect(membership).not.toBeNull();
+        const auditRow = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project.member.add' AND target_id = ?").bind(membership!.id).first<{ meta_json: string }>();
+        expect(JSON.parse(auditRow!.meta_json)).toMatchObject({ source: "default_editor", userId, roleOnProject: "editor", projectId: project.id });
+        const outboxRow = await database.DB.prepare("SELECT id, event_type AS eventType, status FROM notification_outbox WHERE project_id = ? AND recipient_id = ? AND event_type = 'project.assignment.created'").bind(project.id, userId).first<{ id: string; eventType: string; status: string }>();
+        expect(outboxRow?.eventType).toBe("project.assignment.created");
+        expect(["pending", "queued"]).toContain(outboxRow?.status);
+        const ledgerRows = await database.DB.prepare("SELECT channel FROM notification_delivery_ledger WHERE outbox_id = ?").bind(outboxRow!.id).all<{ channel: string }>();
+        expect(ledgerRows.results.map((row) => row.channel).sort()).toEqual(["email", "in_app"]);
+      }
+    });
+
+    it("does not duplicate an explicitly chosen default editor", async () => {
+      const adminCookie = await sessionCookie(adminToken);
+      const response = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST",
+        headers: { cookie: adminCookie, "content-type": "application/json" },
+        body: JSON.stringify({ street: `Default editor explicit ${crypto.randomUUID()}`, orderedServices: [], editorUserIds: [flaggedEditorId] }),
+      });
+      expect(response.status).toBe(201);
+      const project = await response.json() as { id: string; members: Array<{ userId: string; roleOnProject: string }> };
+      expect(project.members.filter((m) => m.userId === flaggedEditorId)).toHaveLength(1);
+      const memberships = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'editor'").bind(project.id, flaggedEditorId).all<{ id: string }>();
+      expect(memberships.results).toHaveLength(1);
+      const auditRow = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project.member.add' AND target_id = ?").bind(memberships.results[0]!.id).first<{ meta_json: string }>();
+      expect(JSON.parse(auditRow!.meta_json)).not.toHaveProperty("source");
+    });
+  });
 });

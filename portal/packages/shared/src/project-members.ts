@@ -12,6 +12,19 @@ export function isProjectAssignmentEligible(roleOnProject: ProjectMemberRole, gl
   return (PROJECT_ASSIGNMENT_ELIGIBLE_ROLES[roleOnProject] as readonly Role[]).includes(globalRole);
 }
 
+/**
+ * "Effective default editor" (#135): `default_editor = 1 AND active = 1 AND role IN
+ * PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor`. One shared predicate so the app's manual project
+ * creation and Tonomo's create path can never drift on who counts as a default editor.
+ */
+export function effectiveDefaultEditorSql(alias: string): { sql: string; bindings: string[] } {
+  const eligibleRoles = [...PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor];
+  return {
+    sql: `${alias}.default_editor = 1 AND ${alias}.active = 1 AND ${alias}.role IN (${eligibleRoles.map(() => "?").join(", ")})`,
+    bindings: eligibleRoles,
+  };
+}
+
 export type ProjectMembershipDto = {
   id: string;
   userId: string;
