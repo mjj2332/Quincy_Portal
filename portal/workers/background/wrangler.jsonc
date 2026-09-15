@@ -78,8 +78,10 @@
     "RENDITIONS_ENABLED": true,
     "DROPBOX_RAW_AUTOMATION_ENABLED": "1",
     "DROPBOX_AUTOHDR_AUTOMATION_ENABLED": "1",
-    // On since the reviewed Rosemont pilot (2026-09-14); set the real cutover epoch before auto-creation.
+    // Automation on since the reviewed Rosemont pilot (2026-09-14). Auto-creation cutover "1" (epoch ms)
+    // since 2026-09-15: every unmapped, non-archived Project with an ISO shoot_date, an active photographer
+    // and a RAW folder that exists in Dropbox gets its Editor tree created (owner decision, Option A).
     "DROPBOX_EDITOR_AUTOMATION_ENABLED": "1",
-    "EDITOR_AUTOCREATE_AFTER_MS": "0"
+    "EDITOR_AUTOCREATE_AFTER_MS": "1"
   }
 }
