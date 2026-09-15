@@ -16,8 +16,10 @@ import type { Env } from "../env";
 import { dbFor } from "../lib/db";
 import {
   EDITOR_INPUT_FOLDER,
+  EDITOR_INPUT_NAME_PATTERN,
   EDITOR_NOTES_FOLDER,
   EDITOR_OUTPUT_FOLDER,
+  EDITOR_OUTPUT_NAME_PATTERN,
   EDITOR_ROOT,
   editorFolderChildPath,
   editorFolderPath,
@@ -72,10 +74,18 @@ export type EditorFolderScaffoldDependencies = {
 
 type FolderRole = "root" | "input" | "output" | "editing_notes";
 
-const CHILD_SPECS: readonly { role: Exclude<FolderRole, "root">; name: typeof EDITOR_INPUT_FOLDER | typeof EDITOR_OUTPUT_FOLDER | typeof EDITOR_NOTES_FOLDER }[] = [
-  { role: "input", name: EDITOR_INPUT_FOLDER },
-  { role: "output", name: EDITOR_OUTPUT_FOLDER },
-  { role: "editing_notes", name: EDITOR_NOTES_FOLDER },
+type ChildName = typeof EDITOR_INPUT_FOLDER | typeof EDITOR_OUTPUT_FOLDER | typeof EDITOR_NOTES_FOLDER;
+type ChildSpec = { role: Exclude<FolderRole, "root">; name: ChildName; pattern: RegExp | null };
+
+/**
+ * `name` is what a fresh create uses; `pattern` is how an already-recorded child of the same
+ * role is recognised directly below the root, so a tree begun under the plain `Input`/`Output`
+ * spelling resumes with the child it already has instead of gaining a numbered sibling.
+ */
+const CHILD_SPECS: readonly ChildSpec[] = [
+  { role: "input", name: EDITOR_INPUT_FOLDER, pattern: EDITOR_INPUT_NAME_PATTERN },
+  { role: "output", name: EDITOR_OUTPUT_FOLDER, pattern: EDITOR_OUTPUT_NAME_PATTERN },
+  { role: "editing_notes", name: EDITOR_NOTES_FOLDER, pattern: null },
 ];
 
 function errorMessage(error: unknown): string {
@@ -104,22 +114,35 @@ function exactFolder(value: DropboxFile | DropboxFolder | undefined, expectedPat
   return expectedId === undefined || value.id === expectedId;
 }
 
-function childPath(mapping: EditorFolderMapping, name: typeof EDITOR_INPUT_FOLDER | typeof EDITOR_OUTPUT_FOLDER | typeof EDITOR_NOTES_FOLDER): string {
+function childPath(mapping: EditorFolderMapping, name: ChildName): string {
   return editorFolderChildPath(mapping.rootPath, name);
 }
 
-function existingChildId(mapping: EditorFolderMapping, role: Exclude<FolderRole, "root">, path: string): string | undefined {
-  if (role === "editing_notes") {
-    return mapping.editingNotesFolderId ?? undefined;
+type PersistedChild = { path: string; folderId: string };
+
+/**
+ * The child already recorded for this role directly below the project root, under either
+ * spelling. Legacy section roots (`Day/Input`) sit one level deeper and never match here.
+ */
+function persistedChild(mapping: EditorFolderMapping, spec: ChildSpec): PersistedChild | undefined {
+  if (spec.role === "editing_notes") {
+    return mapping.editingNotesFolderId ? { path: childPath(mapping, spec.name), folderId: mapping.editingNotesFolderId } : undefined;
   }
-  const roots = role === "input" ? mapping.inputRoots : mapping.outputRoots;
-  return roots.find((root) => {
+  const roots = spec.role === "input" ? mapping.inputRoots : mapping.outputRoots;
+  const rootKey = editorFolderPathKey(mapping.rootPath);
+  for (const root of roots) {
+    if (!root.folderId) continue;
     try {
-      return editorFolderPathKey(root.path) === editorFolderPathKey(path);
+      const segments = root.path.split("/");
+      const leaf = segments.at(-1) ?? "";
+      if (editorFolderPathKey(segments.slice(0, -1).join("/")) === rootKey && spec.pattern?.test(leaf)) {
+        return { path: root.path, folderId: root.folderId };
+      }
     } catch {
-      return false;
+      continue;
     }
-  })?.folderId;
+  }
+  return undefined;
 }
 
 function currentChildRoots(mapping: EditorFolderMapping, role: "input" | "output", path: string, folderId: string): EditorFolderSubtree[] {
@@ -175,18 +198,18 @@ async function ensureChild(
   mapping: EditorFolderMapping,
   connectionId: string,
   leaseToken: string,
-  spec: (typeof CHILD_SPECS)[number],
+  spec: ChildSpec,
   operations: Required<Pick<EditorFolderScaffoldDependencies, "getMetadata" | "createFolderStrict">>,
 ): Promise<EditorFolderMapping> {
-  const path = childPath(mapping, spec.name);
-  const persistedId = existingChildId(mapping, spec.role, path);
-  if (persistedId) {
-    const metadata = await getExactMetadata(env, db, operations.getMetadata, path, connectionId);
-    if (!exactFolder(metadata, path, persistedId)) {
-      return markConflict(db, mapping, leaseToken, spec.role, path, `Persisted ${spec.name} folder metadata no longer matches its recorded Dropbox ID`, persistedId);
+  const persisted = persistedChild(mapping, spec);
+  if (persisted) {
+    const metadata = await getExactMetadata(env, db, operations.getMetadata, persisted.path, connectionId);
+    if (!exactFolder(metadata, persisted.path, persisted.folderId)) {
+      return markConflict(db, mapping, leaseToken, spec.role, persisted.path, `Persisted ${spec.name} folder metadata no longer matches its recorded Dropbox ID`, persisted.folderId);
     }
     return mapping;
   }
+  const path = childPath(mapping, spec.name);
 
   try {
     const created = await operations.createFolderStrict(env, db, path, connectionId);
@@ -369,20 +392,16 @@ export async function reconcileEditorFolder(
       if (mapping.state !== "pending") return mapping;
     }
 
-    const inputPath = childPath(mapping, EDITOR_INPUT_FOLDER);
-    const outputPath = childPath(mapping, EDITOR_OUTPUT_FOLDER);
-    const notesPath = childPath(mapping, EDITOR_NOTES_FOLDER);
-    const inputFolderId = existingChildId(mapping, "input", inputPath);
-    const outputFolderId = existingChildId(mapping, "output", outputPath);
-    const notesFolderId = existingChildId(mapping, "editing_notes", notesPath);
-    if (!mapping.rootFolderId || !inputFolderId || !outputFolderId || !notesFolderId) {
+    const provisioned = mapping;
+    const [input, output, notes] = CHILD_SPECS.map((spec) => persistedChild(provisioned, spec));
+    if (!provisioned.rootFolderId || !input || !output || !notes) {
       throw new Error("Editor folder provisioning completed without all required folder IDs");
     }
-    const ready = await markEditorFolderReady(db, mapping.id, {
-      rootFolderId: mapping.rootFolderId,
-      inputRoots: currentChildRoots(mapping, "input", inputPath, inputFolderId),
-      outputRoots: currentChildRoots(mapping, "output", outputPath, outputFolderId),
-      editingNotesFolderId: notesFolderId,
+    const ready = await markEditorFolderReady(db, provisioned.id, {
+      rootFolderId: provisioned.rootFolderId,
+      inputRoots: currentChildRoots(provisioned, "input", input.path, input.folderId),
+      outputRoots: currentChildRoots(provisioned, "output", output.path, output.folderId),
+      editingNotesFolderId: notes.folderId,
       leaseToken: lease.token,
       at: now(),
     });
