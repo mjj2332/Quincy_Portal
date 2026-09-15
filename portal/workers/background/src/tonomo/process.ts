@@ -194,9 +194,16 @@ async function commitRawFolderPathChange(
 ): Promise<boolean> {
   const at = Date.now();
   const link = order.rawFolderLink && order.rawFolderLink !== project.rawFolderLink ? order.rawFolderLink : null;
-  const meta = JSON.stringify({ actor: "tonomo", orderId: order.orderId, previousRawFolderPath: project.rawFolderPath, rawFolderPath: verified.path, dropboxFolderId: verified.folderId });
+  const meta = JSON.stringify({
+    actor: "tonomo", orderId: order.orderId, previousRawFolderPath: project.rawFolderPath, rawFolderPath: verified.path, dropboxFolderId: verified.folderId,
+    ...(link ? { previousRawFolderLink: project.rawFolderLink, rawFolderLink: link } : {}),
+  });
+  // The ready-mapping guard is re-checked inside the fence: a mapping can go ready during the Dropbox lookup.
+  const mappingGuard = automationFlag(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
+    ? " AND NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')"
+    : "";
   const [update] = await env.DB.batch([
-    env.DB.prepare("UPDATE projects SET raw_folder_path = ?, raw_folder_link = COALESCE(?, raw_folder_link), updated_at = ? WHERE id = ? AND raw_folder_path = ? AND archived_at IS NULL")
+    env.DB.prepare(`UPDATE projects SET raw_folder_path = ?, raw_folder_link = COALESCE(?, raw_folder_link), updated_at = ? WHERE id = ? AND raw_folder_path = ? AND archived_at IS NULL${mappingGuard}`)
       .bind(verified.path, link, at, project.id, project.rawFolderPath),
     env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.raw_folder_path.changed', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND raw_folder_path = ? AND updated_at = ?)")
       .bind(crypto.randomUUID(), project.id, meta, at, project.id, verified.path, at),

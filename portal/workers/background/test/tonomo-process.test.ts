@@ -195,6 +195,28 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ count: 0 });
   });
 
+  it("completes the event without mutation when Dropbox fails for a reason other than not_found", async () => {
+    const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
+    const getMetadata = async (): Promise<DropboxFile | DropboxFolder> => {
+      throw new Error("Dropbox request failed (503)", { cause: new Error("upstream unavailable") });
+    };
+    await processEvent(orderId, { rawFolderPath: NEWER_RAW_FOLDER_PATH, agentName: "Survived" }, { getMetadata });
+    expect(await database.DB.prepare("SELECT raw_folder_path, agent_name FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH, agent_name: "Survived" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
+      .toEqual({ count: 0 });
+  });
+
+  it("declines a path whose address leaf only gained a Tonomo suffix, because Editor and AutoHDR names derive from the leaf", async () => {
+    const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
+    let calls = 0;
+    const getMetadata = async (): Promise<DropboxFile | DropboxFolder> => { calls += 1; throw new Error("unreachable"); };
+    await processEvent(orderId, { rawFolderPath: `${NEWER_RAW_FOLDER_PATH} 2` }, { getMetadata });
+    expect(calls).toBe(0);
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
+  });
+
   it("keeps the stored path when the Editor mapping is ready", async () => {
     const { projectId, orderId } = await seedProject({ rawFolderPath: STORED_RAW_FOLDER_PATH });
     await seedReadyEditorMapping(projectId);
