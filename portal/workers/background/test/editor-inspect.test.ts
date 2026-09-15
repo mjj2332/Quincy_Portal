@@ -266,7 +266,38 @@ describe("previewEditorBackfill", () => {
     const result = await previewEditorBackfill(localEnv());
     const item = result.items.find((entry) => entry.projectId === data.projectId);
     expect(item).toBeDefined();
-    expect(item).toMatchObject({ status: "needs_review", derivedRootPath });
+    expect(item).toMatchObject({ status: "needs_review", derivedRootPath, lastReconcile: null });
+  });
+
+  it("surfaces the last automatic pass's skip reason on an unmapped Project", async () => {
+    const data = await fixture();
+    const now = Date.now();
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, error, created_at, updated_at) VALUES (?, 'editor_reconcile', 'done', ?, 'no_active_photographer: Project has no active photographer member', ?, ?)").bind(crypto.randomUUID(), data.projectId, now - 2000, now - 2000),
+      bindings.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, error, created_at, updated_at) VALUES (?, 'editor_reconcile', 'done', ?, 'raw_outside_root: RAW folder now lives at /Archive/x, outside /Tonomo/Raw Files. This project was completed and delivered outside the Portal; mark it delivered or archived instead of chasing the folder.', ?, ?)").bind("newest-" + data.projectId, data.projectId, now - 1000, now),
+    ]);
+    vi.mocked(getMetadata).mockRejectedValue(new Error("Dropbox /files/get_metadata failed (409): path/conflict"));
+    const result = await previewEditorBackfill(localEnv());
+    const item = result.items.find((entry) => entry.projectId === data.projectId) as { lastReconcile: { jobId: string; status: string; at: string; reason: string } | null } | undefined;
+    expect(item?.lastReconcile).toMatchObject({ jobId: "newest-" + data.projectId, status: "done", at: new Date(now).toISOString() });
+    expect(item?.lastReconcile?.reason).toMatch(/^raw_outside_root: .*delivered outside the Portal/);
+  });
+
+  it("surfaces the last pass's reason on a pending mapping but not on a ready one", async () => {
+    const data = await fixture();
+    const now = Date.now();
+    const rootPath = derivedEditorRootPath(data.shootDate, data.rawFolderPath)!;
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO editor_folder_mappings (id, project_id, connection_id, state, shoot_date, project_folder_name, root_path, root_path_key, photographer_evidence_json, editing_notes_path, input_roots_json, output_roots_json, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, 'x', ?, ?, '{}', ?, '[]', '[]', ?, ?)")
+        .bind(crypto.randomUUID(), data.projectId, data.connectionId, data.shootDate, rootPath, rootPath.toLowerCase(), `${rootPath}/Editing Notes`, now, now),
+      bindings.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, error, created_at, updated_at) VALUES (?, 'editor_reconcile', 'done', ?, 'raw_sync_in_flight: A RAW sync for the Project is queued or running; the tree is created once it settles', ?, ?)").bind(crypto.randomUUID(), data.projectId, now, now),
+    ]);
+    const pending = (await previewEditorBackfill(localEnv())).items.find((entry) => entry.projectId === data.projectId) as { status: string; lastReconcile: { reason: string } | null } | undefined;
+    expect(pending?.status).toBe("needs_review");
+    expect(pending?.lastReconcile?.reason).toMatch(/^raw_sync_in_flight:/);
+    await bindings.DB.prepare("UPDATE editor_folder_mappings SET state = 'ready' WHERE project_id = ?").bind(data.projectId).run();
+    const ready = (await previewEditorBackfill(localEnv())).items.find((entry) => entry.projectId === data.projectId) as { status: string; lastReconcile: unknown } | undefined;
+    expect(ready).toMatchObject({ status: "already_mapped", lastReconcile: null });
   });
 
   it("preview carries derivedRootPath for a link-only Project when inspection fails", async () => {

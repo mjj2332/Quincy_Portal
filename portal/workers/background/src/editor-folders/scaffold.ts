@@ -252,6 +252,41 @@ function addressLeaf(path: string): string | undefined {
   return path.split("/").filter(Boolean).at(-1)?.toLowerCase();
 }
 
+/** Why a reconcile pass ended without a ready tree. Written to `jobs.error` by the queue consumer. */
+export type EditorScaffoldSkipReason =
+  | "project_inactive"
+  | "no_shoot_date"
+  | "no_active_photographer"
+  | "raw_identity_unavailable"
+  | "raw_leaf_mismatch"
+  | "raw_outside_root"
+  | "raw_path_recovered"
+  | "raw_path_change_lost"
+  | "raw_sync_in_flight"
+  | "provision_lease_held"
+  | "project_not_provisionable";
+
+/** Every code that can prefix an `editor_reconcile` job's `error` note. */
+export type EditorReconcileNoteCode = EditorScaffoldSkipReason | "needs_review" | "autocreate_not_allowed";
+
+export type EditorReconcileOutcome =
+  | { status: "mapped"; mapping: EditorFolderMapping }
+  | { status: "needs_review"; mapping: EditorFolderMapping; reason: string }
+  | { status: "skipped"; mapping: EditorFolderMapping | null; reason: EditorScaffoldSkipReason; detail: string };
+
+type RawIdentitySkip = { skip: EditorScaffoldSkipReason; detail: string };
+
+/** The `jobs.error` text for a pass that created no ready tree: `<code>: <sentence>`; undefined when it did. */
+export function editorReconcileNote(outcome: EditorReconcileOutcome): string | undefined {
+  if (outcome.status === "skipped") return reconcileNote(outcome.reason, outcome.detail);
+  if (outcome.status === "needs_review") return reconcileNote("needs_review", outcome.reason);
+  return undefined;
+}
+
+export function reconcileNote(code: EditorReconcileNoteCode, detail: string): string {
+  return `${code}: ${detail}`;
+}
+
 type RawIdentity = {
   rawFolderPath: string;
   projectFolderName: string;
@@ -302,10 +337,10 @@ async function resolveRawIdentity(
   project: RawIdentityProject,
   connectionId: string,
   operations: { getMetadata: DropboxMetadataOperation; resolveRawFolderPath: RawFolderPathOperation },
-): Promise<RawIdentity | null> {
+): Promise<RawIdentity | RawIdentitySkip> {
   const storedPath = project.rawFolderPath;
   const rawFolderPath = storedPath || await operations.resolveRawFolderPath(env, project.rawFolderLink, connectionId);
-  if (!rawFolderPath) return null;
+  if (!rawFolderPath) return { skip: "raw_identity_unavailable", detail: "The Project has no Tonomo RAW folder path, and its RAW shared link (if any) does not resolve to a Dropbox path" };
   const tonomoMetadata = await getExactMetadata(env, db, operations.getMetadata, rawFolderPath, connectionId);
   if (isFolder(tonomoMetadata)) {
     return {
@@ -333,27 +368,25 @@ async function resolveRawIdentity(
         if (addressLeaf(linkPath) !== addressLeaf(storedPath)) {
           // Same rule as the Tonomo processor: Editor and AutoHDR names derive from the address leaf.
           console.log("Editor scaffold skipped: RAW folder found under a different address leaf; needs manual review", { projectId: project.id, storedPath, linkPath });
-          return null;
+          return { skip: "raw_leaf_mismatch", detail: `The RAW shared link now points at ${linkMetadata.path_display ?? linkPath}, a different address from the stored ${storedPath}; review the Project manually` };
         }
         if (!pathEqualsOrIsBelow(linkPath, TONOMO_RAW_ROOT) || dropboxPathKey(linkPath) === dropboxPathKey(TONOMO_RAW_ROOT)) {
-          console.log("Editor scaffold skipped: RAW folder found outside the Tonomo RAW root", {
-            projectId: project.id,
-            reason: `RAW folder now lives at ${linkMetadata.path_display ?? linkPath}, outside ${TONOMO_RAW_ROOT}. This project was completed and delivered outside the Portal; mark it delivered or archived instead of chasing the folder.`,
-          });
-          return null;
+          const detail = `RAW folder now lives at ${linkMetadata.path_display ?? linkPath}, outside ${TONOMO_RAW_ROOT}. This project was completed and delivered outside the Portal; mark it delivered or archived instead of chasing the folder.`;
+          console.log("Editor scaffold skipped: RAW folder found outside the Tonomo RAW root", { projectId: project.id, reason: detail });
+          return { skip: "raw_outside_root", detail };
         }
         const adopted = await commitRawFolderPathChange(env, {
           projectId: project.id, previousPath: storedPath, previousLink: project.rawFolderLink,
           path: linkPath, link: null, dropboxFolderId: linkMetadata.id, actor: "editor_scaffold",
         });
-        if (!adopted) return null;
+        if (!adopted) return { skip: "raw_path_change_lost", detail: "The Project's RAW folder path changed while the shared link was being resolved; the next pass re-reads it" };
         await followRawFolderPathChange(env, db, project.id, "editor_scaffold_raw_path_recovered");
         // Stop here: a ready mapping hands RAW intake to the Editor Input root, so the recovered
         // Tonomo folder must be scanned before any tree exists. The queued sync scans it, and the
         // next reconcile (hourly recovery or the sync's own follow-up) finds the stored path and
         // creates the tree from its path_display like any other project.
         console.log("Editor scaffold deferred: RAW folder path recovered from the shared link; scanning it before creating the tree", { projectId: project.id, storedPath, linkPath });
-        return null;
+        return { skip: "raw_path_recovered", detail: `RAW folder found at ${linkMetadata.path_display ?? linkPath} via the shared link; the Project now points there and a RAW sync is queued. The tree is created on the next pass` };
       }
     }
   }
@@ -381,7 +414,39 @@ export async function reconcileEditorFolder(
   projectId: string,
   dependencies: EditorFolderScaffoldDependencies = {},
 ): Promise<EditorFolderMapping | null> {
+  return (await reconcileEditorFolderOutcome(env, projectId, dependencies)).mapping;
+}
+
+/**
+ * The pass's result from the mapping it ends with: ready is mapped, a conflict is needs_review,
+ * and a mapping still pending here means a lease-fenced write lost to another pass, never a tree.
+ */
+function outcomeFor(mapping: EditorFolderMapping): EditorReconcileOutcome {
+  if (mapping.state === "needs_review") {
+    return { status: "needs_review", mapping, reason: mapping.recoveryProof?.conflict?.reason ?? mapping.recoveryProof?.lastError ?? "Editor folder mapping needs operator review" };
+  }
+  if (mapping.state === "pending") {
+    return { status: "skipped", mapping, reason: "provision_lease_held", detail: "Another reconcile changed the mapping while this pass held the provisioning lease; the next pass finishes it" };
+  }
+  return { status: "mapped", mapping };
+}
+
+/**
+ * `reconcileEditorFolder` with the reason a pass stopped short of a ready tree, so the queue
+ * consumer can record it on the job instead of leaving a silent "done".
+ */
+export async function reconcileEditorFolderOutcome(
+  env: Env,
+  projectId: string,
+  dependencies: EditorFolderScaffoldDependencies = {},
+): Promise<EditorReconcileOutcome> {
+  const skipped = (reason: EditorScaffoldSkipReason, detail: string, mapping: EditorFolderMapping | null = null): EditorReconcileOutcome => ({ status: "skipped", mapping, reason, detail });
   const db = dependencies.db ?? dbFor(env);
+  // After a lost race, report whatever the mapping became: still pending is a skip, anything else is its own result.
+  const settled = async (reason: EditorScaffoldSkipReason, detail: string, fallback: EditorFolderMapping): Promise<EditorReconcileOutcome> => {
+    const current = (await getEditorFolderMapping(db, projectId)) ?? fallback;
+    return current.state === "pending" ? skipped(reason, detail, current) : outcomeFor(current);
+  };
   const now = dependencies.now ?? (() => new Date());
   const getMetadataOperation = dependencies.getMetadata ?? getMetadata;
   const createFolderOperation = dependencies.createFolder ?? createFolder;
@@ -398,16 +463,16 @@ export async function reconcileEditorFolder(
     street: projects.street,
     suburb: projects.suburb,
   }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
-  if (!project) return null;
+  if (!project) return skipped("project_inactive", "Project is archived, delivered or missing");
 
   let mapping = await getEditorFolderMapping(db, projectId);
-  if (mapping?.state === "ready" || mapping?.state === "needs_review") return mapping;
+  if (mapping?.state === "ready" || mapping?.state === "needs_review") return outcomeFor(mapping);
 
   let connectionId: string;
   if (mapping) {
     connectionId = mapping.connectionId;
   } else {
-    if (!project.shootDate) return null;
+    if (!project.shootDate) return skipped("no_shoot_date", "Project has no shoot date");
     parseShootDate(project.shootDate);
     const photographer = await db.select({ userId: projectMembers.userId }).from(projectMembers)
       .innerJoin(user, eq(projectMembers.userId, user.id))
@@ -416,11 +481,11 @@ export async function reconcileEditorFolder(
         eq(projectMembers.roleOnProject, "photographer"),
         eq(user.active, true),
       )).get();
-    if (!photographer) return null;
+    if (!photographer) return skipped("no_active_photographer", "Project has no active photographer member");
     connectionId = await connectionOperation(db);
 
     const identity = await resolveRawIdentity(env, db, project, connectionId, { getMetadata: getMetadataOperation, resolveRawFolderPath: rawFolderPathOperation });
-    if (!identity) return null;
+    if ("skip" in identity) return skipped(identity.skip, identity.detail);
     mapping = await reserveEditorFolderMapping(db, {
       projectId,
       connectionId,
@@ -437,20 +502,19 @@ export async function reconcileEditorFolder(
       },
       now: now(),
     });
-    if (mapping.state !== "pending") return mapping;
+    if (mapping.state !== "pending") return outcomeFor(mapping);
     connectionId = mapping.connectionId;
   }
 
-  if (!mapping) return null;
   // A ready tree takes RAW intake away from the Tonomo folder, so never finish one while a RAW
   // sync of that folder is queued or running (a Tonomo path change or link recovery just nudged
   // one). The hourly recovery pass retries once the sync has settled.
   if (await rawSyncInFlight(db, projectId)) {
     console.log("Editor scaffold deferred: a RAW sync for the project is still in flight", { projectId, mappingId: mapping.id });
-    return mapping;
+    return skipped("raw_sync_in_flight", "A RAW sync for the Project is queued or running; the tree is created once it settles", mapping);
   }
   const lease = await acquireEditorFolderProvisionLease(db, mapping.id, now(), dependencies.leaseMs);
-  if (!lease) return (await getEditorFolderMapping(db, projectId)) ?? mapping;
+  if (!lease) return settled("provision_lease_held", "Another reconcile holds the provisioning lease for this mapping", mapping);
   mapping = lease.mapping;
 
   const operations = { getMetadata: getMetadataOperation, createFolderStrict: createFolderStrictOperation };
@@ -467,13 +531,13 @@ export async function reconcileEditorFolder(
         isNull(projects.archivedAt),
         ne(projects.stageKey, "delivered"),
       )).get();
-    if (!stillProvisionable) return (await getEditorFolderMapping(db, projectId)) ?? mapping;
+    if (!stillProvisionable) return settled("project_not_provisionable", "Project lost its active photographer, was archived or was delivered after the tree was reserved", mapping);
     const monthPath = mapping.rootPath.split("/").slice(0, -2).join("/");
     const dayPath = mapping.rootPath.split("/").slice(0, -1).join("/");
     // The configured Editor root is pre-existing and deliberately excluded from this chain.
     if (!monthPath.startsWith(`${EDITOR_ROOT}/`) || !dayPath.startsWith(`${monthPath}/`)) {
       mapping = await markConflict(db, mapping, lease.token, "root", mapping.rootPath, "Persisted Editor root is outside the configured workspace");
-      return mapping;
+      return outcomeFor(mapping);
     }
     await createFolderOperation(env, db, monthPath, connectionId);
     await createFolderOperation(env, db, dayPath, connectionId);
@@ -483,20 +547,20 @@ export async function reconcileEditorFolder(
       const metadata = await getExactMetadata(env, db, getMetadataOperation, mapping.rootPath, connectionId);
       if (!exactFolder(metadata, mapping.rootPath, mapping.rootFolderId)) {
         mapping = await markConflict(db, mapping, lease.token, "root", mapping.rootPath, "Persisted Editor root metadata no longer matches its recorded Dropbox ID", mapping.rootFolderId);
-        return mapping;
+        return outcomeFor(mapping);
       }
       root = metadata;
     } else {
       const existing = await getExactMetadata(env, db, getMetadataOperation, mapping.rootPath, connectionId);
       if (existing) {
         mapping = await markConflict(db, mapping, lease.token, "root", mapping.rootPath, "An existing Dropbox project folder requires explicit operator review", existing.id);
-        return mapping;
+        return outcomeFor(mapping);
       }
       try {
         const created = await createFolderStrictOperation(env, db, mapping.rootPath, connectionId);
         if (!exactFolder(created, mapping.rootPath)) {
           mapping = await markConflict(db, mapping, lease.token, "root", mapping.rootPath, "Dropbox returned unexpected metadata after creating the Editor project folder");
-          return mapping;
+          return outcomeFor(mapping);
         }
         mapping = await recordEditorFolderProvision(db, mapping.id, {
           role: "root",
@@ -505,19 +569,19 @@ export async function reconcileEditorFolder(
           method: "created",
           leaseToken: lease.token,
         });
-        if (mapping.state !== "pending") return mapping;
+        if (mapping.state !== "pending") return outcomeFor(mapping);
         root = created;
       } catch (error) {
         if (!isDropboxConflict(error)) throw error;
         mapping = await markConflict(db, mapping, lease.token, "root", mapping.rootPath, "Editor project folder creation conflicted; existing roots are never auto-adopted");
-        return mapping;
+        return outcomeFor(mapping);
       }
     }
     if (!root) throw new Error("Editor root metadata was not established");
 
     for (const spec of CHILD_SPECS) {
       mapping = await ensureChild(env, db, mapping, connectionId, lease.token, spec, operations);
-      if (mapping.state !== "pending") return mapping;
+      if (mapping.state !== "pending") return outcomeFor(mapping);
     }
 
     const provisioned = mapping;
@@ -534,7 +598,7 @@ export async function reconcileEditorFolder(
       at: now(),
     });
     if (ready.state === "ready") await recordDropboxSuccess(db, connectionId, ["credentials", "current_account", "list_folder", "folder_path"]);
-    return ready;
+    return outcomeFor(ready);
   } catch (error) {
     await persistDiagnostic(db, mapping.id, lease.token, error);
     throw error;

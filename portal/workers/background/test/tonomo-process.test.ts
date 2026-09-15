@@ -181,6 +181,12 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ count: 0 });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
       .toEqual({ count: 0 });
+    const declined = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first<{ meta_json: string }>();
+    expect(JSON.parse(declined!.meta_json)).toMatchObject({ actor: "tonomo", orderId, storedPath: STORED_RAW_FOLDER_PATH, incomingPath: NEWER_RAW_FOLDER_PATH, reason: "Tonomo path not found in Dropbox; keeping stored path" });
+    // A redelivered webhook with the same path and reason adds no second audit row.
+    await processEvent(orderId, { rawFolderPath: NEWER_RAW_FOLDER_PATH }, { getMetadata });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first())
+      .toEqual({ count: 1 });
   });
 
   it("keeps the stored path when Tonomo's newer path exists but is a file, not a folder", async () => {
@@ -193,6 +199,8 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
       .toEqual({ count: 0 });
+    const declined = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first<{ meta_json: string }>();
+    expect(JSON.parse(declined!.meta_json)).toMatchObject({ reason: "Tonomo path is not a folder in Dropbox; keeping stored path" });
   });
 
   it("completes the event without mutation when Dropbox fails for a reason other than not_found", async () => {
@@ -204,6 +212,9 @@ describe("processTonomoEvent RAW folder path update", () => {
     expect(await database.DB.prepare("SELECT raw_folder_path, agent_name FROM projects WHERE id = ?").bind(projectId).first())
       .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH, agent_name: "Survived" });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
+      .toEqual({ count: 0 });
+    // A transient failure is retried by the webhook, so it is not written to the audit trail.
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first())
       .toEqual({ count: 0 });
   });
 
@@ -230,6 +241,8 @@ describe("processTonomoEvent RAW folder path update", () => {
     expect(calls).toBe(0);
     expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(projectId).first())
       .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
+    const declined = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first<{ meta_json: string }>();
+    expect(JSON.parse(declined!.meta_json)).toMatchObject({ reason: "editor mapping ready; RAW intake already moved to the Editor tree" });
   });
 
   it("keeps the stored path when the address leaf changed", async () => {

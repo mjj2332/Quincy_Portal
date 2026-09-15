@@ -1,5 +1,6 @@
 import { and, eq, gt, isNull, ne } from "drizzle-orm";
 import { projects } from "@quincy/db/schema";
+import { latestJobForProject, type JobStatus } from "../lib/jobs";
 import type { Database } from "@quincy/db";
 import { normalisePath } from "@quincy/shared";
 import type { Env } from "../env";
@@ -145,6 +146,18 @@ export async function inspectEditorCandidate(env: Env, projectId: string, rootPa
   }
 }
 
+/**
+ * The most recent `editor_reconcile` job for the Project: historical evidence of why the last
+ * automatic pass stopped (its `reason` is `jobs.error`), read without touching Dropbox. `at` is the
+ * job's last status change; a queued or running row means a pass is in progress.
+ */
+export type EditorReconcileDiagnostic = { jobId: string; status: JobStatus; at: string; reason: string | null };
+
+export async function latestEditorReconcile(db: Database, projectId: string): Promise<EditorReconcileDiagnostic | null> {
+  const job = await latestJobForProject(db, projectId, "editor_reconcile");
+  return job ? { jobId: job.jobId, status: job.status, at: job.at, reason: job.error } : null;
+}
+
 export async function previewEditorBackfill(env: Env, cursor?: string) {
   const db = dbFor(env);
   const rows = await db.select({ id: projects.id })
@@ -159,6 +172,8 @@ export async function previewEditorBackfill(env: Env, cursor?: string) {
       items.push({ projectId: row.id, status: mapping.state === "ready" ? "already_mapped" as const : "needs_review" as const,
         mappingId: mapping.id, state: mapping.state, rootPath: mapping.rootPath,
         reason: mapping.recoveryProof?.conflict?.reason ?? mapping.recoveryProof?.lastError ?? null,
+        // A pending mapping is one an automatic pass reserved and then deferred; say why.
+        lastReconcile: mapping.state === "ready" ? null : await latestEditorReconcile(db, row.id),
         initialSyncPending: mapping.initialSyncCompletedAt === null,
         // Where the RAW folder was when the tree was reserved: "missing" means the Tonomo folder was
         // gone and RAW is expected through the Editor Input root only.
@@ -167,12 +182,13 @@ export async function previewEditorBackfill(env: Env, cursor?: string) {
       continue;
     }
     let derivedRootPath: string | null = null;
+    const lastReconcile = await latestEditorReconcile(db, row.id);
     try {
       const { project, connectionId, rootPath } = await resolveDerivedRoot(env, db, row.id);
       derivedRootPath = rootPath;
-      items.push({ projectId: row.id, status: "candidate" as const, candidate: await verifyEditorRoot(env, db, row.id, project, connectionId, rootPath) });
+      items.push({ projectId: row.id, status: "candidate" as const, candidate: await verifyEditorRoot(env, db, row.id, project, connectionId, rootPath), lastReconcile });
     } catch (error) {
-      items.push({ projectId: row.id, status: "needs_review" as const, reason: message(error), derivedRootPath });
+      items.push({ projectId: row.id, status: "needs_review" as const, reason: message(error), derivedRootPath, lastReconcile });
     }
   }
   return { items, nextCursor: rows.length === 25 ? rows.at(-1)!.id : null, dryRun: true as const };

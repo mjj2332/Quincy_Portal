@@ -15,7 +15,8 @@ import {
   editorMonthFolderName,
   isValidShootDate,
 } from "../src/editor-folders/paths";
-import { reconcileEditorFolder } from "../src/editor-folders/scaffold";
+import { editorReconcileNote, reconcileEditorFolder, reconcileEditorFolderOutcome } from "../src/editor-folders/scaffold";
+import { handleEditorReconcileMessage } from "../src/editor-folders/queue";
 import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision } from "../src/editor-folders/mapping";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -412,6 +413,55 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     expect(mapping?.photographerEvidence).toMatchObject({ rawSource: "missing", nameSource: "tonomo_formatted_address" });
   });
 
+  it("names each way the RAW identity stops a tree", async () => {
+    const outside = "/archive/2026/72 victoria st, paddington nsw 2021, australia";
+    const other = "/tonomo/raw files/christian quinlan/15-09-2026/74 victoria st, paddington nsw 2021, australia";
+    const { data: a, ops: opsA } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
+    opsA.metadata.set(outside, { ".tag": "folder", id: `id:a-${a.suffix}`, name: "72 victoria st", path_lower: outside, path_display: "/Archive/2026/72 Victoria St, Paddington NSW 2021, Australia" });
+    const outsideRoot = await reconcileEditorFolderOutcome(env as never, a.projectId, { db, ...opsA, resolveRawFolderPath: async () => outside });
+    expect(outsideRoot).toMatchObject({ status: "skipped", reason: "raw_outside_root", mapping: null });
+    expect((outsideRoot as { detail: string }).detail).toContain("/Archive/2026/72 Victoria St, Paddington NSW 2021, Australia");
+    expect((outsideRoot as { detail: string }).detail).toContain("completed and delivered outside the Portal");
+
+    const { data: b, ops: opsB } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
+    opsB.metadata.set(other, { ".tag": "folder", id: `id:b-${b.suffix}`, name: "74 victoria st", path_lower: other, path_display: other });
+    expect(await reconcileEditorFolderOutcome(env as never, b.projectId, { db, ...opsB, resolveRawFolderPath: async () => other })).toMatchObject({ status: "skipped", reason: "raw_leaf_mismatch" });
+
+    const { data: c, ops: opsC } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
+    opsC.metadata.set(MOVED, { ".tag": "folder", id: `id:c-${c.suffix}`, name: "72 Victoria St, Paddington NSW 2021, Australia", path_lower: MOVED, path_display: MOVED_DISPLAY });
+    expect(await reconcileEditorFolderOutcome(env as never, c.projectId, { db, ...opsC, resolveRawFolderPath: async () => MOVED })).toMatchObject({ status: "skipped", reason: "raw_path_recovered" });
+
+  });
+
+  it("names each missing Project prerequisite", async () => {
+    const d = await fixture();
+    await database.DB.prepare("UPDATE projects SET shoot_date = NULL WHERE id = ?").bind(d.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, d.projectId, { db, ...dependencies(d, {}) })).toMatchObject({ status: "skipped", reason: "no_shoot_date" });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-10-02' WHERE id = ?").bind(d.projectId).run();
+    await database.DB.prepare("DELETE FROM project_members WHERE project_id = ?").bind(d.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, d.projectId, { db, ...dependencies(d, {}) })).toMatchObject({ status: "skipped", reason: "no_active_photographer" });
+    await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(d.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, d.projectId, { db, ...dependencies(d, {}) })).toMatchObject({ status: "skipped", reason: "project_inactive" });
+
+  });
+
+  it("reports deferrals, conflicts and success as their own outcomes", async () => {
+    const e = await fixture();
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'dropbox_sync', 'queued', ?, ?, ?)").bind(crypto.randomUUID(), e.projectId, Date.now(), Date.now()).run();
+    const inFlight = await reconcileEditorFolderOutcome(env as never, e.projectId, { db, ...dependencies(e, {}) });
+    expect(inFlight).toMatchObject({ status: "skipped", reason: "raw_sync_in_flight" });
+    expect((inFlight as { mapping: { state: string } }).mapping.state).toBe("pending");
+
+    const f = await fixture();
+    const conflict = await reconcileEditorFolderOutcome(env as never, f.projectId, { db, ...dependencies(f, { rootExists: true }) });
+    expect(conflict).toMatchObject({ status: "needs_review" });
+    expect((conflict as { reason: string }).reason).toMatch(/operator review/);
+    expect((conflict as { mapping: { state: string } }).mapping.state).toBe("needs_review");
+
+    const g = await fixture();
+    expect(await reconcileEditorFolderOutcome(env as never, g.projectId, { db, ...dependencies(g, {}) })).toMatchObject({ status: "mapped", mapping: { state: "ready" } });
+  });
+
   it("falls back to the Project's own address when no Tonomo payload is stored", async () => {
     const { data, ops } = await missingFixture({ link: null, orderId: null });
     const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
@@ -421,3 +471,35 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
   });
 });
 
+describe("editor_reconcile queue consumer", () => {
+  async function job(projectId: string) {
+    const id = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'editor_reconcile', 'queued', ?, ?, ?)").bind(id, projectId, Date.now(), Date.now()).run();
+    return id;
+  }
+  const jobRow = (id: string) => database.DB.prepare("SELECT status, error FROM jobs WHERE id = ?").bind(id).first<{ status: string; error: string | null }>();
+
+  it("formats every non-ready outcome as a prefixed note and nothing for a ready tree", () => {
+    const mapping = { state: "ready" } as never;
+    expect(editorReconcileNote({ status: "mapped", mapping })).toBeUndefined();
+    expect(editorReconcileNote({ status: "needs_review", mapping, reason: "An existing Dropbox project folder requires explicit operator review" })).toBe("needs_review: An existing Dropbox project folder requires explicit operator review");
+    expect(editorReconcileNote({ status: "skipped", mapping: null, reason: "raw_outside_root", detail: "RAW folder now lives elsewhere" })).toBe("raw_outside_root: RAW folder now lives elsewhere");
+  });
+
+  it("records why a pass created no tree on a done job, and keeps failures and disabled automation as failed", async () => {
+    const data = await fixture();
+    await database.DB.prepare("UPDATE projects SET shoot_date = NULL WHERE id = ?").bind(data.projectId).run();
+    const skipped = await job(data.projectId);
+    await handleEditorReconcileMessage(env as never, { projectId: data.projectId, jobId: skipped });
+    expect(await jobRow(skipped)).toEqual({ status: "done", error: "no_shoot_date: Project has no shoot date" });
+
+    const tooOld = await job(data.projectId);
+    await handleEditorReconcileMessage({ ...(env as object), EDITOR_AUTOCREATE_AFTER_MS: String(Date.now() + 86_400_000) } as never, { projectId: data.projectId, jobId: tooOld });
+    expect((await jobRow(tooOld))?.status).toBe("done");
+    expect((await jobRow(tooOld))?.error).toMatch(/^autocreate_not_allowed:/);
+
+    const disabled = await job(data.projectId);
+    await handleEditorReconcileMessage({ ...(env as object), DROPBOX_EDITOR_AUTOMATION_ENABLED: "0" } as never, { projectId: data.projectId, jobId: disabled });
+    expect(await jobRow(disabled)).toEqual({ status: "failed", error: "Editor automation is disabled" });
+  });
+});
