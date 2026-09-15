@@ -2203,3 +2203,22 @@ a user-visible folder name from `path_lower`; find the original-cased source or 
 own address. Tonomo webhook payloads are stored as posted, and Tonomo posts a one-element array
 as often as a bare object, so any SQL over `webhook_events.payload_json` unwraps `$[0]` first.
 
+
+## A missing path turned the Dropbox connection red (2026-09-15)
+
+**Symptom:** minutes after the owner reconnected Dropbox with `sharing.read`, Admin → Integrations
+showed the connection in `error` with `[dropbox:configuration] Dropbox /files/get_metadata failed
+(409): path/not_found`.
+
+**Cause:** `authorisedJson` in `dropbox/client.ts` writes every failed call to the connection's
+`last_error`, and `classifyDropboxError` files any 409 under the sticky `configuration` class,
+which no later success clears. Since #144 the Editor scaffold asks `get_metadata` about a stored
+Tonomo RAW path precisely to learn that it has moved, and it probes every new Editor root before
+creating it. A normal answer about a path was being recorded as a broken integration.
+
+**Fix:** a `get_metadata` 409 `path/not_found` throws `DropboxPathNotFoundError` without touching
+the connection; callers already judge it with `isDropboxPathNotFoundError`. Every other failure
+is still recorded.
+
+**Rule:** only record on the connection what is true of the connection. A lookup whose negative
+answer is expected belongs to the caller, as `list_folder`'s `allowNotFound` already did.
