@@ -43,6 +43,7 @@ import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from
 import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
+import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
@@ -174,15 +175,19 @@ function ShellRoute() {
     if (replace) history.replace(path); else history.push(path);
   }
 
-  // The navigation model replaces `viewFor` (#111). It is computed here, once, from the route the
-  // shell already parsed, and the rail reads the whole tree. Re-resolved on every location change
-  // rather than snapshotted: the Dashboard writes the view preference and then navigates, so a
-  // mount-time read goes stale.
+  // The navigation model replaces `viewFor` (#111). It reads the route the shell already parsed,
+  // and — #119 — the view the Dashboard itself is actually rendering, published through
+  // `lib/dashboard-view-store.ts` rather than re-derived here: see `staff-navigation.ts`'s own
+  // header for why a second derivation drifted (archive scope, a Back past an explicit switch) and
+  // must not come back. The remembered preference remains the pre-mount fallback, for the single
+  // frame before any Dashboard instance has published.
+  const publishedDashboardView = useSyncExternalStore(subscribeDashboardView, readDashboardView, () => null);
   const navigation = useMemo(() => buildStaffNavigation(
     route,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
     { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar") },
-  ), [canAccessAdmin, route, user.role]);
+    publishedDashboardView,
+  ), [canAccessAdmin, publishedDashboardView, route, user.role]);
   const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
   const shell: ShellState = {
     user, route, pathname, notice, navigate,

@@ -258,3 +258,42 @@ describe("buildStaffBreadcrumb — #112, AC7", () => {
     expect(segments.at(-1)?.href).toBeNull();
   });
 });
+
+describe("publishedView — the Dashboard's own rendered view, #119", () => {
+  // The Dashboard publishes the view it is actually rendering (`lib/dashboard-view-store.ts`) once
+  // mounted; this model follows that publication instead of re-deriving one from the route or the
+  // remembered preference. The route/remembered derivation covered above is only the pre-mount
+  // fallback, for the single frame before any Dashboard instance has published.
+  it("overrides an explicit route view", () => {
+    const navigation = buildStaffNavigation({ kind: "dashboard", dashboardView: "kanban" }, "list", all, "calendar");
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active).map((child) => child.id)).toEqual(["dashboard-calendar"]);
+  });
+
+  it("overrides the remembered view on a bare dashboard route", () => {
+    const navigation = buildStaffNavigation(bareDashboard, "kanban", all, "list");
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active).map((child) => child.id)).toEqual(["dashboard-list"]);
+  });
+
+  it("null keeps the pre-#119 route/remembered derivation, unchanged", () => {
+    const withNull = buildStaffNavigation({ kind: "dashboard", dashboardView: "kanban" }, "list", all, null);
+    const withoutArg = buildStaffNavigation({ kind: "dashboard", dashboardView: "kanban" }, "list", all);
+    expect(withNull).toEqual(withoutArg);
+    const children = withNull.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active).map((child) => child.id)).toEqual(["dashboard-kanban"]);
+  });
+
+  it("coerces a published Calendar without the capability, same as an explicit route or the remembered preference", () => {
+    const navigation = buildStaffNavigation(bareDashboard, "list", noCalendar, "calendar");
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.map((child) => child.id)).toEqual(["dashboard-list", "dashboard-kanban"]);
+    expect(children.filter((child) => child.active).map((child) => child.id)).toEqual(["dashboard-list"]);
+  });
+
+  it("is ignored away from the Dashboard", () => {
+    const navigation = buildStaffNavigation({ kind: "admin" }, "kanban", all, "calendar");
+    expect(navigation.groups[0]!.items.find((item) => item.id === "dashboard")?.children?.some((child) => child.active)).toBe(false);
+    expect(navigation.activeSectionId).toBe("admin");
+  });
+});

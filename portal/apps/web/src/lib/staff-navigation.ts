@@ -19,14 +19,20 @@
  * one the rail needs, and it follows the **resolved view**, not the pathname — a bare `/` carries
  * no view, but the remembered preference resolves to one, so the rail marks that child active.
  *
- * ## What is deliberately not an input
+ * ## Archive scope's own input, since #119
  *
- * Archive scope. The Dashboard forces List while viewing archived Projects, but that scope is
- * private screen state and is absent from `StaffRoute`. Threading it in would mean inventing
- * cross-screen state plumbing so that a test's wording could be literally true. Instead the
- * Dashboard navigates to an explicit List route when it forces List, and the model follows that
- * route — which it already does, because an explicit view always beats the remembered one. The
- * Dashboard's own DOM tests remain the proof that selecting Archived forces List.
+ * Archive scope itself is still absent from `StaffRoute` — it is private screen state, and
+ * threading it into the route would be the cross-screen plumbing #111 deliberately avoided.
+ * `publishedView` is what changed: the Dashboard publishes the view it is ACTUALLY rendering
+ * (`lib/dashboard-view-store.ts`, a module-level store — no React context, since screens mount
+ * standalone in their own DOM tests with no provider of any kind), and this model reads that
+ * publication instead of re-deriving archive's effect on its own. Before #119 the model instead
+ * relied on the Dashboard navigating to an explicit List route whenever it forced List, and
+ * followed that route the same way it follows any other explicit view — which drifted the moment
+ * the Dashboard could leave the URL alone and just render differently (#119's two findings). The
+ * Dashboard's own DOM tests remain the proof that selecting Archived forces List; this model's
+ * proof is that it repaints from whatever the Dashboard published, not a second derivation of
+ * when archive applies.
  */
 import { staffPathFor, type StaffRoute } from "./router";
 import type { DashboardView } from "../screens/dashboard-helpers";
@@ -105,13 +111,15 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
 }
 
 /**
- * Which Dashboard view the current location actually shows. An explicit view in the URL wins; the
- * two Calendar spellings both mean Calendar; and a bare `/` falls back to the remembered
- * preference, coerced to Kanban when the Calendar capability is absent — the preference outlives a
- * role change, and marking a child active that the rail does not render would be worse than
+ * Which Dashboard view the current location actually shows. Once a Dashboard has published
+ * (`publishedView !== null`), that publication IS the wanted view — see this file's own "Archive
+ * scope's own input" section above. Otherwise: an explicit view in the URL wins; the two Calendar
+ * spellings both mean Calendar; and a bare `/` falls back to the remembered preference. Either way
+ * the result is coerced to Kanban when the Calendar capability is absent — the preference outlives
+ * a role change, and marking a child active that the rail does not render would be worse than
  * ignoring it.
  */
-function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, capabilities: StaffNavigationCapabilities): DashboardView | null {
+function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, capabilities: StaffNavigationCapabilities, publishedView: DashboardView | null): DashboardView | null {
   if (route.kind !== "dashboard") return null;
   // An EXPLICIT Calendar location also gets coerced, not just a remembered preference. Reported by
   // Luna: without this, a role that cannot view the Calendar arriving at a Calendar URL resolved to
@@ -119,7 +127,7 @@ function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, cap
   // all for the frame before the shell's redirect effect ran. The shell does replace the location
   // with "/", so this is transient rather than a way in; a nav tree with nothing marked active is
   // still the wrong thing to paint while it happens.
-  const wanted = "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
+  const wanted = publishedView !== null ? publishedView : "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
   if (wanted !== "calendar" || capabilities.viewProductionCalendar) return wanted;
   // Coerced. The fallback is the REMEMBERED view when that is itself viewable, not a hardcoded
   // Kanban — a Staff member who works in List should land on List, not be moved to a third view
@@ -138,9 +146,10 @@ export function buildStaffNavigation(
   route: StaffRoute,
   rememberedDashboardView: DashboardView,
   capabilities: StaffNavigationCapabilities,
+  publishedView: DashboardView | null = null,
 ): StaffNavigation {
   const activeSectionId = sectionFor(route);
-  const view = resolvedDashboardView(route, rememberedDashboardView, capabilities);
+  const view = resolvedDashboardView(route, rememberedDashboardView, capabilities, publishedView);
 
   // Held as a list, and mapped rather than spelled out, so a fourth view later is one entry here
   // and no change at all in whatever renders it.
