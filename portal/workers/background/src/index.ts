@@ -24,8 +24,7 @@ import { AutoHdrApiSend } from "./workflows/autohdr-api-send";
 import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
 import { canonicalDropboxConnectionId } from "./dropbox/connection";
-import { enqueueEditorReconcile, editorAutoCreationAllowed } from "./editor-folders/queue";
-import { reconcileEditorFolder } from "./editor-folders/scaffold";
+import { enqueueEditorReconcile, handleEditorReconcileMessage } from "./editor-folders/queue";
 import { syncProjectEditorOutput } from "./editor-folders/sync-output";
 import { automationFlag } from "./dropbox/monitor-state";
 import { previewEditorBackfill, applyEditorCandidate, inspectEditorCandidate, type ReviewedEditorCandidate } from "./editor-folders/backfill";
@@ -785,18 +784,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         if (!parsed) throw new Error(`Invalid queue body for ${batch.queue}`);
         switch (parsed.body.type) {
           case "editor_reconcile":
-            if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
-              await setJobStatus(dbFor(this.env), parsed.body.jobId, "running");
-              try {
-                if (await editorAutoCreationAllowed(this.env, parsed.body.projectId)) await reconcileEditorFolder(this.env, parsed.body.projectId);
-                await setJobStatus(dbFor(this.env), parsed.body.jobId, "done");
-              } catch (error) {
-                await setJobStatus(dbFor(this.env), parsed.body.jobId, "failed", error instanceof Error ? error.message : String(error));
-                throw error;
-              }
-            } else {
-              await setJobStatus(dbFor(this.env), parsed.body.jobId, "failed", "Editor automation is disabled");
-            }
+            await handleEditorReconcileMessage(this.env, parsed.body);
             message.ack();
             break;
           case "editor_sync":

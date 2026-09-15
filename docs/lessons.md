@@ -2189,8 +2189,16 @@ sync runs, and the sync then reads the Editor Input root instead of the folder i
 So link recovery re-points the Project, queues the scan and returns without a mapping; the
 reconcile also refuses to provision while a `dropbox_sync` job for the project is queued or running.
 
+A silent skip was the original symptom: `reconcileEditorFolder` returned `null` for a dozen
+different reasons and the queue consumer marked the job `done`. The fix is not a new job status
+but a typed outcome (`reconcileEditorFolderOutcome`) whose reason lands in `jobs.error` with
+status `done`, so retry gates (which key on `failed|stuck`) are untouched and the workspace job
+list simply shows the text. The candidate endpoint reads that latest job rather than re-running
+the classification, because classification is not read-only (link recovery re-points the Project).
+
 **Rule:** before deciding a tree is pointless, check which side owns intake after the mapping goes
-ready, and never let the tree go ready while a scan of the old side is still queued. Never derive
+ready, and never let the tree go ready while a scan of the old side is still queued. A background
+pass that ends without its expected side effect must say why somewhere durable. Never derive
 a user-visible folder name from `path_lower`; find the original-cased source or use the Portal's
 own address. Tonomo webhook payloads are stored as posted, and Tonomo posts a one-element array
 as often as a bare object, so any SQL over `webhook_events.payload_json` unwraps `$[0]` first.

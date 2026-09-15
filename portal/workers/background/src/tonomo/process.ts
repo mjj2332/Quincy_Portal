@@ -146,20 +146,30 @@ async function verifiedRawFolderPathChange(
   dependencies: TonomoProcessDependencies,
 ): Promise<VerifiedRawFolder | null> {
   const db = dbFor(env);
+  const incomingPath = normalisePath(order.rawFolderPath as string);
+  const storedPath = normalisePath(project.rawFolderPath as string);
   const decline = (reason: string) => {
     console.log("Tonomo raw folder path change declined", { projectId: project.id, orderId: order.orderId, reason });
     return null;
+  };
+  // A decline that is a fact about the data (not a transient Dropbox or D1 failure, which the
+  // webhook retry would repeat) is recorded so the Project's audit trail says why the stored
+  // path was kept. Recording must never fail the webhook itself.
+  const declineRecorded = async (reason: string) => {
+    await env.DB.prepare(
+      "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'project.raw_folder_path.declined', 'project', ?, ?, ?)",
+    ).bind(crypto.randomUUID(), project.id, JSON.stringify({ actor: "tonomo", orderId: order.orderId, storedPath, incomingPath, reason }), Date.now()).run()
+      .catch((error) => console.error("Tonomo raw folder path decline audit failed", { projectId: project.id, error: errorMessage(error) }));
+    return decline(reason);
   };
 
   // Same gate as the RAW monitor: a ready Editor mapping owns RAW intake only while editor automation is on.
   if (automationFlag(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
     const mapping = await getEditorFolderMapping(db, project.id);
-    if (mapping?.state === "ready") return decline("editor mapping ready; RAW intake already moved to the Editor tree");
+    if (mapping?.state === "ready") return declineRecorded("editor mapping ready; RAW intake already moved to the Editor tree");
   }
 
-  const incomingPath = normalisePath(order.rawFolderPath as string);
-  const storedPath = normalisePath(project.rawFolderPath as string);
-  if (addressLeaf(incomingPath) !== addressLeaf(storedPath)) return decline("address leaf changed; needs manual review");
+  if (addressLeaf(incomingPath) !== addressLeaf(storedPath)) return declineRecorded("address leaf changed; needs manual review");
 
   let connectionId: string;
   try {
@@ -171,10 +181,10 @@ async function verifiedRawFolderPathChange(
   const getMetadataOperation = dependencies.getMetadata ?? getMetadata;
   try {
     const entry = await getMetadataOperation(env, db, incomingPath, connectionId);
-    if (entry[".tag"] !== "folder") return decline("Tonomo path is not a folder in Dropbox; keeping stored path");
+    if (entry[".tag"] !== "folder") return declineRecorded("Tonomo path is not a folder in Dropbox; keeping stored path");
     return { path: incomingPath, folderId: entry.id };
   } catch (error) {
-    if (isDropboxPathNotFoundError(error)) return decline("Tonomo path not found in Dropbox; keeping stored path");
+    if (isDropboxPathNotFoundError(error)) return declineRecorded("Tonomo path not found in Dropbox; keeping stored path");
     return decline(errorMessage(error));
   }
 }
