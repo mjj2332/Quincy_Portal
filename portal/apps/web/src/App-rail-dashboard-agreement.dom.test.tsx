@@ -53,7 +53,7 @@ vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: () => <main>Pro
 
 import App from "./App";
 import { readDashboardView, subscribeDashboardView } from "./lib/dashboard-view-store";
-import { locationStore } from "./lib/router";
+import { locationStore, staffPathFor } from "./lib/router";
 
 let root: Root | null = null;
 
@@ -488,7 +488,7 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     expect(host.textContent).toContain("9 Archived Street");
   });
 
-  it("a real Back past the Archived click leaves the rail and the rendered branch agreeing with each other, whatever the Dashboard does with the URL", async () => {
+  it("a real Back past the Archived click lands on the popped URL, with the rail and breadcrumb agreeing with whatever the Dashboard renders there", async () => {
     // An anchored `?view=kanban` entry for Back to return to — same reasoning as sequence "2"'s own
     // pushed anchor above: `afterEach`'s `replaceState` only overwrites the current entry.
     window.history.pushState(null, "", "/?view=kanban");
@@ -506,6 +506,10 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     const expectedLabel = branch === "list" ? "List" : branch === "kanban" ? "Kanban" : branch === "calendar" ? "Calendar" : null;
     expect(activeRailChild(host)).toBe(expectedLabel);
     expect(lastBreadcrumbSegment(host)).toBe(expectedLabel);
+    // A real Back always lands on the pushed `/?view=kanban` anchor this test itself set up — the
+    // URL is a fact about where Back went, not a further guess, so it is checked against that
+    // literal address rather than re-derived from `branch` the way the rail/breadcrumb checks are.
+    expect(currentUrl()).toBe(staffPathFor({ kind: "dashboard", dashboardView: "kanban" }));
   });
 
   it("agrees inside StrictMode the same way production mounts (main.tsx)", async () => {

@@ -290,7 +290,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const error = !hasAcceptedDashboard && !queryProjects
     ? projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined
     : undefined;
-  const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null;
+  // `canViewProductionCalendar`, not just `calendarState !== null`: a mounted instance re-rendered
+  // with a role that has since lost the capability keeps its existing non-null `calendarState`
+  // (nothing resets it on a role change short of a remount), so without this a Staff member who
+  // loses the capability mid-session would still be shown Calendar content for one commit before
+  // the reconciliation effect below moves `view` off it.
+  const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null && canViewProductionCalendar;
   // Published for the rail (#119), mirroring the branch selection above and below (List ~1092,
   // Kanban ~1106) instead of re-deriving `view`/`viewingArchived` a second time, so the two cannot
   // drift: Calendar only when `isCalendarView` itself is true (so a `view` of "calendar" with no
