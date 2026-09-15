@@ -869,6 +869,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       content: <ProductionCalendarMoveConfirmation street={proposal.event.project.street} oldCivil={proposal.event.deadlineLocalCivil} newCivil={proposal.localCivil} consequences={consequences} />,
       signal: confirmController.signal,
     });
+    // Safe to clear unconditionally only because `commandLockRef` serialises the drop path, so
+    // this is still the controller installed above. Were two confirmations ever able to run at
+    // once, this would strand the newer one and unmount would fail to withdraw it.
     openConfirmControllerRef.current = null;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
     if (!ok) {
