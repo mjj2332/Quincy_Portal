@@ -104,7 +104,9 @@ export function classifyDropboxError(error: unknown): DropboxErrorClass {
   if (error instanceof DropboxRateLimitError || /rate-limited \(429\)/i.test(message)) return "rate_limited";
   if (/sharing\.read|shared[- ]link resolution|shared link is not owned/i.test(message)) return "sharing_read";
   if (/folder not found|no resolvable Dropbox RAW folder path|check the path in the project's Dropbox settings/i.test(message)) return "folder_path";
-  if (/credential|decrypt|malformed|token refresh|invalid_access_token|oauth2\/token|no connected Dropbox integration|failed \(401\)/i.test(message)) return "credentials";
+  // "credential" already covers the client's own malformed-credentials errors; a bare "malformed"
+  // also matched Dropbox's path/malformed_path and misfiled a bad path as a credentials failure.
+  if (/credential|decrypt|token refresh|invalid_access_token|oauth2\/token|no connected Dropbox integration|failed \(401\)/i.test(message)) return "credentials";
   // Runtime/network errors are retryable. Ordinary Dropbox 4xx responses are an invalid
   // integration/configuration state and must remain visible until an operator fixes it.
   if (/Dropbox .* failed \((?:400|403|404|409)\)/i.test(message)) return "configuration";
