@@ -16,7 +16,7 @@ import {
   isValidShootDate,
 } from "../src/editor-folders/paths";
 import { reconcileEditorFolder } from "../src/editor-folders/scaffold";
-import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder } from "../src/editor-folders/mapping";
+import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision } from "../src/editor-folders/mapping";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -249,6 +249,25 @@ describe("Editor folder reconciliation", () => {
     expect(pending?.inputRoots[0]?.folderId).toMatch(/^id:0\. input-/);
     const resumed = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
     expect(resumed?.state).toBe("ready");
+  });
+
+  it("resumes a tree that recorded a plain Input child before the numbered names, without a numbered sibling", async () => {
+    const data = await fixture();
+    const ops = dependencies(data, {});
+    const rootPath = editorFolderPath({ shootDate: "2026-10-02", projectFolderName: data.suffix });
+    const legacyInputPath = `${rootPath}/Input`;
+    const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+    await recordEditorFolderProvision(db, reserved.id, { role: "root", path: rootPath, folderId: "id:root-legacy" });
+    await recordEditorFolderProvision(db, reserved.id, { role: "input", path: legacyInputPath, folderId: "id:input-legacy" });
+    ops.metadata.set(rootPath, folder(rootPath, "id:root-legacy"));
+    ops.metadata.set(legacyInputPath, folder(legacyInputPath, "id:input-legacy"));
+
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
+    expect(mapping?.state).toBe("ready");
+    expect(mapping?.inputRoots).toEqual([{ path: legacyInputPath, section: null, folderId: "id:input-legacy" }]);
+    expect(mapping?.outputRoots[0]?.path).toBe(`${rootPath}/1. Output`);
+    expect(ops.metadata.has(`${rootPath}/0. Input`)).toBe(false);
+    expect(mapping?.recoveryProof?.created.find((entry) => entry.role === "input")?.folderId).toBe("id:input-legacy");
   });
 
   it("adopts an exact child conflict only below a claimed root", async () => {

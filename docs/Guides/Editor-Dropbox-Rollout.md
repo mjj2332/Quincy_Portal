@@ -6,7 +6,7 @@ Implementation is opt-in. No production migration, folder linking, webhook repla
 
 - Editor workspace: `/Editor/01_ACTIVE EDITS`.
 - New Project root: `2026-10 October/01/<Tonomo project folder name>`, based on the scheduled shoot's civil date. September 2026 stays `09. September`; January 2027 is `2027-01 January`.
-- Children: `0. Input`, `1. Output`, `Editing Notes`. Mappings created or linked before 2026-09-15 keep their plain `Input`/`Output` paths; reviewed linking recognises both spellings, and nothing is renamed in Dropbox. Existing mapped paths stay fixed after rescheduling.
+- Children: `0. Input`, `1. Output`, `Editing Notes` for every tree the Portal creates. A mapping keeps whichever spelling it was established with (the studio's hand-made folders are mostly plain `Input`/`Output`); reviewed linking and scaffold resume recognise both spellings, and nothing is renamed in Dropbox. Existing mapped paths stay fixed after rescheduling.
 - Input imports DNG/JPEG originals into RAW review; Output imports edited JPEGs without assuming one output equals one original. Importing is not client publication.
 - Existing active Projects require reviewed folder identity. Exact date/name matches are suggestions, not authority. An Admin can provide an explicit reviewed alternate for a legacy name/date without moving files.
 - Tonomo RAW paths remain separate, preserving AutoHDR identity. A ready Editor mapping takes over I/O. Pending/review mappings retain legacy RAW intake where available, but do not permit edited publication into an unverified destination.

@@ -10,16 +10,12 @@ export const EDITOR_NOTES_FOLDER = "Editing Notes" as const;
 export const EDITOR_CHILD_FOLDERS = [EDITOR_INPUT_FOLDER, EDITOR_OUTPUT_FOLDER, EDITOR_NOTES_FOLDER] as const;
 
 /**
- * Recognises an Input child folder by name during reviewed linking: both the plain legacy
- * spelling (mappings created or linked before 2026-09-15) and the numbered spelling that
- * `EDITOR_INPUT_FOLDER` now creates. Established mappings are never renamed to match.
+ * How an Input or Output child is recognised by name, whether during reviewed linking or when
+ * the scaffold resumes a tree it already started: the plain spelling the studio's hand-made
+ * folders use and the numbered spelling `EDITOR_INPUT_FOLDER`/`EDITOR_OUTPUT_FOLDER` create.
+ * A mapping keeps whichever spelling it was established with; nothing is renamed to match.
  */
 export const EDITOR_INPUT_NAME_PATTERN = /^(?:0\. )?input$/iu;
-/**
- * Recognises an Output child folder by name during reviewed linking: both the plain legacy
- * spelling (mappings created or linked before 2026-09-15) and the numbered spelling that
- * `EDITOR_OUTPUT_FOLDER` now creates. Established mappings are never renamed to match.
- */
 export const EDITOR_OUTPUT_NAME_PATTERN = /^(?:1\. )?output$/iu;
 
 const MONTH_NAMES = [

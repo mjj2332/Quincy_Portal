@@ -10,4 +10,4 @@ The confirmed new-folder convention is `2026-10 October/01/<Tonomo folder name>`
 
 ## Amendment 2026-09-15
 
-Portal-created `Input`/`Output` children are now named `0. Input` and `1. Output`, so the numbered pair sorts ahead of `Editing Notes` in Dropbox's default listing. This is a naming change only: mappings established before this date keep their existing plain `Input`/`Output` paths, reviewed linking recognises both spellings, and no existing folder is renamed in Dropbox.
+Portal-created `Input`/`Output` children are now named `0. Input` and `1. Output`, so the numbered pair sorts ahead of `Editing Notes` in Dropbox's default listing. This is a naming change only: an established mapping keeps whichever spelling it holds, reviewed linking recognises both, and no existing folder is renamed in Dropbox.
