@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { INGEST_QUEUE_NAME, parseQueueBody, RENDITION_DLQ_QUEUE_NAME, RENDITION_QUEUE_NAME } from "../src/queue-dispatch";
+import { DROPBOX_SYNC_TRIGGERS } from "../src/messages";
 
 describe("queue-name dispatch", () => {
   it("validates Editor work identity and keeps it off the rendition queue", () => {
@@ -23,6 +24,10 @@ describe("queue-name dispatch", () => {
   it("rejects malformed and unknown queue messages for explicit retry/DLQ handling", () => {
     expect(parseQueueBody(RENDITION_QUEUE_NAME, { type: "generate_renditions" })).toBeNull();
     expect(parseQueueBody(RENDITION_QUEUE_NAME, { type: "dropbox_sync", projectId: "p" })).toBeNull();
+    for (const trigger of DROPBOX_SYNC_TRIGGERS) {
+      expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "dropbox_sync", projectId: "p", jobId: "j", trigger })?.body).toEqual({ type: "dropbox_sync", projectId: "p", jobId: "j", trigger });
+    }
+    expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "dropbox_sync", projectId: "p", trigger: "made_up" })).toBeNull();
     expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_check", projectId: "p" })).toBeNull();
     expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_check", jobId: "job-1" })).toEqual({ queue: INGEST_QUEUE_NAME, body: { type: "autohdr_check", jobId: "job-1" } });
     expect(parseQueueBody(INGEST_QUEUE_NAME, { type: "autohdr_scaffold", projectId: "p", jobId: "job-1" })).toEqual({

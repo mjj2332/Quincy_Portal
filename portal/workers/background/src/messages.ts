@@ -1,4 +1,5 @@
-export type DropboxSyncTrigger = "dropbox_delta" | "manual_dropbox_sync" | "queue_retry" | "tonomo_raw_path_changed";
+export const DROPBOX_SYNC_TRIGGERS = ["dropbox_delta", "manual_dropbox_sync", "queue_retry", "tonomo_raw_path_changed"] as const;
+export type DropboxSyncTrigger = (typeof DROPBOX_SYNC_TRIGGERS)[number];
 
 export type IngestMessage =
   | { type: "asset_ingested"; assetId: string }
