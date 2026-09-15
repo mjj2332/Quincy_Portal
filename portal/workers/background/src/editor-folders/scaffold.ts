@@ -28,6 +28,7 @@ import {
   editorFolderPath,
   editorFolderPathKey,
   deriveEditorProjectFolderName,
+  isValidShootDate,
   parseShootDate,
   fallbackEditorProjectFolderName,
   type EditorNameSource,
@@ -42,6 +43,7 @@ import {
   recordEditorFolderProvision,
   releaseEditorFolderProvisionLease,
   reserveEditorFolderMapping,
+  retargetPendingEditorFolderMapping,
   type EditorFolderMapping,
   type EditorFolderSubtree,
 } from "./mapping";
@@ -264,7 +266,8 @@ export type EditorScaffoldSkipReason =
   | "raw_path_change_lost"
   | "raw_sync_in_flight"
   | "provision_lease_held"
-  | "project_not_provisionable";
+  | "project_not_provisionable"
+  | "editor_folder_not_moved";
 
 /** Every code that can prefix an `editor_reconcile` job's `error` note. */
 export type EditorReconcileNoteCode = EditorScaffoldSkipReason | "needs_review" | "autocreate_not_allowed";
@@ -432,6 +435,27 @@ function outcomeFor(mapping: EditorFolderMapping): EditorReconcileOutcome {
 }
 
 /**
+ * The stored and current shoot dates of a Portal-derived mapping whose day folder no longer matches, or null when the
+ * dates agree, the Project's date is not a calendar date, or an operator linked the root by hand
+ * (a hand-linked path is theirs, whatever the date says).
+ */
+function shootDateDrift(
+  mapping: EditorFolderMapping,
+  projectShootDate: string | null,
+): { previous: string; next: string } | null {
+  if (!isValidShootDate(projectShootDate) || projectShootDate === mapping.shootDate) return null;
+  if (mapping.reviewedBy !== null) return null;
+  let derivedKey: string;
+  try {
+    derivedKey = editorFolderPathKey(editorFolderPath({ shootDate: mapping.shootDate, projectFolderName: mapping.projectFolderName }));
+  } catch {
+    return null;
+  }
+  if (derivedKey !== mapping.rootPathKey) return null;
+  return { previous: mapping.shootDate, next: projectShootDate };
+}
+
+/**
  * `reconcileEditorFolder` with the reason a pass stopped short of a ready tree, so the queue
  * consumer can record it on the job instead of leaving a silent "done".
  */
@@ -466,7 +490,16 @@ export async function reconcileEditorFolderOutcome(
   if (!project) return skipped("project_inactive", "Project is archived, delivered or missing");
 
   let mapping = await getEditorFolderMapping(db, projectId);
-  if (mapping?.state === "ready" || mapping?.state === "needs_review") return outcomeFor(mapping);
+  if (mapping?.state === "needs_review") return outcomeFor(mapping);
+  if (mapping?.state === "ready") {
+    // A ready tree stays where it is when the shoot date moves: the move lands with the
+    // reschedule-move change. Until then say so on the job instead of reporting "mapped".
+    const reschedule = shootDateDrift(mapping, project.shootDate);
+    if (reschedule) {
+      return skipped("editor_folder_not_moved", `Shoot date changed from ${reschedule.previous} to ${reschedule.next}; the Editor tree is still at ${mapping.rootPath}. The mapping cannot be re-pointed until moving Editor trees is supported, so leave the folder where it is; files keep syncing from the stored path`, mapping);
+    }
+    return outcomeFor(mapping);
+  }
 
   let connectionId: string;
   if (mapping) {
@@ -521,7 +554,7 @@ export async function reconcileEditorFolderOutcome(
   try {
     // Re-read mutable assignment state after reservation and immediately before Dropbox creates.
     // A queued job must not create a new external tree after the photographer is unassigned.
-    const stillProvisionable = await db.select({ userId: projectMembers.userId }).from(projectMembers)
+    const stillProvisionable = await db.select({ userId: projectMembers.userId, shootDate: projects.shootDate }).from(projectMembers)
       .innerJoin(user, eq(projectMembers.userId, user.id))
       .innerJoin(projects, eq(projectMembers.projectId, projects.id))
       .where(and(
@@ -532,6 +565,23 @@ export async function reconcileEditorFolderOutcome(
         ne(projects.stageKey, "delivered"),
       )).get();
     if (!stillProvisionable) return settled("project_not_provisionable", "Project lost its active photographer, was archived or was delivered after the tree was reserved", mapping);
+    // A pending mapping that has created nothing yet follows a verified reschedule to the new day
+    // folder; once anything exists in Dropbox the tree stays put (see the ready branch above).
+    // The date is re-read inside the lease: a reschedule committed after this pass first read the
+    // Project must not let the tree be created under the old day.
+    const pendingReschedule = mapping.rootFolderId ? null : shootDateDrift(mapping, stillProvisionable.shootDate);
+    // An unrecorded root at the old path means a previous pass created it and died before writing
+    // the id. Retargeting would orphan it, so provision in place and let the existing-root review take it.
+    if (pendingReschedule && !await getExactMetadata(env, db, getMetadataOperation, mapping.rootPath, connectionId)) {
+      const retarget = await retargetPendingEditorFolderMapping(db, mapping.id, { shootDate: pendingReschedule.next, leaseToken: lease.token, at: now() });
+      if (retarget.status === "held") {
+        mapping = await markConflict(db, mapping, lease.token, "root", retarget.rootPath, "Editor root for the new shoot date is already mapped to another Project");
+        return outcomeFor(mapping);
+      }
+      if (retarget.status === "stale") return settled("provision_lease_held", "The mapping changed while this pass was re-pointing it at the new shoot date; the next pass re-reads it", mapping);
+      // "started" keeps the stored root: the tree is finished where it began and reported as not moved.
+      if (retarget.status === "retargeted") mapping = retarget.mapping;
+    }
     const monthPath = mapping.rootPath.split("/").slice(0, -2).join("/");
     const dayPath = mapping.rootPath.split("/").slice(0, -1).join("/");
     // The configured Editor root is pre-existing and deliberately excluded from this chain.

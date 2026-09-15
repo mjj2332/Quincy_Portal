@@ -13,6 +13,13 @@ export interface TonomoOrder {
   agentPhone: string | null;
   agencyName: string | null;
   shootDate: string | null;
+  /**
+   * Where `shootDate` came from. `start_time` is Tonomo's structured appointment timestamp
+   * rendered in the property's timezone, `iso` an already-canonical text date, `display` its
+   * "Thursday, 17 Sep, 2026" text whose weekday cross-checks, and `text` unparsed free text
+   * passed through verbatim. Only the first three are trusted to change a stored date.
+   */
+  shootDateSource: TonomoShootDateSource;
   timeWindow: string | null;
   /** Undefined means Tonomo omitted the field; null means it explicitly cleared it. */
   invoiceAmount: number | null | undefined;
@@ -24,6 +31,13 @@ export interface TonomoOrder {
   photographerEmails: string[];
   services: { kind: TonomoServiceKind; url: string | null; label: string | null }[];
   unrecognisedServices: string[];
+}
+
+export type TonomoShootDateSource = "start_time" | "iso" | "display" | "text" | null;
+
+/** Sources that identify a real calendar date, as opposed to text the Portal merely stores. */
+export function isVerifiedTonomoShootDateSource(source: TonomoShootDateSource): boolean {
+  return source === "start_time" || source === "iso" || source === "display";
 }
 
 export class TonomoParseError extends Error {
@@ -307,12 +321,13 @@ export function parseTonomoDisplayDate(value: string): string | null {
   return weekday === expectedWeekday ? iso : null;
 }
 
-function shootDateFrom(source: UnknownRecord, propertyAddress: UnknownRecord | null): string | null {
-  const fallback = () => {
+function shootDateFrom(source: UnknownRecord, propertyAddress: UnknownRecord | null): { value: string | null; source: TonomoShootDateSource } {
+  const fallback = (): { value: string | null; source: TonomoShootDateSource } => {
     const text = optionalString(valueFor(source, ["shoot_date", "shootDate", "date"]));
-    if (text === null) return null;
-    if (isCanonicalCalendarDate(text)) return text;
-    return parseTonomoDisplayDate(text) ?? text;
+    if (text === null) return { value: null, source: null };
+    if (isCanonicalCalendarDate(text)) return { value: text, source: "iso" };
+    const display = parseTonomoDisplayDate(text);
+    return display ? { value: display, source: "display" } : { value: text, source: "text" };
   };
   const when = record(source.when);
   if (!when) return fallback();
@@ -330,7 +345,7 @@ function shootDateFrom(source: UnknownRecord, propertyAddress: UnknownRecord | n
     const year = part("year");
     const month = part("month");
     const day = part("day");
-    return year && month && day ? `${year}-${month}-${day}` : fallback();
+    return year && month && day ? { value: `${year}-${month}-${day}`, source: "start_time" } : fallback();
   } catch {
     // Unknown/invalid IANA timezone — keep the human-readable date rather than losing it.
     return fallback();
@@ -368,6 +383,7 @@ export function parseTonomoOrder(payload: unknown): TonomoOrder {
   parseDeliverableLinks(source.deliverablesLinks, parsedServices);
   const firstAgent = Array.isArray(source.listingAgents) ? record(source.listingAgents[0]) : null;
   const bookingFlow = record(source.bookingFlow);
+  const shootDate = shootDateFrom(source, propertyAddress);
   const photographerEmails = Array.isArray(source.photographers)
     ? [...new Set(source.photographers.flatMap((photographer) => {
       const email = optionalString(record(photographer)?.email);
@@ -385,7 +401,8 @@ export function parseTonomoOrder(payload: unknown): TonomoOrder {
     agentEmail: optionalString(firstAgent?.email) ?? optionalString(valueFor(source, ["agent_email", "agentEmail"])) ?? optionalString(source.email),
     agentPhone: optionalString(firstAgent?.phone) ?? optionalString(valueFor(source, ["agent_phone", "agentPhone"])),
     agencyName: optionalString(firstAgent?.brokerage) ?? optionalString(valueFor(source, ["agency_name", "agencyName", "agency"])) ?? optionalString(bookingFlow?.name),
-    shootDate: shootDateFrom(source, propertyAddress),
+    shootDate: shootDate.value,
+    shootDateSource: shootDate.source,
     timeWindow: optionalString(valueFor(source, ["time_window", "timeWindow", "scheduled_time"])),
     invoiceAmount: optionalNumberTriState(source, ["invoice_amount", "invoiceAmount", "amount"]),
     paymentStatus: optionalStringTriState(source, ["payment_status", "paymentStatus"]),
