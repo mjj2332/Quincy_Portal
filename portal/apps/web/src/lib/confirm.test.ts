@@ -75,4 +75,36 @@ describe("confirm abort (#152)", () => {
     confirmStore.resolve(true);
     await expect(promise).resolves.toBe(true);
   });
+
+  it("a subscriber that synchronously aborts on its first notification still resolves false", async () => {
+    const controller = new AbortController();
+    // Subscribe before calling `confirm()` so this listener runs inside `confirm()`'s own
+    // synchronous `emit()`, not on some later tick.
+    const unsubscribe = confirmStore.subscribe(() => {
+      controller.abort();
+    });
+    const promise = confirm({ title: "A", message: "a", signal: controller.signal });
+    unsubscribe();
+
+    await expect(promise).resolves.toBe(false);
+    expect(confirmStore.getSnapshot()).toBeNull();
+  });
+
+  it("a subscriber that synchronously resolves on its first notification settles through the wrapped resolver and leaves no abort listener behind", async () => {
+    const controller = new AbortController();
+    const unsubscribe = confirmStore.subscribe(() => {
+      confirmStore.resolve(true);
+    });
+    const promise = confirm({ title: "A", message: "a", signal: controller.signal });
+    unsubscribe();
+
+    await expect(promise).resolves.toBe(true);
+    expect(confirmStore.getSnapshot()).toBeNull();
+
+    // If the abort listener installed inside `confirm()` were still attached, this would be
+    // the only way to observe it: aborting afterward must be a complete no-op.
+    expect(() => controller.abort()).not.toThrow();
+    expect(confirmStore.getSnapshot()).toBeNull();
+    await expect(promise).resolves.toBe(true);
+  });
 });
