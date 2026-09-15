@@ -152,7 +152,7 @@ describe("Editor folder reconciliation", () => {
     await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
     const again = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
     expect(again).toMatchObject({ status: "skipped", reason: "editor_folder_not_moved", mapping: { state: "ready", rootPath: first?.rootPath, shootDate: "2026-10-02" } });
-    expect(editorReconcileNote(again)).toBe(`editor_folder_not_moved: Shoot date changed from 2026-10-02 to 2027-01-15; the Editor tree is still at ${first?.rootPath}. Moving it lands with the reschedule-move change; until then move the folder by hand and link the new path if the day matters`);
+    expect(editorReconcileNote(again)).toBe(`editor_folder_not_moved: Shoot date changed from 2026-10-02 to 2027-01-15; the Editor tree is still at ${first?.rootPath}. The mapping cannot be re-pointed until moving Editor trees is supported, so leave the folder where it is; files keep syncing from the stored path`);
     expect(ops.created).toHaveLength(2);
     // The same date again is a plain ready tree, and a date that is not a calendar date says nothing.
     await database.DB.prepare("UPDATE projects SET shoot_date = '2026-10-02' WHERE id = ?").bind(data.projectId).run();
@@ -189,6 +189,14 @@ describe("Editor folder reconciliation", () => {
     expect(ops.created).toEqual([newRoot.split("/").slice(0, -2).join("/"), newRoot.split("/").slice(0, -1).join("/")]);
     expect((await getEditorFolderMapping(db, data.projectId))?.rootPathKey).toBe(newRoot.toLowerCase());
 
+    // A root a crashed pass created but never recorded stays put instead of being orphaned.
+    const crashed = await fixture();
+    const crashedOps = dependencies(crashed, {});
+    const crashedReserved = await reserveEditorFolderMapping(db, { projectId: crashed.projectId, connectionId: crashed.connectionId, shootDate: "2026-10-02", projectFolderName: crashed.suffix });
+    crashedOps.metadata.set(crashedReserved.rootPath, folder(crashedReserved.rootPath, `id:unrecorded-${crashed.suffix}`));
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(crashed.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, crashed.projectId, { db, ...crashedOps })).toMatchObject({ status: "needs_review", mapping: { rootPath: crashedReserved.rootPath, shootDate: "2026-10-02" } });
+
     const other = await fixture();
     const otherOps = dependencies(other, {});
     const held = await reserveEditorFolderMapping(db, { projectId: other.projectId, connectionId: other.connectionId, shootDate: "2026-10-02", projectFolderName: other.suffix });
@@ -198,6 +206,18 @@ describe("Editor folder reconciliation", () => {
     const conflict = await reconcileEditorFolderOutcome(env as never, other.projectId, { db, ...otherOps });
     expect(conflict).toMatchObject({ status: "needs_review", reason: "Editor root for the new shoot date is already mapped to another Project", mapping: { id: held.id, rootPath: held.rootPath, shootDate: "2026-10-02" } });
     expect(otherOps.created).toEqual([]);
+  });
+
+  it("re-reads the shoot date inside the lease, so a reschedule that lands mid-pass is not built under the old day", async () => {
+    const data = await fixture();
+    const ops = dependencies(data, {});
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: data.suffix });
+    // The connection lookup runs after the first Project read and before the reservation and lease: move the date there.
+    const outcome = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops, canonicalDropboxConnectionId: async () => {
+      await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
+      return data.connectionId;
+    } });
+    expect(outcome).toMatchObject({ status: "mapped", mapping: { rootPath: newRoot, shootDate: "2027-01-15" } });
   });
 
   it("tells a lost retarget fence and a started tree apart from a held root", async () => {

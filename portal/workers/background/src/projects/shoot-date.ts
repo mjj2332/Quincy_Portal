@@ -30,8 +30,9 @@ export async function commitShootDateChange(env: Env, change: ShootDateChange): 
          )`,
     ).bind(change.next, at, change.projectId, change.previous, change.receivedAt.getTime()),
     env.DB.prepare(
-      "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.shoot_date.changed', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND shoot_date = ? AND updated_at = ?)",
-    ).bind(crypto.randomUUID(), change.projectId, meta, at, change.projectId, change.next, at),
+      // changes() is this connection's previous statement in the batch: the audit exists only if the fenced UPDATE landed.
+      "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.shoot_date.changed', 'project', ?, ?, ? WHERE changes() = 1",
+    ).bind(crypto.randomUUID(), change.projectId, meta, at),
   ]);
   // A lost fence is not retried: either a newer webhook already moved the date, or another writer
   // changed shoot_date since the processor read it, and the next Tonomo event re-evaluates both.
