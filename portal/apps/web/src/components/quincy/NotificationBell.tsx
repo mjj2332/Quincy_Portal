@@ -1,20 +1,15 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Bell, CheckCheck } from "lucide-react";
-import { apiDelete, apiGet, apiPost } from "../../lib/api";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/reui/popover";
 import { Button } from "@/components/reui/button";
 import { Badge } from "@/components/reui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/tooltip";
 import { cn } from "../../lib/utils";
+import { InternalLink } from "../InternalLink";
 import { TabStrip } from "./TabStrip";
-import { NotificationList } from "./NotificationList";
-import {
-  dismissFocusTarget,
-  filterNotifications,
-  groupNotifications,
-  type NotificationFilter,
-  type NotificationListItem,
-} from "../../lib/notification-list";
+import { NotificationList, NotificationEmptyState } from "./NotificationList";
+import { useNotificationFeed } from "../../lib/use-notifications";
+import { dismissFocusTarget, type NotificationFilter, type NotificationListItem } from "../../lib/notification-list";
 
 /**
  * The rail's own notification bell — #112, placed in `NavigationRail`'s header, and #113's own
@@ -26,9 +21,20 @@ import {
  *
  * #114 gives the list day buckets, a richer row grid (leading slot, thumbnail, dismiss) and an
  * All/Unread filter. The buckets and rows live in `NotificationList.tsx`; this file renders that
- * list inside its own focusable `role="tabpanel"`, and owns everything around it — the data layer
- * (fetch, poll, mark-read/dismiss network calls), the filter state and its `TabStrip`, the two
- * empty states, and the popover chrome.
+ * list inside its own focusable `role="tabpanel"`, and owns the popover chrome, the tab strip's
+ * `TabStrip`, and the dismiss-focus handoff around it.
+ *
+ * #115 moves the data layer itself — fetch, poll, the #116 enrichment normalisation, and the
+ * mark-read/mark-all/dismiss optimistic updates — into `useNotificationFeed` (`lib/use-
+ * notifications.ts`), so the `/settings/notifications` page (a later package) shares the exact
+ * same fetch/poll/mutate behaviour rather than a second copy. This file keeps everything the hook
+ * does not own: the popup ref, `pendingDismissFocusRef` and its layout effect,
+ * `focusAllTabAndShowAll`, and all of the placement/anchoring logic below — none of that is data,
+ * and none of it is shared with the page (which has its own dismiss-focus handoff onto the page's
+ * own layout, per the #115 common contract). The two empty states are `NotificationEmptyState`
+ * (`NotificationList.tsx`), extracted the same ticket for the same sharing reason. #115 also adds a
+ * popover footer — "View all notifications", linking to the full page — outside the scrolling
+ * tabpanel, last in Tab order.
  *
  * ## Popover, not Menu
  *
@@ -92,7 +98,6 @@ const HEAD = "flex items-center justify-between gap-[var(--space-3)] px-[var(--s
 // `PopoverTitle` renders an `<h2>`; `tokens/base.css`'s unlayered `h1..h4 { font-weight: regular }`
 // beats a layered `font-medium` regardless of specificity, so it needs `!`.
 const TITLE_WEIGHT = "!font-medium";
-const EMPTY = "px-[var(--space-4)] py-[var(--space-5)] text-[length:var(--text-sm)] text-muted-foreground grid gap-[var(--space-3)] justify-items-start";
 // `shrink-0` — the trigger sits beside the wordmark/breadcrumb in a flex row, and a long identity
 // name or crumb trail must not squeeze the bell's own fixed box. `[&_svg]:size-[19px]` sizes the
 // `Bell` icon explicitly rather than relying on lucide's own default, the one source for the
@@ -130,6 +135,12 @@ const PLACEMENT = {
 // `min-h-0 flex-1` lets the scrolling body shrink inside the popup's own `flex-col`; the tabpanel
 // IS the scrolling container (TabStrip's own convention — see Admin.tsx around its tabpanel ids).
 const LIST = "min-h-0 flex-1 overflow-y-auto overscroll-contain";
+// #115 — a footer link to the full `/settings/notifications` page, OUTSIDE the scrolling tabpanel
+// (`shrink-0`, same as `HEAD`/`TABS_ROW`) so it never scrolls out of view with the rows above it. A
+// top hairline separates it from the list, mirroring `HEAD`'s own bottom hairline.
+const FOOTER = "shrink-0 px-[var(--space-4)] py-[var(--space-3)] " +
+  "border-t-[length:var(--border-width-hair)] [border-top-style:solid] border-t-border";
+const FOOTER_LINK = "text-[length:var(--text-sm)] text-foreground-secondary hover:text-foreground no-underline";
 
 /**
  * `trigger.top - anchor.top`, floored at 0 — the distance to shift the panel's start-aligned
@@ -157,59 +168,20 @@ export type NotificationBellProps = {
   anchorRef: RefObject<HTMLElement | null>;
 };
 
-// #116 — the wire shape a `NotificationsResponse` row arrives in. `actor`/`subject`/`assetId` are
-// staff-only enrichment: an external payload (the same endpoint's other branch) never carries
-// them, so they are typed optional here and normalised to `null` below rather than assumed present.
-type NotificationWireRow = Omit<NotificationListItem, "actor" | "subject" | "assetId"> & {
-  actor?: NotificationListItem["actor"];
-  subject?: NotificationListItem["subject"];
-  assetId?: NotificationListItem["assetId"];
-};
-
-type NotificationsResponse = { notifications: NotificationWireRow[]; unreadCount: number };
-
 export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = false, placement, anchorRef }: NotificationBellProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const idPrefix = useId();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationListItem[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [tab, setTab] = useState<NotificationFilter>("all");
-  // Captured rather than read live, so every row in one render agrees on "now" — refreshed on
-  // open and on each poll response, never on a render-by-render basis.
-  const [now, setNow] = useState(() => Date.now());
+  // #115 — fetch/poll/mark-read/mark-all/dismiss and the derived filter/bucket/visible state all
+  // live in the hook now; this file keeps only the popup ref, the dismiss-focus handoff, tab
+  // selection's own focus side effect, and the popover/placement chrome below.
+  const { notifications, unreadCount, now, refreshNow, tab, setTab, filtered, buckets, visible, markRead, markAllRead, dismiss } =
+    useNotificationFeed({ poll });
   const notificationsPopupRef = useRef<HTMLDivElement | null>(null);
   // Set only by `dismissNotification`, consumed by the layout effect below — never a timer: a
   // deferred focus call could land after the list has changed again.
   const pendingDismissFocusRef = useRef<string | "panel" | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    const loadNotifications = async () => {
-      try {
-        const response = await apiGet<NotificationsResponse>("/api/notifications?limit=25");
-        if (active) {
-          // #116: external payloads lack `actor`/`subject`/`assetId` entirely — normalise here so
-          // the rest of the app only ever sees the full `NotificationListItem` shape.
-          setNotifications(response.notifications.map((n) => ({
-            ...n,
-            actor: n.actor ?? null,
-            subject: n.subject ?? null,
-            assetId: n.assetId ?? null,
-          })));
-          setUnreadCount(response.unreadCount);
-          setNow(Date.now());
-        }
-      } catch { /* The bell is best effort and should not disrupt the app shell. */ }
-    };
-    void loadNotifications();
-    const timer = window.setInterval(() => void loadNotifications(), poll);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [poll]);
-
-  const filtered = filterNotifications(notifications, tab);
-  const buckets = groupNotifications(filtered, now);
-  const visible = buckets.flatMap((bucket) => bucket.notifications);
   const showThumbnails = PLACEMENT[placement].thumbnails;
 
   useLayoutEffect(() => {
@@ -226,7 +198,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
 
   function handleOpenChange(open: boolean) {
     setNotificationsOpen(open);
-    if (open) setNow(Date.now());
+    if (open) refreshNow();
     else pendingDismissFocusRef.current = null;
   }
 
@@ -242,36 +214,25 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
     selectTab("all");
   }
 
-  async function markNotificationRead(notification: NotificationListItem) {
-    if (notification.readAt) return;
-    setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
-    setUnreadCount((current) => Math.max(0, current - 1));
-    try { await apiPost("/api/notifications/" + encodeURIComponent(notification.id) + "/read", {}); } catch { /* The next poll restores server state. */ }
-  }
-
-  async function markAllNotificationsRead() {
-    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
-    setUnreadCount(0);
-    try { await apiPost("/api/notifications/read-all", {}); } catch { /* The next poll restores server state. */ }
-  }
-
   function handleMarkAllClick() {
     // `aria-disabled`, not the `disabled` attribute, keeps focus on the control while this is a
     // no-op at zero unread.
     if (unreadCount === 0) return;
-    void markAllNotificationsRead();
+    void markAllRead();
   }
 
   function activateRow(notification: NotificationListItem) {
-    void markNotificationRead(notification);
+    void markRead(notification);
     setNotificationsOpen(false);
   }
 
-  async function dismissNotification(notification: NotificationListItem) {
+  function dismissNotification(notification: NotificationListItem) {
     pendingDismissFocusRef.current = dismissFocusTarget(visible, notification.id) ?? "panel";
-    setNotifications((current) => current.filter((item) => item.id !== notification.id));
-    if (!notification.readAt) setUnreadCount((current) => Math.max(0, current - 1));
-    try { await apiDelete("/api/notifications/" + encodeURIComponent(notification.id)); } catch { /* The next poll restores server state. */ }
+    void dismiss(notification);
+  }
+
+  function handleViewAllClick() {
+    setNotificationsOpen(false);
   }
 
   const cappedCount = unreadCount > 99 ? "99+" : String(unreadCount);
@@ -379,28 +340,29 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
             className={LIST}
           >
             {filtered.length === 0 ? (
-              tab === "all" ? (
-                <div className={EMPTY} data-testid="rail-notifications-empty" data-notification-empty="all">
-                  <span>No notifications.</span>
-                </div>
-              ) : (
-                <div className={EMPTY} data-testid="rail-notifications-empty" data-notification-empty="unread">
-                  <span>You’re all caught up.</span>
-                  <Button type="button" variant="ghost" size="sm" data-testid="rail-notifications-show-all" onClick={focusAllTabAndShowAll}>
-                    Show all notifications
-                  </Button>
-                  {unreadCount > 0 && <span>Older unread notifications may be outside this recent list.</span>}
-                </div>
-              )
+              <NotificationEmptyState filter={tab} unreadCount={unreadCount} onShowAll={focusAllTabAndShowAll} />
             ) : (
               <NotificationList
                 buckets={buckets}
                 now={now}
                 showThumbnails={showThumbnails}
+                scale="panel"
                 onActivate={activateRow}
-                onDismiss={(notification) => void dismissNotification(notification)}
+                onDismiss={dismissNotification}
               />
             )}
+          </div>
+
+          {/* #115 — outside the scrolling tabpanel, last in Tab order. */}
+          <div className={FOOTER}>
+            <InternalLink
+              to="/settings/notifications"
+              className={FOOTER_LINK}
+              data-testid="rail-notifications-view-all"
+              onClick={handleViewAllClick}
+            >
+              View all notifications
+            </InternalLink>
           </div>
         </PopoverContent>
       </Popover>

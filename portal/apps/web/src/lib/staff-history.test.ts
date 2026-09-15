@@ -165,6 +165,7 @@ describe("the property the read-only history rests on", () => {
     `/projects/${projectId}/edit`,
     "/admin",
     "/settings/notifications",
+    "/settings/notifications/preferences",
   ];
 
   it("rebuilds every canonical staff location to itself, byte for byte", () => {
@@ -178,11 +179,12 @@ describe("the property the read-only history rests on", () => {
 
   it("covers every route kind the app can navigate to, so the corpus cannot silently shrink", () => {
     const kinds = new Set(canonical.map((href) => parseStaffLocation(href).kind));
-    expect(kinds).toEqual(new Set(["dashboard", "create-project", "project", "edit-project", "admin", "notifications"]));
+    expect(kinds).toEqual(new Set(["dashboard", "create-project", "project", "edit-project", "admin", "notifications", "notification-preferences"]));
     // Anchored to the serializer: if a new kind is added, staffPathFor gains an arm and this list
     // must grow with it.
     expect(canonical).toContain(staffPathFor({ kind: "admin" }));
     expect(canonical).toContain(staffPathFor({ kind: "notifications" }));
+    expect(canonical).toContain(staffPathFor({ kind: "notification-preferences" }));
     expect(canonical).toContain(staffPathFor({ kind: "create-project" }));
   });
 

@@ -270,10 +270,9 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
   // (literals only, not a variable of a wider inferred type) would otherwise reject the testid, the
   // same way `RailItem`'s own `tooltip` const (below) already dodges it.
   const accountTooltip = { children: displayName, "data-testid": "rail-tooltip-account" };
-  // Read once, not once per attribute — `activeSectionId` already folds every notifications route
-  // to `"notifications"` (`lib/staff-navigation.ts`), so this is a single presence check, not a
-  // route re-derivation, for both `data-active` and `aria-current` below.
-  const preferencesActive = navigation.activeSectionId === "notifications";
+  // Exact, not the coarse section: since #115 `activeSectionId === "notifications"` also covers
+  // the list at `/settings/notifications`, where this item is not the current page.
+  const preferencesActive = navigation.preferencesActive;
   // The bell's own anchor (#113) — the rail's fixed `sidebar-container` div, not the trigger, so
   // the panel's left edge sits 8px off the rail's right edge regardless of where inside the rail
   // header the trigger sits. `Sidebar` spreads its own rest props onto that div (`reui/sidebar.tsx`), so a plain
@@ -457,7 +456,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
               <MenuPrimitive.LinkItem
                 closeOnClick
                 label="Notification preferences"
-                render={<InternalLink to="/settings/notifications" className={ACCOUNT_MENU_ITEM} />}
+                render={<InternalLink to="/settings/notifications/preferences" className={ACCOUNT_MENU_ITEM} />}
                 // Presence-based, matching Base UI's own `data-active` convention.
                 data-active={preferencesActive ? "" : undefined}
                 aria-current={preferencesActive ? "page" : undefined}

@@ -2,7 +2,7 @@ import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { notificationCopy } from "@quincy/db";
-import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, conformsToNotificationEnrichment } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, conformsToNotificationEnrichment, encodeNotificationCursor, externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { notifyProject, notifySubtaskAssignee } from "../src/lib/notifications";
@@ -1020,5 +1020,217 @@ describe("notification enrichment — external boundary (staff-only)", () => {
     expect(externalRow).not.toHaveProperty("assetId");
     expect(externalRow.title).toBe("You were mentioned");
     expect(externalRow.body).toBe("You were mentioned in a project comment.");
+  });
+});
+
+describe("notification paging", () => {
+  async function createUser(role: "editor" | "external_editor" = "editor") {
+    const id = crypto.randomUUID();
+    const token = `notification-paging-${crypto.randomUUID()}`;
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Paging User', ?, 1, ?, 1, ?, ?)").bind(id, `${id}@example.test`, role, now, now),
+      database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, token, id, now, now),
+    ]);
+    return { id, token };
+  }
+
+  async function makeStaffNotification(input: { userId: string; projectId?: string | null; createdAt: number; title?: string }) {
+    const notificationId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, created_at) VALUES (?, ?, ?, 'raw_ready', ?, 'Body', ?)")
+      .bind(notificationId, input.userId, input.projectId ?? null, input.title ?? "Paging notification", input.createdAt).run();
+    return notificationId;
+  }
+
+  async function makeExternalProject(street: string) {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'editing', ?, ?)").bind(projectId, street, now, now).run();
+    return projectId;
+  }
+
+  /** One editor membership per (project, recipient) pair — `project_members` has a unique
+   * constraint on (project_id, user_id, role_on_project), so every row that shares a project and
+   * recipient must share this one membership rather than minting a fresh one per notification. */
+  async function createExternalMembership(projectId: string, recipientId: string, startedAt: number) {
+    const membershipId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+      .bind(membershipId, projectId, recipientId, startedAt).run();
+    return membershipId;
+  }
+
+  /**
+   * A notification the external-editor branch's visibility CTE accepts, at an explicit shared
+   * `created_at` so paging tests can control tie-breaking on the millisecond boundary — extends
+   * the `seedExternalDirectNotification` pattern used above with an explicit recipient, an
+   * already-created membership, and timestamp.
+   */
+  async function seedExternalDirectNotification(projectId: string, recipientId: string, membershipId: string, startedAt: number, createdAt: number) {
+    const notificationId = crypto.randomUUID();
+    const outboxId = crypto.randomUUID();
+    const sourceKey = `external-paging:${crypto.randomUUID()}`;
+    const payload = JSON.stringify({
+      schemaVersion: 1,
+      event: { type: "project.external_safe.direct", sourceKey, recipientId },
+      authorizationAtOccurrence: { kind: "project_editor_membership", membershipCycle: membershipId, startedAt },
+      legacy: { type: "raw_ready", projectId, sourceId: sourceKey },
+    });
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'raw_ready', 'Paging external notification', 'Body', ?, ?)")
+        .bind(notificationId, recipientId, projectId, sourceKey, createdAt),
+      database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, recipient_membership_cycle_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(outboxId, 1, "project.external_safe.direct", sourceKey, projectId, recipientId, recipientId, 0, payload, "completed", createdAt, membershipId, createdAt, createdAt),
+      database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'in_app', 'sent', ?, ?, ?)")
+        .bind(crypto.randomUUID(), outboxId, "project.external_safe.direct", sourceKey, recipientId, notificationId, createdAt, createdAt),
+    ]);
+    return notificationId;
+  }
+
+  function base64Url(value: string): string {
+    let binary = "";
+    for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte);
+    return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+  }
+
+  async function fetchPage(token: string, cursor: string | null | undefined, limit: number) {
+    const query = cursor ? `?limit=${limit}&cursor=${encodeURIComponent(cursor)}` : `?limit=${limit}`;
+    return request(`/api/notifications${query}`, token);
+  }
+
+  async function collectAllPages(token: string, limit: number) {
+    let cursor: string | null | undefined;
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    let lastNextCursor: string | null = null;
+    let pages = 0;
+    do {
+      const response = await fetchPage(token, cursor, limit);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { notifications: Array<{ id: string }>; nextCursor: string | null };
+      for (const row of body.notifications) {
+        expect(seen.has(row.id)).toBe(false);
+        seen.add(row.id);
+        ids.push(row.id);
+      }
+      cursor = body.nextCursor;
+      lastNextCursor = body.nextCursor;
+      pages += 1;
+      if (pages > 20) throw new Error("Too many pages fetched — pagination loop guard tripped");
+    } while (cursor);
+    return { ids, lastNextCursor };
+  }
+
+  it("pages the staff branch to the end with no gaps or duplicates, ordered by createdAt then id descending", async () => {
+    const { id: userId, token } = await createUser("editor");
+    const t = Date.now();
+    const n1 = await makeStaffNotification({ userId, createdAt: t });
+    const n2 = await makeStaffNotification({ userId, createdAt: t });
+    const n3 = await makeStaffNotification({ userId, createdAt: t - 1000 });
+    const n4 = await makeStaffNotification({ userId, createdAt: t - 2000 });
+    const { ids, lastNextCursor } = await collectAllPages(token, 1);
+    expect(new Set(ids)).toEqual(new Set([n1, n2, n3, n4]));
+    const tiedPairDescending = [n1, n2].sort((a, b) => (a > b ? -1 : 1));
+    expect(ids).toEqual([...tiedPairDescending, n3, n4]);
+    expect(lastNextCursor).toBeNull();
+  });
+
+  it("pages the external CTE branch to the end with no gaps or duplicates, and never surfaces a revoked-membership row sharing the boundary millisecond", async () => {
+    const { id: recipientId, token } = await createUser("external_editor");
+    const projectId = await makeExternalProject("Paging External Street");
+    const t = Date.now();
+    const membershipId = await createExternalMembership(projectId, recipientId, t - 5000);
+    const n1 = await seedExternalDirectNotification(projectId, recipientId, membershipId, t - 5000, t);
+    const n2 = await seedExternalDirectNotification(projectId, recipientId, membershipId, t - 5000, t);
+    const n3 = await seedExternalDirectNotification(projectId, recipientId, membershipId, t - 5000, t - 1000);
+    const n4 = await seedExternalDirectNotification(projectId, recipientId, membershipId, t - 5000, t - 2000);
+
+    // A second project whose membership is revoked before the fetch: invisible on every page,
+    // even though its createdAt ties one of the visible rows above.
+    const invisibleProjectId = await makeExternalProject("Paging External Invisible Street");
+    const invisibleMembershipId = await createExternalMembership(invisibleProjectId, recipientId, t);
+    const invisible = await seedExternalDirectNotification(invisibleProjectId, recipientId, invisibleMembershipId, t, t);
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(invisibleMembershipId).run();
+
+    const { ids, lastNextCursor } = await collectAllPages(token, 1);
+    expect(ids).not.toContain(invisible);
+    expect(new Set(ids)).toEqual(new Set([n1, n2, n3, n4]));
+    const tiedPairDescending = [n1, n2].sort((a, b) => (a > b ? -1 : 1));
+    expect(ids).toEqual([...tiedPairDescending, n3, n4]);
+    expect(lastNextCursor).toBeNull();
+  });
+
+  it("returns nextCursor null on a first page that already fits everything, and on an exactly-full final page", async () => {
+    const { id: userId, token } = await createUser("editor");
+    const t = Date.now();
+    await makeStaffNotification({ userId, createdAt: t });
+    await makeStaffNotification({ userId, createdAt: t - 1000 });
+
+    const fits = await (await fetchPage(token, null, 25)).json() as { notifications: unknown[]; nextCursor: string | null };
+    expect(fits.notifications).toHaveLength(2);
+    expect(fits.nextCursor).toBeNull();
+
+    const exact = await (await fetchPage(token, null, 2)).json() as { notifications: unknown[]; nextCursor: string | null };
+    expect(exact.notifications).toHaveLength(2);
+    expect(exact.nextCursor).toBeNull();
+  });
+
+  it("rejects a malformed cursor with 400 on both the staff and external branches", async () => {
+    const { token: staffToken } = await createUser("editor");
+    const { token: externalToken } = await createUser("external_editor");
+    const malformed = [
+      "garbage",
+      "2026-09-15T00:00:00.000Z",
+      base64Url('{"id":"x"}'),
+      base64Url('{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","createdAt":0}'),
+      base64Url('{"createdAt":1e100,"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'),
+      "",
+    ];
+    for (const [label, token] of [["staff", staffToken], ["external", externalToken]] as const) {
+      for (const cursor of malformed) {
+        const response = await request(`/api/notifications?cursor=${encodeURIComponent(cursor)}`, token);
+        expect(response.status, `${label} branch, cursor ${JSON.stringify(cursor)}`).toBe(400);
+        expect(await response.json()).toEqual({ error: "Invalid cursor" });
+      }
+    }
+  });
+
+  it("accepts a cursor minted from another user's newest row as a plain position, still scoped to the caller", async () => {
+    const { id: userIdA } = await createUser("editor");
+    const { id: userIdB, token: tokenB } = await createUser("editor");
+    const t = Date.now();
+    const idA = await makeStaffNotification({ userId: userIdA, createdAt: t });
+    const nB1 = await makeStaffNotification({ userId: userIdB, createdAt: t - 500 });
+    const nB2 = await makeStaffNotification({ userId: userIdB, createdAt: t - 2000 });
+    const mintedFromA = encodeNotificationCursor({ createdAt: t, id: idA });
+    const response = await request(`/api/notifications?cursor=${encodeURIComponent(mintedFromA)}`, tokenB);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { notifications: Array<{ id: string }> };
+    expect(body.notifications.map((row) => row.id).sort()).toEqual([nB1, nB2].sort());
+  });
+
+  it("leaves unreadCount unaffected by the cursor", async () => {
+    const { id: userId, token } = await createUser("editor");
+    const t = Date.now();
+    await makeStaffNotification({ userId, createdAt: t });
+    await makeStaffNotification({ userId, createdAt: t - 1000 });
+    await makeStaffNotification({ userId, createdAt: t - 2000 });
+    const first = await (await fetchPage(token, null, 1)).json() as { unreadCount: number; nextCursor: string | null };
+    expect(first.unreadCount).toBe(3);
+    const second = await (await fetchPage(token, first.nextCursor, 1)).json() as { unreadCount: number };
+    expect(second.unreadCount).toBe(3);
+  });
+
+  it("parses the staff and external responses through their strict schemas with nextCursor present", async () => {
+    const { id: userId, token: staffToken } = await createUser("editor");
+    await makeStaffNotification({ userId, createdAt: Date.now() });
+    const staffBody = await (await fetchPage(staffToken, null, 25)).json();
+    expect(() => staffNotificationListResponseSchema.parse(staffBody)).not.toThrow();
+
+    const { id: recipientId, token: externalToken } = await createUser("external_editor");
+    const projectId = await makeExternalProject("Schema Paging Street");
+    const schemaMembershipId = await createExternalMembership(projectId, recipientId, Date.now());
+    await seedExternalDirectNotification(projectId, recipientId, schemaMembershipId, Date.now(), Date.now());
+    const externalBody = await (await fetchPage(externalToken, null, 25)).json();
+    expect(() => externalNotificationListResponseSchema.parse(externalBody)).not.toThrow();
   });
 });

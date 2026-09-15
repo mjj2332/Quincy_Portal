@@ -489,10 +489,10 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
         const accountTrigger = sheet.querySelector<HTMLButtonElement>('[data-testid="navigation-rail-account"]')!;
         await click(accountTrigger);
         const preferences = document.querySelector<HTMLAnchorElement>('[data-testid="navigation-rail-preferences"]')!;
-        expect(preferences.getAttribute("href")).toBe("/settings/notifications");
+        expect(preferences.getAttribute("href")).toBe("/settings/notifications/preferences");
         await click(preferences);
         await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
-        expect(window.location.pathname).toBe("/settings/notifications");
+        expect(window.location.pathname).toBe("/settings/notifications/preferences");
       }
     });
 

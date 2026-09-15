@@ -214,7 +214,7 @@ export const externalCommentListResponseSchema = z.object({
 export const externalChecklistListResponseSchema = z.object({ subtasks: z.array(externalChecklistItemSchema) }).strict();
 export const externalCollectionLinkListResponseSchema = z.object({ links: z.array(externalCollectionLinkSchema) }).strict();
 export const externalMentionableListResponseSchema = z.object({ users: z.array(externalMentionableUserSchema).max(20) }).strict();
-export const externalNotificationListResponseSchema = z.object({ notifications: z.array(externalNotificationListItemSchema), unreadCount: z.number().int().nonnegative() }).strict();
+export const externalNotificationListResponseSchema = z.object({ notifications: z.array(externalNotificationListItemSchema), unreadCount: z.number().int().nonnegative(), nextCursor: z.string().max(512).nullable() }).strict();
 export const externalMeResponseSchema = z.object({
   user: z.object({ id: uuid, name: z.string(), email: z.string().email(), role: z.literal("external_editor"), active: z.literal(true), impersonatedBy: uuid.nullable(), authorizationEpoch: z.number().int().nonnegative() }).strict(),
   capabilities: z.array(z.enum(EXTERNAL_EDITOR_CAPABILITIES)).length(EXTERNAL_EDITOR_CAPABILITIES.length),
