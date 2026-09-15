@@ -66,6 +66,9 @@ const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   // coverage, not loosening it, since the extraction is exactly the kind of new shell file this
   // list exists to catch uncovered.
   { path: "components/quincy/NotificationList.tsx", kind: "script" },
+  // #115: the bell's fetch/poll/mark-read/dismiss data layer moved out of `NotificationBell.tsx`
+  // into this hook — a tightening, the same reasoning as #114's `NotificationList.tsx` above.
+  { path: "lib/use-notifications.ts", kind: "script" },
 ];
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import {
   filterNotifications,
   formatNotificationTimestamp,
   groupNotifications,
+  mergeNotificationPages,
   sydneyDayKey,
   type NotificationListItem,
 } from "./notification-list";
@@ -153,6 +154,56 @@ describe("dismissFocusTarget", () => {
 
   it("returns null when the dismissed row was the only one", () => {
     expect(dismissFocusTarget([item({ id: "a" })], "a")).toBeNull();
+  });
+});
+
+describe("mergeNotificationPages", () => {
+  it("dedupes an id present on both pages, keeping the EXISTING copy", () => {
+    const existing = [item({ id: "a", title: "Existing copy", readAt: "2026-09-15T00:00:00.000Z", createdAt: "2026-09-15T01:00:00+10:00" })];
+    const incoming = [item({ id: "a", title: "Incoming copy", readAt: null, createdAt: "2026-09-15T01:00:00+10:00" })];
+    const merged = mergeNotificationPages(existing, incoming, new Set());
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.title).toBe("Existing copy");
+    expect(merged[0]!.readAt).toBe("2026-09-15T00:00:00.000Z");
+  });
+
+  it("drops a dismissed id from either page", () => {
+    const existing = [item({ id: "a", createdAt: "2026-09-15T02:00:00+10:00" }), item({ id: "b", createdAt: "2026-09-15T01:00:00+10:00" })];
+    const incoming = [item({ id: "c", createdAt: "2026-09-15T00:00:00+10:00" })];
+    const merged = mergeNotificationPages(existing, incoming, new Set(["b", "c"]));
+    expect(merged.map((entry) => entry.id)).toEqual(["a"]);
+  });
+
+  it("sorts the union by createdAt DESC then id DESC, the server's own keyset order", () => {
+    const existing = [item({ id: "b", createdAt: "2026-09-15T01:00:00+10:00" })];
+    const incoming = [
+      item({ id: "a", createdAt: "2026-09-15T01:00:00+10:00" }), // same instant as "b" — id DESC breaks the tie
+      item({ id: "z", createdAt: "2026-09-15T03:00:00+10:00" }),
+    ];
+    const merged = mergeNotificationPages(existing, incoming, new Set());
+    expect(merged.map((entry) => entry.id)).toEqual(["z", "b", "a"]);
+  });
+
+  it("groups a Sydney day spanning two pages into one bucket via groupNotifications over the merge", () => {
+    const now = new Date("2026-09-15T09:00:00+10:00").getTime();
+    // Page 1 (newer) ends mid-morning; page 2 (older) picks up earlier the same Sydney day.
+    const page1 = [item({ id: "a", createdAt: "2026-09-15T08:00:00+10:00" })];
+    const page2 = [item({ id: "b", createdAt: "2026-09-15T00:30:00+10:00" })];
+    const merged = mergeNotificationPages(page1, page2, new Set());
+    const buckets = groupNotifications(merged, now);
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]!.key).toBe("2026-09-15");
+    expect(buckets[0]!.notifications.map((entry) => entry.id)).toEqual(["a", "b"]);
+  });
+
+  it("never mutates either input array", () => {
+    const existing = [item({ id: "a" })];
+    const incoming = [item({ id: "b" })];
+    const existingCopy = existing.map((entry) => ({ ...entry }));
+    const incomingCopy = incoming.map((entry) => ({ ...entry }));
+    mergeNotificationPages(existing, incoming, new Set());
+    expect(existing).toEqual(existingCopy);
+    expect(incoming).toEqual(incomingCopy);
   });
 });
 

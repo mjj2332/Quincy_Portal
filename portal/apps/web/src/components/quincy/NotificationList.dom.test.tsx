@@ -66,7 +66,7 @@ function item(overrides: Partial<NotificationListItem> = {}): NotificationListIt
 
 const NOOP = () => {};
 
-function renderList(items: NotificationListItem[], props: Partial<{ now: number; showThumbnails: boolean }> = {}) {
+function renderList(items: NotificationListItem[], props: Partial<{ now: number; showThumbnails: boolean; scale: "panel" | "page" }> = {}) {
   const now = props.now ?? new Date("2026-09-15T09:00:00+10:00").getTime();
   const buckets = groupNotifications(items, now);
   // A neutral container: the list renders a `<section>` per bucket, each with its own `<ul>`,
@@ -77,6 +77,7 @@ function renderList(items: NotificationListItem[], props: Partial<{ now: number;
         buckets={buckets}
         now={now}
         showThumbnails={props.showThumbnails ?? true}
+        scale={props.scale ?? "panel"}
         onActivate={NOOP}
         onDismiss={NOOP}
       />
@@ -282,12 +283,77 @@ describe("NotificationList", () => {
   });
 
   it("lays out four tracks with thumbnails and three without", async () => {
-    await renderList([item()], { showThumbnails: true });
+    await renderList([item()], { showThumbnails: true, scale: "panel" });
     const withThumb = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
     expect(withThumb.className).toContain("grid-cols-[28px_minmax(0,1fr)_64px_44px]");
 
-    await renderList([item()], { showThumbnails: false });
+    await renderList([item()], { showThumbnails: false, scale: "panel" });
     const withoutThumb = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
     expect(withoutThumb.className).toContain("grid-cols-[28px_minmax(0,1fr)_44px]");
+  });
+});
+
+// #115 — the full-page `/settings/notifications` scale (a later package mounts it); every seam
+// this file already covers at `scale="panel"` above must resolve identically here, plus the
+// bigger boxes and the page's own rule-form bucket head.
+describe("NotificationList — page scale (#115)", () => {
+  it("gives the leading slot the page's 32px box and stamps the row with data-notification-scale", async () => {
+    await renderList([item()], { scale: "page" });
+    const row = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
+    const leading = row.querySelector<HTMLElement>("[data-notification-leading]")!;
+    expect(leading.className).toContain("size-[32px]");
+    expect(row.getAttribute("data-notification-scale")).toBe("page");
+  });
+
+  it("gives the thumbnail a 96×64 box at page scale", async () => {
+    await renderList([item({ coverAssetId: "asset-1" })], { scale: "page", showThumbnails: true });
+    const thumb = host.querySelector<HTMLElement>("[data-notification-thumb]")!;
+    expect(thumb.className).toContain("w-[96px]");
+    expect(thumb.className).toContain("h-[64px]");
+  });
+
+  it("lays out the page's grid tracks with and without a thumbnail", async () => {
+    await renderList([item()], { scale: "page", showThumbnails: true });
+    const withThumb = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
+    expect(withThumb.className).toContain("grid-cols-[32px_minmax(0,1fr)_96px_44px]");
+
+    await renderList([item()], { scale: "page", showThumbnails: false });
+    const withoutThumb = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
+    expect(withoutThumb.className).toContain("grid-cols-[32px_minmax(0,1fr)_44px]");
+  });
+
+  it("renders a rule-form bucket head at page scale — a hairline span, not the panel's banded strip", async () => {
+    await renderList([item()], { scale: "page" });
+    const section = host.querySelector<HTMLElement>("[data-notification-bucket]")!;
+    const heading = section.querySelector("h3")!;
+    expect(heading.className).not.toContain("bg-secondary");
+    const rule = heading.querySelector('span[aria-hidden="true"]');
+    expect(rule).not.toBeNull();
+    expect(rule!.tagName).toBe("SPAN");
+    expect(rule!.className).toContain("border-t-");
+  });
+
+  it("gives the title, body and meta the page's roomier text sizes", async () => {
+    await renderList([item({ title: "Row title", body: "Row body" })], { scale: "page" });
+    const link = host.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+    expect(link.className).toContain("text-[length:var(--text-base)]");
+    const body = host.querySelector<HTMLElement>("[data-notification-body]")!;
+    expect(body.className).toContain("text-sm");
+    const meta = host.querySelector<HTMLElement>("[data-notification-meta]")!;
+    expect(meta.className).toContain("text-xs");
+  });
+
+  it("keeps every existing seam present at page scale too", async () => {
+    await renderList([
+      item({ id: "with-cover", title: "With cover", coverAssetId: "asset-1", body: "Body copy" }),
+    ], { scale: "page", showThumbnails: true });
+    const row = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
+    expect(row.querySelector("[data-notification-leading]")).not.toBeNull();
+    expect(row.querySelector('[data-testid="rail-notification-item"]')).not.toBeNull();
+    expect(row.querySelector("[data-notification-body]")).not.toBeNull();
+    expect(row.querySelector("[data-notification-meta]")).not.toBeNull();
+    expect(row.querySelector("[data-notification-thumb]")).not.toBeNull();
+    expect(row.querySelector('[data-notification-dismiss="with-cover"]')).not.toBeNull();
+    expect(host.querySelector('[role="list"]')).not.toBeNull();
   });
 });

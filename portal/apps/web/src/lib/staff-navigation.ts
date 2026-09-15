@@ -89,7 +89,11 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
     case "project": return "project";
     case "edit-project": return "edit-project";
     case "admin": return "admin";
+    // Both notification kinds fold to the same coarse section (#115) — the list at
+    // `/settings/notifications` and its preferences leaf are one screen identity to the shell,
+    // same as every Dashboard view folding to "dashboard".
     case "notifications": return "notifications";
+    case "notification-preferences": return "notifications";
     default: return "not-found";
   }
 }

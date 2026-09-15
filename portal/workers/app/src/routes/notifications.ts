@@ -1,10 +1,11 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { createDb, schema } from "@quincy/db";
 import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
-import { externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
+import { decodeNotificationCursor, encodeNotificationCursor, externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { externalVisibleNotificationCte } from "../lib/external-notification-visibility";
 import { notificationProjectContext } from "../lib/notification-project-context";
 import { notificationEnrichment } from "../lib/notification-enrichment";
@@ -12,39 +13,82 @@ import { coverMaps, effectiveCoverAssetId } from "../lib/project-covers";
 
 const MAX_LIMIT = 50;
 
+/** Shared boundary-cursor encoder for both list branches: a cursor is a position, never a
+ * permission, but if the boundary row itself somehow fails to encode while a further page
+ * exists, returning nextCursor:null would be indistinguishable from genuine end-of-list and
+ * silently truncate the feed — fail loudly instead. */
+function encodeNextCursor(c: Context<AppEnv>, boundary: { createdAt: number; id: string }, branch: "staff" | "external"): string | Response {
+  try {
+    return encodeNotificationCursor({ createdAt: boundary.createdAt, id: boundary.id });
+  } catch {
+    console.error("Notification pagination cursor could not be encoded", { event: "notification_pagination_cursor_rejected", branch, rowId: boundary.id });
+    return c.json({ error: "Notification pagination is temporarily unavailable" }, 500);
+  }
+}
+
 export const notificationsRoutes = new Hono<AppEnv>();
 
 notificationsRoutes.get("/notifications", terminalRoute("/notifications", async (c) => {
   const rawLimit = Number(c.req.query("limit") ?? 25);
   const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), MAX_LIMIT) : 25;
   const cursorValue = c.req.query("cursor");
-  const cursor = cursorValue ? new Date(cursorValue) : null;
-  if (cursorValue && (!cursor || Number.isNaN(cursor.valueOf()))) return c.json({ error: "Invalid cursor" }, 400);
+  const cursor = cursorValue !== undefined ? decodeNotificationCursor(cursorValue) : null;
+  if (cursorValue !== undefined && !cursor) return c.json({ error: "Invalid cursor" }, 400);
   const userId = c.get("user").id;
   const db = createDb(c.env.DB);
   if (c.get("user").role === "external_editor") {
     const visibility = externalVisibleNotificationCte(userId);
-    const rows = await c.env.DB.prepare(`${visibility.sql} SELECT n.id, n.project_id AS projectId, n.type, n.title, n.body, n.read_at AS readAt, n.created_at AS createdAt, p.street AS projectStreet FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id INNER JOIN projects p ON p.id = n.project_id WHERE 1 = 1${cursor ? " AND n.created_at < ?" : ""} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`)
-      .bind(...visibility.bindings, ...(cursor ? [cursor.getTime()] : []), limit).all<{ id: string; projectId: string; type: string; title: string; body: string | null; readAt: number | null; createdAt: number; projectStreet: string }>();
+    const bindings: unknown[] = [...visibility.bindings];
+    let cursorClause = "";
+    if (cursor) {
+      cursorClause = " AND (n.created_at < ? OR (n.created_at = ? AND n.id < ?))";
+      bindings.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    bindings.push(limit + 1);
+    const rows = await c.env.DB.prepare(`${visibility.sql} SELECT n.id, n.project_id AS projectId, n.type, n.title, n.body, n.read_at AS readAt, n.created_at AS createdAt, p.street AS projectStreet FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id INNER JOIN projects p ON p.id = n.project_id WHERE 1 = 1${cursorClause} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`)
+      .bind(...bindings).all<{ id: string; projectId: string; type: string; title: string; body: string | null; readAt: number | null; createdAt: number; projectStreet: string }>();
     const unread = await c.env.DB.prepare(`${visibility.sql} SELECT COUNT(*) AS count FROM notifications n INNER JOIN external_visible_notifications visible ON visible.id = n.id WHERE n.read_at IS NULL`).bind(...visibility.bindings).first<{ count: number }>();
+    const fetchedRows = rows.results ?? [];
+    const hasNext = fetchedRows.length > limit;
+    const pageRows = fetchedRows.slice(0, limit);
+    let nextCursor: string | null = null;
+    if (hasNext) {
+      const boundary = pageRows.at(-1)!;
+      const encoded = encodeNextCursor(c, { createdAt: boundary.createdAt, id: boundary.id }, "external");
+      if (encoded instanceof Response) return encoded;
+      nextCursor = encoded;
+    }
     // External editors never see photographer-RAW restrictions; their stored-cover join already
     // requires edited assets to be publish_status 'ready' (see project-covers.ts).
-    const maps = await coverMaps(db, [...new Set(rows.results.map((row) => row.projectId))], false);
+    const maps = await coverMaps(db, [...new Set(pageRows.map((row) => row.projectId))], false);
     return c.json(externalNotificationListResponseSchema.parse({
-      notifications: rows.results.map((row) => ({
+      notifications: pageRows.map((row) => ({
         ...row,
         readAt: row.readAt === null ? null : new Date(row.readAt).toISOString(),
         createdAt: new Date(row.createdAt).toISOString(),
         coverAssetId: effectiveCoverAssetId(maps, row.projectId),
       })),
       unreadCount: Number(unread?.count ?? 0),
+      nextCursor,
     }));
   }
-  const conditions = [eq(schema.notifications.userId, userId), cursor ? lt(schema.notifications.createdAt, cursor) : undefined];
-  const [rows, unread] = await Promise.all([
-    db.select().from(schema.notifications).where(and(...conditions)).orderBy(desc(schema.notifications.createdAt), desc(schema.notifications.id)).limit(limit).all(),
+  const cursorCondition = cursor
+    ? or(lt(schema.notifications.createdAt, new Date(cursor.createdAt)), and(eq(schema.notifications.createdAt, new Date(cursor.createdAt)), lt(schema.notifications.id, cursor.id)))
+    : undefined;
+  const conditions = [eq(schema.notifications.userId, userId), cursorCondition];
+  const [fetchedRows, unread] = await Promise.all([
+    db.select().from(schema.notifications).where(and(...conditions)).orderBy(desc(schema.notifications.createdAt), desc(schema.notifications.id)).limit(limit + 1).all(),
     db.select({ count: sql<number>`count(*)` }).from(schema.notifications).where(and(eq(schema.notifications.userId, userId), isNull(schema.notifications.readAt))).get(),
   ]);
+  const hasNext = fetchedRows.length > limit;
+  const rows = fetchedRows.slice(0, limit);
+  let nextCursor: string | null = null;
+  if (hasNext) {
+    const boundary = rows.at(-1)!;
+    const encoded = encodeNextCursor(c, { createdAt: boundary.createdAt.getTime(), id: boundary.id }, "staff");
+    if (encoded instanceof Response) return encoded;
+    nextCursor = encoded;
+  }
   const context = await notificationProjectContext(db, c.get("user"), rows.map((row) => row.projectId));
   const enrichment = await notificationEnrichment(
     db,
@@ -66,6 +110,7 @@ notificationsRoutes.get("/notifications", terminalRoute("/notifications", async 
       };
     }),
     unreadCount: unread?.count ?? 0,
+    nextCursor,
   }));
 }));
 

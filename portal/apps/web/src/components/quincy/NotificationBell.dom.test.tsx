@@ -576,6 +576,22 @@ describe("NotificationBell panel (Popover)", () => {
     expect(empty!.textContent).toContain("No notifications.");
   });
 
+  it("adds a footer 'View all notifications' link outside the tabpanel, last in Tab order, that closes the panel on click (#115)", async () => {
+    apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
+    const trigger = await renderPanel();
+    await click(trigger);
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const link = document.querySelector<HTMLAnchorElement>('[data-testid="rail-notifications-view-all"]')!;
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("/settings/notifications");
+    // Outside the scrolling tabpanel, not inside it.
+    expect(dialog.querySelector('[role="tabpanel"]')!.contains(link)).toBe(false);
+    const focusable = [...dialog.querySelectorAll<HTMLElement>('button, a, [tabindex="0"]')].filter((el) => el.tabIndex >= 0);
+    expect(focusable[focusable.length - 1]).toBe(link);
+    await click(link);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it("leaves the bell usable after a failed poll", async () => {
     apiGetMock.mockRejectedValue(new Error("network error"));
     const trigger = await renderPanel();

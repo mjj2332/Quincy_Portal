@@ -44,13 +44,25 @@ describe("shared staff route contract", () => {
       [`/projects/${projectId}/edit`, { kind: "edit-project", projectId }],
       ["/admin", { kind: "admin" }],
       ["/settings/notifications", { kind: "notifications" }],
+      ["/settings/notifications/preferences", { kind: "notification-preferences" }],
     ];
 
     for (const [location, route] of routes) {
       expect(parseStaffLocation(location)).toEqual(route);
       expect(staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>)).toBe(location);
+      expect(safeStaffDestination(location)).toBe(location);
     }
     expect(parseStaffPathname(`/projects/${projectId.toUpperCase()}`)).toEqual({ kind: "not-found" });
+  });
+
+  it("checks the 3-segment notification-preferences arm before the 2-segment notifications arm", () => {
+    // Both share the same two leading segments ("settings", "notifications"); the longer, more
+    // specific match must be checked first or it is unreachable.
+    expect(parseStaffPathname("/settings/notifications")).toEqual({ kind: "notifications" });
+    expect(parseStaffPathname("/settings/notifications/preferences")).toEqual({ kind: "notification-preferences" });
+    expect(parseStaffPathname("/settings/notifications/preferences/extra")).toEqual({ kind: "not-found" });
+    expect(parseStaffPathname("/settings/notifications/other")).toEqual({ kind: "not-found" });
+    expect(parseStaffPathname("/settings/other")).toEqual({ kind: "not-found" });
   });
 
   it("keeps the one-shot collaboration query strict", () => {

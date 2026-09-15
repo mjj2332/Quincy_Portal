@@ -53,6 +53,7 @@ import { Admin } from "../screens/Admin";
 import { CreateProject } from "../screens/CreateProject";
 import { EditProject } from "../screens/EditProject";
 import { NotificationPreferences } from "../screens/NotificationPreferences";
+import { Notifications } from "../screens/Notifications";
 import { buttonClasses } from "../components/quincy/Button";
 
 export type SessionUser = { id: string; name?: string | null; email?: string | null; role: Role; authorizationEpoch: number };
@@ -266,6 +267,17 @@ const notificationsRoute = createRoute({
   component: function NotificationsLeaf() {
     const { route } = useShell();
     if (route.kind !== "notifications") return <NotAvailable />;
+    return <Notifications />;
+  },
+});
+
+// #115 — preferences moved off `/settings/notifications` (now the list) onto its own leaf.
+const notificationPreferencesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/notifications/preferences",
+  component: function NotificationPreferencesLeaf() {
+    const { route } = useShell();
+    if (route.kind !== "notification-preferences") return <NotAvailable />;
     return <NotificationPreferences />;
   },
 });
@@ -276,6 +288,7 @@ const notificationsRoute = createRoute({
 // same chrome. A route that cannot be observed to do anything is decoration, not defence.
 const routeTree = rootRoute.addChildren([
   dashboardRoute, createProjectRoute, projectRoute, editProjectRoute, adminRoute, notificationsRoute,
+  notificationPreferencesRoute,
 ]);
 
 /**

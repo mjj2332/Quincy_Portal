@@ -824,7 +824,7 @@ describe("the account menu panel — order and the preferences item", () => {
 
     expect(eyebrow, "the group's aria-labelledby must resolve to a real element").not.toBeNull();
     expect(eyebrow.textContent).toContain("Account");
-    expect(preferences.getAttribute("href")).toBe("/settings/notifications");
+    expect(preferences.getAttribute("href")).toBe("/settings/notifications/preferences");
     // `compareDocumentPosition`, not a flattened text scan — the separator carries no text of its
     // own, and a structural check is what actually pins the four in document order.
     expect(group.compareDocumentPosition(preferences) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -833,7 +833,7 @@ describe("the account menu panel — order and the preferences item", () => {
   });
 
   it("marks preferences current only on the notifications route", async () => {
-    await renderInProvider(navigationFor("/settings/notifications"));
+    await renderInProvider(navigationFor("/settings/notifications/preferences"));
     const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]')!;
     await click(trigger);
 

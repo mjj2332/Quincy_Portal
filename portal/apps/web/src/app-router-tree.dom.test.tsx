@@ -28,7 +28,8 @@ vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId }:
 vi.mock("./screens/Admin", () => ({ Admin: ({ currentUserId }: { currentUserId: string }) => <main>ADMIN SCREEN {currentUserId}</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>CREATE SCREEN</main> }));
 vi.mock("./screens/EditProject", () => ({ EditProject: ({ projectId }: { projectId: string }) => <main>EDIT SCREEN {projectId}</main> }));
-vi.mock("./screens/NotificationPreferences", () => ({ NotificationPreferences: () => <main>NOTIFICATIONS SCREEN</main> }));
+vi.mock("./screens/Notifications", () => ({ Notifications: () => <main>NOTIFICATIONS LIST SCREEN</main> }));
+vi.mock("./screens/NotificationPreferences", () => ({ NotificationPreferences: () => <main>NOTIFICATIONS PREFERENCES SCREEN</main> }));
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>SIGN IN</main> }));
 
 import App from "./App";
@@ -65,7 +66,8 @@ describe("every route kind resolves to its screen through the router", () => {
     [`/projects/${projectId}`, `PROJECT SCREEN ${projectId}`],
     [`/projects/${projectId}/edit`, `EDIT SCREEN ${projectId}`],
     ["/admin", "ADMIN SCREEN u1"],
-    ["/settings/notifications", "NOTIFICATIONS SCREEN"],
+    ["/settings/notifications", "NOTIFICATIONS LIST SCREEN"],
+    ["/settings/notifications/preferences", "NOTIFICATIONS PREFERENCES SCREEN"],
   ])("%s mounts %s", async (path, expected) => {
     const host = await renderAt(path);
     expect(host.textContent).toContain(expected);

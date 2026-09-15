@@ -457,7 +457,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
               <MenuPrimitive.LinkItem
                 closeOnClick
                 label="Notification preferences"
-                render={<InternalLink to="/settings/notifications" className={ACCOUNT_MENU_ITEM} />}
+                render={<InternalLink to="/settings/notifications/preferences" className={ACCOUNT_MENU_ITEM} />}
                 // Presence-based, matching Base UI's own `data-active` convention.
                 data-active={preferencesActive ? "" : undefined}
                 aria-current={preferencesActive ? "page" : undefined}

@@ -2144,3 +2144,14 @@ cookie, which is exactly what the browser does.
 mutating requests, and a dry run that only issues GETs does not prove the live path is authorised.
 Copy the `api()` helper from the September script, not the July one.
 
+## A list ordered by `(a, b)` but paged on `a` alone silently loses rows (#115, 2026-09-15)
+
+`GET /notifications` ordered by `created_at DESC, id DESC` and filtered the cursor with
+`created_at < ?`. Two rows written in the same millisecond straddling a page boundary: the first is
+the last row of page 1, the cursor is its timestamp, and the second — equal, not less — never
+appears on page 2. Nothing paginated in production, so it never fired; #115 built the first paging
+client and fixed it properly: an opaque cursor over both fields and the keyset predicate
+`(created_at < ?) OR (created_at = ? AND id < ?)`, the same shape `routes/project-activity.ts`
+already used. Two rules. The cursor covers every column in the ORDER BY, or it is wrong. And the
+regression fixture must share a timestamp on purpose — with distinct timestamps the bug is
+unobservable, which is exactly why it survived.
