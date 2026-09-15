@@ -4,7 +4,7 @@ import { createJob, setJobStatus } from "../lib/jobs";
 import { automationFlag } from "../dropbox/monitor-state";
 import { projects, editorFolderMappings } from "@quincy/db/schema";
 import { eq } from "drizzle-orm";
-import { reconcileEditorFolderOutcome } from "./scaffold";
+import { editorReconcileNote, reconcileEditorFolderOutcome, reconcileNote } from "./scaffold";
 
 export async function editorAutoCreationAllowed(env: Env, projectId: string): Promise<boolean> {
   const db = dbFor(env);
@@ -29,14 +29,10 @@ export async function handleEditorReconcileMessage(env: Env, body: { projectId: 
   await setJobStatus(db, body.jobId, "running");
   try {
     if (!await editorAutoCreationAllowed(env, body.projectId)) {
-      await setJobStatus(db, body.jobId, "done", "autocreate_not_allowed: Project predates EDITOR_AUTOCREATE_AFTER_MS and has no mapping");
+      await setJobStatus(db, body.jobId, "done", reconcileNote("autocreate_not_allowed", "Project predates EDITOR_AUTOCREATE_AFTER_MS and has no mapping"));
       return;
     }
-    const outcome = await reconcileEditorFolderOutcome(env, body.projectId);
-    const note = outcome.status === "skipped" ? `${outcome.reason}: ${outcome.detail}`
-      : outcome.status === "needs_review" ? `needs_review: ${outcome.reason}`
-      : undefined;
-    await setJobStatus(db, body.jobId, "done", note);
+    await setJobStatus(db, body.jobId, "done", editorReconcileNote(await reconcileEditorFolderOutcome(env, body.projectId)));
   } catch (error) {
     await setJobStatus(db, body.jobId, "failed", error instanceof Error ? error.message : String(error));
     throw error;

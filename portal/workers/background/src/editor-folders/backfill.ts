@@ -1,5 +1,6 @@
-import { and, desc, eq, gt, isNull, ne } from "drizzle-orm";
-import { jobs, projects } from "@quincy/db/schema";
+import { and, eq, gt, isNull, ne } from "drizzle-orm";
+import { projects } from "@quincy/db/schema";
+import { latestJobForProject, type JobStatus } from "../lib/jobs";
 import type { Database } from "@quincy/db";
 import { normalisePath } from "@quincy/shared";
 import type { Env } from "../env";
@@ -150,13 +151,11 @@ export async function inspectEditorCandidate(env: Env, projectId: string, rootPa
  * automatic pass stopped (its `reason` is `jobs.error`), read without touching Dropbox. `at` is the
  * job's last status change; a queued or running row means a pass is in progress.
  */
-export type EditorReconcileDiagnostic = { jobId: string; status: string; at: string; reason: string | null };
+export type EditorReconcileDiagnostic = { jobId: string; status: JobStatus; at: string; reason: string | null };
 
 export async function latestEditorReconcile(db: Database, projectId: string): Promise<EditorReconcileDiagnostic | null> {
-  const row = await db.select({ id: jobs.id, status: jobs.status, error: jobs.error, updatedAt: jobs.updatedAt })
-    .from(jobs).where(and(eq(jobs.projectId, projectId), eq(jobs.kind, "editor_reconcile")))
-    .orderBy(desc(jobs.createdAt)).limit(1).get();
-  return row ? { jobId: row.id, status: row.status, at: row.updatedAt.toISOString(), reason: row.error } : null;
+  const job = await latestJobForProject(db, projectId, "editor_reconcile");
+  return job ? { jobId: job.jobId, status: job.status, at: job.at, reason: job.error } : null;
 }
 
 export async function previewEditorBackfill(env: Env, cursor?: string) {

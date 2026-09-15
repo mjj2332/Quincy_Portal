@@ -155,10 +155,17 @@ async function verifiedRawFolderPathChange(
   // A decline that is a fact about the data (not a transient Dropbox or D1 failure, which the
   // webhook retry would repeat) is recorded so the Project's audit trail says why the stored
   // path was kept. Recording must never fail the webhook itself.
+  // Idempotent on (project, incoming path, reason): a redelivered or replayed webhook adds no row.
   const declineRecorded = async (reason: string) => {
     await env.DB.prepare(
-      "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'project.raw_folder_path.declined', 'project', ?, ?, ?)",
-    ).bind(crypto.randomUUID(), project.id, JSON.stringify({ actor: "tonomo", orderId: order.orderId, storedPath, incomingPath, reason }), Date.now()).run()
+      `INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+       SELECT ?, NULL, 'project.raw_folder_path.declined', 'project', ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM audit_log
+         WHERE action = 'project.raw_folder_path.declined' AND target_type = 'project' AND target_id = ?
+           AND json_extract(meta_json, '$.incomingPath') = ? AND json_extract(meta_json, '$.reason') = ?
+       )`,
+    ).bind(crypto.randomUUID(), project.id, JSON.stringify({ actor: "tonomo", orderId: order.orderId, storedPath, incomingPath, reason }), Date.now(), project.id, incomingPath, reason).run()
       .catch((error) => console.error("Tonomo raw folder path decline audit failed", { projectId: project.id, error: errorMessage(error) }));
     return decline(reason);
   };

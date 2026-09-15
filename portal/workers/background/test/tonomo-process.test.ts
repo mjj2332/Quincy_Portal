@@ -195,6 +195,8 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ raw_folder_path: STORED_RAW_FOLDER_PATH });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(projectId).first())
       .toEqual({ count: 0 });
+    const declined = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first<{ meta_json: string }>();
+    expect(JSON.parse(declined!.meta_json)).toMatchObject({ reason: "Tonomo path is not a folder in Dropbox; keeping stored path" });
   });
 
   it("completes the event without mutation when Dropbox fails for a reason other than not_found", async () => {

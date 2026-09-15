@@ -283,6 +283,23 @@ describe("previewEditorBackfill", () => {
     expect(item?.lastReconcile?.reason).toMatch(/^raw_outside_root: .*delivered outside the Portal/);
   });
 
+  it("surfaces the last pass's reason on a pending mapping but not on a ready one", async () => {
+    const data = await fixture();
+    const now = Date.now();
+    const rootPath = derivedEditorRootPath(data.shootDate, data.rawFolderPath)!;
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO editor_folder_mappings (id, project_id, connection_id, state, shoot_date, project_folder_name, root_path, root_path_key, photographer_evidence_json, editing_notes_path, input_roots_json, output_roots_json, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, 'x', ?, ?, '{}', ?, '[]', '[]', ?, ?)")
+        .bind(crypto.randomUUID(), data.projectId, data.connectionId, data.shootDate, rootPath, rootPath.toLowerCase(), `${rootPath}/Editing Notes`, now, now),
+      bindings.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, error, created_at, updated_at) VALUES (?, 'editor_reconcile', 'done', ?, 'raw_sync_in_flight: A RAW sync for the Project is queued or running; the tree is created once it settles', ?, ?)").bind(crypto.randomUUID(), data.projectId, now, now),
+    ]);
+    const pending = (await previewEditorBackfill(localEnv())).items.find((entry) => entry.projectId === data.projectId) as { status: string; lastReconcile: { reason: string } | null } | undefined;
+    expect(pending?.status).toBe("needs_review");
+    expect(pending?.lastReconcile?.reason).toMatch(/^raw_sync_in_flight:/);
+    await bindings.DB.prepare("UPDATE editor_folder_mappings SET state = 'ready' WHERE project_id = ?").bind(data.projectId).run();
+    const ready = (await previewEditorBackfill(localEnv())).items.find((entry) => entry.projectId === data.projectId) as { status: string; lastReconcile: unknown } | undefined;
+    expect(ready).toMatchObject({ status: "already_mapped", lastReconcile: null });
+  });
+
   it("preview carries derivedRootPath for a link-only Project when inspection fails", async () => {
     const linkOnlyRawPath = "/tonomo/raw files/x/11-09-2026/22-16-18 rosemont ave, woollahra nsw 2025, australia";
     const data = await fixture({

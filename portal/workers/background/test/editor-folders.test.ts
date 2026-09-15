@@ -413,7 +413,7 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     expect(mapping?.photographerEvidence).toMatchObject({ rawSource: "missing", nameSource: "tonomo_formatted_address" });
   });
 
-  it("names each way a pass stops short of a ready tree", async () => {
+  it("names each way the RAW identity stops a tree", async () => {
     const outside = "/archive/2026/72 victoria st, paddington nsw 2021, australia";
     const other = "/tonomo/raw files/christian quinlan/15-09-2026/74 victoria st, paddington nsw 2021, australia";
     const { data: a, ops: opsA } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
@@ -431,6 +431,9 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     opsC.metadata.set(MOVED, { ".tag": "folder", id: `id:c-${c.suffix}`, name: "72 Victoria St, Paddington NSW 2021, Australia", path_lower: MOVED, path_display: MOVED_DISPLAY });
     expect(await reconcileEditorFolderOutcome(env as never, c.projectId, { db, ...opsC, resolveRawFolderPath: async () => MOVED })).toMatchObject({ status: "skipped", reason: "raw_path_recovered" });
 
+  });
+
+  it("names each missing Project prerequisite", async () => {
     const d = await fixture();
     await database.DB.prepare("UPDATE projects SET shoot_date = NULL WHERE id = ?").bind(d.projectId).run();
     expect(await reconcileEditorFolderOutcome(env as never, d.projectId, { db, ...dependencies(d, {}) })).toMatchObject({ status: "skipped", reason: "no_shoot_date" });
@@ -440,6 +443,9 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(d.projectId).run();
     expect(await reconcileEditorFolderOutcome(env as never, d.projectId, { db, ...dependencies(d, {}) })).toMatchObject({ status: "skipped", reason: "project_inactive" });
 
+  });
+
+  it("reports deferrals, conflicts and success as their own outcomes", async () => {
     const e = await fixture();
     await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'dropbox_sync', 'queued', ?, ?, ?)").bind(crypto.randomUUID(), e.projectId, Date.now(), Date.now()).run();
     const inFlight = await reconcileEditorFolderOutcome(env as never, e.projectId, { db, ...dependencies(e, {}) });

@@ -266,12 +266,26 @@ export type EditorScaffoldSkipReason =
   | "provision_lease_held"
   | "project_not_provisionable";
 
+/** Every code that can prefix an `editor_reconcile` job's `error` note. */
+export type EditorReconcileNoteCode = EditorScaffoldSkipReason | "needs_review" | "autocreate_not_allowed";
+
 export type EditorReconcileOutcome =
   | { status: "mapped"; mapping: EditorFolderMapping }
   | { status: "needs_review"; mapping: EditorFolderMapping; reason: string }
   | { status: "skipped"; mapping: EditorFolderMapping | null; reason: EditorScaffoldSkipReason; detail: string };
 
 type RawIdentitySkip = { skip: EditorScaffoldSkipReason; detail: string };
+
+/** The `jobs.error` text for a pass that created no ready tree: `<code>: <sentence>`; undefined when it did. */
+export function editorReconcileNote(outcome: EditorReconcileOutcome): string | undefined {
+  if (outcome.status === "skipped") return reconcileNote(outcome.reason, outcome.detail);
+  if (outcome.status === "needs_review") return reconcileNote("needs_review", outcome.reason);
+  return undefined;
+}
+
+export function reconcileNote(code: EditorReconcileNoteCode, detail: string): string {
+  return `${code}: ${detail}`;
+}
 
 type RawIdentity = {
   rawFolderPath: string;
@@ -422,6 +436,11 @@ export async function reconcileEditorFolderOutcome(
 ): Promise<EditorReconcileOutcome> {
   const skipped = (reason: EditorScaffoldSkipReason, detail: string, mapping: EditorFolderMapping | null = null): EditorReconcileOutcome => ({ status: "skipped", mapping, reason, detail });
   const db = dependencies.db ?? dbFor(env);
+  // After a lost race, report whatever the mapping became: still pending is a skip, anything else is its own result.
+  const settled = async (reason: EditorScaffoldSkipReason, detail: string, fallback: EditorFolderMapping): Promise<EditorReconcileOutcome> => {
+    const current = (await getEditorFolderMapping(db, projectId)) ?? fallback;
+    return current.state === "pending" ? skipped(reason, detail, current) : outcomeFor(current);
+  };
   const now = dependencies.now ?? (() => new Date());
   const getMetadataOperation = dependencies.getMetadata ?? getMetadata;
   const createFolderOperation = dependencies.createFolder ?? createFolder;
@@ -489,10 +508,7 @@ export async function reconcileEditorFolderOutcome(
     return skipped("raw_sync_in_flight", "A RAW sync for the Project is queued or running; the tree is created once it settles", mapping);
   }
   const lease = await acquireEditorFolderProvisionLease(db, mapping.id, now(), dependencies.leaseMs);
-  if (!lease) {
-    const current = (await getEditorFolderMapping(db, projectId)) ?? mapping;
-    return current.state === "pending" ? skipped("provision_lease_held", "Another reconcile holds the provisioning lease for this mapping", current) : outcomeFor(current);
-  }
+  if (!lease) return settled("provision_lease_held", "Another reconcile holds the provisioning lease for this mapping", mapping);
   mapping = lease.mapping;
 
   const operations = { getMetadata: getMetadataOperation, createFolderStrict: createFolderStrictOperation };
@@ -509,10 +525,7 @@ export async function reconcileEditorFolderOutcome(
         isNull(projects.archivedAt),
         ne(projects.stageKey, "delivered"),
       )).get();
-    if (!stillProvisionable) {
-      const current = (await getEditorFolderMapping(db, projectId)) ?? mapping;
-      return current.state === "pending" ? skipped("project_not_provisionable", "Project lost its active photographer, was archived or was delivered after the tree was reserved", current) : outcomeFor(current);
-    }
+    if (!stillProvisionable) return settled("project_not_provisionable", "Project lost its active photographer, was archived or was delivered after the tree was reserved", mapping);
     const monthPath = mapping.rootPath.split("/").slice(0, -2).join("/");
     const dayPath = mapping.rootPath.split("/").slice(0, -1).join("/");
     // The configured Editor root is pre-existing and deliberately excluded from this chain.
