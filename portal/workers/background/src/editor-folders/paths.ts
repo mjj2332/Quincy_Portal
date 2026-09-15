@@ -185,3 +185,38 @@ export function isEditorWorkspacePath(path: string): boolean {
     return false;
   }
 }
+
+export type FallbackEditorProjectFolderName = { name: string; source: "tonomo_formatted_address" | "project_address" };
+
+/**
+ * Editor project folder name when the Tonomo RAW folder no longer exists, so no path_display is
+ * available. Tonomo's stored path is path_lower (casing lost); Tonomo derives the folder leaf from
+ * the order's formatted address with "/" replaced by "-" and sometimes appends a numeric suffix
+ * (" 2", "(1)"). When the formatted address reproduces the stored leaf apart from that suffix, the
+ * original-cased address plus the stored suffix is exact. Otherwise the project's own address is
+ * the last resort.
+ */
+export function fallbackEditorProjectFolderName(input: {
+  storedRawFolderPath: string | null;
+  formattedAddress: string | null;
+  street: string;
+  suburb: string | null;
+}): FallbackEditorProjectFolderName {
+  const segments = input.storedRawFolderPath?.split("/").filter(Boolean) ?? [];
+  // Same convention as deriveEditorProjectFolderName: a "Listing Images" leaf names the tree after its parent.
+  const storedLeaf = (segments.at(-1)?.toLowerCase() === "listing images" ? segments.at(-2) : segments.at(-1)) ?? null;
+  const formatted = input.formattedAddress?.trim().replace(/\//gu, "-") ?? null;
+  if (formatted && isSafeEditorPathSegment(formatted)) {
+    if (!storedLeaf) return { name: formatted, source: "tonomo_formatted_address" };
+    const lower = formatted.toLowerCase();
+    if (storedLeaf.toLowerCase().startsWith(lower)) {
+      const suffix = storedLeaf.slice(lower.length);
+      const name = `${formatted}${suffix}`;
+      if (isSafeEditorPathSegment(name)) return { name, source: "tonomo_formatted_address" };
+    }
+  }
+  const address = [input.street.trim(), input.suburb?.trim()].filter(Boolean).join(", ").replace(/\//gu, "-");
+  if (!isSafeEditorPathSegment(address)) throw new Error(`Cannot derive an Editor project folder name for ${input.street}`);
+  return { name: address, source: "project_address" };
+}
+

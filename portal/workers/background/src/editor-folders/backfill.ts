@@ -155,10 +155,15 @@ export async function previewEditorBackfill(env: Env, cursor?: string) {
   for (const row of rows) {
     const mapping = await getEditorFolderMapping(db, row.id);
     if (mapping) {
+      const evidence = (mapping.photographerEvidence ?? {}) as { rawSource?: string; nameSource?: string };
       items.push({ projectId: row.id, status: mapping.state === "ready" ? "already_mapped" as const : "needs_review" as const,
         mappingId: mapping.id, state: mapping.state, rootPath: mapping.rootPath,
         reason: mapping.recoveryProof?.conflict?.reason ?? mapping.recoveryProof?.lastError ?? null,
-        initialSyncPending: mapping.initialSyncCompletedAt === null });
+        initialSyncPending: mapping.initialSyncCompletedAt === null,
+        // Where the RAW folder was when the tree was reserved: "missing" means the Tonomo folder was
+        // gone and RAW is expected through the Editor Input root only.
+        rawSource: evidence.rawSource ?? "tonomo",
+        nameSource: evidence.nameSource ?? "tonomo_path_display" });
       continue;
     }
     let derivedRootPath: string | null = null;

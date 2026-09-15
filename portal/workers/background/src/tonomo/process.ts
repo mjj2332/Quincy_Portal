@@ -6,13 +6,12 @@ import { auditLog, collectionLinks, collections, projectMembers, projects, user,
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
-import { createJob, setJobStatus } from "../lib/jobs";
 import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { enqueueEditorReconcile } from "../editor-folders/queue";
 import { getEditorFolderMapping } from "../editor-folders/mapping";
 import type { DropboxMetadataOperation } from "../editor-folders/scaffold";
 import { automationFlag } from "../dropbox/monitor-state";
-import type { DropboxSyncMessage } from "../messages";
+import { commitRawFolderPathChange, enqueueRawFolderPathSync } from "../projects/raw-folder-path";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, isDropboxPathNotFoundError } from "../dropbox/client";
 
@@ -180,54 +179,6 @@ async function verifiedRawFolderPathChange(
   }
 }
 
-/**
- * Guarded write of the verified path with its audit row in one D1 batch: the UPDATE is fenced on
- * the raw_folder_path this event read, and the audit INSERT only fires when that UPDATE landed
- * (matched by the unique updated_at it stamps). Zero changes means another writer (PATCH, the RAW
- * monitor) moved the path first; the next Tonomo event re-reads and decides again.
- */
-async function commitRawFolderPathChange(
-  env: Env,
-  project: Project,
-  order: TonomoOrder,
-  verified: VerifiedRawFolder,
-): Promise<boolean> {
-  const at = Date.now();
-  const link = order.rawFolderLink && order.rawFolderLink !== project.rawFolderLink ? order.rawFolderLink : null;
-  const meta = JSON.stringify({
-    actor: "tonomo", orderId: order.orderId, previousRawFolderPath: project.rawFolderPath, rawFolderPath: verified.path, dropboxFolderId: verified.folderId,
-    ...(link ? { previousRawFolderLink: project.rawFolderLink, rawFolderLink: link } : {}),
-  });
-  // The ready-mapping guard is re-checked inside the fence: a mapping can go ready during the Dropbox lookup.
-  const mappingGuard = automationFlag(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
-    ? " AND NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')"
-    : "";
-  const [update] = await env.DB.batch([
-    env.DB.prepare(`UPDATE projects SET raw_folder_path = ?, raw_folder_link = COALESCE(?, raw_folder_link), updated_at = ? WHERE id = ? AND raw_folder_path = ? AND archived_at IS NULL${mappingGuard}`)
-      .bind(verified.path, link, at, project.id, project.rawFolderPath),
-    env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.raw_folder_path.changed', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND raw_folder_path = ? AND updated_at = ?)")
-      .bind(crypto.randomUUID(), project.id, meta, at, project.id, verified.path, at),
-  ]);
-  if ((update?.meta.changes ?? 0) === 0) {
-    console.log("Tonomo raw folder path change lost the race; another writer moved the path first", { projectId: project.id, orderId: order.orderId });
-    return false;
-  }
-  return true;
-}
-
-/** A D1-only path edit produces no Dropbox delta, so the monitor never notices the new location on its own. */
-async function enqueueRawFolderPathSync(env: Env, db: Database, projectId: string): Promise<{ jobId: string }> {
-  const jobId = await createJob(db, { kind: "dropbox_sync", projectId, correlationId: `dropbox_sync:${projectId}` });
-  try {
-    const message: DropboxSyncMessage = { type: "dropbox_sync", projectId, jobId, trigger: "tonomo_raw_path_changed" };
-    await env.INGEST_QUEUE.send(message);
-    return { jobId };
-  } catch (error) {
-    await setJobStatus(db, jobId, "failed", errorMessage(error));
-    throw error;
-  }
-}
-
 async function updateProject(env: Env, project: Project, linkedByAddress: boolean, order: TonomoOrder, dependencies: TonomoProcessDependencies): Promise<string> {
   const db = dbFor(env);
   const changes: {
@@ -259,13 +210,18 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   }
 
   await db.update(projects).set(changes).where(eq(projects.id, project.id));
-  const moved = verified ? await commitRawFolderPathChange(env, project, order, verified) : false;
+  const moved = verified
+    ? await commitRawFolderPathChange(env, {
+      projectId: project.id, previousPath: project.rawFolderPath, previousLink: project.rawFolderLink,
+      path: verified.path, link: order.rawFolderLink, dropboxFolderId: verified.folderId, actor: "tonomo", orderId: order.orderId,
+    })
+    : false;
   if (changes.rawFolderPath !== undefined || moved) {
     await enqueueAutoHdrScaffold(env, project.id).catch((error) =>
       console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
   }
   if (moved) {
-    await enqueueRawFolderPathSync(env, db, project.id).catch((error) =>
+    await enqueueRawFolderPathSync(env, db, project.id, "tonomo_raw_path_changed").catch((error) =>
       console.error("RAW folder path sync trigger failed", { projectId: project.id, error }));
   }
   return project.id;

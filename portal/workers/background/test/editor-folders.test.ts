@@ -279,3 +279,75 @@ describe("Editor folder reconciliation", () => {
     expect(mapping?.recoveryProof?.created.find((entry) => entry.role === "input")?.method).toBe("verified_existing_child");
   });
 });
+
+describe("Editor folder reconciliation when the Tonomo RAW folder is missing", () => {
+  const STORED = "/tonomo/raw files/igor melo/04-09-2026/72 victoria st, paddington nsw 2021, australia";
+  const MOVED = "/tonomo/raw files/christian quinlan/15-09-2026/72 victoria st, paddington nsw 2021, australia";
+  const MOVED_DISPLAY = "/Tonomo/Raw Files/Christian Quinlan/15-09-2026/72 Victoria St, Paddington NSW 2021, Australia";
+
+  async function missingFixture(options: { link?: string | null; orderId?: string | null; formattedAddress?: string | null; storedPath?: string } = {}) {
+    const data = await fixture();
+    const storedPath = options.storedPath ?? STORED;
+    const orderId = options.orderId === undefined ? `order-${data.suffix}` : options.orderId;
+    await database.DB.prepare("UPDATE projects SET raw_folder_path = ?, raw_folder_link = ?, order_id = ?, street = '72 Victoria Street', suburb = 'Paddington' WHERE id = ?")
+      .bind(storedPath, options.link ?? null, orderId, data.projectId).run();
+    if (orderId && options.formattedAddress) {
+      await database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'processed', ?)")
+        .bind(crypto.randomUUID(), `event-${data.suffix}`, JSON.stringify({ id: orderId, street: "72 Victoria Street", property_address: { formatted_address: options.formattedAddress } }), Date.now()).run();
+    }
+    const ops = dependencies({ ...data, rawFolderPath: storedPath }, {});
+    ops.metadata.delete(storedPath);
+    return { data, ops, storedPath };
+  }
+
+  function rootFor(name: string) {
+    return editorFolderPath({ shootDate: "2026-10-02", projectFolderName: name });
+  }
+
+  it("adopts the folder the RAW shared link now points at when Tonomo moved it under the RAW root", async () => {
+    const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
+    ops.metadata.set(MOVED, { ".tag": "folder", id: `id:moved-${data.suffix}`, name: "72 Victoria St, Paddington NSW 2021, Australia", path_lower: MOVED, path_display: MOVED_DISPLAY });
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => MOVED });
+    expect(mapping?.state).toBe("ready");
+    expect(mapping?.projectFolderName).toBe("72 Victoria St, Paddington NSW 2021, Australia");
+    expect(mapping?.tonomoRawFolderPath).toBe(MOVED);
+    expect((mapping?.photographerEvidence as { rawSource?: string }).rawSource).toBe("link_recovered");
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: MOVED });
+    const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.changed'").bind(data.projectId).first<{ meta_json: string }>();
+    expect(JSON.parse(audit!.meta_json)).toMatchObject({ actor: "editor_scaffold", previousRawFolderPath: storedPath, rawFolderPath: MOVED });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(data.projectId).first()).toEqual({ count: 1 });
+  });
+
+  it("reports and never adopts a RAW folder the link finds outside the Tonomo RAW root", async () => {
+    const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
+    const archived = "/archive/2026/72 victoria st, paddington nsw 2021, australia";
+    ops.metadata.set(archived, { ".tag": "folder", id: `id:archived-${data.suffix}`, name: "72 victoria st", path_lower: archived, path_display: archived });
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => archived });
+    expect(mapping).toBeNull();
+    expect(ops.created).toHaveLength(0);
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: storedPath });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM editor_folder_mappings WHERE project_id = ?").bind(data.projectId).first()).toEqual({ count: 0 });
+  });
+
+  it("creates the tree from Tonomo's original-cased formatted address when the folder is gone", async () => {
+    const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz", formattedAddress: "72 Victoria St, Paddington NSW 2021, Australia" });
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => { throw new Error("Dropbox shared-link resolution failed: path/not_found"); } });
+    expect(mapping?.state).toBe("ready");
+    expect(mapping?.projectFolderName).toBe("72 Victoria St, Paddington NSW 2021, Australia");
+    expect(mapping?.rootPath).toBe(rootFor("72 Victoria St, Paddington NSW 2021, Australia"));
+    expect(mapping?.tonomoRawFolderPath).toBe(storedPath);
+    expect(mapping?.photographerEvidence).toMatchObject({ rawSource: "missing", nameSource: "tonomo_formatted_address" });
+    expect((mapping?.photographerEvidence as { tonomoFolderId?: string }).tonomoFolderId).toBeUndefined();
+    expect(mapping?.inputRoots[0]?.path.endsWith("/0. Input")).toBe(true);
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: storedPath });
+  });
+
+  it("falls back to the Project's own address when no Tonomo payload is stored", async () => {
+    const { data, ops } = await missingFixture({ link: null, orderId: null });
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
+    expect(mapping?.state).toBe("ready");
+    expect(mapping?.projectFolderName).toBe("72 Victoria Street, Paddington");
+    expect(mapping?.photographerEvidence).toMatchObject({ rawSource: "missing", nameSource: "project_address" });
+  });
+});
+
