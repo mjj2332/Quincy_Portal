@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import type { externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { apiDelete, apiGet, apiPost } from "./api";
+import { subscribeWrites, trackWrite, writeSnapshot } from "./notification-write-tracker";
 import {
   filterNotifications,
   groupNotifications,
@@ -31,6 +32,27 @@ import {
  * dismissed this session (`dismissedIdsRef`, session-only — a fresh mount reasonably re-fetches
  * from the server's own current state) and keeps the EXISTING copy on a collision, since it may
  * already carry an optimistic mark-read a stale page response would otherwise clobber.
+ *
+ * ## Write barrier + reconcile, not cross-instance broadcast
+ *
+ * The Bell and the page are separate hook instances, each with its own optimistic copy of the
+ * list. Two earlier attempts at keeping them in step — an optimistic cross-instance broadcast, then
+ * a broadcast-plus-replay-log — did not hold up under review: dropping a response and refetching is
+ * simpler than deciding what to replay onto it and gets to the same place. `markRead`/`markAllRead`/
+ * `dismiss` still apply their optimistic update locally, exactly as before, but now run their
+ * network call through `notification-write-tracker.ts`'s module-wide `pending`/`generation`
+ * scoreboard:
+ *
+ * - A head fetch (`fetchHead`, used for the initial load, every poll tick, and reconcile below)
+ *   captures `generation` before it requests and drops its response on landing if `generation`
+ *   moved, a write is still `pending`, or a newer head fetch from this same instance already
+ *   superseded it (`headSeqRef`). Otherwise it applies the response as the new truth.
+ * - A poll tick skips issuing its request at all while a write is `pending` tab-wide — reconcile
+ *   covers it once the write settles.
+ * - Every instance subscribes to the tracker on mount and calls `fetchHead()` once `pending` returns
+ *   to 0 with a `generation` it has not already reconciled to. That covers both a normal write and
+ *   one whose response this instance dropped for racing it: either way, the next settle triggers a
+ *   fresh fetch that reflects the server's actual state.
  */
 
 // #116 — the wire shape a `NotificationsResponse` row arrives in. `actor`/`subject`/`assetId` are
@@ -49,63 +71,10 @@ type NotificationsResponse = Pick<
   "unreadCount" | "nextCursor"
 > & { notifications: NotificationWireRow[] };
 
-/**
- * The page and the Bell are separate hook instances mounted at the same time, each holding its own
- * copy of the list and count. Without this channel a mutation on one leaves the other showing the
- * pre-mutation state until its next poll (25s for the Bell; never for the non-polling page). Each
- * optimistic mutation is published once and applied by every other instance through the same pure
- * reducer; the network call is still issued only by the originating instance, which publishes a
- * second `settled` event under the same key once that call finishes (success or failure).
- */
-type NotificationMutation =
-  | { kind: "read"; id: string; readAt: string; wasUnread: boolean }
-  | { kind: "read-all"; readAt: string }
-  | { kind: "dismiss"; id: string; wasUnread: boolean };
-
-type FeedState = { notifications: NotificationListItem[]; unreadCount: number };
-
-/** One fetch: the log position it started at and the keys of mutations whose write was unsettled then. */
-type RequestHandle = { since: number; pending: Set<number>; done: boolean };
-
-/**
- * Applies one mutation to a list and its count. `unreadCount` is the server's global count, so a
- * row this instance holds decides the decrement by its own `readAt` (the originating instance's
- * copy may be staler than a receiver that has polled since). For a row this instance does not hold:
- *
- * - `live` (the mutation is happening now): the originator's `wasUnread` is the only evidence.
- * - replay onto a response that may predate the mutation's write: whether the server had already
- *   applied it when it computed that count is unknowable, so the count is left alone. The
- *   error is then at most an unread shown too many, which the next poll or reload corrects,
- *   rather than an unread hidden.
- */
-function reduceMutation(state: FeedState, mutation: NotificationMutation, mode: "live" | "replay"): FeedState {
-  if (mutation.kind === "read-all") {
-    return { notifications: state.notifications.map((item) => ({ ...item, readAt: item.readAt ?? mutation.readAt })), unreadCount: 0 };
-  }
-  const held = state.notifications.find((item) => item.id === mutation.id);
-  const decrement = held ? held.readAt === null : mode === "live" && mutation.wasUnread;
-  const unreadCount = decrement ? Math.max(0, state.unreadCount - 1) : state.unreadCount;
-  const notifications = mutation.kind === "read"
-    ? state.notifications.map((item) => item.id === mutation.id ? { ...item, readAt: item.readAt ?? mutation.readAt } : item)
-    : state.notifications.filter((item) => item.id !== mutation.id);
-  return { notifications, unreadCount };
-}
-
-const mutationChannel = new EventTarget();
-const MUTATION_EVENT = "notification-mutation";
-const SETTLED_EVENT = "notification-mutation-settled";
-// Module-wide so a key names one mutation across every instance that applied it.
-let lastMutationKey = 0;
-
-type MutationDetail = { source: symbol; key: number; mutation: NotificationMutation };
-
-function publishMutation(detail: MutationDetail) {
-  mutationChannel.dispatchEvent(new CustomEvent(MUTATION_EVENT, { detail }));
-}
-
-function publishSettled(key: number) {
-  mutationChannel.dispatchEvent(new CustomEvent(SETTLED_EVENT, { detail: { key } }));
-}
+// Mirrors the API's own clamp (`workers/app/src/routes/notifications.ts`'s `MAX_LIMIT`) — beyond
+// it a reconcile head fetch gives up trying to cover every row already loaded and falls back to
+// the configured page size, same as a fresh mount would.
+const SERVER_MAX_LIMIT = 50;
 
 function normaliseRow(row: NotificationWireRow): NotificationListItem {
   return { ...row, actor: row.actor ?? null, subject: row.subject ?? null, assetId: row.assetId ?? null };
@@ -148,8 +117,8 @@ export type UseNotificationFeedResult = {
 };
 
 export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNotificationFeedOptions): UseNotificationFeedResult {
-  // One state object so a mutation's row change and count change are decided together.
-  const [{ notifications, unreadCount }, setFeed] = useState<FeedState>({ notifications: [], unreadCount: 0 });
+  const [notifications, setNotifications] = useState<NotificationListItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [tab, setTab] = useState<NotificationFilter>("all");
   const [now, setNow] = useState(() => Date.now());
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -159,104 +128,129 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   // `loadingMore` state is a render-time lock only; two clicks before a rerender would issue the
   // same cursor twice. The ref is the synchronous one.
   const loadMoreInFlightRef = useRef(false);
-  // Cleared on unmount so a `loadMore` that settles after navigation runs no setters.
+  // Cleared on unmount so a late setter (a `loadMore`/head fetch/write that settles after
+  // navigation) runs no setters.
   const mountedRef = useRef(true);
   // Session-only record of ids the user dismissed — pruned out of a `loadMore` page (or a future
-  // poll) so a race with a stale response cannot resurrect a row already removed on this side.
+  // head fetch) so a race with a stale response cannot resurrect a row already removed on this side.
   const dismissedIdsRef = useRef<Set<string>>(new Set());
-  // Identifies this instance's own broadcasts so it does not apply a mutation twice.
-  const instanceRef = useRef(Symbol("notification-feed"));
-  // Every mutation this instance applies (its own or received), in order. A response the server
-  // computed before a mutation's write committed would otherwise restore the pre-mutation rows and
-  // count when it lands. That covers two cases a request must replay: mutations applied while it
-  // was in flight (`seq > since`), and mutations applied before it started whose write had not
-  // settled yet (`pending`). Replay is safe when the server did commit first, because the reducer
-  // decides from the rows in the response. An entry is dropped once its write has settled and no
-  // request that started before it is still in flight.
-  const mutationLogRef = useRef<{ seq: number; key: number; mutation: NotificationMutation; settled: boolean }[]>([]);
-  const mutationSeqRef = useRef(0);
-  const inFlightRef = useRef<RequestHandle[]>([]);
-
-  function pruneLog() {
-    const starts = inFlightRef.current.map((request) => request.since);
-    const oldest = starts.length ? Math.min(...starts) : mutationSeqRef.current;
-    mutationLogRef.current = mutationLogRef.current.filter((entry) => !entry.settled || entry.seq > oldest);
-  }
-
-  function beginRequest(): RequestHandle {
-    const request = { since: mutationSeqRef.current, pending: new Set(mutationLogRef.current.filter((entry) => !entry.settled).map((entry) => entry.key)), done: false };
-    inFlightRef.current.push(request);
-    return request;
-  }
-
-  // Ends a request exactly once: the `try` path ends it before any post-response work, so a throw
-  // after that must not reach the `catch` path's call and end it again.
-  function endRequest(request: RequestHandle): NotificationMutation[] {
-    if (request.done) return [];
-    request.done = true;
-    const replay = mutationLogRef.current.filter((entry) => entry.seq > request.since || request.pending.has(entry.key)).map((entry) => entry.mutation);
-    inFlightRef.current = inFlightRef.current.filter((other) => other !== request);
-    pruneLog();
-    return replay;
-  }
-
-  function settleMutation(key: number) {
-    const entry = mutationLogRef.current.find((candidate) => candidate.key === key);
-    if (!entry) return;
-    entry.settled = true;
-    pruneLog();
-  }
+  // Mirrors `notifications` synchronously (state updates are not visible until the next render, but
+  // a head fetch needs the CURRENT row count to size a reconcile request before it awaits anything).
+  const notificationsRef = useRef<NotificationListItem[]>([]);
+  // Mirrors `nextCursor` synchronously — a reconciled head fetch that re-triggers a pending
+  // `loadMore` needs the cursor it just set, not the one from the render that is still pending.
+  const nextCursorRef = useRef<string | null>(null);
+  // The latest head fetch this instance issued. A response whose request is not the latest one is
+  // dropped on landing regardless of anything else — a newer request already superseded it.
+  const headSeqRef = useRef(0);
+  // Bumped every time a head fetch actually applies a response. A `loadMore` that started before a
+  // bump is stale: the view it was extending no longer exists.
+  const viewEpochRef = useRef(0);
+  // Set when a `loadMore` landing finds itself stale and needs to re-run once the next head fetch
+  // has reconciled the view (and, for a paged instance, the cursor to resume from).
+  const pendingLoadMoreRef = useRef(false);
+  // The tracker `generation` this instance has already reconciled to — set from the CURRENT
+  // generation on first render, so a write that happened before mount does not trigger a spurious
+  // extra fetch (the mount's own head fetch already reflects it).
+  const lastReconciledGenerationRef = useRef(writeSnapshot().generation);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  useEffect(() => {
-    const onMutation = (event: Event) => {
-      const { source, key, mutation } = (event as CustomEvent<MutationDetail>).detail;
-      if (source === instanceRef.current) return;
-      applyMutation(key, mutation);
-    };
-    const onSettled = (event: Event) => settleMutation((event as CustomEvent<{ key: number }>).detail.key);
-    mutationChannel.addEventListener(MUTATION_EVENT, onMutation);
-    mutationChannel.addEventListener(SETTLED_EVENT, onSettled);
     return () => {
-      mutationChannel.removeEventListener(MUTATION_EVENT, onMutation);
-      mutationChannel.removeEventListener(SETTLED_EVENT, onSettled);
+      mountedRef.current = false;
     };
   }, []);
 
+  function updateNotifications(updater: (current: NotificationListItem[]) => NotificationListItem[]) {
+    setNotifications((current) => {
+      const next = updater(current);
+      notificationsRef.current = next;
+      return next;
+    });
+  }
+
+  function updateCursor(value: string | null) {
+    nextCursorRef.current = value;
+    setNextCursor(value);
+  }
+
+  // The head fetch: the initial load, every poll tick, and every reconcile all funnel through this
+  // one function so they share one staleness/apply rule. `paged` sizes its request to cover every
+  // row already on screen (up to the server's own cap) rather than the configured page size alone,
+  // so a reconcile does not shrink a page the user had scrolled further into.
+  async function fetchHead() {
+    const seq = ++headSeqRef.current;
+    const startGeneration = writeSnapshot().generation;
+    const loadedCount = notificationsRef.current.length;
+    const effectiveLimit = paged && loadedCount <= SERVER_MAX_LIMIT ? Math.max(limit, loadedCount) : limit;
+    try {
+      // No `cursor` param — a head fetch always re-reads from the top of the feed.
+      const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${effectiveLimit}`);
+      if (!mountedRef.current) return;
+      const { pending, generation } = writeSnapshot();
+      if (seq !== headSeqRef.current || generation !== startGeneration || pending > 0) return;
+      const dismissed = dismissedIdsRef.current;
+      const rows = response.notifications.map(normaliseRow).filter((row) => !dismissed.has(row.id));
+      updateNotifications(() => rows);
+      setUnreadCount(response.unreadCount);
+      setNow(Date.now());
+      if (paged) updateCursor(response.nextCursor);
+      viewEpochRef.current += 1;
+      setLoading(false);
+      if (pendingLoadMoreRef.current) {
+        pendingLoadMoreRef.current = false;
+        void loadMore();
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      // A write that started mid-request is not a failure of THIS request's own data — the next
+      // reconcile (once it settles) covers it, so loading stays true rather than briefly flashing
+      // an empty/failed state ahead of that refetch.
+      if (writeSnapshot().pending === 0) setLoading(false);
+      // A Load more parked on this fetch would otherwise stay busy forever on the non-polling page.
+      if (seq === headSeqRef.current && pendingLoadMoreRef.current) {
+        pendingLoadMoreRef.current = false;
+        setLoadingMore(false);
+        setLoadMoreError(true);
+      }
+    }
+  }
+
+  // Always the current `fetchHead` — the reconcile effect below subscribes once on mount, so its
+  // listener needs a stable way to reach whichever closure is current rather than the one captured
+  // at subscribe time.
+  const fetchHeadRef = useRef(fetchHead);
   useEffect(() => {
-    let active = true;
-    const loadNotifications = async () => {
-      const request = beginRequest();
-      try {
-        // No `cursor` param on the first page — a Bell test asserts this exact URL.
-        const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}`);
-        const replay = endRequest(request);
-        if (!active) return;
-        // Replay before the dismissed-id filter: a dismissed row still present in the response is the
-        // evidence that the server had not deleted it yet, so its unread state must still decrement.
-        const fetched: FeedState = { notifications: response.notifications.map(normaliseRow), unreadCount: response.unreadCount };
-        const replayed = replay.reduce((state, mutation) => reduceMutation(state, mutation, "replay"), fetched);
-        // An earlier dismiss whose delete the server has not applied yet must not resurrect the row either.
-        const dismissed = dismissedIdsRef.current;
-        setFeed({ ...replayed, notifications: replayed.notifications.filter((row) => !dismissed.has(row.id)) });
-        setNow(Date.now());
-        if (paged) setNextCursor(response.nextCursor);
-      } catch {
-        endRequest(request);
-        /* The bell/page are best effort and should not disrupt the app shell. */
-      } finally {
-        if (active) setLoading(false);
+    fetchHeadRef.current = fetchHead;
+  });
+
+  useEffect(() => {
+    void fetchHead();
+    if (poll === null) return;
+    const timer = window.setInterval(() => {
+      // Skip issuing the request at all while a write is in flight anywhere in the tab — the
+      // reconcile listener below refetches once it settles, so this tick would only be dropped on
+      // landing anyway.
+      if (writeSnapshot().pending > 0) return;
+      void fetchHead();
+    }, poll);
+    return () => window.clearInterval(timer);
+  }, [poll, limit, paged]);
+
+  useEffect(() => {
+    const reconcile = () => {
+      const { pending, generation } = writeSnapshot();
+      if (pending === 0 && generation !== lastReconciledGenerationRef.current) {
+        lastReconciledGenerationRef.current = generation;
+        void fetchHeadRef.current();
       }
     };
-    void loadNotifications();
-    if (poll === null) return () => { active = false; };
-    const timer = window.setInterval(() => void loadNotifications(), poll);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [poll, limit, paged]);
+    const unsubscribe = subscribeWrites(reconcile);
+    // A write may start AND settle between this render's capture of `lastReconciledGenerationRef`
+    // and this effect actually subscribing — re-check once immediately so that gap cannot be missed.
+    reconcile();
+    return unsubscribe;
+  }, []);
 
   const filtered = filterNotifications(notifications, tab);
   const buckets = groupNotifications(filtered, now);
@@ -267,63 +261,74 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
     setNow(Date.now());
   }
 
-  // Only state setters and refs are touched, so the listener registered once on mount stays correct.
-  function applyMutation(key: number, mutation: NotificationMutation) {
-    if (mutation.kind === "dismiss") dismissedIdsRef.current.add(mutation.id);
-    mutationLogRef.current.push({ seq: ++mutationSeqRef.current, key, mutation, settled: false });
-    setFeed((current) => reduceMutation(current, mutation, "live"));
-  }
-
-  // Applies and publishes the mutation, runs its write, then marks it settled everywhere. A failed
-  // write settles too: the next poll or reload restores server state.
-  async function mutate(mutation: NotificationMutation, write: () => Promise<unknown>) {
-    const key = ++lastMutationKey;
-    applyMutation(key, mutation);
-    publishMutation({ source: instanceRef.current, key, mutation });
-    try { await write(); } catch { /* See above. */ }
-    settleMutation(key);
-    publishSettled(key);
-  }
-
   async function markRead(notification: NotificationListItem) {
     if (notification.readAt) return;
-    await mutate({ kind: "read", id: notification.id, readAt: new Date().toISOString(), wasUnread: true },
-      () => apiPost("/api/notifications/" + encodeURIComponent(notification.id) + "/read", {}));
+    updateNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
+    setUnreadCount((current) => Math.max(0, current - 1));
+    await trackWrite(() => apiPost("/api/notifications/" + encodeURIComponent(notification.id) + "/read", {}));
   }
 
   async function markAllRead() {
-    await mutate({ kind: "read-all", readAt: new Date().toISOString() }, () => apiPost("/api/notifications/read-all", {}));
+    updateNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    setUnreadCount(0);
+    await trackWrite(() => apiPost("/api/notifications/read-all", {}));
   }
 
   async function dismiss(notification: NotificationListItem) {
-    await mutate({ kind: "dismiss", id: notification.id, wasUnread: !notification.readAt },
-      () => apiDelete("/api/notifications/" + encodeURIComponent(notification.id)));
+    dismissedIdsRef.current.add(notification.id);
+    updateNotifications((current) => current.filter((item) => item.id !== notification.id));
+    if (!notification.readAt) setUnreadCount((current) => Math.max(0, current - 1));
+    await trackWrite(async () => {
+      try {
+        return await apiDelete("/api/notifications/" + encodeURIComponent(notification.id));
+      } catch (error) {
+        // The delete never actually removed the row server-side, so the id must not keep hiding it
+        // from the reconcile fetch this failure's settle is about to trigger.
+        dismissedIdsRef.current.delete(notification.id);
+        throw error;
+      }
+    });
   }
 
   async function loadMore() {
-    if (!paged || nextCursor === null || loadMoreInFlightRef.current) return;
+    if (!paged || nextCursorRef.current === null || loadMoreInFlightRef.current) return;
+    const cursor = nextCursorRef.current;
     loadMoreInFlightRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
-    const request = beginRequest();
+    const startGeneration = writeSnapshot().generation;
+    const startViewEpoch = viewEpochRef.current;
+    let rerunQueued = false;
     try {
-      const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}&cursor=${encodeURIComponent(nextCursor)}`);
-      const replay = endRequest(request);
+      const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}&cursor=${encodeURIComponent(cursor)}`);
       if (!mountedRef.current) return;
-      // Replay onto the page's rows alone: a mark-all-read the server may not have committed must not leave the
-      // appended rows unread. The count stays the one already on screen (see below).
-      const page = replay.reduce((state, mutation) => reduceMutation(state, mutation, "replay"), { notifications: response.notifications.map(normaliseRow), unreadCount: 0 }).notifications;
-      setFeed((current) => ({ ...current, notifications: mergeNotificationPages(current.notifications, page, dismissedIdsRef.current) }));
+      const { pending, generation } = writeSnapshot();
+      if (generation !== startGeneration || pending > 0 || viewEpochRef.current !== startViewEpoch) {
+        // The view this page was extending is gone (a write settled, or a head fetch already
+        // reconciled it) — drop these rows and let the next applied head response re-run this once
+        // it has resolved the cursor to resume from, rather than appending onto a stale list.
+        if (pending === 0 && viewEpochRef.current !== startViewEpoch) {
+          // A head fetch already reconciled the view while this page was in flight, so no later
+          // apply is coming to re-run it (the page does not poll). Re-run now, after the lock drops.
+          rerunQueued = true;
+          queueMicrotask(() => { if (mountedRef.current) void loadMore(); });
+          return;
+        }
+        pendingLoadMoreRef.current = true;
+        return;
+      }
+      const incoming = response.notifications.map(normaliseRow);
+      updateNotifications((current) => mergeNotificationPages(current, incoming, dismissedIdsRef.current));
       // `unreadCount` is deliberately NOT refreshed from a further page: an optimistic mark-read or
       // dismiss in flight would be undone by the count the server computed before it landed.
-      setNextCursor(response.nextCursor);
+      updateCursor(response.nextCursor);
     } catch {
-      endRequest(request);
       // The cursor is untouched — a retry targets the same page rather than skipping ahead.
       if (mountedRef.current) setLoadMoreError(true);
     } finally {
       loadMoreInFlightRef.current = false;
-      if (mountedRef.current) setLoadingMore(false);
+      // Stay busy across a stale landing that is about to re-run itself once reconciled.
+      if (mountedRef.current && !pendingLoadMoreRef.current && !rerunQueued) setLoadingMore(false);
     }
   }
 

@@ -428,6 +428,14 @@ describe("NotificationBell panel (Popover)", () => {
 
     await click(trigger);
     const ctrlClick = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
+    // #115: the write barrier's reconcile issues a further GET once each read's write settles —
+    // keep the persistent mock in step with each one so it does not overwrite the optimistic
+    // decrement with a stale unread count.
+    apiGetMock.mockResolvedValue({ notifications: [
+      notification({ id: "row-a", projectId: "11111111-1111-4111-8111-111111111111", title: "Row A", createdAt: "2026-08-17T00:00:00.000Z", readAt: "2026-08-17T01:00:00.000Z" }),
+      notification({ id: "row-b", projectId: "22222222-2222-4222-8222-222222222222", title: "Row B", createdAt: "2026-08-17T00:00:00.000Z" }),
+      notification({ id: "row-c", projectId: "33333333-3333-4333-8333-333333333333", title: "Row C", createdAt: "2026-08-17T00:00:00.000Z" }),
+    ], unreadCount: 2 });
     await act(async () => { rowLink("row-a").dispatchEvent(ctrlClick); await Promise.resolve(); await Promise.resolve(); });
     expect(ctrlClick.defaultPrevented).toBe(false);
     expect(pushStateSpy).not.toHaveBeenCalled();
@@ -438,6 +446,11 @@ describe("NotificationBell panel (Popover)", () => {
     apiPostMock.mockClear();
     await click(trigger);
     const metaClick = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, metaKey: true });
+    apiGetMock.mockResolvedValue({ notifications: [
+      notification({ id: "row-a", projectId: "11111111-1111-4111-8111-111111111111", title: "Row A", createdAt: "2026-08-17T00:00:00.000Z", readAt: "2026-08-17T01:00:00.000Z" }),
+      notification({ id: "row-b", projectId: "22222222-2222-4222-8222-222222222222", title: "Row B", createdAt: "2026-08-17T00:00:00.000Z", readAt: "2026-08-17T01:00:00.000Z" }),
+      notification({ id: "row-c", projectId: "33333333-3333-4333-8333-333333333333", title: "Row C", createdAt: "2026-08-17T00:00:00.000Z" }),
+    ], unreadCount: 1 });
     await act(async () => { rowLink("row-b").dispatchEvent(metaClick); await Promise.resolve(); await Promise.resolve(); });
     expect(metaClick.defaultPrevented).toBe(false);
     expect(pushStateSpy).not.toHaveBeenCalled();

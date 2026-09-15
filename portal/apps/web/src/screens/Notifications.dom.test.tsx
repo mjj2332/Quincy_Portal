@@ -222,12 +222,19 @@ describe("Notifications", () => {
   });
 
   it("zeroes the Unread tab's count and disables Mark all read after marking all read", async () => {
-    apiGetMock.mockResolvedValue(response([notification({ id: "a" }), notification({ id: "b" })], 2, null));
+    apiGetMock.mockResolvedValueOnce(response([notification({ id: "a" }), notification({ id: "b" })], 2, null));
     await render();
     const unreadTab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Unread"))!;
     expect(unreadTab.textContent).toBe("Unread 2");
     expect(markAllButton().getAttribute("aria-disabled")).toBeNull();
 
+    // #115: the write barrier's reconcile issues a further GET once the write settles — mock the
+    // server having applied it by then.
+    apiGetMock.mockResolvedValue(response(
+      [notification({ id: "a", readAt: "2026-07-28T01:00:00.000Z" }), notification({ id: "b", readAt: "2026-07-28T01:00:00.000Z" })],
+      0,
+      null,
+    ));
     await click(markAllButton());
     expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/read-all", {});
     const unreadTabAfter = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Unread"))!;
