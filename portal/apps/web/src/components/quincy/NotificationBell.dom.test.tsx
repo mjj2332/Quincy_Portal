@@ -825,6 +825,25 @@ describe("NotificationBell panel (Popover)", () => {
       expect(document.querySelector<HTMLElement>('[role="tablist"]')!.className).toContain("[&_[role=tab]]:min-h-[44px]");
     });
 
+    it("moves between All and Unread with the arrow keys inside the popover, and the panel follows", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-unread", title: "Unread", readAt: null }),
+        notification({ id: "n-read", title: "Read", readAt: "2026-07-28T01:00:00.000Z", createdAt: "2026-07-28T01:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      const [allTab, unreadTab] = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+      allTab!.focus();
+      await act(async () => { allTab!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); await Promise.resolve(); });
+      expect(unreadTab!.getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(unreadTab);
+      expect([...document.querySelectorAll('[data-testid="rail-notification-item"]')].map((el) => el.textContent)).toEqual(["Unread"]);
+      await act(async () => { unreadTab!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })); await Promise.resolve(); });
+      expect(allTab!.getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(allTab);
+      expect(document.querySelectorAll('[data-testid="rail-notification-item"]')).toHaveLength(2);
+    });
+
     it("leaves TabStrip's own 38px tabs alone at rail placement", async () => {
       apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
       const trigger = await renderPanel();
