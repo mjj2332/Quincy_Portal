@@ -8,6 +8,7 @@ import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
 import { pushToast as toast } from "../lib/toast-store";
@@ -187,7 +188,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (consumeProjectSearchFocus()) searchInputRef.current?.focus();
   }, [searchFocusToken]);
   const [view, setView] = useState<DashboardView>(() => {
-    if (routeDashboardView) return routeDashboardView;
+    // A route's own explicit "calendar" gets the same capability check the stored preference
+    // already gets below — otherwise a role without it landed here with `view` already "calendar"
+    // and `calendarState` already `null` (that init is gated correctly), so no render branch
+    // matched anything until the reconciliation effect caught up.
+    if (routeDashboardView && (routeDashboardView !== "calendar" || canViewProductionCalendar)) return routeDashboardView;
     if (effectiveRouteCalendar && canViewProductionCalendar) return "calendar";
     const stored = initializeDashboardView({
       read: () => window.localStorage.getItem("quincy:dashboard:view"),
@@ -256,6 +261,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   interactionBlockedRef.current = interactionBlocked;
   const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
   const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
+  // The location this reconciliation effect itself last processed — not merely "is the location
+  // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
+  // own canonical URL in the same handler) is never mistaken for a fresh arrival at a stale one.
+  const lastReconciledLocationRef = useRef(currentLocation);
   const calendarSearchTimerRef = useRef<number | null>(null);
   const movementSettlePendingRef = useRef(false);
   movementSettlePendingRef.current = movementSettlePending;
@@ -281,7 +290,28 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const error = !hasAcceptedDashboard && !queryProjects
     ? projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined
     : undefined;
-  const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null;
+  // `canViewProductionCalendar`, not just `calendarState !== null`: a mounted instance re-rendered
+  // with a role that has since lost the capability keeps its existing non-null `calendarState`
+  // (nothing resets it on a role change short of a remount), so without this a Staff member who
+  // loses the capability mid-session would still be shown Calendar content for one commit before
+  // the reconciliation effect below moves `view` off it.
+  const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null && canViewProductionCalendar;
+  // Published for the rail (#119), mirroring the branch selection above and below (List ~1092,
+  // Kanban ~1106) instead of re-deriving `view`/`viewingArchived` a second time, so the two cannot
+  // drift: Calendar only when `isCalendarView` itself is true (so a `view` of "calendar" with no
+  // `calendarState` yet is never claimed), List while archived or explicitly selected, Kanban only
+  // when neither of those apply, and "none" — no rail child should claim to be current — when
+  // `view` matches nothing that actually renders. `useLayoutEffect`, not `useEffect`, so the rail
+  // updates in the same paint as the screen; see `lib/dashboard-view-store.ts` for the owner rule.
+  const renderedView: DashboardView | "none" = isCalendarView ? "calendar"
+    : viewingArchived || view === "list" ? "list"
+    : !viewingArchived && view === "kanban" ? "kanban"
+    : "none";
+  const dashboardViewOwnerRef = useRef({});
+  useLayoutEffect(() => {
+    publishDashboardView(dashboardViewOwnerRef.current, renderedView);
+  }, [renderedView]);
+  useLayoutEffect(() => () => releaseDashboardView(dashboardViewOwnerRef.current), []);
   // Priority is deliberately the only Dashboard path that still writes this query cache.
   const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
     queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
@@ -332,6 +362,26 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [view, viewingArchived]);
 
   useEffect(() => {
+    // Reconciles the route's EXPLICIT intent against local view state, including archive scope:
+    // the rail keeps offering Kanban and Calendar while archived (see `lib/dashboard-view-store.ts`
+    // for how it learns what actually rendered), so landing on one of those addresses is read as
+    // LEAVING archived rather than an intent the archived screen silently drops.
+    // `arrivedAtNewLocation` compares against the location THIS effect itself last reconciled, not
+    // merely "is the location non-List" — `selectProjectScope("archived")` sets scope and pushes
+    // its own `/?view=list` in the same handler, and an intermediate render still holding the OLD
+    // explicit URL must not immediately bounce the Staff member back out of archived.
+    const arrivedAtNewLocation = currentLocation !== lastReconciledLocationRef.current;
+    lastReconciledLocationRef.current = currentLocation;
+    // `locationHasCalendar`, not `effectiveRouteCalendar !== null` — the latter falls back to the
+    // `calendar` PROP whenever the URL itself carries no facet, and that prop can outlive the URL
+    // that produced it (a direct-mount caller that never re-renders it away, `Dashboard-calendar.
+    // dom.test.tsx`'s own harness among them). Only the location itself is a fact about what the
+    // Staff member is currently pointed at.
+    const explicitNonListLocation = routeDashboardView === "kanban" || routeDashboardView === "calendar" || locationHasCalendar;
+    if (viewingArchived && explicitNonListLocation) {
+      if (arrivedAtNewLocation) setProjectScope("active");
+      return;
+    }
     if (!canViewProductionCalendar) {
       calendarFallbackLocationRef.current = false;
       if (view === "calendar") setView("list");
@@ -346,9 +396,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // and Sydney-today fallbacks. So this is the same canonicalising replace the stale-bare-
       // arrival case below already performs, reached by a different route.
       if (routeDashboardView === "calendar") {
-        // Archived scope forces List, and says so by not following the intent at all. Rewriting the
-        // URL here would fight the archived handling for an address the Staff member cannot see.
-        if (viewingArchived) return;
         if (calendarState) history.replace(staffPathFor({ kind: "dashboard", calendar: calendarState }));
         if (view !== "calendar") setView("calendar");
         return;
@@ -362,7 +409,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // Keep live input whitespace while avoiding a redundant state update when
       // this is the route produced by our own debounced search replacement.
       setQuery((current) => normalizeDashboardCalendarSearch(current) === effectiveRouteCalendar.search ? current : effectiveRouteCalendar.search);
-      if (!viewingArchived) setView("calendar");
+      setView("calendar");
       return;
     }
     if (locationHasCalendar) return;
@@ -378,7 +425,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // makes Back actually undo an explicit List/Kanban switch (D2 gave each one its own history
     // entry), not just the pre-existing "leaving Calendar via a stale bare arrival" case.
     if (view !== bareRouteFallbackViewRef.current) setView(bareRouteFallbackViewRef.current);
-  }, [calendarState, canViewProductionCalendar, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, view, viewingArchived]);
+  }, [calendarState, canViewProductionCalendar, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;

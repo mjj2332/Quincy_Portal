@@ -2259,6 +2259,32 @@ overwritten; fence the write on both the value read and the event's age, since w
 is ordered by processing, not by when Tonomo made the change. Moving a Dropbox tree is not a path
 update: anything keyed by path (Edited assets, pinned publish destinations) must follow first.
 
+## The rail and the Dashboard computed "which view is showing" independently, and drifted (#119, 2026-09-15)
+
+**Symptom:** with Projects archived, clicking the rail's Kanban pushed `/?view=kanban` and marked
+Kanban current, while the screen kept rendering the archived List. Separately, an explicit List
+switch followed by Back left the Dashboard showing Kanban (its own pinned mount-time snapshot)
+while the rail, re-reading `localStorage` for the new location, marked List.
+
+**Cause:** the navigation model (`lib/staff-navigation.ts`) computed the active view from the
+parsed route and the remembered preference. The Dashboard computed its own rendered view from
+private screen state — archive scope, a fixed per-document Back snapshot — that never reached the
+route. Two surfaces deriving the same answer from different inputs drifts the moment one of them
+holds information the other does not.
+
+**Fix:** `lib/dashboard-view-store.ts`, a module-level store following the toast-store precedent
+(#110) — no React context, since `Dashboard` mounts standalone in its own DOM tests with no
+provider. The Dashboard publishes the view it is actually rendering, keyed by an opaque owner
+object so a stale instance's release can never clear a live publication. The navigation model
+treats that publication as authoritative and stops re-deriving or re-coercing it; the route/
+remembered derivation is now only the pre-mount fallback. A published view that matches no render
+branch (a role losing the Calendar capability mid-flight) publishes `"none"` rather than a guess,
+so the rail marks nothing rather than a view the screen is not showing.
+
+**Rule:** the screen that renders owns the answer to "what is currently showing"; navigation chrome
+reads that publication rather than re-deriving or re-coercing it, or the two will eventually see
+different inputs and disagree.
+
 ## #147 fixed only future Tonomo reschedules; the historic ones needed a one-off backfill (2026-09-15)
 
 **Symptom:** after #147 shipped, 10 active Projects still showed shoot dates that their latest

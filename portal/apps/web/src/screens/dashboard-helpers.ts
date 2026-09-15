@@ -66,9 +66,10 @@ export const DASHBOARD_VIEW_KEY = "quincy:dashboard:view";
  * Dashboard for the same migration. So the shell resolves the view through this function and
  * passes the value in, leaving `initializeDashboardView` exactly one caller and exactly one write.
  *
- * Resolve it per location rather than once at mount. The Dashboard writes the preference and then
- * changes the location, so a snapshot taken at mount goes stale the moment a Staff member switches
- * view — the rail would keep highlighting Kanban over a List.
+ * This is now only the pre-mount fallback (#119). The shell still calls this on every model
+ * recompute — it has not stopped — but the value it returns is used only while nothing has
+ * published (`lib/dashboard-view-store.ts`): once a Dashboard instance exists, its own publication
+ * is authoritative and this read is ignored.
  */
 export function readRememberedDashboardView(storage: Pick<DashboardPreferenceStorage, "read">): DashboardView {
   try {
