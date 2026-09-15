@@ -5,8 +5,8 @@ import {
   EDITOR_INPUT_NAME_PATTERN,
   EDITOR_OUTPUT_FOLDER,
   EDITOR_OUTPUT_NAME_PATTERN,
+  fallbackEditorProjectFolderName,
 } from "../src/editor-folders/paths";
-import { fallbackEditorProjectFolderName } from "../src/editor-folders/paths";
 
 describe("Editor Input/Output child folder names", () => {
   it("pins the numbered child names Portal creates", () => {

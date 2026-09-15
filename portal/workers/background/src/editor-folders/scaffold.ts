@@ -12,12 +12,11 @@ import {
 } from "../dropbox/client";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { dropboxPathKey, pathEqualsOrIsBelow, TONOMO_RAW_ROOT } from "../dropbox/paths";
-import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
-import { commitRawFolderPathChange, enqueueRawFolderPathSync } from "../projects/raw-folder-path";
+import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
 import { latestTonomoFormattedAddress } from "../tonomo/formatted-address";
 import { pathFromRawFolderLink } from "../dropbox/sync";
 import type { Env } from "../env";
-import { dbFor } from "../lib/db";
+import { dbFor, errorMessage } from "../lib/db";
 import {
   EDITOR_INPUT_FOLDER,
   EDITOR_INPUT_NAME_PATTERN,
@@ -31,6 +30,8 @@ import {
   deriveEditorProjectFolderName,
   parseShootDate,
   fallbackEditorProjectFolderName,
+  type EditorNameSource,
+  type EditorRawSource,
 } from "./paths";
 import {
   acquireEditorFolderProvisionLease,
@@ -92,10 +93,6 @@ const CHILD_SPECS: readonly ChildSpec[] = [
   { role: "output", name: EDITOR_OUTPUT_FOLDER, pattern: EDITOR_OUTPUT_NAME_PATTERN },
   { role: "editing_notes", name: EDITOR_NOTES_FOLDER, pattern: null },
 ];
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function isDropboxConflict(error: unknown): boolean {
   for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
@@ -251,16 +248,9 @@ async function persistDiagnostic(db: Database, mappingId: string, leaseToken: st
   }
 }
 
-/**
- * Reconciles the Portal-owned Editor folder tree for one active Project.
- *
- * Existing Dropbox project roots are never silently adopted. Only child conflicts below a root
- * created by this mapping, or below a previously persisted/proven root ID, may be adopted after
- * an exact metadata re-read. Every successful create is recorded before the next provider call so
- * a retry resumes from the durable partial tree.
- */
-export type EditorRawSource = "tonomo" | "link_recovered" | "missing";
-export type EditorNameSource = "tonomo_path_display" | "tonomo_formatted_address" | "project_address";
+function addressLeaf(path: string): string | undefined {
+  return path.split("/").filter(Boolean).at(-1)?.toLowerCase();
+}
 
 type RawIdentity = {
   rawFolderPath: string;
@@ -316,11 +306,19 @@ async function resolveRawIdentity(
     try {
       linkPath = await operations.resolveRawFolderPath(env, project.rawFolderLink, connectionId);
     } catch (error) {
+      // A deleted target or a link outside the studio account is a fact about the folder; anything
+      // else (auth, rate limit, outage) is an error and must not be mistaken for "gone".
+      if (!isDropboxPathNotFoundError(error) && !errorMessage(error).includes("Shared link is not owned by")) throw error;
       console.log("Editor scaffold: RAW shared link did not resolve", { projectId: project.id, error: errorMessage(error) });
     }
     if (linkPath && dropboxPathKey(linkPath) !== dropboxPathKey(storedPath)) {
       const linkMetadata = await getExactMetadata(env, db, operations.getMetadata, linkPath, connectionId);
       if (isFolder(linkMetadata)) {
+        if (addressLeaf(linkPath) !== addressLeaf(storedPath)) {
+          // Same rule as the Tonomo processor: Editor and AutoHDR names derive from the address leaf.
+          console.log("Editor scaffold skipped: RAW folder found under a different address leaf; needs manual review", { projectId: project.id, storedPath, linkPath });
+          return null;
+        }
         if (!pathEqualsOrIsBelow(linkPath, TONOMO_RAW_ROOT)) {
           console.log("Editor scaffold skipped: RAW folder found outside the Tonomo RAW root", {
             projectId: project.id,
@@ -333,10 +331,7 @@ async function resolveRawIdentity(
           path: linkPath, link: null, dropboxFolderId: linkMetadata.id, actor: "editor_scaffold",
         });
         if (!adopted) return null;
-        await enqueueAutoHdrScaffold(env, project.id).catch((error) =>
-          console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
-        await enqueueRawFolderPathSync(env, db, project.id, "editor_scaffold_raw_path_recovered").catch((error) =>
-          console.error("RAW folder path sync trigger failed", { projectId: project.id, error }));
+        await followRawFolderPathChange(env, db, project.id, "editor_scaffold_raw_path_recovered");
         return {
           rawFolderPath: linkPath,
           projectFolderName: deriveEditorProjectFolderName(linkMetadata.path_display ?? linkPath),
@@ -358,6 +353,14 @@ async function resolveRawIdentity(
   return { rawFolderPath, projectFolderName: fallback.name, rawSource: "missing", nameSource: fallback.source };
 }
 
+/**
+ * Reconciles the Portal-owned Editor folder tree for one active Project.
+ *
+ * Existing Dropbox project roots are never silently adopted. Only child conflicts below a root
+ * created by this mapping, or below a previously persisted/proven root ID, may be adopted after
+ * an exact metadata re-read. Every successful create is recorded before the next provider call so
+ * a retry resumes from the durable partial tree.
+ */
 export async function reconcileEditorFolder(
   env: Env,
   projectId: string,

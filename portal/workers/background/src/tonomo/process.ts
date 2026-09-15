@@ -11,7 +11,7 @@ import { enqueueEditorReconcile } from "../editor-folders/queue";
 import { getEditorFolderMapping } from "../editor-folders/mapping";
 import type { DropboxMetadataOperation } from "../editor-folders/scaffold";
 import { automationFlag } from "../dropbox/monitor-state";
-import { commitRawFolderPathChange, enqueueRawFolderPathSync } from "../projects/raw-folder-path";
+import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, isDropboxPathNotFoundError } from "../dropbox/client";
 
@@ -204,25 +204,24 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
   if (!project.rawFolderLink && order.rawFolderLink) changes.rawFolderLink = order.rawFolderLink;
   if (!project.rawFolderPath && order.rawFolderPath) changes.rawFolderPath = order.rawFolderPath;
 
+  const storedPath = project.rawFolderPath;
   let verified: VerifiedRawFolder | null = null;
-  if (order.rawFolderPath && project.rawFolderPath && normalisePath(order.rawFolderPath) !== normalisePath(project.rawFolderPath)) {
+  if (order.rawFolderPath && storedPath && normalisePath(order.rawFolderPath) !== normalisePath(storedPath)) {
     verified = await verifiedRawFolderPathChange(env, project, order, dependencies);
   }
 
   await db.update(projects).set(changes).where(eq(projects.id, project.id));
-  const moved = verified
+  const moved = verified && storedPath
     ? await commitRawFolderPathChange(env, {
-      projectId: project.id, previousPath: project.rawFolderPath, previousLink: project.rawFolderLink,
+      projectId: project.id, previousPath: storedPath, previousLink: project.rawFolderLink,
       path: verified.path, link: order.rawFolderLink, dropboxFolderId: verified.folderId, actor: "tonomo", orderId: order.orderId,
     })
     : false;
-  if (changes.rawFolderPath !== undefined || moved) {
+  if (moved) {
+    await followRawFolderPathChange(env, db, project.id, "tonomo_raw_path_changed");
+  } else if (changes.rawFolderPath !== undefined) {
     await enqueueAutoHdrScaffold(env, project.id).catch((error) =>
       console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
-  }
-  if (moved) {
-    await enqueueRawFolderPathSync(env, db, project.id, "tonomo_raw_path_changed").catch((error) =>
-      console.error("RAW folder path sync trigger failed", { projectId: project.id, error }));
   }
   return project.id;
 }

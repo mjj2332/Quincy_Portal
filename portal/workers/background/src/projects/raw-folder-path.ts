@@ -4,12 +4,13 @@ import type { Env } from "../env";
 import { errorMessage } from "../lib/db";
 import { createJob, setJobStatus } from "../lib/jobs";
 import { automationFlag } from "../dropbox/monitor-state";
+import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import type { DropboxSyncMessage, DropboxSyncTrigger } from "../messages";
 
 export type RawFolderPathChange = {
   projectId: string;
   /** The raw_folder_path this caller read; the write is fenced on it. */
-  previousPath: string | null;
+  previousPath: string;
   previousLink: string | null;
   path: string;
   /** Written only when non-null and different from previousLink. */
@@ -40,12 +41,9 @@ export async function commitRawFolderPathChange(env: Env, change: RawFolderPathC
   const mappingGuard = automationFlag(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
     ? " AND NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')"
     : "";
-  const pathGuard = change.previousPath === null ? " AND raw_folder_path IS NULL" : " AND raw_folder_path = ?";
-  const update = env.DB.prepare(`UPDATE projects SET raw_folder_path = ?, raw_folder_link = COALESCE(?, raw_folder_link), updated_at = ? WHERE id = ?${pathGuard} AND archived_at IS NULL${mappingGuard}`);
   const [result] = await env.DB.batch([
-    change.previousPath === null
-      ? update.bind(change.path, link, at, change.projectId)
-      : update.bind(change.path, link, at, change.projectId, change.previousPath),
+    env.DB.prepare(`UPDATE projects SET raw_folder_path = ?, raw_folder_link = COALESCE(?, raw_folder_link), updated_at = ? WHERE id = ? AND raw_folder_path = ? AND archived_at IS NULL${mappingGuard}`)
+      .bind(change.path, link, at, change.projectId, change.previousPath),
     env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.raw_folder_path.changed', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND raw_folder_path = ? AND updated_at = ?)")
       .bind(crypto.randomUUID(), change.projectId, meta, at, change.projectId, change.path, at),
   ]);
@@ -68,3 +66,14 @@ export async function enqueueRawFolderPathSync(env: Env, db: Database, projectId
     throw error;
   }
 }
+
+/** Everything that must follow an adopted path: AutoHDR re-derives its folder from the new path and
+ * the RAW monitor re-reads the new location. Failures are logged, never thrown: the path is already
+ * committed and audited, and the manual "sync Dropbox" action covers a lost nudge. */
+export async function followRawFolderPathChange(env: Env, db: Database, projectId: string, trigger: DropboxSyncTrigger): Promise<void> {
+  await enqueueAutoHdrScaffold(env, projectId).catch((error) =>
+    console.error("AutoHDR scaffold trigger failed", { projectId, error }));
+  await enqueueRawFolderPathSync(env, db, projectId, trigger).catch((error) =>
+    console.error("RAW folder path sync trigger failed", { projectId, error }));
+}
+

@@ -7,7 +7,7 @@ import { dbFor } from "../lib/db";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { getMetadata, listFolder, listFolderContinue, type DropboxFolder } from "../dropbox/client";
 import { pathFromRawFolderLink } from "../dropbox/sync";
-import { deriveEditorProjectFolderName, editorFolderPath, editorFolderPathKey, EDITOR_INPUT_NAME_PATTERN, EDITOR_OUTPUT_NAME_PATTERN, isEditorProjectFolderPath, isEditorWorkspacePath, validateShootDate } from "./paths";
+import { deriveEditorProjectFolderName, editorFolderPath, editorFolderPathKey, EDITOR_INPUT_NAME_PATTERN, EDITOR_OUTPUT_NAME_PATTERN, isEditorProjectFolderPath, isEditorWorkspacePath, validateShootDate, type EditorNameSource, type EditorRawSource } from "./paths";
 import { getEditorFolderMapping, linkExistingEditorFolder } from "./mapping";
 
 export type ReviewedEditorCandidate = {
@@ -155,15 +155,15 @@ export async function previewEditorBackfill(env: Env, cursor?: string) {
   for (const row of rows) {
     const mapping = await getEditorFolderMapping(db, row.id);
     if (mapping) {
-      const evidence = (mapping.photographerEvidence ?? {}) as { rawSource?: string; nameSource?: string };
+      const evidence = (mapping.photographerEvidence ?? {}) as { rawSource?: EditorRawSource; nameSource?: EditorNameSource };
       items.push({ projectId: row.id, status: mapping.state === "ready" ? "already_mapped" as const : "needs_review" as const,
         mappingId: mapping.id, state: mapping.state, rootPath: mapping.rootPath,
         reason: mapping.recoveryProof?.conflict?.reason ?? mapping.recoveryProof?.lastError ?? null,
         initialSyncPending: mapping.initialSyncCompletedAt === null,
         // Where the RAW folder was when the tree was reserved: "missing" means the Tonomo folder was
         // gone and RAW is expected through the Editor Input root only.
-        rawSource: evidence.rawSource ?? "tonomo",
-        nameSource: evidence.nameSource ?? "tonomo_path_display" });
+        rawSource: (evidence.rawSource ?? "tonomo") satisfies EditorRawSource,
+        nameSource: (evidence.nameSource ?? "tonomo_path_display") satisfies EditorNameSource });
       continue;
     }
     let derivedRootPath: string | null = null;

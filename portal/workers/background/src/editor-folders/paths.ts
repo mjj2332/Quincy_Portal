@@ -186,7 +186,12 @@ export function isEditorWorkspacePath(path: string): boolean {
   }
 }
 
-export type FallbackEditorProjectFolderName = { name: string; source: "tonomo_formatted_address" | "project_address" };
+/** Where the Project's RAW folder was when its Editor tree was reserved. "missing" means the Tonomo
+ * folder was gone and RAW is expected through the Editor Input root only. */
+export type EditorRawSource = "tonomo" | "link_recovered" | "missing";
+/** Which original-cased source named the Editor project folder. */
+export type EditorNameSource = "tonomo_path_display" | "tonomo_formatted_address" | "project_address";
+export type FallbackEditorProjectFolderName = { name: string; source: Extract<EditorNameSource, "tonomo_formatted_address" | "project_address"> };
 
 /**
  * Editor project folder name when the Tonomo RAW folder no longer exists, so no path_display is

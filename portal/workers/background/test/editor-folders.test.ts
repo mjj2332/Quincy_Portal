@@ -318,6 +318,22 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(data.projectId).first()).toEqual({ count: 1 });
   });
 
+  it("does not adopt a link-resolved folder whose address leaf differs from the stored path", async () => {
+    const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
+    const other = "/tonomo/raw files/christian quinlan/15-09-2026/74 victoria st, paddington nsw 2021, australia";
+    ops.metadata.set(other, { ".tag": "folder", id: `id:other-${data.suffix}`, name: "74 victoria st", path_lower: other, path_display: other });
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => other });
+    expect(mapping).toBeNull();
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: storedPath });
+  });
+
+  it("treats a transient failure while resolving the link as an error, not as a missing folder", async () => {
+    const { data, ops } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz", formattedAddress: "72 Victoria St, Paddington NSW 2021, Australia" });
+    await expect(reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => { throw new Error("Dropbox shared-link resolution failed; the Dropbox sharing.read scope may be missing: 503"); } }))
+      .rejects.toThrow(/503/);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM editor_folder_mappings WHERE project_id = ?").bind(data.projectId).first()).toEqual({ count: 0 });
+  });
+
   it("reports and never adopts a RAW folder the link finds outside the Tonomo RAW root", async () => {
     const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
     const archived = "/archive/2026/72 victoria st, paddington nsw 2021, australia";
