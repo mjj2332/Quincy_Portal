@@ -304,18 +304,58 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     return editorFolderPath({ shootDate: "2026-10-02", projectFolderName: name });
   }
 
-  it("adopts the folder the RAW shared link now points at when Tonomo moved it under the RAW root", async () => {
+  it("re-points the Project at the folder the RAW shared link now finds under the RAW root, scans it, and leaves the tree to the next pass", async () => {
     const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz" });
     ops.metadata.set(MOVED, { ".tag": "folder", id: `id:moved-${data.suffix}`, name: "72 Victoria St, Paddington NSW 2021, Australia", path_lower: MOVED, path_display: MOVED_DISPLAY });
     const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => MOVED });
-    expect(mapping?.state).toBe("ready");
-    expect(mapping?.projectFolderName).toBe("72 Victoria St, Paddington NSW 2021, Australia");
-    expect(mapping?.tonomoRawFolderPath).toBe(MOVED);
-    expect((mapping?.photographerEvidence as { rawSource?: string }).rawSource).toBe("link_recovered");
+    // A ready tree would take RAW intake away from the recovered folder before the queued sync reads it.
+    expect(mapping).toBeNull();
+    expect(ops.created).toHaveLength(0);
     expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: MOVED });
     const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.changed'").bind(data.projectId).first<{ meta_json: string }>();
     expect(JSON.parse(audit!.meta_json)).toMatchObject({ actor: "editor_scaffold", previousRawFolderPath: storedPath, rawFolderPath: MOVED });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(data.projectId).first()).toEqual({ count: 1 });
+
+    // The test runtime consumes that queue message in-process, so settle the job explicitly (the
+    // in-flight deferral itself is covered below); the stored path is now a plain Tonomo folder.
+    await database.DB.prepare("UPDATE jobs SET status = 'done' WHERE project_id = ? AND kind = 'dropbox_sync'").bind(data.projectId).run();
+    const next = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => MOVED });
+    expect(next?.state).toBe("ready");
+    expect(next?.projectFolderName).toBe("72 Victoria St, Paddington NSW 2021, Australia");
+    expect(next?.tonomoRawFolderPath).toBe(MOVED);
+    expect(next?.photographerEvidence).toMatchObject({ rawSource: "tonomo", nameSource: "tonomo_path_display", tonomoFolderId: `id:moved-${data.suffix}` });
+  });
+
+  it("does not provision a reserved tree while a RAW sync for the project is queued or running", async () => {
+    const data = await fixture();
+    const jobId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'dropbox_sync', 'running', ?, ?, ?)")
+      .bind(jobId, data.projectId, Date.now(), Date.now()).run();
+    const ops = dependencies(data, {});
+    const deferred = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
+    expect(deferred?.state).toBe("pending");
+    expect(ops.created).toHaveLength(0);
+    // A job untouched for hours is stuck, not in flight, and must not block the tree forever.
+    await database.DB.prepare("UPDATE jobs SET updated_at = ? WHERE id = ?").bind(Date.now() - 3 * 60 * 60 * 1000, jobId).run();
+    expect((await reconcileEditorFolder(env as never, data.projectId, { db, ...ops }))?.state).toBe("ready");
+  });
+
+  it("never adopts a link that resolves to the Tonomo RAW root itself", async () => {
+    const { data, ops, storedPath } = await missingFixture({ link: "https://www.dropbox.com/scl/fo/abc/xyz", storedPath: "/tonomo/raw files/igor melo/04-09-2026/raw files" });
+    const root = "/tonomo/raw files";
+    ops.metadata.set(root, { ".tag": "folder", id: `id:root-${data.suffix}`, name: "Raw Files", path_lower: root, path_display: "/Tonomo/Raw Files" });
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops, resolveRawFolderPath: async () => root });
+    expect(mapping).toBeNull();
+    expect(ops.created).toHaveLength(0);
+    expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: storedPath });
+  });
+
+  it("does not create a tree for a delivered Project whose RAW folder is gone", async () => {
+    const { data, ops } = await missingFixture({ link: null, orderId: null });
+    await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(data.projectId).run();
+    expect(await reconcileEditorFolder(env as never, data.projectId, { db, ...ops })).toBeNull();
+    expect(ops.created).toHaveLength(0);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM editor_folder_mappings WHERE project_id = ?").bind(data.projectId).first()).toEqual({ count: 0 });
   });
 
   it("does not adopt a link-resolved folder whose address leaf differs from the stored path", async () => {
@@ -356,6 +396,20 @@ describe("Editor folder reconciliation when the Tonomo RAW folder is missing", (
     expect((mapping?.photographerEvidence as { tonomoFolderId?: string }).tonomoFolderId).toBeUndefined();
     expect(mapping?.inputRoots[0]?.path.endsWith("/0. Input")).toBe(true);
     expect(await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(data.projectId).first()).toEqual({ raw_folder_path: storedPath });
+  });
+
+  it("reads the formatted address from Tonomo's array-wrapped and changed-envelope payloads", async () => {
+    const { data, ops } = await missingFixture({ link: null });
+    const orderId = `order-${data.suffix}`;
+    const insert = (payload: unknown, receivedAt: number) => database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'processed', ?)")
+      .bind(crypto.randomUUID(), crypto.randomUUID(), JSON.stringify(payload), receivedAt).run();
+    await insert([{ order_id: orderId, property_address: { formatted_address: "72 Victoria St, Paddington NSW 2021, Australia" } }], Date.now() - 2000);
+    await insert([{ action: "changed", orderId, order: { orderId, property_address: { formatted_address: "72 Victoria St, Paddington NSW 2021, Australia" } } }], Date.now() - 1000);
+    await insert({ id: "other-order", property_address: { formatted_address: "1 Elsewhere St, Bondi NSW 2026, Australia" } }, Date.now());
+    const mapping = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
+    expect(mapping?.state).toBe("ready");
+    expect(mapping?.projectFolderName).toBe("72 Victoria St, Paddington NSW 2021, Australia");
+    expect(mapping?.photographerEvidence).toMatchObject({ rawSource: "missing", nameSource: "tonomo_formatted_address" });
   });
 
   it("falls back to the Project's own address when no Tonomo payload is stored", async () => {

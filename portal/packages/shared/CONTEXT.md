@@ -104,6 +104,6 @@ _Avoid_: Group, section, date header
 
 ### Editor folder provenance
 
-- **RAW source** (`rawSource` on an Editor folder mapping): where the Project's Tonomo RAW folder was when the Editor tree was reserved. `tonomo` (the stored path existed), `link_recovered` (the stored path was gone; the RAW shared link found the folder elsewhere under the Tonomo RAW root and the Project now points there), `missing` (gone; RAW arrives only through the Editor Input root).
+- **RAW source** (`rawSource` on an Editor folder mapping): where the Project's Tonomo RAW folder was when the Editor tree was reserved. `tonomo` (the stored path existed), `missing` (gone; RAW arrives only through the Editor Input root). When the RAW shared link finds the folder elsewhere under the Tonomo RAW root, the Project is re-pointed first (audit action `project.raw_folder_path.changed`, actor `editor_scaffold`), the folder is scanned, and the next reconcile records `tonomo`.
 - **Name source** (`nameSource`): which original-cased text named the Editor project folder. `tonomo_path_display` (Dropbox's own casing), `tonomo_formatted_address` (the order's formatted address from the latest Tonomo payload, "/" replaced by "-", Tonomo's numeric suffix kept), `project_address` (the Project's street and suburb).
 

@@ -50,6 +50,11 @@ describe("fallbackEditorProjectFolderName", () => {
       formattedAddress: "Somewhere Else, Bondi NSW 2026, Australia", street: "62 Edward Street", suburb: "Bondi",
     })).toEqual({ name: "62 Edward Street, Bondi", source: "project_address" });
     expect(fallbackEditorProjectFolderName({ storedRawFolderPath: null, formattedAddress: null, street, suburb }).name).toBe("2-20 Sutherland Crescent, Darling Point");
+    // A remainder that is not Tonomo's numeric duplicate marker means a different address, not a suffix.
+    expect(fallbackEditorProjectFolderName({
+      storedRawFolderPath: "/tonomo/raw files/igor melo/24-08-2026/62 edward st, bondi nsw 2026, australia rear studio",
+      formattedAddress: "62 Edward St, Bondi NSW 2026, Australia", street: "62 Edward Street", suburb: "Bondi",
+    })).toEqual({ name: "62 Edward Street, Bondi", source: "project_address" });
   });
   it("names after the parent when the stored leaf is Listing Images", () => {
     expect(fallbackEditorProjectFolderName({

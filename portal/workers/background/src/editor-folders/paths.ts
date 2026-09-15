@@ -188,7 +188,7 @@ export function isEditorWorkspacePath(path: string): boolean {
 
 /** Where the Project's RAW folder was when its Editor tree was reserved. "missing" means the Tonomo
  * folder was gone and RAW is expected through the Editor Input root only. */
-export type EditorRawSource = "tonomo" | "link_recovered" | "missing";
+export type EditorRawSource = "tonomo" | "missing";
 /** Which original-cased source named the Editor project folder. */
 export type EditorNameSource = "tonomo_path_display" | "tonomo_formatted_address" | "project_address";
 export type FallbackEditorProjectFolderName = { name: string; source: Extract<EditorNameSource, "tonomo_formatted_address" | "project_address"> };
@@ -201,6 +201,9 @@ export type FallbackEditorProjectFolderName = { name: string; source: Extract<Ed
  * original-cased address plus the stored suffix is exact. Otherwise the project's own address is
  * the last resort.
  */
+/** Tonomo disambiguates same-address folders with " 2" or " (1)" after the formatted address. */
+const TONOMO_DUPLICATE_SUFFIX = /^(?:\s+\d+|\s*\(\d+\))?$/u;
+
 export function fallbackEditorProjectFolderName(input: {
   storedRawFolderPath: string | null;
   formattedAddress: string | null;
@@ -216,8 +219,9 @@ export function fallbackEditorProjectFolderName(input: {
     const lower = formatted.toLowerCase();
     if (storedLeaf.toLowerCase().startsWith(lower)) {
       const suffix = storedLeaf.slice(lower.length);
+      // Only Tonomo's own duplicate markers count as a suffix; any other remainder is a different address.
       const name = `${formatted}${suffix}`;
-      if (isSafeEditorPathSegment(name)) return { name, source: "tonomo_formatted_address" };
+      if (TONOMO_DUPLICATE_SUFFIX.test(suffix) && isSafeEditorPathSegment(name)) return { name, source: "tonomo_formatted_address" };
     }
   }
   const address = [input.street.trim(), input.suburb?.trim()].filter(Boolean).join(", ").replace(/\//gu, "-");

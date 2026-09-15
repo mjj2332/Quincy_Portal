@@ -1,5 +1,5 @@
-import { and, eq, isNull } from "drizzle-orm";
-import { editorFolderMappings, projectMembers, projects, user } from "@quincy/db/schema";
+import { and, eq, gte, inArray, isNull, ne } from "drizzle-orm";
+import { editorFolderMappings, jobs, projectMembers, projects, user } from "@quincy/db/schema";
 import type { Database } from "@quincy/db";
 
 import type { DropboxFile, DropboxFolder } from "../dropbox/client";
@@ -280,6 +280,22 @@ type RawIdentityProject = {
  *    Tonomo's original-cased formatted address (else the Project's own address). RAW then arrives
  *    through the Editor tree's Input root, which is what a ready mapping does anyway.
  */
+/**
+ * Queued or running `dropbox_sync` jobs touched within the last two hours; older ones are stuck,
+ * not in flight. Measured on the wall clock because `jobs.updated_at` is written by the queue
+ * consumer's clock, not the caller's injected `now`.
+ */
+async function rawSyncInFlight(db: Database, projectId: string): Promise<boolean> {
+  const since = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const job = await db.select({ id: jobs.id }).from(jobs).where(and(
+    eq(jobs.projectId, projectId),
+    eq(jobs.kind, "dropbox_sync"),
+    inArray(jobs.status, ["queued", "running"]),
+    gte(jobs.updatedAt, since),
+  )).get();
+  return Boolean(job);
+}
+
 async function resolveRawIdentity(
   env: Env,
   db: Database,
@@ -319,7 +335,7 @@ async function resolveRawIdentity(
           console.log("Editor scaffold skipped: RAW folder found under a different address leaf; needs manual review", { projectId: project.id, storedPath, linkPath });
           return null;
         }
-        if (!pathEqualsOrIsBelow(linkPath, TONOMO_RAW_ROOT)) {
+        if (!pathEqualsOrIsBelow(linkPath, TONOMO_RAW_ROOT) || dropboxPathKey(linkPath) === dropboxPathKey(TONOMO_RAW_ROOT)) {
           console.log("Editor scaffold skipped: RAW folder found outside the Tonomo RAW root", {
             projectId: project.id,
             reason: `RAW folder now lives at ${linkMetadata.path_display ?? linkPath}, outside ${TONOMO_RAW_ROOT}. This project was completed and delivered outside the Portal; mark it delivered or archived instead of chasing the folder.`,
@@ -332,13 +348,12 @@ async function resolveRawIdentity(
         });
         if (!adopted) return null;
         await followRawFolderPathChange(env, db, project.id, "editor_scaffold_raw_path_recovered");
-        return {
-          rawFolderPath: linkPath,
-          projectFolderName: deriveEditorProjectFolderName(linkMetadata.path_display ?? linkPath),
-          tonomoFolderId: linkMetadata.id,
-          rawSource: "link_recovered",
-          nameSource: "tonomo_path_display",
-        };
+        // Stop here: a ready mapping hands RAW intake to the Editor Input root, so the recovered
+        // Tonomo folder must be scanned before any tree exists. The queued sync scans it, and the
+        // next reconcile (hourly recovery or the sync's own follow-up) finds the stored path and
+        // creates the tree from its path_display like any other project.
+        console.log("Editor scaffold deferred: RAW folder path recovered from the shared link; scanning it before creating the tree", { projectId: project.id, storedPath, linkPath });
+        return null;
       }
     }
   }
@@ -382,7 +397,7 @@ export async function reconcileEditorFolder(
     orderId: projects.orderId,
     street: projects.street,
     suburb: projects.suburb,
-  }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt))).get();
+  }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
   if (!project) return null;
 
   let mapping = await getEditorFolderMapping(db, projectId);
@@ -427,6 +442,13 @@ export async function reconcileEditorFolder(
   }
 
   if (!mapping) return null;
+  // A ready tree takes RAW intake away from the Tonomo folder, so never finish one while a RAW
+  // sync of that folder is queued or running (a Tonomo path change or link recovery just nudged
+  // one). The hourly recovery pass retries once the sync has settled.
+  if (await rawSyncInFlight(db, projectId)) {
+    console.log("Editor scaffold deferred: a RAW sync for the project is still in flight", { projectId, mappingId: mapping.id });
+    return mapping;
+  }
   const lease = await acquireEditorFolderProvisionLease(db, mapping.id, now(), dependencies.leaseMs);
   if (!lease) return (await getEditorFolderMapping(db, projectId)) ?? mapping;
   mapping = lease.mapping;
@@ -443,6 +465,7 @@ export async function reconcileEditorFolder(
         eq(projectMembers.roleOnProject, "photographer"),
         eq(user.active, true),
         isNull(projects.archivedAt),
+        ne(projects.stageKey, "delivered"),
       )).get();
     if (!stillProvisionable) return (await getEditorFolderMapping(db, projectId)) ?? mapping;
     const monthPath = mapping.rootPath.split("/").slice(0, -2).join("/");
