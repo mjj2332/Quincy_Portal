@@ -102,6 +102,24 @@ describe("dashboard-view-store", () => {
     unsubscribe();
   });
 
+  it("a different owner publishing the SAME view still becomes owner and notifies, and only its own release clears the store", () => {
+    const first = {};
+    const second = {};
+    publishDashboardView(first, "kanban");
+    let notifications = 0;
+    const unsubscribe = subscribeDashboardView(() => { notifications++; });
+    publishDashboardView(second, "kanban");
+    expect(notifications).toBe(1);
+    expect(readDashboardView()).toBe("kanban");
+    releaseDashboardView(first);
+    expect(notifications).toBe(1);
+    expect(readDashboardView()).toBe("kanban");
+    releaseDashboardView(second);
+    expect(notifications).toBe(2);
+    expect(readDashboardView()).toBeNull();
+    unsubscribe();
+  });
+
   it("unsubscribe stops further notifications to that listener", () => {
     const owner = {};
     let notifications = 0;

@@ -284,11 +284,17 @@ describe("publishedView — the Dashboard's own rendered view, #119", () => {
     expect(children.filter((child) => child.active).map((child) => child.id)).toEqual(["dashboard-kanban"]);
   });
 
-  it("coerces a published Calendar without the capability, same as an explicit route or the remembered preference", () => {
+  it("marks no child active for a published Calendar without the capability — a publication is authoritative, not re-coerced, and the Calendar child is filtered out so nothing matches it", () => {
     const navigation = buildStaffNavigation(bareDashboard, "list", noCalendar, "calendar");
     const children = navigation.groups[0]!.items[0]!.children ?? [];
     expect(children.map((child) => child.id)).toEqual(["dashboard-list", "dashboard-kanban"]);
-    expect(children.filter((child) => child.active).map((child) => child.id)).toEqual(["dashboard-list"]);
+    expect(children.filter((child) => child.active)).toEqual([]);
+  });
+
+  it("marks no child active for a published \"none\" — the Dashboard is rendering no view branch", () => {
+    const navigation = buildStaffNavigation(bareDashboard, "kanban", all, "none");
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active)).toEqual([]);
   });
 
   it("is ignored away from the Dashboard", () => {

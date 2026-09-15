@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE } from "@quincy/shared";
@@ -52,7 +52,7 @@ vi.mock("./components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: () => <main>Project workspace</main> }));
 
 import App from "./App";
-import { readDashboardView } from "./lib/dashboard-view-store";
+import { readDashboardView, subscribeDashboardView } from "./lib/dashboard-view-store";
 import { locationStore } from "./lib/router";
 
 let root: Root | null = null;
@@ -179,6 +179,40 @@ async function renderApp(path: string) {
   await act(async () => { root!.render(<App />); await Promise.resolve(); await Promise.resolve(); });
   await settle();
   return host;
+}
+
+/**
+ * Same initial commit `renderApp` reaches before its own `settle()` — the point every screen has
+ * mounted and the lazy Calendar chunk is warm, but before any `setTimeout`-driven effect (the
+ * capability redirect in `lib/app-router.tsx`, a settling query) has had a further tick to run.
+ * Exists to catch a disagreement that only holds for that one intermediate frame, which `settle()`
+ * would otherwise paper over before an assertion ever sees it.
+ */
+async function renderAppFirstCommit(path: string, strict = false) {
+  window.history.replaceState(null, "", path);
+  const host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  const element = strict ? <StrictMode><App /></StrictMode> : <App />;
+  await act(async () => { root!.render(element); await Promise.resolve(); await Promise.resolve(); });
+  return host;
+}
+
+/** Which Dashboard view branch actually painted, read the same way a Staff member would see it —
+ * not from `view`/`viewingArchived`, which is exactly the state this file catches disagreeing. */
+function renderedDashboardBranch(host: ParentNode): "list" | "kanban" | "calendar" | "none" {
+  if (host.querySelector('[aria-label="Projects list"]')) return "list";
+  if (host.querySelector('[data-testid="dashboard-board"]')) return "kanban";
+  if (host.querySelector('[data-testid="dashboard-calendar-surface"]')
+    || [...host.querySelectorAll('[role="status"]')].some((node) => node.textContent === "Loading calendar…")) return "calendar";
+  return "none";
+}
+
+/** The Dashboard's own segmented control — reflects `view` directly, independent of whether the
+ * data underneath it has loaded yet, unlike `renderedDashboardBranch`'s content markers. */
+function dashboardViewControlActive(host: ParentNode): string | null {
+  return [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')]
+    .find((button) => button.dataset.active === "true")?.textContent?.trim() ?? null;
 }
 
 /**
@@ -328,10 +362,10 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    // The crux of finding 2 (#119's issue text): storage now says "list" — the click above wrote
-    // it — but the bare route Back landed on is the one the Dashboard originally rendered Kanban
-    // for, and Kanban is what it renders again. The rail must follow THAT, not a fresh read of
-    // storage, or it disagrees with the screen it is supposedly describing.
+    // Storage now says "list" — the click above wrote it — but the bare route Back landed on is
+    // the one the Dashboard originally rendered Kanban for, and Kanban is what it renders again.
+    // The rail must follow THAT, not a fresh read of storage, or it disagrees with the screen it
+    // is supposedly describing (#119).
     expect(currentUrl()).toBe("/");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
@@ -374,5 +408,127 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
     expect(activeRailChild(host)).toBe("Kanban");
     expect(readDashboardView()).toBe("kanban");
+  });
+
+  it("a role without the Calendar capability at an explicit Calendar URL never disagrees with the rail", async () => {
+    // `view`'s own `useState` initializer used to return an explicit route's "calendar" before any
+    // capability check ran, while `calendarState` (gated on the capability from the start) came up
+    // `null` — a `view` no render branch matched, yet the store still published "calendar" for one
+    // publish before the reconciliation effect corrected it later in the SAME `act()` flush. Reading
+    // `readDashboardView()` only after `act()` returns misses that publish entirely — React drains
+    // the whole effect queue before yielding, so the transient value is gone by the time any
+    // assertion runs. Subscribing BEFORE the first render and recording every notification is the
+    // only way this harness can see it.
+    sessionState.value = { data: { user: { id: "u2", name: "Pat Photographer", role: "photographer" } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
+    window.history.replaceState(null, "", "/?view=calendar");
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    const published: Array<{ value: ReturnType<typeof readDashboardView>; control: string | null }> = [
+      { value: readDashboardView(), control: dashboardViewControlActive(host) },
+    ];
+    const unsubscribe = subscribeDashboardView(() => {
+      // `notify()` fires synchronously from inside the Dashboard's own `useLayoutEffect`, after its
+      // commit but before any consumer (the rail) has re-rendered — so the segmented control read
+      // here is from the SAME commit as the publish, the cheapest thing that can catch the two
+      // disagreeing without waiting a further tick for the rail's own re-render to reflect it.
+      published.push({ value: readDashboardView(), control: dashboardViewControlActive(host) });
+    });
+
+    try {
+      await act(async () => { root!.render(<App />); await Promise.resolve(); await Promise.resolve(); });
+
+      // Photographer has neither `adminBackend` nor `viewProductionCalendar`: Calendar is absent
+      // from the rail's own children, not merely disabled — "calendar" must never even transit
+      // through the store, since nothing downstream can show it.
+      expect(railChildLinks(host).map((link) => link.textContent?.trim())).toEqual(["List", "Kanban"]);
+      expect(published.map((entry) => entry.value)).not.toContain("calendar");
+      for (const entry of published) {
+        if (entry.value === "list" || entry.value === "kanban") {
+          expect(entry.control).toBe(entry.value === "list" ? "List" : "Kanban");
+        }
+      }
+
+      await settle();
+
+      // The capability redirect (`lib/app-router.tsx`) replaces the explicit Calendar location
+      // once it runs; the Dashboard has settled on a real, renderable view and the rail agrees.
+      expect(currentUrl()).toBe("/");
+      expect(readDashboardView()).not.toBe("none");
+      expect(activeRailChild(host)).toBe(dashboardViewControlActive(host));
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
+describe("archive entry, Back navigation, StrictMode and unmount keep the rail and the Dashboard agreeing (#119)", () => {
+  it("enters Archived from an explicit Kanban URL and stays archived", async () => {
+    const host = await renderApp("/?view=kanban");
+    expect(activeRailChild(host)).toBe("Kanban");
+
+    await clickButtonLabelled(host, "Archived");
+
+    expect(currentUrl()).toBe("/?view=list");
+    expect(activeRailChild(host)).toBe("List");
+    expect(host.textContent).toContain("Archived projects");
+    expect(host.textContent).toContain("9 Archived Street");
+  });
+
+  it("enters Archived from a canonical Calendar URL and stays archived", async () => {
+    const host = await renderApp("/?view=calendar");
+    expect(activeRailChild(host)).toBe("Calendar");
+
+    await clickButtonLabelled(host, "Archived");
+
+    expect(currentUrl()).toBe("/?view=list");
+    expect(activeRailChild(host)).toBe("List");
+    expect(host.textContent).toContain("Archived projects");
+    expect(host.textContent).toContain("9 Archived Street");
+  });
+
+  it("a real Back past the Archived click leaves the rail and the rendered branch agreeing with each other, whatever the Dashboard does with the URL", async () => {
+    // An anchored `?view=kanban` entry for Back to return to — same reasoning as sequence "2"'s own
+    // pushed anchor above: `afterEach`'s `replaceState` only overwrites the current entry.
+    window.history.pushState(null, "", "/?view=kanban");
+    const host = await renderApp("/?view=kanban");
+
+    await clickButtonLabelled(host, "Archived");
+    expect(host.textContent).toContain("Archived projects");
+
+    await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await settle();
+
+    // Whatever the Dashboard's own reconciliation lands on here, the rail's active child and the
+    // breadcrumb's last segment must name the SAME branch that actually rendered.
+    const branch = renderedDashboardBranch(host);
+    const expectedLabel = branch === "list" ? "List" : branch === "kanban" ? "Kanban" : branch === "calendar" ? "Calendar" : null;
+    expect(activeRailChild(host)).toBe(expectedLabel);
+    expect(lastBreadcrumbSegment(host)).toBe(expectedLabel);
+  });
+
+  it("agrees inside StrictMode the same way production mounts (main.tsx)", async () => {
+    const host = await renderAppFirstCommit("/?view=list", true);
+    await settle();
+    await clickButtonLabelled(host, "Archived");
+    expect(activeRailChild(host)).toBe("List");
+
+    await clickRailChild(host, "Kanban");
+
+    expect(currentUrl()).toBe("/?view=kanban");
+    expect(activeRailChild(host)).toBe("Kanban");
+    expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("Archived projects");
+  });
+
+  it("clears the published view on a root unmount", async () => {
+    await renderApp("/?view=kanban");
+    expect(readDashboardView()).toBe("kanban");
+
+    await act(async () => { root!.unmount(); });
+    root = null;
+
+    expect(readDashboardView()).toBeNull();
   });
 });

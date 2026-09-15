@@ -2259,39 +2259,28 @@ overwritten; fence the write on both the value read and the event's age, since w
 is ordered by processing, not by when Tonomo made the change. Moving a Dropbox tree is not a path
 update: anything keyed by path (Edited assets, pinned publish destinations) must follow first.
 
-## The rail and the Dashboard computed "which view is showing" independently, and drifted (2026-09-15)
+## The rail and the Dashboard computed "which view is showing" independently, and drifted (#119, 2026-09-15)
 
 **Symptom:** with Projects archived, clicking the rail's Kanban pushed `/?view=kanban` and marked
-Kanban current, while the screen kept rendering the archived List — the URL, the rail and the
-screen each said something different. Separately, an explicit List switch followed by Back left
-the Dashboard showing Kanban (its own pinned mount-time snapshot) while the rail, re-reading
-`localStorage` for the new location, marked List.
+Kanban current, while the screen kept rendering the archived List. Separately, an explicit List
+switch followed by Back left the Dashboard showing Kanban (its own pinned mount-time snapshot)
+while the rail, re-reading `localStorage` for the new location, marked List.
 
 **Cause:** the navigation model (`lib/staff-navigation.ts`) computed the active view from the
-parsed route and the remembered preference; the Dashboard computed its OWN rendered view from
-private screen state (archive scope, a fixed per-document Back snapshot) that never reached the
-route. Two surfaces deriving the same answer from different inputs is fine exactly until one of
-them has information the other does not — here, archive scope and the mount-time snapshot both
-lived only in the Dashboard.
+parsed route and the remembered preference. The Dashboard computed its own rendered view from
+private screen state — archive scope, a fixed per-document Back snapshot — that never reached the
+route. Two surfaces deriving the same answer from different inputs drifts the moment one of them
+holds information the other does not.
 
 **Fix:** `lib/dashboard-view-store.ts`, a module-level store following the toast-store precedent
 (#110) — no React context, since `Dashboard` mounts standalone in its own DOM tests with no
-provider of any kind. The Dashboard publishes the view it is actually rendering in a
-`useLayoutEffect` (so the rail updates in the same paint), keyed by an opaque owner object so a
-stale instance's release can never clear a live publication out from under the instance actually
-mounted. The navigation model reads the publication instead of re-deriving one; the route/
-remembered-preference derivation is now only the pre-mount fallback, for the single frame before
-any Dashboard instance exists. Archived scope keeps offering Kanban and Calendar in the rail, so no
-destination disappears — landing on one of those addresses while archived is read as LEAVING archived,
-not as an intent the archived screen silently drops, guarded by comparing against the location the
-Dashboard's own reconciliation effect last processed rather than "is the location non-List", so an
-intermediate render mid-transition (entering archived pushes its own canonical URL in the same
-handler) is never mistaken for a fresh arrival at a stale one.
+provider. The Dashboard publishes the view it is actually rendering, keyed by an opaque owner
+object so a stale instance's release can never clear a live publication. The navigation model
+treats that publication as authoritative and stops re-deriving or re-coercing it; the route/
+remembered derivation is now only the pre-mount fallback. A published view that matches no render
+branch (a role losing the Calendar capability mid-flight) publishes `"none"` rather than a guess,
+so the rail marks nothing rather than a view the screen is not showing.
 
 **Rule:** the screen that renders owns the answer to "what is currently showing"; navigation chrome
-reads that publication rather than re-deriving it from the route, or the two will eventually see
-different inputs and disagree. When gating that publication on "is this location explicit", use
-the route-derived signal (`locationHasCalendar`), not a value that can still be true from a stale
-prop the caller passed once and never re-supplied (`effectiveRouteCalendar`'s own fallback) —
-`Dashboard-calendar.dom.test.tsx` mounts `Dashboard` directly with a fixed `calendar` prop that
-outlives the URL it was passed for, and only the URL is a fact about where the Staff member is now.
+reads that publication rather than re-deriving or re-coercing it, or the two will eventually see
+different inputs and disagree.

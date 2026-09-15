@@ -188,7 +188,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (consumeProjectSearchFocus()) searchInputRef.current?.focus();
   }, [searchFocusToken]);
   const [view, setView] = useState<DashboardView>(() => {
-    if (routeDashboardView) return routeDashboardView;
+    // A route's own explicit "calendar" gets the same capability check the stored preference
+    // already gets below — otherwise a role without it landed here with `view` already "calendar"
+    // and `calendarState` already `null` (that init is gated correctly), so no render branch
+    // matched anything until the reconciliation effect caught up.
+    if (routeDashboardView && (routeDashboardView !== "calendar" || canViewProductionCalendar)) return routeDashboardView;
     if (effectiveRouteCalendar && canViewProductionCalendar) return "calendar";
     const stored = initializeDashboardView({
       read: () => window.localStorage.getItem("quincy:dashboard:view"),
@@ -240,17 +244,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     } catch { /* Storage can be disabled. */ }
   }, [canViewProductionCalendar]);
   const viewingArchived = projectScope === "archived";
-  // Published for the rail (#119): while archived the screen always renders List regardless of
-  // `view`'s own last explicit value, so the shell must follow THIS, not `view` itself, or it can
-  // mark Kanban/Calendar active over an archived List. `useLayoutEffect`, not `useEffect`, so the
-  // rail updates in the same paint as the screen — see `lib/dashboard-view-store.ts` for the
-  // owner/publish/release contract this pairs with.
-  const renderedView: DashboardView = viewingArchived ? "list" : view;
-  const dashboardViewOwnerRef = useRef({});
-  useLayoutEffect(() => {
-    publishDashboardView(dashboardViewOwnerRef.current, renderedView);
-  }, [renderedView]);
-  useLayoutEffect(() => () => releaseDashboardView(dashboardViewOwnerRef.current), []);
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity);
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
@@ -298,6 +291,22 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     ? projectsQuery.error instanceof Error ? projectsQuery.error.message : projectsQuery.error ? "Projects could not be loaded." : undefined
     : undefined;
   const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null;
+  // Published for the rail (#119), mirroring the branch selection above and below (List ~1092,
+  // Kanban ~1106) instead of re-deriving `view`/`viewingArchived` a second time, so the two cannot
+  // drift: Calendar only when `isCalendarView` itself is true (so a `view` of "calendar" with no
+  // `calendarState` yet is never claimed), List while archived or explicitly selected, Kanban only
+  // when neither of those apply, and "none" — no rail child should claim to be current — when
+  // `view` matches nothing that actually renders. `useLayoutEffect`, not `useEffect`, so the rail
+  // updates in the same paint as the screen; see `lib/dashboard-view-store.ts` for the owner rule.
+  const renderedView: DashboardView | "none" = isCalendarView ? "calendar"
+    : viewingArchived || view === "list" ? "list"
+    : !viewingArchived && view === "kanban" ? "kanban"
+    : "none";
+  const dashboardViewOwnerRef = useRef({});
+  useLayoutEffect(() => {
+    publishDashboardView(dashboardViewOwnerRef.current, renderedView);
+  }, [renderedView]);
+  useLayoutEffect(() => () => releaseDashboardView(dashboardViewOwnerRef.current), []);
   // Priority is deliberately the only Dashboard path that still writes this query cache.
   const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
     queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
@@ -348,17 +357,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [view, viewingArchived]);
 
   useEffect(() => {
-    // The Dashboard owns the rendered view; the rail follows its publication (`lib/dashboard-
-    // view-store.ts`), not a second route-derived guess (`lib/staff-navigation.ts`'s own header
-    // comment carries the model's half of this). What this effect still owns is reconciling the
-    // route's EXPLICIT intent against local view state — and, new in #119, archive scope itself:
-    // the rail keeps offering Kanban and Calendar while archived, so every destination stays reachable, and landing
-    // on one of those addresses is read as LEAVING archived, not as an intent the archived screen
-    // silently drops. `arrivedAtNewLocation` compares against the location THIS effect itself last
-    // reconciled, not merely "is the location non-List" — `selectProjectScope("archived")` sets
-    // scope and pushes its own `/?view=list` in the same handler, and an intermediate render still
-    // holding the OLD explicit URL must not immediately bounce the Staff member back out of the
-    // archived scope they just chose.
+    // Reconciles the route's EXPLICIT intent against local view state, including archive scope:
+    // the rail keeps offering Kanban and Calendar while archived (see `lib/dashboard-view-store.ts`
+    // for how it learns what actually rendered), so landing on one of those addresses is read as
+    // LEAVING archived rather than an intent the archived screen silently drops.
+    // `arrivedAtNewLocation` compares against the location THIS effect itself last reconciled, not
+    // merely "is the location non-List" — `selectProjectScope("archived")` sets scope and pushes
+    // its own `/?view=list` in the same handler, and an intermediate render still holding the OLD
+    // explicit URL must not immediately bounce the Staff member back out of archived.
     const arrivedAtNewLocation = currentLocation !== lastReconciledLocationRef.current;
     lastReconciledLocationRef.current = currentLocation;
     // `locationHasCalendar`, not `effectiveRouteCalendar !== null` — the latter falls back to the

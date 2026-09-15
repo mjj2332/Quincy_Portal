@@ -19,12 +19,15 @@
  * `Dashboard` is ever mounted at a time in production.
  *
  * `null` means no Dashboard is currently mounted — the shell's own fallback, the route/remembered-
- * view derivation in `staff-navigation.ts`, covers that first frame and nothing else.
+ * view derivation in `staff-navigation.ts`, covers that first frame and nothing else. `"none"` is a
+ * different thing published by a MOUNTED Dashboard: none of its own render branches match the
+ * current `view`/`viewingArchived` (`screens/Dashboard.tsx`'s own `renderedView`), so nothing is
+ * showing that a nav child could correctly claim as current.
  */
 import type { DashboardView } from "../screens/dashboard-helpers";
 
 let owner: object | null = null;
-let publishedView: DashboardView | null = null;
+let publishedView: DashboardView | "none" | null = null;
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -33,7 +36,7 @@ function notify() {
 
 /** Publishing the same owner and view again notifies nobody — the guard against a render loop
  * from a `useLayoutEffect` that runs every time its owning component renders. */
-export function publishDashboardView(nextOwner: object, nextView: DashboardView): void {
+export function publishDashboardView(nextOwner: object, nextView: DashboardView | "none"): void {
   if (owner === nextOwner && publishedView === nextView) return;
   owner = nextOwner;
   publishedView = nextView;
@@ -47,7 +50,7 @@ export function releaseDashboardView(releasingOwner: object): void {
   notify();
 }
 
-export function readDashboardView(): DashboardView | null {
+export function readDashboardView(): DashboardView | "none" | null {
   return publishedView;
 }
 

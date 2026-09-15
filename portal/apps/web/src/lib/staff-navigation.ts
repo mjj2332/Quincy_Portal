@@ -21,18 +21,11 @@
  *
  * ## Archive scope's own input, since #119
  *
- * Archive scope itself is still absent from `StaffRoute` — it is private screen state, and
- * threading it into the route would be the cross-screen plumbing #111 deliberately avoided.
- * `publishedView` is what changed: the Dashboard publishes the view it is ACTUALLY rendering
- * (`lib/dashboard-view-store.ts`, a module-level store — no React context, since screens mount
- * standalone in their own DOM tests with no provider of any kind), and this model reads that
- * publication instead of re-deriving archive's effect on its own. Before #119 the model instead
- * relied on the Dashboard navigating to an explicit List route whenever it forced List, and
- * followed that route the same way it follows any other explicit view — which drifted the moment
- * the Dashboard could leave the URL alone and just render differently (#119's two findings). The
- * Dashboard's own DOM tests remain the proof that selecting Archived forces List; this model's
- * proof is that it repaints from whatever the Dashboard published, not a second derivation of
- * when archive applies.
+ * Archive scope is private screen state, not part of `StaffRoute` (#111 deliberately kept
+ * cross-screen plumbing out of the route). The Dashboard instead publishes the view it is
+ * ACTUALLY rendering (`lib/dashboard-view-store.ts`), and this model treats that publication as
+ * authoritative — see `resolvedDashboardView` below. The route/remembered derivation is only the
+ * pre-mount fallback, for the frame before any Dashboard instance has published.
  */
 import { staffPathFor, type StaffRoute } from "./router";
 import type { DashboardView } from "../screens/dashboard-helpers";
@@ -112,22 +105,27 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
 
 /**
  * Which Dashboard view the current location actually shows. Once a Dashboard has published
- * (`publishedView !== null`), that publication IS the wanted view — see this file's own "Archive
- * scope's own input" section above. Otherwise: an explicit view in the URL wins; the two Calendar
- * spellings both mean Calendar; and a bare `/` falls back to the remembered preference. Either way
- * the result is coerced to Kanban when the Calendar capability is absent — the preference outlives
- * a role change, and marking a child active that the rail does not render would be worse than
- * ignoring it.
+ * (`publishedView !== null`), that publication IS the wanted view, taken as-is: it already reflects
+ * what rendered (`screens/Dashboard.tsx`'s own `renderedView`), so coercing it a second time here
+ * would just be a competing opinion. A published Calendar the capability check would have refused
+ * needs no coercion either — `DASHBOARD_CHILDREN` below has already dropped the Calendar child, so
+ * nothing in `children` matches it and no child is marked active, the same as a published `"none"`.
+ *
+ * Without a publication (the pre-mount fallback) an explicit view in the URL wins, both Calendar
+ * spellings mean Calendar, and a bare `/` falls back to the remembered preference — coerced to
+ * Kanban when the Calendar capability is absent, since the preference outlives a role change and
+ * marking a child active the rail does not render would be worse than ignoring it.
  */
-function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, capabilities: StaffNavigationCapabilities, publishedView: DashboardView | null): DashboardView | null {
+function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, capabilities: StaffNavigationCapabilities, publishedView: DashboardView | "none" | null): DashboardView | "none" | null {
   if (route.kind !== "dashboard") return null;
-  // An EXPLICIT Calendar location also gets coerced, not just a remembered preference. Reported by
-  // Luna: without this, a role that cannot view the Calendar arriving at a Calendar URL resolved to
-  // "calendar", which the child filter then omits — so the rail rendered with NO active child at
-  // all for the frame before the shell's redirect effect ran. The shell does replace the location
-  // with "/", so this is transient rather than a way in; a nav tree with nothing marked active is
-  // still the wrong thing to paint while it happens.
-  const wanted = publishedView !== null ? publishedView : "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
+  if (publishedView !== null) return publishedView;
+  // An EXPLICIT Calendar location also gets coerced, not just a remembered preference. Without
+  // this, a role that cannot view the Calendar arriving at a Calendar URL resolved to "calendar",
+  // which the child filter then omits — so the rail rendered with NO active child at all for the
+  // frame before the shell's redirect effect ran. The shell does replace the location with "/", so
+  // this is transient rather than a way in; a nav tree with nothing marked active is still the
+  // wrong thing to paint while it happens.
+  const wanted = "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
   if (wanted !== "calendar" || capabilities.viewProductionCalendar) return wanted;
   // Coerced. The fallback is the REMEMBERED view when that is itself viewable, not a hardcoded
   // Kanban — a Staff member who works in List should land on List, not be moved to a third view
@@ -146,7 +144,7 @@ export function buildStaffNavigation(
   route: StaffRoute,
   rememberedDashboardView: DashboardView,
   capabilities: StaffNavigationCapabilities,
-  publishedView: DashboardView | null = null,
+  publishedView: DashboardView | "none" | null = null,
 ): StaffNavigation {
   const activeSectionId = sectionFor(route);
   const view = resolvedDashboardView(route, rememberedDashboardView, capabilities, publishedView);
