@@ -17,7 +17,7 @@ import {
 } from "../src/editor-folders/paths";
 import { editorReconcileNote, reconcileEditorFolder, reconcileEditorFolderOutcome } from "../src/editor-folders/scaffold";
 import { handleEditorReconcileMessage } from "../src/editor-folders/queue";
-import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision } from "../src/editor-folders/mapping";
+import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision, retargetPendingEditorFolderMapping } from "../src/editor-folders/mapping";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -145,14 +145,89 @@ describe("Editor folder reconciliation", () => {
     expect(ops.created).toEqual([]);
   });
 
-  it("keeps the claimed folder after a reschedule", async () => {
+  it("keeps the claimed folder after a reschedule and says on the job that it was not moved", async () => {
     const data = await fixture();
     const ops = dependencies(data, {});
     const first = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
     await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
-    const again = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
-    expect(again?.rootPath).toBe(first?.rootPath);
+    const again = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
+    expect(again).toMatchObject({ status: "skipped", reason: "editor_folder_not_moved", mapping: { state: "ready", rootPath: first?.rootPath, shootDate: "2026-10-02" } });
+    expect(editorReconcileNote(again)).toBe(`editor_folder_not_moved: Shoot date changed from 2026-10-02 to 2027-01-15; the Editor tree is still at ${first?.rootPath}. The mapping cannot be re-pointed until moving Editor trees is supported, so leave the folder where it is; files keep syncing from the stored path`);
     expect(ops.created).toHaveLength(2);
+    // The same date again is a plain ready tree, and a date that is not a calendar date says nothing.
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-10-02' WHERE id = ?").bind(data.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped" });
+    await database.DB.prepare("UPDATE projects SET shoot_date = 'Thursday, 15 Jan, 2027' WHERE id = ?").bind(data.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped" });
+  });
+
+  it("leaves a hand-linked root alone after a reschedule", async () => {
+    const data = await fixture("2026-09-01");
+    const rootPath = `${EDITOR_ROOT}/${editorMonthFolderName("2026-09-01")}/${editorDayFolderName("2026-09-01")}/Legacy ${data.suffix}`;
+    const ops = dependencies(data, {});
+    const linked = await linkExistingEditorFolder(db, {
+      projectId: data.projectId, connectionId: data.connectionId, rootPath, shootDate: "2026-09-01", reviewed: true, reviewedBy: data.userId,
+      rootFolder: folder(rootPath, `id:legacy-${data.suffix}`),
+      inputRoots: [{ path: `${rootPath}/0. Input`, section: null, folderId: "id:input", metadata: folder(`${rootPath}/0. Input`, "id:input") }],
+      outputRoots: [{ path: `${rootPath}/1. Output`, section: null, folderId: "id:output", metadata: folder(`${rootPath}/1. Output`, "id:output") }],
+    });
+    expect(linked.state).toBe("ready");
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops })).toMatchObject({ status: "mapped", mapping: { rootPath } });
+  });
+
+  it("re-points a reserved tree that created nothing at the new day folder, and marks a held new root for review", async () => {
+    const data = await fixture();
+    const ops = dependencies(data, {});
+    const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+    expect(reserved.state).toBe("pending");
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
+    const outcome = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: data.suffix });
+    expect(outcome).toMatchObject({ status: "mapped", mapping: { state: "ready", shootDate: "2027-01-15", rootPath: newRoot, editingNotesPath: editorFolderChildPath(newRoot, EDITOR_NOTES_FOLDER) } });
+    expect((outcome as { mapping: { recoveryProof: { diagnostics: string[] } } }).mapping.recoveryProof.diagnostics.at(-1)).toBe(`Retargeted from ${reserved.rootPath} to ${newRoot} after the shoot date changed to 2027-01-15`);
+    expect(ops.created).toEqual([newRoot.split("/").slice(0, -2).join("/"), newRoot.split("/").slice(0, -1).join("/")]);
+    expect((await getEditorFolderMapping(db, data.projectId))?.rootPathKey).toBe(newRoot.toLowerCase());
+
+    // A root a crashed pass created but never recorded stays put instead of being orphaned.
+    const crashed = await fixture();
+    const crashedOps = dependencies(crashed, {});
+    const crashedReserved = await reserveEditorFolderMapping(db, { projectId: crashed.projectId, connectionId: crashed.connectionId, shootDate: "2026-10-02", projectFolderName: crashed.suffix });
+    crashedOps.metadata.set(crashedReserved.rootPath, folder(crashedReserved.rootPath, `id:unrecorded-${crashed.suffix}`));
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(crashed.projectId).run();
+    expect(await reconcileEditorFolderOutcome(env as never, crashed.projectId, { db, ...crashedOps })).toMatchObject({ status: "needs_review", mapping: { rootPath: crashedReserved.rootPath, shootDate: "2026-10-02" } });
+
+    const other = await fixture();
+    const otherOps = dependencies(other, {});
+    const held = await reserveEditorFolderMapping(db, { projectId: other.projectId, connectionId: other.connectionId, shootDate: "2026-10-02", projectFolderName: other.suffix });
+    const squatter = await fixture();
+    await reserveEditorFolderMapping(db, { projectId: squatter.projectId, connectionId: other.connectionId, shootDate: "2027-01-15", projectFolderName: other.suffix });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(other.projectId).run();
+    const conflict = await reconcileEditorFolderOutcome(env as never, other.projectId, { db, ...otherOps });
+    expect(conflict).toMatchObject({ status: "needs_review", reason: "Editor root for the new shoot date is already mapped to another Project", mapping: { id: held.id, rootPath: held.rootPath, shootDate: "2026-10-02" } });
+    expect(otherOps.created).toEqual([]);
+  });
+
+  it("re-reads the shoot date inside the lease, so a reschedule that lands mid-pass is not built under the old day", async () => {
+    const data = await fixture();
+    const ops = dependencies(data, {});
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: data.suffix });
+    // The connection lookup runs after the first Project read and before the reservation and lease: move the date there.
+    const outcome = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops, canonicalDropboxConnectionId: async () => {
+      await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(data.projectId).run();
+      return data.connectionId;
+    } });
+    expect(outcome).toMatchObject({ status: "mapped", mapping: { rootPath: newRoot, shootDate: "2027-01-15" } });
+  });
+
+  it("tells a lost retarget fence and a started tree apart from a held root", async () => {
+    const data = await fixture();
+    const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+    const lease = await acquireEditorFolderProvisionLease(db, reserved.id);
+    expect(await retargetPendingEditorFolderMapping(db, reserved.id, { shootDate: "2027-01-15", leaseToken: "not-the-lease" })).toEqual({ status: "stale" });
+    expect((await getEditorFolderMapping(db, data.projectId))?.shootDate).toBe("2026-10-02");
+    await recordEditorFolderProvision(db, reserved.id, { role: "root", path: reserved.rootPath, folderId: `id:root-${data.suffix}`, leaseToken: lease!.token });
+    expect(await retargetPendingEditorFolderMapping(db, reserved.id, { shootDate: "2027-01-15", leaseToken: lease!.token })).toEqual({ status: "started" });
   });
 
   it("fences concurrent provisioning and reserves a path for only one Project", async () => {

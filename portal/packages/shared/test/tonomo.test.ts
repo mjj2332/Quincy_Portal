@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { normaliseAddressKey, parseTonomoDisplayDate, parseTonomoOrder, TonomoParseError, tonomoOrderKey } from "../src/tonomo";
+import { isVerifiedTonomoShootDateSource, normaliseAddressKey, parseTonomoDisplayDate, parseTonomoOrder, TonomoParseError, tonomoOrderKey } from "../src/tonomo";
 
 const changedWebhookFixture = {
   action: "changed",
@@ -294,5 +294,18 @@ describe("parseTonomoOrder shootDate normalisation", () => {
       property_address: { timezone: "UTC" },
     });
     expect(order.shootDate).toBe("2026-09-16");
+  });
+
+  it("names where the shoot date came from, and trusts only sources that identify a calendar date", () => {
+    const source = (order: Record<string, unknown>) => parseTonomoOrder({ id: "source", street: "1 Test St", ...order }).shootDateSource;
+    expect(source({ when: { start_time: 1_789_516_800 }, property_address: { timezone: "UTC" } })).toBe("start_time");
+    expect(source({ shoot_date: "2026-09-17" })).toBe("iso");
+    expect(source({ shoot_date: "Thursday, 17 Sep, 2026" })).toBe("display");
+    expect(source({ shoot_date: "Monday, 17 Sep, 2026" })).toBe("text");
+    expect(source({ when: { start_time: 1_789_516_800 }, property_address: { timezone: "Not/AZone" }, date: "Thursday, 17 Sep, 2026" })).toBe("display");
+    expect(source({})).toBeNull();
+    expect(["start_time", "iso", "display"].every((value) => isVerifiedTonomoShootDateSource(value as never))).toBe(true);
+    expect(isVerifiedTonomoShootDateSource("text")).toBe(false);
+    expect(isVerifiedTonomoShootDateSource(null)).toBe(false);
   });
 });

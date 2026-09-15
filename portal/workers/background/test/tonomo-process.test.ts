@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { processTonomoEvent, type TonomoProcessDependencies } from "../src/tonomo/process";
+import { commitShootDateChange } from "../src/projects/shoot-date";
 import type { DropboxFile, DropboxFolder } from "../src/dropbox/client";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -72,11 +73,15 @@ describe("processTonomoEvent shootDate upgrade", () => {
       .toEqual({ shoot_date: "2026-09-17" });
   });
 
-  it("does not overwrite an already-canonical shoot date with a different canonical incoming value", async () => {
+  it("moves an already-canonical shoot date when the event's when.start_time names a different day, with a fenced audit row", async () => {
     const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
     await processEvent(orderId, { when: { start_time: 1_789_516_800 }, property_address: { timezone: "UTC" } });
     expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
-      .toEqual({ shoot_date: "2026-09-17" });
+      .toEqual({ shoot_date: "2026-09-16" });
+    const changed = await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>();
+    expect(changed.results).toHaveLength(1);
+    expect(changed.results[0]!.actor_id).toBeNull();
+    expect(JSON.parse(changed.results[0]!.meta_json)).toMatchObject({ actor: "tonomo", orderId, previousShootDate: "2026-09-17", shootDate: "2026-09-16", eventReceivedAt: expect.any(Number) });
   });
 
   it("upgrades a display shoot date when the event's only date is itself display text that now parses to ISO", async () => {
@@ -84,6 +89,78 @@ describe("processTonomoEvent shootDate upgrade", () => {
     await processEvent(orderId, { date: "Saturday, 14 Feb, 2026" });
     expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
       .toEqual({ shoot_date: "2026-02-14" });
+  });
+
+  it("moves a canonical shoot date from weekday-checked display text and from ISO text", async () => {
+    const display = await seedProject({ shootDate: "2026-09-17" });
+    await processEvent(display.orderId, { date: "Saturday, 14 Feb, 2026" });
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(display.projectId).first())
+      .toEqual({ shoot_date: "2026-02-14" });
+    const iso = await seedProject({ shootDate: "2026-09-17" });
+    await processEvent(iso.orderId, { shoot_date: "2026-09-18" });
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(iso.projectId).first())
+      .toEqual({ shoot_date: "2026-09-18" });
+  });
+
+  it("declines unparsed shoot date text against a canonical date, records why once, and moves nothing", async () => {
+    const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
+    await processEvent(orderId, { date: "Monday, 17 Sep, 2026" });
+    await processEvent(orderId, { date: "Monday, 17 Sep, 2026" });
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-17" });
+    const declined = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.shoot_date.declined'").bind(projectId).all<{ meta_json: string }>();
+    expect(declined.results).toHaveLength(1);
+    expect(JSON.parse(declined.results[0]!.meta_json)).toEqual({
+      actor: "tonomo", orderId, storedShootDate: "2026-09-17", incomingShootDate: "Monday, 17 Sep, 2026",
+      reason: "incoming shoot date is unparsed text, not a verified calendar date; keeping stored date",
+    });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).first())
+      .toEqual({ count: 0 });
+  });
+
+  it("ignores a redelivered older event whose date predates the last accepted change", async () => {
+    const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
+    await processEvent(orderId, { shoot_date: "2026-09-20" });
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-20" });
+    const staleId = crypto.randomUUID();
+    const stalePayload = JSON.stringify({ id: orderId, street: "Tonomo shoot date test", shoot_date: "2026-09-18" });
+    await database.DB.prepare(
+      "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)",
+    ).bind(staleId, `event-${staleId}`, stalePayload, Date.now() - 60_000).run();
+    await processTonomoEvent(env, { id: staleId, payloadJson: stalePayload });
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-20" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).first())
+      .toEqual({ count: 1 });
+    expect(await database.DB.prepare("SELECT status FROM webhook_events WHERE id = ?").bind(staleId).first())
+      .toEqual({ status: "processed" });
+  });
+
+  it("writes neither the date nor an audit row when the stored date changed after the processor read it", async () => {
+    const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-09-25' WHERE id = ?").bind(projectId).run();
+    expect(await commitShootDateChange(env as never, { projectId, orderId, previous: "2026-09-17", next: "2026-09-18", receivedAt: new Date() })).toBe(false);
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-25" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).first())
+      .toEqual({ count: 0 });
+  });
+
+  it("still applies a newer event processed after an older one, because the guard compares receipt times", async () => {
+    const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
+    const store = async (date: string, receivedAt: number) => {
+      const id = crypto.randomUUID();
+      const payloadJson = JSON.stringify({ id: orderId, street: "Tonomo shoot date test", shoot_date: date });
+      await database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)").bind(id, `event-${id}`, payloadJson, receivedAt).run();
+      return { id, payloadJson };
+    };
+    const older = await store("2026-09-18", Date.now() - 120_000);
+    const newer = await store("2026-09-19", Date.now() - 60_000);
+    await processTonomoEvent(env, older);
+    await processTonomoEvent(env, newer);
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-19" });
   });
 
   it("does not let a shoot date event overwrite another already-set snapshot field", async () => {
