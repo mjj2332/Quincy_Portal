@@ -2070,3 +2070,20 @@ a trigger inside a taller anchor (the bell inside the rail), the callback has to
 `getBoundingClientRect()` itself. Happy-dom lays nothing out, so the DOM test can prove the callback
 runs and reads the trigger's rect, and the arithmetic is a pure exported function with its own
 tests; the pixel result is a browser check.
+
+## Editor Dropbox child folders renamed to `0. Input`/`1. Output` (2026-09-15)
+
+Portal-created Editor child folders are now `0. Input` and `1. Output` (was `Input`/`Output`), so
+they sort ahead of `Editing Notes`. The names are the `EDITOR_INPUT_FOLDER`/`EDITOR_OUTPUT_FOLDER`
+constants in `workers/background/src/editor-folders/paths.ts`, consumed by the scaffold
+(`editor-folders/scaffold.ts`) when it creates a new tree. Reviewed linking recognises both the
+plain legacy spelling and the numbered one via the exported `EDITOR_INPUT_NAME_PATTERN` /
+`EDITOR_OUTPUT_NAME_PATTERN`; established mappings are never renamed to match, in Dropbox or in
+the stored path.
+
+Cutover risk: a mapping sitting in state `pending` mid-provision when this deploys would strict-
+create the newly numbered child beside a plain `Input`/`Output` it had already created in a prior
+attempt — `existingChildId` matches on the exact persisted path, not the pattern, so a half-created
+tree does not get recognised as already having its child. Deploy this only while no mapping is
+`pending`, and while `EDITOR_AUTOCREATE_AFTER_MS` is still `"0"` so nothing can be provisioning
+unattended during the rollout.

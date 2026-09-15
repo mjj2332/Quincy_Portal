@@ -223,6 +223,8 @@ describe("Editor folder reconciliation", () => {
     expect(mapping?.rootFolderId).toMatch(/^id:root-/);
     expect(mapping?.inputRoots).toHaveLength(1);
     expect(mapping?.outputRoots).toHaveLength(1);
+    expect(mapping?.inputRoots[0]?.path.endsWith("/0. Input")).toBe(true);
+    expect(mapping?.outputRoots[0]?.path.endsWith("/1. Output")).toBe(true);
     expect(mapping?.editingNotesFolderId).toMatch(/^id:editing notes-/);
   });
 
@@ -244,7 +246,7 @@ describe("Editor folder reconciliation", () => {
     const pending = await getEditorFolderMapping(db, data.projectId);
     expect(pending?.state).toBe("pending");
     expect(pending?.rootFolderId).toMatch(/^id:root-/);
-    expect(pending?.inputRoots[0]?.folderId).toMatch(/^id:input-/);
+    expect(pending?.inputRoots[0]?.folderId).toMatch(/^id:0\. input-/);
     const resumed = await reconcileEditorFolder(env as never, data.projectId, { db, ...ops });
     expect(resumed?.state).toBe("ready");
   });
