@@ -441,23 +441,35 @@ export type MarkEditorNeedsReviewInput = {
 };
 
 /**
+ * Why a retarget did not happen: `held` means another mapping owns the new root, `started` means
+ * this mapping already recorded a Dropbox folder (its tree stays where it is), and `stale` means
+ * the mapping changed under the caller's lease, so the caller re-reads rather than concluding.
+ */
+export type RetargetEditorFolderResult =
+  | { status: "retargeted"; mapping: EditorFolderMapping }
+  | { status: "held"; rootPath: string }
+  | { status: "started" }
+  | { status: "stale" };
+
+/**
  * Re-points a pending mapping that has created nothing in Dropbox yet at the root its Project's
- * current shoot date derives to. Fenced on state, lease, no recorded root folder and the old key,
- * so a mapping that already provisioned keeps its tree (moving a tree is a separate, deliberate
- * operation). Returns null when the fence lost or the new key is held by another mapping.
+ * current shoot date derives to. Fenced in SQL on state, lease, no recorded root folder, no
+ * recorded created folder and the old key, so a mapping that already provisioned keeps its tree
+ * (moving a tree is a separate, deliberate operation).
  */
 export async function retargetPendingEditorFolderMapping(
   db: Database,
   mappingId: string,
   input: { shootDate: string; leaseToken: string; at?: Date },
-): Promise<EditorFolderMapping | null> {
+): Promise<RetargetEditorFolderResult> {
   const current = await getEditorFolderMappingById(db, mappingId);
-  if (!current || current.state !== "pending" || current.rootFolderId || (current.recoveryProof?.created.length ?? 0) > 0) return null;
+  if (!current || current.state !== "pending") return { status: "stale" };
+  if (current.rootFolderId || (current.recoveryProof?.created.length ?? 0) > 0) return { status: "started" };
   parseShootDate(input.shootDate);
   const rootPath = editorFolderPath({ shootDate: input.shootDate, projectFolderName: current.projectFolderName });
   const rootPathKey = editorFolderPathKey(rootPath);
   const holder = await findEditorFolderMappingByPath(db, { connectionId: current.connectionId, path: rootPath });
-  if (holder && holder.id !== mappingId) return null;
+  if (holder && holder.id !== mappingId) return { status: "held", rootPath };
   const at = input.at ?? new Date();
   const proof = nextProof(current, {
     rootPath,
@@ -472,13 +484,16 @@ export async function retargetPendingEditorFolderMapping(
           recovery_proof_json = ${JSON.stringify(proof)}, updated_at = ${at.getTime()}
       WHERE id = ${mappingId} AND state = 'pending' AND provision_lease_token = ${input.leaseToken}
         AND root_folder_id IS NULL AND root_path_key = ${current.rootPathKey}
+        AND COALESCE(json_array_length(recovery_proof_json, '$.created'), 0) = 0
     `);
-    if ((result.meta?.changes ?? 0) !== 1) return null;
+    if ((result.meta?.changes ?? 0) !== 1) return { status: "stale" };
   } catch (error) {
-    if (isUniqueConflict(error)) return null;
+    // Another mapping reserved the new root between the holder read and this write.
+    if (isUniqueConflict(error)) return { status: "held", rootPath };
     throw error;
   }
-  return getEditorFolderMappingById(db, mappingId);
+  const mapping = await getEditorFolderMappingById(db, mappingId);
+  return mapping ? { status: "retargeted", mapping } : { status: "stale" };
 }
 
 export async function markEditorFolderNeedsReview(

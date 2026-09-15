@@ -435,11 +435,11 @@ function outcomeFor(mapping: EditorFolderMapping): EditorReconcileOutcome {
 }
 
 /**
- * The day-folder change a verified reschedule implies for a Portal-derived mapping, or null when the
+ * The stored and current shoot dates of a Portal-derived mapping whose day folder no longer matches, or null when the
  * dates agree, the Project's date is not a calendar date, or an operator linked the root by hand
  * (a hand-linked path is theirs, whatever the date says).
  */
-function rescheduledDayFolder(
+function shootDateDrift(
   mapping: EditorFolderMapping,
   projectShootDate: string | null,
 ): { previous: string; next: string } | null {
@@ -494,7 +494,7 @@ export async function reconcileEditorFolderOutcome(
   if (mapping?.state === "ready") {
     // A ready tree stays where it is when the shoot date moves: the move lands with the
     // reschedule-move change. Until then say so on the job instead of reporting "mapped".
-    const reschedule = rescheduledDayFolder(mapping, project.shootDate);
+    const reschedule = shootDateDrift(mapping, project.shootDate);
     if (reschedule) {
       return skipped("editor_folder_not_moved", `Shoot date changed from ${reschedule.previous} to ${reschedule.next}; the Editor tree is still at ${mapping.rootPath}. Moving it lands with the reschedule-move change; until then move the folder by hand and link the new path if the day matters`, mapping);
     }
@@ -567,15 +567,16 @@ export async function reconcileEditorFolderOutcome(
     if (!stillProvisionable) return settled("project_not_provisionable", "Project lost its active photographer, was archived or was delivered after the tree was reserved", mapping);
     // A pending mapping that has created nothing yet follows a verified reschedule to the new day
     // folder; once anything exists in Dropbox the tree stays put (see the ready branch above).
-    const pendingReschedule = mapping.rootFolderId ? null : rescheduledDayFolder(mapping, project.shootDate);
+    const pendingReschedule = mapping.rootFolderId ? null : shootDateDrift(mapping, project.shootDate);
     if (pendingReschedule) {
-      const retargeted = await retargetPendingEditorFolderMapping(db, mapping.id, { shootDate: pendingReschedule.next, leaseToken: lease.token, at: now() });
-      if (!retargeted) {
-        const newRoot = editorFolderPath({ shootDate: pendingReschedule.next, projectFolderName: mapping.projectFolderName });
-        mapping = await markConflict(db, mapping, lease.token, "root", newRoot, "Editor root for the new shoot date is already mapped to another Project");
+      const retarget = await retargetPendingEditorFolderMapping(db, mapping.id, { shootDate: pendingReschedule.next, leaseToken: lease.token, at: now() });
+      if (retarget.status === "held") {
+        mapping = await markConflict(db, mapping, lease.token, "root", retarget.rootPath, "Editor root for the new shoot date is already mapped to another Project");
         return outcomeFor(mapping);
       }
-      mapping = retargeted;
+      if (retarget.status === "stale") return settled("provision_lease_held", "The mapping changed while this pass was re-pointing it at the new shoot date; the next pass re-reads it", mapping);
+      // "started" keeps the stored root: the tree is finished where it began and reported as not moved.
+      if (retarget.status === "retargeted") mapping = retarget.mapping;
     }
     const monthPath = mapping.rootPath.split("/").slice(0, -2).join("/");
     const dayPath = mapping.rootPath.split("/").slice(0, -1).join("/");

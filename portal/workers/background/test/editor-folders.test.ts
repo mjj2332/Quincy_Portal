@@ -17,7 +17,7 @@ import {
 } from "../src/editor-folders/paths";
 import { editorReconcileNote, reconcileEditorFolder, reconcileEditorFolderOutcome } from "../src/editor-folders/scaffold";
 import { handleEditorReconcileMessage } from "../src/editor-folders/queue";
-import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision } from "../src/editor-folders/mapping";
+import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision, retargetPendingEditorFolderMapping } from "../src/editor-folders/mapping";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -198,6 +198,16 @@ describe("Editor folder reconciliation", () => {
     const conflict = await reconcileEditorFolderOutcome(env as never, other.projectId, { db, ...otherOps });
     expect(conflict).toMatchObject({ status: "needs_review", reason: "Editor root for the new shoot date is already mapped to another Project", mapping: { id: held.id, rootPath: held.rootPath, shootDate: "2026-10-02" } });
     expect(otherOps.created).toEqual([]);
+  });
+
+  it("tells a lost retarget fence and a started tree apart from a held root", async () => {
+    const data = await fixture();
+    const reserved = await reserveEditorFolderMapping(db, { projectId: data.projectId, connectionId: data.connectionId, shootDate: "2026-10-02", projectFolderName: data.suffix });
+    const lease = await acquireEditorFolderProvisionLease(db, reserved.id);
+    expect(await retargetPendingEditorFolderMapping(db, reserved.id, { shootDate: "2027-01-15", leaseToken: "not-the-lease" })).toEqual({ status: "stale" });
+    expect((await getEditorFolderMapping(db, data.projectId))?.shootDate).toBe("2026-10-02");
+    await recordEditorFolderProvision(db, reserved.id, { role: "root", path: reserved.rootPath, folderId: `id:root-${data.suffix}`, leaseToken: lease!.token });
+    expect(await retargetPendingEditorFolderMapping(db, reserved.id, { shootDate: "2027-01-15", leaseToken: lease!.token })).toEqual({ status: "started" });
   });
 
   it("fences concurrent provisioning and reserves a path for only one Project", async () => {

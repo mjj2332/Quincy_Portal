@@ -33,6 +33,8 @@ export async function commitShootDateChange(env: Env, change: ShootDateChange): 
       "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'project.shoot_date.changed', 'project', ?, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND shoot_date = ? AND updated_at = ?)",
     ).bind(crypto.randomUUID(), change.projectId, meta, at, change.projectId, change.next, at),
   ]);
+  // A lost fence is not retried: either a newer webhook already moved the date, or another writer
+  // changed shoot_date since the processor read it, and the next Tonomo event re-evaluates both.
   if ((result?.meta.changes ?? 0) === 0) {
     console.log("Shoot date change lost the fence; a newer change or another writer landed first", { projectId: change.projectId, orderId: change.orderId });
     return false;
@@ -41,8 +43,8 @@ export async function commitShootDateChange(env: Env, change: ShootDateChange): 
 }
 
 /**
- * Records why an incoming Tonomo shoot date was not adopted. Idempotent on (project, incoming
- * date, reason) so a redelivered webhook adds no row; never fails the webhook.
+ * Records why an incoming Tonomo shoot date was not adopted. Idempotent on (project, stored
+ * date, incoming date, reason) so a redelivered webhook adds no row; never fails the webhook.
  */
 export async function recordShootDateDecline(env: Env, input: { projectId: string; orderId: string; stored: string; incoming: string; reason: string }): Promise<void> {
   const meta = JSON.stringify({ actor: "tonomo", orderId: input.orderId, storedShootDate: input.stored, incomingShootDate: input.incoming, reason: input.reason });
@@ -51,8 +53,9 @@ export async function recordShootDateDecline(env: Env, input: { projectId: strin
      SELECT ?, NULL, 'project.shoot_date.declined', 'project', ?, ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM audit_log WHERE action = 'project.shoot_date.declined' AND target_type = 'project' AND target_id = ?
-         AND json_extract(meta_json, '$.incomingShootDate') = ? AND json_extract(meta_json, '$.reason') = ?
+         AND json_extract(meta_json, '$.storedShootDate') = ? AND json_extract(meta_json, '$.incomingShootDate') = ?
+         AND json_extract(meta_json, '$.reason') = ?
      )`,
-  ).bind(crypto.randomUUID(), input.projectId, meta, Date.now(), input.projectId, input.incoming, input.reason).run()
+  ).bind(crypto.randomUUID(), input.projectId, meta, Date.now(), input.projectId, input.stored, input.incoming, input.reason).run()
     .catch((error) => console.error("Shoot date decline audit failed", { projectId: input.projectId, error: errorMessage(error) }));
 }

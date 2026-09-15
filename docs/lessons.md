@@ -2152,9 +2152,9 @@ day Editor auto-creation went live. For 12 of them Tonomo's later webhooks carri
 
 **Cause:** Tonomo's path encodes the assigned photographer and the shoot date
 (`/tonomo/raw files/<photographer>/<dd-mm-yyyy>/<address>`), so it changes on reassignment or
-reschedule. `updateProject` in `tonomo/process.ts` only null-filled `rawFolderPath` (and still
-freezes `shootDate` the same way). Tonomo also sometimes recomputes the string without moving the
-folder (Rosemont: folder and 67 assets at the stored path, Tonomo reporting another), so blindly
+reschedule. `updateProject` in `tonomo/process.ts` only null-filled `rawFolderPath` (a canonical
+`shootDate` was frozen the same way until PR-D1, see the reschedule entry below). Tonomo also
+sometimes recomputes the string without moving the folder (Rosemont: folder and 67 assets at the stored path, Tonomo reporting another), so blindly
 accepting the newer path would have broken a working project.
 
 **Fix:** a differing incoming path is adopted only after `get_metadata` confirms it is a folder,
@@ -2216,10 +2216,12 @@ from noise because the parsed order did not say where its date came from.
 **Fix:** `parseTonomoOrder` now returns `shootDateSource` (`start_time`, `iso`, weekday-checked
 `display`, or `text`). A verified source moves the date through one fenced D1 batch
 (`projects/shoot-date.ts`): the UPDATE is guarded on the date the processor read and on no
-`project.shoot_date.changed` audit whose `eventReceivedAt` is later than this event's `received_at` (receipt time, not processing time, or a lagging newer event would be refused), and the audit INSERT fires
-only if that UPDATE landed. `text` is declined and audited once. The Editor tree is not moved: a
-ready mapping reports `editor_folder_not_moved`, and a pending mapping that created nothing is
-re-pointed inside its provisioning lease.
+`project.shoot_date.changed` audit whose `eventReceivedAt` is later than this event's `received_at`
+(receipt time, not processing time, or a lagging newer event would be refused), and the audit INSERT
+fires only if that UPDATE landed. `text` is declined and audited once. The guard only sees changes
+it recorded: a date set at creation or by the display-to-ISO upgrade has no receipt time to compare.
+The Editor tree is not moved: a ready mapping reports `editor_folder_not_moved`, and a pending
+mapping that created nothing is re-pointed inside its provisioning lease.
 
 **Rule:** a field that is "never overwritten" needs a provenance tag before it can be safely
 overwritten; fence the write on both the value read and the event's age, since webhook redelivery

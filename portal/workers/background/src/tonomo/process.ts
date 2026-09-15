@@ -251,7 +251,7 @@ async function updateProject(env: Env, project: Project, linkedByAddress: boolea
       console.error("AutoHDR scaffold trigger failed", { projectId: project.id, error }));
   }
   if (reschedule) {
-    if (isVerifiedTonomoShootDateSource(order.shootDateSource) && isCanonicalCalendarDate(reschedule.next)) {
+    if (isVerifiedTonomoShootDateSource(order.shootDateSource)) {
       // applyOrder enqueues the Editor reconcile after this returns; that pass records what the
       // date change means for an existing Editor tree.
       await commitShootDateChange(env, { projectId: project.id, previous: reschedule.previous, next: reschedule.next, orderId: order.orderId, receivedAt: context.receivedAt });

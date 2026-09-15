@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { processTonomoEvent, type TonomoProcessDependencies } from "../src/tonomo/process";
+import { commitShootDateChange } from "../src/projects/shoot-date";
 import type { DropboxFile, DropboxFolder } from "../src/dropbox/client";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -134,6 +135,16 @@ describe("processTonomoEvent shootDate upgrade", () => {
       .toEqual({ count: 1 });
     expect(await database.DB.prepare("SELECT status FROM webhook_events WHERE id = ?").bind(staleId).first())
       .toEqual({ status: "processed" });
+  });
+
+  it("writes neither the date nor an audit row when the stored date changed after the processor read it", async () => {
+    const { projectId, orderId } = await seedProject({ shootDate: "2026-09-17" });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-09-25' WHERE id = ?").bind(projectId).run();
+    expect(await commitShootDateChange(env as never, { projectId, orderId, previous: "2026-09-17", next: "2026-09-18", receivedAt: new Date() })).toBe(false);
+    expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .toEqual({ shoot_date: "2026-09-25" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).first())
+      .toEqual({ count: 0 });
   });
 
   it("still applies a newer event processed after an older one, because the guard compares receipt times", async () => {
