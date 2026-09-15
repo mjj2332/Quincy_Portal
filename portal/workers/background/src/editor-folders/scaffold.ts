@@ -340,7 +340,7 @@ async function resolveRawIdentity(
 ): Promise<RawIdentity | RawIdentitySkip> {
   const storedPath = project.rawFolderPath;
   const rawFolderPath = storedPath || await operations.resolveRawFolderPath(env, project.rawFolderLink, connectionId);
-  if (!rawFolderPath) return { skip: "raw_identity_unavailable", detail: "No Tonomo RAW folder path or shared link is stored on the Project" };
+  if (!rawFolderPath) return { skip: "raw_identity_unavailable", detail: "The Project has no Tonomo RAW folder path, and its RAW shared link (if any) does not resolve to a Dropbox path" };
   const tonomoMetadata = await getExactMetadata(env, db, operations.getMetadata, rawFolderPath, connectionId);
   if (isFolder(tonomoMetadata)) {
     return {
@@ -417,10 +417,16 @@ export async function reconcileEditorFolder(
   return (await reconcileEditorFolderOutcome(env, projectId, dependencies)).mapping;
 }
 
-/** A mapping that is not pending is the pass's result: ready is mapped, a conflict is needs_review. */
+/**
+ * The pass's result from the mapping it ends with: ready is mapped, a conflict is needs_review,
+ * and a mapping still pending here means a lease-fenced write lost to another pass, never a tree.
+ */
 function outcomeFor(mapping: EditorFolderMapping): EditorReconcileOutcome {
   if (mapping.state === "needs_review") {
     return { status: "needs_review", mapping, reason: mapping.recoveryProof?.conflict?.reason ?? mapping.recoveryProof?.lastError ?? "Editor folder mapping needs operator review" };
+  }
+  if (mapping.state === "pending") {
+    return { status: "skipped", mapping, reason: "provision_lease_held", detail: "Another reconcile changed the mapping while this pass held the provisioning lease; the next pass finishes it" };
   }
   return { status: "mapped", mapping };
 }

@@ -15,7 +15,7 @@ import {
   editorMonthFolderName,
   isValidShootDate,
 } from "../src/editor-folders/paths";
-import { reconcileEditorFolder, reconcileEditorFolderOutcome } from "../src/editor-folders/scaffold";
+import { editorReconcileNote, reconcileEditorFolder, reconcileEditorFolderOutcome } from "../src/editor-folders/scaffold";
 import { handleEditorReconcileMessage } from "../src/editor-folders/queue";
 import { getEditorFolderMapping, reserveEditorFolderMapping, acquireEditorFolderProvisionLease, linkExistingEditorFolder, recordEditorFolderProvision } from "../src/editor-folders/mapping";
 
@@ -478,6 +478,13 @@ describe("editor_reconcile queue consumer", () => {
     return id;
   }
   const jobRow = (id: string) => database.DB.prepare("SELECT status, error FROM jobs WHERE id = ?").bind(id).first<{ status: string; error: string | null }>();
+
+  it("formats every non-ready outcome as a prefixed note and nothing for a ready tree", () => {
+    const mapping = { state: "ready" } as never;
+    expect(editorReconcileNote({ status: "mapped", mapping })).toBeUndefined();
+    expect(editorReconcileNote({ status: "needs_review", mapping, reason: "An existing Dropbox project folder requires explicit operator review" })).toBe("needs_review: An existing Dropbox project folder requires explicit operator review");
+    expect(editorReconcileNote({ status: "skipped", mapping: null, reason: "raw_outside_root", detail: "RAW folder now lives elsewhere" })).toBe("raw_outside_root: RAW folder now lives elsewhere");
+  });
 
   it("records why a pass created no tree on a done job, and keeps failures and disabled automation as failed", async () => {
     const data = await fixture();

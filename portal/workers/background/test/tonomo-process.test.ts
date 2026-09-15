@@ -183,6 +183,10 @@ describe("processTonomoEvent RAW folder path update", () => {
       .toEqual({ count: 0 });
     const declined = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_type = 'project' AND target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first<{ meta_json: string }>();
     expect(JSON.parse(declined!.meta_json)).toMatchObject({ actor: "tonomo", orderId, storedPath: STORED_RAW_FOLDER_PATH, incomingPath: NEWER_RAW_FOLDER_PATH, reason: "Tonomo path not found in Dropbox; keeping stored path" });
+    // A redelivered webhook with the same path and reason adds no second audit row.
+    await processEvent(orderId, { rawFolderPath: NEWER_RAW_FOLDER_PATH }, { getMetadata });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.raw_folder_path.declined'").bind(projectId).first())
+      .toEqual({ count: 1 });
   });
 
   it("keeps the stored path when Tonomo's newer path exists but is a file, not a folder", async () => {

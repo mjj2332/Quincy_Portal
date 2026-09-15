@@ -29,7 +29,7 @@ export async function handleEditorReconcileMessage(env: Env, body: { projectId: 
   await setJobStatus(db, body.jobId, "running");
   try {
     if (!await editorAutoCreationAllowed(env, body.projectId)) {
-      await setJobStatus(db, body.jobId, "done", reconcileNote("autocreate_not_allowed", "Project predates EDITOR_AUTOCREATE_AFTER_MS and has no mapping"));
+      await setJobStatus(db, body.jobId, "done", reconcileNote("autocreate_not_allowed", "Automatic creation does not apply: the Project has no mapping and either predates EDITOR_AUTOCREATE_AFTER_MS, that cutoff is unset, or the Project no longer exists"));
       return;
     }
     await setJobStatus(db, body.jobId, "done", editorReconcileNote(await reconcileEditorFolderOutcome(env, body.projectId)));
