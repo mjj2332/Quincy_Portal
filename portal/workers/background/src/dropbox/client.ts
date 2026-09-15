@@ -85,6 +85,9 @@ export type DropboxDeleteBatchCheckResult = DropboxDeleteBatchCompleteResult | {
 
 export class DropboxCursorResetError extends Error {}
 
+/** A metadata lookup for a path that does not exist: a fact about the path, not the connection. */
+export class DropboxPathNotFoundError extends Error {}
+
 export class DropboxRateLimitError extends Error {
   constructor(message: string, readonly retryAfterSeconds: number | undefined) {
     super(message);
@@ -531,6 +534,12 @@ async function authorisedJson(
       if (endpoint === "/files/list_folder/continue" && response.status === 409 && /\breset\b/i.test(body)) {
         throw new DropboxCursorResetError(`Dropbox cursor reset: ${body}`);
       }
+      if (endpoint === "/files/get_metadata" && response.status === 409 && /\bpath\/not_found\b/i.test(body)) {
+        // Asking whether a path exists is how callers learn that it does not (a moved Tonomo RAW
+        // folder, a root not yet created). It says nothing about the connection, so it is thrown
+        // for the caller to judge and never written to the connection's sticky last_error.
+        throw new DropboxPathNotFoundError(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
+      }
       if (response.status === 429) {
         const retryAfter = retryAfterSeconds(response, body);
         throw new DropboxRateLimitError(rateLimitMessage(endpoint, retryAfter, body), retryAfter);
@@ -539,7 +548,7 @@ async function authorisedJson(
     }
     return await response.json() as unknown;
   } catch (error) {
-    if (error instanceof DropboxCursorResetError) throw error;
+    if (error instanceof DropboxCursorResetError || error instanceof DropboxPathNotFoundError) throw error;
     await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
   }
