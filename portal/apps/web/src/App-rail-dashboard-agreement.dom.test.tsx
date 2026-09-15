@@ -1,4 +1,4 @@
-import { act, StrictMode } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE } from "@quincy/shared";
@@ -35,16 +35,63 @@ vi.mock("./lib/auth", () => ({
 }));
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
+const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
+const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 vi.mock("./lib/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("./lib/api")>(),
   apiGet: (path: string) => apiGetMock(path),
+  apiPut: (path: string, body: unknown) => apiPutMock(path, body),
+  apiPost: (path: string, body: unknown) => apiPostMock(path, body),
 }));
+
+// #152: a per-test flag, defaulting off, so the Board's own DnD (rather than the street-listing
+// stub every other test in this file relies on) is reachable for the drag scenarios below without
+// touching the existing tests, which never turn it on.
+const realBoardEnabled = vi.hoisted(() => ({ value: false }));
+// Stage list is `[]` by default (unchanged from before #152 — nothing in this file reads it), and
+// widened only for the drag scenarios, which need two real Stages to drag between.
+const stagesFixture = vi.hoisted(() => ({ value: [] as Array<{ key: string; label: string; displayOrder: number; active: boolean }> }));
+// Captures the real `DndContext` a real Board renders — the technique `board.dom.test.tsx` and
+// `Dashboard-stage-interactions.dom.test.tsx` use, since happy-dom cannot exercise real
+// PointerSensor/KeyboardSensor activation.
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ props: Record<string, unknown> }> }));
+// A drop trigger's dropped-onto deadline event, present only when a Calendar-drop scenario needs
+// the range response to carry one — every other test's response keeps its original empty `events`.
+const calendarEventFixture = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  return {
+    ...actual,
+    DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
+      dnd.handlers.push({ props: props as unknown as Record<string, unknown> });
+      return createElement(actual.DndContext, props);
+    },
+  };
+});
+vi.mock("@dnd-kit/sortable", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/sortable")>();
+  return { ...actual, SortableContext: (props: Parameters<typeof actual.SortableContext>[0]) => createElement(actual.SortableContext, props) };
+});
 
 // Heavy children, same reasoning as `Dashboard-calendar.dom.test.tsx`: this file is about the
 // rail/Dashboard AGREEMENT, not the Board's DnD or the Calendar's own surface, so each is a stub
-// that leaves an unambiguous marker in the DOM for the "which view actually rendered" checks below.
-vi.mock("./components/kanban2/board", () => ({ ProjectKanbanBoard2: (props: { projects?: Array<{ street?: string }> }) => <div data-testid="dashboard-board">{props.projects?.map((project) => project.street).join(", ")}</div> }));
-vi.mock("./components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: () => <div data-testid="dashboard-calendar-surface" /> }));
+// that leaves an unambiguous marker in the DOM for the "which view actually rendered" checks below
+// — except the Board, which `realBoardEnabled` swaps for the genuine component so the drag
+// scenarios below have a real `DndContext` to capture.
+vi.mock("./components/kanban2/board", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./components/kanban2/board")>();
+  return {
+    ProjectKanbanBoard2: (props: Record<string, unknown>) => realBoardEnabled.value
+      ? createElement(actual.ProjectKanbanBoard2, props as never)
+      : <div data-testid="dashboard-board">{(props.projects as Array<{ street?: string }> | undefined)?.map((project) => project.street).join(", ")}</div>,
+  };
+});
+vi.mock("./components/ProductionCalendarSurface", () => ({
+  ProductionCalendarSurface: (props: { eventDrop?: (arg: unknown) => void; events?: Array<{ extendedProps?: unknown }> }) => <div data-testid="dashboard-calendar-surface">
+    <button type="button" data-testid="dashboard-calendar-drop" onClick={() => props.eventDrop?.({ event: { allDay: true, start: new Date("2026-09-20T00:00:00.000Z"), startStr: "2026-09-20", extendedProps: props.events?.[0]?.extendedProps }, revert: vi.fn() })}>Drop Deadline</button>
+  </div>,
+}));
 vi.mock("./components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 // `Dashboard` navigates to a project by pushing a location; the real `ProjectWorkspace` fetches
 // its own project graph, which is out of scope for a rail/Dashboard agreement check — a stub with
@@ -54,6 +101,7 @@ vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: () => <main>Pro
 import App from "./App";
 import { readDashboardView, subscribeDashboardView } from "./lib/dashboard-view-store";
 import { locationStore, staffPathFor } from "./lib/router";
+import { confirmStore } from "./lib/confirm";
 
 let root: Root | null = null;
 
@@ -75,6 +123,26 @@ function projectsResponse(street: string, id: string) {
  * one: the requested date is "today" by default (`initializeDashboardCalendarState`'s Sydney-today
  * fallback), which this file does not otherwise control.
  */
+/**
+ * A single draggable Project Deadline, present only while `calendarEventFixture.enabled` — the
+ * #152 Calendar-drop scenarios drop it; every other test in this file keeps the original empty
+ * `events` array.
+ */
+function calendarDeadlineEvent() {
+  return {
+    id: "project-deadline:one",
+    kind: "project_deadline" as const,
+    title: "Deadline",
+    project: { id: ACTIVE_PROJECT_ID, street: "1 Active Street", stageKey: "awaiting_raw" as const, checklist: { completed: 0, total: 0 }, delivered: false },
+    timing: { allDay: true, start: "2026-09-10", end: null },
+    status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
+    permissions: { canDrag: true, canResize: false },
+    deadlineLocalCivil: "2026-09-10T09:00",
+    deadlineVersion: 1,
+    reminderOffsetsMinutes: [],
+  };
+}
+
 function calendarRangeResponse(path: string) {
   const params = new URLSearchParams(path.split("?", 2)[1] ?? "");
   return adminProductionCalendarRangeResponseSchema.parse({
@@ -86,7 +154,7 @@ function calendarRangeResponse(path: string) {
       zone: PRODUCTION_CALENDAR_ZONE,
       appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
-    events: [],
+    events: calendarEventFixture.enabled ? [calendarDeadlineEvent()] : [],
     unscheduled: [],
     filterFacets: { projects: [], people: [], myTasksUserId: "00000000-0000-4000-8000-000000000000", unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
   });
@@ -144,9 +212,15 @@ beforeEach(async () => {
   window.localStorage.clear();
   setViewportWidth(1024);
   apiGetMock.mockReset();
+  apiPutMock.mockReset();
+  apiPostMock.mockReset();
+  realBoardEnabled.value = false;
+  stagesFixture.value = [];
+  calendarEventFixture.enabled = false;
+  dnd.handlers.length = 0;
   apiGetMock.mockImplementation((path: string) => {
     if (path.startsWith("/api/notifications")) return Promise.resolve({ notifications: [], unreadCount: 0 });
-    if (path.startsWith("/api/stages")) return Promise.resolve({ stages: [] });
+    if (path.startsWith("/api/stages")) return Promise.resolve({ stages: stagesFixture.value });
     if (path.startsWith("/api/production-calendar")) return Promise.resolve(calendarRangeResponse(path));
     if (path.startsWith("/api/projects")) return Promise.resolve(path.includes("archived=1") ? projectsResponse("9 Archived Street", ARCHIVED_PROJECT_ID) : projectsResponse("1 Active Street", ACTIVE_PROJECT_ID));
     return Promise.reject(new Error(`unhandled apiGet path in App-rail-dashboard-agreement.dom.test.tsx: ${path}`));
@@ -157,6 +231,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // A test that fails mid-drop can leave a request queued — never let it bleed into the next test.
+  while (confirmStore.getSnapshot()) confirmStore.resolve(false);
   if (root) await act(async () => root!.unmount());
   root = null;
   document.body.replaceChildren();
@@ -266,6 +342,28 @@ function lastBreadcrumbSegment(host: ParentNode): string | null {
 
 function currentUrl() {
   return `${window.location.pathname}${window.location.search}`;
+}
+
+/** One of the Dashboard's own "List"/"Kanban"/"Calendar" segmented-control buttons — `disabled`
+ * reflects `interactionBlocked || calendarInteractionBlocked` directly (`screens/Dashboard.tsx`). */
+function viewButton(host: ParentNode, label: "List" | "Kanban" | "Calendar"): HTMLButtonElement | undefined {
+  return findByText([...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')], label);
+}
+
+// Two active Stages — enough for a cross-Stage drag between the single fixture project's own
+// Stage ("awaiting_raw") and an adjacent, empty one.
+const TWO_STAGES = [
+  { key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 1, active: true },
+  { key: "raw_review", label: "RAW review", displayOrder: 2, active: true },
+];
+
+/** Fires the real Board's captured `DndContext.onDragStart` — the technique `board.dom.test.tsx`
+ * and `Dashboard-stage-interactions.dom.test.tsx` use, since happy-dom cannot exercise real
+ * PointerSensor/KeyboardSensor activation. */
+async function dndStart(activeId: string) {
+  const handler = dnd.handlers.at(-1)?.props.onDragStart as ((event: unknown) => void) | undefined;
+  if (!handler) throw new Error("No onDragStart handler captured");
+  await act(async () => { handler({ active: { id: activeId }, over: null }); await Promise.resolve(); });
 }
 
 describe("the rail and the Dashboard agree about the current view (#119)", () => {
@@ -534,5 +632,132 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     root = null;
 
     expect(readDashboardView()).toBeNull();
+  });
+});
+
+describe("#152 — a route change mid-interaction releases the barriers the unmounted surface held", () => {
+  it("1 — Back during a Calendar drop withdraws the confirm and re-enables every control, and the rail still agrees afterwards", async () => {
+    calendarEventFixture.enabled = true;
+    const host = await renderApp("/?view=list");
+    await clickRailChild(host, "Calendar");
+    const drop = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-calendar-drop"]');
+    if (!drop) throw new Error("No calendar drop trigger rendered");
+    await click(drop);
+
+    // Preconditions: the drop opened the confirm and the accept gate is blocking navigation.
+    expect(viewButton(host, "List")?.disabled).toBe(true);
+    expect(confirmStore.getSnapshot()).not.toBeNull();
+
+    await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await settle();
+
+    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(confirmStore.getSnapshot()).toBeNull();
+    expect(viewButton(host, "List")?.disabled).toBe(false);
+    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+    expect(currentUrl()).toBe("/?view=list");
+    expect(renderedDashboardBranch(host)).toBe("list");
+    expect(activeRailChild(host)).toBe("List");
+    expect(lastBreadcrumbSegment(host)).toBe("List");
+    expect(readDashboardView()).toBe("list");
+    expect(apiPutMock).not.toHaveBeenCalled();
+
+    await clickRailChild(host, "Kanban");
+    expect(currentUrl()).toBe("/?view=kanban");
+    expect(renderedDashboardBranch(host)).toBe("kanban");
+    expect(activeRailChild(host)).toBe("Kanban");
+    expect(lastBreadcrumbSegment(host)).toBe("Kanban");
+
+    await clickButtonLabelled(host, "Archived");
+    expect(host.textContent).toContain("Archived projects");
+  });
+
+  it("2 — a rail List click while the Calendar's write is in flight re-enables controls immediately, and the deferred write settles without a second request", async () => {
+    calendarEventFixture.enabled = true;
+    let resolvePut!: (value: unknown) => void;
+    apiPutMock.mockImplementation(() => new Promise((resolve) => { resolvePut = resolve; }));
+
+    const host = await renderApp("/?view=list");
+    await clickRailChild(host, "Calendar");
+    await click(host.querySelector<HTMLButtonElement>('[data-testid="dashboard-calendar-drop"]')!);
+    expect(viewButton(host, "List")?.disabled).toBe(true);
+
+    await act(async () => { confirmStore.resolve(true); await Promise.resolve(); });
+    await settle();
+    // The accepted write is now in flight, held open by the deferred `apiPutMock` above.
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+
+    await clickRailChild(host, "List");
+
+    expect(currentUrl()).toBe("/?view=list");
+    expect(renderedDashboardBranch(host)).toBe("list");
+    expect(activeRailChild(host)).toBe("List");
+    expect(lastBreadcrumbSegment(host)).toBe("List");
+    expect(readDashboardView()).toBe("list");
+    expect(viewButton(host, "List")?.disabled).toBe(false);
+    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+
+    await act(async () => { resolvePut({ changed: true, current: { version: 2, deadline: { localCivil: "2026-09-20T09:00", instant: "2026-09-19T23:00:00.000Z" }, reminderOffsetsMinutes: [] } }); await Promise.resolve(); });
+    await settle();
+
+    expect(viewButton(host, "List")?.disabled).toBe(false);
+    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("3 — Back during a Kanban drag re-enables every control and the rail/breadcrumb agree with wherever Back landed", async () => {
+    realBoardEnabled.value = true;
+    stagesFixture.value = TWO_STAGES;
+    const host = await renderApp("/?view=list");
+    await clickRailChild(host, "Kanban");
+
+    await dndStart(ACTIVE_PROJECT_ID);
+    expect(viewButton(host, "List")?.disabled).toBe(true);
+
+    await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await settle();
+
+    expect(viewButton(host, "List")?.disabled).toBe(false);
+    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+    expect(viewButton(host, "Calendar")?.disabled).toBe(false);
+    expect(currentUrl()).toBe("/?view=list");
+    expect(renderedDashboardBranch(host)).toBe("list");
+    expect(activeRailChild(host)).toBe("List");
+    expect(lastBreadcrumbSegment(host)).toBe("List");
+    expect(readDashboardView()).toBe("list");
+  });
+
+  it("4 — a rail List click during a Kanban drag re-enables controls, and a cross-Stage drag-end the dead Board still receives writes nothing and opens no confirm", async () => {
+    realBoardEnabled.value = true;
+    stagesFixture.value = TWO_STAGES;
+    const host = await renderApp("/?view=list");
+    await clickRailChild(host, "Kanban");
+
+    await dndStart(ACTIVE_PROJECT_ID);
+    expect(viewButton(host, "List")?.disabled).toBe(true);
+    // Captured before the Board unmounts — dnd-kit does not detach an active sensor when
+    // `DndContext` unmounts, so this handler can still fire after the click below.
+    const deadHandlers = dnd.handlers.at(-1);
+
+    await clickRailChild(host, "List");
+
+    expect(currentUrl()).toBe("/?view=list");
+    expect(renderedDashboardBranch(host)).toBe("list");
+    expect(activeRailChild(host)).toBe("List");
+    expect(lastBreadcrumbSegment(host)).toBe("List");
+    expect(readDashboardView()).toBe("list");
+    expect(viewButton(host, "List")?.disabled).toBe(false);
+    expect(viewButton(host, "Kanban")?.disabled).toBe(false);
+
+    const end = deadHandlers?.props.onDragEnd as ((event: unknown) => void) | undefined;
+    if (!end) throw new Error("No onDragEnd handler captured");
+    await act(async () => { end({ active: { id: ACTIVE_PROJECT_ID }, over: { id: "raw_review" } }); await Promise.resolve(); });
+    await settle();
+
+    expect(apiPostMock).not.toHaveBeenCalled();
+    expect(apiPutMock).not.toHaveBeenCalled();
+    expect(confirmStore.getSnapshot()).toBeNull();
   });
 });

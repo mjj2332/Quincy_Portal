@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StageKey } from "@quincy/shared";
 import { StatusBadge } from "../atoms";
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
@@ -192,6 +192,26 @@ export function ProjectKanbanBoard2({
   }, []);
   const activeProjectRef = useRef<string | undefined>(undefined);
   const lastAnnouncedGapRef = useRef<string | undefined>(undefined);
+  // Unmount cleanup needs the LATEST callback, not whichever render happened to mount this Board —
+  // updated every render, the `move-to-control.tsx` pattern.
+  const onInteractionStateChangeRef = useRef(onInteractionStateChange);
+  useEffect(() => { onInteractionStateChangeRef.current = onInteractionStateChange; });
+  // dnd-kit does not detach an active sensor when DndContext unmounts, so a drag left running when
+  // this board unmounts (Back, a rail link) can still deliver drag end, and `onMove` would issue a
+  // move from a board that is gone. The Dashboard's `activeId` outlives this board, and drag
+  // end/cancel never fire, so release it here, and fence every dnd-kit handler against firing
+  // after unmount.
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      if (activeProjectRef.current !== undefined) {
+        activeProjectRef.current = undefined;
+        onInteractionStateChangeRef.current?.({ activeId: undefined, proposal: null });
+      }
+    };
+  }, []);
   const [dropProposal, setDropProposal] = useState<SemanticGap | null>(null);
   // True while any drag is live. The non-drag controls are disabled for its duration: otherwise a
   // keyboard user can pick up card A, Tab to card B's arrow or Move to…, and reorder the column out
@@ -235,6 +255,7 @@ export function ProjectKanbanBoard2({
   }, [activeStages, onAnnounce, projects, terminal]);
 
   const handleMove = useCallback(({ event, activeContainer, overContainer, overIndex }: KanbanMoveEvent) => {
+    if (unmountedRef.current) return;
     const projectId = String(event.active.id);
     const keyboardOrigin = event.activatorEvent?.type === "keydown";
     // Every `return` below is a REJECTED drop, and a rejected drop must say so and give the handle
@@ -258,6 +279,7 @@ export function ProjectKanbanBoard2({
   }, [announceRejection, dragDisabled, dropVerdict, gapFor, onBoardMove, pendingMoves, projects, refocusHandle]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    if (unmountedRef.current) return;
     activeProjectRef.current = String(event.active.id);
     setDragActive(true);
     // Opens the Dashboard's refresh barrier: it blocks ACCEPTANCE of replacement data while a drag
@@ -319,6 +341,7 @@ export function ProjectKanbanBoard2({
    * Bails out on an unchanged gap, because dragOver fires on every collision update.
    */
   const handleDragOver = useCallback((event: DragOverEvent) => {
+    if (unmountedRef.current) return;
     const target = event.over ? hoverTarget(String(event.active.id), String(event.over.id)) : undefined;
     const next = target?.gap ?? null;
     setDropProposal((current) => (
@@ -329,6 +352,7 @@ export function ProjectKanbanBoard2({
   // An outside drop never reaches `onMove` (the primitive resolves no container), so it is the one
   // rejection that has to be handled here.
   const handleDragEnd = useCallback((event: DragEndEvent) => {
+    if (unmountedRef.current) return;
     if (!event.over) {
       announceRejection("drop-outside", activeProjectRef.current);
       refocusHandle();
@@ -337,6 +361,7 @@ export function ProjectKanbanBoard2({
   }, [announceRejection, clearInteraction, refocusHandle]);
 
   const handleDragCancel = useCallback(() => {
+    if (unmountedRef.current) return;
     announceRejection("dnd-cancel", activeProjectRef.current);
     refocusHandle();
     clearInteraction();

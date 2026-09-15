@@ -16,6 +16,8 @@ type PendingConfirm = {
   settled: boolean;
 };
 
+export type ConfirmRequest = ConfirmOptions & { signal?: AbortSignal };
+
 export type ActiveConfirm = Readonly<{ id: number; options: ConfirmOptions }>;
 
 const queue: PendingConfirm[] = [];
@@ -32,7 +34,9 @@ function updateActive() {
   active = request ? { id: request.id, options: request.options } : null;
 }
 
-export function confirm(options: ConfirmOptions): Promise<boolean> {
+// `signal` is destructured out and never stored: `ConfirmDialog.tsx` spreads `shown.options`
+// straight onto the dialog, so a live `AbortSignal` left in there would land on a DOM component.
+export function confirm({ signal, ...options }: ConfirmRequest): Promise<boolean> {
   const normalized: ConfirmOptions = {
     ...options,
     confirmLabel: options.confirmLabel ?? "Confirm",
@@ -40,11 +44,37 @@ export function confirm(options: ConfirmOptions): Promise<boolean> {
     danger: options.danger ?? false,
   };
   return new Promise<boolean>((resolve) => {
-    queue.push({ id: nextId++, options: normalized, resolve, settled: false });
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    const request: PendingConfirm = { id: nextId++, options: normalized, resolve, settled: false };
+    queue.push(request);
     if (queue.length === 1) {
       updateActive();
       emit();
     }
+    if (!signal) return;
+    const onAbort = () => {
+      // Already settled by `confirmStore.resolve` (or a previous abort) — nothing to do.
+      if (request.settled) return;
+      request.settled = true;
+      const index = queue.indexOf(request);
+      if (index !== -1) queue.splice(index, 1);
+      request.resolve(false);
+      if (index === 0) {
+        updateActive();
+        emit();
+      }
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    // Removing the listener on every settlement path (not just abort) avoids leaking one per
+    // confirm — `confirmStore.resolve` below is the normal-resolution path.
+    const originalResolve = request.resolve;
+    request.resolve = (value) => {
+      signal.removeEventListener("abort", onAbort);
+      originalResolve(value);
+    };
   });
 }
 

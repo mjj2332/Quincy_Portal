@@ -537,6 +537,17 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const queuedRefetchRef = useRef(false);
   const accessLostRef = useRef(false);
   const settleRefetchInFlightRef = useRef(false);
+  // Unmount cleanup runs a closure from whichever render created it — refs, updated every render
+  // (the `move-to-control.tsx` pattern), so the LATEST callbacks are the ones cleanup reaches for.
+  const onAcceptGateChangeRef = useRef(onAcceptGateChange);
+  const onSettleStateChangeRef = useRef(onSettleStateChange);
+  useEffect(() => {
+    onAcceptGateChangeRef.current = onAcceptGateChange;
+    onSettleStateChangeRef.current = onSettleStateChange;
+  });
+  // The confirm this component currently has open, so unmount can withdraw exactly that one
+  // request rather than leaving it stranded over whatever view replaced this component.
+  const openConfirmControllerRef = useRef<AbortController | null>(null);
 
   const setAcceptGate = useCallback((blocked: boolean) => {
     acceptGateRef.current = blocked;
@@ -847,6 +858,8 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       now: proposal.snapshot.capturedNow,
     });
     const scheduling = Boolean(proposal.unscheduledEntry);
+    const confirmController = new AbortController();
+    openConfirmControllerRef.current = confirmController;
     const ok = await confirm({
       title: scheduling ? "Schedule Deadline" : "Move Deadline",
       message: scheduling
@@ -854,7 +867,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         : `Move the Deadline for ${proposal.event.project.street}?`,
       confirmLabel: scheduling ? "Schedule Deadline" : "Move Deadline",
       content: <ProductionCalendarMoveConfirmation street={proposal.event.project.street} oldCivil={proposal.event.deadlineLocalCivil} newCivil={proposal.localCivil} consequences={consequences} />,
+      signal: confirmController.signal,
     });
+    openConfirmControllerRef.current = null;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
     if (!ok) {
       finishInteraction(proposal.drop, proposal.event.deadlineLocalCivil);
@@ -1537,8 +1552,16 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     commandLockRef.current.active = false;
     queuedRefetchRef.current = false;
     settleRefetchInFlightRef.current = false;
+    // The parent learns about the gate only through the effect above, which needs this
+    // component's state to change, and a state update on an unmounting component is dropped. A
+    // route change mid-drop (Back, a rail link) would leave the Dashboard's controls disabled
+    // until reload. So release the parent's gate and the confirm this interaction opened
+    // directly. Late responses are already fenced by the token bump above.
+    openConfirmControllerRef.current?.abort();
+    openConfirmControllerRef.current = null;
+    if (acceptGateRef.current) onAcceptGateChangeRef.current?.(false);
     setAcceptGate(false);
-    onSettleStateChange?.({ pending: false, recoveryReason: null });
+    onSettleStateChangeRef.current?.({ pending: false, recoveryReason: null });
   }, [setAcceptGate]);
 
   const clearSettleOnNavigation = useCallback(() => {
