@@ -98,6 +98,16 @@ describe("groupNotifications", () => {
     expect(buckets[1]!.notifications.map((entry) => entry.id)).toEqual(["b"]);
   });
 
+  it("keeps a bucket's key stable across Sydney midnight while its label moves on", () => {
+    const items = [item({ id: "a", createdAt: "2026-09-15T23:30:00+10:00" })];
+    const before = groupNotifications(items, new Date("2026-09-15T23:45:00+10:00").getTime());
+    const after = groupNotifications(items, new Date("2026-09-16T00:15:00+10:00").getTime());
+    expect(before.map((bucket) => bucket.key)).toEqual(["2026-09-15"]);
+    expect(after.map((bucket) => bucket.key)).toEqual(["2026-09-15"]);
+    expect(before[0]!.label).toBe("Today");
+    expect(after[0]!.label).toBe("Yesterday");
+  });
+
   it("omits empty buckets and never produces one for a day with no notifications", () => {
     const items = [item({ id: "a", createdAt: "2026-09-15T01:00:00+10:00" })];
     const buckets = groupNotifications(items, now);
@@ -148,6 +158,18 @@ describe("formatNotificationTimestamp", () => {
     const created = "2026-09-15T09:00:00+10:00";
     const now = new Date(created).getTime() - 500; // now slightly BEFORE created — clock skew
     expect(formatNotificationTimestamp(created, now)).toBe("Just now");
+  });
+
+  it("clamps sub-minute skew across Sydney midnight to 'Just now' as well", () => {
+    const created = "2026-09-16T00:00:20+10:00";
+    const now = new Date("2026-09-15T23:59:50+10:00").getTime(); // 30s behind, on the previous Sydney day
+    expect(formatNotificationTimestamp(created, now)).toBe("Just now");
+  });
+
+  it("renders a timestamp more than a minute ahead as its wall-clock time, even on the same day", () => {
+    const now = new Date("2026-09-15T09:00:00+10:00").getTime();
+    expect(formatNotificationTimestamp("2026-09-15T11:30:00+10:00", now)).toBe("11:30 AM");
+    expect(formatNotificationTimestamp("2026-09-15T09:01:01+10:00", now)).toBe("9:01 AM");
   });
 
   it("shows minutes ago under an hour", () => {

@@ -25,9 +25,10 @@ import {
  * inside it the trigger sits.
  *
  * #114 gives the list day buckets, a richer row grid (leading slot, thumbnail, dismiss) and an
- * All/Unread filter — all of it lives in `NotificationList.tsx`, which this file renders as its
- * own `role="tabpanel"` body. This file keeps the data layer (fetch, poll, mark-read/dismiss
- * network calls, the tab's own filter state) and the popover/tab chrome around it.
+ * All/Unread filter. The buckets and rows live in `NotificationList.tsx`; this file renders that
+ * list inside its own focusable `role="tabpanel"`, and owns everything around it — the data layer
+ * (fetch, poll, mark-read/dismiss network calls), the filter state and its `TabStrip`, the two
+ * empty states, and the popover chrome.
  *
  * ## Popover, not Menu
  *
@@ -117,10 +118,14 @@ const PANEL = "max-h-[min(520px,var(--available-height))] gap-0 p-0 flex-col";
 // is a callback over live refs (see `railAlignOffset` in the component), the header's is 0.
 // `thumbnails` records the same "header is the narrow shell" fact `showThumbnails` reads below,
 // named here so the two fixed shapes stay a single source rather than a second boolean expression
-// drifting out of sync with `side`/`width`.
+// drifting out of sync with `side`/`width`. `tabs` is the same fact again for the tab strip:
+// `TabStrip` grows its tabs to the 44px touch target under its own `max-[721px]` variant, which
+// is not the shell's breakpoint — between 722px and 771px the header is already the narrow shell
+// and its tabs would stay 38px. The header placement therefore asks for 44px tabs outright, from
+// the tablist down, rather than trusting a second media query.
 const PLACEMENT = {
-  rail: { side: "right", sideOffset: 8, collisionPadding: 8, width: "w-[420px]", thumbnails: true },
-  header: { side: "bottom", sideOffset: 0, collisionPadding: { top: 0, left: 0, right: 0, bottom: 8 }, width: "w-[var(--anchor-width)]", thumbnails: false },
+  rail: { side: "right", sideOffset: 8, collisionPadding: 8, width: "w-[420px]", thumbnails: true, tabs: "" },
+  header: { side: "bottom", sideOffset: 0, collisionPadding: { top: 0, left: 0, right: 0, bottom: 8 }, width: "w-[var(--anchor-width)]", thumbnails: false, tabs: "[&_[role=tab]]:min-h-[44px]" },
 } as const;
 // `min-h-0 flex-1` lets the scrolling body shrink inside the popup's own `flex-col`; the tabpanel
 // IS the scrolling container (TabStrip's own convention — see Admin.tsx around its tabpanel ids).
@@ -336,7 +341,7 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
             label="Filter notifications"
             value={tab}
             onValueChange={(next) => selectTab(next as NotificationFilter)}
-            className={TABS_ROW}
+            className={cn(TABS_ROW, PLACEMENT[placement].tabs)}
             items={[
               // All has no count — the list is capped at 25, so its length is not a total.
               { value: "all", label: "All" },

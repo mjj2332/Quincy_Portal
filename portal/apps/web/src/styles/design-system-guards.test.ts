@@ -413,11 +413,11 @@ describe("guard: star colour comes from a token, never a literal", () => {
  * --signal-caution-text"). Painting TEXT from `text-signal-caution` reaches for the wrong one —
  * the brand value has no contrast guarantee on any particular ground.
  *
- * `--warning`/`bg-warning` is a second way to reach the same brand value indirectly
- * (`tokens/reui.css`: `--warning: var(--signal-caution-text)`, `--color-warning: var(--warning)`)
- * — `text-warning` is fine (it resolves to the TEXT-safe value), but `bg-warning` paints a
- * *background* from a value chosen for text contrast, which is exactly the inverse of the
- * `--signal-caution` mistake above: right role, wrong ground.
+ * `--warning` is ReUI's alias into the same caution family, and it resolves to the TEXT token,
+ * not the brand value (`tokens/reui.css`: `--warning: var(--signal-caution-text)`,
+ * `--color-warning: var(--warning)`). So `text-warning` is fine — it is `--signal-caution-text`
+ * by another name — but `bg-warning` paints a *background* from a value chosen for text
+ * contrast, the inverse of the `--signal-caution` mistake above: right family, wrong role.
  *
  * `text-signal-caution` matched with a lookahead rather than a plain substring check, since
  * `text-signal-caution-text` (the correct form) contains `text-signal-caution` as a prefix.

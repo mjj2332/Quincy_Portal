@@ -286,16 +286,21 @@ describe("notification list per-row project street and cover", () => {
     expect(notificationRow(body, title)).toMatchObject({ projectStreet: "Multi Membership Street", coverAssetId: rawAssetId });
   });
 
-  it("returns the effective cover asset on the external-editor notification branch", async () => {
-    const { projectId, editedCollectionId } = await makeProject("External Cover Street", "editing");
-    const coverAssetId = await makeAsset(editedCollectionId, "ready");
-    await database.DB.prepare("UPDATE projects SET cover_asset_id = ? WHERE id = ?").bind(coverAssetId, projectId).run();
+  /**
+   * One notification the external-editor branch's visibility CTE accepts: a current editor
+   * membership, and outbox + ledger rows shaped exactly as `externalVisibleNotificationWhere`'s
+   * `project.external_safe.direct` arm requires. Returns the handles the cases below revoke.
+   */
+  async function seedExternalDirectNotification(street: string, cover: "ready" | "pending" | "none" = "ready") {
+    const { projectId, editedCollectionId } = await makeProject(street, "editing");
+    const coverAssetId = cover === "none" ? null : await makeAsset(editedCollectionId, cover);
+    if (coverAssetId) await database.DB.prepare("UPDATE projects SET cover_asset_id = ? WHERE id = ?").bind(coverAssetId, projectId).run();
     const membershipId = crypto.randomUUID();
     const startedAt = Date.now();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
       .bind(membershipId, projectId, externalEditor, startedAt).run();
 
-    const title = "External cover notification";
+    const title = `External notification ${crypto.randomUUID()}`;
     const notificationId = crypto.randomUUID();
     const outboxId = crypto.randomUUID();
     const sourceKey = `external-cover:${crypto.randomUUID()}`;
@@ -314,10 +319,44 @@ describe("notification list per-row project street and cover", () => {
       database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, notification_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'in_app', 'sent', ?, ?, ?)")
         .bind(crypto.randomUUID(), outboxId, "project.external_safe.direct", sourceKey, externalEditor, notificationId, now, now),
     ]);
+    return { projectId, coverAssetId, membershipId, title };
+  }
 
+  async function externalList() {
     const response = await request("/api/notifications", tokenExternalEditor);
     expect(response.status).toBe(200);
-    const row = notificationRow(await response.json(), title);
-    expect(row).toMatchObject({ projectStreet: "External Cover Street", coverAssetId });
+    return await response.json() as { notifications: Array<Record<string, unknown>>; unreadCount: number };
+  }
+
+  it("returns the street and the effective cover asset on the external-editor notification branch", async () => {
+    const { coverAssetId, title } = await seedExternalDirectNotification("External Cover Street");
+    const body = await externalList();
+    expect(notificationRow(body, title)).toMatchObject({ projectStreet: "External Cover Street", coverAssetId });
+    expect(body.unreadCount).toBe(body.notifications.filter((row) => row.readAt === null).length);
+  });
+
+  it("never names a pending edited cover to an external editor", async () => {
+    const { title } = await seedExternalDirectNotification("Pending Cover Street", "pending");
+    const row = notificationRow(await externalList(), title);
+    expect(row).toMatchObject({ projectStreet: "Pending Cover Street", coverAssetId: null });
+  });
+
+  it("drops the row and its count once the external editor's membership is revoked", async () => {
+    const { membershipId, title } = await seedExternalDirectNotification("Revoked Street");
+    expect(notificationRow(await externalList(), title)).toBeDefined();
+    await database.DB.prepare("DELETE FROM project_members WHERE id = ?").bind(membershipId).run();
+    const body = await externalList();
+    expect(notificationRow(body, title)).toBeUndefined();
+    expect(body.notifications.some((row) => row.projectStreet === "Revoked Street")).toBe(false);
+    expect(body.unreadCount).toBe(body.notifications.filter((row) => row.readAt === null).length);
+  });
+
+  it("drops the row and its count once the project is archived", async () => {
+    const { projectId, title } = await seedExternalDirectNotification("Archived Street");
+    expect(notificationRow(await externalList(), title)).toBeDefined();
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run();
+    const body = await externalList();
+    expect(notificationRow(body, title)).toBeUndefined();
+    expect(body.unreadCount).toBe(body.notifications.filter((row) => row.readAt === null).length);
   });
 });

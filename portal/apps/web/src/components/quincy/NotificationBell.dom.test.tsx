@@ -214,12 +214,16 @@ describe("NotificationBell panel (Popover)", () => {
     const item = document.querySelector<HTMLAnchorElement>('[data-testid="rail-notification-item"]')!;
     const dismiss = document.querySelector<HTMLButtonElement>('[data-notification-dismiss="n-1"]')!;
     expect(item.tagName).toBe("A");
-    // Tab order: mark-all, then the tab strip, then the row's link, then its dismiss — the same
-    // DOM order the old Menu-based panel used for the first/last pair, with the #114 tab strip
-    // now between them and still no roving-focus machinery behind any of it.
-    const focusable = [...dialog!.querySelectorAll<HTMLElement>("button, a")];
+    // Tab order: mark-all, the selected tab, the scrolling tabpanel itself (`tabIndex={0}`, so
+    // the keyboard can scroll a long list without landing on a row), then the row's link, then
+    // its dismiss — the same DOM order the old Menu-based panel used for the first/last pair,
+    // with the #114 tab strip and panel now between them and still no roving-focus machinery.
+    const panel = dialog!.querySelector<HTMLElement>('[role="tabpanel"]')!;
+    expect(panel.tabIndex).toBe(0);
+    const focusable = [...dialog!.querySelectorAll<HTMLElement>('button, a, [tabindex="0"]')].filter((el) => el.tabIndex >= 0);
     expect(focusable.indexOf(markAll)).toBeLessThan(focusable.indexOf(allTab));
-    expect(focusable.indexOf(allTab)).toBeLessThan(focusable.indexOf(item));
+    expect(focusable.indexOf(allTab)).toBeLessThan(focusable.indexOf(panel));
+    expect(focusable.indexOf(panel)).toBeLessThan(focusable.indexOf(item));
     expect(focusable.indexOf(item)).toBeLessThan(focusable.indexOf(dismiss));
   });
 
@@ -786,6 +790,46 @@ describe("NotificationBell panel (Popover)", () => {
       // React's `key={n.id}` keeps this the SAME DOM node across the regroup.
       expect(firstItemAfter).toBe(firstItem);
       expect(document.activeElement).toBe(firstItemAfter);
+    });
+
+    it("keeps a focused row's DOM identity and bucket key when the clock crosses Sydney midnight", async () => {
+      // 23:30 Sydney (AEST, +10) on 28 July; the row was written half an hour earlier.
+      vi.setSystemTime(new Date("2026-07-28T13:30:00.000Z"));
+      apiGetMock.mockResolvedValue({ notifications: [
+        notification({ id: "n-1", title: "First notification", createdAt: "2026-07-28T13:00:00.000Z" }),
+      ], unreadCount: 1 });
+      const trigger = await renderPanel(30 * 60_000);
+      await click(trigger);
+      const bucketBefore = document.querySelector<HTMLElement>("[data-notification-bucket]")!;
+      const labelBefore = document.getElementById(bucketBefore.getAttribute("aria-labelledby")!)!;
+      expect(bucketBefore.getAttribute("data-notification-bucket")).toBe("2026-07-28");
+      expect(labelBefore.textContent).toBe("Today");
+      const firstItem = document.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+      firstItem.focus();
+
+      // Two polls later it is 00:30 on 29 July: the bucket's KEY is the Sydney day the row was
+      // written on and does not move; only its label reads "Yesterday" now.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60 * 60_000); });
+      const bucketAfter = document.querySelector<HTMLElement>("[data-notification-bucket]")!;
+      expect(bucketAfter.getAttribute("data-notification-bucket")).toBe("2026-07-28");
+      expect(document.getElementById(bucketAfter.getAttribute("aria-labelledby")!)!.textContent).toBe("Yesterday");
+      const firstItemAfter = document.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
+      expect(firstItemAfter).toBe(firstItem);
+      expect(document.activeElement).toBe(firstItemAfter);
+    });
+
+    it("asks TabStrip for 44px tabs at header placement only — the narrow shell is a placement, not TabStrip's own breakpoint", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
+      await render(<AnchoredBell placement="header" poll={1_000} touchTarget />);
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!);
+      expect(document.querySelector<HTMLElement>('[role="tablist"]')!.className).toContain("[&_[role=tab]]:min-h-[44px]");
+    });
+
+    it("leaves TabStrip's own 38px tabs alone at rail placement", async () => {
+      apiGetMock.mockResolvedValue({ notifications: [notification()], unreadCount: 1 });
+      const trigger = await renderPanel();
+      await click(trigger);
+      expect(document.querySelector<HTMLElement>('[role="tablist"]')!.className).not.toContain("min-h-[44px]");
     });
 
     it("renders no thumbnail and requests no image at header placement", async () => {

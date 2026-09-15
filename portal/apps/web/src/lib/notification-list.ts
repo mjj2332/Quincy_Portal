@@ -101,15 +101,24 @@ export function groupNotifications<T extends { createdAt: string }>(
 }
 
 /**
- * "Just now" (<60s, also clamping small future clock skew), "Nm ago" (<60m), "Nh ago" for the
- * same Sydney day as `now`; otherwise the Sydney wall clock, 12-hour, uppercase AM/PM, assembled
- * from `formatToParts` — never a locale string, which is not guaranteed stable across runtimes.
+ * A timestamp this far ahead of `now` is clock skew between the Worker and the browser and reads
+ * as `now` — including across Sydney midnight, so a row written a few seconds "tomorrow" still
+ * says "Just now" rather than flipping to a clock time. Anything further ahead is not skew and is
+ * not "ago" either; it renders as its wall-clock time regardless of day.
+ */
+const FUTURE_SKEW_MS = 60_000;
+
+/**
+ * "Just now" (<60s), "Nm ago" (<60m), "Nh ago" for the same Sydney day as `now`; otherwise the
+ * Sydney wall clock, 12-hour, uppercase AM/PM, assembled from `formatToParts` — never a locale
+ * string, which is not guaranteed stable across runtimes.
  */
 export function formatNotificationTimestamp(createdAt: string, now: number): string {
   const created = new Date(createdAt).getTime();
-  const nowInstant = new Date(now);
-  if (sydneyDayKey(created) === sydneyDayKey(nowInstant)) {
-    const deltaMs = Math.max(0, now - created);
+  const skew = created - now;
+  const anchored = skew > 0 && skew <= FUTURE_SKEW_MS ? now : created;
+  if (anchored <= now && sydneyDayKey(anchored) === sydneyDayKey(now)) {
+    const deltaMs = now - anchored;
     const deltaMinutes = Math.floor(deltaMs / 60_000);
     if (deltaMs < 60_000) return "Just now";
     if (deltaMinutes < 60) return `${deltaMinutes}m ago`;

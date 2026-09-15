@@ -66,8 +66,10 @@ const NOOP = () => {};
 function renderList(items: NotificationListItem[], props: Partial<{ now: number; showThumbnails: boolean }> = {}) {
   const now = props.now ?? new Date("2026-09-15T09:00:00+10:00").getTime();
   const buckets = groupNotifications(items, now);
+  // A neutral container: the list renders a `<section>` per bucket, each with its own `<ul>`,
+  // so the harness must not add a list element of its own around them.
   return render(
-    <ul>
+    <div>
       <NotificationList
         buckets={buckets}
         now={now}
@@ -75,8 +77,14 @@ function renderList(items: NotificationListItem[], props: Partial<{ now: number;
         onActivate={NOOP}
         onDismiss={NOOP}
       />
-    </ul>,
+    </div>,
   );
+}
+
+/** Each bucket's heading, read through its `aria-labelledby` relationship rather than a tag name. */
+function bucketLabels(): (string | null)[] {
+  return [...host.querySelectorAll<HTMLElement>("[data-notification-bucket]")].map((section) =>
+    document.getElementById(section.getAttribute("aria-labelledby")!)!.textContent);
 }
 
 describe("NotificationList", () => {
@@ -87,15 +95,15 @@ describe("NotificationList", () => {
       item({ id: "b", createdAt: "2026-09-14T10:00:00+10:00" }),
       item({ id: "c", createdAt: "2026-09-13T10:00:00+10:00" }),
     ], { now });
-    const headings = [...host.querySelectorAll("h3")].map((h3) => h3.textContent);
-    expect(headings).toEqual(["Today", "Yesterday", "13 Sep 2026"]);
+    expect(bucketLabels()).toEqual(["Today", "Yesterday", "13 Sep 2026"]);
+    expect([...host.querySelectorAll("[data-notification-bucket]")].map((section) => section.getAttribute("data-notification-bucket")))
+      .toEqual(["2026-09-15", "2026-09-14", "2026-09-13"]);
   });
 
   it("keeps a late-evening Sydney notification under Yesterday, not Today", async () => {
     const now = new Date("2026-09-15T00:15:00+10:00").getTime(); // 2026-09-14T14:15:00.000Z
     await renderList([item({ id: "a", createdAt: "2026-09-14T23:30:00+10:00" })], { now });
-    const headings = [...host.querySelectorAll("h3")].map((h3) => h3.textContent);
-    expect(headings).toEqual(["Yesterday"]);
+    expect(bucketLabels()).toEqual(["Yesterday"]);
   });
 
   it("exposes the title as the link's name, with body and timestamp as sibling row content", async () => {
@@ -103,10 +111,11 @@ describe("NotificationList", () => {
     const row = host.querySelector<HTMLElement>('[data-testid="rail-notification-row"]')!;
     const link = row.querySelector<HTMLElement>('[data-testid="rail-notification-item"]')!;
     expect(link.textContent).toBe("Row title");
-    const body = row.querySelector("small")!.previousElementSibling;
-    expect(body?.textContent).toBe("Row body");
+    const body = row.querySelector<HTMLElement>("[data-notification-body]")!;
+    expect(body.textContent).toBe("Row body");
     expect(link.contains(body)).toBe(false);
-    const time = row.querySelector("time")!;
+    expect(link.contains(row.querySelector("[data-notification-meta]"))).toBe(false);
+    const time = row.querySelector("[data-notification-meta] time")!;
     expect(time.getAttribute("datetime")).toBe("2026-09-15T01:00:00.000Z");
   });
 
@@ -193,18 +202,27 @@ describe("NotificationList", () => {
       item({ id: "ordinary", type: "mentioned" }),
     ]);
     const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="rail-notification-row"]')];
-    const stalledRow = rows.find((row) => row.querySelector('[data-notification-dismiss="stalled"]'))!;
-    const ordinaryRow = rows.find((row) => row.querySelector('[data-notification-dismiss="ordinary"]'))!;
-    expect(stalledRow.getAttribute("data-notification-tone")).toBe("caution");
-    const stalledTitle = stalledRow.querySelector('[data-testid="rail-notification-item"]')!;
-    expect(stalledTitle.className).toContain("text-warning");
-    expect(stalledTitle.className).not.toContain("text-signal-caution");
+    const rowFor = (id: string) => rows.find((row) => row.querySelector(`[data-notification-dismiss="${id}"]`))!;
+    const titleClasses = (row: HTMLElement) => row.querySelector('[data-testid="rail-notification-item"]')!.className.split(/\s+/);
+    for (const id of ["stalled", "reminder"]) {
+      const row = rowFor(id);
+      expect(row.getAttribute("data-notification-tone")).toBe("caution");
+      // The `!` is load-bearing for the same reason as `!outline-none` in the component:
+      // `tokens/base.css`'s unlayered `a { color: inherit }` beats an ordinary utility, so a bare
+      // `text-warning` would lose and a caution link would read as an ordinary row.
+      expect(titleClasses(row)).toContain("!text-warning");
+      expect(titleClasses(row)).not.toContain("!text-foreground");
+      expect(titleClasses(row).some((cls) => cls.includes("text-signal-caution"))).toBe(false);
+    }
+    const ordinaryRow = rowFor("ordinary");
     expect(ordinaryRow.getAttribute("data-notification-tone")).toBeNull();
+    expect(titleClasses(ordinaryRow)).toContain("!text-foreground");
+    expect(titleClasses(ordinaryRow)).not.toContain("!text-warning");
   });
 
   it("omits the metadata separator when the street is absent", async () => {
     await renderList([item({ projectStreet: null })]);
-    const meta = host.querySelector("small")!;
+    const meta = host.querySelector("[data-notification-meta]")!;
     expect(meta.textContent?.startsWith(" · ")).toBe(false);
     expect(meta.textContent?.includes("·")).toBe(false);
   });

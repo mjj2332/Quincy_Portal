@@ -128,8 +128,8 @@ export function NotificationRow({ notification, now, showThumbnail, onActivate, 
         {/* Body and meta are SIBLINGS of the link/button above, not children of it — inside the
             link they would be read as part of its accessible name; outside, assistive tech reads
             them as ordinary row content while the link's own name stays just the title. */}
-        {body && <span className={ITEM_BODY}>{body}</span>}
-        <small className={ITEM_META}>
+        {body && <span data-notification-body className={ITEM_BODY}>{body}</span>}
+        <small data-notification-meta className={ITEM_META}>
           {projectStreet && <>{projectStreet}{" · "}</>}
           <time dateTime={createdAt} title={ABSOLUTE_TIME_FORMATTER.format(new Date(createdAt))}>
             {formatNotificationTimestamp(createdAt, now)}
