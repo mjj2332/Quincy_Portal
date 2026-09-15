@@ -37,6 +37,13 @@ describe("notification-write-tracker", () => {
     unsubscribe();
   });
 
+  it("a write that throws synchronously still settles the barrier and never throws", async () => {
+    const before = writeSnapshot();
+    await expect(trackWrite(() => { throw new Error("boom"); })).resolves.toBeUndefined();
+    expect(writeSnapshot().pending).toBe(before.pending);
+    expect(writeSnapshot().generation).toBe(before.generation + 2);
+  });
+
   it("a rejected write still settles the barrier and never throws", async () => {
     const before = writeSnapshot();
     const write = () => Promise.reject(new Error("boom"));

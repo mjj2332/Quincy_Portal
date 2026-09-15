@@ -311,7 +311,7 @@ describe("useNotificationFeed", () => {
       expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("1");
     });
 
-    it("a load more that lands during a pending write drops its rows and, once the write reconciles, re-runs exactly once with the reconciled cursor", async () => {
+    it("a load more that lands during a pending write drops its rows, ends busy, and the next Load more uses the reconciled cursor", async () => {
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
       await render(<Harness poll={null} paged />);
 
@@ -323,27 +323,27 @@ describe("useNotificationFeed", () => {
       let resolveWrite!: (value: unknown) => void;
       apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveWrite = resolve; }));
       await click(host.querySelector('[data-testid="mark-all-read"]')!);
-      expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
 
-      // The stale page lands while the write is still pending — dropped, loadingMore stays true.
       await act(async () => { resolveLoadMore(response([row({ id: "n-2" })], 1, null)); await Promise.resolve(); await Promise.resolve(); });
       expect(host.querySelector('[data-testid="id-n-2"]')).toBeNull();
-      expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("true");
+      expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("false");
+      expect(host.querySelector('[data-testid="load-more-error"]')?.textContent).toBe("false");
 
-      // The write settles: reconcile applies server state, then automatically re-runs loadMore with
-      // the fresh cursor exactly once.
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1", readAt: "2026-07-28T01:00:00.000Z" })], 0, "cursor-2"));
-      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-3" })], 0, null));
       await act(async () => { resolveWrite({ ok: true }); });
       await flush();
+      const getsAfterReconcile = apiGetMock.mock.calls.length;
+      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25");
 
-      expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("false");
-      expect(host.querySelector('[data-testid="id-n-2"]')).toBeNull();
-      expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-3" })], 0, null));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(apiGetMock.mock.calls.length).toBe(getsAfterReconcile + 1);
       expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25&cursor=cursor-2");
+      expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
     });
 
-    it("a load more that lands after the reconcile already applied re-runs immediately instead of waiting for a refetch the page never makes", async () => {
+    it("a load more that lands after the reconcile already applied drops its rows and ends busy", async () => {
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
       await render(<Harness poll={null} paged />);
 
@@ -351,22 +351,18 @@ describe("useNotificationFeed", () => {
       apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolveLoadMore = resolve; }));
       await click(host.querySelector('[data-testid="load-more"]')!);
 
-      // The write and its reconcile both complete while the page request is still out.
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1", readAt: "2026-07-28T01:00:00.000Z" })], 0, "cursor-2"));
       await click(host.querySelector('[data-testid="mark-all-read"]')!);
       await flush();
 
-      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-3" })], 0, null));
       await act(async () => { resolveLoadMore(response([row({ id: "n-2" })], 1, null)); await Promise.resolve(); });
       await flush();
-
       expect(host.querySelector('[data-testid="id-n-2"]')).toBeNull();
-      expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
       expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("false");
-      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25&cursor=cursor-2");
+      expect(host.querySelector('[data-testid="has-more"]')?.textContent).toBe("true");
     });
 
-    it("a load more parked on a reconcile that fails ends busy and reports the error", async () => {
+    it("a stale load more ends busy when the reconcile reports no further page", async () => {
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
       await render(<Harness poll={null} paged />);
 
@@ -378,14 +374,30 @@ describe("useNotificationFeed", () => {
       apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveWrite = resolve; }));
       await click(host.querySelector('[data-testid="mark-all-read"]')!);
       await act(async () => { resolveLoadMore(response([row({ id: "n-2" })], 1, null)); await Promise.resolve(); await Promise.resolve(); });
-      expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("true");
 
-      apiGetMock.mockRejectedValueOnce(new Error("offline"));
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1", readAt: "2026-07-28T01:00:00.000Z" })], 0, null));
       await act(async () => { resolveWrite({ ok: true }); });
       await flush();
-
       expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("false");
-      expect(host.querySelector('[data-testid="load-more-error"]')?.textContent).toBe("true");
+      expect(host.querySelector('[data-testid="has-more"]')?.textContent).toBe("false");
+    });
+
+    it("a stale load more that lands after a failed reconcile ends busy", async () => {
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+      await render(<Harness poll={null} paged />);
+
+      let resolveLoadMore!: (value: unknown) => void;
+      apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolveLoadMore = resolve; }));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+
+      apiGetMock.mockRejectedValueOnce(new Error("offline"));
+      await click(host.querySelector('[data-testid="mark-all-read"]')!);
+      await flush();
+
+      await act(async () => { resolveLoadMore(response([row({ id: "n-2" })], 1, null)); await Promise.resolve(); });
+      await flush();
+      expect(host.querySelector('[data-testid="id-n-2"]')).toBeNull();
+      expect(host.querySelector('[data-testid="loading-more"]')?.textContent).toBe("false");
     });
 
     it("after read-all settles, a later response containing a new unread row shows it unread with count 1", async () => {
@@ -572,7 +584,7 @@ describe("useNotificationFeed", () => {
         expect(secondHost.querySelector('[data-testid="id-n-1"]')).not.toBeNull();
       });
 
-      it("two overlapping writes settling in either order produce exactly one reconcile GET per instance, none while either is pending", async () => {
+      it("two overlapping writes settling in order produce exactly one reconcile GET per instance, none while either is pending", async () => {
         apiGetMock.mockResolvedValue(response([row({ id: "n-1" }), row({ id: "n-2" })], 2));
         await render(<Harness poll={null} paged />);
         await mountSecond(<Harness poll={25_000} />);
@@ -594,6 +606,29 @@ describe("useNotificationFeed", () => {
         await act(async () => { resolveDismiss({ ok: true }); });
         await flush();
         // Both writes have now settled — exactly one reconcile GET per mounted instance.
+        expect(apiGetMock.mock.calls.length).toBe(getsBefore + 2);
+      });
+
+      it("two overlapping writes settling in the reverse order also produce exactly one reconcile GET per instance", async () => {
+        apiGetMock.mockResolvedValue(response([row({ id: "n-1" }), row({ id: "n-2" })], 2));
+        await render(<Harness poll={null} paged />);
+        await mountSecond(<Harness poll={25_000} />);
+
+        let resolveRead!: (value: unknown) => void;
+        apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveRead = resolve; }));
+        let resolveDismiss!: (value: unknown) => void;
+        apiDeleteMock.mockImplementationOnce(() => new Promise((resolve) => { resolveDismiss = resolve; }));
+
+        await click(host.querySelector('[data-testid="read-n-1"]')!);
+        await click(host.querySelector('[data-testid="dismiss-n-2"]')!);
+
+        const getsBefore = apiGetMock.mock.calls.length;
+        await act(async () => { resolveDismiss({ ok: true }); });
+        await flush();
+        expect(apiGetMock.mock.calls.length).toBe(getsBefore);
+
+        await act(async () => { resolveRead({ ok: true }); });
+        await flush();
         expect(apiGetMock.mock.calls.length).toBe(getsBefore + 2);
       });
 

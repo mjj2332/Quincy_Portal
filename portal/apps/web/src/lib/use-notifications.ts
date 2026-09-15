@@ -146,9 +146,6 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   // Bumped every time a head fetch actually applies a response. A `loadMore` that started before a
   // bump is stale: the view it was extending no longer exists.
   const viewEpochRef = useRef(0);
-  // Set when a `loadMore` landing finds itself stale and needs to re-run once the next head fetch
-  // has reconciled the view (and, for a paged instance, the cursor to resume from).
-  const pendingLoadMoreRef = useRef(false);
   // The tracker `generation` this instance has already reconciled to — set from the CURRENT
   // generation on first render, so a write that happened before mount does not trigger a spurious
   // extra fetch (the mount's own head fetch already reflects it).
@@ -197,22 +194,12 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
       if (paged) updateCursor(response.nextCursor);
       viewEpochRef.current += 1;
       setLoading(false);
-      if (pendingLoadMoreRef.current) {
-        pendingLoadMoreRef.current = false;
-        void loadMore();
-      }
     } catch {
       if (!mountedRef.current) return;
       // A write that started mid-request is not a failure of THIS request's own data — the next
       // reconcile (once it settles) covers it, so loading stays true rather than briefly flashing
       // an empty/failed state ahead of that refetch.
       if (writeSnapshot().pending === 0) setLoading(false);
-      // A Load more parked on this fetch would otherwise stay busy forever on the non-polling page.
-      if (seq === headSeqRef.current && pendingLoadMoreRef.current) {
-        pendingLoadMoreRef.current = false;
-        setLoadingMore(false);
-        setLoadMoreError(true);
-      }
     }
   }
 
@@ -298,23 +285,16 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
     setLoadMoreError(false);
     const startGeneration = writeSnapshot().generation;
     const startViewEpoch = viewEpochRef.current;
-    let rerunQueued = false;
     try {
       const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}&cursor=${encodeURIComponent(cursor)}`);
       if (!mountedRef.current) return;
       const { pending, generation } = writeSnapshot();
       if (generation !== startGeneration || pending > 0 || viewEpochRef.current !== startViewEpoch) {
-        // The view this page was extending is gone (a write settled, or a head fetch already
-        // reconciled it) — drop these rows and let the next applied head response re-run this once
-        // it has resolved the cursor to resume from, rather than appending onto a stale list.
-        if (pending === 0 && viewEpochRef.current !== startViewEpoch) {
-          // A head fetch already reconciled the view while this page was in flight, so no later
-          // apply is coming to re-run it (the page does not poll). Re-run now, after the lock drops.
-          rerunQueued = true;
-          queueMicrotask(() => { if (mountedRef.current) void loadMore(); });
-          return;
-        }
-        pendingLoadMoreRef.current = true;
+        // The view this page was extending is gone or about to be (a write overlapped it, or a head
+        // fetch already replaced it), so its cursor may no longer follow the rows on screen. Drop the
+        // rows and end the request; the reconcile head fetch sets the cursor a further Load more
+        // resumes from. Re-running automatically would have to wait on a fetch that can fail or
+        // return no cursor, which is how a busy state gets stuck on a page that never polls.
         return;
       }
       const incoming = response.notifications.map(normaliseRow);
@@ -327,8 +307,7 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
       if (mountedRef.current) setLoadMoreError(true);
     } finally {
       loadMoreInFlightRef.current = false;
-      // Stay busy across a stale landing that is about to re-run itself once reconciled.
-      if (mountedRef.current && !pendingLoadMoreRef.current && !rerunQueued) setLoadingMore(false);
+      if (mountedRef.current) setLoadingMore(false);
     }
   }
 

@@ -48,7 +48,10 @@ export async function trackWrite(write: () => Promise<unknown>, timeoutMs = 15_0
   generation += 1;
   notify();
 
-  const settleWrite = write().then(
+  // A synchronous throw from `write` must settle like a rejection, not escape with `pending` raised.
+  let started: Promise<unknown>;
+  try { started = write(); } catch (error) { started = Promise.reject(error); }
+  const settleWrite = started.then(
     () => "settled" as const,
     () => "settled" as const,
   );
