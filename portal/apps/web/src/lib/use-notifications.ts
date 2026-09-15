@@ -146,6 +146,9 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
   // Bumped every time a head fetch actually applies a response. A `loadMore` that started before a
   // bump is stale: the view it was extending no longer exists.
   const viewEpochRef = useRef(0);
+  // The tracker generation the rows on screen were fetched at. Until a head fetch applies at the
+  // current generation, the cursor may not follow the rows, so a Load more landing is dropped.
+  const appliedGenerationRef = useRef(writeSnapshot().generation);
   // The tracker `generation` this instance has already reconciled to — set from the CURRENT
   // generation on first render, so a write that happened before mount does not trigger a spurious
   // extra fetch (the mount's own head fetch already reflects it).
@@ -193,6 +196,7 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
       setNow(Date.now());
       if (paged) updateCursor(response.nextCursor);
       viewEpochRef.current += 1;
+      appliedGenerationRef.current = startGeneration;
       setLoading(false);
     } catch {
       if (!mountedRef.current) return;
@@ -279,17 +283,27 @@ export function useNotificationFeed({ poll, limit = 25, paged = false }: UseNoti
 
   async function loadMore() {
     if (!paged || nextCursorRef.current === null || loadMoreInFlightRef.current) return;
+    const snapshot = writeSnapshot();
+    if (snapshot.pending === 0 && snapshot.generation !== appliedGenerationRef.current) {
+      // The rows on screen predate a settled write and no reconcile has applied (still in flight, or
+      // it failed and the page never polls). A cursor page now would be dropped on landing, so the
+      // click refetches the head instead; the newer request supersedes any reconcile in flight.
+      void fetchHead();
+      return;
+    }
     const cursor = nextCursorRef.current;
     loadMoreInFlightRef.current = true;
     setLoadingMore(true);
     setLoadMoreError(false);
-    const startGeneration = writeSnapshot().generation;
     const startViewEpoch = viewEpochRef.current;
     try {
       const response = await apiGet<NotificationsResponse>(`/api/notifications?limit=${limit}&cursor=${encodeURIComponent(cursor)}`);
       if (!mountedRef.current) return;
       const { pending, generation } = writeSnapshot();
-      if (generation !== startGeneration || pending > 0 || viewEpochRef.current !== startViewEpoch) {
+      // Comparing with the applied generation, not the one at click time, also drops a Load more
+      // clicked after a write settled but before its reconcile applied: its cursor predates the
+      // rows that reconcile is about to put on screen.
+      if (generation !== appliedGenerationRef.current || pending > 0 || viewEpochRef.current !== startViewEpoch) {
         // The view this page was extending is gone or about to be (a write overlapped it, or a head
         // fetch already replaced it), so its cursor may no longer follow the rows on screen. Drop the
         // rows and end the request; the reconcile head fetch sets the cursor a further Load more

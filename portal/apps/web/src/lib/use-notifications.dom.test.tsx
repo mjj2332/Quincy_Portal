@@ -156,12 +156,16 @@ describe("useNotificationFeed", () => {
   it("leaves unreadCount alone on loadMore so an optimistic mark-read in flight is not undone", async () => {
     apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 5, "cursor-1"));
     await render(<Harness poll={null} paged />);
+    // Keep the write pending so the mark-read is genuinely in flight when the page lands.
+    let resolveWrite!: (value: unknown) => void;
+    apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveWrite = resolve; }));
     await click(host.querySelector('[data-testid="mark-all-read"]')!);
     expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
 
     apiGetMock.mockResolvedValueOnce(response([row({ id: "n-2" })], 5, null));
     await click(host.querySelector('[data-testid="load-more"]')!);
     expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
+    await act(async () => { resolveWrite({ ok: true }); });
   });
 
   it("issues one request for two loadMore calls before a rerender", async () => {
@@ -343,6 +347,52 @@ describe("useNotificationFeed", () => {
       expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
     });
 
+    it("a load more clicked after a write settled but before its reconcile applied refetches the head instead of appending a page the reconcile would erase", async () => {
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+      await render(<Harness poll={null} paged />);
+
+      let resolveReconcile!: (value: unknown) => void;
+      apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { resolveReconcile = resolve; }));
+      await click(host.querySelector('[data-testid="mark-all-read"]')!);
+      await flush();
+
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1", readAt: "2026-07-28T01:00:00.000Z" })], 0, "cursor-2"));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25");
+      expect(host.querySelector('[data-testid="has-more"]')?.textContent).toBe("true");
+
+      // The superseded reconcile lands last with an older view and is dropped.
+      await act(async () => { resolveReconcile(response([row({ id: "n-1" })], 1, "cursor-1")); await Promise.resolve(); await Promise.resolve(); });
+      expect(host.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
+
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-3" })], 0, null));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25&cursor=cursor-2");
+      expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
+    });
+
+    it("a load more clicked after a failed reconcile retries the head fetch rather than doing nothing", async () => {
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
+      await render(<Harness poll={null} paged />);
+
+      apiGetMock.mockRejectedValueOnce(new Error("offline"));
+      await click(host.querySelector('[data-testid="mark-all-read"]')!);
+      await flush();
+
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1", readAt: "2026-07-28T01:00:00.000Z" })], 0, "cursor-2"));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25");
+
+      apiGetMock.mockResolvedValueOnce(response([row({ id: "n-3" })], 0, null));
+      await click(host.querySelector('[data-testid="load-more"]')!);
+      await flush();
+      expect(apiGetMock).toHaveBeenLastCalledWith("/api/notifications?limit=25&cursor=cursor-2");
+      expect(host.querySelector('[data-testid="id-n-3"]')).not.toBeNull();
+    });
+
     it("a load more that lands after the reconcile already applied drops its rows and ends busy", async () => {
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1, "cursor-1"));
       await render(<Harness poll={null} paged />);
@@ -476,7 +526,7 @@ describe("useNotificationFeed", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(14_000); });
     });
 
-    it("unmounting mid-write produces no setter warnings and the barrier still returns to 0", async () => {
+    it("unmounting mid-write logs no errors and the barrier still returns to 0", async () => {
       apiGetMock.mockResolvedValueOnce(response([row({ id: "n-1" })], 1));
       await render(<Harness poll={null} />);
 
