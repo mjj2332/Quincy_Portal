@@ -1,0 +1,84 @@
+/**
+ * CI vitest-config coverage guard — every vitest config under `portal/` must be invoked by
+ * the `test` job in `.github/workflows/portal.yml`.
+ *
+ * Two suites sat outside CI for months without anyone noticing: `apps/web/vitest.dom.config.ts`
+ * (the entire component and screen surface — the rail, the Board, the Calendar, the routing
+ * agreement) and `packages/db/vitest.config.ts` (including a guard written specifically to fail
+ * the build when a new `INSERT INTO projects` site appears). Everything passed locally, so the
+ * gap was invisible: it was in which configs CI invokes, not in the tests (#158). A guard that
+ * does not run in CI is decorative, and worse than absent, because it reads as protection in
+ * review.
+ *
+ * It lives in `packages/shared` — a repo-wide concern in the vocabulary package — because
+ * shared's is the one config CI has always invoked, so the guard is self-hosting: it cannot
+ * be the suite that goes unrun.
+ *
+ * This guard discovers the configs from the filesystem rather than from a list, so adding a new
+ * `vitest.*.config.ts` fails the build until the workflow runs it. **Never add an exception list
+ * to make this pass.** If it fires, add the `npx vitest run --config <path>` step to the `test`
+ * job — or delete the config if the suite is genuinely dead.
+ */
+import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, relative } from "node:path";
+
+const portalRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const workflowPath = fileURLToPath(new URL("../../../../.github/workflows/portal.yml", import.meta.url));
+
+const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".wrangler", "coverage"]);
+
+function findVitestConfigs(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      found.push(...findVitestConfigs(join(dir, entry.name)));
+    } else if (/^vitest(\..+)?\.config\.[cm]?[jt]s$/.test(entry.name)) {
+      found.push(relative(portalRoot, join(dir, entry.name)));
+    }
+  }
+  return found.sort();
+}
+
+/**
+ * The configs the `test` job actually runs. Matching whole `- run:` steps rather than
+ * searching the job text means a commented-out step doesn't satisfy the guard.
+ */
+function configsRunByTestJob(): string[] {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const afterTestJob = workflow.split(/^  test:$/m)[1];
+  if (afterTestJob === undefined) throw new Error("portal.yml has no `test:` job");
+  // Stop at the next job so a config invoked elsewhere in the file doesn't count.
+  const testJob = afterTestJob.split(/^  \S/m)[0];
+  return testJob
+    .split("\n")
+    .map((line) => /^\s*- run: npx vitest run --config (\S+)\s*$/.exec(line)?.[1])
+    .filter((config): config is string => config !== undefined)
+    .sort();
+}
+
+describe("CI vitest-config coverage", () => {
+  it("finds vitest configs on disk and vitest steps in the workflow", () => {
+    // Sanity check on both halves: a broken walk or a broken parse makes the guard vacuous.
+    expect(findVitestConfigs(portalRoot).length).toBeGreaterThan(0);
+    expect(configsRunByTestJob().length).toBeGreaterThan(0);
+  });
+
+  it("runs every vitest config in the `test` job", () => {
+    const run = new Set(configsRunByTestJob());
+    const missing = findVitestConfigs(portalRoot).filter((config) => !run.has(config));
+    expect(
+      missing,
+      `Not run by the \`test\` job in .github/workflows/portal.yml:\n${missing
+        .map((config) => `  - run: npx vitest run --config ${config}`)
+        .join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("runs no vitest config that has been deleted", () => {
+    const onDisk = new Set(findVitestConfigs(portalRoot));
+    expect(configsRunByTestJob().filter((config) => !onDisk.has(config))).toEqual([]);
+  });
+});

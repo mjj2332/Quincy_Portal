@@ -69,6 +69,10 @@ jobs:
       - run: npx vitest run --config workers/webhook-ingress/vitest.config.ts
       - run: npx vitest run --config workers/background/vitest.config.ts
       - run: npx vitest run --config apps/web/vitest.config.ts
+      # The DOM suite is the largest of the eight (86 files / 999 tests) but runs in ~7s
+      # wall-clock on vitest's default parallelism, so it is appended to this job rather
+      # than given its own or sharded (#158).
+      - run: npx vitest run --config apps/web/vitest.dom.config.ts
 
   build-web:
     needs: install
