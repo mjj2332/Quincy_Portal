@@ -2,6 +2,7 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { requireExecutedTests } from "../../packages/shared/src/testing/require-executed-tests.ts";
 
 const migrationDirectory = new URL("../../packages/db/migrations/", import.meta.url);
 const migrationNames = (await readdir(migrationDirectory))
@@ -33,5 +34,5 @@ export default defineConfig({
     __BACKGROUND_WRANGLER_CONFIG__: JSON.stringify(wranglerConfig),
   },
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, miniflare: { bindings: { AUTOHDR_API_KEY: "test-autohdr-api-key" } } })],
-  test: { include: ["test/**/*.test.ts"] },
+  test: { reporters: ["default", requireExecutedTests("workers/background/vitest.config.ts")], include: ["test/**/*.test.ts"] },
 });

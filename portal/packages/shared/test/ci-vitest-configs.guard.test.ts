@@ -18,11 +18,18 @@
  * `vitest.*.config.ts` fails the build until the workflow runs it. **Never add an exception list
  * to make this pass.** If it fires, add the `npx vitest run --config <path>` step to the `test`
  * job — or delete the config if the suite is genuinely dead.
+ *
+ * #170 was the next shape of the same failure: a config the workflow *does* run, which executes
+ * nothing. `workers/app/vitest.dev.config.ts` reported `133 skipped, 0 passed` and exited 0 for
+ * almost two months, so the step read as covered while the one behaviour it exists to cover had
+ * no executing test anywhere. Being invoked is not the same as being run, so this guard now also
+ * asserts every config wires `RequireExecutedTests`, which fails any run that executed nothing.
  */
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, relative } from "node:path";
+import { RequireExecutedTests } from "../src/testing/require-executed-tests.ts";
 
 const portalRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const workflowPath = fileURLToPath(new URL("../../../../.github/workflows/portal.yml", import.meta.url));
@@ -74,6 +81,27 @@ describe("CI vitest-config coverage", () => {
       `Not run by the \`test\` job in .github/workflows/portal.yml:\n${missing
         .map((config) => `  - run: npx vitest run --config ${config}`)
         .join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("wires the no-empty-run reporter into every vitest config", async () => {
+    // Assert against the resolved config object, not the source text: a reporter added under the
+    // wrong key, or clobbered by a later spread, is a config that still reads correct and still
+    // exits 0 on an empty run.
+    const unwired: string[] = [];
+    for (const config of findVitestConfigs(portalRoot)) {
+      const resolved: unknown = (await import(pathToFileURL(join(portalRoot, config)).href)).default;
+      if (typeof resolved !== "object" || resolved === null) {
+        throw new Error(`${config} does not default-export a config object; this guard cannot check it.`);
+      }
+      const reporters = (resolved as { test?: { reporters?: unknown } }).test?.reporters;
+      if (!Array.isArray(reporters) || !reporters.some((reporter) => reporter instanceof RequireExecutedTests)) {
+        unwired.push(config);
+      }
+    }
+    expect(
+      unwired,
+      `Missing \`requireExecutedTests(...)\` in \`test.reporters\`:\n${unwired.map((config) => `  - ${config}`).join("\n")}`,
     ).toEqual([]);
   });
 
