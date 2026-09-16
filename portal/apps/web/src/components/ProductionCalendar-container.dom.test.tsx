@@ -12,6 +12,10 @@ import { ProductionCalendar } from "./ProductionCalendar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// Without this the real better-auth client polls /api/auth/get-session over the network (#167).
+// `data: null` is what these tests already ran against — the real session never resolved — so the
+// capability-derived branches keep the coverage they had. A test needing a role sets one here.
+vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
 vi.mock("./ProductionCalendarSurface", () => ({
   ProductionCalendarSurface: (props: any) => <div data-testid="calendar-surface" data-initial-view={props.initialView} data-editable={String(props.editable)} data-event-start-editable={String(props.eventStartEditable)} data-event-duration-editable={String(props.eventDurationEditable)} data-droppable={String(props.droppable)} data-has-event-drop={String(Boolean(props.eventDrop))} data-has-event-resize={String(Boolean(props.eventResize))} data-has-drop={String(Boolean(props.drop))} data-has-event-receive={String(Boolean(props.eventReceive))} data-has-event-change={String(Boolean(props.eventChange))}>
     <button type="button" onClick={() => props.dateClick?.({ allDay: true, dateStr: "2026-08-12" })}>Disclose 12 Aug</button>

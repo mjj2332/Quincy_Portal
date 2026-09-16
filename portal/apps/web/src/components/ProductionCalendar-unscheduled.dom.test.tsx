@@ -22,6 +22,10 @@ const assigneeId = "22222222-2222-4222-8222-222222222222";
 const confirmMock = vi.hoisted(() => vi.fn<(options: unknown) => Promise<boolean>>());
 const invalidateProjectResourcesMock = vi.hoisted(() => vi.fn(async () => undefined));
 
+// Without this the real better-auth client polls /api/auth/get-session over the network (#167).
+// `data: null` is what these tests already ran against — the real session never resolved — so the
+// capability-derived branches keep the coverage they had. A test needing a role sets one here.
+vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock, confirmStore: { getSnapshot: vi.fn(() => null), resolve: vi.fn() } }));
 vi.mock("../lib/project-data", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/project-data")>()), invalidateProjectResources: invalidateProjectResourcesMock }));
 

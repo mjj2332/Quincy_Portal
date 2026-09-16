@@ -9,6 +9,10 @@ import { getProjectQueryRuntime } from "../lib/project-query-sync";
 const apiPostMock = vi.hoisted(() => vi.fn());
 const uploadMultipartFileMock = vi.hoisted(() => vi.fn());
 
+// Without this the real better-auth client polls /api/auth/get-session over the network (#167).
+// `data: null` is what these tests already ran against — the real session never resolved — so the
+// capability-derived branches keep the coverage they had. A test needing a role sets one here.
+vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiPost: apiPostMock }));
 vi.mock("../lib/multipart-upload", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/multipart-upload")>()), uploadMultipartFile: uploadMultipartFileMock }));
 

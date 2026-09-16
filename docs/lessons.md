@@ -2453,3 +2453,40 @@ unannounced, asynchronous write (a human's own upload) cannot infer "quiet" from
 activity check at decision time — pair a quiet period before acting with a sweep after, and never
 let the sweep adopt what it finds.
 
+
+## A passing test that opens a real socket — the origin happy-dom hands you is a real one (#167)
+
+**What happened:** adding the DOM suite to CI (#158) surfaced `ECONNREFUSED ::1:3000` in every run.
+Eight of the 94 files were opening real TCP connections to `localhost:3000` — around forty per run —
+and all eight passed. happy-dom gives the document a default origin of `http://localhost:3000`, so
+anything the app requests during a test resolves against it and vitest dials out for real. The
+connection is refused on a machine with nothing on that port, the rejection lands after the test has
+ended, and vitest prints it as stderr rather than failing the run.
+
+Refusal was doing all the work. With `npm run dev` listening on :3000 those same requests *succeed*
+against a real local API — so the tests read one way on a developer's machine and another on CI,
+which surfaces as flakiness with no visible cause and no stack that points anywhere useful.
+
+**The diagnosis was wrong the first time.** The issue named `SubtaskChecklist.tsx`'s
+mentionable-users `apiGet` as the source, which was plausible and false: all eight files already
+mocked `lib/api`. The actual caller in every case was better-auth's client — `lib/auth.ts`'s
+`useSession` polling `/api/auth/get-session` through `@better-fetch/fetch`, an absolute URL built
+from `window.location.origin`. What found it was hooking `fetch` and printing a stack, after a first
+guard that hooked `fetch` in `beforeEach` caught nothing at all: the call is issued from a timer, so
+it lands between tests or after teardown, outside any hook's window.
+
+**Fix:** `apps/web/src/testing/no-unmocked-fetch.ts`, a `setupFiles` entry for the DOM config, swaps
+`fetch` for one that records the attempt and rejects — installed at module scope, before any test
+file imports the app, and reasserted per test. Failing is done by *recording* and throwing in
+`afterEach`/`afterAll`, not by the rejection: components catch their own fetch errors and swallow a
+bare one. The eight files got the mock the other twenty already had:
+`vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }))` —
+`data: null` because that is the state they already ran against, so no capability-derived branch
+silently changed.
+
+**Rule:** a test that passes is not a test that stayed local. When a DOM environment invents an
+origin, every relative URL in the app becomes a live address — assume the network is reachable
+unless something in the suite makes it unreachable, and put that something in `setupFiles` where no
+individual test can forget it. When a leak is issued from a timer, a `beforeEach` hook is the wrong
+instrument: it is not running when the call happens. And a guard that lives in a config field is one
+deleted line from decorative — guard the wiring too (`dom-fetch-guard-wiring.guard.test.ts`).
