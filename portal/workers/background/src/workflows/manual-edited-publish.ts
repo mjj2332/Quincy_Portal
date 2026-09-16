@@ -12,7 +12,7 @@ import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { enqueueManualEditedRenditions } from "../manual-edited-renditions";
-import { getEditorFolderMapping, type EditorFolderMapping } from "../editor-folders/mapping";
+import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "../editor-folders/mapping";
 import { automationFlag } from "../dropbox/monitor-state";
 import { dropboxPathKey } from "../dropbox/paths";
 
@@ -88,6 +88,12 @@ async function assertManualDestinationCurrent(
     if (!mapping || mapping.state !== "ready" || mapping.id !== destination.mappingId || mapping.connectionId !== destination.connectionId) {
       throw new Error(`Editor folder mapping for project ${asset.projectId} changed before manual publishing`);
     }
+    // A mapping mid-move keeps `state = 'ready'`, but its roots are about to be rebased by the
+    // move's own commit. Never create folders or upload against a destination that is about to
+    // move out from under this Workflow; a retry re-resolves the destination once the move lands.
+    if (mapping.moveStatus === "moving") {
+      throw new Error(`Editor folder for project ${asset.projectId} is moving; manual publishing resumes after the move`);
+    }
     let expectedPath: string;
     try {
       expectedPath = mappedManualUploadPath(mapping, asset.collectionKind, asset.section, asset.id, asset.originalFilename);
@@ -121,7 +127,7 @@ function manualDestinationGuard(
 ): DestinationGuard {
   if (destination.mapped) {
     return {
-      clause: " AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.state = 'ready' AND EXISTS (SELECT 1 FROM json_each(CASE WHEN ? = 'raw' THEN m.input_roots_json ELSE m.output_roots_json END) AS root WHERE lower(?) = lower(json_extract(root.value, '$.path') || '/Manual-Uploads/' || assets.id || '/' || assets.original_filename)))",
+      clause: ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.state = 'ready' AND ${EDITOR_MAPPING_NOT_MOVING_SQL} AND EXISTS (SELECT 1 FROM json_each(CASE WHEN ? = 'raw' THEN m.input_roots_json ELSE m.output_roots_json END) AS root WHERE lower(?) = lower(json_extract(root.value, '$.path') || '/Manual-Uploads/' || assets.id || '/' || assets.original_filename)))`,
       bindings: [destination.mappingId, projectId, destination.connectionId, collectionKind, destination.path],
     };
   }
@@ -183,6 +189,9 @@ export class ManualEditedPublish extends WorkflowEntrypoint<Env, ManualEditedPub
           ? await getEditorFolderMapping(dbFor(this.env), input.projectId)
           : null;
         if (mapping?.state === "ready") {
+          if (mapping.moveStatus === "moving") {
+            throw new Error(`Editor folder for project ${input.projectId} is moving; manual publishing resumes after the move`);
+          }
           return {
             path: mappedManualUploadPath(mapping, asset.collectionKind, asset.section, asset.id, asset.originalFilename),
             mapped: true,

@@ -2251,8 +2251,9 @@ from noise because the parsed order did not say where its date came from.
 (receipt time, not processing time, or a lagging newer event would be refused), and the audit INSERT
 fires only if that UPDATE landed. `text` is declined and audited once. The guard only sees changes
 it recorded: a date set at creation or by the display-to-ISO upgrade has no receipt time to compare.
-The Editor tree is not moved: a ready mapping reports `editor_folder_not_moved`, and a pending
-mapping that created nothing is re-pointed inside its provisioning lease.
+At the time, the Editor tree was not moved: a ready mapping reported `editor_folder_not_moved`, and
+a pending mapping that created nothing was re-pointed inside its provisioning lease. **Superseded by
+#153**, which moves a ready tree too and removed that code; the pending re-point is unchanged.
 
 **Rule:** a field that is "never overwritten" needs a provenance tag before it can be safely
 overwritten; fence the write on both the value read and the event's age, since webhook redelivery
@@ -2361,4 +2362,94 @@ a ref'd callback, not its own state — a state update on an unmounting componen
 effect that would have told the parent. And a component that hands a callback to a third-party
 library must fence that callback against firing after unmount, since the library's own teardown is
 not guaranteed to run first.
+## `move_v2` needed its own error vocabulary and its own response shape, not `get_metadata`'s or `create_folder_v2`'s (#153)
+
+**Symptom:** wiring `/files/move_v2` the same way the two existing Dropbox endpoints were wired
+would have reintroduced #148 for a new endpoint, and mistyped a routine response.
+
+**Cause:** #148 only carved `get_metadata`'s `path/not_found` 409 out of "every failure is recorded
+on the connection"; `authorisedJson`'s generic branch still recorded anything else, and `move_v2`
+has its own 409 vocabulary that isn't `path/not_found` at all — `to/conflict` when something already
+occupies the destination, `from_lookup/not_found` or `to/not_found` when the source or the
+destination's parent is gone. Both are facts about the *paths* being moved, not about the
+connection, exactly like #148's lesson, but the code that recognised #148's shape had no reason to
+also recognise this endpoint's. Separately, `create_folder_v2` always returns a folder, so
+`createFolder` never has to look at what it got back; `move_v2` returns a Metadata **union**
+(file/folder/deleted) tagged by `.tag`, and assuming "it's a folder" the way `createFolder` does
+would silently mistype a relocated file as a moved folder instead of throwing.
+
+**Fix:** the first pass enumerated the 409s it knew about — `to/conflict` as
+`DropboxRelocationConflictError`, `from_lookup/not_found`/`to/not_found` as the existing
+`DropboxPathNotFoundError` — and review caught that this was #148 a third time in waiting: the
+unlisted variants (`no_write_permission`, `insufficient_quota`, `too_many_files`, and whatever
+Dropbox adds next) still fell through to the generic branch and marked the connection. An
+enumeration of a union that grows is a bug with a delay on it. So the carve-out became a type
+instead of a list: `DropboxPathError` is the base for "a fact about a path, not the connection",
+`authorisedJson`'s catch tests that one type, and **every** `move_v2` 409 is one of its subclasses
+— a 409 on that endpoint is by definition about the two paths in the request. A new path-scoped
+error now only has to extend the base to be excluded. `moveFolderStrict` separately runs the same
+`parseEntry()` every other endpoint uses on the returned metadata and rejects a non-folder `.tag`
+instead of assuming one.
+
+**Rule:** #148's rule ("only record on the connection what is true of the connection") is not a
+fact about `get_metadata` — apply it fresh to every new endpoint's actual documented error shapes.
+And the third time you write the same carve-out, stop writing carve-outs: make the safe behaviour
+the default for the whole endpoint, so the next unlisted variant costs nothing. Never assume one
+endpoint's response shape (a bare folder, a union) carries over to the next just because both
+return something with an `id` and a `path_lower`.
+
+## The commit after an irreversible external change is the one that must not retry forever (#153)
+
+**Symptom:** if the D1 batch that records an Editor folder move failed *after* Dropbox had already
+moved the tree, the mapping stayed `moving` — which correctly fences editor sync, manual publishing
+and RAW reconciliation — and every later pass took the lease over and failed the same way. The
+project's whole Editor pipeline was silently switched off, with nothing in the UI, no audit row and
+no note saying why.
+
+**Cause:** retry is the right answer for a transient failure and the wrong one for a deterministic
+failure, and the code could not tell them apart. A UNIQUE collision on the destination fails
+identically every minute forever. The fence that protects the data during a move is the same thing
+that strands the project when the move never completes.
+
+**Fix:** count the attempts durably (`move_commit_attempts`, migration 0045, reset by a successful
+commit or a release) and escalate at three: keep `moving` so nothing syncs against a path that is
+no longer there, stop taking the lease over, and write both an audit row
+(`editor_folder.move.commit_stuck`) and a plain-language note saying the Dropbox folder has already
+moved and the Portal could not record it.
+
+**Rule:** when an operation changes the outside world before it records that change, the recording
+step needs a bounded number of attempts and an escalation a human can see — not an unbounded retry.
+"The world has changed and the database does not know" is the state to design an alarm for, because
+it is the one state that will not fix itself and will not announce itself.
+
+## An Editor tree move needed a version fence, not a path fence, and a human upload has no signal before the move commits (#153)
+
+**Symptom:** an early design for the reschedule move fenced every writer on `root_path_key` alone,
+and treated a run of Dropbox's `list_folder` at claim time as sufficient proof the tree was quiet.
+
+**Cause:** a path key is not a version. A mapping can occupy key A, move to key B on one
+reschedule, and move back to key A on a second, so a writer (an Output sync, a RAW sync) that
+started against key A before the first move could still match key A's *second* occupation days
+later — the key repeats, but the tree underneath it does not. Separately, a human dragging files
+into Dropbox produces no signal to the Portal until the next time something asks; a single
+`list_folder` at the instant of claiming cannot see an upload that starts a second after that call
+returns, so "no recent files right now" is not "safe to move."
+
+**Fix:** `root_revision` is a counter the mapping's own commit batch bumps by exactly one, never by
+anything else, so it only ever moves forward even if the path key it's attached to cycles back.
+Every writer that touches a mapped tree — the move's own claim and commit, `sync-output.ts`, the
+RAW-mapped branch of `dropbox/sync.ts` — reads the revision once at the start of its run and binds
+every subsequent write to that exact value plus a live `move_status != 'moving'` check, so a run
+that starts before a move cannot land under the tree the move produces even if the key matches
+again later. The move itself never claims off one snapshot: it requires 30 quiet minutes before
+claiming, takes the same reading again immediately after claiming (a check-then-commit gap is still
+a gap) and releases if that second check finds an upload, and — because even that cannot see an
+upload Dropbox has not yet reported — leaves the emptied old path on the mapping after landing and
+watches it for another 30 minutes, reporting rather than merging anything that turns up there.
+
+**Rule:** a value that can repeat is not a version; fence concurrent writers on a counter that only
+moves forward, not on whatever identifies the row today. A background process guarding against an
+unannounced, asynchronous write (a human's own upload) cannot infer "quiet" from one absence-of-
+activity check at decision time — pair a quiet period before acting with a sweep after, and never
+let the sweep adopt what it finds.
 

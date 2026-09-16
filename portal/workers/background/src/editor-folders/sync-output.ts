@@ -13,6 +13,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { Env } from "../env";
 import { errorMessage } from "../lib/db";
+import { createJob } from "../lib/jobs";
 import { requireBoardSchemaReady } from "../lib/board-schema";
 import {
   createDropboxClientContext,
@@ -25,7 +26,7 @@ import {
 } from "../dropbox/client";
 import { automationFlag } from "../dropbox/monitor-state";
 import { dropboxPathKey, normalisePath, pathEqualsOrIsBelow } from "../dropbox/paths";
-import { getEditorFolderMapping, type EditorFolderMapping } from "./mapping";
+import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "./mapping";
 
 const MAX_DOWNLOADS_PER_RUN = 120;
 const EDITOR_REQUEST_PACING_MS = 150;
@@ -204,6 +205,12 @@ export async function syncProjectEditorOutput(
   if (!mapping || mapping.state !== "ready") {
     return { newlyImported: 0, currentEditedAvailable: false, hasMore: false };
   }
+  // A mapping mid-move is a no-op the same way an inapplicable mapping is: the root a listing
+  // would scan is about to be rebased by the move's own commit, and every path this sync would
+  // record is rebased there too, so scanning now would only race that batch.
+  if (mapping.moveStatus === "moving") {
+    return { newlyImported: 0, currentEditedAvailable: false, hasMore: false };
+  }
   if (!mapping.outputRoots.length) {
     throw new Error(
       `Editor folder mapping for project ${projectId} has no ready Output roots`,
@@ -236,6 +243,11 @@ export async function syncProjectEditorOutput(
   let downloadsThisRun = 0;
   let contentCallsThisRun = 0;
   let continuationEnqueued = false;
+  // Bound to the revision read at the start of this run so a mapping that starts moving
+  // mid-listing (root_revision unchanged, move_status flips to 'moving') fences every write
+  // below just as reliably as one that has already landed at a new revision.
+  const mappingGuard = ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.root_revision = ? AND m.state = 'ready' AND ${EDITOR_MAPPING_NOT_MOVING_SQL})`;
+  const mappingGuardBindings = [mapping.id, projectId, mapping.connectionId, mapping.rootRevision];
 
   try {
     for (const { file, section } of files) {
@@ -269,15 +281,11 @@ export async function syncProjectEditorOutput(
 
       if (existing && sameContent(existing.contentHash, file.content_hash)) {
         if (existing.source === "dropbox") {
-          await db
-            .update(assets)
-            .set({
-              sourcePath,
-              sourcePathKey,
-              section,
-              updatedAt: new Date(),
-            })
-            .where(eq(assets.id, existing.id));
+          // Raw SQL (not drizzle's .update()) so the same mapping/revision/not-moving fence as
+          // every other write below applies here too — this update was unguarded before #153.
+          await env.DB.prepare(
+            `UPDATE assets SET source_path = ?, source_path_key = ?, section = ?, updated_at = ? WHERE id = ?${mappingGuard}`,
+          ).bind(sourcePath, sourcePathKey, section, Date.now(), existing.id, ...mappingGuardBindings).run();
         }
         await enqueueRenditionSafely(
           env,
@@ -330,7 +338,6 @@ export async function syncProjectEditorOutput(
         httpMetadata: { contentType: "image/jpeg" },
       });
       const now = Date.now();
-      const mappingGuard = " AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.state = 'ready')";
       const insert = existing
         ? env.DB.prepare(
             `INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, section, publish_status, is_premium, version, version_group_id, supersedes_asset_id, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, 'ready', 0, ?, ?, ?, ?, ? WHERE changes() = 1 AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)${mappingGuard}`,
@@ -350,9 +357,7 @@ export async function syncProjectEditorOutput(
             now,
             now,
             projectId,
-            mapping.id,
-            projectId,
-            mapping.connectionId,
+            ...mappingGuardBindings,
           )
         : env.DB.prepare(
             `INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, section, publish_status, is_premium, created_at, updated_at) SELECT ?, ?, 'photo', ?, ?, ?, ?, 'dropbox', ?, ?, ?, 'ready', 0, ?, ? WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) AND NOT EXISTS (SELECT 1 FROM assets WHERE collection_id = ? AND source_path_key = ? AND superseded_at IS NULL)${mappingGuard} ON CONFLICT DO NOTHING`,
@@ -371,9 +376,7 @@ export async function syncProjectEditorOutput(
             projectId,
             collection.id,
             sourcePathKey,
-            mapping.id,
-            projectId,
-            mapping.connectionId,
+            ...mappingGuardBindings,
           );
       const supersede = existing
         ? env.DB.prepare(
@@ -387,9 +390,7 @@ export async function syncProjectEditorOutput(
             sourcePathKey,
             existing.contentHash,
             projectId,
-            mapping.id,
-            projectId,
-            mapping.connectionId,
+            ...mappingGuardBindings,
           )
         : null;
       // The supersede and insert are one D1 transaction. A stale read cannot supersede a newer
@@ -450,9 +451,14 @@ export async function syncProjectEditorOutput(
       newlyImported += 1;
     }
     if (continuationEnqueued) {
+      // A tracked job the same way index.ts's triggerEditorSync creates one, not a bare message:
+      // an untracked continuation left no jobs row for an operator or the move state machine's
+      // blocking-job check to see while it was in flight.
+      const continuationJobId = await createJob(db, { kind: "editor_sync", projectId });
       await env.INGEST_QUEUE.send({
         type: "editor_sync",
         projectId,
+        jobId: continuationJobId,
         connectionId: mapping.connectionId,
       });
     }

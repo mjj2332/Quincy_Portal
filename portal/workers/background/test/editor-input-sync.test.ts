@@ -231,3 +231,57 @@ describe("Editor Input synchronization", () => {
       .resolves.toEqual({ source: "upload", source_path: null });
   });
 });
+
+describe("Editor Input synchronization: move in progress (#153)", () => {
+  it("is a no-op while the mapping is moving, without listing Dropbox, and leaves no stuck claim or job", async () => {
+    const data = await fixture();
+    await bindings.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving' WHERE id = ?").bind(data.mappingId).run();
+    configure([file(`${data.inputRoot}/frame.jpg`, "frame.jpg", "moving")]);
+
+    await expect(syncProjectRawFolder(localEnv(), data.projectId, undefined, data.connectionId))
+      .resolves.toEqual({ newlyImported: 0, currentRawAvailable: false, claimed: false, hasMore: false });
+    expect(listFolder).not.toHaveBeenCalled();
+    await expect(bindings.DB.prepare("SELECT state FROM raw_reconciliation_claims WHERE project_id = ?").bind(data.projectId).first())
+      .resolves.toEqual({ state: "done" });
+    await expect(bindings.DB.prepare("SELECT status FROM jobs WHERE project_id = ? AND kind = 'dropbox_sync'").bind(data.projectId).first<{ status: string }>())
+      .resolves.toMatchObject({ status: "done" });
+  });
+
+  it("does not update an existing identity's path or insert a fresh asset once the mapping starts moving mid-listing", async () => {
+    const data = await fixture();
+    const returning = file(`${data.inputRoot}/returning.jpg`, "returning.jpg", "returning");
+    const fresh = file(`${data.inputRoot}/fresh.jpg`, "fresh.jpg", "fresh");
+    const collectionId = crypto.randomUUID();
+    const existingAssetId = crypto.randomUUID();
+    const now = Date.now();
+    const oldSourcePath = `${data.inputRoot}/OLD-CASED-returning.jpg`;
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES (?, ?, 'raw', 'received', ?, ?)").bind(collectionId, data.projectId, now, now),
+      bindings.DB.prepare(
+        "INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, section, is_premium, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'returning.jpg', 4, ?, 'dropbox', ?, NULL, 1, ?, ?)",
+      ).bind(existingAssetId, collectionId, `tests/${existingAssetId}.jpg`, returning.content_hash, oldSourcePath, now, now),
+      bindings.DB.prepare(
+        "INSERT INTO asset_ingest_identities (id, collection_id, identity_key, asset_id, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).bind(crypto.randomUUID(), collectionId, `hash:${returning.content_hash!.toLowerCase()}`, existingAssetId, now),
+    ]);
+
+    vi.mocked(createDropboxClientContext).mockResolvedValue({ connectionId: "mock-context", accessToken: "test-token" });
+    vi.mocked(listFolder).mockImplementation(async () => {
+      await bindings.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving' WHERE id = ?").bind(data.mappingId).run();
+      return { entries: [returning, fresh], cursor: "cursor", has_more: false };
+    });
+    vi.mocked(listFolderContinue).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
+    vi.mocked(download).mockImplementation(async () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+      headers: { "Dropbox-API-Result": JSON.stringify({ content_hash: fresh.content_hash }) },
+    }));
+    vi.mocked(recordDropboxSuccess).mockResolvedValue(undefined);
+
+    await expect(syncProjectRawFolder(localEnv(), data.projectId, undefined, data.connectionId))
+      .resolves.toMatchObject({ newlyImported: 0 });
+
+    await expect(bindings.DB.prepare("SELECT is_premium, source_path FROM assets WHERE id = ?").bind(existingAssetId).first())
+      .resolves.toEqual({ is_premium: 1, source_path: oldSourcePath });
+    await expect(bindings.DB.prepare("SELECT count(*) AS count FROM assets a JOIN collections c ON c.id = a.collection_id WHERE c.project_id = ? AND a.original_filename = 'fresh.jpg'").bind(data.projectId).first<{ count: number }>())
+      .resolves.toEqual({ count: 0 });
+  });
+});

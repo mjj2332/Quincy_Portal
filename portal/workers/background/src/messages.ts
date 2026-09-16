@@ -1,4 +1,4 @@
-export const DROPBOX_SYNC_TRIGGERS = ["dropbox_delta", "manual_dropbox_sync", "queue_retry", "tonomo_raw_path_changed", "editor_scaffold_raw_path_recovered"] as const;
+export const DROPBOX_SYNC_TRIGGERS = ["dropbox_delta", "manual_dropbox_sync", "queue_retry", "tonomo_raw_path_changed", "editor_scaffold_raw_path_recovered", "editor_folder_moved"] as const;
 export type DropboxSyncTrigger = (typeof DROPBOX_SYNC_TRIGGERS)[number];
 
 export type IngestMessage =

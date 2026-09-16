@@ -153,6 +153,13 @@ function parsedMapping(row: EditorFolderMappingRow): EditorFolderMapping {
   if (!isSafeEditorPathSegment(row.projectFolderName)) throw new Error("Editor folder mapping has invalid project folder name");
   if (editorFolderPathKey(row.rootPath) !== row.rootPathKey) throw new Error("Editor folder mapping path key is not canonical");
   if (!isEditorWorkspacePath(row.rootPath)) throw new Error("Editor folder mapping root is outside the Editor workspace");
+  if (row.moveTargetPath !== null) {
+    if (editorFolderPathKey(row.moveTargetPath) !== row.moveTargetPathKey) throw new Error("Editor folder mapping move target path key is not canonical");
+    if (!isEditorWorkspacePath(row.moveTargetPath)) throw new Error("Editor folder mapping move target is outside the Editor workspace");
+  } else if (row.moveTargetPathKey !== null) {
+    throw new Error("Editor folder mapping move target path key is set without a move target path");
+  }
+  if (row.moveTargetShootDate !== null) parseShootDate(row.moveTargetShootDate);
   return {
     ...row,
     inputRoots: parseSubtrees(row.inputRootsJson, "input roots", row.rootPath),
@@ -211,6 +218,31 @@ export async function findEditorFolderMappingByPath(
   return row ? parsedMapping(row) : null;
 }
 
+/** SQL fence for the same rule as {@link findEditorFolderMappingByMoveTargetPath}, applied inside
+ * the write itself so a claim that races the pre-check still loses. `exceptMappingId` exempts the
+ * mapping doing the writing, which may legitimately be moving to its own new root. */
+function moveTargetIsFree(connectionId: string, rootPathKey: string, exceptMappingId?: string) {
+  return sql`NOT EXISTS (
+          SELECT 1 FROM editor_folder_mappings m
+          WHERE m.connection_id = ${connectionId} AND m.move_target_path_key = ${rootPathKey}${
+            exceptMappingId === undefined ? sql`` : sql` AND m.id != ${exceptMappingId}`}
+        )`;
+}
+
+/** A root that another mapping on the same connection is already moving to is not free to claim,
+ * even though it is nobody's `rootPathKey` yet: the mapping holding it will land there shortly. */
+export async function findEditorFolderMappingByMoveTargetPath(
+  db: Database,
+  input: { connectionId: string; path: string },
+): Promise<EditorFolderMapping | null> {
+  const pathKey = editorFolderPathKey(input.path);
+  const row = await db.select().from(editorFolderMappings).where(and(
+    eq(editorFolderMappings.connectionId, input.connectionId),
+    eq(editorFolderMappings.moveTargetPathKey, pathKey),
+  )).get();
+  return row ? parsedMapping(row) : null;
+}
+
 export type ReserveEditorFolderMappingInput = {
   projectId: string;
   connectionId: string;
@@ -241,6 +273,8 @@ export async function reserveEditorFolderMapping(db: Database, input: ReserveEdi
   const rootPathKey = editorFolderPathKey(rootPath);
   const existingPath = await findEditorFolderMappingByPath(db, { connectionId: input.connectionId, path: rootPath });
   if (existingPath && existingPath.projectId !== input.projectId) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, existingPath.projectId);
+  const moveTargetHolder = await findEditorFolderMappingByMoveTargetPath(db, { connectionId: input.connectionId, path: rootPath });
+  if (moveTargetHolder && moveTargetHolder.projectId !== input.projectId) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, moveTargetHolder.projectId);
   const now = input.now ?? new Date();
   const proof: EditorFolderRecoveryProof = {
     version: 1,
@@ -275,6 +309,7 @@ export async function reserveEditorFolderMapping(db: Database, input: ReserveEdi
           SELECT 1 FROM integration_connections c
           WHERE c.id = ${input.connectionId} AND c.provider = 'dropbox'
         )
+        AND ${moveTargetIsFree(input.connectionId, rootPathKey)}
       ON CONFLICT DO NOTHING
     `);
   } catch (error) {
@@ -286,7 +321,13 @@ export async function reserveEditorFolderMapping(db: Database, input: ReserveEdi
     throw error;
   }
   const created = await getEditorFolderMapping(db, input.projectId);
-  if (!created) throw new EditorFolderMappingError("EDITOR_FOLDER_NOT_FOUND", `Editor folder mapping for project ${input.projectId} was not persisted`);
+  if (!created) {
+    // The row was silently skipped by the WHERE guard above, not a UNIQUE conflict: the same
+    // move-target collision the pre-check looks for, just lost to a concurrent claim in the gap.
+    const moveTargetWinner = await findEditorFolderMappingByMoveTargetPath(db, { connectionId: input.connectionId, path: rootPath });
+    if (moveTargetWinner) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, moveTargetWinner.projectId);
+    throw new EditorFolderMappingError("EDITOR_FOLDER_NOT_FOUND", `Editor folder mapping for project ${input.projectId} was not persisted`);
+  }
   return created;
 }
 
@@ -307,6 +348,12 @@ function nextProof(current: EditorFolderMapping, patch: Partial<EditorFolderReco
     created: patch.created ?? existing.created,
   };
 }
+
+/** SQL predicate (on an `editor_folder_mappings` row aliased `m`) for "this mapping is not mid-move".
+ * A mapping being moved keeps `state = 'ready'`, so every write fenced on a mapping's root needs
+ * this alongside the state and `root_revision` checks — see #153. One source of truth so a future
+ * `move_status` value cannot be added in one guard and forgotten in the other three. */
+export const EDITOR_MAPPING_NOT_MOVING_SQL = "(m.move_status IS NULL OR m.move_status != 'moving')";
 
 export const EDITOR_PROVISION_LEASE_MS = 5 * 60 * 1000;
 
@@ -470,6 +517,8 @@ export async function retargetPendingEditorFolderMapping(
   const rootPathKey = editorFolderPathKey(rootPath);
   const holder = await findEditorFolderMappingByPath(db, { connectionId: current.connectionId, path: rootPath });
   if (holder && holder.id !== mappingId) return { status: "held", rootPath };
+  const moveTargetHolder = await findEditorFolderMappingByMoveTargetPath(db, { connectionId: current.connectionId, path: rootPath });
+  if (moveTargetHolder && moveTargetHolder.id !== mappingId) return { status: "held", rootPath };
   const at = input.at ?? new Date();
   const proof = nextProof(current, {
     rootPath,
@@ -485,8 +534,16 @@ export async function retargetPendingEditorFolderMapping(
       WHERE id = ${mappingId} AND state = 'pending' AND provision_lease_token = ${input.leaseToken}
         AND root_folder_id IS NULL AND root_path_key = ${current.rootPathKey}
         AND COALESCE(json_array_length(recovery_proof_json, '$.created'), 0) = 0
+        AND ${moveTargetIsFree(current.connectionId, rootPathKey, mappingId)}
     `);
-    if ((result.meta?.changes ?? 0) !== 1) return { status: "stale" };
+    if ((result.meta?.changes ?? 0) !== 1) {
+      // Distinguish a lost move-target race from an ordinary stale fence (lease lost, tree
+      // started, or the mapping already moved on) so the caller re-evaluates instead of retrying
+      // the same doomed target.
+      const raceLoser = await findEditorFolderMappingByMoveTargetPath(db, { connectionId: current.connectionId, path: rootPath });
+      if (raceLoser && raceLoser.id !== mappingId) return { status: "held", rootPath };
+      return { status: "stale" };
+    }
   } catch (error) {
     // Another mapping reserved the new root between the holder read and this write.
     if (isUniqueConflict(error)) return { status: "held", rootPath };
@@ -679,6 +736,8 @@ export async function linkExistingEditorFolder(db: Database, input: LinkExisting
   }
   const existingPath = await findEditorFolderMappingByPath(db, { connectionId: input.connectionId, path: rootPath });
   if (existingPath && existingPath.projectId !== input.projectId) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, existingPath.projectId);
+  const moveTargetHolder = await findEditorFolderMappingByMoveTargetPath(db, { connectionId: input.connectionId, path: rootPath });
+  if (moveTargetHolder && moveTargetHolder.projectId !== input.projectId) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, moveTargetHolder.projectId);
   const now = input.now ?? new Date();
   const expected = input.expectedProjectSnapshot;
   const snapshotGuard = expected
@@ -712,6 +771,7 @@ export async function linkExistingEditorFolder(db: Database, input: LinkExisting
       sql`root_folder_id IS ${existingProject.rootFolderId}`,
       sql`(provision_lease_token IS NULL OR provision_lease_expires_at <= ${now.getTime()})`,
       sql`EXISTS (SELECT 1 FROM projects p WHERE p.id = editor_folder_mappings.project_id AND p.archived_at IS NULL AND p.stage_key != 'delivered' AND ${snapshotGuard})`,
+      moveTargetIsFree(input.connectionId, editorFolderPathKey(rootPath), existingProject.id),
     )).catch(async (error: unknown) => {
       if (!isUniqueConflict(error)) throw error;
       const holder = await findEditorFolderMappingByPath(db, { connectionId: input.connectionId, path: rootPath });
@@ -743,6 +803,7 @@ export async function linkExistingEditorFolder(db: Database, input: LinkExisting
       WHERE EXISTS (
         SELECT 1 FROM projects p WHERE p.id = ${input.projectId} AND p.archived_at IS NULL AND p.stage_key != 'delivered' AND ${snapshotGuard}
       )
+        AND ${moveTargetIsFree(input.connectionId, editorFolderPathKey(rootPath))}
       ON CONFLICT DO NOTHING
     `);
   } catch (error) {
@@ -757,6 +818,8 @@ export async function linkExistingEditorFolder(db: Database, input: LinkExisting
   if (!linked) {
     const holder = await findEditorFolderMappingByPath(db, { connectionId: input.connectionId, path: rootPath });
     if (holder) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, holder.projectId);
+    const moveTargetWinner = await findEditorFolderMappingByMoveTargetPath(db, { connectionId: input.connectionId, path: rootPath });
+    if (moveTargetWinner) throw new EditorFolderPathCollisionError(input.connectionId, rootPath, moveTargetWinner.projectId);
     throw new EditorFolderMappingError("EDITOR_FOLDER_NOT_FOUND", `Editor folder mapping for project ${input.projectId} was not persisted`);
   }
   if (linked.rootPathKey !== editorFolderPathKey(rootPath) || linked.connectionId !== input.connectionId || linked.rootFolderId !== rootId) {

@@ -2,12 +2,14 @@ import { and, eq, gte, inArray, isNull, ne } from "drizzle-orm";
 import { editorFolderMappings, jobs, projectMembers, projects, user } from "@quincy/db/schema";
 import type { Database } from "@quincy/db";
 
-import type { DropboxFile, DropboxFolder } from "../dropbox/client";
+import type { DropboxEntry, DropboxFile, DropboxFolder } from "../dropbox/client";
 import {
   createFolder,
   createFolderStrict,
   getMetadata,
   isDropboxPathNotFoundError,
+  listFolderRecursive,
+  moveFolderStrict,
   recordDropboxSuccess,
 } from "../dropbox/client";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
@@ -47,6 +49,7 @@ import {
   type EditorFolderMapping,
   type EditorFolderSubtree,
 } from "./mapping";
+import { attemptEditorFolderMove, resumeEditorFolderMove, type EditorFolderMoveDependencies } from "./move";
 
 export type DropboxMetadataOperation = (
   env: Env,
@@ -54,7 +57,7 @@ export type DropboxMetadataOperation = (
   path: string,
   connectionId?: string,
 ) => Promise<DropboxFile | DropboxFolder>;
-type DropboxCreateFolderOperation = (
+export type DropboxCreateFolderOperation = (
   env: Env,
   db: Database,
   path: string,
@@ -66,6 +69,19 @@ type DropboxCreateFolderStrictOperation = (
   path: string,
   connectionId?: string,
 ) => Promise<DropboxFolder>;
+export type DropboxMoveFolderOperation = (
+  env: Env,
+  db: Database,
+  fromPath: string,
+  toPath: string,
+  connectionId?: string,
+) => Promise<DropboxFolder>;
+export type DropboxListFolderRecursiveOperation = (
+  env: Env,
+  db: Database,
+  path: string,
+  connectionId?: string,
+) => Promise<DropboxEntry[]>;
 type DropboxConnectionOperation = (db: Database) => Promise<string>;
 type RawFolderPathOperation = (env: Env, rawFolderLink: string | null, connectionId: string) => Promise<string | null>;
 
@@ -74,6 +90,8 @@ export type EditorFolderScaffoldDependencies = {
   getMetadata?: DropboxMetadataOperation;
   createFolder?: DropboxCreateFolderOperation;
   createFolderStrict?: DropboxCreateFolderStrictOperation;
+  moveFolderStrict?: DropboxMoveFolderOperation;
+  listFolderRecursive?: DropboxListFolderRecursiveOperation;
   canonicalDropboxConnectionId?: DropboxConnectionOperation;
   resolveRawFolderPath?: RawFolderPathOperation;
   now?: () => Date;
@@ -267,15 +285,24 @@ export type EditorScaffoldSkipReason =
   | "raw_sync_in_flight"
   | "provision_lease_held"
   | "project_not_provisionable"
-  | "editor_folder_not_moved";
+  | "editor_folder_move_nonstandard_parent"
+  | "editor_folder_move_conflict"
+  | "editor_folder_move_source_missing"
+  | "editor_folder_move_moved_elsewhere"
+  | "editor_folder_move_refused"
+  | "editor_folder_move_stuck"
+  | "editor_folder_move_deferred"
+  | "editor_folder_move_in_flight"
+  | "editor_folder_move_orphan_upload";
 
 /** Every code that can prefix an `editor_reconcile` job's `error` note. */
-export type EditorReconcileNoteCode = EditorScaffoldSkipReason | "needs_review" | "autocreate_not_allowed";
+export type EditorReconcileNoteCode = EditorScaffoldSkipReason | "needs_review" | "autocreate_not_allowed" | "editor_folder_moved";
 
 export type EditorReconcileOutcome =
   | { status: "mapped"; mapping: EditorFolderMapping }
   | { status: "needs_review"; mapping: EditorFolderMapping; reason: string }
-  | { status: "skipped"; mapping: EditorFolderMapping | null; reason: EditorScaffoldSkipReason; detail: string };
+  | { status: "skipped"; mapping: EditorFolderMapping | null; reason: EditorScaffoldSkipReason; detail: string }
+  | { status: "moved"; mapping: EditorFolderMapping; from: string; to: string; previousShootDate: string };
 
 type RawIdentitySkip = { skip: EditorScaffoldSkipReason; detail: string };
 
@@ -283,6 +310,9 @@ type RawIdentitySkip = { skip: EditorScaffoldSkipReason; detail: string };
 export function editorReconcileNote(outcome: EditorReconcileOutcome): string | undefined {
   if (outcome.status === "skipped") return reconcileNote(outcome.reason, outcome.detail);
   if (outcome.status === "needs_review") return reconcileNote("needs_review", outcome.reason);
+  if (outcome.status === "moved") {
+    return reconcileNote("editor_folder_moved", `Moved the Editor tree from ${outcome.from} to ${outcome.to} after the shoot date changed from ${outcome.previousShootDate} to ${outcome.mapping.shootDate}`);
+  }
   return undefined;
 }
 
@@ -475,8 +505,25 @@ export async function reconcileEditorFolderOutcome(
   const getMetadataOperation = dependencies.getMetadata ?? getMetadata;
   const createFolderOperation = dependencies.createFolder ?? createFolder;
   const createFolderStrictOperation = dependencies.createFolderStrict ?? createFolderStrict;
+  const moveFolderStrictOperation = dependencies.moveFolderStrict ?? moveFolderStrict;
+  const listFolderRecursiveOperation = dependencies.listFolderRecursive ?? listFolderRecursive;
   const connectionOperation = dependencies.canonicalDropboxConnectionId ?? canonicalDropboxConnectionId;
   const rawFolderPathOperation = dependencies.resolveRawFolderPath ?? ((currentEnv, link, connectionId) => pathFromRawFolderLink(currentEnv, link, connectionId));
+  const moveDependencies: EditorFolderMoveDependencies = {
+    getMetadata: getMetadataOperation,
+    createFolder: createFolderOperation,
+    moveFolderStrict: moveFolderStrictOperation,
+    listFolderRecursive: listFolderRecursiveOperation,
+    now,
+  };
+
+  // A mapping mid-move must be resolved (commit or release) even for a Project that has since
+  // become archived/delivered; the resume path may only finish an in-flight move, never start
+  // one — a fresh move only ever starts from the ready branch below.
+  const priorMapping = await getEditorFolderMapping(db, projectId);
+  if (priorMapping?.moveStatus === "moving") {
+    return await resumeEditorFolderMove(env, db, priorMapping, moveDependencies);
+  }
 
   const project = await db.select({
     id: projects.id,
@@ -489,15 +536,13 @@ export async function reconcileEditorFolderOutcome(
   }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
   if (!project) return skipped("project_inactive", "Project is archived, delivered or missing");
 
-  let mapping = await getEditorFolderMapping(db, projectId);
+  let mapping = priorMapping;
   if (mapping?.state === "needs_review") return outcomeFor(mapping);
   if (mapping?.state === "ready") {
-    // A ready tree stays where it is when the shoot date moves: the move lands with the
-    // reschedule-move change. Until then say so on the job instead of reporting "mapped".
-    const reschedule = shootDateDrift(mapping, project.shootDate);
-    if (reschedule) {
-      return skipped("editor_folder_not_moved", `Shoot date changed from ${reschedule.previous} to ${reschedule.next}; the Editor tree is still at ${mapping.rootPath}. The mapping cannot be re-pointed until moving Editor trees is supported, so leave the folder where it is; files keep syncing from the stored path`, mapping);
-    }
+    // A ready tree that has drifted from the Project's current shoot date is moved (or blocked
+    // and reported) here; a mapping with nothing to move still runs the orphan-upload sweep.
+    const moveOutcome = await attemptEditorFolderMove(env, db, project, mapping, moveDependencies);
+    if (moveOutcome) return moveOutcome;
     return outcomeFor(mapping);
   }
 
