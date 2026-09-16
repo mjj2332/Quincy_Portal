@@ -922,7 +922,8 @@ export const editorFolderMappings = sqliteTable(
      * mid-move against the batch that rebases it. */
     rootRevision: integer("root_revision").notNull().default(0),
     /** Set while a ready mapping's tree is being relocated for a reschedule, or when a move
-     * attempt could not proceed and needs an operator to look at `moveNote`. */
+     * attempt could not proceed. The reason is in `moveNote`, which as of #153 no surface reads:
+     * finding a blocked or stuck move means querying D1 by hand. Tracked in #163. */
     moveStatus: text("move_status", { enum: ["moving", "blocked"] as const }),
     moveTargetPath: text("move_target_path"),
     moveTargetPathKey: text("move_target_path_key"),
