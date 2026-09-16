@@ -2378,18 +2378,49 @@ also recognise this endpoint's. Separately, `create_folder_v2` always returns a 
 (file/folder/deleted) tagged by `.tag`, and assuming "it's a folder" the way `createFolder` does
 would silently mistype a relocated file as a moved folder instead of throwing.
 
-**Fix:** `authorisedJson` matches both `move_v2` 409 shapes before its generic branch —
-`to/conflict` throws `DropboxRelocationConflictError` (the move state machine re-checks by Dropbox
-folder ID before deciding whether that's a real conflict or its own retry landing on top of an
-already-completed move), and `from_lookup/not_found`/`to/not_found` throw the existing
-`DropboxPathNotFoundError` — and neither is recorded on the connection, alongside `get_metadata`'s
-`path/not_found`. `moveFolderStrict` runs the same `parseEntry()` every other endpoint uses on the
-returned metadata and rejects a non-folder `.tag` instead of assuming one.
+**Fix:** the first pass enumerated the 409s it knew about — `to/conflict` as
+`DropboxRelocationConflictError`, `from_lookup/not_found`/`to/not_found` as the existing
+`DropboxPathNotFoundError` — and review caught that this was #148 a third time in waiting: the
+unlisted variants (`no_write_permission`, `insufficient_quota`, `too_many_files`, and whatever
+Dropbox adds next) still fell through to the generic branch and marked the connection. An
+enumeration of a union that grows is a bug with a delay on it. So the carve-out became a type
+instead of a list: `DropboxPathError` is the base for "a fact about a path, not the connection",
+`authorisedJson`'s catch tests that one type, and **every** `move_v2` 409 is one of its subclasses
+— a 409 on that endpoint is by definition about the two paths in the request. A new path-scoped
+error now only has to extend the base to be excluded. `moveFolderStrict` separately runs the same
+`parseEntry()` every other endpoint uses on the returned metadata and rejects a non-folder `.tag`
+instead of assuming one.
 
 **Rule:** #148's rule ("only record on the connection what is true of the connection") is not a
-fact about `get_metadata` — apply it fresh to every new endpoint's actual documented error shapes,
-and never assume one endpoint's response shape (a bare folder, a union) carries over to the next
-just because both return something with an `id` and a `path_lower`.
+fact about `get_metadata` — apply it fresh to every new endpoint's actual documented error shapes.
+And the third time you write the same carve-out, stop writing carve-outs: make the safe behaviour
+the default for the whole endpoint, so the next unlisted variant costs nothing. Never assume one
+endpoint's response shape (a bare folder, a union) carries over to the next just because both
+return something with an `id` and a `path_lower`.
+
+## The commit after an irreversible external change is the one that must not retry forever (#153)
+
+**Symptom:** if the D1 batch that records an Editor folder move failed *after* Dropbox had already
+moved the tree, the mapping stayed `moving` — which correctly fences editor sync, manual publishing
+and RAW reconciliation — and every later pass took the lease over and failed the same way. The
+project's whole Editor pipeline was silently switched off, with nothing in the UI, no audit row and
+no note saying why.
+
+**Cause:** retry is the right answer for a transient failure and the wrong one for a deterministic
+failure, and the code could not tell them apart. A UNIQUE collision on the destination fails
+identically every minute forever. The fence that protects the data during a move is the same thing
+that strands the project when the move never completes.
+
+**Fix:** count the attempts durably (`move_commit_attempts`, migration 0045, reset by a successful
+commit or a release) and escalate at three: keep `moving` so nothing syncs against a path that is
+no longer there, stop taking the lease over, and write both an audit row
+(`editor_folder.move.commit_stuck`) and a plain-language note saying the Dropbox folder has already
+moved and the Portal could not record it.
+
+**Rule:** when an operation changes the outside world before it records that change, the recording
+step needs a bounded number of attempts and an escalation a human can see — not an unbounded retry.
+"The world has changed and the database does not know" is the state to design an alarm for, because
+it is the one state that will not fix itself and will not announce itself.
 
 ## An Editor tree move needed a version fence, not a path fence, and a human upload has no signal before the move commits (#153)
 
