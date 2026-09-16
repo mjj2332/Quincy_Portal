@@ -24,7 +24,7 @@ export default defineConfig({
   define: {
     __PORTAL_MIGRATION_SQL__: JSON.stringify(migrationSql),
     __PORTAL_SEED_SQL__: JSON.stringify(seedSql),
-    "process.env.DOCUMENT_DIRECT_TEST": JSON.stringify("false"),
+    __DOCUMENT_DIRECT_TEST__: JSON.stringify(false),
   },
   plugins: [
     cloudflareTest({
