@@ -24,11 +24,19 @@ agents read the same file.
 Everything lives under `portal/` (an npm-workspaces monorepo). From `portal/`:
 
 ```bash
+npm run db:migrate:local            # FIRST, per worktree — migrate local D1 and enable dev flags
 npm run dev -w @quincy/web          # run the SPA locally (needs the app worker too)
 npx wrangler dev                    # in workers/app — the API + auth + SPA host
 npm run build -w @quincy/web        # build the SPA
 npx vitest run --config workers/app/vitest.config.ts   # API/integration tests
 ```
+
+Run `db:migrate:local` before the first `dev` in **each git worktree** — every worktree gets its
+own `.wrangler/state`, so a fresh one starts with an empty database. It also switches on the
+feature flags that production already has on but that ship disabled from their staged-rollout
+migration, the Board contract among them; without it the Kanban renders as disabled and no drag
+can be started (#160). It is safe to re-run, and local-only by construction — it refuses any
+argument that could point it at another environment.
 
 Local app/auth secrets go in `portal/workers/app/.dev.vars`; background-provider secrets such as
 `AUTOHDR_API_KEY` go in `portal/workers/background/.dev.vars` (both are gitignored). See the

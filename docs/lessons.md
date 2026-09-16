@@ -2490,3 +2490,66 @@ unless something in the suite makes it unreachable, and put that something in `s
 individual test can forget it. When a leak is issued from a timer, a `beforeEach` hook is the wrong
 instrument: it is not running when the call happens. And a guard that lives in a config field is one
 deleted line from decorative — guard the wiring too (`dom-fetch-guard-wiring.guard.test.ts`).
+
+## A staged rollout leaves two states, and dev was stuck in the older one (#160)
+
+`0037_project_board_order_contract` seeded `tb5a_board_contract_enabled` at `0`. That was correct:
+the Board contract shipped off and production was flipped on deliberately afterwards. What nobody
+wrote down is that flipping it was the *second half* of the rollout — so while production ran the
+post-rollout configuration, every local database sat in the pre-rollout one forever. The Kanban
+renders "Board interactions are temporarily unavailable", every drag handle carries
+`data-disabled="true"`, and no drag can be started by mouse or keyboard. Each git worktree has its
+own `.wrangler/state`, so this recurred per worktree and was rediscovered by hand each time.
+
+It surfaced in the #152 browser pass: three of five checks could not execute at all and were logged
+inconclusive. Not a test failure — an *absence* of testability, which is harder to notice, because
+nothing turns red. Together with the DOM suite being absent from CI (#158), a Kanban drag regression
+was caught at neither the automated nor the manual layer.
+
+**Where the fix does not go.** `packages/db/seed/0001_seed.sql` is the all-environments seed, so
+enabling a flag there would reach production — and it uses `INSERT OR IGNORE`, which would not
+update the row 0037 has already created at `0`, so it would not even work. Nor does a bare
+`d1 execute --file`: applying SQL proves nothing unless something checks it landed, and printing the
+row is not checking it. `packages/db/setup-local.mjs` runs the migrations, enables the flag, then
+*asserts* the flag reads `1` and exits non-zero otherwise. `db:migrate:local` is now that script.
+
+`workers/app/wrangler.jsonc` carries the production D1 `database_id`, so `--local` is the only thing
+between a dev-setup script and the real database. It is hard-coded, never taken from the caller, and
+`--remote` / `--env` / `--config` / passthrough are refused before a subprocess is spawned.
+
+### The same migration was quietly able to revoke the flip
+
+0037's insert ended `ON CONFLICT(key) DO UPDATE SET enabled = 0, updated_by = NULL, ...`. Seeding a
+default is right; *restamping* a live value is not. Replaying that statement against a database
+where an operator had enabled the Board switched it off for every user and erased who had turned it
+on — no schema change, no error, nothing to explain the outage. A feature-flag row is operator-owned
+the moment it exists. It is now `ON CONFLICT(key) DO NOTHING`, with
+`migration-feature-flag-ownership.guard.test.ts` failing the build on the next one.
+
+Two corrections to how that was first written up, both worth keeping:
+
+- **Whole-file replay was never the reachable path.** 0037's three `ALTER TABLE ... ADD COLUMN`
+  statements sit above the flag insert and abort on the duplicate column first. Only the single
+  statement can reach the conflict clause, which is what the test replays. A hazard you cannot
+  reproduce is a hazard you have not actually verified.
+- **Editing an applied migration was safe here, and that is narrower than it sounds.** Wrangler's
+  ledger is `id / name / applied_at` and matches by *name*; drizzle's `_journal.json` entry is
+  `{idx, version, when, tag, breakpoints}`. Neither stores a checksum, so an environment that has
+  applied a migration never re-reads the file and cannot detect the edit. This does **not** make
+  migrations editable in general — it made this edit free because it provably could not change the
+  fresh-apply path (row absent → INSERT branch → `enabled = 0`, which the existing 0037 tests
+  already assert). A new migration was the alternative and would have been ceremony: running after
+  0037 on a replay, it cannot restore a value it never knew.
+
+One thing that is *not* a defect, and must stay as it is:
+`workers/background/src/external-role-cache-purge.ts` also re-asserts on conflict
+(`DO UPDATE SET enabled = 1`). That one is a latch deliberately asserting a freeze after the bounded
+zone purge exhausts, not a default being restamped — converting it would break the freeze. The guard
+reads migrations only, so it is excluded structurally rather than by an allowlist. (Its missing
+release path is #161.)
+
+**Rule:** a migration may establish a flag's default, never re-assert it. And when a rollout has a
+manual second step, the step is part of the rollout — automate it into dev setup or it becomes a
+permanent divergence nobody can see, because the environment that is wrong is the one with no users
+complaining. Be honest about what the guards prove: they gate the wiring, not your `.wrangler/state`.
+Nothing in CI can assert your local database has the flag on; only a browser pass closes that.
