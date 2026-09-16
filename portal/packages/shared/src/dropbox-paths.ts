@@ -50,3 +50,29 @@ export function rawFolderGate(rawFolderPath: string | null | undefined, rawFolde
 
 export const RAW_FOLDER_MISSING_MESSAGE = "This project has no Dropbox RAW folder. Create the shoot folder in Tonomo, then set the RAW folder on the project before uploading edited images.";
 export const RAW_FOLDER_INVALID_MESSAGE = "This project's Dropbox RAW folder path is not a usable shoot folder. Correct it on the project before uploading edited images.";
+
+/** The primary Editor Input root a project's RAW sync reads, plus any further legacy roots it
+ * also watches. Shared so the app worker and the web client agree on the shape by construction. */
+export type MonitoredRawFolder = {
+  source: "editor_input";
+  path: string;
+  webUrl: string | null;
+  extraPaths: string[];
+};
+
+/**
+ * A signed-in team member's web URL for a Dropbox folder path. Null when no path can be named.
+ * Segments are escaped individually — never the whole path — so `/` keeps working as a separator
+ * while spaces and reserved URL characters inside a folder name are encoded. Casing is left
+ * exactly as Dropbox displays it; `editorFolderPathKey` exists for case-insensitive comparison.
+ */
+export function dropboxHomeUrl(path: string | null | undefined): string | null {
+  const normalised = normalisePath(path ?? "");
+  const segments = normalised.split("/").filter(Boolean);
+  if (!segments.length) return null;
+  // `encodeURIComponent(".")` and `encodeURIComponent("..")` leave dot segments literal, and a
+  // browser canonicalises them out of the resulting URL's path — pointing at a different folder
+  // than the caller named. Fail closed rather than emit a wrong-but-plausible URL.
+  if (segments.some((segment) => segment === "." || segment === "..")) return null;
+  return `https://www.dropbox.com/home/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`;
+}

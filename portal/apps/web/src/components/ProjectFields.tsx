@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { CollectionKind, Role } from "@quincy/shared";
+import type { CollectionKind, MonitoredRawFolder, Role } from "@quincy/shared";
 import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { FieldGroup } from "@/components/reui/field";
@@ -107,11 +107,15 @@ export function validateProjectFields(form: ProjectForm, mode: ProjectFieldsMode
   };
 }
 
-export function ProjectFields({ form, errors, existingCollections = [], mode = "create", onChange, onToggle }: {
+export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, onChange, onToggle }: {
   form: ProjectForm;
   errors: Partial<Record<ProjectFieldError, string>>;
   existingCollections?: CollectionKind[];
   mode?: ProjectFieldsMode;
+  /** Set when a ready Editor folder mapping already monitors this project's RAW intake — the
+   * Tonomo fields below stay fully editable (they still drive Tonomo change detection, RAW
+   * identity recovery and AutoHDR naming) but are no longer the folder being watched. */
+  monitoredRawFolder?: MonitoredRawFolder | null;
   onChange: (field: ProjectTextField, value: string) => void;
   onToggle: (field: ProjectSelectionField, value: string) => void;
 }) {
@@ -182,6 +186,9 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     </section>
     <section className="create-project__section" aria-labelledby="dropbox-heading">
       <SectionHead eyebrow="Dropbox" id="dropbox-heading">Where will the RAW files land?</SectionHead>
+      {monitoredRawFolder && <Notice tone="caution" role="status" className="mb-[var(--space-4)]">
+        RAW is monitored from the Editor Input folder <strong className="font-medium [font-family:var(--font-mono)]">{monitoredRawFolder.path}</strong>. The fields below are the Tonomo folder: they are not monitored, and are still used for Tonomo change detection, RAW identity recovery and AutoHDR naming.
+      </Notice>}
       <div className={FIELD_GRID_2}>
         <QuincyField id="project-raw-folder-link" label="RAW folder link" type="url" placeholder="https://www.dropbox.com/..." value={form.rawFolderLink} onChange={(event) => onChange("rawFolderLink", event.target.value)} aria-invalid={Boolean(errors.rawFolderLink)} error={errors.rawFolderLink} />
         <QuincyField id="project-raw-folder-path" label="RAW folder path" placeholder="/Shoots/Property name" value={form.rawFolderPath} onChange={(event) => onChange("rawFolderPath", event.target.value)} />

@@ -5,6 +5,7 @@ import { InternalLink } from "./InternalLink";
 import { ProjectTeamControl } from "./ProjectTeamControl";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { buttonClasses } from "./quincy/Button";
+import { StatusPill } from "./quincy/StatusPill";
 import { cn } from "../lib/utils";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
@@ -206,10 +207,45 @@ export function ProjectOverviewRail({
       })}</div>
     </section>
 
-    {canUpload && (hasRawFolder || canAdminBackend) && <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
+    {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <section className="py-[var(--space-5)] max-[721px]:py-[var(--space-4)]
                         [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border
                         last:border-b-0" aria-labelledby="project-overview-dropbox">
       <div className={RAIL_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
+      {project.monitoredRawFolder && <div data-testid="raw-monitored" className="mb-[var(--space-4)]">
+        <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+          <span className={RAIL_KV_KEY}>Monitored RAW folder</span>
+          <span className={cn(RAIL_KV_VALUE, "[font-family:var(--font-mono)]")}>{project.monitoredRawFolder.path}</span>
+        </div>
+        <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
+          <StatusPill tone="positive">Monitored</StatusPill>
+        </div>
+        {project.monitoredRawFolder.webUrl
+          ? <a href={project.monitoredRawFolder.webUrl} target="_blank" rel="noreferrer" className={buttonClasses("secondary", { className: "w-full min-h-[44px]" })}>Open in Dropbox</a>
+          : null}
+        {project.monitoredRawFolder.extraPaths.length > 0 && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+          <span className={RAIL_KV_KEY}>Also monitored</span>
+          {project.monitoredRawFolder.extraPaths.map((path) => (
+            <span key={path} className={cn(RAIL_KV_VALUE, "[font-family:var(--font-mono)] block")}>{path}</span>
+          ))}
+        </div>}
+      </div>}
+      {(project.rawFolderPath || project.rawFolderLink) && project.monitoredRawFolder && <div data-testid="raw-tonomo-secondary" className="mb-[var(--space-4)]">
+        {project.rawFolderPath && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+          <span className={RAIL_KV_KEY}>Tonomo folder path</span>
+          <span className={RAIL_KV_VALUE}>{project.rawFolderPath}</span>
+        </div>}
+        {project.rawFolderLink && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+          <span className={RAIL_KV_KEY}>Tonomo folder link</span>
+          <span className={RAIL_KV_VALUE}>{project.rawFolderLink}</span>
+        </div>}
+        <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
+          <StatusPill tone="neutral">Not monitored</StatusPill>
+        </div>
+        <p className="m-0 text-foreground-secondary
+                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]">
+          RAW is read from the Editor Input folder. This folder is kept for Tonomo change detection and AutoHDR naming.
+        </p>
+      </div>}
       <button
         type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
         className={buttonClasses("secondary", { className: "w-full min-h-[44px]" })}

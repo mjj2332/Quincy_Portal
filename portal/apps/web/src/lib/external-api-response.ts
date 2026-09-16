@@ -69,6 +69,7 @@ export function externalProjectDetailToWorkspace(project: ExternalProjectDetailD
     editedUploadAvailable: project.editedUploadAvailable,
     rawFolderPath: null,
     rawFolderLink: null,
+    monitoredRawFolder: null,
     coverAssetId: project.cover?.assetId ?? null,
     effectiveCoverAssetId: project.cover?.assetId ?? null,
     collections: project.collections,

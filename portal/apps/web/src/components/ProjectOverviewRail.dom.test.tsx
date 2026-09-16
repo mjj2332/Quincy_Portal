@@ -179,4 +179,66 @@ describe("Project Overview rail Stage control", () => {
       expect(element.querySelector("button, a, input, select, textarea")).toBeNull();
     }
   });
+
+  it("shows the monitored Editor Input folder above Sync, an Open-in-Dropbox link, and demotes the Tonomo folder to Not monitored", () => {
+    render(<ProjectOverviewRail {...baseProps(project({
+      rawFolderPath: "/Tonomo/Raw Files/12 Example St",
+      rawFolderLink: "https://www.dropbox.com/scl/fo/legacy",
+      monitoredRawFolder: {
+        source: "editor_input",
+        path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input",
+        webUrl: "https://www.dropbox.com/home/Editor/01_ACTIVE%20EDITS/09.%20September/11/12%20Example%20St/0.%20Input",
+        extraPaths: ["/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/11/Input"],
+      },
+    }))} canUpload hasRawFolder />);
+
+    const monitored = host.querySelector('[data-testid="raw-monitored"]')!;
+    expect(monitored).not.toBeNull();
+    expect(monitored.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input");
+    expect(monitored.textContent).toContain("Monitored");
+    expect(monitored.textContent).toContain("Also monitored");
+    expect(monitored.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/11/Input");
+
+    const openLink = monitored.querySelector<HTMLAnchorElement>("a")!;
+    expect(openLink.getAttribute("href")).toBe("https://www.dropbox.com/home/Editor/01_ACTIVE%20EDITS/09.%20September/11/12%20Example%20St/0.%20Input");
+    expect(openLink.getAttribute("target")).toBe("_blank");
+    expect(openLink.getAttribute("rel")).toBe("noreferrer");
+
+    const secondary = host.querySelector('[data-testid="raw-tonomo-secondary"]')!;
+    expect(secondary).not.toBeNull();
+    expect(secondary.textContent).toContain("Not monitored");
+    expect(secondary.textContent).toContain("/Tonomo/Raw Files/12 Example St");
+    expect(secondary.textContent).toContain("https://www.dropbox.com/scl/fo/legacy");
+    expect(secondary.querySelector("a")).toBeNull();
+
+    // The monitored path is above Sync, not swapped in for it.
+    const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
+    expect(syncButton).not.toBeNull();
+    expect(monitored.compareDocumentPosition(syncButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders neither monitored nor Tonomo-secondary testid when there is no ready Editor mapping, even with a Tonomo path set", () => {
+    render(<ProjectOverviewRail {...baseProps(project({ rawFolderPath: "/Tonomo/Raw Files/12 Example St", monitoredRawFolder: null }))} canUpload hasRawFolder />);
+    expect(host.querySelector('[data-testid="raw-monitored"]')).toBeNull();
+    expect(host.querySelector('[data-testid="raw-tonomo-secondary"]')).toBeNull();
+  });
+
+  it("never renders an Open-in-Dropbox link when webUrl is null, and never falls back to the legacy rawFolderLink", () => {
+    render(<ProjectOverviewRail {...baseProps(project({
+      rawFolderLink: "https://www.dropbox.com/scl/fo/legacy-shared-link",
+      monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: null, extraPaths: [] },
+    }))} canUpload hasRawFolder />);
+    const monitored = host.querySelector('[data-testid="raw-monitored"]')!;
+    expect(monitored.querySelector("a")).toBeNull();
+    expect(host.querySelector('a[href^="https://www.dropbox.com"]')).toBeNull();
+    expect(monitored.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input");
+  });
+
+  it("still shows the monitored block to a photographer", () => {
+    roleState.role = "photographer";
+    render(<ProjectOverviewRail {...baseProps(project({
+      monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: "https://www.dropbox.com/home/x", extraPaths: [] },
+    }))} canUpload hasRawFolder />);
+    expect(host.querySelector('[data-testid="raw-monitored"]')).not.toBeNull();
+  });
 });

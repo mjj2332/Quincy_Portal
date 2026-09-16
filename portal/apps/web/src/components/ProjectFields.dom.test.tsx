@@ -176,4 +176,29 @@ describe("ProjectFields Client controls", () => {
       expect(host.querySelector("#project-agent-email-error")).toBeNull();
     }
   });
+
+  it("names the monitored Editor path in a notice and leaves the Tonomo fields fully editable, only when a monitored folder is passed", async () => {
+    await render(<ProjectFields form={form} errors={{}} mode="edit" onChange={() => undefined} onToggle={() => undefined} monitoredRawFolder={{
+      source: "editor_input",
+      path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input",
+      webUrl: "https://www.dropbox.com/home/x",
+      extraPaths: [],
+    }} />);
+    expect(host.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input");
+    const notice = host.querySelector('[data-slot="notice"]')!;
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input");
+
+    const link = host.querySelector<HTMLInputElement>("#project-raw-folder-link")!;
+    const path = host.querySelector<HTMLInputElement>("#project-raw-folder-path")!;
+    expect(link.disabled).toBe(false);
+    expect(link.readOnly).toBe(false);
+    expect(path.disabled).toBe(false);
+    expect(path.readOnly).toBe(false);
+
+    await unmount();
+    host = mount();
+    await render(<ProjectFields form={form} errors={{}} mode="edit" onChange={() => undefined} onToggle={() => undefined} />);
+    expect(host.querySelector('[data-slot="notice"]')).toBeNull();
+  });
 });

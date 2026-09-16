@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { editorFolderAvailability } from "../lib/editor-folders";
+import { editorFolderAvailability, editorFolderProjection } from "../lib/editor-folders";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
@@ -160,12 +160,18 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));
   const deadlineSchedule = await readProjectDeadlineSchedule(d1, projectId);
-  const editorFolders = editorEnv ? await editorFolderAvailability(editorEnv, projectId) : null;
+  const projection = editorEnv ? await editorFolderProjection(editorEnv, projectId) : null;
+  // Visibility of the Editor Input path rides on reaching this function at all: `external_editor`
+  // is short-circuited into `readExternalProjectDetail` before it runs, and that DTO carries no
+  // RAW folder fields. A `viewRaw` check here would read like the rule and is not one — every
+  // role holds `viewRaw`, `external_editor` included (EXTERNAL_EDITOR_CAPABILITIES).
+  const monitoredRawFolder = projection?.monitoredRawFolder ?? null;
   return projectStageForRole({
     ...project,
     boardRevision: variant === "tb5a_0037" && "boardRevision" in project ? Number(project.boardRevision) : 0,
     contractEnabled,
-    editedUploadAvailable: editorFolders ? editorFolders.outputReady : Boolean(project.rawFolderPath || project.rawFolderLink),
+    editedUploadAvailable: projection ? projection.availability.outputReady : Boolean(project.rawFolderPath || project.rawFolderLink),
+    monitoredRawFolder,
     effectiveCoverAssetId: storedByProject.get(projectId) ?? automaticByProject.get(projectId) ?? null,
     collections,
     members: memberDtos,

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { CollectionKind } from "@quincy/shared";
+import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
 import { FIELD_GRID_PROPERTY, ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
@@ -17,7 +17,7 @@ import { buttonClasses } from "@/components/quincy/Button";
 
 type ProjectResponse = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; agentEmail: string | null; agentPhone: string | null;
-  shootDate: string | null; timeWindow: string | null; orderNo: string | null; orderId: string | null; invoiceAmount: number | null; paymentStatus: string | null; notes: string | null; productionNotes: string | null; rawFolderLink: string | null; rawFolderPath: string | null;
+  shootDate: string | null; timeWindow: string | null; orderNo: string | null; orderId: string | null; invoiceAmount: number | null; paymentStatus: string | null; notes: string | null; productionNotes: string | null; rawFolderLink: string | null; rawFolderPath: string | null; monitoredRawFolder?: MonitoredRawFolder | null;
   archivedAt: string | null;
   collections: Array<{ id: string; kind: CollectionKind }>;
 };
@@ -144,7 +144,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
           <QuincyField id="project-postcode" label="Postcode" inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} />
         </div>
       </section>
-      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" onChange={updateField} onToggle={() => {}} />
+      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={() => {}} />
       <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
         <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>

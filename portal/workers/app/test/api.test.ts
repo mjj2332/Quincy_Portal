@@ -3793,6 +3793,101 @@ describe("staff app API", () => {
     expect(await editorFolderAvailability({ ...enabled, DROPBOX_EDITOR_AUTOMATION_ENABLED: "0" }, projectId)).toBeNull();
   });
 
+  async function seedEditorFolderMapping(projectId: string, state: "pending" | "ready" | "needs_review", inputRoots: Array<{ path: string; section: string | null }>, day = "03") {
+    const connectionId = crypto.randomUUID();
+    const rootPath = `/Editor/01_ACTIVE EDITS/09. September/${day}/${projectId}`;
+    const now = Date.now();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
+      database.DB.prepare("INSERT INTO editor_folder_mappings (id, project_id, connection_id, root_path, root_path_key, shoot_date, project_folder_name, photographer_evidence_json, input_roots_json, output_roots_json, editing_notes_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '2026-09-01', ?, '{}', ?, ?, ?, ?, ?, ?)")
+        .bind(crypto.randomUUID(), projectId, connectionId, rootPath, rootPath.toLowerCase(), projectId, JSON.stringify(inputRoots), JSON.stringify([{ path: `${rootPath}/1. Output`, section: null }]), `${rootPath}/Editing Notes`, state, now, now),
+    ]);
+    return rootPath;
+  }
+
+  it("leaves the RAW folder section unchanged while an Editor mapping is only needs_review", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    const rootPath = await seedEditorFolderMapping(projectId, "needs_review", [{ path: "PLACEHOLDER", section: null }]);
+    await database.DB.prepare("UPDATE editor_folder_mappings SET input_roots_json = ? WHERE project_id = ?").bind(JSON.stringify([{ path: `${rootPath}/0. Input`, section: null }]), projectId).run();
+    const response = await jsonRequest(`/api/projects/${projectId}`, await sessionCookie(adminToken), "GET");
+    expect(response.status).toBe(200);
+    const body = await response.json() as { monitoredRawFolder: unknown; rawFolderPath: string | null; rawFolderLink: string | null };
+    expect(body.monitoredRawFolder).toBeNull();
+    expect(body.rawFolderPath).toBe("/Tonomo/Raw Files/Legacy");
+    expect(body.rawFolderLink).toBeNull();
+  });
+
+  it("reports the monitored Editor Input folder once the mapping goes ready, leaving the Tonomo fields untouched", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    const rootPath = await seedEditorFolderMapping(projectId, "ready", [{ path: "PLACEHOLDER", section: null }], "04");
+    const inputPath = `${rootPath}/0. Input`;
+    await database.DB.prepare("UPDATE editor_folder_mappings SET input_roots_json = ? WHERE project_id = ?").bind(JSON.stringify([{ path: inputPath, section: null }]), projectId).run();
+    const response = await jsonRequest(`/api/projects/${projectId}`, await sessionCookie(adminToken), "GET");
+    expect(response.status).toBe(200);
+    const body = await response.json() as { monitoredRawFolder: unknown; rawFolderPath: string | null; rawFolderLink: string | null };
+    expect(body.monitoredRawFolder).toEqual({
+      source: "editor_input",
+      path: inputPath,
+      webUrl: `https://www.dropbox.com/home/${inputPath.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`,
+      extraPaths: [],
+    });
+    expect(body.rawFolderPath).toBe("/Tonomo/Raw Files/Legacy");
+    expect(body.rawFolderLink).toBeNull();
+  });
+
+  it("never writes projects.raw_folder_path/raw_folder_link, or touches updated_at or the audit trail, from a plain GET", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    const rootPath = await seedEditorFolderMapping(projectId, "ready", [{ path: "PLACEHOLDER", section: null }], "05");
+    await database.DB.prepare("UPDATE editor_folder_mappings SET input_roots_json = ? WHERE project_id = ?").bind(JSON.stringify([{ path: `${rootPath}/0. Input`, section: null }]), projectId).run();
+    const footprint = async () => Promise.all([
+      database.DB.prepare("SELECT raw_folder_path AS rawFolderPath, raw_folder_link AS rawFolderLink, updated_at AS updatedAt FROM projects WHERE id = ?").bind(projectId).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(projectId).first(),
+      database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(projectId).first(),
+    ]);
+    const before = await footprint();
+    const response = await jsonRequest(`/api/projects/${projectId}`, await sessionCookie(adminToken), "GET");
+    expect(response.status).toBe(200);
+    expect(await footprint()).toEqual(before);
+  });
+
+  it("emits no monitored folder when Editor automation is disabled", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    const rootPath = await seedEditorFolderMapping(projectId, "ready", [{ path: "PLACEHOLDER", section: null }], "06");
+    await database.DB.prepare("UPDATE editor_folder_mappings SET input_roots_json = ? WHERE project_id = ?").bind(JSON.stringify([{ path: `${rootPath}/0. Input`, section: null }]), projectId).run();
+    const response = await app.fetch(new Request(`https://portal.test/api/projects/${projectId}`, {
+      headers: { cookie: await sessionCookie(adminToken) },
+    }), { ...authEnv, DROPBOX_EDITOR_AUTOMATION_ENABLED: "0" }, createExecutionContext());
+    expect(response.status).toBe(200);
+    expect((await response.json() as { monitoredRawFolder: unknown }).monitoredRawFolder).toBeNull();
+  });
+
+  it("fails closed to null when a ready mapping's Input roots are empty", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    await seedEditorFolderMapping(projectId, "ready", [], "07");
+    const response = await jsonRequest(`/api/projects/${projectId}`, await sessionCookie(adminToken), "GET");
+    expect(response.status).toBe(200);
+    expect((await response.json() as { monitoredRawFolder: unknown }).monitoredRawFolder).toBeNull();
+  });
+
+  it("never surfaces monitoredRawFolder on the external-editor detail payload", async () => {
+    const projectId = crypto.randomUUID();
+    await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Legacy");
+    const rootPath = await seedEditorFolderMapping(projectId, "ready", [{ path: "PLACEHOLDER", section: null }], "08");
+    await database.DB.batch([
+      database.DB.prepare("UPDATE editor_folder_mappings SET input_roots_json = ? WHERE project_id = ?").bind(JSON.stringify([{ path: `${rootPath}/0. Input`, section: null }]), projectId),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, externalEditorId, Date.now()),
+    ]);
+    const response = await jsonRequest(`/api/projects/${projectId}`, await sessionCookie(externalEditorToken), "GET");
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, unknown>;
+    expect("monitoredRawFolder" in body).toBe(false);
+  });
+
   it("fences an Edited upload when its destination disappears before metadata commit", async () => {
     const projectId = crypto.randomUUID();
     await seedSyncDropboxProject(projectId, "/Tonomo/Raw Files/Committed destination");

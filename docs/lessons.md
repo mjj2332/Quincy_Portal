@@ -2302,3 +2302,33 @@ so any real Tonomo reschedule still wins the stale-event guard.
 wrote. Say in the PR whether historic rows need a backfill, and give it an age that loses to real
 events.
 
+## Display what the RAW-sync consumer reads, not what it could recompute (#155, 2026-09-16)
+
+**Symptom:** once a project's Editor folder mapping goes `ready`, RAW sync reads only its Input
+roots and the RAW-scope monitor stops watching the Tonomo folder — but the project page kept
+showing the Tonomo `raw_folder_link`/`raw_folder_path` as if they were still the monitored
+location, so staff believed the Portal was watching a folder nothing reads from any more.
+
+**Cause:** the Tonomo path and the Editor Input path are two different, legitimately independent
+fields once a mapping is `ready`: Tonomo's still drives change detection (#142), RAW identity
+recovery and AutoHDR naming, while the Editor mapping's `input_roots_json` is what `dropbox/
+sync.ts` actually polls. Nothing wrote the wrong value; the page just never learned there were now
+two folders and picked the wrong one to display.
+
+**Fix:** the monitored-folder projection (`workers/app/src/lib/editor-folders.ts`) reads
+`input_roots_json` directly and derives nothing from `root_path + "0. Input"`, `tonomo_raw_folder_
+path`, or any date/name constant — those can all recompute a path RAW sync no longer reads once a
+legacy `Day/Input` root or a manual re-link has diverged the mapping from its own naming
+convention. Same rule as the "Tonomo's RAW folder path is not stable" entry above, aimed the other
+way: a path is only trustworthy as *display* when it is read from the exact field the consumer it
+describes actually reads, never recomputed from the rule that (usually) produces it. The rail and
+Edit Project notice are two independent surfaces reading the one projection, so a projection bug
+shows up the same way on both instead of silently agreeing with each other by accident.
+
+**Open question:** the "Open in Dropbox" link points at `https://www.dropbox.com/home/<path>`,
+which resolves under whichever Dropbox namespace the signed-in browser session defaults to. D1
+records no team-namespace ID for the studio's Dropbox account, and no automated test can drive a
+real signed-in Dropbox tab to prove the link lands in the studio's team space rather than the
+individual's. It needs one real click by the owner before this is provably correct, not just
+plausibly correct.
+
