@@ -2601,6 +2601,21 @@ Three details that are load-bearing:
 - **Reporters run in the vitest host process**, which is why this works where the `define` did not.
   workerd and happy-dom never see it.
 
+One more thing the gate could not tell us about itself. It was proven red three ways — a permanent
+subprocess test, the wiring guard, and the real dev invocation — and a read-only review still found a
+hole in it: vitest replaces every configured reporter when the CLI passes `--reporter`, so
+`vitest run --config … --reporter=default` drops the gate and an all-skipped run exits 0 again. The
+reviewer could execute nothing (its sandbox blocked vite's temp writes) and found it by reading
+vitest's dist, pinned to an exact line. The fix was to narrow the claim rather than widen the code:
+the gate is per *config*, the reporter says so in its own header, and the absence of `--reporter` in
+the workflow is asserted directly rather than left to `configsRunByTestJob` rejecting the step for an
+unrelated-sounding reason. A gate that fires correctly and lies about why costs the next reader more
+than a clean failure does.
+
+Two caveats on leaning on a review like that: it reported on a snapshot, so anything committed after
+it is simply unreviewed — silence there covers nothing — and anything it could not run is a reading
+of the source, which is worth reproducing before acting on. Both of its findings reproduced.
+
 **Rule:** being invoked is not being run. A step's exit code answers "did anything fail", never "did
 anything happen" — assert the second separately, and prove the assertion red before trusting it.
 `require-executed-tests.test.ts` runs a real `vitest run` against fixture files and asserts the child
