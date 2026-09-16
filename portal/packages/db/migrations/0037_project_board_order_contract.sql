@@ -64,10 +64,7 @@ VALUES (
   NULL,
   unixepoch('now') * 1000
 )
-ON CONFLICT(key) DO UPDATE SET
-  enabled = 0,
-  updated_by = NULL,
-  updated_at = excluded.updated_at;
+ON CONFLICT(key) DO NOTHING;
 --> statement-breakpoint
 CREATE TABLE project_board_order_0037_rollback (
   project_id TEXT PRIMARY KEY NOT NULL,

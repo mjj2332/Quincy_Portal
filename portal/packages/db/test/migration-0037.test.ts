@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { rollbackBoardOrder0037PreEnable } from "../src/board-order-rollback-0037";
+import { BOARD_CONTRACT_FLAG } from "../src/board-schema-variant";
 
 type SqliteRow = Record<string, unknown>;
 type SqliteStatement = {
@@ -53,6 +54,17 @@ function applyThrough(db: SqliteDatabase, through: number): void {
   for (const name of migrationNames()) {
     if (Number(name.slice(0, 4)) <= through) applyMigration(db, name);
   }
+}
+
+function boardContractFlagSegment(): string {
+  // The flag insert is one statement of 0037. A whole-file replay cannot reach it — the three
+  // `ALTER TABLE ... ADD COLUMN` statements above it abort on the duplicate column first — so
+  // replaying that one segment is the only way to exercise the conflict clause at all (#160).
+  const segments = migrationSegments(MIGRATION_NAME).filter((segment) => segment.includes(BOARD_CONTRACT_FLAG));
+  if (segments.length !== 1) {
+    throw new Error(`Expected exactly one 0037 segment writing ${BOARD_CONTRACT_FLAG}, found ${segments.length}`);
+  }
+  return segments[0] as string;
 }
 
 function migrationSource(): string {
@@ -408,6 +420,38 @@ describe("migration 0037 project board order contract", () => {
     await expect(rollbackBoardOrder0037PreEnable(localD1(db))).rejects.toThrow();
     expect(db.prepare("SELECT id, board_position FROM projects WHERE archived_at IS NULL ORDER BY id").all()).toEqual(normalized);
     expect(objectExists(db, "table", "_tb5a_0037_position_rollback_guard")).toBe(false);
+    db.close();
+  });
+
+  it("leaves an operator's flag flip and its audit trail intact when the flag statement is replayed", () => {
+    // The clause used to be `DO UPDATE SET enabled = 0, updated_by = NULL, ...`, which silently
+    // switched the Board off for every user and erased who had turned it on (#160).
+    const db = localSqlite();
+    applyThrough(db, 37);
+    const operator = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
+    // `feature_flags.updated_by` is a real foreign key into `user` — the audit trail this test is about.
+    db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Quincy Admin', 'operator@example.test', 0, 'admin', 1, 0, 0)").run(operator);
+    db.prepare("UPDATE feature_flags SET enabled = 1, updated_by = ?, updated_at = ? WHERE key = ?").run(operator, 1_700_000_000_000, BOARD_CONTRACT_FLAG);
+    const before = db.prepare("SELECT key, enabled, updated_by, updated_at FROM feature_flags WHERE key = ?").get(BOARD_CONTRACT_FLAG);
+
+    db.exec(boardContractFlagSegment());
+
+    expect(db.prepare("SELECT key, enabled, updated_by, updated_at FROM feature_flags WHERE key = ?").get(BOARD_CONTRACT_FLAG)).toEqual(before);
+    db.close();
+  });
+
+  it("still establishes the flag disabled when the row is absent, however often the statement runs", () => {
+    // The staged-rollout default is deliberate and must survive the conflict-clause change.
+    const db = localSqlite();
+    applyThrough(db, 37);
+    db.prepare("DELETE FROM feature_flags WHERE key = ?").run(BOARD_CONTRACT_FLAG);
+
+    db.exec(boardContractFlagSegment());
+    const seeded = db.prepare("SELECT enabled, updated_by FROM feature_flags WHERE key = ?").get(BOARD_CONTRACT_FLAG);
+    expect(seeded).toEqual({ enabled: 0, updated_by: null });
+
+    db.exec(boardContractFlagSegment());
+    expect(db.prepare("SELECT enabled, updated_by FROM feature_flags WHERE key = ?").get(BOARD_CONTRACT_FLAG)).toEqual(seeded);
     db.close();
   });
 });
