@@ -97,6 +97,24 @@ describe("rebaseEditorPath", () => {
     expect(rebaseEditorPath(path, oldRoot, newRoot)).toBe(`${newRoot}/0. Input/50% Off_Client's café.jpg`);
   });
 
+  // The accent is in the ROOT being keyed, and in the opposite normalisation form on each side.
+  // macOS hands Dropbox NFD filenames while `editorFolderPathKey` NFC-normalises the roots it
+  // derives, so these two forms genuinely meet inside one move; comparing them raw reports "not
+  // below" and silently drops the row from the rebase.
+  it("matches an accented root across NFC/NFD, in both directions", () => {
+    const nfcRoot = `${EDITOR_ROOT}/09. September/01/Café Project`;
+    const nfdRoot = nfcRoot.normalize("NFD");
+    expect(nfcRoot).not.toBe(nfdRoot);
+
+    expect(rebaseEditorPath(`${nfdRoot}/0. Input/shot.jpg`, nfcRoot, newRoot)).toBe(`${newRoot}/0. Input/shot.jpg`);
+    expect(rebaseEditorPath(`${nfcRoot}/0. Input/shot.jpg`, nfdRoot, newRoot)).toBe(`${newRoot}/0. Input/shot.jpg`);
+  });
+
+  it("still refuses a sibling whose name only differs after the accent", () => {
+    const nfdRoot = `${EDITOR_ROOT}/09. September/01/Café Project`.normalize("NFD");
+    expect(rebaseEditorPath(`${EDITOR_ROOT}/09. September/01/Café Project 2/shot.jpg`, nfdRoot, newRoot)).toBeNull();
+  });
+
   it("slices by segment count rather than string length, so a longer new root still works", () => {
     const longerNewRoot = `${EDITOR_ROOT}/2027-01 January/15/A Much Longer Project Name Than Before`;
     expect(rebaseEditorPath(`${oldRoot}/1. Output/final.jpg`, oldRoot, longerNewRoot)).toBe(`${longerNewRoot}/1. Output/final.jpg`);

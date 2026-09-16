@@ -14,7 +14,7 @@ import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { notifyProject } from "../notifications";
 import { requireBoardSchemaReady } from "../lib/board-schema";
 import { commitAutomaticStage } from "../lib/automatic-stage";
-import { getEditorFolderMapping, type EditorFolderMapping } from "../editor-folders/mapping";
+import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "../editor-folders/mapping";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
 // rendition enqueue, and several D1 statements) — 150 once overran the pre-2026 Free-tier
@@ -312,17 +312,22 @@ export async function syncProjectRawFolder(
     const syncPlan = await resolveRawSyncPlan(env, projectId, project, editorMapping, client);
     const mappedInput = syncPlan.editorMapping?.state === "ready";
     const mappedInputRevision = mappedInput ? syncPlan.editorMapping!.rootRevision : null;
+    // `sourceGuard` is spliced into a SQL string rather than bound, so the revision is proved to be
+    // a plain integer here instead of being trusted to be one.
+    if (mappedInputRevision !== null && !Number.isSafeInteger(mappedInputRevision)) {
+      throw new Error(`Editor folder mapping for project ${projectId} has a non-integer root revision`);
+    }
     // Not-moving is part of the same fence as the mapping/revision check below: a mapping mid-move
     // is still `state = 'ready'`, but its root is about to be rebased by the move's own commit, so
     // a write bound to the pre-move revision must not land underneath it.
     const sourceGuard = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
       ? mappedInput
-        ? ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready' AND m.root_revision = ${mappedInputRevision} AND (m.move_status IS NULL OR m.move_status != 'moving'))`
+        ? ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready' AND m.root_revision = ${mappedInputRevision} AND ${EDITOR_MAPPING_NOT_MOVING_SQL})`
         : " AND NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = projects.id AND m.state = 'ready')"
       : "";
     const sourceOwnerGuard = editorAutomationEnabled(env.DROPBOX_EDITOR_AUTOMATION_ENABLED)
       ? mappedInput
-        ? sql`EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready' AND m.root_revision = ${mappedInputRevision} AND (m.move_status IS NULL OR m.move_status != 'moving'))`
+        ? sql`EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready' AND m.root_revision = ${mappedInputRevision} AND ${sql.raw(EDITOR_MAPPING_NOT_MOVING_SQL)})`
         : sql`NOT EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.project_id = ${projectId} AND m.state = 'ready')`
       : sql`1 = 1`;
 

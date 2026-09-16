@@ -20,10 +20,19 @@ export function dropboxPathKey(path: string): string {
   return normalisePath(path).toLowerCase();
 }
 
-/** Equality or descendant containment with an explicit slash boundary. */
+/**
+ * Equality or descendant containment with an explicit slash boundary.
+ *
+ * Compared in NFC. `dropboxPathKey` deliberately does NOT normalise, because the keys it produces
+ * are stored and must keep matching rows written before this existed; but a *comparison* has no
+ * such constraint, and the two forms do occur together in one process: macOS hands Dropbox NFD
+ * filenames, while `editorFolderPathKey` NFC-normalises the Editor roots it derives. Comparing the
+ * raw forms would silently report "not below" for a path that is in fact inside the root — which
+ * in the Editor move is a row quietly left pointing at a tree that has gone.
+ */
 export function pathEqualsOrIsBelow(path: string, root: string): boolean {
-  const key = dropboxPathKey(path);
-  const rootKey = dropboxPathKey(root);
+  const key = dropboxPathKey(path).normalize("NFC");
+  const rootKey = dropboxPathKey(root).normalize("NFC");
   return Boolean(rootKey) && (key === rootKey || key.startsWith(`${rootKey}/`));
 }
 

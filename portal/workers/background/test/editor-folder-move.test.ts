@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createDb } from "@quincy/db";
-import { DropboxPathNotFoundError, DropboxRelocationConflictError, type DropboxEntry, type DropboxFolder } from "../src/dropbox/client";
+import { DropboxPathNotFoundError, DropboxRelocationConflictError, DropboxRelocationRefusedError, type DropboxEntry, type DropboxFolder } from "../src/dropbox/client";
 import { dropboxPathKey } from "../src/dropbox/paths";
 import { EDITOR_ROOT, editorDayFolderName, editorFolderPath, editorFolderPathKey, editorMonthFolderName } from "../src/editor-folders/paths";
 import { getEditorFolderMapping, type EditorFolderMapping } from "../src/editor-folders/mapping";
@@ -152,7 +152,8 @@ describe("Editor folder move: derived happy path", () => {
     await database.DB.prepare("INSERT INTO edited_source_claims (id, collection_id, source_path_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
       .bind(`claim-${suffix}`, `collection-${suffix}`, claimSourcePathKey, Date.now(), Date.now()).run();
 
-    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    // A RAW folder, so the move queues the RAW re-sync as well as the Editor one.
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15', raw_folder_path = '/Tonomo/Raw Files/123 Example St' WHERE id = ?").bind(projectId).run();
     const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: suffix });
     const created: string[] = [];
     const outcome = await attemptEditorFolderMove(
@@ -218,6 +219,15 @@ describe("Editor folder move: corrupt mapping state", () => {
     expect(dropboxCalled).toBe(false);
     expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_source_missing", mapping: { moveStatus: "blocked", moveTargetShootDate: "2027-01-15" } });
     expect((await auditRows("editor_folder.move.blocked", projectId)).results).toHaveLength(1);
+  });
+
+  it("leaves a mapping with no Dropbox folder ID alone when there is no reschedule to act on", async () => {
+    const { projectId, mapping } = await setup({ shootDate: "2026-09-01", mappingShootDate: "2026-09-01" });
+    await database.DB.prepare("UPDATE editor_folder_mappings SET root_folder_id = NULL WHERE id = ?").bind(mapping.id).run();
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2026-09-01" }, (await getEditorFolderMapping(db, projectId))!, deps());
+    expect(outcome).toBeNull();
+    expect((await auditRows("editor_folder.move.blocked", projectId)).results).toHaveLength(0);
+    expect(await database.DB.prepare("SELECT move_status FROM editor_folder_mappings WHERE id = ?").bind(mapping.id).first<{ move_status: string | null }>()).toEqual({ move_status: null });
   });
 });
 
@@ -497,5 +507,258 @@ describe("Editor folder move: orphan-upload sweep", () => {
     const after = await getEditorFolderMapping(db, projectId);
     expect(after?.movedFromPath).toBeNull();
     expect(after?.moveCompletedAt).toBeNull();
+  });
+
+  it("still audits an orphan upload and clears watch bookkeeping for a mapping blocked by a SECOND reschedule, while the outcome stays the stored block note", async () => {
+    const oldPath = "/Editor/01_ACTIVE EDITS/2026-10 October/02/old-leaf";
+    const storedNote = "editor_folder_move_conflict: A folder named old-leaf already exists in /Editor/01_ACTIVE EDITS/2027-01 January/15";
+    const { projectId, mapping } = await setup({
+      overrides: {
+        move_status: "blocked",
+        move_target_shoot_date: "2027-01-15",
+        move_note: storedNote,
+        moved_from_path: oldPath,
+        move_completed_at: FIXED_NOW.getTime() - 40 * 60_000,
+      },
+    });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, deps({
+      getMetadata: async () => folder(oldPath, "id:orphan"),
+    }));
+    // The block note (durable until an operator acts) is still what's reported, not the orphan note.
+    expect(outcome).toMatchObject({
+      status: "skipped", reason: "editor_folder_move_conflict",
+      detail: "A folder named old-leaf already exists in /Editor/01_ACTIVE EDITS/2027-01 January/15",
+    });
+    const audits = await auditRows("editor_folder.move.orphan_upload", projectId);
+    expect(audits.results).toHaveLength(1);
+    const after = await getEditorFolderMapping(db, projectId);
+    expect(after?.movedFromPath).toBeNull();
+    expect(after?.moveCompletedAt).toBeNull();
+    expect(after).toMatchObject({ moveStatus: "blocked", moveTargetShootDate: "2027-01-15", moveNote: storedNote });
+  });
+});
+
+describe("Editor folder move: blocked mapping with a missing note", () => {
+  it("returns a usable outcome, not an empty reason, when a blocked mapping's note is NULL", async () => {
+    const { projectId, mapping } = await setup({
+      overrides: { move_status: "blocked", move_target_shoot_date: "2026-10-02", move_note: null },
+    });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2026-10-02" }, mapping, deps());
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_deferred" });
+    expect((outcome as { detail: string }).detail.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Editor folder move: clearStaleBlock", () => {
+  it("clears a blocked mapping's status, target date, and note when the Project reschedules back to the mapping's own stored shoot date", async () => {
+    const { projectId, mapping } = await setup({
+      shootDate: "2026-10-02",
+      overrides: { move_status: "blocked", move_target_shoot_date: "2027-01-15", move_note: "editor_folder_move_conflict: some detail" },
+    });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2026-10-02" }, mapping, deps());
+    expect(outcome).toBeNull();
+    const after = await getEditorFolderMapping(db, projectId);
+    expect(after).toMatchObject({ moveStatus: null, moveTargetShootDate: null, moveNote: null });
+  });
+});
+
+describe("Editor folder move: commit rebase with a NULL display path", () => {
+  it("rebases an asset's source_path_key but leaves a NULL source_path NULL, not a lower-cased key", async () => {
+    const { suffix, projectId, mapping } = await setup();
+    const oldRoot = mapping.rootPath;
+
+    await database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', ?, ?)")
+      .bind(`collection-${suffix}`, projectId, Date.now(), Date.now()).run();
+    const assetSourcePathKey = dropboxPathKey(`${oldRoot}/0. Input/DSC001.CR2`);
+    await database.DB.prepare(
+      "INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, source_path, source_path_key, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, 100, 'dropbox', NULL, ?, 'ready', ?, ?)",
+    ).bind(`asset-${suffix}`, `collection-${suffix}`, `r2/${suffix}`, "DSC001.CR2", assetSourcePathKey, Date.now(), Date.now()).run();
+
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: suffix });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, deps({
+      getMetadata: async () => folder(oldRoot, mapping.rootFolderId!),
+      moveFolderStrict: async (_env, _db, _from, to) => folder(to, mapping.rootFolderId!),
+    }));
+    expect(outcome).toMatchObject({ status: "moved", from: oldRoot, to: newRoot });
+
+    const asset = await database.DB.prepare("SELECT source_path, source_path_key FROM assets WHERE id = ?").bind(`asset-${suffix}`).first<{ source_path: string | null; source_path_key: string }>();
+    expect(asset?.source_path).toBeNull();
+    expect(asset?.source_path_key).toBe(dropboxPathKey(`${newRoot}/0. Input/DSC001.CR2`));
+  });
+});
+
+describe("Editor folder move: Dropbox refuses the relocation", () => {
+  // #148 and #149 were both a path-level Dropbox error taken as a connection fault. A move_v2 409
+  // that is neither a conflict nor a missing path must still leave every other project working.
+  it("blocks the mapping with a visible note and leaves the studio connection connected", async () => {
+    const { suffix, connectionId, projectId, mapping } = await setup();
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+
+    const outcome = await attemptEditorFolderMove(
+      env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping,
+      deps({
+        getMetadata: async () => folder(mapping.rootPath, `id:root-${suffix}`),
+        moveFolderStrict: async () => {
+          throw new DropboxRelocationRefusedError("Dropbox /files/move_v2 failed (409): to/no_write_permission/..");
+        },
+      }),
+    );
+
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_refused" });
+    expect((outcome as { detail: string }).detail).toContain("no_write_permission");
+    expect(await connectionState(connectionId)).toEqual({ status: "connected", last_error: null });
+
+    const stored = (await getEditorFolderMapping(db, projectId))!;
+    expect(stored.moveStatus).toBe("blocked");
+    expect(stored.rootPath).toBe(mapping.rootPath);
+    expect(stored.moveNote).toContain("editor_folder_move_refused");
+  });
+});
+
+describe("Editor folder move: a commit that keeps failing after Dropbox has already moved the tree", () => {
+  /** Occupies the destination's `root_path_key` on the same connection, so the commit batch hits
+   * the connection-scoped UNIQUE index and rolls back — deterministically, every attempt. */
+  async function blockDestination(connectionId: string, targetPath: string) {
+    const other = await setup();
+    await database.DB.prepare("UPDATE editor_folder_mappings SET connection_id = ?, root_path = ?, root_path_key = ? WHERE id = ?")
+      .bind(connectionId, targetPath, editorFolderPathKey(targetPath), other.mapping.id).run();
+  }
+
+  it("counts each failure, then stops retrying and escalates with a note and an audit row", async () => {
+    const { suffix, projectId, connectionId, mapping } = await setup();
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: suffix });
+
+    // The pre-claim guard already refuses a destination that is taken, so the collision is
+    // introduced after the claim — the race the guard cannot close — and is deterministic after
+    // that, which is exactly the shape that would otherwise retry forever.
+    // Dropbox's own state: once the tree has moved, every later lookup by folder ID finds it at
+    // the new root — which is the whole danger, since the database still says otherwise.
+    let dropboxPath = mapping.rootPath;
+    const moveDeps = (onMove?: () => Promise<void>) => deps({
+      getMetadata: async () => folder(dropboxPath, `id:root-${suffix}`),
+      moveFolderStrict: async (_env, _db, _from, to) => {
+        await onMove?.();
+        dropboxPath = to;
+        return folder(to, `id:root-${suffix}`);
+      },
+    });
+
+    // Attempt 1: the tree moves in Dropbox, the commit rolls back, the mapping stays `moving`.
+    await expect(attemptEditorFolderMove(
+      env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping,
+      moveDeps(() => blockDestination(connectionId, newRoot)),
+    )).rejects.toThrow();
+    let stored = (await getEditorFolderMapping(db, projectId))!;
+    expect(stored.moveStatus).toBe("moving");
+    expect(stored.moveCommitAttempts).toBe(1);
+    expect(stored.moveNote).toBeNull();
+    expect((await auditRows("editor_folder.move.commit_stuck", projectId)).results).toHaveLength(0);
+
+    // Attempts 2 and 3, taken over after each lease expires, reach the limit.
+    for (const attempt of [2, 3]) {
+      await database.DB.prepare("UPDATE editor_folder_mappings SET move_expires_at = ? WHERE id = ?")
+        .bind(FIXED_NOW.getTime() - 1000, mapping.id).run();
+      const expired = (await getEditorFolderMapping(db, projectId))!;
+      await expect(resumeEditorFolderMove(env as never, db, expired, moveDeps())).rejects.toThrow();
+      stored = (await getEditorFolderMapping(db, projectId))!;
+      expect(stored.moveCommitAttempts).toBe(attempt);
+    }
+
+    // Escalated: the note names the disagreement between Dropbox and the database, and an operator
+    // has an audit row to find it by.
+    expect(stored.moveNote).toContain("editor_folder_move_stuck");
+    expect(stored.moveNote).toContain(newRoot);
+    const audits = (await auditRows("editor_folder.move.commit_stuck", projectId)).results;
+    expect(audits).toHaveLength(1);
+    expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ to: newRoot, attempts: 3 });
+
+    // And the next pass stops rather than repeating a failure that has proved deterministic —
+    // still `moving`, so nothing syncs against a path that is no longer there.
+    await database.DB.prepare("UPDATE editor_folder_mappings SET move_expires_at = ? WHERE id = ?")
+      .bind(FIXED_NOW.getTime() - 1000, mapping.id).run();
+    const wedged = (await getEditorFolderMapping(db, projectId))!;
+    const outcome = await resumeEditorFolderMove(env as never, db, wedged, deps());
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_stuck" });
+    expect((await getEditorFolderMapping(db, projectId))!.moveStatus).toBe("moving");
+  });
+});
+
+describe("Editor folder move: Unicode normalisation", () => {
+  // macOS hands Dropbox NFD filenames, so `assets.source_path_key` (written by `dropboxPathKey`,
+  // which does not normalise) can be decomposed while the mapping's root is composed. Comparing
+  // the raw forms silently dropped the row from the rebase, leaving it pointing at a tree that
+  // had gone — with no error anywhere.
+  it("rebases an asset whose stored key is decomposed while the mapping root is composed", async () => {
+    const leaf = "Caf\u00e9 Project";
+    const { suffix, projectId, mapping } = await setup({ leaf });
+    expect(mapping.rootPath).toContain(leaf);
+
+    await database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', ?, ?)")
+      .bind(`collection-${suffix}`, projectId, Date.now(), Date.now()).run();
+    const decomposedPath = `${mapping.rootPath}/0. Input/DSC001.CR2`.normalize("NFD");
+    const decomposedKey = dropboxPathKey(decomposedPath);
+    expect(decomposedKey).not.toBe(dropboxPathKey(`${mapping.rootPath}/0. Input/DSC001.CR2`));
+    await database.DB.prepare(
+      "INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, source_path, source_path_key, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, ?, 100, 'dropbox', ?, ?, 'ready', ?, ?)",
+    ).bind(`asset-${suffix}`, `collection-${suffix}`, `r2/${suffix}`, "DSC001.CR2", decomposedPath, decomposedKey, Date.now(), Date.now()).run();
+
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: leaf });
+    const outcome = await attemptEditorFolderMove(
+      env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping,
+      deps({
+        getMetadata: async () => folder(mapping.rootPath, `id:root-${suffix}`),
+        moveFolderStrict: async (_env, _db, _from, to) => folder(to, `id:root-${suffix}`),
+      }),
+    );
+    expect(outcome).toMatchObject({ status: "moved" });
+
+    const asset = await database.DB.prepare("SELECT source_path, source_path_key FROM assets WHERE id = ?").bind(`asset-${suffix}`).first<{ source_path: string; source_path_key: string }>();
+    expect(asset?.source_path).toBe(`${newRoot}/0. Input/DSC001.CR2`);
+    expect(asset?.source_path_key).toBe(dropboxPathKey(`${newRoot}/0. Input/DSC001.CR2`));
+  });
+});
+
+describe("Editor folder move: the RAW re-sync it queues", () => {
+  it("queues no dropbox_sync for a project with no Tonomo RAW folder, so the jobs list shows no RAW pass that never ran", async () => {
+    const { suffix, projectId, mapping } = await setup();
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    expect((await database.DB.prepare("SELECT raw_folder_path FROM projects WHERE id = ?").bind(projectId).first<{ raw_folder_path: string | null }>())?.raw_folder_path).toBeNull();
+
+    const outcome = await attemptEditorFolderMove(
+      env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping,
+      deps({
+        getMetadata: async () => folder(mapping.rootPath, `id:root-${suffix}`),
+        moveFolderStrict: async (_env, _db, _from, to) => folder(to, `id:root-${suffix}`),
+      }),
+    );
+    expect(outcome).toMatchObject({ status: "moved" });
+
+    const kinds = await database.DB.prepare("SELECT kind, count(*) AS n FROM jobs WHERE project_id = ? GROUP BY kind").bind(projectId).all<{ kind: string; n: number }>();
+    expect(kinds.results).toEqual([{ kind: "editor_sync", n: 1 }]);
+  });
+});
+
+describe("Editor folder move: the stale-job note and moves that never happen", () => {
+  it("leaves a stuck job unstamped when the move defers on the quiet period, so no note claims a move that did not occur", async () => {
+    const { projectId, mapping, suffix } = await setup();
+    const staleUpdatedAt = FIXED_NOW.getTime() - 3 * 60 * 60 * 1000;
+    const jobId = await insertJob({ projectId, kind: "dropbox_sync", status: "running", updatedAt: staleUpdatedAt });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, deps({
+      getMetadata: async () => folder(mapping.rootPath, mapping.rootFolderId!),
+      listFolderRecursive: async () => [{
+        ".tag": "file", name: "DSC900.CR2", id: `id:upload-${suffix}`, size: 100,
+        path_lower: `${mapping.rootPath.toLowerCase()}/0. input/dsc900.cr2`,
+        path_display: `${mapping.rootPath}/0. Input/DSC900.CR2`,
+        server_modified: new Date(FIXED_NOW.getTime() - 60 * 1000).toISOString(),
+      } as DropboxEntry],
+    }));
+
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_deferred" });
+    expect((await jobRow(jobId))?.error).toBeNull();
   });
 });

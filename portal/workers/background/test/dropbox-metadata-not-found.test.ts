@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createDb } from "@quincy/db";
-import { DropboxPathNotFoundError, DropboxRelocationConflictError, getMetadata, isDropboxPathNotFoundError, moveFolderStrict } from "../src/dropbox/client";
+import { DropboxPathNotFoundError, DropboxRelocationConflictError, DropboxRelocationRefusedError, getMetadata, isDropboxPathNotFoundError, moveFolderStrict } from "../src/dropbox/client";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 const database = env as unknown as { DB: D1Database };
@@ -124,6 +124,24 @@ describe("Dropbox moveFolderStrict and relocation conflicts", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error_summary: "to/not_found/..", error: { ".tag": "to", to: { ".tag": "not_found" } } }), { status: 409 })));
     const error = await moveFolderStrict(env as never, db, fromPath, toPath, id, client).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(DropboxPathNotFoundError);
+    expect(await state(id)).toEqual({ status: "connected", last_error: null });
+  });
+
+  // #148 and #149 were both an unlisted path-level error taken as a connection fault. A 409 on
+  // move_v2 is by definition about the two paths in the request, so no RelocationError variant —
+  // including ones added after this was written — may take the studio's connection offline.
+  it.each([
+    ["to/no_write_permission/..", "no_write_permission"],
+    ["to/insufficient_quota/..", "insufficient_quota"],
+    ["too_many_files/..", "too_many_files"],
+    ["cant_move_folder_into_itself/..", "cant_move_folder_into_itself"],
+    ["some_future_variant_dropbox_has_not_shipped_yet/..", "an unknown future variant"],
+  ])("leaves the connection healthy for a 409 %s, and reports it as refused", async (summary) => {
+    const { id, client } = await connection();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error_summary: summary }), { status: 409 })));
+    const error = await moveFolderStrict(env as never, db, fromPath, toPath, id, client).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DropboxRelocationRefusedError);
+    expect((error as Error).message).toContain(summary);
     expect(await state(id)).toEqual({ status: "connected", last_error: null });
   });
 

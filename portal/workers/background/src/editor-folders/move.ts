@@ -6,12 +6,14 @@ import {
   editedSourceClaims,
   editorFolderMappings,
   jobs,
+  projects,
   rawReconciliationClaims,
 } from "@quincy/db/schema";
 import type { Database } from "@quincy/db";
 
 import type { DropboxFolder } from "../dropbox/client";
-import { DropboxPathNotFoundError, DropboxRelocationConflictError, isDropboxPathNotFoundError, recordDropboxSuccess } from "../dropbox/client";
+import { errorMessage } from "../lib/db";
+import { DropboxPathNotFoundError, DropboxRelocationConflictError, DropboxRelocationRefusedError, isDropboxPathNotFoundError, recordDropboxSuccess } from "../dropbox/client";
 import { dropboxPathKey, pathEqualsOrIsBelow } from "../dropbox/paths";
 import type { Env } from "../env";
 import { createJob } from "../lib/jobs";
@@ -41,6 +43,19 @@ export type EditorFolderMoveDependencies = {
 const BLOCKING_JOB_KINDS = ["editor_sync", "dropbox_sync", "manual_edited_publish", "manual_raw_publish", "autohdr", "autohdr_api_send"] as const;
 
 const MOVE_LEASE_MS = 10 * 60 * 1000;
+
+/**
+ * How many times a commit may fail AFTER Dropbox has already reported the tree at its new
+ * location before the move stops being retried and is escalated instead.
+ *
+ * This is the one genuinely dangerous state in the feature: the world has changed and the database
+ * has not. Retrying is right for a transient D1 failure and wrong for a deterministic one — a
+ * UNIQUE collision fails identically every minute, forever, while the project's Editor pipeline
+ * stays fenced and nobody is told. Past this limit the mapping stays `moving` (so the fence holds
+ * and no sync runs against a path that no longer exists) but takeover stops, the note says plainly
+ * that Dropbox and the database disagree, and an audit row records it for a human to find.
+ */
+const MOVE_COMMIT_ATTEMPT_LIMIT = 3;
 const JOB_STALE_MS = 2 * 60 * 60 * 1000;
 const QUIET_PERIOD_MS = 30 * 60 * 1000;
 const ORPHAN_SWEEP_MS = 30 * 60 * 1000;
@@ -138,6 +153,11 @@ async function markStaleJobs(db: Database, projectId: string, now: Date): Promis
 async function queueEditorFolderResync(env: Env, db: Database, projectId: string, connectionId: string): Promise<void> {
   const editorSyncJobId = await createJob(db, { kind: "editor_sync", projectId });
   await env.INGEST_QUEUE.send({ type: "editor_sync", projectId, jobId: editorSyncJobId, connectionId });
+  // The RAW pass is only worth queueing for a project that has a Tonomo RAW folder: without one,
+  // `dropbox_sync` has nothing to look at and the job exists only to be marked done, which reads
+  // in the jobs list as a RAW sync that ran and found nothing.
+  const project = await db.select({ rawFolderPath: projects.rawFolderPath }).from(projects).where(eq(projects.id, projectId)).get();
+  if (!project?.rawFolderPath) return;
   const dropboxSyncJobId = await createJob(db, { kind: "dropbox_sync", projectId, correlationId: `dropbox_sync:${projectId}:editor_folder_moved:${editorSyncJobId}` });
   await env.INGEST_QUEUE.send({ type: "dropbox_sync", projectId, jobId: dropboxSyncJobId, connectionId, trigger: "editor_folder_moved" });
 }
@@ -160,9 +180,9 @@ async function blockBeforeClaim(
     env.DB.prepare(`
       UPDATE editor_folder_mappings
       SET move_status = 'blocked', move_target_shoot_date = ?, move_note = ?, updated_at = ?
-      WHERE id = ? AND state = 'ready' AND root_path_key = ?
+      WHERE id = ? AND state = 'ready' AND root_path_key = ? AND root_revision = ?
         AND (move_status IS NULL OR (move_status = 'blocked' AND move_target_shoot_date IS NOT ?))
-    `).bind(input.nextShootDate, note, now.getTime(), mapping.id, mapping.rootPathKey, input.nextShootDate),
+    `).bind(input.nextShootDate, note, now.getTime(), mapping.id, mapping.rootPathKey, mapping.rootRevision, input.nextShootDate),
     env.DB.prepare(
       "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'editor_folder.move.blocked', 'project', ?, ?, ? WHERE changes() = 1",
     ).bind(auditId, mapping.projectId, meta, now.getTime()),
@@ -208,7 +228,7 @@ async function releaseEditorFolderMove(env: Env, db: Database, mapping: EditorFo
     env.DB.prepare(`
       UPDATE editor_folder_mappings
       SET move_status = NULL, move_target_path = NULL, move_target_path_key = NULL, move_target_shoot_date = NULL,
-          move_token = NULL, move_expires_at = NULL, move_note = NULL, updated_at = ?
+          move_token = NULL, move_expires_at = NULL, move_note = NULL, move_commit_attempts = 0, updated_at = ?
       WHERE id = ? AND move_token = ? AND move_status = 'moving'
     `).bind(now.getTime(), mapping.id, mapping.moveToken),
     env.DB.prepare(
@@ -327,7 +347,9 @@ async function commitEditorFolderMove(
     ...existingProof,
     rootPath: newRootPath,
     rootPathKey: newRootKey,
-    attempts: existingProof.attempts + 1,
+    // Not incremented: `attempts` counts provisioning attempts, and a move is not one. Bumping it
+    // would make a moved tree read as though its scaffold had been retried.
+    attempts: existingProof.attempts,
     created: existingProof.created.map((entry) => {
       const rebased = rebaseEditorPath(entry.path, oldRootPath, newRootPath);
       return rebased ? { ...entry, path: rebased } : entry;
@@ -354,10 +376,14 @@ async function commitEditorFolderMove(
     .from(assets).innerJoin(collections, eq(assets.collectionId, collections.id))
     .where(and(eq(collections.projectId, mapping.projectId), sql`${assets.sourcePathKey} IS NOT NULL`));
   const assetUpdates = assetRows
-    .filter((row): row is typeof row & { sourcePath: string; sourcePathKey: string } => Boolean(row.sourcePathKey) && pathEqualsOrIsBelow(row.sourcePathKey!, oldRootKey))
+    .filter((row): row is typeof row & { sourcePathKey: string } => Boolean(row.sourcePathKey) && pathEqualsOrIsBelow(row.sourcePathKey!, oldRootKey))
     .map((row) => {
-      const newPath = rebaseEditorPath(row.sourcePath ?? row.sourcePathKey, oldRootPath, newRootPath)!;
-      return { id: row.id, oldPathKey: row.sourcePathKey, newPath, newPathKey: dropboxPathKey(newPath) };
+      // `source_path` is the display path and `source_path_key` its lower-cased form. A row with no
+      // display path keeps none (a JSON null reaches the UPDATE as SQL NULL): rebasing the key into
+      // that column would invent a lower-cased display path that Dropbox never reported.
+      const newPath = row.sourcePath === null ? null : rebaseEditorPath(row.sourcePath, oldRootPath, newRootPath)!;
+      const newPathKey = dropboxPathKey(rebaseEditorPath(row.sourcePathKey, oldRootPath, newRootPath)!);
+      return { id: row.id, oldPathKey: row.sourcePathKey, newPath, newPathKey };
     });
 
   const identityRows = await db.select({ id: assetIngestIdentities.id, identityKey: assetIngestIdentities.identityKey })
@@ -384,7 +410,7 @@ async function commitEditorFolderMove(
         recovery_proof_json = ?, root_revision = ?, moved_from_path = ?, move_completed_at = ?,
         move_status = NULL, move_target_path = NULL, move_target_path_key = NULL,
         move_target_shoot_date = NULL, move_token = NULL, move_expires_at = NULL, move_note = NULL,
-        updated_at = ?
+        move_commit_attempts = 0, updated_at = ?
     WHERE id = ? AND move_token = ? AND move_status = 'moving' AND root_path_key = ? AND root_revision = ?
   `).bind(
     newRootPath, newRootKey, target.next,
@@ -430,6 +456,7 @@ async function commitEditorFolderMove(
     // mapping is untouched and still `moving`, so a later pass (a fresh claim, or a takeover once
     // this one's lease expires) retries the whole commit from scratch.
     console.error("Editor folder move commit failed; the mapping stays in a moving state for a later pass to retry", { mappingId: mapping.id, error: error instanceof Error ? error.message : String(error) });
+    await noteFailedCommit(env, db, mapping, newRootPath, errorMessage(error), now);
     throw error;
   }
   if ((results[0]?.meta.changes ?? 0) !== 1) {
@@ -438,6 +465,21 @@ async function commitEditorFolderMove(
       return { status: "moved", mapping: current, from: oldRootPath, to: newRootPath, previousShootDate };
     }
     return { status: "skipped", mapping: current, reason: "editor_folder_move_deferred", detail: "Another pass already committed or is completing this Editor folder move" };
+  }
+
+  // Each rebase statement is fenced on the row's own old key as well as the mapping guard, so a
+  // row that changed underneath us is skipped rather than overwritten — silently. Report the
+  // shortfall: "rebased 3 of 4" is the only signal that a path was left behind.
+  const rebased = [
+    { what: "assets", planned: assetUpdates.length, changed: results[2]?.meta.changes ?? 0 },
+    { what: "asset_ingest_identities", planned: identityUpdates.length, changed: results[3]?.meta.changes ?? 0 },
+    { what: "edited_source_claims", planned: claimUpdates.length, changed: results[4]?.meta.changes ?? 0 },
+  ].filter((row) => row.changed !== row.planned);
+  if (rebased.length > 0) {
+    console.error("Editor folder move rebased fewer rows than it planned to", {
+      mappingId: mapping.id, projectId: mapping.projectId, from: oldRootPath, to: newRootPath,
+      shortfall: rebased.map((row) => `${row.what}: rebased ${row.changed} of ${row.planned}`),
+    });
   }
 
   await recordDropboxSuccess(db, mapping.connectionId, ["credentials", "current_account", "list_folder", "folder_path"]);
@@ -484,12 +526,20 @@ async function resolveClaimedMove(
         moved = recheck;
       } else if (error instanceof DropboxPathNotFoundError) {
         return await blockByToken(env, db, mapping, "editor_folder_move_source_missing", `The Editor root ${mapping.rootPath} was gone when the Portal tried to move it; an operator must restore or relink it`, now);
+      } else if (error instanceof DropboxRelocationRefusedError) {
+        // Dropbox refused the relocation for a reason that is neither a conflict nor a missing
+        // path — no write permission, quota, too many files. The tree has NOT moved, so this is a
+        // durable block an operator can see rather than a throw that only replays every minute.
+        return await blockByToken(env, db, mapping, "editor_folder_move_refused", `Dropbox refused to move the Editor root to ${target.targetPath}: ${errorMessage(error)}`, now);
       } else {
         throw error;
       }
     }
     if (moved.id !== mapping.rootFolderId || editorFolderPathKey(moved.path_lower) !== target.targetPathKey) {
-      return await blockByToken(env, db, mapping, "editor_folder_move_moved_elsewhere", `Dropbox moved the Editor root to an unexpected location ${moved.path_display ?? moved.path_lower}; an operator must resolve this by hand`, now);
+      // The tree HAS left the old path, but not for the path the Portal asked for, so the commit
+      // is refused and the database still records the old location. Say both halves: an operator
+      // reading only "unexpected location" would not know the recorded path is now a dead one.
+      return await blockByToken(env, db, mapping, "editor_folder_move_moved_elsewhere", `Dropbox reported the Editor root at ${moved.path_display ?? moved.path_lower} instead of ${target.targetPath}. The move was not recorded, so the Portal still has it at ${mapping.rootPath}, which is no longer where the folder is; an operator must resolve this by hand`, now);
     }
   } else if (currentKey !== target.targetPathKey) {
     return await blockByToken(env, db, mapping, "editor_folder_move_moved_elsewhere", `The Editor root now lives at ${current.path_display ?? current.path_lower}, neither the expected old nor new location; an operator must resolve this by hand`, now);
@@ -532,10 +582,50 @@ async function resolveTakeoverMove(env: Env, db: Database, mapping: EditorFolder
   return await blockByToken(env, db, mapping, "editor_folder_move_moved_elsewhere", `The Editor root now lives at ${current.path_display ?? current.path_lower}, neither the expected old nor new location; an operator must resolve this by hand`, now);
 }
 
+/**
+ * Records one failed commit against the mapping, outside the batch that just rolled back. The
+ * counter is fenced on the move token so a takeover by another pass cannot double-count, and the
+ * escalation fires on the attempt that crosses the limit, so the audit row is written once.
+ */
+async function noteFailedCommit(
+  env: Env, db: Database, mapping: EditorFolderMapping, targetPath: string, detail: string, now: Date,
+): Promise<void> {
+  const attempts = mapping.moveCommitAttempts + 1;
+  const escalated = attempts >= MOVE_COMMIT_ATTEMPT_LIMIT;
+  const note = escalated
+    ? `editor_folder_move_stuck: the Dropbox folder has already moved to ${targetPath}, but the Portal could not record the move after ${attempts} attempts and has stopped retrying. The Editor pipeline for this project is paused until an operator resolves it. Last failure: ${detail}`
+    : null;
+  const update = env.DB.prepare(`
+    UPDATE editor_folder_mappings SET move_commit_attempts = ?, move_note = COALESCE(?, move_note), updated_at = ?
+    WHERE id = ? AND move_token = ? AND move_status = 'moving'
+  `).bind(attempts, note, now.getTime(), mapping.id, mapping.moveToken);
+  if (!escalated) {
+    await update.run();
+    return;
+  }
+  await env.DB.batch([
+    update,
+    env.DB.prepare(
+      "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'editor_folder.move.commit_stuck', 'project', ?, ?, ? WHERE changes() = 1",
+    ).bind(crypto.randomUUID(), mapping.projectId, JSON.stringify({
+      actor: "editor_reconcile", mappingId: mapping.id, from: mapping.rootPath, to: targetPath, attempts, detail,
+    }), now.getTime()),
+  ]);
+}
+
 /** A mapping with `move_status = 'moving'`: takes over an expired lease (never starting a fresh
  * move — see `resolveTakeoverMove`) or reports another pass's lease is still active. */
 export async function resumeEditorFolderMove(env: Env, db: Database, mapping: EditorFolderMapping, deps: EditorFolderMoveDependencies): Promise<EditorReconcileOutcome> {
   const now = deps.now();
+  if (mapping.moveCommitAttempts >= MOVE_COMMIT_ATTEMPT_LIMIT) {
+    // Escalated by `noteFailedCommit`. Taking the lease over again would repeat a failure that has
+    // already proved deterministic; the mapping deliberately stays `moving` so nothing syncs
+    // against the old path, and the note tells an operator why.
+    return {
+      status: "skipped", mapping, reason: "editor_folder_move_stuck",
+      detail: mapping.moveNote ?? `The Editor folder move for this project failed to commit ${mapping.moveCommitAttempts} times and is no longer being retried; an operator must resolve it`,
+    };
+  }
   if (!mapping.moveExpiresAt || mapping.moveExpiresAt.getTime() >= now.getTime()) {
     return {
       status: "skipped", mapping, reason: "editor_folder_move_in_flight",
@@ -617,19 +707,16 @@ export async function attemptEditorFolderMove(
   const now = deps.now();
 
   if (mapping.moveStatus === "blocked" && mapping.moveTargetShootDate === project.shootDate) {
-    const { reason, detail } = parseReconcileNote(mapping.moveNote ?? "");
-    return { status: "skipped", mapping, reason, detail };
-  }
-
-  // Every `ready` mapping is provisioned or linked with a Dropbox folder ID, and the move locates
-  // the tree by that ID rather than by path. Without one there is nothing safe to follow, so report
-  // it instead of dereferencing null deep inside a Dropbox call.
-  if (mapping.rootFolderId === null) {
-    return await blockBeforeClaim(env, db, mapping, {
-      code: "editor_folder_move_source_missing",
-      detail: `The Editor mapping for ${mapping.rootPath} is ready but has no Dropbox folder ID recorded, so the Portal cannot follow the tree to move it; an operator must relink it`,
-      nextShootDate: project.shootDate ?? mapping.shootDate,
-    }, now);
+    // Still a mapping with a `moved_from_path` to watch: an earlier move landed, a LATER reschedule
+    // blocked, and the orphan sweep's own bookkeeping (audit row, and clearing the watch at +30min)
+    // must not stop just because this pass has a block to report instead. The block is the more
+    // durable of the two — it sits in `move_note` until an operator acts — so it stays the outcome.
+    await sweepOrphanUpload(env, db, mapping, deps, now);
+    const parsed = mapping.moveNote === null ? null : parseReconcileNote(mapping.moveNote);
+    if (parsed === null) {
+      return { status: "skipped", mapping, reason: "editor_folder_move_deferred", detail: "The Editor folder move is blocked but its note is missing; the next reschedule re-evaluates it" };
+    }
+    return { status: "skipped", mapping, reason: parsed.reason, detail: parsed.detail };
   }
 
   const target = editorMoveTarget({ rootPath: mapping.rootPath, shootDate: mapping.shootDate }, project.shootDate);
@@ -646,6 +733,18 @@ export async function attemptEditorFolderMove(
     }, now);
   }
 
+  // Only once there is a real move to make: every `ready` mapping is provisioned or linked with a
+  // Dropbox folder ID, and the move follows the tree by that ID rather than by path. Without one
+  // there is nothing safe to follow. Checked here, not earlier, so a mapping with nothing to move
+  // still reports its ordinary `mapped` outcome rather than being blocked for a move nobody asked for.
+  if (mapping.rootFolderId === null) {
+    return await blockBeforeClaim(env, db, mapping, {
+      code: "editor_folder_move_source_missing",
+      detail: `The Editor mapping for ${mapping.rootPath} is ready but has no Dropbox folder ID recorded, so the Portal cannot follow the tree to move it; an operator must relink it`,
+      nextShootDate: target.next,
+    }, now);
+  }
+
   const blockingJob = await findBlockingJob(db, project.id, now);
   if (blockingJob) {
     return {
@@ -656,8 +755,6 @@ export async function attemptEditorFolderMove(
   if (await activeReconciliationClaim(db, project.id, now)) {
     return { status: "skipped", mapping, reason: "editor_folder_move_deferred", detail: "A RAW reconciliation pass is running for this Project; the Editor folder move waits for it to finish" };
   }
-  const staleJobIds = await markStaleJobs(db, project.id, now);
-
   const quietHit = await findRecentUpload(env, db, mapping, deps);
   if (quietHit) {
     return {
@@ -692,5 +789,10 @@ export async function attemptEditorFolderMove(
     };
   }
 
+  // Stamped only once the move is actually going ahead. Stamping before the claim wrote "no longer
+  // blocks the Editor folder move" onto jobs for moves that then deferred on the quiet period or
+  // lost the claim — a note about a move that never happened. The claim's own SQL decides what
+  // blocks, by timestamp, so it is unaffected by where this runs.
+  const staleJobIds = await markStaleJobs(db, project.id, now);
   return await resolveClaimedMove(env, db, claimed, target, staleJobIds, deps, now);
 }

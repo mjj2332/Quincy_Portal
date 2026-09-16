@@ -349,6 +349,12 @@ function nextProof(current: EditorFolderMapping, patch: Partial<EditorFolderReco
   };
 }
 
+/** SQL predicate (on an `editor_folder_mappings` row aliased `m`) for "this mapping is not mid-move".
+ * A mapping being moved keeps `state = 'ready'`, so every write fenced on a mapping's root needs
+ * this alongside the state and `root_revision` checks — see #153. One source of truth so a future
+ * `move_status` value cannot be added in one guard and forgotten in the other three. */
+export const EDITOR_MAPPING_NOT_MOVING_SQL = "(m.move_status IS NULL OR m.move_status != 'moving')";
+
 export const EDITOR_PROVISION_LEASE_MS = 5 * 60 * 1000;
 
 export type EditorFolderProvisionLease = {

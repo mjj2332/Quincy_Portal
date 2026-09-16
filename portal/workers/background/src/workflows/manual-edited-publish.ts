@@ -12,7 +12,7 @@ import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
 import { setJobStatus } from "../lib/jobs";
 import { enqueueManualEditedRenditions } from "../manual-edited-renditions";
-import { getEditorFolderMapping, type EditorFolderMapping } from "../editor-folders/mapping";
+import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "../editor-folders/mapping";
 import { automationFlag } from "../dropbox/monitor-state";
 import { dropboxPathKey } from "../dropbox/paths";
 
@@ -127,7 +127,7 @@ function manualDestinationGuard(
 ): DestinationGuard {
   if (destination.mapped) {
     return {
-      clause: " AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.state = 'ready' AND (m.move_status IS NULL OR m.move_status != 'moving') AND EXISTS (SELECT 1 FROM json_each(CASE WHEN ? = 'raw' THEN m.input_roots_json ELSE m.output_roots_json END) AS root WHERE lower(?) = lower(json_extract(root.value, '$.path') || '/Manual-Uploads/' || assets.id || '/' || assets.original_filename)))",
+      clause: ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.state = 'ready' AND ${EDITOR_MAPPING_NOT_MOVING_SQL} AND EXISTS (SELECT 1 FROM json_each(CASE WHEN ? = 'raw' THEN m.input_roots_json ELSE m.output_roots_json END) AS root WHERE lower(?) = lower(json_extract(root.value, '$.path') || '/Manual-Uploads/' || assets.id || '/' || assets.original_filename)))`,
       bindings: [destination.mappingId, projectId, destination.connectionId, collectionKind, destination.path],
     };
   }

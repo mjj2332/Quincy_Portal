@@ -26,7 +26,7 @@ import {
 } from "../dropbox/client";
 import { automationFlag } from "../dropbox/monitor-state";
 import { dropboxPathKey, normalisePath, pathEqualsOrIsBelow } from "../dropbox/paths";
-import { getEditorFolderMapping, type EditorFolderMapping } from "./mapping";
+import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "./mapping";
 
 const MAX_DOWNLOADS_PER_RUN = 120;
 const EDITOR_REQUEST_PACING_MS = 150;
@@ -246,7 +246,7 @@ export async function syncProjectEditorOutput(
   // Bound to the revision read at the start of this run so a mapping that starts moving
   // mid-listing (root_revision unchanged, move_status flips to 'moving') fences every write
   // below just as reliably as one that has already landed at a new revision.
-  const mappingGuard = " AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.root_revision = ? AND m.state = 'ready' AND (m.move_status IS NULL OR m.move_status != 'moving'))";
+  const mappingGuard = ` AND EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.id = ? AND m.project_id = ? AND m.connection_id = ? AND m.root_revision = ? AND m.state = 'ready' AND ${EDITOR_MAPPING_NOT_MOVING_SQL})`;
   const mappingGuardBindings = [mapping.id, projectId, mapping.connectionId, mapping.rootRevision];
 
   try {

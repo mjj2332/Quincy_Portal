@@ -64,12 +64,15 @@ describe("migration 0045 editor folder move", () => {
     const columns = (db.prepare("PRAGMA table_info(editor_folder_mappings)").all()) as { name: string; notnull: number; dflt_value: string | null }[];
     const byName = (name: string) => columns.find((row) => row.name === name);
     expect(byName("root_revision")).toMatchObject({ notnull: 1, dflt_value: "0" });
+    // NOT NULL DEFAULT 0 so an existing mapping starts at zero attempts rather than NULL, which
+    // the >= comparison that stops a wedged move would never satisfy.
+    expect(byName("move_commit_attempts")).toMatchObject({ notnull: 1, dflt_value: "0" });
     for (const nullable of ["move_status", "move_target_path", "move_target_path_key", "move_target_shoot_date", "move_token", "move_expires_at", "move_note", "moved_from_path", "move_completed_at"]) {
       expect(byName(nullable)).toMatchObject({ notnull: 0, dflt_value: null });
     }
 
-    const existing = db.prepare("SELECT root_revision, move_status, move_target_path_key FROM editor_folder_mappings WHERE id = 'mapping-existing'").get();
-    expect(existing).toEqual({ root_revision: 0, move_status: null, move_target_path_key: null });
+    const existing = db.prepare("SELECT root_revision, move_status, move_target_path_key, move_commit_attempts FROM editor_folder_mappings WHERE id = 'mapping-existing'").get();
+    expect(existing).toEqual({ root_revision: 0, move_status: null, move_target_path_key: null, move_commit_attempts: 0 });
 
     db.close();
   });

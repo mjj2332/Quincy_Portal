@@ -289,6 +289,8 @@ export type EditorScaffoldSkipReason =
   | "editor_folder_move_conflict"
   | "editor_folder_move_source_missing"
   | "editor_folder_move_moved_elsewhere"
+  | "editor_folder_move_refused"
+  | "editor_folder_move_stuck"
   | "editor_folder_move_deferred"
   | "editor_folder_move_in_flight"
   | "editor_folder_move_orphan_upload";

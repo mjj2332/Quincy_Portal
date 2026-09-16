@@ -236,4 +236,64 @@ describe("Editor Output synchronization: move in progress (#153)", () => {
     await expect(bindings.DB.prepare("SELECT source_path FROM assets WHERE id = ?").bind(existingId).first())
       .resolves.toEqual({ source_path: oldSourcePath });
   });
+
+  it("writes nothing for a fresh INSERT when the mapping starts moving mid-listing", async () => {
+    const data = await fixture();
+    const hash = "hash-insert-race";
+    const file = outputFile(data, hash);
+
+    vi.mocked(createDropboxClientContext).mockResolvedValue({ connectionId: "unused-context-connection", accessToken: "test-token" });
+    // Same race as the UPDATE-guard test above: the mapping flips to 'moving' while this listing
+    // is still in flight, so this is a brand-new INSERT racing the move rather than an existing row.
+    vi.mocked(listFolder).mockImplementation(async () => {
+      await bindings.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving' WHERE project_id = ?").bind(data.projectId).run();
+      return { entries: [file], cursor: "cursor", has_more: false };
+    });
+    vi.mocked(listFolderContinue).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
+    vi.mocked(download).mockImplementation(async () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+      headers: { "Dropbox-API-Result": JSON.stringify({ content_hash: hash }) },
+    }));
+    vi.mocked(recordDropboxSuccess).mockResolvedValue(undefined);
+
+    await expect(syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId))
+      .resolves.toMatchObject({ newlyImported: 0 });
+    await expect(bindings.DB.prepare("SELECT count(*) AS count FROM assets a JOIN collections c ON c.id = a.collection_id WHERE c.project_id = ? AND c.kind = 'edited'").bind(data.projectId).first<{ count: number }>())
+      .resolves.toEqual({ count: 0 });
+  });
+
+  it("writes nothing for a supersede (existing asset, different content hash) when the mapping starts moving mid-listing", async () => {
+    const data = await fixture();
+    const oldHash = "hash-supersede-old";
+    const newHash = "hash-supersede-new";
+    const file = outputFile(data, newHash);
+    const collectionId = crypto.randomUUID();
+    const existingId = crypto.randomUUID();
+    const now = Date.now();
+    await bindings.DB.batch([
+      bindings.DB.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES (?, ?, 'edited', 'received', ?, ?)").bind(collectionId, data.projectId, now, now),
+      bindings.DB.prepare(
+        "INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, content_hash, source, source_path, source_path_key, section, is_premium, version, version_group_id, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'edited.jpg', 4, ?, 'dropbox', ?, ?, NULL, 0, 1, ?, ?, ?)",
+      ).bind(existingId, collectionId, `tests/${existingId}.jpg`, oldHash, data.filePath, dropboxPathKey(file.path_lower), existingId, now, now),
+    ]);
+
+    vi.mocked(createDropboxClientContext).mockResolvedValue({ connectionId: "unused-context-connection", accessToken: "test-token" });
+    // Same race again, but this time listing finds a different content hash than the current row,
+    // so a successful pass would both supersede the old asset and insert a new version.
+    vi.mocked(listFolder).mockImplementation(async () => {
+      await bindings.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving' WHERE project_id = ?").bind(data.projectId).run();
+      return { entries: [file], cursor: "cursor", has_more: false };
+    });
+    vi.mocked(listFolderContinue).mockResolvedValue({ entries: [], cursor: "cursor", has_more: false });
+    vi.mocked(download).mockImplementation(async () => new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+      headers: { "Dropbox-API-Result": JSON.stringify({ content_hash: newHash }) },
+    }));
+    vi.mocked(recordDropboxSuccess).mockResolvedValue(undefined);
+
+    await expect(syncProjectEditorOutput(localEnv(), data.projectId, data.connectionId))
+      .resolves.toMatchObject({ newlyImported: 0 });
+    await expect(bindings.DB.prepare("SELECT count(*) AS count FROM assets WHERE collection_id = ?").bind(collectionId).first<{ count: number }>())
+      .resolves.toEqual({ count: 1 });
+    await expect(bindings.DB.prepare("SELECT content_hash, superseded_at FROM assets WHERE id = ?").bind(existingId).first())
+      .resolves.toEqual({ content_hash: oldHash, superseded_at: null });
+  });
 });

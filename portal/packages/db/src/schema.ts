@@ -936,6 +936,10 @@ export const editorFolderMappings = sqliteTable(
     /** The now-empty former root, kept only so the orphan-upload sweep can watch it. */
     movedFromPath: text("moved_from_path"),
     moveCompletedAt: integer("move_completed_at", { mode: "timestamp_ms" }),
+    /** Commit attempts made after Dropbox already reported the tree at its new location. Reset to
+     * 0 by a successful commit or a release; past `MOVE_COMMIT_ATTEMPT_LIMIT` the move stops
+     * being retried and is escalated for an operator instead of wedging quietly. */
+    moveCommitAttempts: integer("move_commit_attempts").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

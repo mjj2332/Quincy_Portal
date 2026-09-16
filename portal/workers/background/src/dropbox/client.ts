@@ -88,12 +88,29 @@ export type DropboxDeleteBatchCheckResult = DropboxDeleteBatchCompleteResult | {
 
 export class DropboxCursorResetError extends Error {}
 
-/** A metadata lookup for a path that does not exist: a fact about the path, not the connection. */
-export class DropboxPathNotFoundError extends Error {}
+/**
+ * A fact about a path, not about the connection. Nothing that extends this is ever written to the
+ * connection's sticky `last_error`, so a single bad path cannot take the studio's Dropbox offline.
+ *
+ * #148 carved out one such case (a `get_metadata` not_found) and #149 a second (`malformed_path`
+ * misfiled as a credentials failure). This is the third, and it is a base class rather than a
+ * third carve-out precisely so there is no fourth: `authorisedJson`'s catch tests this type, and a
+ * new path-scoped error only has to extend it to be excluded.
+ */
+export class DropboxPathError extends Error {}
 
-/** `/files/move_v2` found something already at the destination: a fact about that path, not the
- * connection, and the caller (the Editor tree move) decides whether to re-check and continue. */
-export class DropboxRelocationConflictError extends Error {}
+/** A metadata lookup for a path that does not exist. */
+export class DropboxPathNotFoundError extends DropboxPathError {}
+
+/** `/files/move_v2` found something already at the destination; the caller (the Editor tree move)
+ * decides whether to re-check by folder ID and continue. */
+export class DropboxRelocationConflictError extends DropboxPathError {}
+
+/** Any other reason Dropbox refused to relocate a path: `no_write_permission`, `insufficient_quota`,
+ * `too_many_files`, `cant_move_folder_into_itself`, and whatever the union grows next. These are
+ * real failures the caller must surface, but they are still scoped to the two paths in the
+ * request — recording them on the connection would strand every other project. */
+export class DropboxRelocationRefusedError extends DropboxPathError {}
 
 export class DropboxRateLimitError extends Error {
   constructor(message: string, readonly retryAfterSeconds: number | undefined) {
@@ -558,6 +575,13 @@ async function authorisedJson(
         // The source folder (or the destination's parent) is gone. Also a fact about the path.
         throw new DropboxPathNotFoundError(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
       }
+      if (endpoint === "/files/move_v2" && response.status === 409) {
+        // Every remaining RelocationError variant. Enumerating them is what produced #148 and #149:
+        // the union grows, the enumeration does not, and the first unlisted member marks the whole
+        // connection errored. A 409 on this endpoint is by definition about the two paths sent, so
+        // the default is the safe one and new variants need no code change.
+        throw new DropboxRelocationRefusedError(`Dropbox ${endpoint} failed (${response.status}): ${body}`);
+      }
       if (response.status === 429) {
         const retryAfter = retryAfterSeconds(response, body);
         throw new DropboxRateLimitError(rateLimitMessage(endpoint, retryAfter, body), retryAfter);
@@ -566,7 +590,7 @@ async function authorisedJson(
     }
     return await response.json() as unknown;
   } catch (error) {
-    if (error instanceof DropboxCursorResetError || error instanceof DropboxPathNotFoundError || error instanceof DropboxRelocationConflictError) throw error;
+    if (error instanceof DropboxCursorResetError || error instanceof DropboxPathError) throw error;
     await recordDropboxError(db, resolvedClient.connectionId, error);
     throw error;
   }
