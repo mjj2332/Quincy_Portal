@@ -28,7 +28,8 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
 import { RequireExecutedTests } from "../src/testing/require-executed-tests.ts";
 
 const portalRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -103,6 +104,36 @@ describe("CI vitest-config coverage", () => {
       unwired,
       `Missing \`requireExecutedTests(...)\` in \`test.reporters\`:\n${unwired.map((config) => `  - ${config}`).join("\n")}`,
     ).toEqual([]);
+  });
+
+  it("keeps the reporter's fixtures out of config discovery and out of every suite", async () => {
+    // `require-executed-tests.test.ts` runs vitest against deliberately-degenerate fixtures: a file
+    // where every test is skipped, and one that fails on purpose. Two things must stay true of them,
+    // and today both hold by naming convention alone — which is the same shape of bug as #170, one
+    // level up, so pin them to the behaviour rather than to the names.
+    const fixtures = join(portalRoot, "packages/shared/test/fixtures");
+
+    // 1. The harness config must not be discovered, or this guard demands CI run a fixture.
+    expect(findVitestConfigs(portalRoot).filter((config) => config.startsWith("packages/shared/test/fixtures/"))).toEqual([]);
+
+    // 2. No suite may collect the fixtures, or the failing one fails a real run. Only a config whose
+    //    root contains them could, so ask vitest itself which files those configs collect.
+    let checked = 0;
+    for (const config of findVitestConfigs(portalRoot)) {
+      const absolute = join(portalRoot, config);
+      const resolved = (await import(pathToFileURL(absolute).href)).default as { root?: string };
+      const root = resolved.root ?? dirname(absolute);
+      if (relative(root, fixtures).startsWith("..")) continue;
+      checked += 1;
+      const collected = execFileSync(
+        process.execPath,
+        [fileURLToPath(new URL("../../../node_modules/vitest/vitest.mjs", import.meta.url)), "list", "--filesOnly", "--config", absolute],
+        { encoding: "utf8", stdio: "pipe", timeout: 120_000 },
+      );
+      expect(collected, `${config} collects a reporter fixture`).not.toContain("test/fixtures/");
+    }
+    // A vacuous pass here would mean the fixtures moved out from under every root — say so loudly.
+    expect(checked, "no config's root contains the fixtures; this assertion proved nothing").toBeGreaterThan(0);
   });
 
   it("runs no vitest config that has been deleted", () => {
