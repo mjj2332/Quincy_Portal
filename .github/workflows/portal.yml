@@ -69,9 +69,11 @@ jobs:
       - run: npx vitest run --config workers/webhook-ingress/vitest.config.ts
       - run: npx vitest run --config workers/background/vitest.config.ts
       - run: npx vitest run --config apps/web/vitest.config.ts
-      # The DOM suite is the largest of the eight (86 files / 999 tests) but runs in ~7s
-      # wall-clock on vitest's default parallelism, so it is appended to this job rather
-      # than given its own or sharded (#158).
+      # The DOM suite (85 files / 980 tests) is the most expensive of the eight on the CI
+      # runner at ~135s, but only narrowly ahead of workers/app at ~120s — splitting it into
+      # its own job or sharding it would not shorten this job without splitting that one too,
+      # so it is appended here (#158). Revisit if the job keeps growing. Measure on the runner,
+      # not locally: a dev machine's parallelism runs this suite in ~7s and hides the cost.
       - run: npx vitest run --config apps/web/vitest.dom.config.ts
 
   build-web:
