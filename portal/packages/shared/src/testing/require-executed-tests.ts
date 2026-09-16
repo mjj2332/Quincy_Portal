@@ -16,6 +16,13 @@
  *
  * This runs in the vitest host process, not in the test environment, which is why it works
  * where #170's `define` did not — workerd and happy-dom never see it.
+ *
+ * **One limit, stated rather than papered over:** vitest replaces the configured reporters when
+ * any CLI `--reporter` is passed, so `vitest run --config … --reporter=default` drops this gate
+ * and an all-skipped run exits 0 again. The gate is therefore per *config*, not per invocation.
+ * CI cannot drift into that: `ci-vitest-configs.guard.test.ts` matches whole `- run:` steps, so a
+ * step carrying any extra flag no longer counts as running its config, and it asserts the absence
+ * of `--reporter` directly so the failure says why. A local run with `--reporter` is on you.
  */
 import type { Reporter, TestModule } from "vitest/node";
 

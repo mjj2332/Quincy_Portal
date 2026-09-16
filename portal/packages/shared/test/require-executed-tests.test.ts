@@ -33,6 +33,12 @@ describe("require-executed-tests, against a real vitest run", () => {
     expect(status).toBe(1);
   });
 
+  it("passes a run in which everything executed", () => {
+    const { status, output } = runFixture("passing.fixture.ts");
+    expect(output).not.toContain("executed no tests");
+    expect(status).toBe(0);
+  });
+
   it("passes a run with one executed test alongside a skip", () => {
     const { status, output } = runFixture("mixed.fixture.ts");
     expect(output).not.toContain("executed no tests");

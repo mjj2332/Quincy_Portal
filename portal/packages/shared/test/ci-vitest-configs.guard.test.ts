@@ -106,6 +106,22 @@ describe("CI vitest-config coverage", () => {
     ).toEqual([]);
   });
 
+  it("passes no `--reporter` flag, which would replace the no-empty-run reporter", () => {
+    // vitest drops every configured reporter when the CLI supplies one, so `--reporter=default`
+    // on a step would silently remove the zero-test gate and an all-skipped run would exit 0
+    // again. `configsRunByTestJob` already rejects steps carrying extra flags, but it rejects
+    // them as "config not run", which sends the next reader looking for the wrong thing.
+    const workflow = readFileSync(workflowPath, "utf8");
+    const overriding = workflow
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- run:") && line.includes("vitest run") && line.includes("--reporter"));
+    expect(
+      overriding,
+      `These steps replace the configured reporters, which removes the no-empty-run gate:\n${overriding.map((line) => `  ${line}`).join("\n")}`,
+    ).toEqual([]);
+  });
+
   it("keeps the reporter's fixtures out of config discovery and out of every suite", async () => {
     // `require-executed-tests.test.ts` runs vitest against deliberately-degenerate fixtures: a file
     // where every test is skipped, and one that fails on purpose. Two things must stay true of them,
