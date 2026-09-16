@@ -2332,3 +2332,33 @@ real signed-in Dropbox tab to prove the link lands in the studio's team space ra
 individual's. It needs one real click by the owner before this is provably correct, not just
 plausibly correct.
 
+## A Calendar or Board unmount left the Dashboard's controls stuck disabled (#152, 2026-09-16)
+
+**Symptom:** starting a Calendar deadline drop or a Kanban drag, then pressing Back or clicking a
+different rail child mid-interaction, left List/Kanban/Calendar disabled and Archived a silent
+no-op until reload.
+
+**Cause:** each surface told its parent about its barrier only through an effect keyed on its own
+state (`useEffect(() => onAcceptGateChange?.(gate), [gate, ...])`), and reset that state in its
+unmount cleanup — a state update on an unmounting component, which React drops. The effect never
+ran again, so the parent's copy of the barrier never cleared. Separately, dnd-kit does not detach
+an active sensor when `DndContext` unmounts, so a drag left running when the Board unmounted could
+still deliver a drag end from a board that was gone, and the confirm a Calendar drop had opened
+stayed open with no way to withdraw it once the component owning its continuation was gone.
+
+**Fix:** both surfaces keep the parent's callback in a ref, updated every render (the
+`move-to-control.tsx` precedent), and call it directly from unmount cleanup rather than waiting on
+their own effect. `lib/confirm.ts` gained an optional `signal` field on the confirm request, so a
+component can withdraw exactly the confirm it opened, on unmount, without disturbing the queue's
+other entries; the field is destructured out before the request is stored, since `ConfirmDialog`
+spreads the stored options onto a DOM component. `kanban2/board.tsx` gained an `unmountedRef` that
+every dnd-kit handler (`onDragStart`/`onDragOver`/`onDragEnd`/`onDragCancel`/`onMove`) checks
+first, so a handler dnd-kit still fires after unmount is a no-op rather than a write from a dead
+board.
+
+**Rule:** a component that raises a barrier in its parent must lower it in unmount cleanup through
+a ref'd callback, not its own state — a state update on an unmounting component never runs the
+effect that would have told the parent. And a component that hands a callback to a third-party
+library must fence that callback against firing after unmount, since the library's own teardown is
+not guaranteed to run first.
+
