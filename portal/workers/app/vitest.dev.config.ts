@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { requireExecutedTests } from "../../packages/shared/src/testing/require-executed-tests.ts";
+import { CI_HOOK_TIMEOUT_MS, CI_TEST_TIMEOUT_MS } from "../../packages/shared/src/testing/ci-timeouts.ts";
 
 const migrationDirectory = new URL("../../packages/db/migrations/", import.meta.url);
 const migrationSql = (await Promise.all((await readdir(migrationDirectory)).filter((name) => name.endsWith(".sql")).sort().map((name) => readFile(new URL(name, migrationDirectory), "utf8")))).join("\n--> statement-breakpoint\n");
@@ -15,5 +16,5 @@ export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, miniflare: { bindings: { TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes", APP_ENV: "dev", R2_ACCOUNT_ID: "", R2_S3_ACCESS_KEY_ID: "", R2_S3_SECRET_ACCESS_KEY: "" }, workers: [{ name: "quincy-portal-background", modules: true, script: "import { WorkerEntrypoint } from 'cloudflare:workers'; export default class QuincyBackground extends WorkerEntrypoint { async processTonomoEvents() {} }" }] } })],
   // Direct R2 PUT is the only dev-only behavior. Keep production redirect assertions out of
   // this config even though they share the API test module.
-  test: { reporters: ["default", requireExecutedTests("workers/app/vitest.dev.config.ts")], include: ["test/api.test.ts"], testNamePattern: "reserves direct R2 document uploads" },
+  test: { reporters: ["default", requireExecutedTests("workers/app/vitest.dev.config.ts")], testTimeout: CI_TEST_TIMEOUT_MS, hookTimeout: CI_HOOK_TIMEOUT_MS, include: ["test/api.test.ts"], testNamePattern: "reserves direct R2 document uploads" },
 });

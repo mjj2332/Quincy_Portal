@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { requireExecutedTests } from "../../packages/shared/src/testing/require-executed-tests.ts";
+import { CI_HOOK_TIMEOUT_MS, CI_TEST_TIMEOUT_MS } from "../../packages/shared/src/testing/ci-timeouts.ts";
 
 const migrationDirectory = new URL("../../packages/db/migrations/", import.meta.url);
 const migrationNames = (await readdir(migrationDirectory))
@@ -34,5 +35,5 @@ export default defineConfig({
     __BACKGROUND_WRANGLER_CONFIG__: JSON.stringify(wranglerConfig),
   },
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, miniflare: { bindings: { AUTOHDR_API_KEY: "test-autohdr-api-key" } } })],
-  test: { reporters: ["default", requireExecutedTests("workers/background/vitest.config.ts")], include: ["test/**/*.test.ts"] },
+  test: { reporters: ["default", requireExecutedTests("workers/background/vitest.config.ts")], testTimeout: CI_TEST_TIMEOUT_MS, hookTimeout: CI_HOOK_TIMEOUT_MS, include: ["test/**/*.test.ts"] },
 });
