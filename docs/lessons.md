@@ -2553,3 +2553,71 @@ manual second step, the step is part of the rollout — automate it into dev set
 permanent divergence nobody can see, because the environment that is wrong is the one with no users
 complaining. Be honest about what the guards prove: they gate the wiring, not your `.wrangler/state`.
 Nothing in CI can assert your local database has the flag on; only a browser pass closes that.
+
+## A green CI step that runs nothing is worse than a missing one (#170)
+
+`.github/workflows/portal.yml` ran `npx vitest run --config workers/app/vitest.dev.config.ts` for
+almost two months. The step passed every time and executed nothing: `133 skipped, 0 passed`. That
+config exists for exactly one behaviour — Miniflare's direct R2 PUT fallback, the path dev uses for
+document uploads — so that behaviour had no executing test anywhere, while the workflow displayed a
+green step implying it did. Behind it sat a completion batch that had never worked (#171).
+
+**Why the gate never flipped.** The test is gated on `process.env.DOCUMENT_DIRECT_TEST === "true"`
+and the config flipped it with `define: { "process.env.DOCUMENT_DIRECT_TEST": JSON.stringify("true") }`.
+Vite does **not** substitute `process.env.*` define keys in the workerd/SSR transform. The
+expression survived to runtime and read an empty `nodejs_compat` `process`, so `documentDirectIt`
+was permanently `it.skip`. Exporting the variable in the shell does not help either — the shell's
+environment is not the isolate's.
+
+The fix is the idiom the same config already relied on and which demonstrably does reach the module:
+a bare identifier (`__DOCUMENT_DIRECT_TEST__`, like `__PORTAL_MIGRATION_SQL__`), declared with
+`declare const` in the test file.
+
+Two things were ruled out by experiment rather than by reading, and both were worth the five
+minutes: `testNamePattern` works fine under that config (point it at another test in the same file
+and that test runs), and a probe test under the config observed `process.env.DOCUMENT_DIRECT_TEST`
+as `undefined` while `typeof process === "object"`, which is what distinguishes "not substituted"
+from "substituted with the wrong value".
+
+**Why nothing caught the emptiness.** `vitest run` exits 0 when every test it collected was skipped,
+and `passWithNoTests` does not cover it — that option is consulted only when zero *modules* were
+collected. Verified, not assumed: `npx vitest run --config packages/shared/vitest.config.ts -t
+"zzz-no-such-test-name" --passWithNoTests=false` reports `240 skipped` and exits **0**. There is no
+built-in knob for the all-skipped case in vitest 4.1.10.
+
+So `packages/shared/src/testing/require-executed-tests.ts` fails any run that executed nothing, and
+`ci-vitest-configs.guard.test.ts` — which already discovered configs from the filesystem for #158 —
+now also asserts every config wires it. The guard checks the *resolved config object*, not the
+source text: a reporter added under the wrong key, or clobbered by a later spread, still reads
+correct in review and still exits 0.
+
+Three details that are load-bearing:
+
+- **Set `process.exitCode`, do not throw.** Vitest assigns the exit code before reporters run and
+  does not catch reporter errors, so a throw surfaces as a misleading startup banner.
+- **The rule is per invocation, not per file or per test.** One executed test alongside 132 skips is
+  green; so is one all-skipped file among many. Only "this whole run executed nothing" fails. That
+  is the weakest rule that catches #170 and it leaves legitimate skips alone.
+- **Reporters run in the vitest host process**, which is why this works where the `define` did not.
+  workerd and happy-dom never see it.
+
+One more thing the gate could not tell us about itself. It was proven red three ways — a permanent
+subprocess test, the wiring guard, and the real dev invocation — and a read-only review still found a
+hole in it: vitest replaces every configured reporter when the CLI passes `--reporter`, so
+`vitest run --config … --reporter=default` drops the gate and an all-skipped run exits 0 again. The
+reviewer could execute nothing (its sandbox blocked vite's temp writes) and found it by reading
+vitest's dist, pinned to an exact line. The fix was to narrow the claim rather than widen the code:
+the gate is per *config*, the reporter says so in its own header, and the absence of `--reporter` in
+the workflow is asserted directly rather than left to `configsRunByTestJob` rejecting the step for an
+unrelated-sounding reason. A gate that fires correctly and lies about why costs the next reader more
+than a clean failure does.
+
+Two caveats on leaning on a review like that: it reported on a snapshot, so anything committed after
+it is simply unreviewed — silence there covers nothing — and anything it could not run is a reading
+of the source, which is worth reproducing before acting on. Both of its findings reproduced.
+
+**Rule:** being invoked is not being run. A step's exit code answers "did anything fail", never "did
+anything happen" — assert the second separately, and prove the assertion red before trusting it.
+`require-executed-tests.test.ts` runs a real `vitest run` against fixture files and asserts the child
+process's exit code, because every part of a gate like this can look right while the run still exits
+0. That is precisely how #170 survived review for two months.

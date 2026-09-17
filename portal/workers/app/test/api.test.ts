@@ -33,6 +33,7 @@ const editorId = "33333333-3333-4333-8333-333333333333";
 const externalEditorId = "44444444-4444-4444-8444-444444444444";
 declare const __PORTAL_MIGRATION_SQL__: string;
 declare const __PORTAL_SEED_SQL__: string;
+declare const __DOCUMENT_DIRECT_TEST__: boolean;
 
 // Browser fetch supplies Origin for unsafe same-origin requests. Keep the existing
 // integration corpus realistic rather than weakening the production middleware.
@@ -3481,7 +3482,10 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'collection_link.reorder' AND target_id = ?").bind(third.id).first()).toEqual({ count: 0 });
   });
 
-  const documentDirectIt = process.env.DOCUMENT_DIRECT_TEST === "true" ? it : it.skip;
+  // A bare identifier, not `process.env.DOCUMENT_DIRECT_TEST`: Vite does not substitute
+  // `process.env.*` define keys in the workerd/SSR transform, so the old gate read an
+  // empty nodejs_compat `process` and this test never once ran in CI (#170).
+  const documentDirectIt = __DOCUMENT_DIRECT_TEST__ ? it : it.skip;
   documentDirectIt("reserves direct R2 document uploads, atomically pairs floorplan versions, and reconciles delivery counts", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie: adminCookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Document collection", orderedServices: [], photographerUserIds: [firstPhotographerId] }) });
