@@ -7,6 +7,7 @@ import QuincyBackground from "../src/index";
 import { editorFolderPath, editorFolderPathKey } from "../src/editor-folders/paths";
 import { getEditorFolderMapping } from "../src/editor-folders/mapping";
 import { JOB_STALE_MS } from "../src/editor-folders/move";
+import type { JobStatus } from "../src/lib/jobs";
 import { MOVE_COMMIT_ATTEMPT_LIMIT } from "../src/editor-folders/move-note";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -79,7 +80,7 @@ async function createMapping(input: {
   return { projectId, mappingId };
 }
 
-async function insertReconcileJob(projectId: string, status: string, createdAt: number, updatedAt: number): Promise<void> {
+async function insertReconcileJob(projectId: string, status: JobStatus, createdAt: number, updatedAt: number): Promise<void> {
   await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'editor_reconcile', ?, ?, ?, ?)")
     .bind(crypto.randomUUID(), status, projectId, createdAt, updatedAt).run();
 }
