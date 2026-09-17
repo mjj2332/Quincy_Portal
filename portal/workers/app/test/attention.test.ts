@@ -157,6 +157,22 @@ describe("editor reconcile attention (#163)", () => {
     expect(items).not.toContain(delivered);
   });
 
+  it("keeps a block saying the recorded root is gone even after the date moved on, but not once the project is delivered", async () => {
+    const elsewhere = await seedMapping({ moveStatus: "blocked", moveTargetShootDate: "2026-09-25", moveNote: "editor_folder_move_moved_elsewhere: Dropbox reports the tree at /Somewhere" });
+    const missing = await seedMapping({ moveStatus: "blocked", moveTargetShootDate: "2026-09-25", moveNote: "editor_folder_move_source_missing: gone" });
+    const delivered = await seedMapping({ moveStatus: "blocked", moveTargetShootDate: "2026-09-25", stageKey: "delivered", moveNote: "editor_folder_move_source_missing: gone" });
+    const elsewhereItem = await itemFor(elsewhere);
+    expect(elsewhereItem).toMatchObject({ kind: "editor_folder_move_blocked", code: "editor_folder_move_moved_elsewhere" });
+    expect(elsewhereItem?.headline).not.toMatch(/sync continues/i);
+    expect(await itemFor(missing)).toMatchObject({ code: "editor_folder_move_source_missing", detail: "gone" });
+    expect(await itemFor(delivered)).toBeUndefined();
+  });
+
+  it("does not repeat a bare-code note as its own detail", async () => {
+    const projectId = await seedMapping({ moveStatus: "moving", moveCommitAttempts: 3, moveNote: "editor_folder_move_stuck" });
+    expect(await itemFor(projectId)).toMatchObject({ code: "editor_folder_move_stuck", detail: expect.stringMatching(/failed to commit 3 times/) });
+  });
+
   it("keeps a stuck move listed even on an archived project, because its fence is still up", async () => {
     const projectId = await seedMapping({ moveStatus: "moving", moveCommitAttempts: 3, archived: true, moveNote: "editor_folder_move_stuck: x" });
     expect(await itemFor(projectId)).toMatchObject({ kind: "editor_folder_move_stuck" });
@@ -177,6 +193,26 @@ describe("editor reconcile attention (#163)", () => {
     const kinds = (await list()).items.map((item) => item.kind);
     const rank = (kind: string) => ["editor_folder_move_stuck", "editor_folder_move_overdue", "editor_folder_needs_review", "editor_folder_move_blocked"].indexOf(kind);
     expect(kinds.map(rank)).toEqual([...kinds.map(rank)].sort((a, b) => a - b));
+  });
+
+  it("never lets the list limit cut a stuck move in favour of older, less severe rows", async () => {
+    const now = Date.now();
+    const statements = [];
+    for (let index = 0; index < 201; index += 1) {
+      const projectId = crypto.randomUUID();
+      statements.push(
+        database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, created_at, updated_at) VALUES (?, 'Bulk St', '2026-09-20', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
+        database.DB.prepare(`INSERT INTO editor_folder_mappings (id, project_id, connection_id, root_path, root_path_key, shoot_date, project_folder_name, photographer_evidence_json, editing_notes_path, state, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, '2026-09-18', 'Bulk', '{}', ?, 'needs_review', ?, ?)`)
+          .bind(crypto.randomUUID(), projectId, connectionId, `/Editor/01_ACTIVE EDITS/September 2026/18/${projectId}`, `/editor/01_active edits/september 2026/18/${projectId}`, `/Editor/01_ACTIVE EDITS/September 2026/18/${projectId}/Editing Notes`, 1, 1),
+      );
+    }
+    await database.DB.batch(statements);
+    const stuck = await seedMapping({ moveStatus: "moving", moveCommitAttempts: 3, moveNote: "editor_folder_move_stuck: newest" });
+    const result = await list();
+    expect(result.truncated).toBe(true);
+    expect(result.items.map((item) => item.projectId)).toContain(stuck);
+    await database.DB.prepare("DELETE FROM projects WHERE street = 'Bulk St'").run();
   });
 
   describe("provisioning freeze (#161's latch, read-only here)", () => {

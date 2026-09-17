@@ -50,10 +50,6 @@ const QUIET_PERIOD_MS = 30 * 60 * 1000;
 const ORPHAN_SWEEP_MS = 30 * 60 * 1000;
 const STALE_JOB_NOTE = "stale_job: no progress for 2h; no longer blocks the Editor folder move";
 
-function reconcileNote(code: string, detail: string): string {
-  return formatMoveNote(code, detail);
-}
-
 function parseReconcileNote(note: string): { reason: EditorScaffoldSkipReason; detail: string } {
   const { code, detail } = parseMoveNote(note);
   return { reason: code as EditorScaffoldSkipReason, detail };
@@ -159,7 +155,7 @@ async function blockBeforeClaim(
   input: { code: EditorScaffoldSkipReason; detail: string; nextShootDate: string },
   now: Date,
 ): Promise<EditorReconcileOutcome> {
-  const note = reconcileNote(input.code, input.detail);
+  const note = formatMoveNote(input.code, input.detail);
   const auditId = crypto.randomUUID();
   const meta = JSON.stringify({ actor: "editor_reconcile", mappingId: mapping.id, code: input.code, note, nextShootDate: input.nextShootDate });
   await env.DB.batch([
@@ -187,7 +183,7 @@ async function blockByToken(
   detail: string,
   now: Date,
 ): Promise<EditorReconcileOutcome> {
-  const note = reconcileNote(code, detail);
+  const note = formatMoveNote(code, detail);
   const auditId = crypto.randomUUID();
   const meta = JSON.stringify({ actor: "editor_reconcile", mappingId: mapping.id, code, note });
   await env.DB.batch([

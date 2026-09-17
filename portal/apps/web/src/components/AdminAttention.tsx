@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AdminAttentionResponse, EditorFolderAttentionKind } from "@quincy/shared";
+import { editorFolderAttentionPausesPipeline, type AdminAttentionResponse, type EditorFolderAttentionKind } from "@quincy/shared";
 import { apiGet } from "../lib/api";
 import { InternalLink } from "./InternalLink";
 import { Button } from "@/components/reui/button";
 import { EmptyState } from "@/components/quincy/EmptyState";
 import { Notice } from "@/components/quincy/Notice";
 import { SectionHead } from "@/components/quincy/SectionHead";
-import { StatusPill, type StatusTone } from "@/components/quincy/StatusPill";
+import { StatusPill } from "@/components/quincy/StatusPill";
 import { TableWrap, Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/quincy/Table";
 
-const KIND_LABELS: Record<EditorFolderAttentionKind, { label: string; tone: StatusTone }> = {
-  editor_folder_move_stuck: { label: "Pipeline paused", tone: "critical" },
-  editor_folder_move_overdue: { label: "Pipeline paused", tone: "critical" },
-  editor_folder_needs_review: { label: "Needs review", tone: "caution" },
-  editor_folder_move_blocked: { label: "Move blocked", tone: "caution" },
+const KIND_LABELS: Record<EditorFolderAttentionKind, string> = {
+  editor_folder_move_stuck: "Pipeline paused",
+  editor_folder_move_overdue: "Pipeline paused",
+  editor_folder_needs_review: "Needs review",
+  editor_folder_move_blocked: "Move blocked",
 };
 
 function formatTimestamp(value: number): string {
@@ -56,7 +56,7 @@ export function AdminAttention() {
         <TableHead><TableRow><TableHeader>Project</TableHeader><TableHeader>State</TableHeader><TableHeader>What happened</TableHeader><TableHeader>Last updated</TableHeader></TableRow></TableHead>
         <TableBody>{items.map((item) => <TableRow key={item.projectId} data-testid="admin-attention-item">
           <TableCell data-label="Project"><InternalLink to={`/projects/${encodeURIComponent(item.projectId)}`}>{item.projectLabel}</InternalLink></TableCell>
-          <TableCell data-label="State"><StatusPill tone={KIND_LABELS[item.kind].tone}>{KIND_LABELS[item.kind].label}</StatusPill></TableCell>
+          <TableCell data-label="State"><StatusPill tone={editorFolderAttentionPausesPipeline(item.kind) ? "critical" : "caution"}>{KIND_LABELS[item.kind]}</StatusPill></TableCell>
           <TableCell data-label="What happened">{item.headline}{item.detail && <><br /><small className="text-foreground-secondary"><code>{item.code}</code> {item.detail}</small></>}</TableCell>
           <TableCell data-label="Last updated">{formatTimestamp(item.updatedAt)}</TableCell>
         </TableRow>)}</TableBody>

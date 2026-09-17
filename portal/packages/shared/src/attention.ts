@@ -7,10 +7,18 @@ export const EDITOR_FOLDER_ATTENTION_KINDS = [
 ] as const;
 export type EditorFolderAttentionKind = (typeof EDITOR_FOLDER_ATTENTION_KINDS)[number];
 
+/** Whether the Editor pipeline (Output sync, manual publishing, RAW reconciliation) is fenced off.
+ * Only a `moving` mapping is; a blocked move and a review leave sync running. */
+export function editorFolderAttentionPausesPipeline(kind: EditorFolderAttentionKind): boolean {
+  return kind === "editor_folder_move_stuck" || kind === "editor_folder_move_overdue";
+}
+
 export type EditorFolderAttentionDto = {
   kind: EditorFolderAttentionKind;
   /** Safe for any staff viewer: says what is affected, never why. */
   headline: string;
+  /** The precise reason within `kind`: the `move_note` code (e.g. `editor_folder_move_conflict` for
+   * a blocked move), `needs_review`, or the kind itself when nothing more specific is recorded. */
   code: string;
   /** Operator diagnostics (paths, provider errors); null when withheld from the viewer. */
   detail: string | null;

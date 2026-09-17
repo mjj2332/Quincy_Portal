@@ -3,6 +3,7 @@ import {
   type AttentionItemDto, type EditorFolderAttentionDto, type EditorFolderAttentionKind, type ProvisioningFreezeDto, type Role,
 } from "@quincy/shared";
 import { MOVE_COMMIT_ATTEMPT_LIMIT, parseMoveNote } from "../../../background/src/editor-folders/move-note";
+import { EXTERNAL_PROVISIONING_FROZEN_FLAG } from "../../../background/src/external-role-cache-purge";
 
 /**
  * The single read path for latches the Editor pipeline and External Editor provisioning set and
@@ -14,7 +15,6 @@ import { MOVE_COMMIT_ATTEMPT_LIMIT, parseMoveNote } from "../../../background/sr
  * The cron retakes an expired lease within minutes, so two hours means something is stopping it. */
 export const MOVE_OVERDUE_MS = 2 * 60 * 60 * 1000;
 const LIST_LIMIT = 200;
-const PROVISIONING_FROZEN_FLAG = "external_editor_provisioning_frozen";
 
 const HEADLINES: Record<EditorFolderAttentionKind, string> = {
   editor_folder_move_stuck: "Editor pipeline paused: the folder moved in Dropbox but the Portal could not record the move.",
@@ -39,14 +39,26 @@ type MappingRow = {
 /**
  * Every row this matches is a latch; the classifier below only names it. Blocks and reviews on an
  * archived or delivered project are dropped because nothing will act on them, and a block whose
- * target date is no longer the project's date is dropped because the next reconcile re-decides it.
+ * target date is no longer the project's date is dropped because the next reconcile re-decides it —
+ * except a block saying the recorded root is gone, which stays wrong whatever the date does.
  * A `moving` row is kept regardless of project state: its fence stays up until someone clears it.
  */
+/** Block codes that mean the mapping's recorded root no longer exists where the Portal thinks. */
+const DEAD_ROOT_CODES = ["editor_folder_move_moved_elsewhere", "editor_folder_move_source_missing"] as const;
+const DEAD_ROOT_HEADLINE = "Editor folder is no longer where the Portal recorded it: edited output cannot be collected until it is relinked.";
+const MOVE_NOTE_CODE_SQL = "substr(m.move_note, 1, instr(m.move_note, ':') - 1)";
+
 const LATCHED_MAPPING_SQL = `
   (m.move_status = 'moving' AND (m.move_commit_attempts >= ? OR m.move_expires_at IS NULL OR m.move_expires_at < ?))
   OR (
     p.archived_at IS NULL AND p.stage_key != 'delivered'
-    AND (m.state = 'needs_review' OR (m.move_status = 'blocked' AND m.move_target_shoot_date IS p.shoot_date))
+    AND (
+      m.state = 'needs_review'
+      OR (m.move_status = 'blocked' AND (
+        m.move_target_shoot_date IS p.shoot_date
+        OR ${MOVE_NOTE_CODE_SQL} IN (${DEAD_ROOT_CODES.map((code) => `'${code}'`).join(", ")})
+      ))
+    )
   )`;
 
 const MAPPING_COLUMNS = `
@@ -66,24 +78,40 @@ function reviewReason(recoveryProofJson: string | null): string {
 function classify(row: MappingRow, now: number): EditorFolderAttentionDto {
   const attention = (kind: EditorFolderAttentionKind, code: string, detail: string): EditorFolderAttentionDto =>
     ({ kind, headline: HEADLINES[kind], code, detail, updatedAt: Number(row.updatedAt) });
-  const note = row.moveNote ? parseMoveNote(row.moveNote) : null;
+  const parsed = row.moveNote ? parseMoveNote(row.moveNote) : null;
+  // A bare code parses to itself as its detail; that is no detail at all.
+  const note = parsed && { code: parsed.code, detail: parsed.detail === parsed.code ? null : parsed.detail };
   if (row.moveStatus === "moving") {
     if (row.moveCommitAttempts >= MOVE_COMMIT_ATTEMPT_LIMIT) {
       return attention("editor_folder_move_stuck", note?.code ?? "editor_folder_move_stuck", note?.detail
         ?? `The Editor folder move for this project failed to commit ${row.moveCommitAttempts} times and is no longer being retried; an operator must resolve it`);
     }
-    if (row.moveExpiresAt === null || Number(row.moveExpiresAt) < now - MOVE_OVERDUE_MS) return attention("editor_folder_move_overdue", "editor_folder_move_overdue", row.moveExpiresAt === null
-      ? "The move is marked in progress but has no lease expiry, so no recovery pass will ever take it over"
-      : `The move's lease expired at ${new Date(Number(row.moveExpiresAt)).toISOString()} and no recovery pass has taken it over since`);
+    if (row.moveExpiresAt === null) {
+      return attention("editor_folder_move_overdue", "editor_folder_move_overdue", "The move is marked in progress but has no lease expiry, so no recovery pass will ever take it over");
+    }
+    if (Number(row.moveExpiresAt) < now - MOVE_OVERDUE_MS) {
+      return attention("editor_folder_move_overdue", "editor_folder_move_overdue",
+        `The move's lease expired at ${new Date(Number(row.moveExpiresAt)).toISOString()} and no recovery pass has taken it over since`);
+    }
   }
   if (row.state === "needs_review") return attention("editor_folder_needs_review", "needs_review", reviewReason(row.recoveryProofJson));
-  return attention("editor_folder_move_blocked", note?.code ?? "editor_folder_move_blocked", note?.detail
+  const blocked = attention("editor_folder_move_blocked", note?.code ?? "editor_folder_move_blocked", note?.detail
     ?? "The Editor folder move is blocked but its note is missing; the next reschedule re-evaluates it");
+  // "Sync continues from the old folder" is false when the writer recorded that folder as gone.
+  return (DEAD_ROOT_CODES as readonly string[]).includes(blocked.code) ? { ...blocked, headline: DEAD_ROOT_HEADLINE } : blocked;
 }
 
 /** `stuck`/`overdue` fence the whole project pipeline; `needs_review` stops Output collection;
  * `blocked` leaves sync running against the old folder. */
 const severity = (kind: EditorFolderAttentionKind) => EDITOR_FOLDER_ATTENTION_KINDS.indexOf(kind);
+
+/** The same ranking in SQL, so the LIMIT drops the least severe rows rather than the newest. Must
+ * agree with `classify`. */
+const SEVERITY_SQL = `CASE
+  WHEN m.move_status = 'moving' AND m.move_commit_attempts >= ? THEN 0
+  WHEN m.move_status = 'moving' THEN 1
+  WHEN m.state = 'needs_review' THEN 2
+  ELSE 3 END`;
 
 function projectLabel(row: MappingRow): string {
   return [row.street, row.suburb].filter(Boolean).join(", ") || row.projectId;
@@ -94,8 +122,8 @@ export async function listEditorFolderAttention(db: D1Database, now: number): Pr
     SELECT ${MAPPING_COLUMNS}
     FROM editor_folder_mappings m JOIN projects p ON p.id = m.project_id
     WHERE ${LATCHED_MAPPING_SQL}
-    ORDER BY m.updated_at ASC, m.project_id ASC LIMIT ?
-  `).bind(MOVE_COMMIT_ATTEMPT_LIMIT, now - MOVE_OVERDUE_MS, LIST_LIMIT + 1).all<MappingRow>();
+    ORDER BY ${SEVERITY_SQL}, m.updated_at ASC, m.project_id ASC LIMIT ?
+  `).bind(MOVE_COMMIT_ATTEMPT_LIMIT, now - MOVE_OVERDUE_MS, MOVE_COMMIT_ATTEMPT_LIMIT, LIST_LIMIT + 1).all<MappingRow>();
   const items = rows.results.slice(0, LIST_LIMIT)
     .map((row) => ({ ...classify(row, now), projectId: row.projectId, projectLabel: projectLabel(row) }))
     .sort((a, b) => severity(a.kind) - severity(b.kind) || a.updatedAt - b.updatedAt);
@@ -123,7 +151,7 @@ export async function readProvisioningFreeze(db: D1Database): Promise<Provisioni
         WHERE a.target_type = 'feature_flag' AND a.target_id = f.key AND a.action = 'external.provisioning.frozen'
         ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS metaJson
     FROM feature_flags f WHERE f.key = ? AND f.enabled = 1
-  `).bind(PROVISIONING_FROZEN_FLAG).first<{ frozenAt: number; metaJson: string | null }>();
+  `).bind(EXTERNAL_PROVISIONING_FROZEN_FLAG).first<{ frozenAt: number; metaJson: string | null }>();
   if (!row) return null;
   let meta: { attempts?: unknown; jobId?: unknown } = {};
   try { meta = JSON.parse(row.metaJson ?? "{}") ?? {}; } catch { /* context is optional */ }

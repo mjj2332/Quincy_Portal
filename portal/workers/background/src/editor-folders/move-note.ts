@@ -18,7 +18,7 @@
  */
 export const MOVE_COMMIT_ATTEMPT_LIMIT = 3;
 
-/** `<code>: <sentence>` — the one place the note is joined. */
+/** `<code>: <sentence>` — the one joiner for both `move_note` and `editor_reconcile` job notes. */
 export function formatMoveNote(code: string, detail: string): string {
   return `${code}: ${detail}`;
 }

@@ -14,6 +14,7 @@ import {
 } from "../dropbox/client";
 import { canonicalDropboxConnectionId } from "../dropbox/connection";
 import { dropboxPathKey, pathEqualsOrIsBelow, TONOMO_RAW_ROOT } from "../dropbox/paths";
+import { formatMoveNote } from "./move-note";
 import { commitRawFolderPathChange, followRawFolderPathChange } from "../projects/raw-folder-path";
 import { latestTonomoFormattedAddress } from "../tonomo/formatted-address";
 import { pathFromRawFolderLink } from "../dropbox/sync";
@@ -317,7 +318,7 @@ export function editorReconcileNote(outcome: EditorReconcileOutcome): string | u
 }
 
 export function reconcileNote(code: EditorReconcileNoteCode, detail: string): string {
-  return `${code}: ${detail}`;
+  return formatMoveNote(code, detail);
 }
 
 type RawIdentity = {
