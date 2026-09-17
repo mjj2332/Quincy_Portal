@@ -1741,6 +1741,14 @@ the finding belongs to whatever re-orders the result. And vary fixtures along a 
 production data actually varies: a suite where every row shares a value cannot see a rule keyed on
 that value.
 
+**Resolved (#106, 2026-09-17).** The owner chose "Board position wins": every server read of Board
+order now goes through one comparator, `compareBoardOrder` (`workers/app/src/lib/project-board-order.ts`),
+which is position then id. The tiered rule had been copied into three places (the placement
+planner, `authorizedInternalBoardOrder`, and the external-editor list), so fixing one would have left
+the others disagreeing. Priority still orders the client's local Priority sort. Migration 0037 and its
+test keep the tiered comparator on purpose, because that is how the migration normalised positions
+back then.
+
 ## Two reviewers, one bug, opposite fixes — and the behaviour you replaced is the tiebreaker (#110, 2026-09-12)
 
 Consolidating four per-screen `useState` toast arrays into one module-level store moved a lifetime

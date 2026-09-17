@@ -4,6 +4,7 @@ import { externalProjectDetailSchema, externalProjectListResponseSchema, externa
 import type { Env } from "../env";
 import { readProjectDeadlineSchedule } from "./project-deadline";
 import { activeEditorRefsByProject } from "./project-editors";
+import { compareBoardOrder } from "./project-board-order";
 import { visibleProjectWhere } from "./visible-project-scope";
 import { editorFolderAvailability } from "./editor-folders";
 import { readEditorFolderAttention } from "./attention";
@@ -151,7 +152,7 @@ function canonicalExternalBoardOrder(groups: Iterable<{ project: ProjectRow }>):
   }
   const orderedProjectIdsByStage: Partial<Record<"awaiting_raw" | "raw_review" | "editing" | "edited_review" | "delivered", string[]>> = {};
   for (const [stageKey, rows] of byStage) {
-    rows.sort((left, right) => (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0) || left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
+    rows.sort(compareBoardOrder);
     orderedProjectIdsByStage[stageKey as keyof typeof orderedProjectIdsByStage] = rows.map((row) => row.id);
   }
   return orderedProjectIdsByStage;

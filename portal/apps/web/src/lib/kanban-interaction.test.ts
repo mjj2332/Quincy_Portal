@@ -365,29 +365,42 @@ describe("Kanban interaction model", () => {
     expect(editorOverlay.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "editing" });
   });
 
-  it("uses the authoritative target array, provisional source, and settled priority-first snap", () => {
+  it("uses the authoritative target array and provisional source, and a mixed-Priority drop settles where the Board said (#106)", () => {
     const baseline = board([
       project("source", "awaiting_raw", { priority: null, boardRevision: 3 }),
-      project("first", "raw_review", { priority: 1, boardRevision: 8 }),
-      project("last", "raw_review", { priority: null, boardRevision: 10 }),
-    ], { awaiting_raw: ["source"], raw_review: ["first", "last"] });
-    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "first" }, "admin");
-    expect(sortKanbanProjects(overlay.projects.filter((item) => item.stageKey === "raw_review"), "priority").map((item) => item.id)).toEqual(["first", "source", "last"]);
+      project("first", "raw_review", { street: "First Street", priority: 1, boardRevision: 8 }),
+      project("middle", "raw_review", { street: "Middle Street", priority: 4, boardRevision: 9 }),
+      project("last", "raw_review", { street: "Last Street", priority: null, boardRevision: 10 }),
+    ], { awaiting_raw: ["source"], raw_review: ["first", "middle", "last"] });
+    const options = moveToPositionOptions(baseline, "source", "raw_review", "admin", {
+      canMoveProjectStage: true,
+      canPrioritize: true,
+      sort: "board",
+      activeStageKeys: ["awaiting_raw", "raw_review"],
+      stageLabel: "RAW review",
+    });
+    expect(options).toContainEqual({ label: "Before Middle Street — position 2", successor: "middle" });
+    const boardOrder = (model: BoardModel) => sortKanbanProjects(model.projects.filter((item) => item.stageKey === "raw_review")).map((item) => item.id);
+    const overlay = applyOptimisticOverlay(baseline, "source", { targetStageKey: "raw_review", successor: "middle" }, "admin");
+    expect(boardOrder(overlay)).toEqual(["first", "source", "middle", "last"]);
 
+    // The server orders a Stage by Board position alone, so its answer matches the promise.
     const response: MoveProjectStageResponse = {
       changed: true,
       project: { projectId: "source", stageKey: "raw_review", boardRevision: 11 },
-      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["first", "last", "source"] },
+      board: { sourceStageKey: "awaiting_raw", targetStageKey: "raw_review", orderedVisibleProjectIds: ["first", "source", "middle", "last"] },
     };
     const settled = reconcileAuthoritativeResponse(baseline, "source", response);
     expect(settled.sourceProvisional).toBe(true);
-    expect(settled.model.authorizedBoardOrder?.raw_review).toEqual(["first", "last", "source"]);
+    expect(settled.model.authorizedBoardOrder?.raw_review).toEqual(["first", "source", "middle", "last"]);
     expect(settled.model.authorizedBoardOrder?.awaiting_raw).toEqual([]);
     expect(settled.model.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 11 });
-    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review"), "priority").map((item) => item.id)).toEqual(["first", "last", "source"]);
+    expect(boardOrder(settled.model)).toEqual(boardOrder(overlay));
+    // Priority sort is a local view and still tiers by Priority.
+    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review"), "priority").map((item) => item.id)).toEqual(["first", "middle", "source", "last"]);
 
     const unchanged = reconcileAuthoritativeResponse(baseline, "source", { ...response, changed: false });
-    expect(unchanged.model.authorizedBoardOrder?.raw_review).toEqual(["first", "last", "source"]);
+    expect(unchanged.model.authorizedBoardOrder?.raw_review).toEqual(["first", "source", "middle", "last"]);
   });
 
   it("carries the widened summary's assigned Editors through a Stage move untouched", () => {

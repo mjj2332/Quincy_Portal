@@ -40,7 +40,8 @@ glyph. They are never the same number and never describe the same thing.
 
 **Project priority**:
 How urgently a Project should be worked, relative to other Projects. 1–5, or unset.
-Set by hand; never derived.
+Set by hand; never derived. It orders Projects only in the Priority sort — a Stage's Board
+order is Board position alone, so Priority never moves a card on the Board (#106).
 _Avoid_: Rank, urgency, importance, weight, project rating
 
 **Asset rating**:

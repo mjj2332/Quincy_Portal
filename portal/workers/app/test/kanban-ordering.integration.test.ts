@@ -10,6 +10,8 @@ const adminId = crypto.randomUUID();
 const adminToken = `kanban-admin-${crypto.randomUUID()}`;
 const photographerId = crypto.randomUUID();
 const photographerToken = `kanban-photographer-${crypto.randomUUID()}`;
+const externalEditorId = crypto.randomUUID();
+const externalEditorToken = `kanban-external-${crypto.randomUUID()}`;
 const authSecret = appEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -55,6 +57,10 @@ beforeAll(async () => {
       .bind(photographerId, `${photographerId}@example.test`, now, now),
     database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), now + 3_600_000, photographerToken, photographerId, now, now),
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, 'Kanban External Editor', ?, 1, 'external_editor', 1, 0, ?, ?)")
+      .bind(externalEditorId, `${externalEditorId}@example.test`, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), now + 3_600_000, externalEditorToken, externalEditorId, now, now),
   ]);
 });
 
@@ -204,6 +210,35 @@ describe("Kanban priority and Board commands", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ error: "Reload the application before moving this project.", code: "stage_contract_reload_required" });
     expect(await database.DB.prepare("SELECT stage_key, board_revision FROM projects WHERE id = ?").bind(target).first()).toEqual({ stage_key: "raw_review", board_revision: 0 });
+  });
+
+  it("keeps an unprioritised card in the gap it was dropped into between prioritised cards (#106)", async () => {
+    // A Stage of its own, so rows seeded by earlier tests cannot interleave with the assertion.
+    const stage = "awaiting_raw";
+    await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE stage_key = ? AND archived_at IS NULL").bind(Date.now(), stage).run();
+    const upper = crypto.randomUUID(); const lower = crypto.randomUUID(); const mover = crypto.randomUUID();
+    await seedProject(upper, stage, 3000, 1); await seedProject(lower, stage, 4000, 4); await seedProject(mover, stage, 5000);
+    const moved = await request(`/api/projects/${mover}/board-position`, adminToken, { method: "POST", body: JSON.stringify({
+      expected: { stageKey: stage, boardRevision: 0 },
+      targetStageKey: stage,
+      placement: { kind: "between", before: { projectId: upper, boardRevision: 0 }, after: { projectId: lower, boardRevision: 0 } },
+    }) });
+    expect(moved.status).toBe(200);
+    expect((await moved.json()).board.orderedVisibleProjectIds).toEqual([upper, mover, lower]);
+    expect(await database.DB.prepare("SELECT board_position FROM projects WHERE id = ?").bind(mover).first()).toEqual({ board_position: 3500 });
+
+    const listed = await request("/api/projects", adminToken);
+    expect(listed.status).toBe(200);
+    const body = await listed.json() as { board: { orderedProjectIdsByStage: Record<string, string[]> } };
+    expect(body.board.orderedProjectIdsByStage[stage]).toEqual([upper, mover, lower]);
+
+    const now = Date.now();
+    await database.DB.batch([upper, mover, lower].map((projectId) => database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+      .bind(crypto.randomUUID(), projectId, externalEditorId, now)));
+    const external = await request("/api/projects", externalEditorToken);
+    expect(external.status).toBe(200);
+    const externalBody = await external.json() as { board: { orderedProjectIdsByStage: Record<string, string[]> } };
+    expect(externalBody.board.orderedProjectIdsByStage[stage]).toEqual([upper, mover, lower]);
   });
 
   it("returns only currently-assigned, active Editors on the summary, never Photographers (#79)", async () => {
