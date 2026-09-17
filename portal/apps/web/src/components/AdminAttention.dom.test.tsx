@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminAttentionResponse, EditorFolderAttentionDto } from "@quincy/shared";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
-vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/api")>(), apiGet: (path: string) => apiGetMock(path) }));
+const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
+vi.mock("../lib/api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/api")>(),
+  apiGet: (path: string) => apiGetMock(path),
+  apiPost: (path: string, body: unknown) => apiPostMock(path, body),
+}));
 
 import { AdminAttention } from "./AdminAttention";
 import { EditorFolderAttentionNotice } from "./EditorFolderAttentionNotice";
@@ -30,6 +35,7 @@ function response(overrides: Partial<AdminAttentionResponse> = {}): AdminAttenti
 beforeEach(() => {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   apiGetMock.mockReset();
+  apiPostMock.mockReset();
 });
 
 afterEach(async () => {
@@ -71,10 +77,49 @@ describe("AdminAttention", () => {
     expect(host.textContent).not.toContain("Nothing needs attention");
   });
 
+  describe("orphan uploads (#195)", () => {
+    const orphan = {
+      kind: "editor_folder_orphan_upload", headline: "Files were added to an Editor folder after it moved.", code: "editor_folder_move_orphan_upload",
+      detail: "Files landed at /Editor/Old after the move", updatedAt: Date.UTC(2026, 8, 17, 2), projectId: "p-1", projectLabel: "12 Example St", orphanWatchId: "w-1",
+    } as const;
+    const buttons = () => [...host.querySelectorAll("button")].filter((button) => button.textContent === "Acknowledge");
+
+    it("lists a project's latch and its orphan upload as separate rows, with Acknowledge only on the orphan", async () => {
+      apiGetMock.mockResolvedValue(response({ items: [{ ...stuck, projectId: "p-1", projectLabel: "12 Example St" }, orphan] }));
+      await render(<AdminAttention />);
+      const rows = [...host.querySelectorAll("[data-testid=admin-attention-item]")];
+      expect(rows).toHaveLength(2);
+      expect(rows[1]?.textContent).toContain("Files left behind");
+      expect(rows[0]?.querySelector("button")).toBeNull();
+      expect(buttons()).toHaveLength(1);
+    });
+
+    it("acknowledges the watch and reloads the list", async () => {
+      apiGetMock.mockResolvedValueOnce(response({ items: [orphan] })).mockResolvedValueOnce(response());
+      apiPostMock.mockResolvedValue({ ok: true });
+      await render(<AdminAttention />);
+      await act(async () => { buttons()[0]!.click(); });
+      for (let index = 0; index < 5; index += 1) await act(async () => { await Promise.resolve(); });
+      expect(apiPostMock).toHaveBeenCalledWith("/api/admin/attention/orphan-uploads/w-1/acknowledge", {});
+      expect(apiGetMock).toHaveBeenCalledTimes(2);
+      expect(host.textContent).toContain("Nothing needs attention");
+    });
+
+    it("keeps the row and says why when acknowledging fails", async () => {
+      apiGetMock.mockResolvedValue(response({ items: [orphan] }));
+      apiPostMock.mockRejectedValue(new Error("Orphan-upload report not found"));
+      await render(<AdminAttention />);
+      await act(async () => { buttons()[0]!.click(); });
+      for (let index = 0; index < 5; index += 1) await act(async () => { await Promise.resolve(); });
+      expect(host.querySelector("[data-testid=admin-attention-ack-error]")?.textContent).toContain("Orphan-upload report not found");
+      expect(host.querySelectorAll("[data-testid=admin-attention-item]")).toHaveLength(1);
+    });
+  });
+
   it("warns when the list was cut short", async () => {
     apiGetMock.mockResolvedValue(response({ truncated: true, items: [{ ...stuck, projectId: "p-1", projectLabel: "One" }] }));
     await render(<AdminAttention />);
-    expect(host.textContent).toContain("more are stuck");
+    expect(host.textContent).toContain("more need attention");
   });
 });
 

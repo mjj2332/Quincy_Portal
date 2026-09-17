@@ -170,7 +170,7 @@ describe("Editor folder reconciliation", () => {
     const moved = await reconcileEditorFolderOutcome(env as never, data.projectId, { db, ...ops });
     expect(moved).toMatchObject({
       status: "moved", from: first?.rootPath, to: newRoot, previousShootDate: "2026-10-02",
-      mapping: { state: "ready", rootPath: newRoot, shootDate: "2027-01-15", movedFromPath: first?.rootPath },
+      mapping: { state: "ready", rootPath: newRoot, shootDate: "2027-01-15" },
     });
     expect(editorReconcileNote(moved)).toBe(`editor_folder_moved: Moved the Editor tree from ${first?.rootPath} to ${newRoot} after the shoot date changed from 2026-10-02 to 2027-01-15`);
     expect(ops.created).toEqual([

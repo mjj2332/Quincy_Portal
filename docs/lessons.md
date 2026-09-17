@@ -2777,3 +2777,37 @@ never true for NULL, so a lease with no expiry could never be taken over.
 
 **Rule:** for every row a bounded page can select, name the write that takes it off the page. If
 there isn't one, the row doesn't belong in the select.
+
+## One column can only watch one thing, and a report nobody can clear is not a latch (#195)
+
+#153 kept the orphan-upload watch in `editor_folder_mappings.moved_from_path`. A second reschedule
+inside the 30-minute window overwrote it, and the first old root stopped being watched without any
+error. A found orphan was only an audit row, so #163 had no state it could list or clear. #195 moved
+the watch into `editor_folder_orphan_watches`, one row per committed move revision, with a durable
+`found` state that an admin acknowledges.
+
+What the blind plan reviews caught:
+
+- **A watch list must forget a root the tree has moved back onto.** Under the single column, A→B→A
+  overwrote the watch on A. Once watches accumulate, the watch on A would report the live tree as
+  an orphan. The commit deletes overlapping watches, and the sweep skips any root a mapping lives
+  at or is moving to.
+- **A child insert in a fenced batch has to be fenced on the same win.** Guarding the watch insert
+  on "the mapping is now at revision N" is also true for a replayed batch. It is chained on
+  `changes() = 1` right after the fenced UPDATE, ahead of the audit row that uses the same chain.
+  The batch's positional result indexes shift with it.
+- **A lapse delete races a found update.** Delete only `WHERE status = 'watching' AND
+  watch_until = <what you read>`. Write the found update and its audit row in one batch.
+- **A cron arm needs the same reach as the pass it enqueues.** An inactive project's reconcile
+  pass returned before the sweep, so a due watch there was re-enqueued every ten minutes and held a
+  slot in the page of 10: #194's starvation in a different place. The pass now sweeps inactive
+  projects too, and the arm selects them.
+- **A caught failure must still move the row off the page.** Catching a Dropbox error so the move
+  can run left the watch due and the mapping unchanged, so a revoked connection would be picked
+  again every throttle window. A due watch whose check fails now pushes its own `watch_until`
+  out by 30 minutes and logs; it is retried, never dropped.
+- **"The path exists" is not "a file was uploaded."** Dropbox can bring back an empty folder, so
+  the sweep only counts a file.
+
+**Rule:** a column that stores "the latest X" is a list the moment X can happen twice inside the
+window you care about. And before a report goes on a screen, decide what clears it.

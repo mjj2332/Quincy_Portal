@@ -48,6 +48,11 @@ const MOVE_LEASE_MS = 10 * 60 * 1000;
 export const JOB_STALE_MS = 2 * 60 * 60 * 1000;
 const QUIET_PERIOD_MS = 30 * 60 * 1000;
 const ORPHAN_SWEEP_MS = 30 * 60 * 1000;
+
+/** SQL that is true when path keys `a` and `b` are equal or one sits below the other. Each side is
+ * bound or named twice; the explicit `/` boundary keeps `/x/ab` from overlapping `/x/a`. */
+const overlapSql = (a: string, b: string) =>
+  `(${a} = ${b} OR substr(${a}, 1, length(${b}) + 1) = ${b} || '/' OR substr(${b}, 1, length(${a}) + 1) = ${a} || '/')`;
 const STALE_JOB_NOTE = "stale_job: no progress for 2h; no longer blocks the Editor folder move";
 
 function parseReconcileNote(note: string): { reason: EditorScaffoldSkipReason; detail: string } {
@@ -389,7 +394,7 @@ async function commitEditorFolderMove(
     UPDATE editor_folder_mappings
     SET root_path = ?, root_path_key = ?, shoot_date = ?,
         input_roots_json = ?, output_roots_json = ?, editing_notes_path = ?,
-        recovery_proof_json = ?, root_revision = ?, moved_from_path = ?, move_completed_at = ?,
+        recovery_proof_json = ?, root_revision = ?,
         move_status = NULL, move_target_path = NULL, move_target_path_key = NULL,
         move_target_shoot_date = NULL, move_token = NULL, move_expires_at = NULL, move_note = NULL,
         move_commit_attempts = 0, updated_at = ?
@@ -397,10 +402,18 @@ async function commitEditorFolderMove(
   `).bind(
     newRootPath, newRootKey, target.next,
     JSON.stringify(inputRoots), JSON.stringify(outputRoots), editingNotesPath,
-    JSON.stringify(recoveryProof), newRevision, oldRootPath, now.getTime(),
+    JSON.stringify(recoveryProof), newRevision,
     now.getTime(),
     mapping.id, mapping.moveToken, oldRootKey, mapping.rootRevision,
   );
+  // The orphan-upload watch on the root just vacated (#195). Chained on `changes() = 1` like the
+  // audit row after it: it exists only if this batch's fenced UPDATE won, so a replayed or losing
+  // commit neither adds a watch nor resurrects one an admin already acknowledged. It inserts exactly
+  // one row whenever the UPDATE did (the revision is fresh), which keeps the audit row's chain intact.
+  const watchInsert = env.DB.prepare(`
+    INSERT INTO editor_folder_orphan_watches (id, mapping_id, move_revision, old_path, old_path_key, status, watch_until, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, 'watching', ?, ?, ? WHERE changes() = 1
+  `).bind(crypto.randomUUID(), mapping.id, newRevision, oldRootPath, oldRootKey, now.getTime() + ORPHAN_SWEEP_MS, now.getTime(), now.getTime());
   const auditInsert = env.DB.prepare(
     "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'editor_folder.moved', 'project', ?, ?, ? WHERE changes() = 1",
   ).bind(auditId, mapping.projectId, movedMeta, now.getTime());
@@ -430,9 +443,17 @@ async function commitEditorFolderMove(
     WHERE edited_source_claims.id = pending.id AND edited_source_claims.source_path_key = pending.old_key AND ${mappingGuard}
   `).bind(now.getTime(), claimsPayload, mapping.id, newRevision, newRootKey);
 
+  // A tree moved back onto (or into) a root it vacated earlier: that root is live again, so its
+  // older watch would report the live tree as an orphan upload. A found watch stays: files already
+  // reported still need an admin's acknowledgement.
+  const reclaimedWatchesDelete = env.DB.prepare(`
+    DELETE FROM editor_folder_orphan_watches
+    WHERE mapping_id = ? AND move_revision < ? AND status = 'watching' AND ${overlapSql("old_path_key", "?")} AND ${mappingGuard}
+  `).bind(mapping.id, newRevision, newRootKey, newRootKey, newRootKey, newRootKey, mapping.id, newRevision, newRootKey);
+
   let results;
   try {
-    results = await env.DB.batch([mappingUpdate, auditInsert, assetsUpdate, identitiesUpdate, claimsUpdate]);
+    results = await env.DB.batch([mappingUpdate, watchInsert, auditInsert, assetsUpdate, identitiesUpdate, claimsUpdate, reclaimedWatchesDelete]);
   } catch (error) {
     // A UNIQUE collision (or any other batch failure) rolls the whole transaction back; the
     // mapping is untouched and still `moving`, so a later pass (a fresh claim, or a takeover once
@@ -453,9 +474,9 @@ async function commitEditorFolderMove(
   // row that changed underneath us is skipped rather than overwritten — silently. Report the
   // shortfall: "rebased 3 of 4" is the only signal that a path was left behind.
   const rebased = [
-    { what: "assets", planned: assetUpdates.length, changed: results[2]?.meta.changes ?? 0 },
-    { what: "asset_ingest_identities", planned: identityUpdates.length, changed: results[3]?.meta.changes ?? 0 },
-    { what: "edited_source_claims", planned: claimUpdates.length, changed: results[4]?.meta.changes ?? 0 },
+    { what: "assets", planned: assetUpdates.length, changed: results[3]?.meta.changes ?? 0 },
+    { what: "asset_ingest_identities", planned: identityUpdates.length, changed: results[4]?.meta.changes ?? 0 },
+    { what: "edited_source_claims", planned: claimUpdates.length, changed: results[5]?.meta.changes ?? 0 },
   ].filter((row) => row.changed !== row.planned);
   if (rebased.length > 0) {
     console.error("Editor folder move rebased fewer rows than it planned to", {
@@ -641,38 +662,91 @@ async function clearStaleBlock(env: Env, db: Database, mapping: EditorFolderMapp
   `).bind(now.getTime(), mapping.id, mapping.moveTargetShootDate).run();
 }
 
-/** Watches the now-empty former root after a move lands: human uploads are invisible to the move
- * itself (only the quiet period sees them before a commit), so this is the safety net afterwards.
- * Never adopts/merges what it finds — only reports it and, once 30 minutes have passed, stops
- * watching. Returns `null` when there is nothing to report (including when `movedFromPath` is unset). */
-async function sweepOrphanUpload(env: Env, db: Database, mapping: EditorFolderMapping, deps: EditorFolderMoveDependencies, now: Date): Promise<EditorReconcileOutcome | null> {
-  if (!mapping.movedFromPath) return null;
-  let found = false;
+/** How long a due watch whose Dropbox check failed waits before the cron retries it. */
+const ORPHAN_CHECK_RETRY_MS = 30 * 60_000;
+
+type OrphanWatch = { id: string; oldPath: string; oldPathKey: string; watchUntil: number };
+
+/** The first file under `path` (or `path` itself, if a file now sits there); null when the path is
+ * gone or holds only folders. An empty re-created folder is not an upload. */
+async function firstOrphanFile(env: Env, db: Database, path: string, connectionId: string, deps: EditorFolderMoveDependencies): Promise<string | null> {
   try {
-    await deps.getMetadata(env, db, mapping.movedFromPath, mapping.connectionId);
-    found = true;
+    const metadata = await deps.getMetadata(env, db, path, connectionId);
+    if (metadata[".tag"] !== "folder") return metadata.path_display ?? path;
+    const file = (await deps.listFolderRecursive(env, db, path, connectionId)).find((entry) => entry[".tag"] === "file");
+    return file ? (("path_display" in file && file.path_display) || file.path_lower) : null;
   } catch (error) {
-    if (!isDropboxPathNotFoundError(error)) throw error;
+    if (isDropboxPathNotFoundError(error)) return null;
+    throw error;
   }
-  let result: EditorReconcileOutcome | null = null;
-  if (found) {
-    const auditId = crypto.randomUUID();
-    const meta = JSON.stringify({ actor: "editor_reconcile", mappingId: mapping.id, oldPath: mapping.movedFromPath, newPath: mapping.rootPath });
-    await env.DB.prepare(
-      "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'editor_folder.move.orphan_upload', 'project', ?, ?, ?)",
-    ).bind(auditId, mapping.projectId, meta, now.getTime()).run();
-    result = {
-      status: "skipped", mapping, reason: "editor_folder_move_orphan_upload",
-      detail: `Files landed at ${mapping.movedFromPath} after the move; move them into ${mapping.rootPath} by hand`,
-    };
+}
+
+/** Watches each root a move vacated (#195): human uploads are invisible to the move itself (only
+ * the quiet period sees them before a commit), so this is the safety net afterwards. Never
+ * adopts what it finds. A watch with files under it becomes `found`, which stays until an admin
+ * acknowledges it; one still empty when its window lapses is deleted. Returns the orphan outcome
+ * when this pass found something, otherwise `null`. */
+async function sweepOrphanUploads(env: Env, db: Database, mapping: EditorFolderMapping, deps: EditorFolderMoveDependencies, now: Date): Promise<EditorReconcileOutcome | null> {
+  const watches = await env.DB.prepare(`
+    SELECT w.id AS id, w.old_path AS oldPath, w.old_path_key AS oldPathKey, w.watch_until AS watchUntil,
+      EXISTS (SELECT 1 FROM editor_folder_mappings m WHERE m.connection_id = ? AND (
+        ${overlapSql("m.root_path_key", "w.old_path_key")}
+        OR (m.move_target_path_key IS NOT NULL AND ${overlapSql("m.move_target_path_key", "w.old_path_key")})
+      )) AS reclaimed
+    FROM editor_folder_orphan_watches w
+    WHERE w.mapping_id = ? AND w.status = 'watching'
+    ORDER BY w.move_revision
+  `).bind(mapping.connectionId, mapping.id).all<OrphanWatch & { reclaimed: number }>();
+
+  const found: { oldPath: string; file: string }[] = [];
+  for (const watch of watches.results) {
+    // A root some mapping now lives at (or is moving to) is not abandoned; checking it would
+    // report that mapping's own tree.
+    let file: string | null = null;
+    if (!watch.reclaimed) {
+      try {
+        file = await firstOrphanFile(env, db, watch.oldPath, mapping.connectionId, deps);
+      } catch (error) {
+        // One unreadable old root must not hold up the move this pass exists for, and a due watch
+        // that keeps failing (a revoked connection) must not stay due: the cron page is ordered
+        // by mapping, so ten of them would starve every other move. A due watch backs off; it
+        // never lapses unchecked, and every failure is logged.
+        const retryAt = now.getTime() >= Number(watch.watchUntil) ? now.getTime() + ORPHAN_CHECK_RETRY_MS : null;
+        console.error("Editor folder orphan-upload check failed", { mappingId: mapping.id, watchId: watch.id, retryAt, error: errorMessage(error) });
+        if (retryAt !== null) {
+          await env.DB.prepare("UPDATE editor_folder_orphan_watches SET watch_until = ?, updated_at = ? WHERE id = ? AND status = 'watching' AND watch_until = ?")
+            .bind(retryAt, now.getTime(), watch.id, watch.watchUntil).run();
+        }
+        continue;
+      }
+    }
+    if (file !== null) {
+      const meta = JSON.stringify({ actor: "editor_reconcile", mappingId: mapping.id, watchId: watch.id, oldPath: watch.oldPath, newPath: mapping.rootPath, file });
+      const [marked] = await env.DB.batch([
+        env.DB.prepare("UPDATE editor_folder_orphan_watches SET status = 'found', found_at = ?, found_detail = ?, updated_at = ? WHERE id = ? AND status = 'watching'")
+          .bind(now.getTime(), file, now.getTime(), watch.id),
+        env.DB.prepare(
+          "INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'editor_folder.move.orphan_upload', 'project', ?, ?, ? WHERE changes() = 1",
+        ).bind(crypto.randomUUID(), mapping.projectId, meta, now.getTime()),
+      ]);
+      if ((marked?.meta.changes ?? 0) === 1) found.push({ oldPath: watch.oldPath, file });
+    } else if (watch.reclaimed || now.getTime() >= Number(watch.watchUntil)) {
+      // Fenced on the state this pass read: a concurrent pass may have marked it found meanwhile.
+      await env.DB.prepare("DELETE FROM editor_folder_orphan_watches WHERE id = ? AND status = 'watching' AND watch_until = ?")
+        .bind(watch.id, watch.watchUntil).run();
+    }
   }
-  if (mapping.moveCompletedAt && now.getTime() >= mapping.moveCompletedAt.getTime() + ORPHAN_SWEEP_MS) {
-    await env.DB.prepare(`
-      UPDATE editor_folder_mappings SET moved_from_path = NULL, move_completed_at = NULL, updated_at = ?
-      WHERE id = ? AND moved_from_path = ? AND move_completed_at = ?
-    `).bind(now.getTime(), mapping.id, mapping.movedFromPath, mapping.moveCompletedAt.getTime()).run();
-  }
-  return result;
+  if (found.length === 0) return null;
+  return {
+    status: "skipped", mapping, reason: "editor_folder_move_orphan_upload",
+    detail: found.map(({ oldPath, file }) => `Files landed at ${oldPath} after the move (first: ${file}); move them into ${mapping.rootPath} by hand, then acknowledge it under Admin → Pipeline`).join("; "),
+  };
+}
+
+/** The orphan-upload sweep alone, for a `ready` mapping whose Project is archived or delivered:
+ * no move starts there, but a watch opened before delivery still has to be checked or lapse. */
+export async function sweepEditorFolderOrphanUploads(env: Env, db: Database, mapping: EditorFolderMapping, deps: EditorFolderMoveDependencies): Promise<EditorReconcileOutcome | null> {
+  return await sweepOrphanUploads(env, db, mapping, deps, deps.now());
 }
 
 /**
@@ -688,13 +762,12 @@ export async function attemptEditorFolderMove(
   deps: EditorFolderMoveDependencies,
 ): Promise<EditorReconcileOutcome | null> {
   const now = deps.now();
+  // Every pass over a ready mapping sweeps its orphan watches first, whatever the move below then
+  // does — blocked, deferred or moved — so a due watch is never left for the cron to re-enqueue.
+  // A block or a deferral stays the reported outcome; the found watch is durable on its own row.
+  const orphanOutcome = await sweepOrphanUploads(env, db, mapping, deps, now);
 
   if (mapping.moveStatus === "blocked" && mapping.moveTargetShootDate === project.shootDate) {
-    // Still a mapping with a `moved_from_path` to watch: an earlier move landed, a LATER reschedule
-    // blocked, and the orphan sweep's own bookkeeping (audit row, and clearing the watch at +30min)
-    // must not stop just because this pass has a block to report instead. The block is the more
-    // durable of the two — it sits in `move_note` until an operator acts — so it stays the outcome.
-    await sweepOrphanUpload(env, db, mapping, deps, now);
     const parsed = mapping.moveNote === null ? null : parseReconcileNote(mapping.moveNote);
     if (parsed === null) {
       return { status: "skipped", mapping, reason: "editor_folder_move_deferred", detail: "The Editor folder move is blocked but its note is missing; the next reschedule re-evaluates it" };
@@ -705,7 +778,7 @@ export async function attemptEditorFolderMove(
   const target = editorMoveTarget({ rootPath: mapping.rootPath, shootDate: mapping.shootDate }, project.shootDate);
   if (!target) {
     if (mapping.moveStatus === "blocked") await clearStaleBlock(env, db, mapping, now);
-    return await sweepOrphanUpload(env, db, mapping, deps, now);
+    return orphanOutcome;
   }
 
   if (target.kind === "nonstandard_parent") {

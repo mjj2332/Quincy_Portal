@@ -21,6 +21,7 @@ const HEADLINES: Record<EditorFolderAttentionKind, string> = {
   editor_folder_move_overdue: "Editor pipeline paused: a folder move has not finished and is not recovering on its own.",
   editor_folder_needs_review: "Editor folder needs review: edited output is not being collected for this project.",
   editor_folder_move_blocked: "Editor folder was not moved to the new shoot date: sync continues from the old folder.",
+  editor_folder_orphan_upload: "Files were added to an Editor folder after it moved: they are not collected until someone moves them.",
 };
 
 type MappingRow = {
@@ -101,8 +102,44 @@ function classify(row: MappingRow, now: number): EditorFolderAttentionDto {
   return (DEAD_ROOT_CODES as readonly string[]).includes(blocked.code) ? { ...blocked, headline: DEAD_ROOT_HEADLINE } : blocked;
 }
 
+type OrphanRow = {
+  watchId: string;
+  projectId: string;
+  street: string | null;
+  suburb: string | null;
+  oldPath: string;
+  rootPath: string;
+  foundDetail: string | null;
+  foundAt: number;
+};
+
+/** A found orphan-upload watch (#195). Listed whatever the project's state: unlike a block, nothing
+ * re-decides it, and files left behind on a delivered project matter most. */
+const ORPHAN_COLUMNS = `
+  w.id AS watchId, m.project_id AS projectId, p.street AS street, p.suburb AS suburb,
+  w.old_path AS oldPath, m.root_path AS rootPath, w.found_detail AS foundDetail, w.found_at AS foundAt`;
+const ORPHAN_FROM = `
+  FROM editor_folder_orphan_watches w
+  JOIN editor_folder_mappings m ON m.id = w.mapping_id
+  JOIN projects p ON p.id = m.project_id
+  WHERE w.status = 'found'`;
+const ORPHAN_CODE = "editor_folder_move_orphan_upload";
+
+function classifyOrphan(row: OrphanRow): EditorFolderAttentionDto {
+  // The mapping's root as it is now, not as it was when the watch began: after A→B→C the files
+  // under A belong in C.
+  const first = row.foundDetail ? ` (first: ${row.foundDetail})` : "";
+  return {
+    kind: "editor_folder_orphan_upload",
+    headline: HEADLINES.editor_folder_orphan_upload,
+    code: ORPHAN_CODE,
+    detail: `Files landed at ${row.oldPath} after the move${first}; move them into ${row.rootPath} by hand, then acknowledge this`,
+    updatedAt: Number(row.foundAt),
+  };
+}
+
 /** `stuck`/`overdue` fence the whole project pipeline; `needs_review` stops Output collection;
- * `blocked` leaves sync running against the old folder. */
+ * `blocked` leaves sync running against the old folder; an orphan upload pauses nothing. */
 const severity = (kind: EditorFolderAttentionKind) => EDITOR_FOLDER_ATTENTION_KINDS.indexOf(kind);
 
 /** The same ranking in SQL, so the LIMIT drops the least severe rows rather than the newest. Must
@@ -113,21 +150,29 @@ const SEVERITY_SQL = `CASE
   WHEN m.state = 'needs_review' THEN 2
   ELSE 3 END`;
 
-function projectLabel(row: MappingRow): string {
+function projectLabel(row: Pick<MappingRow, "projectId" | "street" | "suburb">): string {
   return [row.street, row.suburb].filter(Boolean).join(", ") || row.projectId;
 }
 
 export async function listEditorFolderAttention(db: D1Database, now: number): Promise<{ items: AttentionItemDto[]; truncated: boolean }> {
-  const rows = await db.prepare(`
-    SELECT ${MAPPING_COLUMNS}
-    FROM editor_folder_mappings m JOIN projects p ON p.id = m.project_id
-    WHERE ${LATCHED_MAPPING_SQL}
-    ORDER BY ${SEVERITY_SQL}, m.updated_at ASC, m.project_id ASC LIMIT ?
-  `).bind(MOVE_COMMIT_ATTEMPT_LIMIT, now - MOVE_OVERDUE_MS, MOVE_COMMIT_ATTEMPT_LIMIT, LIST_LIMIT + 1).all<MappingRow>();
-  const items = rows.results.slice(0, LIST_LIMIT)
-    .map((row) => ({ ...classify(row, now), projectId: row.projectId, projectLabel: projectLabel(row) }))
-    .sort((a, b) => severity(a.kind) - severity(b.kind) || a.updatedAt - b.updatedAt);
-  return { items, truncated: rows.results.length > LIST_LIMIT };
+  const [rows, orphans] = await Promise.all([
+    db.prepare(`
+      SELECT ${MAPPING_COLUMNS}
+      FROM editor_folder_mappings m JOIN projects p ON p.id = m.project_id
+      WHERE ${LATCHED_MAPPING_SQL}
+      ORDER BY ${SEVERITY_SQL}, m.updated_at ASC, m.project_id ASC LIMIT ?
+    `).bind(MOVE_COMMIT_ATTEMPT_LIMIT, now - MOVE_OVERDUE_MS, MOVE_COMMIT_ATTEMPT_LIMIT, LIST_LIMIT + 1).all<MappingRow>(),
+    db.prepare(`SELECT ${ORPHAN_COLUMNS} ${ORPHAN_FROM} ORDER BY w.found_at ASC, w.id ASC LIMIT ?`).bind(LIST_LIMIT + 1).all<OrphanRow>(),
+  ]);
+  // Orphan uploads are the least severe kind, so after the sort the cap drops them first.
+  const merged: AttentionItemDto[] = [
+    ...rows.results.slice(0, LIST_LIMIT).map((row) => ({ ...classify(row, now), projectId: row.projectId, projectLabel: projectLabel(row) })),
+    ...orphans.results.slice(0, LIST_LIMIT).map((row) => ({ ...classifyOrphan(row), projectId: row.projectId, projectLabel: projectLabel(row), orphanWatchId: row.watchId })),
+  ].sort((a, b) => severity(a.kind) - severity(b.kind) || a.updatedAt - b.updatedAt);
+  return {
+    items: merged.slice(0, LIST_LIMIT),
+    truncated: rows.results.length > LIST_LIMIT || orphans.results.length > LIST_LIMIT || merged.length > LIST_LIMIT,
+  };
 }
 
 /** The per-project banner. Diagnostics go only to viewers who can act on them (`adminBackend`). */
@@ -137,8 +182,11 @@ export async function readEditorFolderAttention(db: D1Database, projectId: strin
     FROM editor_folder_mappings m JOIN projects p ON p.id = m.project_id
     WHERE m.project_id = ? AND (${LATCHED_MAPPING_SQL})
   `).bind(projectId, MOVE_COMMIT_ATTEMPT_LIMIT, now - MOVE_OVERDUE_MS).first<MappingRow>();
-  if (!row) return null;
-  const attention = classify(row, now);
+  // A mapping latch outranks an orphan upload; with neither, the oldest found watch is the banner.
+  const orphan = row ? null : await db.prepare(`SELECT ${ORPHAN_COLUMNS} ${ORPHAN_FROM} AND m.project_id = ? ORDER BY w.found_at ASC, w.id ASC LIMIT 1`)
+    .bind(projectId).first<OrphanRow>();
+  const attention = row ? classify(row, now) : orphan ? classifyOrphan(orphan) : null;
+  if (!attention) return null;
   return roleHasCapability(role, "adminBackend") ? attention : { ...attention, detail: null };
 }
 
