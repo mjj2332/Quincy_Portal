@@ -596,7 +596,8 @@ async function noteFailedCommit(
 }
 
 /** A mapping with `move_status = 'moving'`: takes over an expired lease (never starting a fresh
- * move — see `resolveTakeoverMove`) or reports another pass's lease is still active. */
+ * move — see `resolveTakeoverMove`) or reports another pass's lease is still active. A NULL expiry
+ * is treated as expired: no writer sets `moving` without one, so no live pass can hold it (#194). */
 export async function resumeEditorFolderMove(env: Env, db: Database, mapping: EditorFolderMapping, deps: EditorFolderMoveDependencies): Promise<EditorReconcileOutcome> {
   const now = deps.now();
   if (mapping.moveCommitAttempts >= MOVE_COMMIT_ATTEMPT_LIMIT) {
@@ -608,18 +609,18 @@ export async function resumeEditorFolderMove(env: Env, db: Database, mapping: Ed
       detail: mapping.moveNote ?? `The Editor folder move for this project failed to commit ${mapping.moveCommitAttempts} times and is no longer being retried; an operator must resolve it`,
     };
   }
-  if (!mapping.moveExpiresAt || mapping.moveExpiresAt.getTime() >= now.getTime()) {
+  if (mapping.moveExpiresAt && mapping.moveExpiresAt.getTime() >= now.getTime()) {
     return {
       status: "skipped", mapping, reason: "editor_folder_move_in_flight",
-      detail: `Editor folder move token is still active${mapping.moveExpiresAt ? ` until ${mapping.moveExpiresAt.toISOString()}` : ""}; another pass is completing it`,
+      detail: `Editor folder move token is still active until ${mapping.moveExpiresAt.toISOString()}; another pass is completing it`,
     };
   }
   const newToken = crypto.randomUUID();
   const newExpiresAt = new Date(now.getTime() + MOVE_LEASE_MS);
   const swap = await env.DB.prepare(`
     UPDATE editor_folder_mappings SET move_token = ?, move_expires_at = ?, updated_at = ?
-    WHERE id = ? AND move_status = 'moving' AND move_token = ? AND move_expires_at = ?
-  `).bind(newToken, newExpiresAt.getTime(), now.getTime(), mapping.id, mapping.moveToken, mapping.moveExpiresAt.getTime()).run();
+    WHERE id = ? AND move_status = 'moving' AND move_token IS ? AND move_expires_at IS ?
+  `).bind(newToken, newExpiresAt.getTime(), now.getTime(), mapping.id, mapping.moveToken, mapping.moveExpiresAt?.getTime() ?? null).run();
   if ((swap.meta.changes ?? 0) !== 1) {
     const current = await getEditorFolderMapping(db, mapping.projectId);
     return { status: "skipped", mapping: current ?? mapping, reason: "editor_folder_move_in_flight", detail: "Another pass is already taking over this Editor folder move" };

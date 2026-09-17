@@ -87,7 +87,7 @@ function classify(row: MappingRow, now: number): EditorFolderAttentionDto {
         ?? `The Editor folder move for this project failed to commit ${row.moveCommitAttempts} times and is no longer being retried; an operator must resolve it`);
     }
     if (row.moveExpiresAt === null) {
-      return attention("editor_folder_move_overdue", "editor_folder_move_overdue", "The move is marked in progress but has no lease expiry, so no recovery pass will ever take it over");
+      return attention("editor_folder_move_overdue", "editor_folder_move_overdue", "The move is marked in progress but has no lease expiry. Move recovery takes such a move over on its next pass, so one still listed here has not been picked up");
     }
     if (Number(row.moveExpiresAt) < now - MOVE_OVERDUE_MS) {
       return attention("editor_folder_move_overdue", "editor_folder_move_overdue",
