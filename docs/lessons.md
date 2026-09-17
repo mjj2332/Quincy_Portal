@@ -2621,3 +2621,54 @@ anything happen" — assert the second separately, and prove the assertion red b
 `require-executed-tests.test.ts` runs a real `vitest run` against fixture files and asserts the child
 process's exit code, because every part of a gate like this can look right while the run still exits
 0. That is precisely how #170 survived review for two months.
+
+## A timeout is a budget someone chose, and nobody had chosen this one (#188)
+
+Four CI failures in one day were timeouts with **zero failing assertions**: the gated
+`api.test.ts` document-direct test (#170), `tb5a-migration-proof.test.ts` (#181), the notice-toast
+dismissal test added in #184, and `route-manifest.test.ts:289`. Each was diagnosed on its own, and
+three were patched on their own with a per-test or per-`describe` budget. That is three fixes for
+one defect, and it leaves the next slow test starting from the same place.
+
+The measurement is what settled it. All eight vitest configs, local wall clock against the same
+step on one green CI run:
+
+| config | local | CI | factor |
+|---|---|---|---|
+| `apps/web/vitest.dom.config.ts` | 7.49s | 164.72s | **22.0x** |
+| `packages/db` | 2.17s | 23.83s | 11.0x |
+| `apps/web/vitest.config.ts` | 1.42s | 15.34s | 10.8x |
+| `workers/background` | 11.97s | 116.09s | 9.7x |
+| `workers/app` | 18.25s | 139.36s | 7.6x |
+| `packages/shared` | 1.59s | 9.60s | 6.0x |
+| `workers/webhook-ingress` | 0.25s | 0.76s | 3.0x |
+| `workers/app` (dev config) | 4.75s | 13.39s | 2.8x |
+
+The tempting split — a tight budget for the fast pure-logic suites, a loose one for workerd — does
+not survive this table. `apps/web` is 10.8x with no workerd in sight, **worse** than `workers/app`
+at 7.6x, and the DOM suite is the worst of the eight. The cause is the runner, so the budget is
+repo-wide. At 22x, a test taking 228ms locally is already at the 5s default's edge, and 228ms is an
+ordinary DOM test.
+
+Two things made this hurt more than a flaky test normally would. The `test` job runs seven configs
+as **sequential steps**, so a failure at step 8 destroys the evidence for steps 9–13. And a timeout
+names a line number and explains nothing, so each one cost a diagnosis cycle to establish that it
+was a budget rather than a defect.
+
+Worth saying plainly, because it looks like the opposite: **raising a timeout is not loosening an
+assertion.** None of those tests asserted anything weaker afterwards. They ran out of wall clock
+before reaching their assertions at all, and a hung test still fails — 25s later. The one real
+cost is in that direction, which is why the guard bounds the budget from **both** sides rather than
+setting a floor: an unbounded floor would let a later bump to 300s through silently, and that is
+the only direction anyone priced a cost for.
+
+One self-inflicted case is worth separating from the other three. The #184 dismissal test was slow
+because it *slept* — it waited out the real 3.6s toast TTL, spending 75% of the default budget
+doing nothing. A bigger budget would have hidden that. Fake timers took it from 3744ms to 18ms. Ask
+which kind you have before reaching for the budget: a test that is slow because the runner is slow
+wants a budget, and a test that is slow because it waits wants to stop waiting.
+
+**Rule:** an inherited default is not a decision. Before treating a timeout failure as a defect,
+check whether any assertion failed — if none did, you are looking at a budget, and the question is
+what the budget should be for the machine that actually runs it. Measure before choosing, fix the
+class rather than the instance, and bound the answer from both ends.

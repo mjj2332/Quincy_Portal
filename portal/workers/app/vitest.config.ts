@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { requireExecutedTests } from "../../packages/shared/src/testing/require-executed-tests.ts";
+import { HOOK_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../../packages/shared/src/testing/vitest-timeouts.ts";
 
 // Worker tests cannot read the host filesystem at runtime. Read the SQL while
 // Vite evaluates this Node-side config, then inject it into the test bundle.
@@ -57,6 +58,8 @@ export default defineConfig({
   ],
   test: {
     reporters: ["default", requireExecutedTests("workers/app/vitest.config.ts")],
+    testTimeout: TEST_TIMEOUT_MS,
+    hookTimeout: HOOK_TIMEOUT_MS,
     include: ["test/**/*.test.ts"],
   },
 });
