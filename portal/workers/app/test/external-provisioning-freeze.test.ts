@@ -3,6 +3,7 @@ import { makeSignature } from "better-auth/crypto";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
+import { provisioningFreezeReleaseStatements } from "../src/routes/users";
 
 const database = env as unknown as { DB: D1Database };
 const authEnv = env as unknown as Env;
@@ -137,6 +138,22 @@ describe("External Editor provisioning freeze release (#161)", () => {
     const again = await request(PATH, adminCookie, "PATCH", { frozen: false });
     expect(again.status).toBe(200);
     await expect(again.json()).resolves.toEqual({ frozen: false, frozenAt: null, updatedBy: adminId });
+    expect(await releaseAudits()).toHaveLength(1);
+  });
+
+  it("does not release, or audit, a re-freeze that landed after the release read the row", async () => {
+    const t0 = Date.now() - 120_000;
+    const t1 = t0 + 60_000;
+    await freeze(t0);
+    await freeze(t1);
+    const statements = provisioningFreezeReleaseStatements(database.DB, { actorId: adminId, frozenAt: t0, metaJson: JSON.stringify({ frozenAt: t0 }), now: Date.now() });
+    await database.DB.batch(statements);
+    expect(await database.DB.prepare("SELECT enabled, updated_by, updated_at FROM feature_flags WHERE key = ?").bind(FLAG).first()).toEqual({ enabled: 1, updated_by: null, updated_at: t1 });
+    expect(await releaseAudits()).toEqual([]);
+
+    const current = provisioningFreezeReleaseStatements(database.DB, { actorId: adminId, frozenAt: t1, metaJson: JSON.stringify({ frozenAt: t1 }), now: Date.now() });
+    await database.DB.batch(current);
+    expect(await database.DB.prepare("SELECT enabled, updated_by FROM feature_flags WHERE key = ?").bind(FLAG).first()).toEqual({ enabled: 0, updated_by: adminId });
     expect(await releaseAudits()).toHaveLength(1);
   });
 });

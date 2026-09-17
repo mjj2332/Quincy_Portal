@@ -61,6 +61,23 @@ async function readProvisioningFreeze(db: D1Database) {
   const frozen = row.enabled === 1;
   return { frozen, frozenAt: frozen ? row.updatedAt : null, updatedBy: row.updatedBy };
 }
+/**
+ * Releases the freeze observed at `frozenAt`, and audits it only if this release is the one that
+ * cleared it. Exported so the stale-snapshot case can be tested without interleaving requests.
+ */
+export function provisioningFreezeReleaseStatements(
+  db: D1Database,
+  input: { actorId: string; frozenAt: number; metaJson: string | null; now: number },
+): D1PreparedStatement[] {
+  return [
+    db.prepare("UPDATE feature_flags SET enabled = 0, updated_by = ?, updated_at = ? WHERE key = ? AND enabled = 1 AND updated_at = ?")
+      .bind(input.actorId, input.now, EXTERNAL_PROVISIONING_FROZEN_FLAG, input.frozenAt),
+    db.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'external.provisioning.released', 'feature_flag', ?, ?, ? WHERE changes() = 1
+    `).bind(newId(), input.actorId, EXTERNAL_PROVISIONING_FROZEN_FLAG, input.metaJson, input.now),
+  ];
+}
 usersRoutes.get("/users/external-provisioning-freeze", terminalRoute("/users/external-provisioning-freeze", async (c) => c.json(await readProvisioningFreeze(c.env.DB))));
 /**
  * Release-only: freezing belongs to the purge worker. Releasing an open latch is a no-op with no audit entry.
@@ -71,15 +88,10 @@ usersRoutes.patch("/users/external-provisioning-freeze", terminalRoute("/users/e
   const data = await jsonInput(c, provisioningFreezeInput); if (data instanceof Response) return data;
   const user = c.get("user"); const now = Date.now();
   const before = await readProvisioningFreeze(c.env.DB);
-  if (before.frozen) {
-    await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = ?, updated_at = ? WHERE key = ? AND enabled = 1 AND updated_at = ?")
-        .bind(user.id, now, EXTERNAL_PROVISIONING_FROZEN_FLAG, before.frozenAt),
-      c.env.DB.prepare(`
-        INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-        SELECT ?, ?, 'external.provisioning.released', 'feature_flag', ?, ?, ? WHERE changes() = 1
-      `).bind(newId(), user.id, EXTERNAL_PROVISIONING_FROZEN_FLAG, auditMeta(user, { frozenAt: before.frozenAt }), now),
-    ]);
+  if (before.frozenAt !== null) {
+    await c.env.DB.batch(provisioningFreezeReleaseStatements(c.env.DB, {
+      actorId: user.id, frozenAt: before.frozenAt, metaJson: auditMeta(user, { frozenAt: before.frozenAt }), now,
+    }));
   }
   return c.json(await readProvisioningFreeze(c.env.DB));
 }));
