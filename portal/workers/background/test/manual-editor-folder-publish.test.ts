@@ -273,3 +273,83 @@ describe("mapped manual Dropbox publication: move in progress (#153)", () => {
       .resolves.toEqual({ publish_status: "ready", source_path: destination });
   });
 });
+
+describe("manual publish durable failure bookkeeping (#154)", () => {
+  const movingMessage = (projectId: string) => `Editor folder for project ${projectId} is moving; manual publishing resumes after the move`;
+
+  async function markMoving(mappingId: string) {
+    await database.DB.prepare("UPDATE editor_folder_mappings SET move_status = 'moving', move_token = 'test-token', move_expires_at = ? WHERE id = ?")
+      .bind(Date.now() + 10 * 60 * 1000, mappingId).run();
+  }
+
+  it("runs a durable record-manual-publish-failure step that fails the job and asset with the original error", async () => {
+    const data = await fixture({ collectionKind: "edited" });
+    const stepNames: string[] = [];
+    const steps = {
+      do: async (name: string, callback: () => Promise<unknown>) => {
+        stepNames.push(name);
+        const result = await callback();
+        if (name === "resolve-manual-destination") await markMoving(data.mappingId);
+        return result;
+      },
+      sleep: async () => undefined,
+    };
+
+    await expect(workflow(data.localEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: "durable-failure-bookkeeping", workflowName: "manual-edited-publish" }, steps as never))
+      .rejects.toThrow(movingMessage(data.projectId));
+
+    expect(stepNames).toContain("record-manual-publish-failure");
+    await expect(database.DB.prepare("SELECT status, error FROM jobs WHERE id = ?").bind(data.jobId).first())
+      .resolves.toEqual({ status: "failed", error: movingMessage(data.projectId) });
+    await expect(database.DB.prepare("SELECT publish_status FROM assets WHERE id = ?").bind(data.assetId).first())
+      .resolves.toEqual({ publish_status: "failed" });
+    const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'asset.manual_publish.failed' AND target_id = ?").bind(data.assetId).all<{ meta_json: string }>();
+    expect(audit.results).toHaveLength(1);
+    expect(JSON.parse(audit.results[0]!.meta_json)).toMatchObject({ actor: "system", projectId: data.projectId, jobId: data.jobId, error: movingMessage(data.projectId) });
+  });
+
+  it("rethrows the original publish error when the failure bookkeeping step itself fails", async () => {
+    const data = await fixture({ collectionKind: "edited" });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const steps = {
+      do: async (name: string, callback: () => Promise<unknown>) => {
+        if (name === "record-manual-publish-failure") throw new Error("D1 unavailable");
+        const result = await callback();
+        if (name === "resolve-manual-destination") await markMoving(data.mappingId);
+        return result;
+      },
+      sleep: async () => undefined,
+    };
+
+    await expect(workflow(data.localEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: "durable-failure-bookkeeping-failed", workflowName: "manual-edited-publish" }, steps as never))
+      .rejects.toThrow(movingMessage(data.projectId));
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it.each(["stuck", "done"] as const)(
+    "does not overwrite a job already %s when the failure step runs",
+    async (priorStatus) => {
+      const data = await fixture({ collectionKind: "edited" });
+      const priorError = `prior:${priorStatus}`;
+      const priorUpdatedAt = Date.now() - 1000;
+      const steps = directStep(async (name) => {
+        if (name === "resolve-manual-destination") {
+          await markMoving(data.mappingId);
+          await database.DB.prepare("UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?")
+            .bind(priorStatus, priorError, priorUpdatedAt, data.jobId).run();
+        }
+      });
+
+      await expect(workflow(data.localEnv).run({ payload: { projectId: data.projectId, assetId: data.assetId, jobId: data.jobId }, timestamp: new Date(), instanceId: `durable-failure-${priorStatus}`, workflowName: "manual-edited-publish" }, steps as never))
+        .rejects.toThrow(movingMessage(data.projectId));
+
+      await expect(database.DB.prepare("SELECT status, error, updated_at FROM jobs WHERE id = ?").bind(data.jobId).first())
+        .resolves.toEqual({ status: priorStatus, error: priorError, updated_at: priorUpdatedAt });
+      await expect(database.DB.prepare("SELECT publish_status FROM assets WHERE id = ?").bind(data.assetId).first())
+        .resolves.toEqual({ publish_status: "pending" });
+      const audit = await database.DB.prepare("SELECT id FROM audit_log WHERE action = 'asset.manual_publish.failed' AND target_id = ?").bind(data.assetId).all();
+      expect(audit.results).toHaveLength(0);
+    },
+  );
+});
