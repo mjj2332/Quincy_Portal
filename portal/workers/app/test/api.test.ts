@@ -3524,8 +3524,25 @@ describe("staff app API", () => {
 
     // Completing is leased, not a permanent version-group lock. The next presign acts as the
     // bounded reaper in this request-driven system and retries its (dev-direct) abort safely.
+    //
+    // The stall is wired deliberately (#173). This block used to depend on the completion
+    // happening to fail, which it did only because of the malformed asset INSERT in #171 — a
+    // 7-byte declaration against 7 written bytes is this file's idiom for a completion that
+    // *succeeds*, so once #171 was fixed nothing here produced a stuck row and the reaper
+    // assertions below passed for the wrong reason. Archiving the project between the claim and
+    // the batch trips the route's own batch guard, which is the race that guard was written for:
+    // the claim is taken, every object verifies, the batch then aborts on the NULL asset id, and
+    // the catch returns 409 without releasing the claim. That is how a row really gets stranded
+    // in `completing`, and it is the state the reaper exists to clear.
     const stalledResponse = await reserve(copyInput("stalled")); expect(stalledResponse.status).toBe(201); const stalled = await stalledResponse.json() as Reserved;
-    await put(stalled.sessionId, "pdf", "stalled"); expect((await complete(stalled.sessionId)).status).toBe(409);
+    expect((await put(stalled.sessionId, "pdf", "stalled")).status).toBe(204);
+    const stalledCompletion = await requestWithDbBatchFault(`/api/projects/${project.id}/documents/complete`, adminCookie, { sessionId: stalled.sessionId, pdf: {} }, async (db) => {
+      await db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), project.id).run();
+    }, "POST");
+    await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(project.id).run();
+    expect(stalledCompletion.status).toBe(409);
+    expect(await database.DB.prepare("SELECT status FROM document_uploads WHERE id = ?").bind(stalled.sessionId).first()).toEqual({ status: "completing" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE r2_key = ?").bind(stalled.files.pdf.key).first()).toEqual({ count: 0 });
     await database.DB.prepare("UPDATE document_uploads SET completing_at = ? WHERE id = ?").bind(Date.now() - 16 * 60 * 1000, stalled.sessionId).run();
     expect((await reserve(copyInput("reaper-kick"))).status).toBe(201);
     expect(await database.DB.prepare("SELECT status FROM document_uploads WHERE id = ?").bind(stalled.sessionId).first()).toEqual({ status: "expired" });
