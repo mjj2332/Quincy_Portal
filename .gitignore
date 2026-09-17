@@ -40,3 +40,9 @@ tmp/
 # Agent scratch space — planning briefs, subagent specs and reports. Working notes for a slice,
 # never part of the software project. The durable conclusions belong in docs/ or a commit message.
 scratchpad/
+
+# Installed dependencies, at the root and in every workspace. No trailing slash: agents and
+# scripts symlink `node_modules` into throwaway worktrees, and `node_modules/` matches only a
+# real directory, so a symlink slipped past the rule and five of them were committed onto
+# `main` — each an absolute path into one machine's checkout, one of them pointing at itself.
+node_modules
