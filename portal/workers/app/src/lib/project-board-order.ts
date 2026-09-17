@@ -75,10 +75,13 @@ function isGlobal(role: Role) {
   return roleHasCapability(role, "viewAllProjects");
 }
 
-function compareRows(left: BoardProjectRow, right: BoardProjectRow) {
-  return (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
-    || left.boardPosition - right.boardPosition
-    || left.id.localeCompare(right.id);
+/**
+ * The Board order of one Stage: Board position, then id. Priority deliberately takes no part — a
+ * Project stays in the gap it was dropped into, whatever its Priority (#106). Priority ordering is
+ * the client's local Priority sort. Every server read of Board order uses this comparator.
+ */
+export function compareBoardOrder(left: { id: string; boardPosition: number }, right: { id: string; boardPosition: number }) {
+  return left.boardPosition - right.boardPosition || left.id.localeCompare(right.id);
 }
 
 function currentState(row: ProjectRow | BoardProjectRow | null, role: Role): StageMoveProjectState | null {
@@ -126,7 +129,7 @@ export async function readBoardRows(db: D1Database, stageKey: StageKey): Promise
     FROM projects
     WHERE stage_key = ? AND archived_at IS NULL
   `).bind(stageKey).all<BoardProjectRow>();
-  return result.results.sort(compareRows);
+  return result.results.sort(compareBoardOrder);
 }
 
 export async function readVisibleBoardRows(db: D1Database, principal: Pick<SessionUser, "id" | "role">, stageKey: StageKey): Promise<BoardProjectRow[]> {
@@ -145,7 +148,7 @@ export async function readVisibleBoardRows(db: D1Database, principal: Pick<Sessi
     LEFT JOIN project_members m ON m.project_id = p.id
     WHERE p.stage_key = ? AND p.archived_at IS NULL${stageVisibility}${membership}
   `).bind(...(isGlobal(principal.role) ? [stageKey] : [stageKey, principal.id])).all<BoardProjectRow>();
-  return result.results.sort(compareRows);
+  return result.results.sort(compareBoardOrder);
 }
 
 function normalizedPlacement(request: MoveProjectStageRequest) {
@@ -168,8 +171,8 @@ export function placementChangesLogicalSlot(input: {
   request: MoveProjectStageRequest;
 }): boolean {
   const placement = normalizedPlacement(input.request);
-  const destinationWithoutTarget = input.destinationRows.filter((row) => row.id !== input.target.id).sort(compareRows);
-  const visibleWithoutTarget = input.visibleRows.filter((row) => row.id !== input.target.id).sort(compareRows);
+  const destinationWithoutTarget = input.destinationRows.filter((row) => row.id !== input.target.id).sort(compareBoardOrder);
+  const visibleWithoutTarget = input.visibleRows.filter((row) => row.id !== input.target.id).sort(compareBoardOrder);
   const fullById = new Map(destinationWithoutTarget.map((row) => [row.id, row]));
   let insertionIndex = destinationWithoutTarget.length;
 
@@ -195,7 +198,7 @@ export function placementChangesLogicalSlot(input: {
   }
 
   const requestedDestinationStage = input.request.targetStageKey === "editing" ? "editing_autohdr" : input.request.targetStageKey as StageKey;
-  const currentIndex = input.destinationRows.slice().sort(compareRows).findIndex((row) => row.id === input.target.id);
+  const currentIndex = input.destinationRows.slice().sort(compareBoardOrder).findIndex((row) => row.id === input.target.id);
   return input.target.stageKey !== requestedDestinationStage || currentIndex < 0 || currentIndex !== insertionIndex;
 }
 
@@ -212,8 +215,8 @@ export function planBoardPlacement(input: {
 }): BoardPlacementPlan | null {
   const { target, request } = input;
   const placement = normalizedPlacement(request);
-  const destinationWithoutTarget = input.destinationRows.filter((row) => row.id !== target.id).sort(compareRows);
-  const visibleWithoutTarget = input.visibleRows.filter((row) => row.id !== target.id).sort(compareRows);
+  const destinationWithoutTarget = input.destinationRows.filter((row) => row.id !== target.id).sort(compareBoardOrder);
+  const visibleWithoutTarget = input.visibleRows.filter((row) => row.id !== target.id).sort(compareBoardOrder);
   const fullById = new Map(destinationWithoutTarget.map((row) => [row.id, row]));
   const visibleById = new Map(visibleWithoutTarget.map((row) => [row.id, row]));
 
@@ -246,7 +249,7 @@ export function planBoardPlacement(input: {
   // A same-Stage request can describe the target's existing logical slot. Treat that as a
   // no-op before calculating a fresh midpoint; otherwise an append of an already-bottom row
   // would manufacture a new position and incorrectly count as a reorder.
-  const currentDestination = input.destinationRows.slice().sort(compareRows);
+  const currentDestination = input.destinationRows.slice().sort(compareBoardOrder);
   const currentIndex = currentDestination.findIndex((row) => row.id === target.id);
   const unchangedSlot = target.stageKey === requestedDestinationStage
     && currentIndex >= 0

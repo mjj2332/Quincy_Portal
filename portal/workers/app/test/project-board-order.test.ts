@@ -49,4 +49,43 @@ describe("project Board placement planning", () => {
     });
     expect(noChange?.changed).toBe(false);
   });
+
+  it("holds an unprioritised card in a gap between prioritised cards (#106)", () => {
+    const upper = row("upper", 3000, 1);
+    const lower = row("lower", 4000, 4);
+    const target = row("target", 5000);
+    const rows = [upper, lower, target];
+    const plan = planBoardPlacement({
+      target,
+      destinationRows: rows,
+      visibleRows: rows,
+      request: {
+        expected: { stageKey: "raw_review", boardRevision: 0 },
+        targetStageKey: "raw_review",
+        placement: { kind: "between", before: { projectId: upper.id, boardRevision: 0 }, after: { projectId: lower.id, boardRevision: 0 } },
+      },
+    });
+    expect(plan?.changed).toBe(true);
+    expect(plan?.boardPosition).toBe(3500);
+    expect(plan?.destination.map((item) => item.id)).toEqual(["upper", "target", "lower"]);
+  });
+
+  it("orders a Stage by Board position alone, whatever the Priorities (#106)", () => {
+    const unprioritised = row("unprioritised", 0);
+    const prioritised = row("prioritised", 1024, 1);
+    const target = row("target", 2048);
+    const plan = planBoardPlacement({
+      target,
+      destinationRows: [prioritised, target, unprioritised],
+      visibleRows: [prioritised, target, unprioritised],
+      request: {
+        expected: { stageKey: "raw_review", boardRevision: 0 },
+        targetStageKey: "raw_review",
+        placement: { kind: "between", before: { projectId: prioritised.id, boardRevision: 0 }, after: null },
+      },
+    });
+    // Already last after `prioritised` in position order, so the slot is unchanged.
+    expect(plan?.changed).toBe(false);
+    expect(plan?.destination.map((item) => item.id)).toEqual(["unprioritised", "prioritised", "target"]);
+  });
 });

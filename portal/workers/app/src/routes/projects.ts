@@ -22,7 +22,7 @@ import { listExternalProjects, readExternalProjectDetail } from "../lib/external
 import { activeEditorRefsByProject } from "../lib/project-editors";
 import { boardContractDisabled, boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 import { moveProjectStage } from "../lib/project-stage";
-import { moveProjectBoardOrder } from "../lib/project-board-order";
+import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
 
@@ -184,8 +184,8 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   }, role);
 }
 
-function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; priority: number | null; boardPosition: number } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
-  const groups = new Map<StageTransportKey, Array<{ id: string; priority: number | null; boardPosition: number }>>();
+function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stageKey: string; boardPosition: number } }>, role: Role): Partial<Record<StageTransportKey, string[]>> {
+  const groups = new Map<StageTransportKey, Array<{ id: string; boardPosition: number }>>();
   for (const { project } of rows) {
     const stageKey = projectStageForRole(project, role).stageKey as StageTransportKey;
     const group = groups.get(stageKey) ?? [];
@@ -194,7 +194,7 @@ function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stage
   }
   const orderedProjectIdsByStage: Partial<Record<StageTransportKey, string[]>> = {};
   for (const [stageKey, group] of groups) {
-    group.sort((left, right) => (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0) || left.boardPosition - right.boardPosition || left.id.localeCompare(right.id));
+    group.sort(compareBoardOrder);
     orderedProjectIdsByStage[stageKey] = group.map((project) => project.id);
   }
   return orderedProjectIdsByStage;
