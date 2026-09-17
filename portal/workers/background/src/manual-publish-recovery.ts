@@ -164,6 +164,8 @@ export async function sweepStuckManualPublishes(
   scheduledTime: number,
 ): Promise<{ scanned: number; recovered: number; skipped: number }> {
   const cutoff = new Date(scheduledTime - MANUAL_PUBLISH_STALE_MS);
+  // Random, not oldest-first: skipped rows keep their `updated_at`, so a fixed order would let 25
+  // long-lived or unreadable rows fill every page and hide a dead instance behind them forever.
   const rows = await createDb(env.DB).select({
     id: jobs.id,
     kind: jobs.kind,
@@ -175,8 +177,6 @@ export async function sweepStuckManualPublishes(
     inArray(jobs.kind, [...MANUAL_PUBLISH_JOB_KINDS]),
     inArray(jobs.status, ["queued", "running"]),
     lte(jobs.updatedAt, cutoff),
-    // Random, not oldest-first: skipped rows keep their `updated_at`, so a fixed order would let 25
-  // long-lived or unreadable rows fill every page and hide a dead instance behind them forever.
   )).orderBy(sql`random()`).limit(MANUAL_PUBLISH_SWEEP_LIMIT);
   const candidates = rows as unknown as ManualPublishCandidate[];
 

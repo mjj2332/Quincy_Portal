@@ -8,6 +8,7 @@ import {
   sweepStuckManualPublishes,
 } from "../src/manual-publish-recovery";
 import QuincyBackground from "../src";
+import { JOB_STALE_MS } from "../src/editor-folders/move";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -106,6 +107,17 @@ async function auditRows(action: string, targetId: string) {
 function fakeWorkflow(get: (id: string) => Promise<{ status(): Promise<{ status: string }> }>) {
   return { DB: database.DB, MANUAL_EDITED_PUBLISH_WORKFLOW: { get } } as never as Parameters<typeof sweepStuckManualPublishes>[0];
 }
+
+describe("MANUAL_PUBLISH_STALE_MS", () => {
+  // The tests below age rows relative to the constant, so they cannot catch it being shortened.
+  it("stays the #153 stale window, and no shorter than one unconfigured step can stay silent", () => {
+    // A job stops blocking an Editor folder move at the moment it becomes recoverable.
+    expect(MANUAL_PUBLISH_STALE_MS).toBe(JOB_STALE_MS);
+    // An unconfigured step.do: 5 attempts x 10 min timeout + 10+20+40+80s backoff, with no job write.
+    const worstCaseStepMs = 5 * 10 * 60_000 + (10 + 20 + 40 + 80) * 1000;
+    expect(MANUAL_PUBLISH_STALE_MS).toBeGreaterThanOrEqual(worstCaseStepMs);
+  });
+});
 
 describe("isWorkflowInstanceNotFound", () => {
   it("is true only when instance.not_found appears somewhere in the cause chain", () => {

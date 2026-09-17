@@ -56,7 +56,7 @@ const MOVE_LEASE_MS = 10 * 60 * 1000;
  * that Dropbox and the database disagree, and an audit row records it for a human to find.
  */
 const MOVE_COMMIT_ATTEMPT_LIMIT = 3;
-const JOB_STALE_MS = 2 * 60 * 60 * 1000;
+export const JOB_STALE_MS = 2 * 60 * 60 * 1000;
 const QUIET_PERIOD_MS = 30 * 60 * 1000;
 const ORPHAN_SWEEP_MS = 30 * 60 * 1000;
 const STALE_JOB_NOTE = "stale_job: no progress for 2h; no longer blocks the Editor folder move";
