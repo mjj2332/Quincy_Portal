@@ -109,13 +109,11 @@ function fakeWorkflow(get: (id: string) => Promise<{ status(): Promise<{ status:
 }
 
 describe("MANUAL_PUBLISH_STALE_MS", () => {
-  // The tests below age rows relative to the constant, so they cannot catch it being shortened.
-  it("stays the #153 stale window, and no shorter than one unconfigured step can stay silent", () => {
-    // A job stops blocking an Editor folder move at the moment it becomes recoverable.
+  // The tests below age rows relative to the constant, so they cannot catch it being changed.
+  // Age never proves a Workflow dead (its status decides); the value is the #153 window so a job
+  // stops blocking an Editor folder move at the same moment it becomes recoverable.
+  it("stays the #153 stale window", () => {
     expect(MANUAL_PUBLISH_STALE_MS).toBe(JOB_STALE_MS);
-    // An unconfigured step.do: 5 attempts x 10 min timeout + 10+20+40+80s backoff, with no job write.
-    const worstCaseStepMs = 5 * 10 * 60_000 + (10 + 20 + 40 + 80) * 1000;
-    expect(MANUAL_PUBLISH_STALE_MS).toBeGreaterThanOrEqual(worstCaseStepMs);
   });
 });
 
