@@ -175,6 +175,33 @@ adminRoutes.get("/admin/attention", terminalRoute("/admin/attention", async (c) 
   return c.json({ ...editorFolders, provisioningFreeze });
 }));
 
+/** Clears a found orphan-upload watch (#195): the admin asserts the files left under a vacated
+ * Editor root have been dealt with. Dropbox is not re-checked — the admin may have chosen to leave
+ * them — so the audit entry, not the sweep, is the record. The row is deleted; a later move away
+ * from the same root starts a fresh watch. */
+adminRoutes.post("/admin/attention/orphan-uploads/:id/acknowledge", terminalRoute("/admin/attention/orphan-uploads/:id/acknowledge", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const watchId = c.req.param("id"); if (!idCheck(watchId)) return c.json({ error: "Invalid watch id" }, 400);
+  const watch = await c.env.DB.prepare(`
+    SELECT w.status AS status, w.mapping_id AS mappingId, m.project_id AS projectId, w.old_path AS oldPath, w.found_detail AS file, w.found_at AS foundAt
+    FROM editor_folder_orphan_watches w JOIN editor_folder_mappings m ON m.id = w.mapping_id WHERE w.id = ?
+  `).bind(watchId).first<{ status: string; mappingId: string; projectId: string; oldPath: string; file: string | null; foundAt: number | null }>();
+  if (!watch) return c.json({ error: "Orphan-upload report not found" }, 404);
+  if (watch.status !== "found") return c.json({ error: "Nothing has been found under this Editor root yet", code: "orphan_watch_not_found_state" }, 409);
+  const { status: _status, projectId, ...found } = watch;
+  // A found watch never changes until it is deleted, so the delete is fenced on that state alone
+  // and the audit row is chained to it: two concurrent acknowledgements write one entry.
+  const [deleted] = await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM editor_folder_orphan_watches WHERE id = ? AND status = 'found'").bind(watchId),
+    c.env.DB.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'editor_folder.move.orphan_upload.acknowledged', 'project', ?, ?, ? WHERE changes() = 1
+    `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { watchId, ...found }), Date.now()),
+  ]);
+  if ((deleted?.meta.changes ?? 0) !== 1) return c.json({ error: "Orphan-upload report not found" }, 404);
+  return c.json({ ok: true });
+}));
+
 adminRoutes.get("/admin/notification-deliveries", terminalRoute("/admin/notification-deliveries", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const parsed = notificationDeliveryQuery.safeParse(c.req.query());

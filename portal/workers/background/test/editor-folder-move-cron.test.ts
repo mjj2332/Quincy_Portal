@@ -44,8 +44,6 @@ async function createMapping(input: {
   moveExpiresAt?: number | null;
   moveCommitAttempts?: number;
   moveTargetShootDate?: string | null;
-  movedFromPath?: string | null;
-  moveCompletedAt?: number | null;
   archived?: boolean;
   updatedAt?: number;
 }): Promise<{ projectId: string; mappingId: string }> {
@@ -66,15 +64,15 @@ async function createMapping(input: {
       photographer_evidence_json, input_roots_json, output_roots_json, editing_notes_path, editing_notes_folder_id,
       state, provision_lease_token, provision_lease_expires_at, root_revision,
       move_status, move_target_path, move_target_path_key, move_target_shoot_date, move_token, move_expires_at, move_note,
-      moved_from_path, move_completed_at, move_commit_attempts, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 'ready', NULL, NULL, 0, ?, NULL, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
+      move_commit_attempts, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 'ready', NULL, NULL, 0, ?, NULL, NULL, ?, NULL, ?, NULL, ?, ?, ?)
   `).bind(
     mappingId, projectId, connectionId, rootPath, editorFolderPathKey(rootPath), `id:root-${suffix}`, input.mappingShootDate, input.leaf,
     JSON.stringify([{ path: `${rootPath}/0. Input`, section: null, folderId: `id:input-${suffix}` }]),
     JSON.stringify([{ path: `${rootPath}/1. Output`, section: null, folderId: `id:output-${suffix}` }]),
     `${rootPath}/Editing Notes`, `id:notes-${suffix}`,
     input.moveStatus ?? null, input.moveTargetShootDate ?? null, input.moveExpiresAt ?? null,
-    input.movedFromPath ?? null, input.moveCompletedAt ?? null, input.moveCommitAttempts ?? 0,
+    input.moveCommitAttempts ?? 0,
     now, input.updatedAt ?? now,
   ).run();
   return { projectId, mappingId };
@@ -83,6 +81,11 @@ async function createMapping(input: {
 async function insertReconcileJob(projectId: string, status: JobStatus, createdAt: number, updatedAt: number): Promise<void> {
   await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'editor_reconcile', ?, ?, ?, ?)")
     .bind(crypto.randomUUID(), status, projectId, createdAt, updatedAt).run();
+}
+
+async function insertWatch(mappingId: string, input: { watchUntil: number; status?: "watching" | "found" }): Promise<void> {
+  await database.DB.prepare("INSERT INTO editor_folder_orphan_watches (id, mapping_id, move_revision, old_path, old_path_key, status, watch_until, created_at, updated_at) VALUES (?, ?, 0, '/Editor/old', '/editor/old', ?, ?, ?, ?)")
+    .bind(crypto.randomUUID(), mappingId, input.status ?? "watching", input.watchUntil, Date.now(), Date.now()).run();
 }
 
 async function reconcileJobCount(projectId: string): Promise<number> {
@@ -129,12 +132,28 @@ describe("Minute cron: Editor folder move selection", () => {
     expect(await reconcileJobCount(projectId)).toBe(0);
   });
 
-  it("selects a mapping whose orphan-upload watch is due its +30 minute check, and not one still inside the window", async () => {
-    const due = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-due", movedFromPath: "/Editor/01_ACTIVE EDITS/2026-10 October/02/old", moveCompletedAt: Date.now() - 31 * 60_000 });
-    const notYet = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-fresh", movedFromPath: "/Editor/01_ACTIVE EDITS/2026-10 October/02/old", moveCompletedAt: Date.now() - 5 * 60_000 });
+  it("selects a mapping with an orphan-upload watch that is due, and not one still inside its window or already found", async () => {
+    const due = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-due" });
+    const notYet = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-fresh" });
+    const found = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-found" });
+    await insertWatch(due.mappingId, { watchUntil: Date.now() - 60_000 });
+    await insertWatch(notYet.mappingId, { watchUntil: Date.now() + 25 * 60_000 });
+    await insertWatch(found.mappingId, { watchUntil: Date.now() - 60_000, status: "found" });
     await worker().scheduled(controller(Date.now()));
     expect(await reconcileJobCount(due.projectId)).toBe(1);
     expect(await reconcileJobCount(notYet.projectId)).toBe(0);
+    expect(await reconcileJobCount(found.projectId)).toBe(0);
+  });
+
+  it("does not select a due orphan-upload watch on an archived or delivered Project, whose reconcile pass would never sweep it", async () => {
+    const archived = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-archived", archived: true });
+    const delivered = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-delivered" });
+    await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(delivered.projectId).run();
+    await insertWatch(archived.mappingId, { watchUntil: Date.now() - 60_000 });
+    await insertWatch(delivered.mappingId, { watchUntil: Date.now() - 60_000 });
+    await worker().scheduled(controller(Date.now()));
+    expect(await reconcileJobCount(archived.projectId)).toBe(0);
+    expect(await reconcileJobCount(delivered.projectId)).toBe(0);
   });
 
   it("throttles on an editor_reconcile job already queued/running or created within the last 10 minutes", async () => {
@@ -186,11 +205,11 @@ describe("Minute cron: Editor folder move selection", () => {
   });
 
   it("does not select a commit-stuck mapping through its orphan-upload watch either (#194)", async () => {
-    const { projectId } = await createMapping({
+    const { projectId, mappingId } = await createMapping({
       shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "stuck-with-watch", moveStatus: "moving",
       moveExpiresAt: Date.now() - 60_000, moveCommitAttempts: MOVE_COMMIT_ATTEMPT_LIMIT,
-      movedFromPath: "/Editor/01_ACTIVE EDITS/2026-09 September/01/old", moveCompletedAt: Date.now() - 31 * 60_000,
     });
+    await insertWatch(mappingId, { watchUntil: Date.now() - 60_000 });
     await worker().scheduled(controller(Date.now()));
     expect(await reconcileJobCount(projectId)).toBe(0);
   });

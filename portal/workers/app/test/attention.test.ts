@@ -21,13 +21,13 @@ async function executeSql(source: string): Promise<void> {
   }
 }
 
-async function request(path: string, token: string): Promise<Response> {
+async function request(path: string, token: string, method = "GET"): Promise<Response> {
   const context = await createAuth(baseEnv).$context;
   const cookie = `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
-  return workerSelf.fetch(`https://portal.test${path}`, { headers: { cookie, origin: baseEnv.APP_ORIGIN } });
+  return workerSelf.fetch(`https://portal.test${path}`, { method, headers: { cookie, origin: baseEnv.APP_ORIGIN } });
 }
 
-type AttentionItem = { projectId: string; projectLabel: string; kind: string; headline: string; code: string; detail: string | null; updatedAt: number };
+type AttentionItem = { projectId: string; projectLabel: string; kind: string; headline: string; code: string; detail: string | null; updatedAt: number; orphanWatchId?: string };
 type AttentionResponse = { items: AttentionItem[]; truncated: boolean; provisioningFreeze: { frozenAt: number; attempts: number | null; jobId: string | null } | null };
 
 type MappingFixture = {
@@ -67,6 +67,19 @@ async function seedMapping(fixture: MappingFixture = {}): Promise<string> {
       ),
   ]);
   return projectId;
+}
+
+const mappingRoot = (projectId: string) => `/Editor/01_ACTIVE EDITS/September 2026/18/${projectId}`;
+
+/** An orphan-upload watch (#195) on the project's mapping. */
+async function seedWatch(projectId: string, input: { status?: "watching" | "found"; oldPath?: string; foundAt?: number; foundDetail?: string } = {}): Promise<string> {
+  const id = crypto.randomUUID();
+  const oldPath = input.oldPath ?? `/Editor/01_ACTIVE EDITS/August 2026/01/${projectId}`;
+  const found = (input.status ?? "found") === "found";
+  await database.DB.prepare(`INSERT INTO editor_folder_orphan_watches (id, mapping_id, move_revision, old_path, old_path_key, status, watch_until, found_at, found_detail, created_at, updated_at)
+      SELECT ?, m.id, (SELECT COUNT(*) FROM editor_folder_orphan_watches w WHERE w.mapping_id = m.id), ?, lower(?), ?, 0, ?, ?, 0, 0 FROM editor_folder_mappings m WHERE m.project_id = ?`)
+    .bind(id, oldPath, oldPath, input.status ?? "found", found ? input.foundAt ?? Date.now() : null, found ? input.foundDetail ?? `${oldPath}/1. Output/late.jpg` : null, projectId).run();
+  return id;
 }
 
 describe("editor reconcile attention (#163)", () => {
@@ -188,12 +201,15 @@ describe("editor reconcile attention (#163)", () => {
     expect(await itemFor(projectId)).toMatchObject({ kind: "editor_folder_needs_review", code: "needs_review", detail: "a file sits where the root should be" });
   });
 
-  it("orders the list by severity: stuck and overdue before needs_review before blocked", async () => {
+  it("orders the list by severity: stuck and overdue before needs_review before blocked before orphan uploads", async () => {
+    await seedWatch(await seedMapping(), { foundAt: 1 });
     await seedMapping({ moveStatus: "blocked", moveTargetShootDate: "2026-09-20", moveNote: "editor_folder_move_conflict: x" });
     await seedMapping({ state: "needs_review" });
     await seedMapping({ moveStatus: "moving", moveCommitAttempts: 3, moveNote: "editor_folder_move_stuck: x" });
     const kinds = (await list()).items.map((item) => item.kind);
-    const rank = (kind: string) => ["editor_folder_move_stuck", "editor_folder_move_overdue", "editor_folder_needs_review", "editor_folder_move_blocked"].indexOf(kind);
+    const rank = (kind: string) => ["editor_folder_move_stuck", "editor_folder_move_overdue", "editor_folder_needs_review", "editor_folder_move_blocked", "editor_folder_orphan_upload"].indexOf(kind);
+    expect(kinds).toContain("editor_folder_orphan_upload");
+    expect(kinds.every((kind) => rank(kind) >= 0)).toBe(true);
     expect(kinds.map(rank)).toEqual([...kinds.map(rank)].sort((a, b) => a - b));
   });
 
@@ -215,6 +231,89 @@ describe("editor reconcile attention (#163)", () => {
     expect(result.truncated).toBe(true);
     expect(result.items.map((item) => item.projectId)).toContain(stuck);
     await database.DB.prepare("DELETE FROM projects WHERE street = 'Bulk St'").run();
+  });
+
+  describe("orphan uploads (#195)", () => {
+    const orphanItems = async (projectId: string) => (await list()).items.filter((item) => item.projectId === projectId && item.kind === "editor_folder_orphan_upload");
+
+    it("lists each found watch, naming the old root, the first file and the mapping's current root", async () => {
+      const projectId = await seedMapping();
+      const oldPath = "/Editor/01_ACTIVE EDITS/August 2026/01/First";
+      const watchId = await seedWatch(projectId, { oldPath, foundAt: 1234, foundDetail: `${oldPath}/late.jpg` });
+      const second = await seedWatch(projectId, { oldPath: "/Editor/01_ACTIVE EDITS/August 2026/02/Second", foundAt: 1235 });
+      await seedWatch(projectId, { status: "watching", oldPath: "/Editor/01_ACTIVE EDITS/August 2026/03/Pending" });
+      const items = await orphanItems(projectId);
+      expect(items.map((item) => item.orphanWatchId)).toEqual([watchId, second]);
+      expect(items[0]).toMatchObject({ code: "editor_folder_move_orphan_upload", updatedAt: 1234, projectLabel: expect.stringContaining("Attention St") });
+      expect(items[0]?.headline).toMatch(/Editor folder/);
+      expect(items[0]?.detail).toContain(oldPath);
+      expect(items[0]?.detail).toContain(`${oldPath}/late.jpg`);
+      expect(items[0]?.detail).toContain(mappingRoot(projectId));
+    });
+
+    it("lists a mapping's latch and its found watch side by side", async () => {
+      const projectId = await seedMapping({ moveStatus: "blocked", moveTargetShootDate: "2026-09-20", moveNote: "editor_folder_move_conflict: x" });
+      await seedWatch(projectId);
+      expect((await list()).items.filter((item) => item.projectId === projectId).map((item) => item.kind)).toEqual(["editor_folder_move_blocked", "editor_folder_orphan_upload"]);
+    });
+
+    it("keeps a found watch listed on an archived or delivered project, because only an acknowledgement clears it", async () => {
+      const archived = await seedMapping({ archived: true });
+      const delivered = await seedMapping({ stageKey: "delivered" });
+      await seedWatch(archived);
+      await seedWatch(delivered);
+      expect(await orphanItems(archived)).toHaveLength(1);
+      expect(await orphanItems(delivered)).toHaveLength(1);
+    });
+
+    it("puts the orphan headline on the project page only when the mapping has no latch of its own, with detail for admins only", async () => {
+      const plain = await seedMapping();
+      await seedWatch(plain);
+      const admin = await (await request(`/api/projects/${plain}`, adminToken)).json() as { editorFolderAttention: AttentionItem | null };
+      expect(admin.editorFolderAttention).toMatchObject({ kind: "editor_folder_orphan_upload", detail: expect.stringContaining(mappingRoot(plain)) });
+      expect(admin.editorFolderAttention).not.toHaveProperty("orphanWatchId");
+      const editor = await (await request(`/api/projects/${plain}`, editorToken)).json() as { editorFolderAttention: AttentionItem | null };
+      expect(editor.editorFolderAttention).toMatchObject({ kind: "editor_folder_orphan_upload", detail: null });
+
+      const latched = await seedMapping({ moveStatus: "moving", moveCommitAttempts: 3, moveNote: "editor_folder_move_stuck: x" });
+      await seedWatch(latched);
+      const body = await (await request(`/api/projects/${latched}`, adminToken)).json() as { editorFolderAttention: AttentionItem | null };
+      expect(body.editorFolderAttention?.kind).toBe("editor_folder_move_stuck");
+    });
+
+    describe("acknowledge", () => {
+      const acknowledge = (id: string, token = adminToken) => request(`/api/admin/attention/orphan-uploads/${id}/acknowledge`, token, "POST");
+
+      it("is admin-only and validates the id", async () => {
+        const watchId = await seedWatch(await seedMapping());
+        expect((await acknowledge(watchId, editorToken)).status).toBe(403);
+        expect((await acknowledge("not-a-uuid")).status).toBe(400);
+        expect((await acknowledge(crypto.randomUUID())).status).toBe(404);
+      });
+
+      it("refuses a watch that has found nothing", async () => {
+        const watchId = await seedWatch(await seedMapping(), { status: "watching" });
+        expect((await acknowledge(watchId)).status).toBe(409);
+        expect(await database.DB.prepare("SELECT status FROM editor_folder_orphan_watches WHERE id = ?").bind(watchId).first()).toEqual({ status: "watching" });
+      });
+
+      it("clears a found watch, records who acknowledged it, and drops it from the list", async () => {
+        const projectId = await seedMapping();
+        const oldPath = "/Editor/01_ACTIVE EDITS/August 2026/04/Ack";
+        const watchId = await seedWatch(projectId, { oldPath, foundDetail: `${oldPath}/late.jpg` });
+        const response = await acknowledge(watchId);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(await orphanItems(projectId)).toEqual([]);
+        expect(await database.DB.prepare("SELECT COUNT(*) AS n FROM editor_folder_orphan_watches WHERE id = ?").bind(watchId).first()).toEqual({ n: 0 });
+        const audit = await database.DB.prepare("SELECT actor_id AS actorId, target_type AS targetType, meta_json AS metaJson FROM audit_log WHERE action = 'editor_folder.move.orphan_upload.acknowledged' AND target_id = ?")
+          .bind(projectId).all<{ actorId: string; targetType: string; metaJson: string }>();
+        expect(audit.results).toHaveLength(1);
+        expect(audit.results[0]).toMatchObject({ actorId: adminId, targetType: "project" });
+        expect(JSON.parse(audit.results[0]!.metaJson)).toMatchObject({ watchId, oldPath, file: `${oldPath}/late.jpg` });
+        expect((await acknowledge(watchId)).status).toBe(404);
+      });
+    });
   });
 
   describe("provisioning freeze (#161's latch, read-only here)", () => {

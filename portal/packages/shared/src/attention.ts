@@ -1,9 +1,12 @@
-/** Latches a human has to clear (#163), as the app serves them. Most severe kind first. */
+/** Latches a human has to clear (#163), as the app serves them. Most severe kind first.
+ * `editor_folder_orphan_upload` (#195) is files left under a root a move vacated: nothing is paused,
+ * and it clears only when an admin acknowledges it. */
 export const EDITOR_FOLDER_ATTENTION_KINDS = [
   "editor_folder_move_stuck",
   "editor_folder_move_overdue",
   "editor_folder_needs_review",
   "editor_folder_move_blocked",
+  "editor_folder_orphan_upload",
 ] as const;
 export type EditorFolderAttentionKind = (typeof EDITOR_FOLDER_ATTENTION_KINDS)[number];
 
@@ -27,7 +30,13 @@ export type EditorFolderAttentionDto = {
   updatedAt: number;
 };
 
-export type AttentionItemDto = EditorFolderAttentionDto & { projectId: string; projectLabel: string };
+export type AttentionItemDto = EditorFolderAttentionDto & {
+  projectId: string;
+  projectLabel: string;
+  /** Set on `editor_folder_orphan_upload` items: the watch that
+   * `POST /api/admin/attention/orphan-uploads/:id/acknowledge` clears. */
+  orphanWatchId?: string;
+};
 
 /** #161's External Editor provisioning freeze, read-only. Released from Admin → Users. */
 export type ProvisioningFreezeDto = { frozenAt: number; attempts: number | null; jobId: string | null };

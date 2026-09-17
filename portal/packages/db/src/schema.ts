@@ -935,8 +935,10 @@ export const editorFolderMappings = sqliteTable(
     /** `<code>: <sentence>` (see `editor-folders/move-note.ts`) for a `blocked` move, or for a
      * `moving` one that has stopped being retried. */
     moveNote: text("move_note"),
-    /** The now-empty former root, kept only so the orphan-upload sweep can watch it. */
+    /** @deprecated since 0046 (#195): neither read nor written. Orphan-upload watches live in
+     * `editorFolderOrphanWatches`; the columns stay only because dropping them needs a rebuild. */
     movedFromPath: text("moved_from_path"),
+    /** @deprecated since 0046 (#195); see `movedFromPath`. */
     moveCompletedAt: integer("move_completed_at", { mode: "timestamp_ms" }),
     /** Commit attempts made after Dropbox already reported the tree at its new location. Reset to
      * 0 by a successful commit or a release; past `MOVE_COMMIT_ATTEMPT_LIMIT` the move stops
@@ -957,6 +959,36 @@ export const editorFolderMappings = sqliteTable(
     check("editor_folder_mappings_photographer_evidence_json_check", sql`json_valid(${t.photographerEvidenceJson})`),
     check("editor_folder_mappings_recovery_proof_json_check", sql`${t.recoveryProofJson} IS NULL OR json_valid(${t.recoveryProofJson})`),
     check("editor_folder_mappings_move_status_check", sql`${t.moveStatus} IS NULL OR ${t.moveStatus} IN ('moving', 'blocked')`),
+  ],
+);
+
+/**
+ * One orphan-upload watch per committed Editor tree move (#195). After a move lands, the sweep
+ * checks `oldPath` for files a human dropped into the now-abandoned root. `watching` until files
+ * are found (`found`, held until an admin acknowledges it, which deletes the row) or the watch
+ * lapses empty at `watchUntil` (deleted). Read by `workers/app/src/lib/attention.ts`.
+ */
+export const editorFolderOrphanWatches = sqliteTable(
+  "editor_folder_orphan_watches",
+  {
+    id: id(),
+    mappingId: text("mapping_id").notNull().references(() => editorFolderMappings.id, { onDelete: "cascade" }),
+    /** The `root_revision` the move committed; one watch per revision, so a replayed commit is a no-op. */
+    moveRevision: integer("move_revision").notNull(),
+    oldPath: text("old_path").notNull(),
+    oldPathKey: text("old_path_key").notNull(),
+    status: text("status", { enum: ["watching", "found"] as const }).notNull().default("watching"),
+    watchUntil: integer("watch_until", { mode: "timestamp_ms" }).notNull(),
+    foundAt: integer("found_at", { mode: "timestamp_ms" }),
+    /** The first file the sweep saw at `oldPath`. */
+    foundDetail: text("found_detail"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("editor_folder_orphan_watches_mapping_revision_unique").on(t.mappingId, t.moveRevision),
+    index("editor_folder_orphan_watches_status_due_idx").on(t.status, t.watchUntil),
+    check("editor_folder_orphan_watches_status_check", sql`${t.status} IN ('watching', 'found')`),
   ],
 );
 

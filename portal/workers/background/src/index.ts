@@ -86,9 +86,11 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         try {
           // Bounded selection of ready mappings that need a move-related editor_reconcile pass:
           // an expired move lease (takeover), a shoot date that has drifted from the mapping's own
-          // placement date (a fresh move, or a stale block worth re-checking), or a completed move
-          // whose orphan-upload watch is due its +30-minute check. Throttled the same way as any
-          // other reconcile trigger, so a project already mid-pass is not re-enqueued on top of itself.
+          // placement date (a fresh move, or a stale block worth re-checking), or an orphan-upload
+          // watch whose window has lapsed (#195). An inactive Project's pass returns before the
+          // sweep, so its due watch is left out rather than re-enqueued every ten minutes. Throttled
+          // the same way as any other reconcile trigger, so a project already mid-pass is not
+          // re-enqueued on top of itself.
           //
           // The page is oldest-first and bounded, so every row it can select must be one a pass will
           // act on (#194, and the #154 lesson): a commit-stuck mapping is excluded outright, because
@@ -109,7 +111,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
                   AND ${projects.shootDate} != ${editorFolderMappings.shootDate}
                   AND (${editorFolderMappings.moveStatus} IS NULL OR (${editorFolderMappings.moveStatus} = 'blocked' AND ${editorFolderMappings.moveTargetShootDate} IS NOT ${projects.shootDate}))
                 )
-                OR (${editorFolderMappings.movedFromPath} IS NOT NULL AND ${editorFolderMappings.moveCompletedAt} <= ${controller.scheduledTime - 30 * 60_000})
+                OR (
+                  ${projects.archivedAt} IS NULL AND ${projects.stageKey} != 'delivered'
+                  AND EXISTS (
+                    SELECT 1 FROM editor_folder_orphan_watches w
+                    WHERE w.mapping_id = editor_folder_mappings.id AND w.status = 'watching' AND w.watch_until <= ${controller.scheduledTime}
+                  )
+                )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'

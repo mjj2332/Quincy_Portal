@@ -171,7 +171,7 @@ describe("Editor folder move: derived happy path", () => {
 
     expect(outcome).toMatchObject({
       status: "moved", from: oldRoot, to: newRoot, previousShootDate: "2026-10-02",
-      mapping: { rootPath: newRoot, rootPathKey: editorFolderPathKey(newRoot), shootDate: "2027-01-15", rootRevision: 1, movedFromPath: oldRoot },
+      mapping: { rootPath: newRoot, rootPathKey: editorFolderPathKey(newRoot), shootDate: "2027-01-15", rootRevision: 1 },
     });
     expect(created).toEqual([
       newRoot.split("/").slice(0, -2).join("/"),
@@ -548,57 +548,185 @@ describe("Editor folder move: rescheduling and archival", () => {
   });
 });
 
-describe("Editor folder move: orphan-upload sweep", () => {
-  it("reports files found at the old root, and never adopts them", async () => {
-    const { projectId, mapping } = await setup({ overrides: { moved_from_path: "/Editor/01_ACTIVE EDITS/2026-10 October/02/old-leaf", move_completed_at: FIXED_NOW.getTime() } });
-    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, deps({
-      getMetadata: async () => folder("/Editor/01_ACTIVE EDITS/2026-10 October/02/old-leaf", "id:orphan"),
+type WatchRow = { id: string; move_revision: number; old_path: string; old_path_key: string; status: string; watch_until: number; found_at: number | null; found_detail: string | null };
+const watchRows = (mappingId: string) => database.DB.prepare("SELECT id, move_revision, old_path, old_path_key, status, watch_until, found_at, found_detail FROM editor_folder_orphan_watches WHERE mapping_id = ? ORDER BY move_revision")
+  .bind(mappingId).all<WatchRow>().then((result) => result.results);
+
+async function insertWatch(mappingId: string, input: { oldPath: string; moveRevision?: number; status?: "watching" | "found"; watchUntil: number }): Promise<string> {
+  const id = crypto.randomUUID();
+  await database.DB.prepare("INSERT INTO editor_folder_orphan_watches (id, mapping_id, move_revision, old_path, old_path_key, status, watch_until, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, mappingId, input.moveRevision ?? 0, input.oldPath, dropboxPathKey(input.oldPath), input.status ?? "watching", input.watchUntil, Date.now(), Date.now()).run();
+  return id;
+}
+
+function file(path: string): DropboxEntry {
+  return { ".tag": "file", id: `id:${path}`, name: path.split("/").at(-1)!, path_lower: path.toLowerCase(), path_display: path, size: 1 };
+}
+
+/** Dropbox as the sweep sees it: `tree` maps a path to what lives there. A path not in it is not found. */
+function orphanDeps(tree: Record<string, DropboxEntry[] | "file">, overrides: Partial<EditorFolderMoveDependencies> = {}): EditorFolderMoveDependencies {
+  const notFound = (path: string) => new DropboxPathNotFoundError(`Dropbox get_metadata failed (409): path/not_found/.. ${path}`);
+  return deps({
+    getMetadata: async (_env, _db, path) => {
+      const entry = tree[path];
+      if (entry === undefined) throw notFound(path);
+      return entry === "file" ? file(path) as never : folder(path, `id:${path}`);
+    },
+    listFolderRecursive: async (_env, _db, path) => {
+      const entry = tree[path];
+      if (entry === undefined) return [];
+      if (entry === "file") throw new Error("not a folder");
+      return entry;
+    },
+    ...overrides,
+  });
+}
+
+describe("Editor folder move: orphan-upload watches (#195)", () => {
+  const OLD = "/Editor/01_ACTIVE EDITS/2026-10 October/02/old-leaf";
+
+  async function reschedule(projectId: string, shootDate: string, suffix: string, rootFolderId: string) {
+    await database.DB.prepare("UPDATE projects SET shoot_date = ? WHERE id = ?").bind(shootDate, projectId).run();
+    const mapping = (await getEditorFolderMapping(db, projectId))!;
+    return await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate }, mapping, deps({
+      getMetadata: async () => folder(mapping.rootPath, rootFolderId),
+      moveFolderStrict: async (_env, _db, _from, to) => folder(to, rootFolderId),
     }));
-    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_orphan_upload", detail: expect.stringContaining("old-leaf") });
-    const audits = await auditRows("editor_folder.move.orphan_upload", projectId);
-    expect(audits.results).toHaveLength(1);
-    expect((await getEditorFolderMapping(db, projectId))?.movedFromPath).not.toBeNull();
+  }
+
+  it("records a watch on the old root when a move commits, and leaves the legacy column alone", async () => {
+    const { projectId, mapping } = await setup();
+    const outcome = await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    expect(outcome).toMatchObject({ status: "moved" });
+    expect(await watchRows(mapping.id)).toEqual([expect.objectContaining({
+      move_revision: 1, old_path: mapping.rootPath, old_path_key: mapping.rootPathKey, status: "watching",
+      watch_until: FIXED_NOW.getTime() + 30 * 60_000, found_at: null,
+    })]);
+    expect((await getEditorFolderMapping(db, projectId))).toMatchObject({ movedFromPath: null, moveCompletedAt: null });
   });
 
-  it("reports nothing when the old root is empty, and clears the watch once 30 minutes have passed", async () => {
-    const oldPath = "/Editor/01_ACTIVE EDITS/2026-10 October/02/old-leaf";
-    const { projectId, mapping } = await setup({ overrides: { moved_from_path: oldPath, move_completed_at: Date.now() - 40 * 60_000 } });
-    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, deps({
-      getMetadata: async () => { throw new DropboxPathNotFoundError("Dropbox get_metadata failed (409): path/not_found/.."); },
-      now: () => new Date(),
+  it("writes no watch when another pass takes the move over before this one commits", async () => {
+    const { projectId, mapping } = await setup();
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, deps({
+      getMetadata: async () => folder(mapping.rootPath, mapping.rootFolderId!),
+      moveFolderStrict: async (_env, _db, _from, to) => {
+        // A takeover swaps the token while Dropbox is moving the tree, so this pass's fenced commit loses.
+        await database.DB.prepare("UPDATE editor_folder_mappings SET move_token = 'someone-else' WHERE id = ?").bind(mapping.id).run();
+        return folder(to, mapping.rootFolderId!);
+      },
+    }));
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_deferred" });
+    expect(await watchRows(mapping.id)).toEqual([]);
+    expect((await auditRows("editor_folder.moved", projectId)).results).toHaveLength(0);
+  });
+
+  it("keeps a watch on every old root when a second reschedule lands inside the window", async () => {
+    const { projectId, mapping } = await setup();
+    const first = mapping.rootPath;
+    await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    const second = (await getEditorFolderMapping(db, projectId))!.rootPath;
+    expect(await reschedule(projectId, "2027-02-20", mapping.projectFolderName, mapping.rootFolderId!)).toMatchObject({ status: "moved" });
+    expect((await watchRows(mapping.id)).map((row) => [row.move_revision, row.old_path])).toEqual([[1, first], [2, second]]);
+  });
+
+  it("drops the watch on a root the tree has just moved back onto", async () => {
+    const { projectId, mapping } = await setup();
+    const home = mapping.rootPath;
+    await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    const away = (await getEditorFolderMapping(db, projectId))!.rootPath;
+    expect(await reschedule(projectId, "2026-10-02", mapping.projectFolderName, mapping.rootFolderId!)).toMatchObject({ status: "moved", to: home });
+    // The live root is not an orphan; only the root it just left is watched.
+    expect((await watchRows(mapping.id)).map((row) => [row.move_revision, row.old_path])).toEqual([[2, away]]);
+  });
+
+  it("marks a watch found when a file sits under the old root, audits it once, and names the current root", async () => {
+    const { projectId, mapping } = await setup();
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    const tree = { [OLD]: [folder(`${OLD}/1. Output`, "id:o"), file(`${OLD}/1. Output/late.jpg`)] };
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps(tree));
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_orphan_upload" });
+    expect((outcome as { detail: string }).detail).toContain(OLD);
+    expect((outcome as { detail: string }).detail).toContain(mapping.rootPath);
+    expect(await watchRows(mapping.id)).toEqual([expect.objectContaining({ status: "found", found_at: FIXED_NOW.getTime(), found_detail: `${OLD}/1. Output/late.jpg` })]);
+
+    // A found watch is durable: a later pass neither re-checks Dropbox nor audits again, even past its window.
+    let dropboxCalls = 0;
+    const later = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps(tree, {
+      getMetadata: async () => { dropboxCalls += 1; throw new Error("unexpected"); },
+      now: () => new Date(FIXED_NOW.getTime() + 60 * 60_000),
+    }));
+    expect(later).toBeNull();
+    expect(dropboxCalls).toBe(0);
+    expect((await watchRows(mapping.id))[0]?.status).toBe("found");
+    const audits = await auditRows("editor_folder.move.orphan_upload", projectId);
+    expect(audits.results).toHaveLength(1);
+    expect(JSON.parse(audits.results[0]!.meta_json)).toMatchObject({ mappingId: mapping.id, oldPath: OLD, newPath: mapping.rootPath, file: `${OLD}/1. Output/late.jpg` });
+  });
+
+  it("treats a file sitting at the old root path itself as found", async () => {
+    const { projectId, mapping } = await setup();
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps({ [OLD]: "file" }));
+    expect(await watchRows(mapping.id)).toEqual([expect.objectContaining({ status: "found", found_detail: OLD })]);
+  });
+
+  it("does not count a re-created folder with no files as an upload, and ends the watch once its window lapses", async () => {
+    const { projectId, mapping } = await setup();
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    const tree = { [OLD]: [folder(`${OLD}/0. Input`, "id:i")] };
+    expect(await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps(tree))).toBeNull();
+    expect((await watchRows(mapping.id))[0]?.status).toBe("watching");
+    expect(await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps(tree, { now: () => new Date(FIXED_NOW.getTime() + 10 * 60_000) }))).toBeNull();
+    expect(await watchRows(mapping.id)).toEqual([]);
+    expect((await auditRows("editor_folder.move.orphan_upload", projectId)).results).toHaveLength(0);
+  });
+
+  it("never lets a lapsing pass delete a watch another pass has just marked found", async () => {
+    const { projectId, mapping } = await setup();
+    const watchId = await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() - 1 });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps({}, {
+      getMetadata: async () => {
+        // The concurrent pass wins between this pass's read and its lapse.
+        await database.DB.prepare("UPDATE editor_folder_orphan_watches SET status = 'found', found_at = 1 WHERE id = ?").bind(watchId).run();
+        throw new DropboxPathNotFoundError("Dropbox get_metadata failed (409): path/not_found/..");
+      },
     }));
     expect(outcome).toBeNull();
-    const after = await getEditorFolderMapping(db, projectId);
-    expect(after?.movedFromPath).toBeNull();
-    expect(after?.moveCompletedAt).toBeNull();
+    expect(await watchRows(mapping.id)).toEqual([expect.objectContaining({ id: watchId, status: "found" })]);
   });
 
-  it("still audits an orphan upload and clears watch bookkeeping for a mapping blocked by a SECOND reschedule, while the outcome stays the stored block note", async () => {
-    const oldPath = "/Editor/01_ACTIVE EDITS/2026-10 October/02/old-leaf";
-    const storedNote = "editor_folder_move_conflict: A folder named old-leaf already exists in /Editor/01_ACTIVE EDITS/2027-01 January/15";
-    const { projectId, mapping } = await setup({
-      overrides: {
-        move_status: "blocked",
-        move_target_shoot_date: "2027-01-15",
-        move_note: storedNote,
-        moved_from_path: oldPath,
-        move_completed_at: FIXED_NOW.getTime() - 40 * 60_000,
-      },
-    });
-    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, deps({
-      getMetadata: async () => folder(oldPath, "id:orphan"),
+  it("ends, without asking Dropbox, a watch whose old root is now another mapping's live root", async () => {
+    const other = await setup({ leaf: "taken-over" });
+    // Same Dropbox account: a root on another connection is a different folder.
+    const { projectId, mapping } = await setup({ overrides: { connection_id: other.connectionId } });
+    await insertWatch(mapping.id, { oldPath: other.mapping.rootPath, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    let dropboxCalls = 0;
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, deps({
+      getMetadata: async () => { dropboxCalls += 1; return folder(other.mapping.rootPath, "id:x"); },
     }));
-    // The block note (durable until an operator acts) is still what's reported, not the orphan note.
-    expect(outcome).toMatchObject({
-      status: "skipped", reason: "editor_folder_move_conflict",
-      detail: "A folder named old-leaf already exists in /Editor/01_ACTIVE EDITS/2027-01 January/15",
-    });
-    const audits = await auditRows("editor_folder.move.orphan_upload", projectId);
-    expect(audits.results).toHaveLength(1);
-    const after = await getEditorFolderMapping(db, projectId);
-    expect(after?.movedFromPath).toBeNull();
-    expect(after?.moveCompletedAt).toBeNull();
-    expect(after).toMatchObject({ moveStatus: "blocked", moveTargetShootDate: "2027-01-15", moveNote: storedNote });
+    expect(outcome).toBeNull();
+    expect(dropboxCalls).toBe(0);
+    expect(await watchRows(mapping.id)).toEqual([]);
+  });
+
+  it("still sweeps a mapping whose later reschedule is blocked, while the outcome stays the stored block note", async () => {
+    const storedNote = "editor_folder_move_conflict: A folder named old-leaf already exists in /Editor/01_ACTIVE EDITS/2027-01 January/15";
+    const { projectId, mapping } = await setup({ overrides: { move_status: "blocked", move_target_shoot_date: "2027-01-15", move_note: storedNote } });
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, orphanDeps({ [OLD]: [file(`${OLD}/x.jpg`)] }));
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_conflict" });
+    expect((await watchRows(mapping.id))[0]?.status).toBe("found");
+    expect((await getEditorFolderMapping(db, projectId))).toMatchObject({ moveStatus: "blocked", moveNote: storedNote });
+  });
+
+  it("still sweeps a mapping whose move is deferred behind an in-flight job", async () => {
+    const { projectId, mapping } = await setup();
+    await insertJob({ projectId, kind: "editor_sync", status: "running", updatedAt: FIXED_NOW.getTime() - 60_000 });
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() - 1 });
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, orphanDeps({}));
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_deferred" });
+    expect(await watchRows(mapping.id)).toEqual([]);
   });
 });
 
