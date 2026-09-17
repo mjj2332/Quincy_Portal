@@ -3710,7 +3710,12 @@ describe("staff app API", () => {
       expect(JSON.stringify(payload)).not.toMatch(/key|r2Key|pdfKey|url|filename/i);
       expect(Object.keys(payload)).not.toEqual(expect.arrayContaining(["key", "r2Key", "pdfKey", "url", "filename"]));
     }
-  });
+  // 30s, matching the other end-to-end tests in this file (803, 996, 2082). This one reserves,
+  // uploads and completes a dozen sessions over SELF.fetch, and the 5s default is not a budget
+  // anyone chose for it: until #170 the test was skipped in CI, so its runtime was never once
+  // measured there. It takes ~0.4s locally and ~5.2s on a CI runner, which cleared the default
+  // by a hair and failed as a timeout rather than an assertion.
+  }, 30_000);
 
   it("denies same-Stage placement changes to internal and External Editors without mutation", async () => {
     const adminCookie = await sessionCookie(adminToken);
