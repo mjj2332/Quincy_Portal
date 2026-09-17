@@ -89,7 +89,13 @@ async function executeBundle(db: D1Database, statements: D1PreparedStatement[]):
   return db.batch(statements);
 }
 
-describe("TB5A Slice 8 consolidated migration and SQL proof", () => {
+// 30s for the whole block, not the 5s default. Three of these tests apply the full 0000..0037
+// chain against real SQLite files through `withTemporaryDatabase`, so they are bound by disk
+// rather than by CPU: ~200-380ms on a local disk, and over 5s on a contended CI runner, where
+// this failed as a timeout with no assertion failing (#181). The default was never a budget
+// chosen for this work. It sits on `describe` because the heavy tests are not one test — a
+// timeout on whichever one tripped first would just move the next flake to another line.
+describe("TB5A Slice 8 consolidated migration and SQL proof", { timeout: 30_000 }, () => {
   it("runs the complete 0000..0037 chain and proves normalized seed order, health, and inert state", () => {
     const names = migrationNames().filter((name) => Number(name.slice(0, 4)) <= 37);
     expect(names.map((name) => Number(name.slice(0, 4)))).toEqual(Array.from({ length: 38 }, (_, index) => index));
