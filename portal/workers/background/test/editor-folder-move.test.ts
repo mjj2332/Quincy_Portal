@@ -461,6 +461,41 @@ describe("Editor folder move: claiming and takeover", () => {
     expect(outcome).toMatchObject({ status: "moved", to: newRoot, mapping: { rootPath: newRoot, moveStatus: null } });
   });
 
+  // The takeover CAS is the only fence between a stale snapshot and a lease another pass has since
+  // taken. Each case changes exactly one of token/expiry so each half of the CAS is proven on its own.
+  async function staleTakeover(leaf: string, snapshotExpiresAt: number | null, rowChange: { token: boolean; expiresAt: number }) {
+    const { suffix, projectId, mapping } = await setup({ leaf });
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: suffix });
+    const snapshotToken = crypto.randomUUID();
+    await database.DB.prepare(`UPDATE editor_folder_mappings SET move_status = 'moving', move_token = ?, move_expires_at = ?,
+        move_target_path = ?, move_target_path_key = ?, move_target_shoot_date = '2027-01-15' WHERE id = ?`)
+      .bind(snapshotToken, snapshotExpiresAt, newRoot, editorFolderPathKey(newRoot), mapping.id).run();
+    const stale = (await getEditorFolderMapping(db, projectId))!;
+    const otherToken = rowChange.token ? crypto.randomUUID() : snapshotToken;
+    await database.DB.prepare("UPDATE editor_folder_mappings SET move_token = ?, move_expires_at = ? WHERE id = ?")
+      .bind(otherToken, rowChange.expiresAt, mapping.id).run();
+    const outcome = await resumeEditorFolderMove(env as never, db, stale, deps({
+      getMetadata: async () => { throw new Error("a fenced-out takeover must not touch Dropbox"); },
+    }));
+    expect(outcome).toMatchObject({ status: "skipped", reason: "editor_folder_move_in_flight" });
+    const row = await getEditorFolderMapping(db, projectId);
+    expect(row).toMatchObject({ moveStatus: "moving", moveToken: otherToken });
+    expect(row!.moveExpiresAt?.getTime()).toBe(rowChange.expiresAt);
+  }
+
+  it("does not take over from a stale snapshot once another pass has extended the lease (#194)", async () => {
+    await staleTakeover("cas-expiry", FIXED_NOW.getTime() - 1000, { token: false, expiresAt: FIXED_NOW.getTime() + 60_000 });
+  });
+
+  it("does not take over from a stale snapshot once another pass holds a new token (#194)", async () => {
+    const expiresAt = FIXED_NOW.getTime() - 1000;
+    await staleTakeover("cas-token", expiresAt, { token: true, expiresAt });
+  });
+
+  it("does not take over from a NULL-expiry snapshot once the row has a real lease (#194)", async () => {
+    await staleTakeover("cas-null-expiry", null, { token: false, expiresAt: FIXED_NOW.getTime() + 60_000 });
+  });
+
   it("reports an unexpired claim held by another pass as in flight", async () => {
     const first = await setup({ leaf: "in-flight" });
     const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: first.suffix });
