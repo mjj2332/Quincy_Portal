@@ -18,6 +18,7 @@ export * from "./notification-types";
 export * from "./notification-enrichment";
 export * from "./notification-cursor";
 export * from "./project-members";
+export * from "./attention";
 export * from "./project-deadline";
 export * from "./production-calendar";
 export {

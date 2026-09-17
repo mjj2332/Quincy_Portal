@@ -922,8 +922,8 @@ export const editorFolderMappings = sqliteTable(
      * mid-move against the batch that rebases it. */
     rootRevision: integer("root_revision").notNull().default(0),
     /** Set while a ready mapping's tree is being relocated for a reschedule, or when a move
-     * attempt could not proceed. The reason is in `moveNote`, which as of #153 no surface reads:
-     * finding a blocked or stuck move means querying D1 by hand. Tracked in #163. */
+     * attempt could not proceed. The reason is in `moveNote`; the app reads both through
+     * `workers/app/src/lib/attention.ts` (Admin → Pipeline, and the project page banner). */
     moveStatus: text("move_status", { enum: ["moving", "blocked"] as const }),
     moveTargetPath: text("move_target_path"),
     moveTargetPathKey: text("move_target_path_key"),
@@ -932,7 +932,8 @@ export const editorFolderMappings = sqliteTable(
     /** Claims the in-flight move so a takeover only happens after `moveExpiresAt`. */
     moveToken: text("move_token"),
     moveExpiresAt: integer("move_expires_at", { mode: "timestamp_ms" }),
-    /** `<code>: <sentence>` shown to an operator when `moveStatus` is `blocked`. */
+    /** `<code>: <sentence>` (see `editor-folders/move-note.ts`) for a `blocked` move, or for a
+     * `moving` one that has stopped being retried. */
     moveNote: text("move_note"),
     /** The now-empty former root, kept only so the orphan-upload sweep can watch it. */
     movedFromPath: text("moved_from_path"),

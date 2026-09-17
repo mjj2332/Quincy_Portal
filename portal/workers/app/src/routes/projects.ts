@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { editorFolderAvailability, editorFolderProjection } from "../lib/editor-folders";
+import { readEditorFolderAttention } from "../lib/attention";
 import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
@@ -166,6 +167,9 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
   // RAW folder fields. A `viewRaw` check here would read like the rule and is not one — every
   // role holds `viewRaw`, `external_editor` included (EXTERNAL_EDITOR_CAPABILITIES).
   const monitoredRawFolder = projection?.monitoredRawFolder ?? null;
+  // Checked on the role, not `viewerSeesRawOnly`: the PATCH handlers pass `false` for that flag
+  // whatever the caller's role, so it cannot be what keeps a photographer from seeing this.
+  const editorFolderAttention = role === "photographer" ? undefined : await readEditorFolderAttention(d1, projectId, role, Date.now());
   return projectStageForRole({
     ...project,
     boardRevision: variant === "tb5a_0037" && "boardRevision" in project ? Number(project.boardRevision) : 0,
@@ -176,6 +180,7 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
     collections,
     members: memberDtos,
     deadlineSchedule,
+    ...(editorFolderAttention === undefined ? {} : { editorFolderAttention }),
   }, role);
 }
 
