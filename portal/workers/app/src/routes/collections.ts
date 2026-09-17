@@ -446,6 +446,7 @@ collectionsRoutes.post("/projects/:id/documents/complete", terminalRoute("/proje
   let upload = await ownedUpload(c, projectId, data.sessionId);
   if (!upload) return c.json({ error: "Document upload session not found" }, 404);
   if (upload.status === "completed") return c.json(responseFor(upload));
+  let claimedHere = false;
   if (upload.status === "pending") {
     const now = new Date();
     const claimed = await c.env.DB.prepare("UPDATE document_uploads SET status = 'completing', completing_at = ?, updated_at = ? WHERE id = ? AND project_id = ? AND created_by = ? AND status = 'pending' AND expires_at > ? AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)")
@@ -457,13 +458,33 @@ collectionsRoutes.post("/projects/:id/documents/complete", terminalRoute("/proje
       upload = current;
     } else {
       upload = { ...upload, status: "completing", completingAt: now, updatedAt: now };
+      claimedHere = true;
     }
   } else if (upload.status !== "completing") return c.json({ error: "Document upload session has expired or was aborted" }, 409);
-  if ((upload.kind === "floorplan") !== Boolean(data.preview)) return c.json({ error: upload.kind === "floorplan" ? "Floorplan completion requires both PDF and JPEG preview" : "Copy uploads do not accept a preview" }, 400);
+  // The claim is a lease for a worker that stalls mid-batch, not a hold on every way a request
+  // can be refused. Answering a request *and* keeping its claim left the row `completing` for the
+  // full 15 minutes, and archive treats that as an active upload — so an admin told "that upload
+  // failed" could not archive the project and nothing explained why (#174). Release on the paths
+  // this request has already decided, and only when this request is the one that took the claim;
+  // a claim held by another in-flight completion is not ours to drop. The batch-abort path below
+  // deliberately keeps its claim: that one really is a completion left in an unknown state, which
+  // is what the lease and the presign reaper are for.
+  const releaseClaim = async (status: "pending" | "failed") => {
+    if (!claimedHere) return;
+    await c.env.DB.prepare("UPDATE document_uploads SET status = ?, completing_at = NULL, updated_at = ? WHERE id = ? AND status = 'completing'")
+      .bind(status, Date.now(), upload.id).run();
+  };
+  // Retryable: the session and its presigned objects are still good, the request body was not.
+  if ((upload.kind === "floorplan") !== Boolean(data.preview)) { await releaseClaim("pending"); return c.json({ error: upload.kind === "floorplan" ? "Floorplan completion requires both PDF and JPEG preview" : "Copy uploads do not accept a preview" }, 400); }
   try {
     await finishObject(c, upload, "pdf", data.pdf);
     if (upload.kind === "floorplan") await finishObject(c, upload, "preview", data.preview!);
-  } catch (error) { return c.json({ error: error instanceof Error ? error.message : "Document object verification failed" }, 409); }
+  } catch (error) {
+    // Terminal: bytes and content type are verified against what the presign declared, so no
+    // retry on this session can pass. A new presign is the only way forward.
+    await releaseClaim("failed");
+    return c.json({ error: error instanceof Error ? error.message : "Document object verification failed" }, 409);
+  }
   const now = new Date(); const statements: D1PreparedStatement[] = [
     // This is the batch guard. A stale completion claim tries to insert a NULL NOT NULL
     // asset id and aborts the entire D1 batch before any document asset can commit.
