@@ -2545,8 +2545,8 @@ One thing that is *not* a defect, and must stay as it is:
 `workers/background/src/external-role-cache-purge.ts` also re-asserts on conflict
 (`DO UPDATE SET enabled = 1`). That one is a latch deliberately asserting a freeze after the bounded
 zone purge exhausts, not a default being restamped — converting it would break the freeze. The guard
-reads migrations only, so it is excluded structurally rather than by an allowlist. (Its missing
-release path is #161.)
+reads migrations only, so it is excluded structurally rather than by an allowlist. (Its release is
+the audited admin PATCH `/api/users/external-provisioning-freeze`, added in #161.)
 
 **Rule:** a migration may establish a flag's default, never re-assert it. And when a rollout has a
 manual second step, the step is part of the rollout — automate it into dev setup or it becomes a

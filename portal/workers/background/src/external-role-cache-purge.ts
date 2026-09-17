@@ -8,14 +8,20 @@ const PURGE_RETRY_DELAY_MS = 60_000;
 type PurgePayload = { userId: string; roleChangeAuditId: string; authorizationEpoch: number; attempts?: number; deadlineAt?: number; nextAttemptAt?: number };
 type PurgeJob = { id: string; retries: number; payloadJson: string | null };
 
+/**
+ * Latches the freeze. Re-asserting on conflict is deliberate — see packages/db/test/migration-feature-flag-ownership.guard.test.ts
+ * and #161 — and so is clearing `updated_by`: the row names the admin who last released it, and a
+ * re-freeze by the worker must not leave that admin looking like its author. Release is the admin
+ * PATCH /api/users/external-provisioning-freeze.
+ */
 async function freezeProvisioning(env: Env, now: number, details: { attempts: number; deadlineAt: number; jobId: string }): Promise<void> {
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES (?, 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1, updated_at = ?`)
+    env.DB.prepare(`INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES (?, 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1, updated_by = NULL, updated_at = ?`)
       .bind(EXTERNAL_PROVISIONING_FROZEN_FLAG, now, now),
     env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'external.provisioning.frozen', 'feature_flag', ?, ?, ?)`)
       .bind(crypto.randomUUID(), EXTERNAL_PROVISIONING_FROZEN_FLAG, JSON.stringify(details), now),
   ]);
-  console.error("External provisioning frozen: bounded zone purge exhausted; manual Cloudflare zone purge required", details);
+  console.error("External provisioning frozen: bounded zone purge exhausted; manual Cloudflare zone purge required, then release in Admin → Users", details);
 }
 
 async function purgeZone(env: Env): Promise<boolean> {
