@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_LABELS } from "./capabilities";
+import { EDITOR_FOLDER_ATTENTION_KINDS } from "./attention";
 import { externalAssetSchema } from "./external-asset-dto";
 import { externalEditedCompleteResponseSchema, externalEditedUploadCreateResponseSchema } from "./external-upload";
 import { STAGE_PRESENTATION_KEYS } from "./stage-move";
@@ -135,11 +136,23 @@ const projectSummaryShape = {
 export const externalProjectSummarySchema = z.object(projectSummaryShape).strict();
 export type ExternalProjectSummaryDto = z.infer<typeof externalProjectSummarySchema>;
 
+/** #163's per-project banner as an External Editor receives it: the headline and code only. Operator
+ * diagnostics are never on this wire, so `detail` can only be null. */
+export const externalEditorFolderAttentionSchema = z.object({
+  kind: z.enum(EDITOR_FOLDER_ATTENTION_KINDS),
+  headline: z.string(),
+  code: z.string(),
+  detail: z.null(),
+  updatedAt: z.number(),
+}).strict();
+
 export const externalProjectDetailSchema = externalProjectSummarySchema.extend({
   contractEnabled: z.boolean(),
   editedUploadAvailable: z.boolean(),
   collections: z.array(serviceSchema),
   members: z.array(externalParticipantSchema.extend({ assignedSubtaskCount: z.number().int().nonnegative() }).strict()),
+  // Defaults like `editors` above (#79), so a response from a server that predates the field still parses.
+  editorFolderAttention: externalEditorFolderAttentionSchema.nullable().default(null),
 }).strict();
 export type ExternalProjectDetailDto = z.infer<typeof externalProjectDetailSchema>;
 

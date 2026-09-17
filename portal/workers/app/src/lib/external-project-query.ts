@@ -6,6 +6,7 @@ import { readProjectDeadlineSchedule } from "./project-deadline";
 import { activeEditorRefsByProject } from "./project-editors";
 import { visibleProjectWhere } from "./visible-project-scope";
 import { editorFolderAvailability } from "./editor-folders";
+import { readEditorFolderAttention } from "./attention";
 
 type Db = ReturnType<typeof createDb>;
 
@@ -199,12 +200,13 @@ export async function readExternalProjectDetail(env: Env, userId: string, role: 
     const service = toProjectRow(row).service;
     return service ? [service] : [];
   }).filter((service, index, all) => all.findIndex((item) => item.id === service.id) === index);
-  const [members, deadline, coverAsset, subtaskCounts, editorsByProject] = await Promise.all([
+  const [members, deadline, coverAsset, subtaskCounts, editorsByProject, attention] = await Promise.all([
     membersFor(db, projectId),
     readProjectDeadlineSchedule(env.DB, projectId),
     coverFor(db, first.project),
     assignedSubtaskCounts(db, projectId),
     activeEditorRefsByProject(db, [projectId]),
+    readEditorFolderAttention(env.DB, projectId, role, Date.now()),
   ]);
   const summary = summaryFields(first.project, services, deadline, coverAsset, env.APP_ORIGIN, editorsByProject.get(projectId) ?? []);
   return externalProjectDetailSchema.parse({
@@ -223,5 +225,8 @@ export async function readExternalProjectDetail(env: Env, userId: string, role: 
       active: Boolean(member.active),
       assignedSubtaskCount: subtaskCounts.get(member.userId) ?? 0,
     })),
+    // `readEditorFolderAttention` withholds `detail` from any role without `adminBackend`; the
+    // schema's `detail: null` makes that a parse failure rather than a leak if it ever changes.
+    editorFolderAttention: attention,
   });
 }

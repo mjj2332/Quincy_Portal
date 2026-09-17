@@ -70,6 +70,7 @@ export function externalProjectDetailToWorkspace(project: ExternalProjectDetailD
     rawFolderPath: null,
     rawFolderLink: null,
     monitoredRawFolder: null,
+    editorFolderAttention: project.editorFolderAttention,
     coverAssetId: project.cover?.assetId ?? null,
     effectiveCoverAssetId: project.cover?.assetId ?? null,
     collections: project.collections,

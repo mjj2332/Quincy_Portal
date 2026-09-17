@@ -15,7 +15,8 @@ export function editorFolderAttentionPausesPipeline(kind: EditorFolderAttentionK
 
 export type EditorFolderAttentionDto = {
   kind: EditorFolderAttentionKind;
-  /** Safe for any staff viewer: says what is affected, never why. */
+  /** Says what is affected, never why. Sent to every role that sees the project except a
+   * photographer — External Editors included, by the owner's decision on #163. */
   headline: string;
   /** The precise reason within `kind`: the `move_note` code (e.g. `editor_folder_move_conflict` for
    * a blocked move), `needs_review`, or the kind itself when nothing more specific is recorded. */

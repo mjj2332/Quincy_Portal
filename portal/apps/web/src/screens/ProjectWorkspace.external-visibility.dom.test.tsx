@@ -115,7 +115,7 @@ function externalDetailFixture() {
     agencyDisplayName: null, agentDisplayName: null, shootDate: null, timeWindow: null,
     stageKey: "raw_review", boardRevision: 0, deadline: null, productionNotes: null,
     services: COLLECTIONS, cover: null, contractEnabled: true, editedUploadAvailable: true,
-    collections: COLLECTIONS, members: [],
+    collections: COLLECTIONS, members: [], editorFolderAttention: null,
   };
 }
 
