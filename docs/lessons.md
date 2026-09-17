@@ -13,9 +13,9 @@
   `http://localhost:8787` directly for any local auth-gated testing, not the Vite dev server on
   `5173`** — `wrangler dev` serves the built SPA (`npm run build -w @quincy/web` first) and the API
   on one origin, so the browser's actual `Origin` header, better-auth's computed `redirect_uri`,
-  and `APP_ORIGIN` all agree; splitting across Vite's proxy and the worker's own port works for
-  ordinary API calls but adds an avoidable cross-origin variable to a flow that's already finicky
-  to debug.
+  and `APP_ORIGIN` all agree. The Vite dev server on `5173` is fine for everything except the
+  sign-in flow itself: its proxy rewrites a same-origin `Origin` to `APP_ORIGIN` (#191; see that
+  entry below).
   Separately: this is a **closed staff system** — Google sign-up is disabled
   (`disableSignUp: true` in `workers/app/src/auth.ts`, enforced again by a `user.create` database
   hook that unconditionally throws), so only a user row that already exists in D1 can ever sign
@@ -2734,3 +2734,23 @@ skipped. DOM tests need `--config vitest.dom.config.ts` (the `test` script runs 
 
 **Rule:** when you add a latch, add the place a human sees it in the same change — and when you
 read one, ask what it actually stops, and whether it can outlive the reason it was set.
+
+## A dev proxy that forwards the browser's Origin unchanged fails every exact-Origin check (#191)
+
+**Symptom:** in `npm run dev` (Vite on `:5173`), every POST/PUT/PATCH/DELETE returned
+`403 {"error":"Forbidden: invalid request origin"}`. Reads worked, so the app looked healthy until a
+write. It surfaced as "the Kanban drag is broken" during the #160 browser pass.
+
+**Cause:** `requireAppOrigin` demands `Origin === APP_ORIGIN`, and the dev `APP_ORIGIN` is
+`http://localhost:8787` on purpose (Google OAuth is registered there, first entry above). Vite's
+proxy changed the destination but forwarded `Origin: http://localhost:5173` untouched, so the two
+could never agree. `APP_ORIGIN` was right; the proxy was wrong.
+
+**Fix:** `apps/web/src/config/dev-proxy.ts` rewrites `Origin` to the proxy target, but only when the
+Origin is the dev server itself (its host equals the request's `Host`). A cross-site page keeps its
+own Origin and is still rejected. `dev-proxy.test.ts` drives a real Vite proxy against a real HTTP
+server, and also asserts that `vite.config.ts` uses the helper for `/api` and `/media`.
+
+**Rule:** a proxy in front of an origin check must decide what Origin it presents. Rewrite it only
+for the pages it serves itself, never for every request, or the proxy launders a cross-site request
+into a trusted one.
