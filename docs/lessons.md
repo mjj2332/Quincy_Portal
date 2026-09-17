@@ -2672,3 +2672,35 @@ wants a budget, and a test that is slow because it waits wants to stop waiting.
 check whether any assertion failed — if none did, you are looking at a budget, and the question is
 what the budget should be for the machine that actually runs it. Measure before choosing, fix the
 class rather than the instance, and bound the answer from both ends.
+
+## A failure handler outside `step.do` is not durable, and "the row now matches" is not "my write landed" (#154)
+
+`ManualEditedPublish` did its failure bookkeeping in a plain `catch`. If that write threw, or the
+instance died before reaching it, the job stayed `running` and the Edited asset `pending` forever —
+and nothing in the system ever wrote `stuck`, so Retry never appeared. The fix was two parts, since
+neither covers the other: the bookkeeping runs inside `step.do`, and a minute-cron sweep asks the
+Workflow binding (`get(jobId).status()`; the instance id *is* the job id) about aged active jobs.
+
+Four traps came up in the build and review, each of which passed a green test first:
+
+- **Age proves nothing about a Workflow.** An unconfigured `step.do` can legitimately run ~52 min
+  (5 attempts × 10 min + backoff), and this Workflow has 8 of them. Age only pre-selects rows; the
+  instance status decides. Only `errored`/`terminated`/`complete` and `instance.not_found` recover;
+  `unknown` and every other lookup error skip.
+- **Miniflare conflates not-found.** Its `get()` rethrows *any* `status()` failure as
+  `instance.not_found`, so local tests cannot tell a missing instance from a failed lookup. It does
+  report a terminated instance as `terminated` — a comment claiming otherwise was wrong and was
+  caught only by re-reading the probe output.
+- **Gate dependent writes on `changes() = 1`, not on the row's resulting values.** The first cut
+  let the asset update fire if the job row *now* equalled the tuple the batch wrote. A duplicate
+  delivery of the same sweep matches that tuple without having changed anything, and would re-fail
+  an asset an operator retry had just reset. `changes()` of the preceding statement asks the right
+  question: did *this* batch's transition land. The same bug hid in the sweep's counter, which
+  called a lost CAS "recovered" — and a test had encoded that.
+- **A bounded, oldest-first page starves.** Skipped rows keep their `updated_at`, so 25 sticky
+  rows fill every page forever and hide the dead instance behind them. Random order restores
+  progress without a cursor.
+
+**Rule:** a fixed page over a set you do not shrink is not bounded work, it is a queue that never
+advances; and a guard that checks state rather than your own write's effect is a guard a replay
+passes.

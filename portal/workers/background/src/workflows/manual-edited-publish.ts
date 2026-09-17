@@ -15,6 +15,7 @@ import { enqueueManualEditedRenditions } from "../manual-edited-renditions";
 import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "../editor-folders/mapping";
 import { automationFlag } from "../dropbox/monitor-state";
 import { dropboxPathKey } from "../dropbox/paths";
+import { manualPublishFailureStatements } from "../manual-publish-recovery";
 
 export interface ManualEditedPublishInput {
   projectId: string;
@@ -317,23 +318,31 @@ export class ManualEditedPublish extends WorkflowEntrypoint<Env, ManualEditedPub
       });
     } catch (error) {
       const message = errorMessage(error);
-      const now = new Date();
-      const asset = await dbFor(this.env).select({ collectionKind: collections.kind })
-        .from(assets)
-        .innerJoin(collections, eq(assets.collectionId, collections.id))
-        .where(and(eq(assets.id, input.assetId), eq(collections.projectId, input.projectId)))
-        .get();
-      if (asset?.collectionKind === "raw") {
-        await this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, NULL, 'asset.manual_raw_mirror.failed', 'asset', ?, ?, ?)")
-          .bind(crypto.randomUUID(), input.assetId, JSON.stringify({ actor: "system", projectId: input.projectId, jobId: input.jobId, error: message }), now.getTime())
-          .run();
-      } else {
-        await this.env.DB.batch([
-          this.env.DB.prepare("UPDATE assets SET publish_status = 'failed', updated_at = ? WHERE id = ? AND publish_status = 'pending'").bind(now.getTime(), input.assetId),
-          this.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, NULL, 'asset.manual_publish.failed', 'asset', ?, ?, ? WHERE changes() = 1").bind(crypto.randomUUID(), input.assetId, JSON.stringify({ actor: "system", projectId: input.projectId, jobId: input.jobId, error: message }), now.getTime()),
-        ]);
-      }
-      await setJobStatus(dbFor(this.env), input.jobId, "failed", message);
+      // If the bookkeeping itself exhausts its retries, the stuck-publish sweep is the backstop;
+      // the instance must still end with the publish error, not the bookkeeping one.
+      await step.do("record-manual-publish-failure", async () => {
+        const now = Date.now();
+        const asset = await dbFor(this.env).select({ collectionKind: collections.kind })
+          .from(assets)
+          .innerJoin(collections, eq(assets.collectionId, collections.id))
+          .where(and(eq(assets.id, input.assetId), eq(collections.projectId, input.projectId)))
+          .get();
+        const collectionKind: "raw" | "edited" = asset?.collectionKind === "raw" ? "raw" : "edited";
+        const statements = manualPublishFailureStatements(this.env.DB, {
+          jobId: input.jobId,
+          projectId: input.projectId,
+          assetId: input.assetId,
+          collectionKind,
+          status: "failed",
+          error: message,
+          meta: {},
+          now,
+        });
+        await this.env.DB.batch(statements);
+        return { status: "failed" };
+      }).catch((bookkeepingError: unknown) => {
+        console.error("Manual publish failure bookkeeping failed", { jobId: input.jobId, error: errorMessage(bookkeepingError) });
+      });
       throw error;
     }
   }

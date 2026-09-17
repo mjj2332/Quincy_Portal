@@ -45,6 +45,7 @@ import { processNotificationDlqMessage, processNotificationMessage, recoverNotif
 import { scanProjectDeadlineOccurrences } from "./project-deadline";
 import { sweepExternalEditedUploads } from "./external-upload-sweep";
 import { processExternalRoleCachePurges } from "./external-role-cache-purge";
+import { sweepStuckManualPublishes } from "./manual-publish-recovery";
 import { isBoardSchemaMaintenanceError, requireBoardSchemaReady } from "./lib/board-schema";
 
 export { AutoHdrApiSend, AutoHdrFetch, AutoHdrSend, ManualEditedPublish, DropboxSyncDO, TonomoProcessorDO };
@@ -132,6 +133,12 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         if (purged) console.log("External role cache purge jobs", { purged });
       } catch (error) {
         console.error("External role cache purge failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
+      try {
+        const recoveredManualPublishes = await sweepStuckManualPublishes(this.env, controller.scheduledTime);
+        console.log("Manual publish stuck sweep", recoveredManualPublishes);
+      } catch (error) {
+        console.error("Manual publish stuck sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       return;
     }

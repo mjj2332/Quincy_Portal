@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const scheduledJobs = vi.hoisted(() => ({
   deadline: vi.fn().mockResolvedValue({ scanned: 0, fired: 0, published: 0 }),
   recovery: vi.fn().mockResolvedValue(0),
+  manualPublish: vi.fn().mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 }),
   raw: vi.fn().mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 }),
   stalled: vi.fn().mockResolvedValue(0),
   subtasks: vi.fn().mockResolvedValue(0),
@@ -15,6 +16,7 @@ vi.mock("../src/notification-delivery", () => ({
   processNotificationMessage: vi.fn(),
   recoverNotificationOutbox: scheduledJobs.recovery,
 }));
+vi.mock("../src/manual-publish-recovery", () => ({ sweepStuckManualPublishes: scheduledJobs.manualPublish }));
 vi.mock("../src/reconcile-awaiting-raw", () => ({ reconcileAwaitingRawProjects: scheduledJobs.raw }));
 vi.mock("../src/notifications", () => ({
   notifyProject: vi.fn(),
@@ -39,6 +41,7 @@ function controller(cron: string): ScheduledController {
 beforeEach(() => {
   for (const job of Object.values(scheduledJobs)) job.mockReset().mockResolvedValue(undefined);
   scheduledJobs.deadline.mockResolvedValue({ scanned: 0, fired: 0, published: 0 });
+  scheduledJobs.manualPublish.mockResolvedValue({ scanned: 0, recovered: 0, skipped: 0 });
   scheduledJobs.raw.mockResolvedValue({ attempted: 0, advanced: 0, skipped: 0, failures: 0 });
   consoleError.mockClear();
   consoleWarn.mockClear();
@@ -73,6 +76,7 @@ describe("background scheduled Cron dispatch", () => {
   it.each([
     ["deadline", "* * * * *"],
     ["recovery", "* * * * *"],
+    ["manualPublish", "* * * * *"],
     ["raw", "0 * * * *"],
     ["stalled", "0 * * * *"],
     ["subtasks", "0 * * * *"],
@@ -80,9 +84,20 @@ describe("background scheduled Cron dispatch", () => {
   ] as const)("isolates a failure in the %s job from its siblings", async (name, cron) => {
     scheduledJobs[name].mockRejectedValueOnce(new Error(`${name} failed`));
     await expect(worker().scheduled(controller(cron))).resolves.toBeUndefined();
-    const siblings = cron === "* * * * *" ? [scheduledJobs.deadline, scheduledJobs.recovery] : [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.prune];
+    const siblings = cron === "* * * * *"
+      ? [scheduledJobs.deadline, scheduledJobs.recovery, scheduledJobs.manualPublish]
+      : [scheduledJobs.raw, scheduledJobs.stalled, scheduledJobs.subtasks, scheduledJobs.prune];
     for (const job of siblings) expect(job).toHaveBeenCalledOnce();
     expect(consoleError).toHaveBeenCalled();
+  });
+
+  it("runs the manual publish stuck sweep for the every-minute trigger only", async () => {
+    await worker().scheduled(controller("* * * * *"));
+    expect(scheduledJobs.manualPublish).toHaveBeenCalledOnce();
+
+    scheduledJobs.manualPublish.mockClear();
+    await worker().scheduled(controller("0 * * * *"));
+    expect(scheduledJobs.manualPublish).not.toHaveBeenCalled();
   });
 
   it("warns and runs nothing for an unrecognized trigger", async () => {
