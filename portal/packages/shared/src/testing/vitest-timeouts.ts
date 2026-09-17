@@ -26,5 +26,5 @@
  * used to. If a single test needs longer, give it its own `it(..., ms)` or `describe` option so
  * the reason lives next to the test, rather than raising this for everyone.
  */
-export const CI_TEST_TIMEOUT_MS = 30_000;
-export const CI_HOOK_TIMEOUT_MS = 30_000;
+export const TEST_TIMEOUT_MS = 30_000;
+export const HOOK_TIMEOUT_MS = 30_000;

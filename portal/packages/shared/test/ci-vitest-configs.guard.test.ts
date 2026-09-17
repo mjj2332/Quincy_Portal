@@ -31,24 +31,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { RequireExecutedTests } from "../src/testing/require-executed-tests.ts";
+import { findVitestConfigs } from "../src/testing/find-vitest-configs.ts";
 
 const portalRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const workflowPath = fileURLToPath(new URL("../../../../.github/workflows/portal.yml", import.meta.url));
 
-const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".wrangler", "coverage"]);
-
-function findVitestConfigs(dir: string): string[] {
-  const found: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      found.push(...findVitestConfigs(join(dir, entry.name)));
-    } else if (/^vitest(\..+)?\.config\.[cm]?[jt]s$/.test(entry.name)) {
-      found.push(relative(portalRoot, join(dir, entry.name)));
-    }
-  }
-  return found.sort();
-}
 
 /**
  * The configs the `test` job actually runs. Matching whole `- run:` steps rather than
