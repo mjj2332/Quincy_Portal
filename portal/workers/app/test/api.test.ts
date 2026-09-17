@@ -3494,6 +3494,7 @@ describe("staff app API", () => {
     const reserve = async (body: Record<string, unknown>, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/presign`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
     const put = (sessionId: string, slot: "pdf" | "preview", body: string, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/direct/${sessionId}/${slot}`, { method: "PUT", headers: { cookie, "content-type": slot === "pdf" ? "application/pdf" : "image/jpeg" }, body });
     const complete = (sessionId: string, preview = false, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/complete`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ sessionId, pdf: {}, ...(preview ? { preview: {} } : {}) }) });
+    const abortSession = (sessionId: string, cookie = adminCookie) => SELF.fetch(`https://portal.test/api/projects/${project.id}/documents/${sessionId}/abort`, { method: "POST", headers: { cookie } });
     const floorplanInput = (pdf: string, preview: string, versionGroupId?: string) => ({ kind: "floorplan", versionGroupId, pdf: { filename: `floorplan-${pdf}.pdf`, bytes: pdf.length, contentType: "application/pdf" }, preview: { filename: `floorplan-${preview}.jpg`, bytes: preview.length, contentType: "image/jpeg" } });
     const copyInput = (pdf: string, versionGroupId?: string) => ({ kind: "copy_pdf", versionGroupId, pdf: { filename: `copy-${pdf}.pdf`, bytes: pdf.length, contentType: "application/pdf" } });
 
@@ -3512,6 +3513,9 @@ describe("staff app API", () => {
     const missing = await reserve(floorplanInput("pdf", "jpg")); expect(missing.status).toBe(201); const missingSession = await missing.json() as Reserved;
     expect((await complete(missingSession.sessionId)).status).toBe(400); // The pair is a logical floorplan version.
     expect((await complete(missingSession.sessionId, true, await sessionCookie(otherAdminToken))).status).toBe(404); // session belongs to its presigning user.
+    // Released back to `pending` by the pair-mismatch refusal, so still live and still blocking
+    // archive by design. Abort what this test reserved rather than leaving it open (#174).
+    expect((await abortSession(missingSession.sessionId)).status).toBe(204);
 
     const floorplan1Response = await reserve(floorplanInput("one", "one")); expect(floorplan1Response.status).toBe(201); const floorplan1 = await floorplan1Response.json() as Reserved;
     expect((await put(floorplan1.sessionId, "pdf", "one")).status).toBe(204); expect((await put(floorplan1.sessionId, "preview", "one")).status).toBe(204);
@@ -3548,8 +3552,9 @@ describe("staff app API", () => {
     expect(await database.DB.prepare("SELECT status FROM document_uploads WHERE id = ?").bind(stalled.sessionId).first()).toEqual({ status: "completing" });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE r2_key = ?").bind(stalled.files.pdf.key).first()).toEqual({ count: 0 });
     await database.DB.prepare("UPDATE document_uploads SET completing_at = ? WHERE id = ?").bind(Date.now() - 16 * 60 * 1000, stalled.sessionId).run();
-    expect((await reserve(copyInput("reaper-kick"))).status).toBe(201);
+    const reaperKickResponse = await reserve(copyInput("reaper-kick")); expect(reaperKickResponse.status).toBe(201);
     expect(await database.DB.prepare("SELECT status FROM document_uploads WHERE id = ?").bind(stalled.sessionId).first()).toEqual({ status: "expired" });
+    expect((await abortSession(((await reaperKickResponse.json()) as Reserved).sessionId)).status).toBe(204);
 
     const archiveBlockResponse = await reserve(copyInput("archive-block")); expect(archiveBlockResponse.status).toBe(201); const archiveBlocked = await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie: adminCookie } });
     expect(archiveBlocked.status).toBe(409);
@@ -3581,9 +3586,13 @@ describe("staff app API", () => {
     expect(approved.status).toBe(200);
     const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=floorplan`, { headers: { cookie: adminCookie } });
     await expect(listed.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: v2.id, kind: "floorplan_pdf", version: 2, versionGroupId: v1.versionGroupId, review: expect.objectContaining({ decision: "approved" }) }), expect.objectContaining({ id: v2.preview.id, kind: "floorplan_preview", version: 2, versionGroupId: v1.versionGroupId })]) });
-    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE project_id = ? AND kind = 'floorplan'").bind(project.id).first()).toEqual({ received_count: 4, status: "received" });
+    // Two versions of one floorplan, so two current assets: the v2 PDF and its v2 preview. The
+    // v1 pair is superseded and no longer delivered (#176). This read 4 before that fix, which
+    // contradicted the `copy` expectation below for the identical v1->v2 relationship.
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE project_id = ? AND kind = 'floorplan'").bind(project.id).first()).toEqual({ received_count: 2, status: "received" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE version_group_id = ? AND superseded_at IS NOT NULL").bind(v1.versionGroupId).first()).toEqual({ count: 2 });
     const projectDetails = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie: adminCookie } });
-    await expect(projectDetails.json()).resolves.toMatchObject({ collections: expect.arrayContaining([expect.objectContaining({ kind: "floorplan", receivedCount: 4, status: "received" }), expect.objectContaining({ kind: "copy", receivedCount: 2, status: "received" })]) });
+    await expect(projectDetails.json()).resolves.toMatchObject({ collections: expect.arrayContaining([expect.objectContaining({ kind: "floorplan", receivedCount: 2, status: "received" }), expect.objectContaining({ kind: "copy", receivedCount: 2, status: "received" })]) });
     const original = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
     expect(original.status).toBe(200); expect(original.headers.get("content-type")).toContain("application/pdf");
     expect(original.headers.get("content-disposition")).toBe('inline; filename="floorplan-two.pdf"');
@@ -3656,8 +3665,8 @@ describe("staff app API", () => {
     expect(Object.keys(externalShape)).toEqual(Object.keys(adminShape));
     expect(Object.keys(externalShape.files.pdf)).toEqual(Object.keys(adminShape.files.pdf));
     expect(externalShape.files.pdf).toEqual(expect.objectContaining({ assetId: expect.any(String), key: expect.any(String), devDirect: true }));
-    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${adminShape.sessionId}/abort`, { method: "POST", headers: adminCookie })).status).toBe(204);
-    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalShape.sessionId}/abort`, { method: "POST", headers: externalCookie })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${adminShape.sessionId}/abort`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalShape.sessionId}/abort`, { method: "POST", headers: { cookie: externalCookie } })).status).toBe(204);
 
     const adminCompleteResponse = await adminReserveExternal(copyInput("admin-complete"));
     expect(adminCompleteResponse.status).toBe(201);
@@ -3686,7 +3695,7 @@ describe("staff app API", () => {
     const abortResponse = await externalReserve(externalCopyInput("external-abort"));
     expect(abortResponse.status).toBe(201);
     const externalAbort = await abortResponse.json() as typeof adminShape;
-    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalAbort.sessionId}/abort`, { method: "POST", headers: externalCookie })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalAbort.sessionId}/abort`, { method: "POST", headers: { cookie: externalCookie } })).status).toBe(204);
     expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/presign`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify(externalCopyInput("photographer-denied")) })).status).toBe(403);
 
     const activityResponse = await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/activity?limit=30`, { headers: { cookie: await sessionCookie(firstPhotographerToken) } });
@@ -3701,7 +3710,12 @@ describe("staff app API", () => {
       expect(JSON.stringify(payload)).not.toMatch(/key|r2Key|pdfKey|url|filename/i);
       expect(Object.keys(payload)).not.toEqual(expect.arrayContaining(["key", "r2Key", "pdfKey", "url", "filename"]));
     }
-  });
+  // 30s, matching the other end-to-end tests in this file (803, 996, 2082). This one reserves,
+  // uploads and completes a dozen sessions over SELF.fetch, and the 5s default is not a budget
+  // anyone chose for it: until #170 the test was skipped in CI, so its runtime was never once
+  // measured there. It takes ~0.4s locally and ~5.2s on a CI runner, which cleared the default
+  // by a hair and failed as a timeout rather than an assertion.
+  }, 30_000);
 
   it("denies same-Stage placement changes to internal and External Editors without mutation", async () => {
     const adminCookie = await sessionCookie(adminToken);
