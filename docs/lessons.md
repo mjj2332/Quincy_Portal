@@ -2754,3 +2754,26 @@ server, and also asserts that `vite.config.ts` uses the helper for `/api` and `/
 **Rule:** a proxy in front of an origin check must decide what Origin it presents. Rewrite it only
 for the pages it serves itself, never for every request, or the proxy launders a cross-site request
 into a trusted one.
+
+## A bounded page is only bounded if every row on it can move (#194)
+
+The minute cron's move-recovery select took 10 `moving` rows with an expired lease, oldest first. A
+commit-stuck mapping (`move_commit_attempts` at the limit) always matches that, and
+`resumeEditorFolderMove` returns before writing anything, so it never stops being the oldest. Ten
+of them filled the page for good — the #154 starvation again, from a different starting point. The
+same select also had two conditions that could never end: a `queued`/`running` reconcile job with no
+age bound (one that died mid-run hid its project forever), and `move_expires_at < now`, which is
+never true for NULL, so a lease with no expiry could never be taken over.
+
+- **Exclude what nothing will act on, at the top level.** The stuck clause sits beside
+  `state = 'ready'`, not inside the `moving` arm: a stuck row with an old orphan watch matched the
+  orphan arm and would have taken the slot anyway. A mutation that moved it into the arm failed a test.
+- **A throttle on "in flight" needs an end.** The job only throttles while `updated_at` is inside
+  `JOB_STALE_MS`. Use `updated_at`, not `created_at`: a retried delivery is old and still alive. A
+  second pass next to a slow live one is safe, because every move write is fenced on the lease token.
+- **NULL fences need `IS`.** Treating a NULL expiry as expired in the reader is not enough on its own:
+  the takeover CAS compared `move_token = ? AND move_expires_at = ?`, which never matches NULL. Only a
+  test with *both* columns NULL caught the token half, and a mutation run is what showed that test was missing.
+
+**Rule:** for every row a bounded page can select, name the write that takes it off the page. If
+there isn't one, the row doesn't belong in the select.

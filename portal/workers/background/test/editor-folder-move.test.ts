@@ -432,6 +432,35 @@ describe("Editor folder move: claiming and takeover", () => {
     expect(moved).toMatchObject({ status: "moved", to: newRoot });
   });
 
+  it("takes over a moving mapping with no lease expiry instead of reporting it in flight forever (#194)", async () => {
+    const { suffix, projectId, mapping } = await setup({ leaf: "null-expiry" });
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: suffix });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    await database.DB.prepare(`UPDATE editor_folder_mappings SET move_status = 'moving', move_token = ?, move_expires_at = NULL,
+        move_target_path = ?, move_target_path_key = ?, move_target_shoot_date = ? WHERE id = ?`)
+      .bind(crypto.randomUUID(), newRoot, editorFolderPathKey(newRoot), "2027-01-15", mapping.id).run();
+    const takingOver = (await getEditorFolderMapping(db, projectId))!;
+    expect(takingOver.moveExpiresAt).toBeNull();
+    const outcome = await resumeEditorFolderMove(env as never, db, takingOver, deps({
+      getMetadata: async () => folder(newRoot, mapping.rootFolderId!),
+    }));
+    expect(outcome).toMatchObject({ status: "moved", to: newRoot, mapping: { rootPath: newRoot, moveStatus: null } });
+  });
+
+  it("takes over a moving mapping whose token and expiry are both missing (#194)", async () => {
+    const { suffix, projectId, mapping } = await setup({ leaf: "null-token" });
+    const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: suffix });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    await database.DB.prepare(`UPDATE editor_folder_mappings SET move_status = 'moving', move_token = NULL, move_expires_at = NULL,
+        move_target_path = ?, move_target_path_key = ?, move_target_shoot_date = ? WHERE id = ?`)
+      .bind(newRoot, editorFolderPathKey(newRoot), "2027-01-15", mapping.id).run();
+    const takingOver = (await getEditorFolderMapping(db, projectId))!;
+    const outcome = await resumeEditorFolderMove(env as never, db, takingOver, deps({
+      getMetadata: async () => folder(newRoot, mapping.rootFolderId!),
+    }));
+    expect(outcome).toMatchObject({ status: "moved", to: newRoot, mapping: { rootPath: newRoot, moveStatus: null } });
+  });
+
   it("reports an unexpired claim held by another pass as in flight", async () => {
     const first = await setup({ leaf: "in-flight" });
     const newRoot = editorFolderPath({ shootDate: "2027-01-15", projectFolderName: first.suffix });

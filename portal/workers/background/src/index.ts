@@ -25,6 +25,8 @@ import { AutoHdrFetch } from "./workflows/autohdr-fetch";
 import { ManualEditedPublish } from "./workflows/manual-edited-publish";
 import { canonicalDropboxConnectionId } from "./dropbox/connection";
 import { enqueueEditorReconcile, handleEditorReconcileMessage } from "./editor-folders/queue";
+import { JOB_STALE_MS } from "./editor-folders/move";
+import { MOVE_COMMIT_ATTEMPT_LIMIT } from "./editor-folders/move-note";
 import { syncProjectEditorOutput } from "./editor-folders/sync-output";
 import { automationFlag } from "./dropbox/monitor-state";
 import { previewEditorBackfill, applyEditorCandidate, inspectEditorCandidate, type ReviewedEditorCandidate } from "./editor-folders/backfill";
@@ -87,11 +89,20 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           // placement date (a fresh move, or a stale block worth re-checking), or a completed move
           // whose orphan-upload watch is due its +30-minute check. Throttled the same way as any
           // other reconcile trigger, so a project already mid-pass is not re-enqueued on top of itself.
+          //
+          // The page is oldest-first and bounded, so every row it can select must be one a pass will
+          // act on (#194, and the #154 lesson): a commit-stuck mapping is excluded outright, because
+          // `resumeEditorFolderMove` returns before writing anything and it would otherwise hold its
+          // slot forever. A NULL expiry is a lease nobody can be holding, so it counts as expired.
+          // A queued/running reconcile job only throttles while it is still making progress: one that
+          // died mid-run would otherwise hide the project for good. Letting a second pass start
+          // beside a slow-but-alive one is safe, since every move write is fenced on the lease token.
           const dueForMove = await dbFor(this.env).select({ projectId: editorFolderMappings.projectId }).from(editorFolderMappings)
             .innerJoin(projects, eq(projects.id, editorFolderMappings.projectId))
             .where(sql`${editorFolderMappings.state} = 'ready'
+              AND NOT (${editorFolderMappings.moveStatus} = 'moving' AND ${editorFolderMappings.moveCommitAttempts} >= ${MOVE_COMMIT_ATTEMPT_LIMIT})
               AND (
-                (${editorFolderMappings.moveStatus} = 'moving' AND ${editorFolderMappings.moveExpiresAt} < ${controller.scheduledTime})
+                (${editorFolderMappings.moveStatus} = 'moving' AND (${editorFolderMappings.moveExpiresAt} IS NULL OR ${editorFolderMappings.moveExpiresAt} < ${controller.scheduledTime}))
                 OR (
                   ${projects.archivedAt} IS NULL AND ${projects.stageKey} != 'delivered'
                   AND ${projects.shootDate} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
@@ -102,7 +113,7 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
               )
               AND NOT EXISTS (
                 SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'
-                  AND (j.status IN ('queued','running') OR j.created_at > ${controller.scheduledTime - 10 * 60_000})
+                  AND ((j.status IN ('queued','running') AND j.updated_at > ${controller.scheduledTime - JOB_STALE_MS}) OR j.created_at > ${controller.scheduledTime - 10 * 60_000})
               )`)
             .orderBy(editorFolderMappings.updatedAt).limit(10);
           for (const row of dueForMove) await enqueueEditorReconcile(this.env, row.projectId);
