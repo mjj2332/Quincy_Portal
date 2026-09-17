@@ -6,7 +6,7 @@ import type { Env } from "../src/env";
 import QuincyBackground from "../src/index";
 import { editorFolderPath, editorFolderPathKey } from "../src/editor-folders/paths";
 import { getEditorFolderMapping } from "../src/editor-folders/mapping";
-import { JOB_STALE_MS } from "../src/editor-folders/move";
+import { JOB_STALE_MS, sweepEditorFolderOrphanUploads } from "../src/editor-folders/move";
 import type { JobStatus } from "../src/lib/jobs";
 import { MOVE_COMMIT_ATTEMPT_LIMIT } from "../src/editor-folders/move-note";
 
@@ -154,6 +154,23 @@ describe("Minute cron: Editor folder move selection", () => {
     await worker().scheduled(controller(Date.now()));
     expect(await reconcileJobCount(archived.projectId)).toBe(1);
     expect(await reconcileJobCount(delivered.projectId)).toBe(1);
+  });
+
+  it("stops selecting a due watch whose Dropbox check failed, so it cannot fill the page", async () => {
+    const failing = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-failing" });
+    await insertWatch(failing.mappingId, { watchUntil: Date.now() - 60_000 });
+    const mapping = (await getEditorFolderMapping(db, failing.projectId))!;
+    const now = new Date();
+    await sweepEditorFolderOrphanUploads(env as never, db, mapping, {
+      now: () => now,
+      getMetadata: async () => { throw new Error("Dropbox get_metadata failed (401): expired_access_token"); },
+      listFolderRecursive: async () => { throw new Error("unexpected"); },
+    } as never);
+    await worker().scheduled(controller(now.getTime()));
+    expect(await reconcileJobCount(failing.projectId)).toBe(0);
+    // Retried once the backoff is due.
+    await worker().scheduled(controller(now.getTime() + 30 * 60_000 + 11 * 60_000));
+    expect(await reconcileJobCount(failing.projectId)).toBe(1);
   });
 
   it("throttles on an editor_reconcile job already queued/running or created within the last 10 minutes", async () => {

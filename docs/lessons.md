@@ -2798,9 +2798,14 @@ What the blind plan reviews caught:
   The batch's positional result indexes shift with it.
 - **A lapse delete races a found update.** Delete only `WHERE status = 'watching' AND
   watch_until = <what you read>`. Write the found update and its audit row in one batch.
-- **A cron arm needs the same filter as the pass it enqueues.** An inactive project's reconcile
-  pass returns before the sweep, so a due watch there was re-enqueued every ten minutes and held a
-  slot in the page of 10. That is #194's starvation in a different place.
+- **A cron arm needs the same reach as the pass it enqueues.** An inactive project's reconcile
+  pass returned before the sweep, so a due watch there was re-enqueued every ten minutes and held a
+  slot in the page of 10: #194's starvation in a different place. The pass now sweeps inactive
+  projects too, and the arm selects them.
+- **A caught failure must still move the row off the page.** Catching a Dropbox error so the move
+  can run left the watch due and the mapping unchanged, so a revoked connection would be picked
+  again every throttle window. A due watch whose check fails now pushes its own `watch_until`
+  out by 30 minutes and logs; it is retried, never dropped.
 - **"The path exists" is not "a file was uploaded."** Dropbox can bring back an empty folder, so
   the sweep only counts a file.
 

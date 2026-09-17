@@ -91,6 +91,26 @@ describe("migration 0046 editor folder orphan watches (#195)", () => {
     db.close();
   });
 
+  it("drains a watch the old worker wrote after the migration, even when the new worker has since moved at that revision", () => {
+    const now = 1_791_100_000_000;
+    const db = prepared(now);
+    apply0046(db);
+    const drain = () => db.exec(readFileSync(new URL("../../../scripts/0046-legacy-orphan-watch-drain.sql", import.meta.url), "utf8"));
+    // The old worker commits revision 2 into the retired column; the new worker then commits revision 3 and watches that move.
+    db.prepare("UPDATE editor_folder_mappings SET root_revision = 3, moved_from_path = '/Editor/Gap/Root', move_completed_at = ? WHERE id = 'mapping-idle'").run(now);
+    db.prepare("INSERT INTO editor_folder_orphan_watches (id, mapping_id, move_revision, old_path, old_path_key, status, watch_until, created_at, updated_at) VALUES ('new-worker', 'mapping-idle', 3, '/Editor/Second', '/editor/second', 'watching', 0, 0, 0)").run();
+    drain();
+    expect(db.prepare("SELECT move_revision, old_path, old_path_key, status, watch_until FROM editor_folder_orphan_watches WHERE mapping_id = 'mapping-idle' ORDER BY move_revision").all()).toEqual([
+      { move_revision: -3, old_path: "/Editor/Gap/Root", old_path_key: "/editor/gap/root", status: "watching", watch_until: now + 30 * 60_000 },
+      { move_revision: 3, old_path: "/Editor/Second", old_path_key: "/editor/second", status: "watching", watch_until: 0 },
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM editor_folder_mappings WHERE moved_from_path IS NOT NULL OR move_completed_at IS NOT NULL").get()).toEqual({ n: 0 });
+    const before = db.prepare("SELECT COUNT(*) AS n FROM editor_folder_orphan_watches").get();
+    drain();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM editor_folder_orphan_watches").get()).toEqual(before);
+    db.close();
+  });
+
   it("keeps the migration journal in order", () => {
     const journal = JSON.parse(readFileSync(new URL("../migrations/meta/_journal.json", import.meta.url), "utf8")) as { entries: Record<string, unknown>[] };
     const at = journal.entries.findIndex((entry) => entry.idx === 46);

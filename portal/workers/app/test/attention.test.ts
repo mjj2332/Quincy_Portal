@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { MOVE_OVERDUE_MS } from "../src/lib/attention";
+import { orphanAcknowledgeStatements } from "../src/routes/admin";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -281,6 +282,21 @@ describe("editor reconcile attention (#163)", () => {
       expect(body.editorFolderAttention?.kind).toBe("editor_folder_move_stuck");
     });
 
+    it("lists the oldest reports first when there are more than the cap", async () => {
+      const projectId = await seedMapping();
+      // One past the list cap of 200, found at 1..201.
+      await database.DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 201)
+        INSERT INTO editor_folder_orphan_watches (id, mapping_id, move_revision, old_path, old_path_key, status, watch_until, found_at, found_detail, created_at, updated_at)
+        SELECT lower(hex(randomblob(16))), m.id, n.i, '/Editor/01_ACTIVE EDITS/Bulk/' || n.i, lower('/Editor/01_ACTIVE EDITS/Bulk/' || n.i), 'found', 0, n.i, NULL, 0, 0
+        FROM n, editor_folder_mappings m WHERE m.project_id = ?`).bind(projectId).run();
+      const result = await list();
+      const foundAts = result.items.filter((item) => item.projectId === projectId).map((item) => item.updatedAt);
+      expect(result.truncated).toBe(true);
+      expect(foundAts.length).toBeGreaterThan(0);
+      expect(foundAts).toEqual(Array.from({ length: foundAts.length }, (_, index) => index + 1));
+      await database.DB.prepare("DELETE FROM editor_folder_orphan_watches WHERE old_path LIKE '/Editor/01_ACTIVE EDITS/Bulk/%'").run();
+    });
+
     describe("acknowledge", () => {
       const acknowledge = (id: string, token = adminToken) => request(`/api/admin/attention/orphan-uploads/${id}/acknowledge`, token, "POST");
 
@@ -289,6 +305,27 @@ describe("editor reconcile attention (#163)", () => {
         expect((await acknowledge(watchId, editorToken)).status).toBe(403);
         expect((await acknowledge("not-a-uuid")).status).toBe(400);
         expect((await acknowledge(crypto.randomUUID())).status).toBe(404);
+      });
+
+      const ackAudits = (projectId: string) => database.DB.prepare("SELECT id FROM audit_log WHERE action = 'editor_folder.move.orphan_upload.acknowledged' AND target_id = ?").bind(projectId).all().then((result) => result.results);
+      const ackStatements = (watchId: string, projectId: string) => orphanAcknowledgeStatements(database.DB, { watchId, actorId: adminId, projectId, metaJson: "{}", now: Date.now() });
+
+      it("writes one audit entry when two acknowledgements race, and the loser's delete changes nothing", async () => {
+        const projectId = await seedMapping();
+        const watchId = await seedWatch(projectId);
+        const first = ackStatements(watchId, projectId);
+        const second = ackStatements(watchId, projectId);
+        expect((await database.DB.batch(first))[0]?.meta.changes).toBe(1);
+        expect((await database.DB.batch(second))[0]?.meta.changes).toBe(0);
+        expect(await ackAudits(projectId)).toHaveLength(1);
+      });
+
+      it("neither deletes nor audits a watch that is not in the found state", async () => {
+        const projectId = await seedMapping();
+        const watchId = await seedWatch(projectId, { status: "watching" });
+        expect((await database.DB.batch(ackStatements(watchId, projectId)))[0]?.meta.changes).toBe(0);
+        expect(await database.DB.prepare("SELECT status FROM editor_folder_orphan_watches WHERE id = ?").bind(watchId).first()).toEqual({ status: "watching" });
+        expect(await ackAudits(projectId)).toEqual([]);
       });
 
       it("refuses a watch that has found nothing", async () => {

@@ -696,6 +696,32 @@ describe("Editor folder move: orphan-upload watches (#195)", () => {
     expect(await watchRows(mapping.id)).toEqual([expect.objectContaining({ id: watchId, status: "found" })]);
   });
 
+  it("audits nothing when a concurrent pass marked the watch found first", async () => {
+    const { projectId, mapping } = await setup();
+    const watchId = await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    const tree = { [OLD]: [file(`${OLD}/late.jpg`)] };
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps(tree, {
+      listFolderRecursive: async () => {
+        await database.DB.prepare("UPDATE editor_folder_orphan_watches SET status = 'found', found_at = 1 WHERE id = ?").bind(watchId).run();
+        return tree[OLD];
+      },
+    }));
+    expect(outcome).toBeNull();
+    expect((await auditRows("editor_folder.move.orphan_upload", projectId)).results).toHaveLength(0);
+  });
+
+  it("does not take a root that only shares a name prefix with another mapping's root as reclaimed", async () => {
+    const other = await setup({ leaf: "prefix-root Bar" });
+    const shorter = other.mapping.rootPath.slice(0, -" Bar".length);
+    const longer = `${other.mapping.rootPath}X`;
+    const { projectId, mapping } = await setup({ overrides: { connection_id: other.connectionId } });
+    await insertWatch(mapping.id, { oldPath: shorter, moveRevision: 0, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    await insertWatch(mapping.id, { oldPath: longer, moveRevision: 1, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping,
+      orphanDeps({ [shorter]: [file(`${shorter}/a.jpg`)], [longer]: [file(`${longer}/b.jpg`)] }));
+    expect((await watchRows(mapping.id)).map((row) => [row.old_path, row.status])).toEqual([[shorter, "found"], [longer, "found"]]);
+  });
+
   it("ends, without asking Dropbox, a watch whose old root is now another mapping's live root", async () => {
     const other = await setup({ leaf: "taken-over" });
     // Same Dropbox account: a root on another connection is a different folder.
@@ -732,6 +758,17 @@ describe("Editor folder move: orphan-upload watches (#195)", () => {
     }));
     expect(outcome).toMatchObject({ status: "moved" });
     expect((await watchRows(mapping.id)).map((row) => [row.old_path, row.status])).toEqual([[OLD, "watching"], [mapping.rootPath, "watching"]]);
+    // Backed off, so the cron stops picking it until the retry is due.
+    expect((await watchRows(mapping.id))[0]?.watch_until).toBe(FIXED_NOW.getTime() + 30 * 60_000);
+  });
+
+  it("leaves a failing watch alone while it is still inside its window", async () => {
+    const { projectId, mapping } = await setup();
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 5 * 60_000 });
+    await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: mapping.shootDate }, mapping, orphanDeps({}, {
+      getMetadata: async () => { throw new Error("Dropbox get_metadata failed (500)"); },
+    }));
+    expect(await watchRows(mapping.id)).toEqual([expect.objectContaining({ status: "watching", watch_until: FIXED_NOW.getTime() + 5 * 60_000 })]);
   });
 
   it("sweeps the watches of a Project delivered or archived inside the window", async () => {

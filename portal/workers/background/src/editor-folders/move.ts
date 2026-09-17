@@ -662,6 +662,9 @@ async function clearStaleBlock(env: Env, db: Database, mapping: EditorFolderMapp
   `).bind(now.getTime(), mapping.id, mapping.moveTargetShootDate).run();
 }
 
+/** How long a due watch whose Dropbox check failed waits before the cron retries it. */
+const ORPHAN_CHECK_RETRY_MS = 30 * 60_000;
+
 type OrphanWatch = { id: string; oldPath: string; oldPathKey: string; watchUntil: number };
 
 /** The first file under `path` (or `path` itself, if a file now sits there); null when the path is
@@ -704,9 +707,16 @@ async function sweepOrphanUploads(env: Env, db: Database, mapping: EditorFolderM
       try {
         file = await firstOrphanFile(env, db, watch.oldPath, mapping.connectionId, deps);
       } catch (error) {
-        // One unreadable old root must not hold up the move this pass exists for. The watch
-        // stays `watching`, so the cron keeps bringing it back until Dropbox answers.
-        console.error("Editor folder orphan-upload check failed", { mappingId: mapping.id, watchId: watch.id, error: errorMessage(error) });
+        // One unreadable old root must not hold up the move this pass exists for, and a due watch
+        // that keeps failing (a revoked connection) must not stay due: the cron page is ordered
+        // by mapping, so ten of them would starve every other move. A due watch backs off; it
+        // never lapses unchecked, and every failure is logged.
+        const retryAt = now.getTime() >= Number(watch.watchUntil) ? now.getTime() + ORPHAN_CHECK_RETRY_MS : null;
+        console.error("Editor folder orphan-upload check failed", { mappingId: mapping.id, watchId: watch.id, retryAt, error: errorMessage(error) });
+        if (retryAt !== null) {
+          await env.DB.prepare("UPDATE editor_folder_orphan_watches SET watch_until = ?, updated_at = ? WHERE id = ? AND status = 'watching' AND watch_until = ?")
+            .bind(retryAt, now.getTime(), watch.id, watch.watchUntil).run();
+        }
         continue;
       }
     }

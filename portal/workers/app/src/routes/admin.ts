@@ -179,6 +179,24 @@ adminRoutes.get("/admin/attention", terminalRoute("/admin/attention", async (c) 
  * Editor root have been dealt with. Dropbox is not re-checked — the admin may have chosen to leave
  * them — so the audit entry, not the sweep, is the record. The row is deleted; a later move away
  * from the same root starts a fresh watch. */
+/**
+ * Deletes a found orphan-upload report and audits it only if this call is the one that deleted it.
+ * A found watch never changes until it is deleted, so the delete is fenced on that state alone:
+ * two concurrent acknowledgements write one entry. Exported so the race can be tested directly.
+ */
+export function orphanAcknowledgeStatements(
+  db: D1Database,
+  input: { watchId: string; actorId: string; projectId: string; metaJson: string | null; now: number },
+): D1PreparedStatement[] {
+  return [
+    db.prepare("DELETE FROM editor_folder_orphan_watches WHERE id = ? AND status = 'found'").bind(input.watchId),
+    db.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+      SELECT ?, ?, 'editor_folder.move.orphan_upload.acknowledged', 'project', ?, ?, ? WHERE changes() = 1
+    `).bind(newId(), input.actorId, input.projectId, input.metaJson, input.now),
+  ];
+}
+
 adminRoutes.post("/admin/attention/orphan-uploads/:id/acknowledge", terminalRoute("/admin/attention/orphan-uploads/:id/acknowledge", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
   const watchId = c.req.param("id"); if (!idCheck(watchId)) return c.json({ error: "Invalid watch id" }, 400);
@@ -189,15 +207,9 @@ adminRoutes.post("/admin/attention/orphan-uploads/:id/acknowledge", terminalRout
   if (!watch) return c.json({ error: "Orphan-upload report not found" }, 404);
   if (watch.status !== "found") return c.json({ error: "Nothing has been found under this Editor root yet", code: "orphan_watch_not_found_state" }, 409);
   const { status: _status, projectId, ...found } = watch;
-  // A found watch never changes until it is deleted, so the delete is fenced on that state alone
-  // and the audit row is chained to it: two concurrent acknowledgements write one entry.
-  const [deleted] = await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM editor_folder_orphan_watches WHERE id = ? AND status = 'found'").bind(watchId),
-    c.env.DB.prepare(`
-      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
-      SELECT ?, ?, 'editor_folder.move.orphan_upload.acknowledged', 'project', ?, ?, ? WHERE changes() = 1
-    `).bind(newId(), c.get("user").id, projectId, auditMeta(c.get("user"), { watchId, ...found }), Date.now()),
-  ]);
+  const [deleted] = await c.env.DB.batch(orphanAcknowledgeStatements(c.env.DB, {
+    watchId, actorId: c.get("user").id, projectId, metaJson: auditMeta(c.get("user"), { watchId, ...found }), now: Date.now(),
+  }));
   if ((deleted?.meta.changes ?? 0) !== 1) return c.json({ error: "Orphan-upload report not found" }, 404);
   return c.json({ ok: true });
 }));
