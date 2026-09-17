@@ -103,8 +103,6 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   currentProjectIdRef.current = projectId;
   terminalRef.current = terminal;
 
-  useEffect(() => { if (!notice) return; toast(notice); onNoticeShown?.(); }, [notice, onNoticeShown]);
-
   useEffect(() => {
     const nextRun = runRef.current + 1; runRef.current = nextRun; setRun(nextRun);
     manualOwnerRef.current?.controller.abort();
@@ -114,16 +112,29 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     if (legacyTimerRef.current) window.clearTimeout(legacyTimerRef.current);
     activeJobTimerRef.current = undefined; legacyTimerRef.current = undefined;
     const controller = new AbortController(); manualOwnerRef.current = { controller, run: nextRun, projectId };
-    // This effect runs on every mount, including the first, and clears toasts unconditionally — while
-    // the `notice` effect above pushes one on mount too. Whichever commits second wins, so a `notice`
-    // can be wiped by this reset on the very render that raised it. Pre-existing, not introduced by
-    // #110, and deliberately NOT fixed here — filed separately as #117. Effect order is unchanged.
+    // Clears toasts unconditionally, on every mount including the first. The `notice` effect is
+    // ordered deliberately *after* this one so that a notice raised on mount survives it (#117).
     setActiveTab("raw"); setOpenAssetId(null); setLightboxOrderIds(null); setIngest(null); setJobs([]); setAutohdrStatus(null); clearToasts();
     setManualReadyFor(null); setQueryReadyFor(null); setTerminal(null); setInitialDetailProbe(false); setCollaborationOnly(false); setCollaborationUnavailable(false); setCollectionDenied(new Set()); setStageKeyForManual(null); setIsSyncing(false); setIsSending(false);
     initialTabHandledRef.current = null; autohdrObservedRef.current = null;
     transientNoticeRef.current.clear();
     return () => { controller.abort(); for (const timer of syncDelayTimersRef.current) window.clearTimeout(timer); syncDelayTimersRef.current.clear(); };
   }, [projectId]);
+
+  const onNoticeShownRef = useRef(onNoticeShown);
+  onNoticeShownRef.current = onNoticeShown;
+  // Ordered after the per-Project reset above, and that order is the whole fix (#117). Both effects
+  // run on mount and React commits them in source order, so with the push first the reset's
+  // `clearToasts()` wiped the notice on the very render that raised it — and `onNoticeShown` had
+  // already fired, so the notice was consumed rather than deferred. A Staff member arriving after a
+  // Stage change lost the confirmation with no way to tell whether the action landed. Reset first
+  // means the outgoing Project's toasts are cleared and the notice lands in the cleared surface,
+  // which is also what a Project switch carrying a notice needs.
+  //
+  // Keyed on the notice value alone, with the callback in a ref: `clearNotice` is reallocated on
+  // every shell render (lib/app-router.tsx:194), so depending on its identity would re-run this on
+  // unrelated renders and could show one notice twice.
+  useEffect(() => { if (!notice) return; toast(notice); onNoticeShownRef.current?.(); }, [notice]);
 
   const isCurrent = useCallback(() => {
     const owner = manualOwnerRef.current;
