@@ -3661,8 +3661,8 @@ describe("staff app API", () => {
     expect(Object.keys(externalShape)).toEqual(Object.keys(adminShape));
     expect(Object.keys(externalShape.files.pdf)).toEqual(Object.keys(adminShape.files.pdf));
     expect(externalShape.files.pdf).toEqual(expect.objectContaining({ assetId: expect.any(String), key: expect.any(String), devDirect: true }));
-    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${adminShape.sessionId}/abort`, { method: "POST", headers: adminCookie })).status).toBe(204);
-    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalShape.sessionId}/abort`, { method: "POST", headers: externalCookie })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${adminShape.sessionId}/abort`, { method: "POST", headers: { cookie: adminCookie } })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalShape.sessionId}/abort`, { method: "POST", headers: { cookie: externalCookie } })).status).toBe(204);
 
     const adminCompleteResponse = await adminReserveExternal(copyInput("admin-complete"));
     expect(adminCompleteResponse.status).toBe(201);
@@ -3691,7 +3691,7 @@ describe("staff app API", () => {
     const abortResponse = await externalReserve(externalCopyInput("external-abort"));
     expect(abortResponse.status).toBe(201);
     const externalAbort = await abortResponse.json() as typeof adminShape;
-    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalAbort.sessionId}/abort`, { method: "POST", headers: externalCookie })).status).toBe(204);
+    expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/${externalAbort.sessionId}/abort`, { method: "POST", headers: { cookie: externalCookie } })).status).toBe(204);
     expect((await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/documents/presign`, { method: "POST", headers: { cookie: await sessionCookie(firstPhotographerToken), "content-type": "application/json" }, body: JSON.stringify(externalCopyInput("photographer-denied")) })).status).toBe(403);
 
     const activityResponse = await SELF.fetch(`https://portal.test/api/projects/${externalProject.id}/activity?limit=30`, { headers: { cookie: await sessionCookie(firstPhotographerToken) } });
