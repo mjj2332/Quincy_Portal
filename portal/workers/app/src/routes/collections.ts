@@ -491,6 +491,17 @@ collectionsRoutes.post("/projects/:id/documents/complete", terminalRoute("/proje
     c.env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, supersedes_asset_id, version_group_id, created_at, updated_at) SELECT CASE WHEN EXISTS (SELECT 1 FROM document_uploads WHERE id = ? AND status = 'completing') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) THEN ? ELSE NULL END, ?, ?, ?, ?, 'upload', ?, ?, ?, ?, ?").bind(upload.id, projectId, upload.pdfAssetId, upload.collectionId, expectedPdfKind(upload.kind), upload.pdfKey, upload.pdfFilename, upload.pdfBytes, upload.version, upload.pdfSupersedesAssetId, upload.versionGroupId, now.getTime(), now.getTime()),
   ];
   if (upload.kind === "floorplan") statements.push(c.env.DB.prepare("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, supersedes_asset_id, version_group_id, created_at, updated_at) SELECT CASE WHEN EXISTS (SELECT 1 FROM document_uploads WHERE id = ? AND status = 'completing') AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL) THEN ? ELSE NULL END, ?, 'floorplan_preview', ?, ?, ?, 'upload', ?, ?, ?, ?, ?").bind(upload.id, projectId, upload.previewAssetId, upload.collectionId, upload.previewKey, upload.previewFilename, upload.previewBytes, upload.version, upload.previewSupersedesAssetId, upload.versionGroupId, now.getTime(), now.getTime()));
+  // The version chain was only ever written forward: the new asset records what it supersedes,
+  // but the predecessor was never marked, so it stayed "current" for ever. `received_count`
+  // counts `superseded_at IS NULL`, so a corrected floorplan and the thing it corrected were
+  // both counted as delivered and the client's number grew on every re-upload (#176). Retiring
+  // the predecessor here keeps the count derived state inside the one batch that produces it,
+  // so a rollback cannot leave a version retired by a completion that never committed. This
+  // must stay ahead of COLLECTION_RECEIVED_COUNT_SQL below, which reads what these write.
+  for (const supersededId of [upload.pdfSupersedesAssetId, ...(upload.kind === "floorplan" ? [upload.previewSupersedesAssetId] : [])]) {
+    if (!supersededId) continue;
+    statements.push(c.env.DB.prepare("UPDATE assets SET superseded_at = ?, updated_at = ? WHERE id = ? AND superseded_at IS NULL").bind(now.getTime(), now.getTime(), supersededId));
+  }
   statements.push(
     c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'document.complete', 'document_upload', ?, ?, ?)").bind(upload.completionAuditId, c.get("user").id, upload.id, auditMeta(c.get("user"), { projectId, kind: upload.kind, versionGroupId: upload.versionGroupId, version: upload.version, assetIds: responseFor(upload).assets.map((asset) => asset.id) }), now.getTime()),
     c.env.DB.prepare("UPDATE document_uploads SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ? AND status = 'completing' AND EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)").bind(now.getTime(), now.getTime(), upload.id, projectId),

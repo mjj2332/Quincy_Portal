@@ -3582,9 +3582,13 @@ describe("staff app API", () => {
     expect(approved.status).toBe(200);
     const listed = await SELF.fetch(`https://portal.test/api/projects/${project.id}/assets?collection=floorplan`, { headers: { cookie: adminCookie } });
     await expect(listed.json()).resolves.toMatchObject({ assets: expect.arrayContaining([expect.objectContaining({ id: v2.id, kind: "floorplan_pdf", version: 2, versionGroupId: v1.versionGroupId, review: expect.objectContaining({ decision: "approved" }) }), expect.objectContaining({ id: v2.preview.id, kind: "floorplan_preview", version: 2, versionGroupId: v1.versionGroupId })]) });
-    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE project_id = ? AND kind = 'floorplan'").bind(project.id).first()).toEqual({ received_count: 4, status: "received" });
+    // Two versions of one floorplan, so two current assets: the v2 PDF and its v2 preview. The
+    // v1 pair is superseded and no longer delivered (#176). This read 4 before that fix, which
+    // contradicted the `copy` expectation below for the identical v1->v2 relationship.
+    expect(await database.DB.prepare("SELECT received_count, status FROM collections WHERE project_id = ? AND kind = 'floorplan'").bind(project.id).first()).toEqual({ received_count: 2, status: "received" });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM assets WHERE version_group_id = ? AND superseded_at IS NOT NULL").bind(v1.versionGroupId).first()).toEqual({ count: 2 });
     const projectDetails = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { headers: { cookie: adminCookie } });
-    await expect(projectDetails.json()).resolves.toMatchObject({ collections: expect.arrayContaining([expect.objectContaining({ kind: "floorplan", receivedCount: 4, status: "received" }), expect.objectContaining({ kind: "copy", receivedCount: 2, status: "received" })]) });
+    await expect(projectDetails.json()).resolves.toMatchObject({ collections: expect.arrayContaining([expect.objectContaining({ kind: "floorplan", receivedCount: 2, status: "received" }), expect.objectContaining({ kind: "copy", receivedCount: 2, status: "received" })]) });
     const original = await SELF.fetch(`https://portal.test/media/asset/${v2.id}/original`, { headers: { cookie: adminCookie } });
     expect(original.status).toBe(200); expect(original.headers.get("content-type")).toContain("application/pdf");
     expect(original.headers.get("content-disposition")).toBe('inline; filename="floorplan-two.pdf"');
