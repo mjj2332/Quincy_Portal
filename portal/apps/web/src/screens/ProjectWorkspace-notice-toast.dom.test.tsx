@@ -84,6 +84,14 @@ async function flush(times = 10) {
   }
 }
 
+// `flush()` under fake timers. It cannot use a real `setTimeout(0)` — nothing would ever resolve it
+// — so it drives the fake clock instead, which also flushes the microtasks queued between ticks.
+async function settle(times = 10) {
+  for (let i = 0; i < times; i += 1) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  }
+}
+
 let host: HTMLElement;
 
 beforeEach(() => {
@@ -134,12 +142,18 @@ describe("ProjectWorkspace notice toast on mount (#117)", () => {
   });
 
   it("dismisses the notice on the normal toast timer (AC1)", async () => {
+    // Fake timers, and installed before the render rather than after it: `pushToast` schedules the
+    // dismissal as it runs, so a clock swapped in afterwards would leave that timeout on the real
+    // one and advancing would do nothing. Waiting it out for real cost 3.7s of the 5s default
+    // per-test timeout — 75% of the budget spent sleeping, which is exactly how #170 and #181
+    // turned into CI timeouts with no assertion failing. A bigger timeout would have hidden that
+    // rather than fixed it.
+    vi.useFakeTimers();
     await render(<ProjectWorkspace projectId="p1" notice="Moved to Editing." />);
-    await flush();
+    await settle();
     expect(host.textContent).toContain("Moved to Editing.");
 
-    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, TOAST_TTL_MS + 100)); });
-    await flush();
+    await act(async () => { await vi.advanceTimersByTimeAsync(TOAST_TTL_MS + 100); });
 
     expect(host.textContent).not.toContain("Moved to Editing.");
   });
