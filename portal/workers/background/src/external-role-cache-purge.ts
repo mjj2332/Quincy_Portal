@@ -9,7 +9,7 @@ type PurgePayload = { userId: string; roleChangeAuditId: string; authorizationEp
 type PurgeJob = { id: string; retries: number; payloadJson: string | null };
 
 /**
- * Latches the freeze. Re-asserting on conflict is deliberate — see the feature-flag ownership guard
+ * Latches the freeze. Re-asserting on conflict is deliberate — see packages/db/test/migration-feature-flag-ownership.guard.test.ts
  * and #161 — and so is clearing `updated_by`: the row names the admin who last released it, and a
  * re-freeze by the worker must not leave that admin looking like its author. Release is the admin
  * PATCH /api/users/external-provisioning-freeze.

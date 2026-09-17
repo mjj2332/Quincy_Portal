@@ -18,8 +18,8 @@
  * re-asserts on conflict (`DO UPDATE SET enabled = 1`) and is *correct as written* — it is a
  * latch asserting a freeze after the bounded zone purge exhausts, not a default being restamped.
  * Converting it to `DO NOTHING` would break the freeze. This guard reads migrations only, so
- * that file is excluded structurally rather than by an allowlist. (Its missing release path is
- * tracked separately as #161.)
+ * that file is excluded structurally rather than by an allowlist. (Its release is the audited admin
+ * PATCH /api/users/external-provisioning-freeze, #161.)
  *
  * There is no baseline and no exception list, and there must never be one: at the time of
  * writing every migration passes. **If this fires, the migration is wrong, not the guard.**

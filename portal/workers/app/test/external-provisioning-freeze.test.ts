@@ -116,6 +116,15 @@ describe("External Editor provisioning freeze release (#161)", () => {
     expect((await provisionExternal(adminCookie)).status).toBe(201);
   });
 
+  it("refuses a role change to External Editor while frozen, with the same code", async () => {
+    const adminCookie = await sessionCookie(adminToken);
+    await freeze(Date.now());
+    const refused = await request(`/api/users/${photographerId}`, adminCookie, "PATCH", { role: "external_editor" });
+    expect(refused.status).toBe(503);
+    await expect(refused.json()).resolves.toMatchObject({ code: "external_provisioning_frozen" });
+    expect(await database.DB.prepare("SELECT role FROM user WHERE id = ?").bind(photographerId).first()).toEqual({ role: "photographer" });
+  });
+
   it("treats releasing an open latch as a no-op that writes no audit entry", async () => {
     const adminCookie = await sessionCookie(adminToken);
     const absent = await request(PATH, adminCookie, "PATCH", { frozen: false });

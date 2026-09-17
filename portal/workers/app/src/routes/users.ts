@@ -57,19 +57,24 @@ usersRoutes.patch("/users/impersonation-settings", terminalRoute("/users/imperso
 async function readProvisioningFreeze(db: D1Database) {
   const row = await db.prepare("SELECT enabled, updated_by AS updatedBy, updated_at AS updatedAt FROM feature_flags WHERE key = ?")
     .bind(EXTERNAL_PROVISIONING_FROZEN_FLAG).first<{ enabled: number; updatedBy: string | null; updatedAt: number }>();
-  const frozen = row?.enabled === 1;
-  return { frozen, frozenAt: frozen ? row!.updatedAt : null, updatedBy: row?.updatedBy ?? null };
+  if (!row) return { frozen: false, frozenAt: null, updatedBy: null };
+  const frozen = row.enabled === 1;
+  return { frozen, frozenAt: frozen ? row.updatedAt : null, updatedBy: row.updatedBy };
 }
 usersRoutes.get("/users/external-provisioning-freeze", terminalRoute("/users/external-provisioning-freeze", async (c) => c.json(await readProvisioningFreeze(c.env.DB))));
-/** Release-only: freezing belongs to the purge worker. Releasing an open latch is a no-op with no audit entry. */
+/**
+ * Release-only: freezing belongs to the purge worker. Releasing an open latch is a no-op with no audit entry.
+ * The UPDATE is fenced on the `updated_at` just read, so a re-freeze landing in between is not released
+ * unseen — the response then still reports it frozen, with the newer `frozenAt`.
+ */
 usersRoutes.patch("/users/external-provisioning-freeze", terminalRoute("/users/external-provisioning-freeze", async (c) => {
   const data = await jsonInput(c, provisioningFreezeInput); if (data instanceof Response) return data;
   const user = c.get("user"); const now = Date.now();
   const before = await readProvisioningFreeze(c.env.DB);
   if (before.frozen) {
     await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = ?, updated_at = ? WHERE key = ? AND enabled = 1")
-        .bind(user.id, now, EXTERNAL_PROVISIONING_FROZEN_FLAG),
+      c.env.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = ?, updated_at = ? WHERE key = ? AND enabled = 1 AND updated_at = ?")
+        .bind(user.id, now, EXTERNAL_PROVISIONING_FROZEN_FLAG, before.frozenAt),
       c.env.DB.prepare(`
         INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
         SELECT ?, ?, 'external.provisioning.released', 'feature_flag', ?, ?, ? WHERE changes() = 1
@@ -83,9 +88,7 @@ usersRoutes.post("/users", terminalRoute("/users", async (c) => {
   const db = createDb(c.env.DB); const id = newId();
   if (id === PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID) return c.json({ error: "Reserved user identifier" }, 409);
   if (data.role === "external_editor") {
-    const frozen = await db.select({ enabled: schema.featureFlags.enabled }).from(schema.featureFlags)
-      .where(eq(schema.featureFlags.key, EXTERNAL_PROVISIONING_FROZEN_FLAG)).get();
-    if (frozen?.enabled) return c.json(EXTERNAL_PROVISIONING_FROZEN_ERROR, 503);
+    if ((await readProvisioningFreeze(c.env.DB)).frozen) return c.json(EXTERNAL_PROVISIONING_FROZEN_ERROR, 503);
   }
   try { await db.insert(schema.user).values({ id, ...data, emailVerified: false, active: true, createdAt: new Date(), updatedAt: new Date() }); }
   catch { return c.json({ error: "A user with this email already exists" }, 409); }
@@ -137,9 +140,7 @@ usersRoutes.patch("/users/:id", terminalRoute("/users/:id", async (c) => {
 
   if (roleChanged || activeChanged) {
     if (roleChanged && data.role === "external_editor") {
-      const frozen = await db.select({ enabled: schema.featureFlags.enabled }).from(schema.featureFlags)
-        .where(eq(schema.featureFlags.key, EXTERNAL_PROVISIONING_FROZEN_FLAG)).get();
-      if (frozen?.enabled) return c.json(EXTERNAL_PROVISIONING_FROZEN_ERROR, 503);
+      if ((await readProvisioningFreeze(c.env.DB)).frozen) return c.json(EXTERNAL_PROVISIONING_FROZEN_ERROR, 503);
     }
     const blockerRole = data.role === "external_editor" ? "photographer" : data.role === "photographer" ? "editor" : null;
     if (blockerRole) {
