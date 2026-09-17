@@ -10,6 +10,7 @@ import { newId } from "../lib/ids";
 import { jsonInput } from "./helpers";
 import { ensurePipelineStages, listPipelineStages } from "./stages";
 import { boardSchemaMaintenance } from "../lib/board-schema-maintenance";
+import { listEditorFolderAttention, readProvisioningFreeze } from "../lib/attention";
 
 const agencyCreate = z.object({ name: z.string().trim().min(1), notes: z.string().trim().nullable().optional() });
 const agencyPatch = agencyCreate.partial();
@@ -162,6 +163,17 @@ async function notificationDeliveryCounts(c: Parameters<typeof adminAllowed>[0],
   }));
   return Object.fromEntries(counts) as Record<typeof notificationDeliveryView['_type'], number>;
 }
+
+/** Latches a human has to clear (#163). The freeze is returned beside the list, not in it, so a
+ * capped list of stuck projects can never hide it. */
+adminRoutes.get("/admin/attention", terminalRoute("/admin/attention", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const [editorFolders, provisioningFreeze] = await Promise.all([
+    listEditorFolderAttention(c.env.DB, Date.now()),
+    readProvisioningFreeze(c.env.DB),
+  ]);
+  return c.json({ ...editorFolders, provisioningFreeze });
+}));
 
 adminRoutes.get("/admin/notification-deliveries", terminalRoute("/admin/notification-deliveries", async (c) => {
   if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);

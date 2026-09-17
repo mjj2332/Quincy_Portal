@@ -10,6 +10,7 @@ import {
   rawReconciliationClaims,
 } from "@quincy/db/schema";
 import type { Database } from "@quincy/db";
+import { formatMoveNote, MOVE_COMMIT_ATTEMPT_LIMIT, parseMoveNote } from "./move-note";
 
 import type { DropboxFolder } from "../dropbox/client";
 import { errorMessage } from "../lib/db";
@@ -44,33 +45,18 @@ const BLOCKING_JOB_KINDS = ["editor_sync", "dropbox_sync", "manual_edited_publis
 
 const MOVE_LEASE_MS = 10 * 60 * 1000;
 
-/**
- * How many times a commit may fail AFTER Dropbox has already reported the tree at its new
- * location before the move stops being retried and is escalated instead.
- *
- * This is the one genuinely dangerous state in the feature: the world has changed and the database
- * has not. Retrying is right for a transient D1 failure and wrong for a deterministic one — a
- * UNIQUE collision fails identically every minute, forever, while the project's Editor pipeline
- * stays fenced and nobody is told. Past this limit the mapping stays `moving` (so the fence holds
- * and no sync runs against a path that no longer exists) but takeover stops, the note says plainly
- * that Dropbox and the database disagree, and an audit row records it for a human to find.
- */
-const MOVE_COMMIT_ATTEMPT_LIMIT = 3;
 export const JOB_STALE_MS = 2 * 60 * 60 * 1000;
 const QUIET_PERIOD_MS = 30 * 60 * 1000;
 const ORPHAN_SWEEP_MS = 30 * 60 * 1000;
 const STALE_JOB_NOTE = "stale_job: no progress for 2h; no longer blocks the Editor folder move";
 
-/** Mirrors `scaffold.ts`'s `reconcileNote`; duplicated to avoid a runtime import cycle between
- * this module and the one that calls into it (a plain string join has no cycle risk of its own). */
 function reconcileNote(code: string, detail: string): string {
-  return `${code}: ${detail}`;
+  return formatMoveNote(code, detail);
 }
 
 function parseReconcileNote(note: string): { reason: EditorScaffoldSkipReason; detail: string } {
-  const separator = note.indexOf(": ");
-  if (separator === -1) return { reason: note as EditorScaffoldSkipReason, detail: note };
-  return { reason: note.slice(0, separator) as EditorScaffoldSkipReason, detail: note.slice(separator + 2) };
+  const { code, detail } = parseMoveNote(note);
+  return { reason: code as EditorScaffoldSkipReason, detail };
 }
 
 function isUniqueConstraintViolation(error: unknown): boolean {

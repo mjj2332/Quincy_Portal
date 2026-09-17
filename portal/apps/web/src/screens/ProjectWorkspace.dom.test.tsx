@@ -189,6 +189,23 @@ afterEach(async () => {
     host.remove();
   });
 
+  it("shows no Editor folder banner when nothing is latched (#163)", async () => {
+    await render(<ProjectWorkspace projectId="p1" />);
+    await flush();
+    expect(host.textContent).toContain("raw-1.jpg");
+    expect(host.querySelector('[data-testid="editor-folder-attention"]')).toBeNull();
+  });
+
+  it("shows a latched Editor folder banner from the project detail (#163)", async () => {
+    const base = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string) => path === "/api/projects/p1"
+      ? Promise.resolve({ ...projectFixture(), editorFolderAttention: { kind: "editor_folder_move_stuck", headline: "Editor pipeline paused: test headline.", code: "editor_folder_move_stuck", detail: null, updatedAt: 0 } })
+      : base(path));
+    await render(<ProjectWorkspace projectId="p1" />);
+    await flush();
+    expect(host.querySelector('[data-testid="editor-folder-attention"]')?.textContent).toContain("Editor pipeline paused: test headline.");
+  });
+
   it("clears a RAW-tab selection when switching to Edited, via the key={activeTab} remount", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();

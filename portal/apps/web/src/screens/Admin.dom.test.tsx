@@ -136,7 +136,8 @@ describe("Admin Pipeline configuration boundary", () => {
 
     expect(host.querySelectorAll('[data-testid="admin-stage"]')).toHaveLength(5);
     expect([...host.querySelectorAll<HTMLElement>('[data-testid="admin-stage-order"]')].map((element) => element.textContent)).toEqual(["1", "2", "3", "4", "5"]);
-    expect([...host.querySelectorAll<HTMLButtonElement>("#admin-panel-pipeline button")].map((button) => button.textContent)).toEqual(["Refresh"]);
+    // The "Needs attention" panel above the stages (#163) has its own Refresh; this pins the stages part.
+    expect([...host.querySelectorAll<HTMLButtonElement>("#admin-panel-pipeline button")].filter((button) => !button.closest('[data-testid="admin-attention"]')).map((button) => button.textContent)).toEqual(["Refresh"]);
     expect(host.querySelectorAll('[data-testid="admin-stage"] button')).toHaveLength(0);
     expect(host.textContent).not.toContain("Up");
     expect(host.textContent).not.toContain("Down");

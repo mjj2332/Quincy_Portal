@@ -81,6 +81,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "PATCH", path: "/api/admin/agents/:id", class: "withheld" },
   { method: "GET", path: "/api/admin/agents", class: "withheld" },
   { method: "POST", path: "/api/admin/agents", class: "withheld" },
+  { method: "GET", path: "/api/admin/attention", class: "withheld" },
   { method: "POST", path: "/api/admin/autohdr/backfill", class: "withheld" },
   { method: "POST", path: "/api/admin/autohdr/scaffold-backfill", class: "withheld" },
   { method: "POST", path: "/api/admin/notification-deliveries/:outboxId/discard", class: "withheld" },

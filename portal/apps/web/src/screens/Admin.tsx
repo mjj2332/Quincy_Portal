@@ -23,6 +23,7 @@ import { Notice } from "@/components/quincy/Notice";
 import { EmptyState } from "@/components/quincy/EmptyState";
 import { QuincyField } from "@/components/quincy/QuincyField";
 import { QuincySelectField } from "@/components/quincy/QuincySelectField";
+import { AdminAttention } from "../components/AdminAttention";
 
 type AdminTab = "users" | "directory" | "pipeline" | "integrations";
 type User = { id: string; name: string; email: string; role: Role; active: boolean; defaultEditor: boolean; createdAt: string | null };
@@ -594,6 +595,7 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       </section>}
 
       {activeTab === "pipeline" && canAdminBackend && <section role="tabpanel" id="admin-panel-pipeline" aria-labelledby="admin-tab-pipeline" tabIndex={0}>
+        <AdminAttention />
         <SectionHead eyebrow="Project flow" actions={<Button type="button" variant="outline" onClick={() => void loadPipeline()} data-testid="admin-pipeline-refresh">Refresh</Button>}>Pipeline stages</SectionHead>
         {pipelineError && <Notice role="alert" className="mb-[var(--space-4)]">{pipelineError}</Notice>}
         {stageError && <Notice role="alert" className="mb-[var(--space-4)]">{stageError}</Notice>}

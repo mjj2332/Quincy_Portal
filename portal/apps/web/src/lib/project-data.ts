@@ -1,4 +1,4 @@
-import { isStageKey, type ChecklistScheduleDto, type CollectionKind, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
+import { isStageKey, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
@@ -12,7 +12,7 @@ export type ProjectCollection = { id: string; kind: CollectionKind; status: stri
 export type ProjectMember = ProjectMembershipDto;
 export type ProjectDetail = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null;
-  shootDate: string | null; timeWindow?: string | null; priority?: number | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; monitoredRawFolder?: MonitoredRawFolder | null; productionNotes?: string | null; editedUploadAvailable?: boolean; archivedAt?: string | number | null; boardRevision: number; contractEnabled: boolean;
+  shootDate: string | null; timeWindow?: string | null; priority?: number | null; stageKey: ProjectStageKey; rawFolderPath: string | null; rawFolderLink: string | null; monitoredRawFolder?: MonitoredRawFolder | null; editorFolderAttention?: EditorFolderAttentionDto | null; productionNotes?: string | null; editedUploadAvailable?: boolean; archivedAt?: string | number | null; boardRevision: number; contractEnabled: boolean;
   coverAssetId: string | null; effectiveCoverAssetId: string | null; collections: ProjectCollection[]; members: ProjectMember[]; deadlineSchedule: ProjectDeadlineSchedule;
 };
 export type ProjectSubtask = {

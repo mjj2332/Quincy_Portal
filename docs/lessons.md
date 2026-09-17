@@ -2704,3 +2704,33 @@ Four traps came up in the build and review, each of which passed a green test fi
 **Rule:** a fixed page over a set you do not shrink is not bounded work, it is a queue that never
 advances; and a guard that checks state rather than your own write's effect is a guard a replay
 passes.
+
+## A latch is only half-built until something a human reads says it is set (#163)
+
+#153 and the provisioning freeze both latched correctly and wrote their reasons down carefully —
+into `move_note`, `feature_flags` and `audit_log`, none of which any screen read. A stuck project was
+found when someone noticed the Editor pipeline had gone quiet. #163 added one read path
+(`workers/app/src/lib/attention.ts`) behind Admin → Pipeline and a project banner.
+
+Things the reviews caught before the build, each of which would have shipped a wrong answer:
+
+- **Not every latch pauses the same thing.** Only `moving` is fenced by
+  `EDITOR_MAPPING_NOT_MOVING_SQL`; a `blocked` move leaves sync running against the old folder. A
+  banner saying "paused" for both would have been false for the common case.
+- **A latch can outlive its relevance.** A block is only cleared by a reconcile pass, and the cron
+  stops selecting a row once the shoot date reverts or the project is archived/delivered — so the
+  row stays `blocked` indefinitely. The reader filters to blocks that still apply, but keeps a
+  `moving` row whatever the project state, because its fence is still up.
+- **`updated_at` is "last written", not "since".** Other writers bump it. The UI says "Last updated".
+- **A capped list must not be able to hide a global state.** The freeze is returned beside the
+  project list, not inside it.
+- **A failed load must never render the empty state.** "Nothing needs attention" on a 500 is the
+  exact silence this surface exists to end.
+
+Separately, a trap in the web test tooling: `npx vitest run src/…/X.dom.test.tsx` in `apps/web`
+uses `vitest.config.ts`, which includes only `*.test.ts`. On its own it prints "No test files
+found"; alongside any `.test.ts` file it runs those and reports green with the DOM file silently
+skipped. DOM tests need `--config vitest.dom.config.ts` (the `test` script runs both).
+
+**Rule:** when you add a latch, add the place a human sees it in the same change — and when you
+read one, ask what it actually stops, and whether it can outlive the reason it was set.
