@@ -87,8 +87,8 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
           // Bounded selection of ready mappings that need a move-related editor_reconcile pass:
           // an expired move lease (takeover), a shoot date that has drifted from the mapping's own
           // placement date (a fresh move, or a stale block worth re-checking), or an orphan-upload
-          // watch whose window has lapsed (#195). An inactive Project's pass returns before the
-          // sweep, so its due watch is left out rather than re-enqueued every ten minutes. Throttled
+          // watch whose window has lapsed (#195), on any Project: an archived or delivered Project's pass
+          // starts no move but still sweeps, so its due watch is found or ends. Throttled
           // the same way as any other reconcile trigger, so a project already mid-pass is not
           // re-enqueued on top of itself.
           //
@@ -111,12 +111,9 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
                   AND ${projects.shootDate} != ${editorFolderMappings.shootDate}
                   AND (${editorFolderMappings.moveStatus} IS NULL OR (${editorFolderMappings.moveStatus} = 'blocked' AND ${editorFolderMappings.moveTargetShootDate} IS NOT ${projects.shootDate}))
                 )
-                OR (
-                  ${projects.archivedAt} IS NULL AND ${projects.stageKey} != 'delivered'
-                  AND EXISTS (
-                    SELECT 1 FROM editor_folder_orphan_watches w
-                    WHERE w.mapping_id = editor_folder_mappings.id AND w.status = 'watching' AND w.watch_until <= ${controller.scheduledTime}
-                  )
+                OR EXISTS (
+                  SELECT 1 FROM editor_folder_orphan_watches w
+                  WHERE w.mapping_id = editor_folder_mappings.id AND w.status = 'watching' AND w.watch_until <= ${controller.scheduledTime}
                 )
               )
               AND NOT EXISTS (

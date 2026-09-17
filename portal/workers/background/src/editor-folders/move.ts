@@ -444,10 +444,11 @@ async function commitEditorFolderMove(
   `).bind(now.getTime(), claimsPayload, mapping.id, newRevision, newRootKey);
 
   // A tree moved back onto (or into) a root it vacated earlier: that root is live again, so its
-  // older watch would report the live tree as an orphan upload.
+  // older watch would report the live tree as an orphan upload. A found watch stays: files already
+  // reported still need an admin's acknowledgement.
   const reclaimedWatchesDelete = env.DB.prepare(`
     DELETE FROM editor_folder_orphan_watches
-    WHERE mapping_id = ? AND move_revision < ? AND ${overlapSql("old_path_key", "?")} AND ${mappingGuard}
+    WHERE mapping_id = ? AND move_revision < ? AND status = 'watching' AND ${overlapSql("old_path_key", "?")} AND ${mappingGuard}
   `).bind(mapping.id, newRevision, newRootKey, newRootKey, newRootKey, newRootKey, mapping.id, newRevision, newRootKey);
 
   let results;
@@ -698,7 +699,17 @@ async function sweepOrphanUploads(env: Env, db: Database, mapping: EditorFolderM
   for (const watch of watches.results) {
     // A root some mapping now lives at (or is moving to) is not abandoned; checking it would
     // report that mapping's own tree.
-    const file = watch.reclaimed ? null : await firstOrphanFile(env, db, watch.oldPath, mapping.connectionId, deps);
+    let file: string | null = null;
+    if (!watch.reclaimed) {
+      try {
+        file = await firstOrphanFile(env, db, watch.oldPath, mapping.connectionId, deps);
+      } catch (error) {
+        // One unreadable old root must not hold up the move this pass exists for. The watch
+        // stays `watching`, so the cron keeps bringing it back until Dropbox answers.
+        console.error("Editor folder orphan-upload check failed", { mappingId: mapping.id, watchId: watch.id, error: errorMessage(error) });
+        continue;
+      }
+    }
     if (file !== null) {
       const meta = JSON.stringify({ actor: "editor_reconcile", mappingId: mapping.id, watchId: watch.id, oldPath: watch.oldPath, newPath: mapping.rootPath, file });
       const [marked] = await env.DB.batch([
@@ -720,6 +731,12 @@ async function sweepOrphanUploads(env: Env, db: Database, mapping: EditorFolderM
     status: "skipped", mapping, reason: "editor_folder_move_orphan_upload",
     detail: found.map(({ oldPath, file }) => `Files landed at ${oldPath} after the move (first: ${file}); move them into ${mapping.rootPath} by hand, then acknowledge it under Admin → Pipeline`).join("; "),
   };
+}
+
+/** The orphan-upload sweep alone, for a `ready` mapping whose Project is archived or delivered:
+ * no move starts there, but a watch opened before delivery still has to be checked or lapse. */
+export async function sweepEditorFolderOrphanUploads(env: Env, db: Database, mapping: EditorFolderMapping, deps: EditorFolderMoveDependencies): Promise<EditorReconcileOutcome | null> {
+  return await sweepOrphanUploads(env, db, mapping, deps, deps.now());
 }
 
 /**

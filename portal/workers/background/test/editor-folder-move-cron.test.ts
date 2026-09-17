@@ -145,15 +145,15 @@ describe("Minute cron: Editor folder move selection", () => {
     expect(await reconcileJobCount(found.projectId)).toBe(0);
   });
 
-  it("does not select a due orphan-upload watch on an archived or delivered Project, whose reconcile pass would never sweep it", async () => {
+  it("selects a due orphan-upload watch on an archived or delivered Project too, whose pass still sweeps it", async () => {
     const archived = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-archived", archived: true });
     const delivered = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "orphan-delivered" });
     await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(delivered.projectId).run();
     await insertWatch(archived.mappingId, { watchUntil: Date.now() - 60_000 });
     await insertWatch(delivered.mappingId, { watchUntil: Date.now() - 60_000 });
     await worker().scheduled(controller(Date.now()));
-    expect(await reconcileJobCount(archived.projectId)).toBe(0);
-    expect(await reconcileJobCount(delivered.projectId)).toBe(0);
+    expect(await reconcileJobCount(archived.projectId)).toBe(1);
+    expect(await reconcileJobCount(delivered.projectId)).toBe(1);
   });
 
   it("throttles on an editor_reconcile job already queued/running or created within the last 10 minutes", async () => {

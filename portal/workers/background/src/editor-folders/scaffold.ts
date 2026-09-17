@@ -50,7 +50,7 @@ import {
   type EditorFolderMapping,
   type EditorFolderSubtree,
 } from "./mapping";
-import { attemptEditorFolderMove, resumeEditorFolderMove, type EditorFolderMoveDependencies } from "./move";
+import { attemptEditorFolderMove, resumeEditorFolderMove, sweepEditorFolderOrphanUploads, type EditorFolderMoveDependencies } from "./move";
 
 export type DropboxMetadataOperation = (
   env: Env,
@@ -535,7 +535,13 @@ export async function reconcileEditorFolderOutcome(
     street: projects.street,
     suburb: projects.suburb,
   }).from(projects).where(and(eq(projects.id, projectId), isNull(projects.archivedAt), ne(projects.stageKey, "delivered"))).get();
-  if (!project) return skipped("project_inactive", "Project is archived, delivered or missing");
+  if (!project) {
+    if (priorMapping?.state === "ready") {
+      const orphanOutcome = await sweepEditorFolderOrphanUploads(env, db, priorMapping, moveDependencies);
+      if (orphanOutcome) return orphanOutcome;
+    }
+    return skipped("project_inactive", "Project is archived, delivered or missing");
+  }
 
   let mapping = priorMapping;
   if (mapping?.state === "needs_review") return outcomeFor(mapping);

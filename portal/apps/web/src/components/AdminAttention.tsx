@@ -82,7 +82,7 @@ export function AdminAttention() {
         </TableRow>)}</TableBody>
       </Table></TableWrap>}
       {ackError && <Notice tone="critical" role="alert" className="mt-[var(--space-4)]" data-testid="admin-attention-ack-error">Could not acknowledge the report: {ackError}</Notice>}
-      {data.truncated && <Notice tone="caution" role="status" className="mt-[var(--space-4)]">Showing the first {items.length} projects; more are stuck.</Notice>}
+      {data.truncated && <Notice tone="caution" role="status" className="mt-[var(--space-4)]">Showing the first {items.length} items; more need attention.</Notice>}
     </>}
   </div>;
 }

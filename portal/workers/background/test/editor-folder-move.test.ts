@@ -710,6 +710,44 @@ describe("Editor folder move: orphan-upload watches (#195)", () => {
     expect(await watchRows(mapping.id)).toEqual([]);
   });
 
+  it("keeps a found watch when the tree later moves back onto that root, because only an acknowledgement clears it", async () => {
+    const { projectId, mapping } = await setup();
+    const home = mapping.rootPath;
+    await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    await database.DB.prepare("UPDATE editor_folder_orphan_watches SET status = 'found', found_at = 1, found_detail = ? WHERE mapping_id = ?").bind(`${home}/late.jpg`, mapping.id).run();
+    expect(await reschedule(projectId, "2026-10-02", mapping.projectFolderName, mapping.rootFolderId!)).toMatchObject({ status: "moved", to: home });
+    expect((await watchRows(mapping.id)).map((row) => [row.move_revision, row.status])).toEqual([[1, "found"], [2, "watching"]]);
+  });
+
+  it("still attempts the move when Dropbox fails on one watch, and keeps that watch for the next pass", async () => {
+    const { projectId, mapping } = await setup();
+    await insertWatch(mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() - 1 });
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
+    const outcome = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, deps({
+      getMetadata: async (_env, _db, path) => {
+        if (path === OLD) throw new Error("Dropbox get_metadata failed (500)");
+        return folder(mapping.rootPath, mapping.rootFolderId!);
+      },
+      moveFolderStrict: async (_env, _db, _from, to) => folder(to, mapping.rootFolderId!),
+    }));
+    expect(outcome).toMatchObject({ status: "moved" });
+    expect((await watchRows(mapping.id)).map((row) => [row.old_path, row.status])).toEqual([[OLD, "watching"], [mapping.rootPath, "watching"]]);
+  });
+
+  it("sweeps the watches of a Project delivered or archived inside the window", async () => {
+    const delivered = await setup({ stageKey: "delivered" });
+    await insertWatch(delivered.mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() + 10 * 60_000 });
+    const found = await reconcileEditorFolderOutcome(env as never, delivered.projectId, { db, ...orphanDeps({ [OLD]: [file(`${OLD}/x.jpg`)] }) });
+    expect(found).toMatchObject({ status: "skipped", reason: "editor_folder_move_orphan_upload" });
+    expect((await watchRows(delivered.mapping.id))[0]?.status).toBe("found");
+
+    const archived = await setup({ archived: true, leaf: "archived-lapse" });
+    await insertWatch(archived.mapping.id, { oldPath: OLD, watchUntil: FIXED_NOW.getTime() - 1 });
+    const lapsed = await reconcileEditorFolderOutcome(env as never, archived.projectId, { db, ...orphanDeps({}) });
+    expect(lapsed).toMatchObject({ status: "skipped", reason: "project_inactive" });
+    expect(await watchRows(archived.mapping.id)).toEqual([]);
+  });
+
   it("still sweeps a mapping whose later reschedule is blocked, while the outcome stays the stored block note", async () => {
     const storedNote = "editor_folder_move_conflict: A folder named old-leaf already exists in /Editor/01_ACTIVE EDITS/2027-01 January/15";
     const { projectId, mapping } = await setup({ overrides: { move_status: "blocked", move_target_shoot_date: "2027-01-15", move_note: storedNote } });

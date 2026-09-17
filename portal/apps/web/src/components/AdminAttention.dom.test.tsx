@@ -119,7 +119,7 @@ describe("AdminAttention", () => {
   it("warns when the list was cut short", async () => {
     apiGetMock.mockResolvedValue(response({ truncated: true, items: [{ ...stuck, projectId: "p-1", projectLabel: "One" }] }));
     await render(<AdminAttention />);
-    expect(host.textContent).toContain("more are stuck");
+    expect(host.textContent).toContain("more need attention");
   });
 });
 
