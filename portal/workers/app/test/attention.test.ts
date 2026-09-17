@@ -73,14 +73,16 @@ describe("editor reconcile attention (#163)", () => {
   const adminToken = `attention-admin-${crypto.randomUUID()}`;
   const editorToken = `attention-editor-${crypto.randomUUID()}`;
   const photographerToken = `attention-photographer-${crypto.randomUUID()}`;
+  const externalToken = `attention-external-${crypto.randomUUID()}`;
   const adminId = crypto.randomUUID();
   const editorId = crypto.randomUUID();
   const photographerId = crypto.randomUUID();
+  const externalId = crypto.randomUUID();
 
   beforeAll(async () => {
     await executeSql(__PORTAL_MIGRATION_SQL__);
     const now = Date.now();
-    const users = [[adminId, "admin", adminToken], [editorId, "editor", editorToken], [photographerId, "photographer", photographerToken]] as const;
+    const users = [[adminId, "admin", adminToken], [editorId, "editor", editorToken], [photographerId, "photographer", photographerToken], [externalId, "external_editor", externalToken]] as const;
     await database.DB.batch([
       database.DB.prepare("INSERT INTO integration_connections (id, provider, status, created_at, updated_at) VALUES (?, 'dropbox', 'connected', ?, ?)").bind(connectionId, now, now),
       ...users.flatMap(([id, role, token]) => [
@@ -262,6 +264,25 @@ describe("editor reconcile attention (#163)", () => {
     it("is null for a project with nothing latched", async () => {
       const projectId = await seedMapping();
       expect((await detail(projectId, adminToken)).editorFolderAttention).toBeNull();
+    });
+
+    // The owner's decision (#163): an External Editor assigned to the project sees the headline too,
+    // through its own wire contract, and never the operator detail.
+    it("shows an assigned External Editor the headline and code, never the detail", async () => {
+      const projectId = await seedMapping({ moveStatus: "moving", moveCommitAttempts: 3, moveNote: "editor_folder_move_stuck: Last failure: UNIQUE constraint failed" });
+      await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+        .bind(crypto.randomUUID(), projectId, externalId, Date.now()).run();
+      const admin = await detail(projectId, adminToken);
+      const external = await detail(projectId, externalToken);
+      expect(external.editorFolderAttention).toMatchObject({ kind: "editor_folder_move_stuck", code: "editor_folder_move_stuck", detail: null });
+      expect(external.editorFolderAttention?.headline).toBe(admin.editorFolderAttention?.headline);
+    });
+
+    it("sends an External Editor null for a project with nothing latched", async () => {
+      const projectId = await seedMapping();
+      await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)")
+        .bind(crypto.randomUUID(), projectId, externalId, Date.now()).run();
+      expect((await detail(projectId, externalToken)).editorFolderAttention).toBeNull();
     });
 
     it("is never sent to a photographer", async () => {

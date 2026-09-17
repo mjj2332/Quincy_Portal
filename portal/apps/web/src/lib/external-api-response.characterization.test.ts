@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ExternalProjectDetailDto, ExternalProjectSummaryDto } from "@quincy/shared";
 import { sortKanbanProjects, type ProjectSummary } from "./kanban-interaction";
 import { externalProjectSummaryToDashboard } from "./external-api-response";
-import { externalProjectDetailToWorkspace } from "./external-api-response";
+import { decodeExternalResponse, externalProjectDetailToWorkspace } from "./external-api-response";
 
 function summary(id: string): ExternalProjectSummaryDto {
   return {
@@ -51,6 +51,7 @@ describe("TB5A Slice 4 External Board adapter", () => {
 			editedUploadAvailable: false,
 			collections: [],
 			members: [],
+			editorFolderAttention: null,
 		};
 
 		expect(externalProjectDetailToWorkspace(project)).toMatchObject({
@@ -58,5 +59,20 @@ describe("TB5A Slice 4 External Board adapter", () => {
 			boardRevision: 9,
 			contractEnabled: true,
 		});
+	});
+
+	it("carries the Editor folder headline to the workspace, and refuses operator detail on the external wire (#163)", () => {
+		const attention = { kind: "editor_folder_move_stuck", headline: "Editor pipeline paused.", code: "editor_folder_move_stuck", detail: null, updatedAt: 1 } as const;
+		const project: ExternalProjectDetailDto = {
+			...summary("00000000-0000-4000-8000-000000000004"),
+			boardRevision: 1,
+			contractEnabled: true,
+			editedUploadAvailable: false,
+			collections: [],
+			members: [],
+			editorFolderAttention: attention,
+		};
+		expect(externalProjectDetailToWorkspace(decodeExternalResponse("project-detail", project) as ExternalProjectDetailDto).editorFolderAttention).toEqual(attention);
+		expect(() => decodeExternalResponse("project-detail", { ...project, editorFolderAttention: { ...attention, detail: "Last failure: /Editor/x" } })).toThrow();
 	});
 });
