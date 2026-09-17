@@ -16,7 +16,8 @@ close that window. Without both secrets, `purgeZone()` returns `false` on every 
 Editor provisioning** (sets the `external_editor_provisioning_frozen` feature flag, writes an
 `external.provisioning.frozen` audit row) and pages the operator to run a manual zone purge. So a
 missing secret doesn't lose data — it stops all further External Editor provisioning until
-someone purges by hand and clears the flag (see the plan's "Transform purge exhaustion runbook").
+someone purges by hand and an admin releases the freeze (below). Nothing releases it automatically:
+a later successful purge does not undo the exhaustion that froze it (#161).
 
 Grounded in Cloudflare's current docs (fetched 2026-08-28); links below are the source of truth if
 a dashboard flow has shifted.
@@ -95,9 +96,11 @@ If the flag got set (secrets were missing when a transition ran):
 
 1. Run the full-zone purge by hand — dashboard **Caching → Configuration → Purge Everything**, or
    `curl -X POST https://api.cloudflare.com/client/v4/zones/<ZONE_ID>/purge_cache -H "Authorization: Bearer <TOKEN>" -d '{"purge_everything":true}'`.
-2. Verify the purge in the dashboard, then clear the flag:
-   `UPDATE feature_flags SET enabled = 0 WHERE key = 'external_editor_provisioning_frozen';`
-   (record who/when — the plan's runbook wants operator evidence).
+2. Verify the purge in the dashboard, then release the freeze in **Admin → Users → Release
+   freeze** (or `PATCH /api/users/external-provisioning-freeze` with `{"frozen": false}` as an
+   admin). The release writes an `external.provisioning.released` audit row with the actor, so the
+   operator evidence is recorded for you. Do not clear the flag with a hand-written D1 statement:
+   it leaves no audit trail.
 3. Set the secrets (steps 1–4) so it does not recur.
 
 ## If something in this guide is stale

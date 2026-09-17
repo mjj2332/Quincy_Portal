@@ -266,6 +266,48 @@ describe("Admin Pipeline configuration boundary", () => {
     expect(inactive.title).toBe("Only active editors, external editors and admins can be default editors");
   });
 
+  it("shows the External Editor provisioning freeze and releases it only after confirmation (#161)", async () => {
+    const frozenAt = Date.UTC(2026, 8, 14, 3, 0);
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users: [] })
+      : path === "/api/users/external-provisioning-freeze" ? Promise.resolve({ frozen: true, frozenAt, updatedBy: null })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+
+    const notice = host.querySelector<HTMLElement>('[data-testid="admin-provisioning-freeze"]')!;
+    expect(notice).not.toBeNull();
+    expect(notice.textContent).toContain("External Editor provisioning has been frozen since 14 Sept 2026.");
+    const release = [...notice.querySelectorAll("button")].find((button) => button.textContent === "Release freeze")!;
+
+    confirmMock.mockResolvedValueOnce(false);
+    await click(release);
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "Release the provisioning freeze?",
+      message: "Only release it after a manual Cloudflare zone purge has completed. Otherwise a converted External Editor can keep reading cached pages they no longer have access to.",
+      confirmLabel: "Release freeze",
+      danger: true,
+    });
+    expect(apiPatchMock).not.toHaveBeenCalled();
+
+    apiPatchMock.mockResolvedValueOnce({ frozen: false, frozenAt: null, updatedBy: "self" });
+    await click(release);
+    await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith("/api/users/external-provisioning-freeze", { frozen: false });
+    expect(host.querySelector('[data-testid="admin-provisioning-freeze"]')).toBeNull();
+  });
+
+  it("shows no freeze control while provisioning is open (#161)", async () => {
+    apiGetMock.mockImplementation((path) => path === "/api/users"
+      ? Promise.resolve({ users: [] })
+      : path === "/api/users/external-provisioning-freeze" ? Promise.resolve({ frozen: false, frozenAt: null, updatedBy: null })
+      : path === "/api/users/impersonation-settings" ? Promise.resolve({ enabled: false }) : Promise.resolve({}));
+    await act(async () => { root!.render(<Admin currentUserId="self" />); await Promise.resolve(); });
+    await flush();
+    expect(host.querySelector('[data-testid="admin-provisioning-freeze"]')).toBeNull();
+    expect(apiGetMock).toHaveBeenCalledWith("/api/users/external-provisioning-freeze");
+  });
+
   it("PATCHes defaultEditor on toggle and shows the added-to-projects toast", async () => {
     const users = [
       { id: "editor", name: "Active Editor", email: "editor@example.test", role: "editor", active: true, defaultEditor: false, createdAt: null },

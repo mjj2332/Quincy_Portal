@@ -30,6 +30,8 @@ type IntegrationStatus = "connected" | "disconnected" | "expired" | "error";
 type Integration = { provider: string; status: IntegrationStatus; expiresAt: string | null; lastEventAt: string | null; lastError: string | null };
 type UsersResponse = { users: User[] };
 type ImpersonationSettingsResponse = { enabled: boolean };
+/** Set by the background purge worker, released only here (#161). */
+type ProvisioningFreezeResponse = { frozen: boolean; frozenAt: number | null; updatedBy: string | null };
 type IntegrationsResponse = { integrations: Integration[] };
 type Agency = { id: string; name: string; notes: string | null; agentCount: number; createdAt: string | null };
 type Agent = { id: string; agencyId: string | null; agencyName?: string | null; name: string; email: string | null; phone: string | null; createdAt: string | null };
@@ -158,6 +160,8 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
   const [users, setUsers] = useState<User[]>([]);
   const [impersonationEnabled, setImpersonationEnabled] = useState(false);
   const [isUpdatingImpersonation, setIsUpdatingImpersonation] = useState(false);
+  const [provisioningFreeze, setProvisioningFreeze] = useState<ProvisioningFreezeResponse>();
+  const [isReleasingFreeze, setIsReleasingFreeze] = useState(false);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -206,12 +210,14 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
     setIsLoadingUsers(true);
     setUsersError(undefined);
     try {
-      const [usersResponse, settingsResponse] = await Promise.all([
+      const [usersResponse, settingsResponse, freezeResponse] = await Promise.all([
         apiGet<UsersResponse>("/api/users"),
         apiGet<ImpersonationSettingsResponse>("/api/users/impersonation-settings"),
+        apiGet<ProvisioningFreezeResponse>("/api/users/external-provisioning-freeze"),
       ]);
       setUsers(usersResponse.users);
       setImpersonationEnabled(settingsResponse.enabled);
+      setProvisioningFreeze(freezeResponse);
     } catch (reason) {
       setUsersError(reason instanceof Error ? reason.message : "Users could not be loaded.");
     } finally {
@@ -229,6 +235,23 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
       toast(reason instanceof Error ? reason.message : "The impersonation setting could not be updated.", "error");
     } finally {
       setIsUpdatingImpersonation(false);
+    }
+  }
+
+  async function releaseProvisioningFreeze() {
+    if (!await confirm({
+      title: "Release the provisioning freeze?",
+      message: "Only release it after a manual Cloudflare zone purge has completed. Otherwise a converted External Editor can keep reading cached pages they no longer have access to.",
+      confirmLabel: "Release freeze",
+      danger: true,
+    })) return;
+    setIsReleasingFreeze(true);
+    try {
+      setProvisioningFreeze(await apiPatch<ProvisioningFreezeResponse, { frozen: false }>("/api/users/external-provisioning-freeze", { frozen: false }));
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "The provisioning freeze could not be released.", "error");
+    } finally {
+      setIsReleasingFreeze(false);
     }
   }
 
@@ -513,6 +536,10 @@ export function Admin({ currentUserId }: { currentUserId?: string | null }) {
         {isLoadingUsers && <EmptyState role="status" title="Loading users.">Reading the studio access roster.</EmptyState>}
         {!isLoadingUsers && usersError && <EmptyState role="alert" tone="error" title="Users are unavailable.">{usersError}<div className="mt-[var(--space-4)]"><Button type="button" variant="outline" onClick={() => void loadUsers()}>Try again</Button></div></EmptyState>}
         {!isLoadingUsers && !usersError && <label className={cn(TOGGLE_ROW, "mb-[var(--space-4)]")}><input type="checkbox" className={CHECKBOX_INPUT} checked={impersonationEnabled} disabled={isUpdatingImpersonation} onChange={toggleImpersonation} aria-label="Enable user impersonation (testing)" /><span>Enable user impersonation (testing)</span></label>}
+        {!isLoadingUsers && !usersError && provisioningFreeze?.frozen && <Notice tone="caution" role="status" data-testid="admin-provisioning-freeze" className="mb-[var(--space-4)] flex flex-wrap items-center justify-between gap-[var(--space-3)]">
+          <span>External Editor provisioning has been frozen since {formatDate(provisioningFreeze.frozenAt === null ? null : new Date(provisioningFreeze.frozenAt).toISOString())}. The Cloudflare cache purge after a role change did not complete, so no one can be made an External Editor. Purge the zone manually, then release the freeze.</span>
+          <Button type="button" variant="outline" disabled={isReleasingFreeze} onClick={() => void releaseProvisioningFreeze()}>Release freeze</Button>
+        </Notice>}
         {!isLoadingUsers && !usersError && users.length === 0 && <EmptyState title="No users provisioned.">Provision a team member to give them closed-access Google sign-in.</EmptyState>}
         {!isLoadingUsers && !usersError && users.length > 0 && <TableWrap><Table>
           <TableHead><TableRow><TableHeader>Name</TableHeader><TableHeader>Email</TableHeader><TableHeader>Role</TableHeader><TableHeader>Access</TableHeader><TableHeader>Default editor</TableHeader><TableHeader>Created</TableHeader><TableHeader><span className="sr-only">Actions</span></TableHeader></TableRow></TableHead>

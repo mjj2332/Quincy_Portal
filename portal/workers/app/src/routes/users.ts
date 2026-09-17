@@ -14,7 +14,13 @@ import { jsonInput } from "./helpers";
 const input = z.object({ email: z.string().email(), name: z.string().min(1).max(200), role: z.enum(ROLES) });
 const patchInput = input.partial().omit({ email: true }).extend({ active: z.boolean().optional(), defaultEditor: z.boolean().optional() });
 const impersonationSettingsInput = z.object({ enabled: z.boolean() }).strict();
+const provisioningFreezeInput = z.object({ frozen: z.literal(false) }).strict();
+/** Set by the background worker when the bounded zone purge exhausts (#161); only an admin release clears it. */
 const EXTERNAL_PROVISIONING_FROZEN_FLAG = "external_editor_provisioning_frozen";
+const EXTERNAL_PROVISIONING_FROZEN_ERROR = {
+  error: "External Editor provisioning is frozen because a Cloudflare cache purge did not complete. Purge the zone manually, then release the freeze in Admin → Users.",
+  code: "external_provisioning_frozen",
+} as const;
 export const usersRoutes = new Hono<AppEnv>();
 // Scope to /users paths only: use("*") leaks onto sibling routers mounted at the same base.
 usersRoutes.use("/users", requireCapability("manageUsers"));
@@ -48,6 +54,30 @@ usersRoutes.patch("/users/impersonation-settings", terminalRoute("/users/imperso
   ]);
   return c.json({ enabled: data.enabled });
 }));
+async function readProvisioningFreeze(db: D1Database) {
+  const row = await db.prepare("SELECT enabled, updated_by AS updatedBy, updated_at AS updatedAt FROM feature_flags WHERE key = ?")
+    .bind(EXTERNAL_PROVISIONING_FROZEN_FLAG).first<{ enabled: number; updatedBy: string | null; updatedAt: number }>();
+  const frozen = row?.enabled === 1;
+  return { frozen, frozenAt: frozen ? row!.updatedAt : null, updatedBy: row?.updatedBy ?? null };
+}
+usersRoutes.get("/users/external-provisioning-freeze", terminalRoute("/users/external-provisioning-freeze", async (c) => c.json(await readProvisioningFreeze(c.env.DB))));
+/** Release-only: freezing belongs to the purge worker. Releasing an open latch is a no-op with no audit entry. */
+usersRoutes.patch("/users/external-provisioning-freeze", terminalRoute("/users/external-provisioning-freeze", async (c) => {
+  const data = await jsonInput(c, provisioningFreezeInput); if (data instanceof Response) return data;
+  const user = c.get("user"); const now = Date.now();
+  const before = await readProvisioningFreeze(c.env.DB);
+  if (before.frozen) {
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE feature_flags SET enabled = 0, updated_by = ?, updated_at = ? WHERE key = ? AND enabled = 1")
+        .bind(user.id, now, EXTERNAL_PROVISIONING_FROZEN_FLAG),
+      c.env.DB.prepare(`
+        INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
+        SELECT ?, ?, 'external.provisioning.released', 'feature_flag', ?, ?, ? WHERE changes() = 1
+      `).bind(newId(), user.id, EXTERNAL_PROVISIONING_FROZEN_FLAG, auditMeta(user, { frozenAt: before.frozenAt }), now),
+    ]);
+  }
+  return c.json(await readProvisioningFreeze(c.env.DB));
+}));
 usersRoutes.post("/users", terminalRoute("/users", async (c) => {
   const data = await jsonInput(c, input); if (data instanceof Response) return data;
   const db = createDb(c.env.DB); const id = newId();
@@ -55,7 +85,7 @@ usersRoutes.post("/users", terminalRoute("/users", async (c) => {
   if (data.role === "external_editor") {
     const frozen = await db.select({ enabled: schema.featureFlags.enabled }).from(schema.featureFlags)
       .where(eq(schema.featureFlags.key, EXTERNAL_PROVISIONING_FROZEN_FLAG)).get();
-    if (frozen?.enabled) return c.json({ error: "External Editor provisioning is temporarily frozen", code: "external_provisioning_frozen" }, 503);
+    if (frozen?.enabled) return c.json(EXTERNAL_PROVISIONING_FROZEN_ERROR, 503);
   }
   try { await db.insert(schema.user).values({ id, ...data, emailVerified: false, active: true, createdAt: new Date(), updatedAt: new Date() }); }
   catch { return c.json({ error: "A user with this email already exists" }, 409); }
@@ -109,7 +139,7 @@ usersRoutes.patch("/users/:id", terminalRoute("/users/:id", async (c) => {
     if (roleChanged && data.role === "external_editor") {
       const frozen = await db.select({ enabled: schema.featureFlags.enabled }).from(schema.featureFlags)
         .where(eq(schema.featureFlags.key, EXTERNAL_PROVISIONING_FROZEN_FLAG)).get();
-      if (frozen?.enabled) return c.json({ error: "External Editor provisioning is temporarily frozen", code: "external_provisioning_frozen" }, 503);
+      if (frozen?.enabled) return c.json(EXTERNAL_PROVISIONING_FROZEN_ERROR, 503);
     }
     const blockerRole = data.role === "external_editor" ? "photographer" : data.role === "photographer" ? "editor" : null;
     if (blockerRole) {

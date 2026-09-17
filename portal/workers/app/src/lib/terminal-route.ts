@@ -210,6 +210,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/uploads/presign", class: "withheld" },
   { method: "POST", path: "/api/uploads/presign/", class: "withheld" },
   { method: "PATCH", path: "/api/users/:id", class: "withheld" },
+  { method: "GET", path: "/api/users/external-provisioning-freeze", class: "withheld" },
+  { method: "PATCH", path: "/api/users/external-provisioning-freeze", class: "withheld" },
   { method: "GET", path: "/api/users/impersonation-settings", class: "withheld" },
   { method: "PATCH", path: "/api/users/impersonation-settings", class: "withheld" },
   { method: "GET", path: "/api/users", class: "withheld" },
