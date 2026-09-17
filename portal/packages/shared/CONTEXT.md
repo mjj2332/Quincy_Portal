@@ -21,9 +21,13 @@ The pipeline step a Project currently occupies. Keys are fixed in code; labels, 
 state and display order are admin configuration.
 _Avoid_: Status, state, column, phase
 
-**Board**:
+**Kanban**:
 The cross-Project view that groups Projects into columns by Stage. One column per Stage.
-_Avoid_: Kanban, dashboard, pipeline view
+The user interface, `PRD.md` and the rail's navigation entry have always said Kanban; the
+stored view preference is `"kanban"`. Promoting the view to a navigation destination in #109
+made the glossary's disagreement with the screen user-visible, and it is settled towards the
+word on the screen.
+_Avoid_: Board, dashboard, pipeline view
 
 **Deadline**:
 The civil-time commitment for a Project's delivery, held in the studio's timezone.
