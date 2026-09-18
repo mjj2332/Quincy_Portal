@@ -383,10 +383,9 @@ describe("external-editor visibility inventory", () => {
 // popovers, "Add Editor" / "Add Photographer" buttons) was replaced by `ProjectTeamCombobox`, one
 // Base UI multi-select combobox with a single chips input. `FROZEN_ADMIN`'s five `controls`
 // arrays lose "Add Editor" and "Add Photographer" and gain "Add team member" (the chips input's
-// accessible name) in their place, and gain a second `[input]` entry per tab (on top of #203's) — Base UI's Combobox
-// renders its own `aria-hidden` mirror `<input>` for native form association, which this file's
-// `accessibleName()` helper does not special-case for `aria-hidden` (same treatment as every
-// other control this file inventories by DOM presence, not by AT-visibility). Re-captured with
+// accessible name) in their place. Base UI's Combobox also renders an `aria-hidden` mirror
+// `<input>`, but `controls` is a de-duplicated set and #203's Select already contributes the
+// same `"[input]"` entry, so the literal gains nothing for it. Re-captured with
 // DUMP_VISIBILITY_INVENTORY on the tree rebased over #203, not hand-merged. Nothing else moved:
 // the `project-team-control` testid, its count, and every `roles` entry are unchanged, and
 // `FROZEN_EXTERNAL_EDITOR` needs no edit at all — an external editor never gets `canEdit` on the
