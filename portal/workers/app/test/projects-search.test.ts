@@ -232,6 +232,14 @@ describe("/api/projects — q, external_editor checklist-title matching (#217 fo
     // projects' ids appear in it regardless of the active `q`, exactly matching the unfiltered
     // run's own envelope.
     expect(filtered.body.board).toEqual(unfiltered.body.board);
+    // Assert the EXACT authorised ids inside `orderedProjectIdsByStage` itself, not just envelope
+    // equality between the two runs -- both could leak the hidden project's id and still be equal
+    // to each other. The hidden (non-member) project's id must be absent from every stage.
+    const orderedIds = Object.values(
+      (filtered.body.board as { orderedProjectIdsByStage: Record<string, string[]> }).orderedProjectIdsByStage,
+    ).flat();
+    expect(orderedIds.sort()).toEqual([externalOtherVisibleId, externalVisibleChecklistId].sort());
+    expect(orderedIds).not.toContain(externalHiddenChecklistId);
   });
 
   it("the identical title on a project the external is NOT a member of is absent, and not counted", async () => {
