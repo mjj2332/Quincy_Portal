@@ -400,28 +400,74 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
   });
 
   // `ruleBody` returns the FIRST rule whose selector list matches — it does not scope by media
-  // context — and `.project-header__controls > section` already has a base (non-media) rule
-  // (side-by-side sections), so a plain `ruleBody` call here would silently check the wrong rule.
-  // Instead: find the one `@media (max-width: 720px)` block that carries the (unique)
-  // `.project-header { padding: var(--space-4); }` rule, walk its braces to the block's real end,
-  // and read the section rule out of that block only.
-  it("stacks the header's control sections one per line at 720px and below (#206)", () => {
-    const anchor = appCss.indexOf(".project-header { padding: var(--space-4); }");
-    expect(anchor, ".project-header padding rule").toBeGreaterThan(-1);
-    const open = appCss.lastIndexOf("@media (max-width: 720px) {", anchor);
-    expect(open, "@media (max-width: 720px) block enclosing the .project-header rule").toBeGreaterThan(-1);
-    let depth = 0;
-    let close = -1;
-    for (let i = appCss.indexOf("{", open); i < appCss.length; i += 1) {
-      if (appCss[i] === "{") depth += 1;
-      else if (appCss[i] === "}" && --depth === 0) { close = i; break; }
+  // context — and the header's control selectors all have base (non-media) rules, so a plain
+  // `ruleBody` call would silently check the wrong rule. Instead: collect every
+  // `@media (max-width: <N>px)` block (walking braces to each block's real end, comments stripped
+  // because they can carry commas that `ruleBody` would read as selector separators) and read the
+  // rule out of the first such block that declares it.
+  function mediaRule(maxWidth: string, selector: string): string | null {
+    return atRule(`@media (max-width: ${maxWidth}) {`, selector);
+  }
+  // #213: the header's control row wraps by a container query on the header itself (the rail may
+  // be open or closed at the same viewport), so the same walk is needed for `@container` blocks.
+  function containerRule(maxWidth: string, selector: string): string | null {
+    return atRule(`@container project-header (max-width: ${maxWidth}) {`, selector);
+  }
+  function atRule(marker: string, selector: string): string | null {
+    let from = 0;
+    for (;;) {
+      const open = appCss.indexOf(marker, from);
+      if (open === -1) return null;
+      let depth = 0;
+      let close = -1;
+      for (let i = appCss.indexOf("{", open); i < appCss.length; i += 1) {
+        if (appCss[i] === "{") depth += 1;
+        else if (appCss[i] === "}" && --depth === 0) { close = i; break; }
+      }
+      const block = appCss.slice(open, close + 1).replace(/\/\*[\s\S]*?\*\//g, "");
+      const body = ruleBody(block, selector);
+      if (body !== null) return body;
+      from = close + 1;
     }
-    expect(close).toBeGreaterThan(anchor);
-    // Comments can carry commas, which `ruleBody` would read as selector separators.
-    const block = appCss.slice(open, close + 1).replace(/\/\*[\s\S]*?\*\//g, "");
-    const section = ruleBody(block, ".project-header__controls > section");
-    expect(section, "stacked-section rule inside the 720px block").not.toBeNull();
-    expect(section).toMatch(/flex:\s*1 1 100%/);
-    expect(section).toMatch(/max-width:\s*none/);
+  }
+
+  // #213: row 2 is the prototype's one flat control row — a four-column grid (Stage, Team,
+  // Deadline, Dropbox) with a hairline divider drawn on every cell but the first. Grid, not
+  // flex-wrap, because the 1024 and 720 layouts must be deterministic: two columns at 1024, one at
+  // 720 (#206's "wraps" / "stacks" criteria), with the divider reset on each new first column.
+  it("lays the header's four controls out in one grid row with hairline dividers (#213)", () => {
+    const controls = ruleBody(appCss, ".project-header__controls");
+    expect(controls, ".project-header__controls base rule").not.toBeNull();
+    expect(controls).toMatch(/display:\s*grid/);
+    expect(controls).toMatch(/grid-template-columns:\s*max-content minmax\(0, 1fr\) max-content max-content/);
+    const cell = ruleBody(appCss, ".project-header__control");
+    expect(cell, ".project-header__control base rule").not.toBeNull();
+    expect(cell).toMatch(/border-inline-start:\s*1px solid var\(--border-hairline\)/);
+    const first = ruleBody(appCss, ".project-header__control:first-child");
+    expect(first).toMatch(/border-inline-start:\s*0/);
+    expect(appCss).not.toMatch(/\.project-header__controls > section/);
+  });
+
+  // The wrap breakpoints are the header's own content width (Sol, #213 review: a viewport media
+  // query left a 1025–1279px band where four columns squeezed Team to nothing whenever a Deadline
+  // was set, and could not see the rail closing). 859px = the measured worst-case row (~820px) no
+  // longer fits; 639px = a 320px cell no longer fits a scheduled Deadline. The 720px "stacks" state
+  // (#206) stays a viewport rule and must come AFTER the container rules: at 720 the header's
+  // content is 688px, wider than a 1024 railed viewport's 693px, so width alone cannot tell them
+  // apart and the later rule has to win at equal specificity.
+  it("wraps the header's controls two per line below 860px of header width (1024px railed) and stacks them below 640px and at a 720px viewport (#206, #213)", () => {
+    const header = ruleBody(appCss, ".project-header");
+    expect(header).toMatch(/container:\s*project-header \/ inline-size/);
+    expect(containerRule("859px", ".project-header__controls")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)\s*;/);
+    expect(containerRule("859px", ".project-header__control:nth-child(odd)")).toMatch(/border-inline-start:\s*0/);
+    expect(containerRule("639px", ".project-header__controls")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)\s*;/);
+    expect(containerRule("639px", ".project-header__control")).toMatch(/border-inline-start:\s*0/);
+    expect(mediaRule("720px", ".project-header")).toMatch(/padding:\s*var\(--space-4\)/);
+    expect(mediaRule("720px", ".project-header__controls")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)\s*;/);
+    expect(mediaRule("720px", ".project-header__control")).toMatch(/border-inline-start:\s*0/);
+    // (Several `@media (max-width: 720px)` blocks exist; the header's is the one carrying its padding.)
+    expect(appCss.indexOf("@container project-header (max-width: 859px) {")).toBeLessThan(appCss.indexOf(".project-header { padding: var(--space-4); }"));
+    // The two-per-line layout must not also hang off the viewport — one source of truth.
+    expect(mediaRule("1024px", ".project-header__controls")).toBeNull();
   });
 });

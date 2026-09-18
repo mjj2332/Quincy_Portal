@@ -250,7 +250,16 @@ describe("Project header Stage control", () => {
     expect(monitored.textContent).toContain("Also monitored");
     expect(monitored.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/11/Input");
 
-    const openLink = monitored.querySelector<HTMLAnchorElement>("a")!;
+    // #213: the title row reads "Dropbox" then the state pill, before any folder facts.
+    expect(dialog.textContent!.indexOf("Dropbox")).toBeLessThan(dialog.textContent!.indexOf("Monitored"));
+    expect(dialog.textContent!.indexOf("Monitored")).toBeLessThan(dialog.textContent!.indexOf("/Editor/"));
+
+    // #213: Open in Dropbox sits in the button row beside Sync (prototype 2a), no longer inside
+    // the monitored block — the block holds facts, the row holds actions.
+    const openLink = dialog.querySelector<HTMLAnchorElement>('a[href^="https://www.dropbox.com/home"]')!;
+    expect(openLink).not.toBeNull();
+    expect(monitored.contains(openLink)).toBe(false);
+    expect(openLink.textContent).toBe("Open in Dropbox");
     expect(openLink.getAttribute("href")).toBe("https://www.dropbox.com/home/Editor/01_ACTIVE%20EDITS/09.%20September/11/12%20Example%20St/0.%20Input");
     expect(openLink.getAttribute("target")).toBe("_blank");
     expect(openLink.getAttribute("rel")).toBe("noreferrer");
@@ -266,6 +275,20 @@ describe("Project header Stage control", () => {
     const syncButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
     expect(syncButton).not.toBeNull();
     expect(monitored.compareDocumentPosition(syncButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Open in Dropbox precedes Sync inside one shared button row.
+    expect(openLink.parentElement).toBe(syncButton.parentElement);
+    expect(openLink.compareDocumentPosition(syncButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says in one line that nothing is monitored when there is no Editor mapping, above Sync (#213)", async () => {
+    render(<ProjectHeader {...baseProps(project({ monitoredRawFolder: null }))} canUpload hasRawFolder />);
+    const dialog = await openDropbox();
+    expect(dialog.textContent!.indexOf("Dropbox")).toBeLessThan(dialog.textContent!.indexOf("Not monitored"));
+    const note = [...dialog.querySelectorAll("p")].find((p) => p.textContent?.includes("No Editor Input folder is monitored"))!;
+    expect(note).not.toBeNull();
+    const syncButton = dialog.querySelector('[data-testid="dropbox-sync"]')!;
+    expect(note.compareDocumentPosition(syncButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(dialog.querySelector("a")).toBeNull();
   });
 
   it("renders neither monitored nor Tonomo-secondary testid when there is no ready Editor mapping, even with a Tonomo path set", async () => {
@@ -343,9 +366,28 @@ describe("Project header Stage control", () => {
     expect(host.querySelector("h2#project-overview-property")!.textContent).toBe("12 Example St");
   });
 
+  // #213: row 2 is the prototype's flat control row — four labels, in order, each once. "Team"
+  // is the cell label (the combobox is mocked to an empty <div/> here), "Deadline" the cell
+  // label above the trigger (whose own text is "Set deadline", lower-case d), "Dropbox" the cell
+  // label (the trigger carries its name in aria-label, not text). The old rail's "Production"
+  // section heading is gone. Text-only assertions: Guard A forbids class selectors in DOM tests.
+  it("row 2 is one flat row of four labelled controls — Stage, Team, Deadline, Dropbox — with no section headings and no label repeated (#213)", () => {
+    render(<ProjectHeader {...baseProps(project({
+      monitoredRawFolder: { source: "editor_input", path: "/Editor/x", webUrl: null, extraPaths: [] },
+    }))} canUpload hasRawFolder canEdit />);
+    const text = host.textContent ?? "";
+    expect(text).not.toContain("Production");
+    const positions = ["Stage", "Team", "Deadline", "Dropbox"].map((label) => {
+      expect(text.split(label).length - 1, `${label} appears exactly once`).toBe(1);
+      return text.indexOf(label);
+    });
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(text).toContain("Set deadline");
+    expect(host.querySelector('[data-testid="project-deadline-trigger"]')!.getAttribute("aria-label")).toBe("Deadline: Set deadline");
+  });
+
   it("omits the Dropbox block when uploads are allowed but there is no folder, mapping, or backend admin", () => {
     render(<ProjectHeader {...baseProps(project())} canUpload />);
-    expect(host.querySelector('[aria-labelledby="project-overview-dropbox"]')).toBeNull();
     expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
     expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
   });

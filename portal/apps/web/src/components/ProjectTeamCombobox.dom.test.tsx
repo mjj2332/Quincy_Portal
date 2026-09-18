@@ -446,11 +446,13 @@ describe("ProjectTeamCombobox", () => {
     const addIndex = labels.indexOf("Add team member");
     const rawIndex = labels.findIndex((label) => label?.includes("RAW"));
 
+    // #213: row 2 reads Stage · Team · Deadline · Dropbox (prototype 2a), so the Team chips and
+    // input now come before the Deadline trigger.
     expect(stageIndex).toBeGreaterThanOrEqual(0);
-    expect(deadlineIndex).toBeGreaterThan(stageIndex);
-    expect(removeIndex).toBeGreaterThan(deadlineIndex);
+    expect(removeIndex).toBeGreaterThan(stageIndex);
     expect(addIndex).toBeGreaterThan(removeIndex);
-    expect(rawIndex).toBeGreaterThan(addIndex);
+    expect(deadlineIndex).toBeGreaterThan(addIndex);
+    expect(rawIndex).toBeGreaterThan(deadlineIndex);
     expect(rawIndex).toBe(labels.length - 1);
   });
 

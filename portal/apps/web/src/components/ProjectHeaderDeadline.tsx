@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/reui/popover";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { StatusPill } from "./quincy/StatusPill";
 import { dueIn } from "../lib/deadline-due-in";
-import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, POPOVER_CONTENT } from "./project-header-popover";
+import { cn } from "../lib/utils";
+import { DASHED_TRIGGER, HEADER_KV_VALUE, POPOVER_CONTENT } from "./project-header-popover";
 
 /**
  * #205 — the Production section's Deadline block becomes a dashed trigger that opens
@@ -28,6 +30,23 @@ import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, POPOVER_CONTENT } from 
 
 const DUE_IN_REFRESH_MS = 60_000;
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * #213 — the trigger's visible text in prototype 2a's shape, "Thu 18 Sep · 17:00". Read off
+ * `localCivil` (already the Sydney wall-clock the editor saved), never the instant, so a viewer in
+ * another zone sees the same date the editor set. Fixed name tables, not `Intl`: recent ICU data
+ * abbreviates September as "Sept" for en-AU, and the weekday is the only thing a `Date` is used for.
+ */
+export function deadlineTriggerText(localCivil: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(localCivil);
+  if (!match) return localCivil.replace("T", " ");
+  const [, year, month, day, hours, minutes] = match;
+  const weekday = WEEKDAYS[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()];
+  return `${weekday} ${Number(day)} ${MONTHS[Number(month) - 1]} · ${hours}:${minutes}`;
+}
+
 export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
   projectId: string;
   schedule: ProjectDeadlineSchedule;
@@ -41,9 +60,13 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
     return () => clearInterval(id);
   }, []);
 
-  const valueText = schedule.deadline ? schedule.deadline.localCivil.replace("T", " ") : "Not set";
+  // #213: the visible text takes the prototype's shape, and the accessible name is built from that
+  // same text (WCAG 2.5.3 Label in Name — a speech-control user says what they see), prefixed with
+  // the cell's key so the name still says which fact it is. Frozen in the external-visibility
+  // inventory as "Deadline: Set deadline".
+  const triggerText = schedule.deadline ? deadlineTriggerText(schedule.deadline.localCivil) : "Set deadline";
   const due = dueIn(schedule, now);
-  const ariaLabel = `Deadline: ${valueText}${due ? `, ${due.label}` : ""}`;
+  const ariaLabel = `Deadline: ${triggerText}${due ? `, ${due.label}` : ""}`;
 
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger
@@ -52,11 +75,9 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
       aria-label={ariaLabel}
       className={DASHED_TRIGGER}
     >
-      <span className="grid gap-[var(--space-1)]">
-        <span className={HEADER_KV_KEY}>Deadline</span>
-        <span className={HEADER_KV_VALUE}>{valueText}</span>
-      </span>
-      {due && <span className="w-fit"><StatusPill tone={due.tone}>{due.label}</StatusPill></span>}
+      <span className={cn(HEADER_KV_VALUE, "[white-space:nowrap]")}>{triggerText}</span>
+      {due && <StatusPill tone={due.tone}>{due.label}</StatusPill>}
+      <ChevronDown aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5] text-foreground-secondary" />
     </PopoverTrigger>
     <PopoverContent align="start" aria-label="Deadline" className={POPOVER_CONTENT}>
       <PopoverTitle className="!font-medium">Deadline</PopoverTitle>

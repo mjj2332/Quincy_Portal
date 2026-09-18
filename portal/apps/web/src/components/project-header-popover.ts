@@ -14,10 +14,12 @@ export const HEADER_KV_VALUE =
 
 // A dashed-border trigger idiom, carried over from STAGE_SELECT (ProjectHeader.tsx) with a solid
 // border swapped for a dashed one — this control opens an editor, it does not host one directly.
+// #213: content-sized and single-line like the prototype's `.sel.dashed` (value · pill · chevron
+// in a row), not a full-width labelled box — the label now lives on the header cell around it.
 export const DASHED_TRIGGER =
-  "w-full text-left cursor-pointer " +
+  "w-fit max-w-full text-left cursor-pointer " +
   "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
-  "grid gap-[var(--space-2)] " +
+  "inline-flex items-center gap-[var(--space-2)] " +
   "px-[14px] py-[9px] " +
   "rounded-[var(--radius-sm)] [border-style:dashed] border-[length:var(--border-width-hair)] " +
   "bg-card border-border text-foreground " +

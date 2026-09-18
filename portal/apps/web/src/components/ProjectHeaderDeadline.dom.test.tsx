@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { ApiError } from "../lib/api";
-import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
+import { ProjectHeaderDeadline, deadlineTriggerText } from "./ProjectHeaderDeadline";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { confirmStore } from "../lib/confirm";
 
@@ -146,13 +146,57 @@ describe("ProjectHeaderDeadline", () => {
   });
 
 
-  it("shows Not set and no pill when there is no deadline", async () => {
+  // #213: the accessible name is the visible text with the cell's key in front (WCAG 2.5.3 — the
+  // name must contain what a speech-control user reads); "Deadline: Set deadline" is frozen in
+  // the external-visibility inventory.
+  it("shows Set deadline and no pill when there is no deadline, with the accessible name Deadline: Set deadline", async () => {
     const host = await mount(emptySchedule);
     const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
-    expect(trigger.textContent).toContain("Not set");
+    expect(trigger.textContent).toContain("Set deadline");
+    expect(trigger.textContent).not.toContain("Not set");
     expect(trigger.textContent).not.toContain("Overdue");
     expect(trigger.textContent).not.toContain("Due in");
-    expect(trigger.getAttribute("aria-label")).toBe("Deadline: Not set");
+    expect(trigger.getAttribute("aria-label")).toBe("Deadline: Set deadline");
+  });
+
+  // #213: prototype 2a prints the scheduled Deadline as "Thu 18 Sep · 17:00" — weekday, day,
+  // three-letter month, no year, then the civil time. Built from `localCivil`, never from the
+  // instant, so the viewer's own zone cannot shift the date. September is the trap: recent ICU
+  // data abbreviates it "Sept" for en-AU, so the month must not come from Intl.
+  it("prints a scheduled Deadline as weekday, day, three-letter month and civil time", async () => {
+    const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z"));
+    const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
+    expect(trigger.textContent).toContain("Fri 15 Jan · 09:00");
+    expect(trigger.textContent).not.toContain("2027");
+    expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Fri 15 Jan · 09:00/);
+    await rerenderSchedule(scheduleAt("2026-09-17T07:00:00.000Z", {
+      deadline: { localCivil: "2026-09-17T17:00", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 0, instant: "2026-09-17T07:00:00.000Z" },
+    }));
+    expect(trigger.textContent).toContain("Thu 17 Sep · 17:00");
+  });
+
+  // Sol (#213 review): the twelve-entry month table and the weekday lookup are user-visible data;
+  // one January and one September case would let ten of them regress unnoticed. Known dates only.
+  it.each([
+    ["2026-01-01T00:00", "Thu 1 Jan · 00:00"],
+    ["2026-02-28T09:05", "Sat 28 Feb · 09:05"],
+    ["2024-02-29T12:00", "Thu 29 Feb · 12:00"],
+    ["2026-03-31T23:59", "Tue 31 Mar · 23:59"],
+    ["2026-04-06T08:30", "Mon 6 Apr · 08:30"],
+    ["2026-05-10T17:00", "Sun 10 May · 17:00"],
+    ["2026-06-19T11:45", "Fri 19 Jun · 11:45"],
+    ["2026-07-04T13:00", "Sat 4 Jul · 13:00"],
+    ["2026-08-12T07:15", "Wed 12 Aug · 07:15"],
+    ["2026-09-18T17:00", "Fri 18 Sep · 17:00"],
+    ["2026-10-04T02:30", "Sun 4 Oct · 02:30"],
+    ["2026-11-25T18:20", "Wed 25 Nov · 18:20"],
+    ["2026-12-31T22:00", "Thu 31 Dec · 22:00"],
+  ])("deadlineTriggerText(%s) is %s", (localCivil, expected) => {
+    expect(deadlineTriggerText(localCivil)).toBe(expected);
+  });
+
+  it("falls back to the raw civil string when it is not an ISO local date-time", () => {
+    expect(deadlineTriggerText("tomorrow")).toBe("tomorrow");
   });
 
   it("shows a critical Overdue pill once the deadline has passed", async () => {

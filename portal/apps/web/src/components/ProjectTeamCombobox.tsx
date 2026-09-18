@@ -406,7 +406,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
           })}
         </ComboboxValue>
         <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
-        <ComboboxChipsInput aria-label="Add team member" placeholder="Add team member…" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
+        <ComboboxChipsInput aria-label="Add team member" placeholder="Add…" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
       </ComboboxChips>
       <ComboboxContent anchor={anchor} className="max-w-(--anchor-width) min-w-(--anchor-width)">
         <ComboboxEmpty>No eligible people match.</ComboboxEmpty>

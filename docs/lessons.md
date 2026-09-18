@@ -2861,3 +2861,55 @@ Two smaller ones from the same ticket:
 **Rule:** when a vendor composite owns keyboard handling and you make one of its children
 tabbable, read the parent's keydown for what it does with keys it does not handle. "Nothing"
 is rarely the answer.
+
+## A ticket without the design file builds the ticket, not the design (#213)
+
+Five header tickets (#202–#206) shipped, each with Sol's diff review, Luna's browser pass and a
+spec/standards code review, and the result still did not look like the prototype the owner had
+signed off. Row 2 carried the old rail's "Production / Team / Dropbox" section headings, a nested
+"Dropbox" label under the "Dropbox" heading, ISO dates in a dashed box, and a Sync-only popover.
+Every gate had passed because every gate compared the code against the ticket, and the ticket
+never carried the picture.
+
+How it happened, step by step:
+
+- `/to-spec` wrote #201 from the prototype in words: ReUI example ids (`c-select-19`,
+  `c-combobox-19`), behaviours, test seams. It did not link the design file or attach a screenshot.
+- `/to-tickets` split #201 into a behaviour-preserving scaffold (#202, "port the rail's controls
+  **unchanged**") plus one ticket per control. "Unchanged" carried the rail's section chrome into
+  the header. No ticket said "and remove it".
+- Each builder (fast-worker for #202, peers for #203–#205) had the ticket text and the codebase.
+  None had the prototype. They built exactly what they were given.
+- #206's planning noted "three sections, not four controls" and judged no restructuring needed —
+  correct for a responsive/a11y ticket, wrong for the product. The gap was visible and nobody
+  owned it.
+- The prototype itself had a bug: no CSS rule for its `.hrow` container, so Claude Design rendered
+  row 2 stacked while its own caption said "Row 2: Stage · Team · Deadline · Dropbox". Read the
+  markup and the caption, not just the render, before treating a prototype as truth.
+
+What fixed it (#213): a ticket that links the design file, embeds a side-by-side screenshot of
+prototype and build, and lists each delta as its own acceptance criterion. Luna's pass then has
+something to compare against.
+
+Two build-level lessons from the same ticket:
+
+- **A copy change on a control is an accessible-name change.** The first cut kept the Deadline
+  trigger's `aria-label` at "Deadline: Not set" while the visible text became "Set deadline", to
+  avoid re-freezing the external-visibility inventory. Sol caught it: WCAG 2.5.3 (Label in Name)
+  wants the name to contain the visible text, or a speech-control user saying "Set deadline" hits
+  nothing. The name is now the visible text with the cell's key in front ("Deadline: Set
+  deadline"), and the inventory was re-frozen on purpose — that is what the freeze is for.
+- **Viewport breakpoints cannot see the rail.** The control row first wrapped on
+  `@media (max-width: 1024px)`; at 1025–1279px with the rail open the four columns still ran and
+  Team collapsed to 33px whenever a Deadline was set. The header is now its own container
+  (`container: project-header / inline-size`) and the row wraps on the header's width, measured
+  against the worst-case cell contents, not on the viewport. One trap: a container query reads the
+  content box, so the 720px "stacks" state — where the header's padding also shrinks and its
+  content (688px) is wider than a 1024px railed viewport's (693px) — stays a viewport rule placed
+  after the container rules.
+- **Do not ask `Intl` for a three-letter month.** Recent ICU data abbreviates September as
+  "Sept" for en-AU and en-GB. A twelve-entry table is the whole fix.
+
+**Rule:** a UI ticket links the design file and carries a "matches the prototype at 1280px"
+criterion with a screenshot. Review axes that never look at the design cannot catch a design
+deviation, however many of them run.
