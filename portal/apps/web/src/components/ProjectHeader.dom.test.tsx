@@ -56,12 +56,30 @@ async function clickOption(option: HTMLElement) {
   await act(async () => { option.click(); await Promise.resolve(); });
 }
 
+/**
+ * The Dropbox popover (`reui/popover.tsx`) portals its content to `document.body`, outside
+ * `host` — same as `quincy/NotificationBell.tsx`'s panel. A native `.click()` inside `act`,
+ * flushing microtasks the same way `NotificationBell.dom.test.tsx`'s own click helper does, then
+ * the caller queries `document` (or the returned dialog) rather than `host` for anything the
+ * popover renders.
+ */
+async function openDropbox(): Promise<HTMLElement> {
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!;
+  await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!;
+}
+
 describe("Project header Stage control", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     roleState.role = "editor"; roleState.inactive = false;
   });
-  afterEach(() => { act(() => root.unmount()); host.remove(); });
+  afterEach(() => {
+    act(() => root.unmount());
+    // Popover content portals to `document.body`, outside `host` — a plain `host.remove()` would
+    // leave it behind for the next test.
+    document.body.replaceChildren();
+  });
 
   const baseProps = (p: ProjectDetail, onStageMove = vi.fn()) => ({
     project: p, activeTab: "raw" as CollectionKind, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
@@ -120,10 +138,11 @@ describe("Project header Stage control", () => {
     expect(stageTrigger()).toBeNull();
   });
 
-  it("keeps the Dropbox sync button non-activatable while syncing is in progress", () => {
+  it("keeps the Dropbox sync button non-activatable while syncing is in progress", async () => {
     const onSyncDropbox = vi.fn();
     render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder isSyncing onSyncDropbox={onSyncDropbox} />);
-    const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Syncing Dropbox"))!;
+    const dialog = await openDropbox();
+    const syncButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Syncing Dropbox"))!;
     expect(syncButton.disabled).toBe(true);
     act(() => syncButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
     expect(onSyncDropbox).not.toHaveBeenCalled();
@@ -179,13 +198,14 @@ describe("Project header Stage control", () => {
     expect(raw.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("hides the Stage chevron and Dropbox sync icons from assistive tech, gives the sync button its exact accessible name, keeps the Blocked status readable, and nests no interactive element inside another", () => {
+  it("hides the Stage chevron and Dropbox sync icons from assistive tech, gives the sync button its exact accessible name, keeps the Blocked status readable, and nests no interactive element inside another", async () => {
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} canUpload hasRawFolder autohdrBlocked isSyncing={false} />);
 
     const chevron = stageTrigger()!.querySelector("svg")!;
     expect(chevron.getAttribute("aria-hidden")).toBe("true");
 
-    const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
+    const dialog = await openDropbox();
+    const syncButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
     const syncIcon = syncButton.querySelector("svg")!;
     expect(syncIcon.getAttribute("aria-hidden")).toBe("true");
     // This project has no @testing-library/dom (which would give an accessible-name-aware
@@ -197,18 +217,20 @@ describe("Project header Stage control", () => {
     expect(syncButton.hasAttribute("aria-labelledby")).toBe(false);
     expect(syncButton.textContent?.trim()).toBe("Sync from Dropbox");
 
-    const status = host.querySelector('[role="status"]')!;
+    const status = dialog.querySelector('[role="status"]')!;
     expect(status.textContent).toBe("Blocked");
     // The status paragraph is a sibling of the sync button, not nested inside it.
     expect(syncButton.contains(status)).toBe(false);
 
-    const interactive = [...host.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
+    // Scans the whole document, not just `host` — the popover's content portals to
+    // `document.body`, outside `host`, once opened.
+    const interactive = [...document.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
     for (const element of interactive) {
       expect(element.querySelector("button, a, input, select, textarea")).toBeNull();
     }
   });
 
-  it("shows the monitored Editor Input folder above Sync, an Open-in-Dropbox link, and demotes the Tonomo folder to Not monitored", () => {
+  it("shows the monitored Editor Input folder above Sync, an Open-in-Dropbox link, and demotes the Tonomo folder to Not monitored", async () => {
     render(<ProjectHeader {...baseProps(project({
       rawFolderPath: "/Tonomo/Raw Files/12 Example St",
       rawFolderLink: "https://www.dropbox.com/scl/fo/legacy",
@@ -219,8 +241,9 @@ describe("Project header Stage control", () => {
         extraPaths: ["/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/11/Input"],
       },
     }))} canUpload hasRawFolder />);
+    const dialog = await openDropbox();
 
-    const monitored = host.querySelector('[data-testid="raw-monitored"]')!;
+    const monitored = dialog.querySelector('[data-testid="raw-monitored"]')!;
     expect(monitored).not.toBeNull();
     expect(monitored.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input");
     expect(monitored.textContent).toContain("Monitored");
@@ -232,7 +255,7 @@ describe("Project header Stage control", () => {
     expect(openLink.getAttribute("target")).toBe("_blank");
     expect(openLink.getAttribute("rel")).toBe("noreferrer");
 
-    const secondary = host.querySelector('[data-testid="raw-tonomo-secondary"]')!;
+    const secondary = dialog.querySelector('[data-testid="raw-tonomo-secondary"]')!;
     expect(secondary).not.toBeNull();
     expect(secondary.textContent).toContain("Not monitored");
     expect(secondary.textContent).toContain("/Tonomo/Raw Files/12 Example St");
@@ -240,34 +263,37 @@ describe("Project header Stage control", () => {
     expect(secondary.querySelector("a")).toBeNull();
 
     // The monitored path is above Sync, not swapped in for it.
-    const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
+    const syncButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
     expect(syncButton).not.toBeNull();
     expect(monitored.compareDocumentPosition(syncButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("renders neither monitored nor Tonomo-secondary testid when there is no ready Editor mapping, even with a Tonomo path set", () => {
+  it("renders neither monitored nor Tonomo-secondary testid when there is no ready Editor mapping, even with a Tonomo path set", async () => {
     render(<ProjectHeader {...baseProps(project({ rawFolderPath: "/Tonomo/Raw Files/12 Example St", monitoredRawFolder: null }))} canUpload hasRawFolder />);
-    expect(host.querySelector('[data-testid="raw-monitored"]')).toBeNull();
-    expect(host.querySelector('[data-testid="raw-tonomo-secondary"]')).toBeNull();
+    const dialog = await openDropbox();
+    expect(dialog.querySelector('[data-testid="raw-monitored"]')).toBeNull();
+    expect(dialog.querySelector('[data-testid="raw-tonomo-secondary"]')).toBeNull();
   });
 
-  it("never renders an Open-in-Dropbox link when webUrl is null, and never falls back to the legacy rawFolderLink", () => {
+  it("never renders an Open-in-Dropbox link when webUrl is null, and never falls back to the legacy rawFolderLink", async () => {
     render(<ProjectHeader {...baseProps(project({
       rawFolderLink: "https://www.dropbox.com/scl/fo/legacy-shared-link",
       monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: null, extraPaths: [] },
     }))} canUpload hasRawFolder />);
-    const monitored = host.querySelector('[data-testid="raw-monitored"]')!;
+    const dialog = await openDropbox();
+    const monitored = dialog.querySelector('[data-testid="raw-monitored"]')!;
     expect(monitored.querySelector("a")).toBeNull();
-    expect(host.querySelector('a[href^="https://www.dropbox.com"]')).toBeNull();
+    expect(document.querySelector('a[href^="https://www.dropbox.com"]')).toBeNull();
     expect(monitored.textContent).toContain("/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input");
   });
 
-  it("still shows the monitored block to a photographer", () => {
+  it("still shows the monitored block to a photographer", async () => {
     roleState.role = "photographer";
     render(<ProjectHeader {...baseProps(project({
       monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: "https://www.dropbox.com/home/x", extraPaths: [] },
     }))} canUpload hasRawFolder />);
-    expect(host.querySelector('[data-testid="raw-monitored"]')).not.toBeNull();
+    const dialog = await openDropbox();
+    expect(dialog.querySelector('[data-testid="raw-monitored"]')).not.toBeNull();
   });
 
   it("row 1 renders suburb · postcode, Shoot date pending when unset, — for a missing agency/agent pair, and Edit details only when canEdit", () => {
@@ -320,7 +346,51 @@ describe("Project header Stage control", () => {
   it("omits the Dropbox block when uploads are allowed but there is no folder, mapping, or backend admin", () => {
     render(<ProjectHeader {...baseProps(project())} canUpload />);
     expect(host.querySelector('[aria-labelledby="project-overview-dropbox"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
     expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+  });
+
+  it("renders a Dropbox trigger button but no Dropbox content while its popover is closed", () => {
+    render(<ProjectHeader {...baseProps(project({
+      monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: "https://www.dropbox.com/home/x", extraPaths: [] },
+    }))} canUpload hasRawFolder />);
+    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    expect(host.textContent).not.toContain("Sync from Dropbox");
+    expect(host.querySelector('a[href^="https://www.dropbox.com"]')).toBeNull();
+  });
+
+  it("shows Blocked on the Dropbox trigger when AutoHDR is blocked, regardless of monitoring", () => {
+    render(<ProjectHeader {...baseProps(project({
+      monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] },
+    }))} canUpload hasRawFolder autohdrBlocked />);
+    const trigger = host.querySelector('[data-testid="project-dropbox-trigger"]')!;
+    expect(trigger.textContent).toContain("Blocked");
+    expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Blocked");
+  });
+
+  it("shows Monitored on the Dropbox trigger when a Monitored RAW folder is set", () => {
+    render(<ProjectHeader {...baseProps(project({
+      monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] },
+    }))} canUpload hasRawFolder />);
+    const trigger = host.querySelector('[data-testid="project-dropbox-trigger"]')!;
+    expect(trigger.textContent).toContain("Monitored");
+    expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Monitored");
+  });
+
+  it("shows Not monitored on the Dropbox trigger by default", () => {
+    render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
+    const trigger = host.querySelector('[data-testid="project-dropbox-trigger"]')!;
+    expect(trigger.textContent).toContain("Not monitored");
+    expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Not monitored");
+  });
+
+  it("closes the Dropbox popover on Escape", async () => {
+    render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
+    await openDropbox();
+    expect(document.querySelector('[role="dialog"][aria-label="Dropbox"]')).not.toBeNull();
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[role="dialog"][aria-label="Dropbox"]')).toBeNull();
   });
 
   it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", async () => {

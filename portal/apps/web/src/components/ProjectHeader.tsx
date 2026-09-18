@@ -1,11 +1,10 @@
 import type { CollectionKind } from "@quincy/shared";
-import { RefreshCw } from "lucide-react";
 import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
-import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
+import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
+import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
 import { buttonClasses } from "./quincy/Button";
-import { StatusPill } from "./quincy/StatusPill";
 import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 import { Badge } from "@/components/reui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
@@ -176,7 +175,7 @@ export function ProjectHeader({
       <section aria-labelledby="project-overview-production">
         <div className={HEADER_SECTION_LABEL} id="project-overview-production">Production</div>
         {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={HEADER_KV_KEY}>Stage</span><span className={HEADER_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span></div>}
-        <ProjectDeadlineControl projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
+        <ProjectHeaderDeadline projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
       </section>
 
       <section aria-labelledby="project-overview-team">
@@ -186,54 +185,7 @@ export function ProjectHeader({
 
       {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <section aria-labelledby="project-overview-dropbox">
         <div className={HEADER_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
-        {project.monitoredRawFolder && <div data-testid="raw-monitored" className="mb-[var(--space-4)]">
-          <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-            <span className={HEADER_KV_KEY}>Monitored RAW folder</span>
-            <span className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)]")}>{project.monitoredRawFolder.path}</span>
-          </div>
-          <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
-            <StatusPill tone="positive">Monitored</StatusPill>
-          </div>
-          {project.monitoredRawFolder.webUrl
-            ? <a href={project.monitoredRawFolder.webUrl} target="_blank" rel="noreferrer" className={buttonClasses("secondary", { className: "min-h-[44px]" })}>Open in Dropbox</a>
-            : null}
-          {project.monitoredRawFolder.extraPaths.length > 0 && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-            <span className={HEADER_KV_KEY}>Also monitored</span>
-            {project.monitoredRawFolder.extraPaths.map((path) => (
-              <span key={path} className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)] block")}>{path}</span>
-            ))}
-          </div>}
-        </div>}
-        {(project.rawFolderPath || project.rawFolderLink) && project.monitoredRawFolder && <div data-testid="raw-tonomo-secondary" className="mb-[var(--space-4)]">
-          {project.rawFolderPath && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-            <span className={HEADER_KV_KEY}>Tonomo folder path</span>
-            <span className={HEADER_KV_VALUE}>{project.rawFolderPath}</span>
-          </div>}
-          {project.rawFolderLink && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-            <span className={HEADER_KV_KEY}>Tonomo folder link</span>
-            <span className={HEADER_KV_VALUE}>{project.rawFolderLink}</span>
-          </div>}
-          <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
-            <StatusPill tone="neutral">Not monitored</StatusPill>
-          </div>
-          <p className="m-0 text-foreground-secondary
-                        [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]">
-            RAW is read from the Editor Input folder. This folder is kept for Tonomo change detection and AutoHDR naming.
-          </p>
-        </div>}
-        <button
-          type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
-          className={buttonClasses("secondary", { className: "min-h-[44px]" })}
-          onClick={onSyncDropbox}
-        >
-          <RefreshCw aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5]" />
-          <span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span>
-        </button>
-        {autohdrBlocked && (
-          <p role="status" className="mt-[var(--space-2)] m-0
-               [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
-               uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Blocked</p>
-        )}
+        <ProjectHeaderDropbox project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} />
       </section>}
     </div>
 
