@@ -11,7 +11,7 @@ on:
 
 jobs:
   install:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, quincy-mac]
     defaults:
       run:
         working-directory: portal
@@ -26,7 +26,7 @@ jobs:
 
   typecheck:
     needs: install
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, quincy-mac]
     defaults:
       run:
         working-directory: portal
@@ -47,7 +47,7 @@ jobs:
 
   test:
     needs: install
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, quincy-mac]
     defaults:
       run:
         working-directory: portal
@@ -78,7 +78,7 @@ jobs:
 
   build-web:
     needs: install
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, quincy-mac]
     defaults:
       run:
         working-directory: portal
