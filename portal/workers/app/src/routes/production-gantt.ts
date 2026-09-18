@@ -82,11 +82,12 @@ function unsafeText(value: string): boolean {
   return /[\\\x00-\x1f\x7f]/u.test(value);
 }
 
-/** A non-empty comma list with no empty or duplicate entries, or `null` for a malformed one.
- * An empty string is its own valid "no items" spelling (matches the Calendar's own leniency for
- * an explicitly empty filter value). */
+/** A non-empty comma list with no empty or duplicate entries, or `null` for a malformed one —
+ * including an explicit empty string. Unlike the Calendar's own leniency (an explicitly empty
+ * `editors=`/`stages=` there silently means "no filter"), Gantt's closed parser rejects it: the
+ * caller should omit the parameter entirely to mean "no filter" (fix-218-r1 nit #4). */
 function splitList(value: string): string[] | null {
-  if (value === "") return [];
+  if (value === "") return null;
   const values = value.split(",");
   return values.some((item) => item === "") || new Set(values).size !== values.length ? null : values;
 }

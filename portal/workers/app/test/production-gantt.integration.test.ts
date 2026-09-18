@@ -195,6 +195,18 @@ describe("production-gantt", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
   });
 
+  it("an explicit empty editors= is rejected, not treated as no filter", async () => {
+    const response = await request("/api/production-gantt?scope=active&editors=", tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
+  });
+
+  it("an explicit empty stages= is rejected, not treated as no filter", async () => {
+    const response = await request("/api/production-gantt?scope=active&stages=", tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
+  });
+
   it("a project with CHILD_PAGE_LIMIT+3 subtasks reports total, truncated and a nextCursor", async () => {
     const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.admin)).json());
     const project = response.projects.find((p) => p.id === manyChildrenProjectId)!;
