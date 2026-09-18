@@ -382,35 +382,56 @@ describe("production-gantt", () => {
   // these large row counts never distort an earlier, unfiltered assertion (e.g. "admin sees every
   // non-archived project"). Each test below scopes itself to one dedicated, otherwise-unused stage
   // key so the two density fixtures don't also inflate each other's counts.
+  // fix-218-r2 #5: pins BOTH the exact boundary (N: still 200, not-yet-too-dense) and one row
+  // past it (N+1: crosses into tooManyToDraw / 422) for both caps, seeded via the same bulk
+  // INSERT...SELECT-from-a-recursive-CTE technique the N+1-only version already used (proven fast
+  // — this whole file runs in well under a second). `matchedRows` counts the project row itself
+  // plus its visible checklist rows, so a project needs exactly `CAP - 1` subtasks to land
+  // matchedRows on `CAP` precisely; one more subtask (a single-row insert) then lands on `CAP + 1`.
   describe("density", () => {
     const drawCapProjectId = "81999999-9999-4999-8999-999999999990";
     const maxRowsProjectId = "81999999-9999-4999-8999-999999999991";
-    const drawCapRowCount = PRODUCTION_GANTT_DRAW_CAP + 1;
-    const maxRowsRowCount = PRODUCTION_GANTT_MAX_MATCHED_ROWS + 1;
 
     beforeAll(async () => {
       await insertProject(drawCapProjectId, "20 Draw Cap Street", "awaiting_raw");
-      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < ${drawCapRowCount}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('92000000-0000-4000-8000-%012d', n), '${drawCapProjectId}', printf('Draw cap row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
+      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < ${PRODUCTION_GANTT_DRAW_CAP - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('92000000-0000-4000-8000-%012d', n), '${drawCapProjectId}', printf('Draw cap row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
 
       await insertProject(maxRowsProjectId, "21 Max Rows Street", "edited_review");
-      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d CROSS JOIN digits e WHERE a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n < ${maxRowsRowCount}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('93000000-0000-4000-8000-%012d', n), '${maxRowsProjectId}', printf('Max rows row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
+      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d CROSS JOIN digits e WHERE a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n < ${PRODUCTION_GANTT_MAX_MATCHED_ROWS - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('93000000-0000-4000-8000-%012d', n), '${maxRowsProjectId}', printf('Max rows row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
     });
 
-    it("matchedRows over DRAW_CAP sets tooManyToDraw and still returns a page", async () => {
+    it("matchedRows exactly at DRAW_CAP is not yet tooManyToDraw", async () => {
       const response = await request("/api/production-gantt?scope=active&stages=awaiting_raw", tokens.admin);
       expect(response.status).toBe(200);
       const body = adminProductionGanttResponseSchema.parse(await response.json());
-      expect(body.density.matchedRows).toBeGreaterThan(PRODUCTION_GANTT_DRAW_CAP);
+      expect(body.density.matchedRows).toBe(PRODUCTION_GANTT_DRAW_CAP);
+      expect(body.density.tooManyToDraw).toBe(false);
+    });
+
+    it("matchedRows one over DRAW_CAP sets tooManyToDraw and still returns a page", async () => {
+      await insertSubtask(drawCapProjectId, "one over draw cap", PRODUCTION_GANTT_DRAW_CAP - 1);
+      const response = await request("/api/production-gantt?scope=active&stages=awaiting_raw", tokens.admin);
+      expect(response.status).toBe(200);
+      const body = adminProductionGanttResponseSchema.parse(await response.json());
+      expect(body.density.matchedRows).toBe(PRODUCTION_GANTT_DRAW_CAP + 1);
       expect(body.density.tooManyToDraw).toBe(true);
       expect(body.projects.length).toBeGreaterThan(0);
     });
 
-    it("matchedRows over MAX_MATCHED_ROWS returns 422 gantt_scope_too_dense", async () => {
+    it("matchedRows exactly at MAX_MATCHED_ROWS is still a 200", async () => {
+      const response = await request("/api/production-gantt?scope=active&stages=edited_review", tokens.admin);
+      expect(response.status).toBe(200);
+      const body = adminProductionGanttResponseSchema.parse(await response.json());
+      expect(body.density.matchedRows).toBe(PRODUCTION_GANTT_MAX_MATCHED_ROWS);
+    });
+
+    it("matchedRows one over MAX_MATCHED_ROWS returns 422 gantt_scope_too_dense", async () => {
+      await insertSubtask(maxRowsProjectId, "one over max rows", PRODUCTION_GANTT_MAX_MATCHED_ROWS - 1);
       const response = await request("/api/production-gantt?scope=active&stages=edited_review", tokens.admin);
       expect(response.status).toBe(422);
       const body = await response.json() as { code: string; count: number; max: number };
       expect(body.code).toBe("gantt_scope_too_dense");
-      expect(body.count).toBeGreaterThan(PRODUCTION_GANTT_MAX_MATCHED_ROWS);
+      expect(body.count).toBe(PRODUCTION_GANTT_MAX_MATCHED_ROWS + 1);
       expect(body.max).toBe(PRODUCTION_GANTT_MAX_MATCHED_ROWS);
     });
   });
