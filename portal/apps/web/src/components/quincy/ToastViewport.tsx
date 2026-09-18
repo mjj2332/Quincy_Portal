@@ -54,8 +54,16 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
               `danger` pairs a dark destructive text colour with a near-transparent destructive
               wash — illegible on both tones. `underline` restores the affordance `buttonClasses`'s
               `no-underline` strips, and `min-h-[44px]` overrides `text`'s 32px box (only kicks in
-              at `max-[721px]` on `text` otherwise) to keep the hit target at every width. */}
-          {item.action && <button type="button" data-testid="toast-action" className={buttonClasses("text", { className: "underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)]" })} onClick={() => { item.action!.onAction(); dismissToast(item.id); }}>{item.action.label}</button>}
+              at `max-[721px]` on `text` otherwise) to keep the hit target at every width.
+
+              `focus-visible:!outline-on-inverse` is the same fix `ImpersonationBanner.tsx`'s `EXIT`
+              carries, applied here for the same reason: the toast sits on ink (or, in the error
+              tone, on `bg-destructive`), and `styles/tokens/base.css:25`'s unlayered global
+              `:focus-visible { outline: … var(--focus-ring); }` (imported outside any layer at
+              `index.css:8`) beats an ordinary layered `outline-*` utility regardless of
+              specificity — so without the `!`, the ring stays `--focus-ring` (ink), unreadable on
+              an ink toast (~1.00:1) and barely better on the destructive one (~1.98:1). */}
+          {item.action && <button type="button" data-testid="toast-action" className={buttonClasses("text", { className: "underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)] focus-visible:!outline-on-inverse" })} onClick={() => { item.action!.onAction(); dismissToast(item.id); }}>{item.action.label}</button>}
         </div>
       ))}
     </div>
