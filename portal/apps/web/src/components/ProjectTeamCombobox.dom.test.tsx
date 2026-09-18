@@ -378,6 +378,72 @@ describe("ProjectTeamCombobox", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Candidates could not be loaded");
   });
 
+  it("14. tabbable controls sit in DOM order row 2 then tabs, with no positive tabindex (#206)", async () => {
+    const host = await mount();
+    const elements = [...host.querySelectorAll<HTMLElement>('button, a[href], input, [tabindex]')]
+      .filter((el) => !el.hasAttribute("disabled") && el.tabIndex >= 0);
+    for (const el of elements) expect(el.tabIndex).not.toBeGreaterThan(0);
+    const labels = elements.map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim());
+
+    // `canEdit` here also gates row 1's "Edit details" link, which sits before the controls
+    // section in DOM order — real, but outside this test's scope (row 2 then tabs) — so the
+    // relative order below is checked with indexOf rather than a full-list equality (brief's
+    // documented fallback), rather than asserting "Move project Stage" is first overall.
+    const stageIndex = labels.indexOf("Move project Stage");
+    const deadlineIndex = labels.findIndex((label) => label?.startsWith("Deadline:"));
+    const removeIndex = labels.indexOf("Remove Inactive Editor (Editor)");
+    const addIndex = labels.indexOf("Add team member");
+    const rawIndex = labels.findIndex((label) => label?.includes("RAW"));
+
+    expect(stageIndex).toBeGreaterThanOrEqual(0);
+    expect(deadlineIndex).toBeGreaterThan(stageIndex);
+    expect(removeIndex).toBeGreaterThan(deadlineIndex);
+    expect(addIndex).toBeGreaterThan(removeIndex);
+    expect(rawIndex).toBeGreaterThan(addIndex);
+    expect(rawIndex).toBe(labels.length - 1);
+  });
+
+  it("13. the chip × is a Tab stop and removes on Enter (#206)", async () => {
+    let resolveDelete!: (value: unknown) => void;
+    apiDeleteMock.mockReturnValueOnce(new Promise((resolve) => { resolveDelete = resolve; }));
+    const host = await mount(members);
+    const removeButton = host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!;
+    // Base UI's ChipRemove ships `tabIndex=-1`; ours must win so the × is reachable by keyboard
+    // (#206: the chip's own Backspace path is rejected on purpose in onValueChange above).
+    expect(removeButton.tabIndex).toBe(0);
+
+    // Tab must leave the × alone. Base UI's parent Chip treats any key it does not recognise as
+    // "stay on this chip" and refocuses the chip `div` from its own keydown handler; the browser's
+    // default Tab then moves on from the chip div and lands on the × again — a keyboard trap.
+    // jsdom performs no default Tab move, so "focus is still on the ×" is exactly "the chip did
+    // not steal it".
+    await act(async () => {
+      removeButton.focus();
+      removeButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(removeButton);
+
+    await act(async () => {
+      removeButton.focus();
+      removeButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+
+    // While pending, Base UI's `focusableWhenDisabled` (ChipRemove's own useButton call) keeps
+    // the native `disabled` attribute off — on purpose, so the × stays a Tab stop even mid-flight
+    // — and marks it disabled via `aria-disabled`/`data-disabled` instead, same pattern as test 3's
+    // `isDisabled` check on a pending Combobox option.
+    const pendingButton = host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!;
+    expect(pendingButton.disabled).toBe(false);
+    expect(pendingButton.getAttribute("aria-disabled")).toBe("true");
+    expect(pendingButton.hasAttribute("data-disabled")).toBe(true);
+
+    resolveDelete({ outcome: "removed", removed: { membershipCycle: members[0]!.id, userId: members[0]!.userId, roleOnProject: "editor" }, subtaskAssignmentsCleared: 0 });
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledTimes(1));
+  });
+
   it("shows a dual-role person as a selectable option in both groups", async () => {
     const dual = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Dana Dual", email: "dana@example.test", globalRole: "admin" as const, active: true as const };
     apiGetMock.mockResolvedValue({ photographers: [photographer, dual], editors: [editor, dual] });

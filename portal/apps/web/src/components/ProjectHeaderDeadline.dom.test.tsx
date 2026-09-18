@@ -127,6 +127,25 @@ afterEach(async () => {
 });
 
 describe("ProjectHeaderDeadline", () => {
+  it("names only role-bearing or natively-named elements in the popover, and nests no interactive element inside another (#206)", async () => {
+    const host = await mount(scheduleAt("2027-01-15T09:00:00.000Z", { state: "overdue" }));
+    const dialog = await openTrigger(host);
+
+    // `ProjectDeadlineControl.tsx`'s reminder-summary block used to be `aria-label` on a plain
+    // `<div>` — html-aria naming rules do not let a generic div carry an accessible name — so it
+    // needs `role="group"` (or similar) to be a legal target for `aria-label`.
+    const unnamed = [...dialog.querySelectorAll<HTMLElement>("[aria-label]")]
+      .filter((el) => el.getAttribute("aria-label") && !el.hasAttribute("role")
+        && !["BUTTON", "INPUT", "A", "SELECT", "TEXTAREA"].includes(el.tagName));
+    expect(unnamed).toEqual([]);
+    // The scan above is a net; this is the specific catch it was cast for.
+    expect(dialog.querySelector('[role="group"][aria-label="Deadline reminder summary"]')).not.toBeNull();
+
+    const interactive = [...dialog.querySelectorAll<HTMLElement>("button, a, input, select, textarea")];
+    for (const element of interactive) expect(element.querySelector("button, a, input, select, textarea")).toBeNull();
+  });
+
+
   it("shows Not set and no pill when there is no deadline", async () => {
     const host = await mount(emptySchedule);
     const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
@@ -235,13 +254,17 @@ describe("ProjectHeaderDeadline", () => {
     expect(dialog.textContent).toContain("Review and reapply my draft");
   });
 
-  it("closes on Escape without saving, and discards the open draft", async () => {
+  it("closes on Escape without saving, discards the open draft, and returns focus to the trigger (#206)", async () => {
     const host = await mount(emptySchedule);
     await dirtyDraft(await openTrigger(host));
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     expect(apiPutMock).not.toHaveBeenCalled();
+    // Base UI's focus-return lands a tick after the close — same 20ms wait the outside-click
+    // test below already uses for its own dismiss.
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="project-deadline-trigger"]'));
     await expectDraftDiscarded(host);
   });
 

@@ -253,7 +253,13 @@ button { font-family: var(--font-sans); }
 .project-header__tabs { min-width: 0; overflow-x: auto; }
 .project-header__tabs [role="tablist"] { height: auto; }
 .project-header__tabs [role="tab"] { min-height: 44px; /* WCAG 2.5.5 Enhanced target, not a spacing token */ flex: none; }
-@media (max-width: 720px) { .project-header { padding: var(--space-4); } }
+@media (max-width: 720px) {
+  .project-header { padding: var(--space-4); }
+  /* #206: at 720px and below the three control sections stack one per line — the shell is
+     already in sheet mode here (771px), and at 688px of content two 240px sections would still
+     fit side by side and clip the chip row. */
+  .project-header__controls > section { flex: 1 1 100%; max-width: none; }
+}
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }

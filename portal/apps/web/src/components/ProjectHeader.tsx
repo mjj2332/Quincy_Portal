@@ -96,6 +96,9 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         aria-label="Move project Stage"
         aria-busy={pending || undefined}
         aria-disabled={unavailable ? "true" : undefined}
+        // #206: the reason must be described, not just visually adjacent — only wired when a
+        // reason is actually shown below, since an absent target id would be worse than none.
+        aria-describedby={unavailable ? `project-stage-reason-${project.id}` : undefined}
         className={STAGE_SELECT}
       >
         <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
@@ -109,7 +112,7 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         {!current && <SelectItem value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
       </SelectContent>
     </Select>
-    {unavailable && <span className="block mt-[var(--space-1)]
+    {unavailable && <span id={`project-stage-reason-${project.id}`} className="block mt-[var(--space-1)]
                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
                      text-foreground-secondary">{unavailable}</span>}
   </div>;

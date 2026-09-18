@@ -385,6 +385,17 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
                 "data-testid": "project-member-remove",
                 disabled: isPending,
                 className: TEAM_CHIP_REMOVE_HIT_AREA,
+                // #206: Base UI renders the chip as a `div tabIndex=-1` and `ChipRemove` as a
+                // `<button tabIndex=-1>`, relying on the chip's own Backspace/Delete path — which
+                // `onValueChange` above rejects on purpose (reason "none"). Base UI merges
+                // elementProps after its own `{ tabIndex: -1 }`, so this wins and makes the × a
+                // real Tab stop; ChipRemove's own onKeyDown still handles Enter/Space.
+                tabIndex: 0,
+                // A key the parent Chip does not recognise makes it refocus its own `div` from its
+                // keydown handler, so the browser's default Tab would then step from the chip
+                // back onto this × — a trap. Keep Tab from reaching the chip; the default move
+                // still happens. Arrow keys deliberately still bubble (chip-to-chip navigation).
+                onKeyDown: (event) => { if (event.key === "Tab") event.stopPropagation(); },
               }}
             >
               <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />

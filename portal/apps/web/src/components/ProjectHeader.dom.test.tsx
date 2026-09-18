@@ -385,12 +385,18 @@ describe("Project header Stage control", () => {
     expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Not monitored");
   });
 
-  it("closes the Dropbox popover on Escape", async () => {
+  it("closes the Dropbox popover on Escape and returns focus to the trigger (#206)", async () => {
     render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!;
+    act(() => { trigger.focus(); });
     await openDropbox();
     expect(document.querySelector('[role="dialog"][aria-label="Dropbox"]')).not.toBeNull();
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
     expect(document.querySelector('[role="dialog"][aria-label="Dropbox"]')).toBeNull();
+    // Base UI's focus-return lands a tick after the close — same idiom as the Deadline test file's
+    // 20ms wait for its own outside-press dismiss.
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", async () => {
@@ -398,10 +404,16 @@ describe("Project header Stage control", () => {
     const trigger = stageTrigger()!;
     expect(trigger.disabled).toBe(true);
     expect(trigger.getAttribute("aria-busy")).toBe("true");
+    expect(trigger.hasAttribute("aria-describedby")).toBe(false);
     act(() => { root.render(<ProjectHeader {...baseProps(project())} stageMoveDisabledReason="Stage movement is paused." />); });
     expect(trigger.disabled).toBe(false);
     expect(trigger.getAttribute("aria-disabled")).toBe("true");
     expect(host.textContent).toContain("Stage movement is paused.");
+    // The reason is described, not just visually adjacent (#206): aria-describedby points at the
+    // element whose text is the reason.
+    const describedBy = trigger.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe("Stage movement is paused.");
     // readOnly while the disabled reason is present: opening it must not surface a listbox.
     await openStage(trigger);
     expect(document.querySelector('[role="listbox"]')).toBeNull();

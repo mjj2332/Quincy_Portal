@@ -2819,3 +2819,39 @@ What the blind plan reviews caught:
 
 **Rule:** a column that stores "the latest X" is a list the moment X can happen twice inside the
 window you care about. And before a report goes on a screen, decide what clears it.
+
+## A focusable child inside a composite that owns keydown is a trap until you say otherwise (#206)
+
+The Team chip's × is a real `<button>`, but Base UI ships it with `tabIndex=-1` and expects
+removal to come from the chip's own Backspace/Delete path. #204 rejects that path on purpose
+(reason `"none"`), so keyboard users had no way to remove a member. Making the × a Tab stop
+(`removeProps.tabIndex = 0`) was the smallest fix and both blind plan reviews proposed it.
+
+What Sol's diff review caught, and the Base UI source confirmed:
+
+- **The parent chip answers every key it does not recognise with "stay here".** `ComboboxChip`'s
+  keydown returns its own index for Tab and then calls `.focus()` on the chip `div`. The
+  browser's default Tab then steps *from the chip div* to the next tabbable, which is the × inside
+  it. Forward Tab bounced back onto the same button. jsdom does no default Tab move, so
+  "activeElement is still the ×" after a bubbled Tab keydown is exactly the assertion that fails
+  before the fix and passes after: the parent did not steal focus.
+- **Stop the key, not the move.** `stopPropagation` on Tab in the ×'s own keydown keeps it from
+  the chip; `preventDefault` would have killed the traversal we were trying to enable. Arrow keys
+  still bubble so chip-to-chip navigation keeps working.
+- **A named element's naming rules travel with its role.** `aria-label` on a plain `<div>` is not
+  a name, it is a lint error waiting for a checker. `role="group"` made the Deadline reminder
+  summary a legal target. Only a fixture with a deadline *set* renders that block, so the a11y
+  scan has to run against one.
+
+Two smaller ones from the same ticket:
+
+- **`ruleBody` finds the first matching selector, not the one in your media block**, and it splits
+  selector lists on commas, so a comment with a comma inside the block hides the rule that follows
+  it. Walk the braces to the block's end and strip comments before handing it the slice.
+- **A browser pass against a local Worker is only as current as the local D1.** Luna's first run
+  reported every criterion BLOCKED: the project API returned 500 because `0046` (#195) had never
+  been applied locally. `npx wrangler d1 migrations list DB --local` before a pass, not after.
+
+**Rule:** when a vendor composite owns keyboard handling and you make one of its children
+tabbable, read the parent's keydown for what it does with keys it does not handle. "Nothing"
+is rarely the answer.

@@ -398,4 +398,30 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     const body = ruleBody(appCss, ".project-header") ?? "";
     expect(body).not.toMatch(/top:/);
   });
+
+  // `ruleBody` returns the FIRST rule whose selector list matches — it does not scope by media
+  // context — and `.project-header__controls > section` already has a base (non-media) rule
+  // (side-by-side sections), so a plain `ruleBody` call here would silently check the wrong rule.
+  // Instead: find the one `@media (max-width: 720px)` block that carries the (unique)
+  // `.project-header { padding: var(--space-4); }` rule, walk its braces to the block's real end,
+  // and read the section rule out of that block only.
+  it("stacks the header's control sections one per line at 720px and below (#206)", () => {
+    const anchor = appCss.indexOf(".project-header { padding: var(--space-4); }");
+    expect(anchor, ".project-header padding rule").toBeGreaterThan(-1);
+    const open = appCss.lastIndexOf("@media (max-width: 720px) {", anchor);
+    expect(open, "@media (max-width: 720px) block enclosing the .project-header rule").toBeGreaterThan(-1);
+    let depth = 0;
+    let close = -1;
+    for (let i = appCss.indexOf("{", open); i < appCss.length; i += 1) {
+      if (appCss[i] === "{") depth += 1;
+      else if (appCss[i] === "}" && --depth === 0) { close = i; break; }
+    }
+    expect(close).toBeGreaterThan(anchor);
+    // Comments can carry commas, which `ruleBody` would read as selector separators.
+    const block = appCss.slice(open, close + 1).replace(/\/\*[\s\S]*?\*\//g, "");
+    const section = ruleBody(block, ".project-header__controls > section");
+    expect(section, "stacked-section rule inside the 720px block").not.toBeNull();
+    expect(section).toMatch(/flex:\s*1 1 100%/);
+    expect(section).toMatch(/max-width:\s*none/);
+  });
 });
