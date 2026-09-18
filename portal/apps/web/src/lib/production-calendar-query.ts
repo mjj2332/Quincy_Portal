@@ -84,11 +84,6 @@ function responseSchemaFor(role: Role): { parse: (value: unknown) => ProductionC
   throw new RangeError("Photographers do not have a Production Calendar response domain.");
 }
 
-// §216 fix round 2 item 4: single definition lives in scheduling-types.ts (a neutral module, so
-// scheduling-policy.ts/scheduling-undo.ts import no query-layer file for this type); re-exported
-// here so this module's own (query-layer) importers are untouched.
-export type { ChecklistMutationResult } from "./scheduling-types";
-
 const mutationEndpointSchema = z.object({
   kind: z.enum(["date", "timed"]),
   localCivil: z.string(),
