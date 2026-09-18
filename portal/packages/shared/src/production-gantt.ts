@@ -147,16 +147,22 @@ export type GanttProjectDeadlineDto = {
 } | null;
 
 /**
- * **Live-data pagination contract (fix-218-r2 #1):** `ProductionGanttResponse.page` and a
- * project's `children` page are both read against live data, not a point-in-time snapshot. A
- * row's sort key (`barStartDate` for a project, `position` for a checklist row) can change
- * between the request that minted a `nextCursor` and the request that consumes it, so a row whose
- * sort key moves across the cursor boundary mid-walk may appear on more than one page of the same
- * walk — a keyset cursor over live data cannot prevent this without a point-in-time snapshot, and
- * this API intentionally does not add one. **Every client that accumulates multiple pages must
- * dedupe by id, latest page wins** (the later occurrence carries the freshest data and reflects
- * where the row currently sorts). `apps/web/src/lib/production-gantt-query.ts`'s
- * `flattenGanttProjectPages`/`mergeGanttChildPage` are the required implementations of that rule.
+ * **Live-data pagination contract (fix-218-r2 #1, wording pinned fix-218-r3 #3):**
+ * `ProductionGanttResponse.page` and a project's `children` page are both read against live data,
+ * not a point-in-time snapshot. Pages are read against live data; between requests a row may
+ * appear twice (clients dedupe by id, latest page wins) or be temporarily omitted; a fresh walk
+ * converges. Concretely: a row's sort key (`barStartDate` for a project, `position` for a
+ * checklist row) can change between the request that minted a `nextCursor` and the request that
+ * consumes it — moving FORWARD past the cursor makes the row reappear on a later page of the same
+ * walk (a duplicate); moving BACKWARD past the cursor drops the row out of that walk's keyset
+ * predicate for its remainder (a temporary omission). Neither is a bug: the mutation that moved
+ * the row invalidates the Gantt surface and the polling query starts a fresh walk from page one,
+ * which converges on the row's current position. A keyset cursor over live data cannot prevent
+ * either case without a point-in-time snapshot, and this API intentionally does not add one.
+ * **Every client that accumulates multiple pages must dedupe by id, latest page wins** (the later
+ * occurrence carries the freshest data and reflects where the row currently sorts).
+ * `apps/web/src/lib/production-gantt-query.ts`'s `flattenGanttProjectPages`/`mergeGanttChildPage`
+ * are the required implementations of that rule.
  */
 export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransportKey> = {
   id: string;

@@ -33,6 +33,9 @@ const invalidDateProjectId = "82ffffff-ffff-4fff-8fff-fffffffffff1";
 const childProjectId = "82888888-8888-4888-8888-888888888880";
 const movedProjectId = "82999999-9999-4999-8999-999999999990";
 const movedPeerProjectId = "82999999-9999-4999-8999-999999999991";
+const backwardEarlyProjectId = "82aaaaaa-9999-4999-8999-999999999992";
+const backwardLateProjectId = "82aaaaaa-9999-4999-8999-999999999993";
+const childBackwardProjectId = "82aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab";
 const percentProjectId = "82666666-6666-4666-8666-666666666660";
 const underscoreProjectId = "82777777-7777-4777-8777-777777777770";
 const completedOnlyProjectId = "82777777-7777-4777-8777-777777777771";
@@ -109,6 +112,9 @@ beforeAll(async () => {
   await insertProject(childProjectId, "Child Cursor Probe", "editing_autohdr", "2026-08-02", day("2026-08-02"));
   await insertProject(movedProjectId, "Mutable Sort Probe A", "raw_review", "2026-08-03", day("2026-08-03"));
   await insertProject(movedPeerProjectId, "Mutable Sort Probe B", "raw_review", "2026-08-03", day("2026-08-03"));
+  await insertProject(backwardEarlyProjectId, "Backward Sort Probe Early", "raw_review", "2026-08-06", day("2026-08-06"));
+  await insertProject(backwardLateProjectId, "Backward Sort Probe Late", "raw_review", "2026-08-07", day("2026-08-07"));
+  await insertProject(childBackwardProjectId, "Child Backward Cursor Probe", "editing_autohdr", "2026-08-02", day("2026-08-02"));
   await insertProject(percentProjectId, "Literal % Probe", "awaiting_raw", "2026-08-04", day("2026-08-04"));
   await insertProject(underscoreProjectId, "Literal _ Probe", "awaiting_raw", "2026-08-04", day("2026-08-04"));
   await insertProject(completedOnlyProjectId, "Completed Title Probe", "awaiting_raw", "2026-08-04", day("2026-08-04"));
@@ -124,6 +130,13 @@ beforeAll(async () => {
   await insertMember(childProjectId, editorId, "editor");
   for (let i = 0; i <= PRODUCTION_GANTT_CHILD_PAGE_LIMIT; i++) {
     await insertSubtask(childProjectId, `82888888-8888-4888-8888-${String(i + 1).padStart(12, "0")}`, `Child ${i}`, i, i % 2 === 0);
+  }
+  // fix-218-r3 #3: one more row than the fixed 100-row child page size, so a dedicated-endpoint
+  // `childCursor` walk needs a second page: exactly one not-yet-seen row (position
+  // PRODUCTION_GANTT_CHILD_PAGE_LIMIT) for the backward-movement characterisation test to move
+  // behind the cursor.
+  for (let i = 0; i <= PRODUCTION_GANTT_CHILD_PAGE_LIMIT; i++) {
+    await insertSubtask(childBackwardProjectId, `82aaaaaa-aaaa-4aaa-8aaa-${String(i + 1).padStart(12, "0")}`, `Backward Child ${i}`, i);
   }
   await insertSubtask(percentProjectId, crypto.randomUUID(), "Percent child %", 0);
   await insertSubtask(underscoreProjectId, crypto.randomUUID(), "Underscore child _", 0);
@@ -247,9 +260,13 @@ describe("production-gantt adversarial probes", () => {
   // re-selected, and clients are the documented dedupe point
   // (`flattenGanttProjectPages`/`mergeGanttChildPage` in
   // apps/web/src/lib/production-gantt-query.ts). This test now pins the CONTRACT the server does
-  // own instead: after the same mutation, the walk still surfaces every project at least once,
-  // skips none, and terminates.
-  it("mutable barStartDate changes: the walk still returns every project at least once, skips none, and terminates", async () => {
+  // own for this specific movement instead: after a shoot_date change that moves a row's sort key
+  // FORWARD past the cursor, the walk still surfaces every project at least once and terminates.
+  // fix-218-r3 #3: narrowed the title/claim from an unqualified "skips none" — that is only true
+  // for forward movement. A row whose sort key moves BACKWARD past the cursor mid-walk CAN be
+  // temporarily omitted from that walk; see "backward barStartDate movement" below, which pins
+  // that as the documented, accepted behaviour instead of re-asserting it away here.
+  it("forward barStartDate movement: the walk still returns every project at least once, and terminates", async () => {
     const first = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Mutable+Sort+Probe&limit=1", tokens.admin)).json());
     await database.DB.prepare("UPDATE projects SET shoot_date = '9999-01-01' WHERE id = ?").bind(first.projects[0]!.id).run();
     const seen: string[] = [...first.projects.map((project) => project.id)];
@@ -269,6 +286,63 @@ describe("production-gantt adversarial probes", () => {
     // appear more than once under the documented live-data pagination contract, so this
     // deliberately checks the *set* of ids, not their count.
     expect(new Set(seen)).toEqual(new Set([movedProjectId, movedPeerProjectId]));
+  });
+
+  // fix-218-r3 #3: the documented counterpart to the forward-movement test above — a row's sort
+  // key moving BACKWARD past an already-issued cursor is temporarily omitted from the REST of
+  // that same walk (it now sorts before where the walk has already read), and that omission is
+  // accepted, documented behaviour (routes/production-gantt.ts's Statement 1 docblock,
+  // packages/shared/src/production-gantt.ts's `GanttProjectRowDto` docblock): the mutation that
+  // moved it invalidates the surface and the client's next, fresh walk converges on it.
+  it("backward barStartDate movement: a row that sorts before the cursor is omitted from the rest of that walk, but a fresh walk converges on it", async () => {
+    const first = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Backward+Sort+Probe&limit=1", tokens.admin)).json());
+    expect(first.projects.map((project) => project.id)).toEqual([backwardEarlyProjectId]);
+    const cursor = first.page.nextCursor!;
+
+    // The not-yet-seen row (backwardLateProjectId, still ahead of the cursor) moves its sort key
+    // BACKWARD past the cursor that was just minted.
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-01-01' WHERE id = ?").bind(backwardLateProjectId).run();
+    try {
+      const continued = adminProductionGanttResponseSchema.parse(await (await request(`/api/production-gantt?scope=active&q=Backward+Sort+Probe&limit=1&cursor=${encodeURIComponent(cursor)}`, tokens.admin)).json());
+      // Omitted from the rest of THIS walk: it now sorts before the cursor, so the keyset
+      // predicate excludes it, and there is no other row left to page to.
+      expect(continued.projects.map((project) => project.id)).not.toContain(backwardLateProjectId);
+      expect(continued.page.nextCursor).toBeNull();
+
+      // A fresh walk (no cursor, starting from page one) converges: the row now sorts first.
+      const fresh = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Backward+Sort+Probe&limit=1", tokens.admin)).json());
+      expect(fresh.projects.map((project) => project.id)).toEqual([backwardLateProjectId]);
+    } finally {
+      await database.DB.prepare("UPDATE projects SET shoot_date = '2026-08-07' WHERE id = ?").bind(backwardLateProjectId).run();
+    }
+  });
+
+  // fix-218-r3 #3: the same backward-movement characterisation for the dedicated child-page
+  // endpoint's `position` keyset (routes/production-gantt.ts's `productionGanttChildPageSql`).
+  it("backward child position movement: a row that sorts before the childCursor is omitted from the rest of that walk, but a fresh walk converges on it", async () => {
+    const first = productionGanttChildPageSchema.parse(await (await request(`/api/production-gantt?scope=active&childrenOf=${childBackwardProjectId}`, tokens.admin)).json());
+    expect(first.children.rows).toHaveLength(PRODUCTION_GANTT_CHILD_PAGE_LIMIT);
+    expect(first.children.nextCursor).not.toBeNull();
+    const cursor = first.children.nextCursor!;
+    const notYetSeenId = `82aaaaaa-aaaa-4aaa-8aaa-${String(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 1).padStart(12, "0")}`;
+    expect(first.children.rows.map((row) => row.id)).not.toContain(notYetSeenId);
+
+    // The not-yet-seen row (position PRODUCTION_GANTT_CHILD_PAGE_LIMIT, still ahead of the
+    // cursor) moves its sort key BACKWARD past the cursor that was just minted.
+    await database.DB.prepare("UPDATE project_subtasks SET position = -1 WHERE id = ?").bind(notYetSeenId).run();
+    try {
+      const continued = productionGanttChildPageSchema.parse(await (await request(`/api/production-gantt?scope=active&childrenOf=${childBackwardProjectId}&childCursor=${encodeURIComponent(cursor)}`, tokens.admin)).json());
+      // Omitted from the rest of THIS walk: it now sorts before the cursor, so the keyset
+      // predicate excludes it, and there is no other row left to page to.
+      expect(continued.children.rows.map((row) => row.id)).not.toContain(notYetSeenId);
+      expect(continued.children.nextCursor).toBeNull();
+
+      // A fresh walk (no cursor, starting from page one) converges: the row now sorts first.
+      const fresh = productionGanttChildPageSchema.parse(await (await request(`/api/production-gantt?scope=active&childrenOf=${childBackwardProjectId}`, tokens.admin)).json());
+      expect(fresh.children.rows[0]!.id).toBe(notYetSeenId);
+    } finally {
+      await database.DB.prepare("UPDATE project_subtasks SET position = ? WHERE id = ?").bind(PRODUCTION_GANTT_CHILD_PAGE_LIMIT, notYetSeenId).run();
+    }
   });
 
   it("treats search metacharacters literally, rejects controls, and enforces the 200-code-point cap", async () => {

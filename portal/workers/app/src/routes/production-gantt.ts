@@ -282,17 +282,25 @@ const BAR_START_DATE_EXPR = "CASE WHEN p.shoot_date GLOB '[0-9][0-9][0-9][0-9]-[
  * start date (`''` for none), `?6` cursor id (`''` for none), `?7` editor ids JSON, `?8` stage
  * keys JSON, `?9` `limit + 1` (the "is there a next page" probe row).
  *
- * **Live-data pagination contract (fix-218-r2 #1):** a cursor is minted from a row's
- * `bar_start_date` at the moment it is read (`encodeGanttProjectCursor` below) and every
- * subsequent page re-evaluates `bar_start_date` against the *live* `projects` row via
- * `BAR_START_DATE_EXPR`, not a snapshot. If a project's `shoot_date` changes between the request
- * that minted a cursor and a later request that consumes it, that project's sort key moves and it
- * can be re-selected by the keyset predicate below, appearing on more than one page of the same
- * walk. This is a deliberate, documented tradeoff — a keyset cursor over live data cannot prevent
- * it without a point-in-time snapshot, and this endpoint does not add one. Every client must
- * dedupe a multi-page walk by id, latest page wins (see `flattenGanttProjectPages` /
+ * **Live-data pagination contract (fix-218-r2 #1, wording pinned fix-218-r3 #3):** a cursor is
+ * minted from a row's `bar_start_date` at the moment it is read (`encodeGanttProjectCursor`
+ * below) and every subsequent page re-evaluates `bar_start_date` against the *live* `projects`
+ * row via `BAR_START_DATE_EXPR`, not a snapshot. Pages are read against live data; between
+ * requests a row may appear twice (clients dedupe by id, latest page wins) or be temporarily
+ * omitted; a fresh walk converges. Concretely: if a project's `shoot_date` changes between the
+ * request that minted a cursor and a later request that consumes it, that project's sort key
+ * moves — FORWARD past the cursor re-selects it, appearing on more than one page of the same
+ * walk; BACKWARD past the cursor drops it from the keyset predicate below for the remainder of
+ * that walk (it sorts before where the cursor has already passed). Neither case is a bug: a
+ * mutation that moves a row invalidates the Gantt surface and the query polls, so the very next
+ * walk starts from page one and picks the row up wherever it now sorts. This is a deliberate,
+ * documented tradeoff — a keyset cursor over live data cannot prevent either case without a
+ * point-in-time snapshot, and this endpoint does not add one. Every client must dedupe a
+ * multi-page walk by id, latest page wins (see `flattenGanttProjectPages` /
  * `mergeGanttChildPage` in `apps/web/src/lib/production-gantt-query.ts`, and
  * `ProductionGanttResponse`/`GanttProjectRowDto` in `packages/shared/src/production-gantt.ts`).
+ * The child-page keyset predicate (`productionGanttChildPageSql` below, ordered on `position`)
+ * has the same forward-duplicate / backward-omission behaviour for the same reason.
  */
 export function productionGanttProjectsSql(role: GanttRole): string {
   const searchPredicate = withSubtaskTitleExists(projectSearchSql("r.search", {
