@@ -813,6 +813,27 @@ export function mapChecklistEndResizeToCommand<TStage extends StageTransportKey>
   return normalizedRequest(schedule, event.schedule.version);
 }
 
+export function mapChecklistStartResizeToCommand<TStage extends StageTransportKey>(input: ChecklistResizeInput<TStage>): CalendarMappingResult<SaveChecklistScheduleRequest> {
+  const { event, target } = input;
+  if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda uses the Move/Reschedule editor instead of direct resize mapping.");
+  if (input.edge === "end" || target.edge === "end") return calendarError("end_resize_not_this_mapper", "Use mapChecklistEndResizeToCommand for the end edge.");
+  if (event.schedule.state !== "range" || !event.schedule.start || !event.schedule.end) return calendarError("unsupported_schedule_state", "Only checklist ranges can be start-resized.");
+  const currentEnd = endpointToInput(event.schedule.end);
+  const oldStart = event.schedule.start;
+  const disambiguation = endpointDisambiguation(input.disambiguation, "start");
+  let nextStart: ChecklistScheduleEndpointInput;
+  if (oldStart.kind === "date") {
+    if (!parseCalendarDate(target.targetDate)) return calendarError("invalid_local_time", "Expected a valid target calendar date.");
+    nextStart = { kind: "date", localCivil: target.targetDate };
+  } else {
+    const time = targetTime(target);
+    if (!time.ok) return time;
+    nextStart = { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
+  }
+  const schedule: InitialChecklistScheduleInput = { state: "range", start: nextStart, end: currentEnd };
+  return normalizedRequest(schedule, event.schedule.version);
+}
+
 export function mapUnscheduledChecklistDropToCommand<TStage extends StageTransportKey>(input: UnscheduledChecklistDropInput<TStage>): CalendarMappingResult<SaveChecklistScheduleRequest> {
   const { event, target } = input;
   if (event.reason !== "unscheduled") return calendarError("schedule_needs_attention", "Only a plain unscheduled checklist entry can be dropped.");
