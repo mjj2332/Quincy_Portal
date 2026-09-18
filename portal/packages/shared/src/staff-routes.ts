@@ -46,6 +46,7 @@ export type DashboardCalendarState = {
 export type DashboardViewRoute = {
   kind: "dashboard";
   dashboardView: "list" | "kanban" | "calendar";
+  search?: string;
 };
 
 export type DashboardCalendarFacetRoute = {
@@ -54,7 +55,7 @@ export type DashboardCalendarFacetRoute = {
 };
 
 export type DashboardRoute =
-  | { kind: "dashboard" }
+  | { kind: "dashboard"; search?: string }
   | DashboardViewRoute
   | DashboardCalendarFacetRoute;
 
@@ -76,8 +77,11 @@ const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned
 const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
-const dashboardListKanbanParameterNames = new Set(["view"]);
+const dashboardListKanbanParameterNames = new Set(["view", "q"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
+
+/** Shared with the Calendar facet's own `q` (line ~239) so both enforce the same cap. */
+export const DASHBOARD_SEARCH_MAX_CHARS = 200;
 
 function unsafeText(value: string): boolean {
   return /[\\\u0000-\u001f\u007f]/.test(value);
@@ -236,7 +240,7 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   if (includeUnassigned === null || showCompletedChecklist === null || showDeliveredProjects === null || overdueOnly === null || myTasks === null) return null;
 
   const search = params.get("q") ?? "";
-  if ([...search].length > 200) return null;
+  if ([...search].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
 
   return {
     view: "calendar",
@@ -254,14 +258,30 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   };
 }
 
+/**
+ * `undefined` = `q` absent (legal); `null` = reject. Reject an empty `q` -- the serializer never
+ * emits one, so accepting it would break the `staffPathFor` -> `parseStaffLocation` fixed point --
+ * or a value over `DASHBOARD_SEARCH_MAX_CHARS` code points. Unsafe characters, duplicate keys,
+ * non-canonical percent-encoding and an oversized query are already rejected upstream by
+ * `parseDashboardQuery`; this helper does not re-check them.
+ */
+function parseDashboardSearch(params: URLSearchParams): string | null | undefined {
+  if (!params.has("q")) return undefined;
+  const value = params.get("q")!;
+  if (value === "" || [...value].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
+  return value;
+}
+
 function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardViewRoute | null {
   for (const name of params.keys()) {
     if (!dashboardListKanbanParameterNames.has(name)) return null;
   }
   const dashboardView = params.get("view");
   if (dashboardView !== "list" && dashboardView !== "kanban") return null;
+  const search = parseDashboardSearch(params);
+  if (search === null) return null;
 
-  return { kind: "dashboard", dashboardView };
+  return { kind: "dashboard", dashboardView, ...(search ? { search } : {}) };
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
@@ -278,6 +298,16 @@ export function parseStaffLocation(location: string): StaffRoute {
   const params = parseDashboardQuery(query);
   if (params === null) return { kind: "not-found" };
   const view = params.get("view");
+  if (!params.has("view")) {
+    // Bare `/?q=...`: the only legal key here is `q` itself -- everything else (including a
+    // `view` spelling this arm didn't already claim) falls through to `not-found` below.
+    for (const name of params.keys()) {
+      if (name !== "q") return { kind: "not-found" };
+    }
+    const search = parseDashboardSearch(params);
+    if (search === null || search === undefined) return { kind: "not-found" };
+    return { kind: "dashboard", search };
+  }
   if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
     // The bare `/?view=calendar` intent (#111), legal only as the sole query field. Checked before
@@ -331,8 +361,14 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
   switch (route.kind) {
     case "dashboard": {
       if ("calendar" in route) return calendarPathFor(route.calendar);
-      if ("dashboardView" in route) return `/?view=${route.dashboardView}`;
-      return "/";
+      const params = new URLSearchParams();
+      if ("dashboardView" in route) params.set("view", route.dashboardView);
+      if (route.search !== undefined) {
+        const safeSearch = stripUnsafeText(route.search);
+        if (safeSearch !== "") params.set("q", safeSearch);
+      }
+      const qs = params.toString();
+      return qs ? `/?${qs}` : "/";
     }
     case "create-project": return "/projects/new";
     case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DASHBOARD_SEARCH_MAX_CHARS,
   parseStaffLocation,
   parseStaffPathname,
   safeStaffDestination,
@@ -211,5 +212,55 @@ describe("shared staff route contract", () => {
     const location = calendarUrl("view=calendar&date=2026-08-30&sub=month&layers=project&%71%00=search");
     expect(parseStaffLocation(location)).toEqual({ kind: "not-found" });
     expect(safeStaffDestination(location)).toBeNull();
+  });
+
+  describe("the Dashboard `q` grammar (#217)", () => {
+    it("round-trips a search value through the bare, List and Kanban facets", () => {
+      const astral = "🎉".repeat(DASHBOARD_SEARCH_MAX_CHARS);
+      expect([...astral].length).toBe(DASHBOARD_SEARCH_MAX_CHARS);
+      const values = ["smith street", "a&b", "a+b", "a%b", "a=b", "café façade", astral];
+      for (const search of values) {
+        const routes: StaffRoute[] = [
+          { kind: "dashboard", search },
+          { kind: "dashboard", dashboardView: "list", search },
+          { kind: "dashboard", dashboardView: "kanban", search },
+        ];
+        for (const route of routes) {
+          const location = staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
+          expect(parseStaffLocation(location), location).toEqual(route);
+          expect(safeStaffDestination(location), location).toBe(location);
+        }
+      }
+    });
+
+    it("rejects an illegal `q` spelling", () => {
+      const overLimit = "x".repeat(DASHBOARD_SEARCH_MAX_CHARS + 1);
+      for (const location of [
+        "/?q=",
+        "/?q=a&q=b",
+        `/?q=${overLimit}`,
+        "/?q=%zz",
+        "/?q=a%00b",
+        "/?view=calendar&q=x",
+        "/?search=x",
+        "/?view=list&q=x&bogus=1",
+      ]) {
+        expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+        expect(safeStaffDestination(location), location).toBeNull();
+      }
+    });
+
+    it("strips parse-unsafe characters from a bare-dashboard search so the route round-trips", () => {
+      const dirty = "smith" + String.fromCharCode(92) + "street";
+      const route = { kind: "dashboard" as const, search: dirty };
+      const path = staffPathFor(route);
+      expect(path.includes(String.fromCharCode(92))).toBe(false);
+      expect(parseStaffLocation(path)).toEqual({ kind: "dashboard", search: "smithstreet" });
+      expect(safeStaffDestination(path)).toBe(path);
+    });
+
+    it("serializes the canonical view+q spelling with `+` for spaces", () => {
+      expect(safeStaffDestination("/?view=kanban&q=hi+there")).toBe("/?view=kanban&q=hi+there");
+    });
   });
 });
