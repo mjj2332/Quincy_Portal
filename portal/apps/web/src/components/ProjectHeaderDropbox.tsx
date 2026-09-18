@@ -42,7 +42,7 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
       </span>
       <span className="w-fit"><StatusPill tone={state.tone}>{state.label}</StatusPill></span>
     </PopoverTrigger>
-    <PopoverContent align="start" aria-label="Dropbox" className={cn(POPOVER_CONTENT)}>
+    <PopoverContent align="start" aria-label="Dropbox" className={POPOVER_CONTENT}>
       <PopoverTitle className="!font-medium">Dropbox</PopoverTitle>
       {project.monitoredRawFolder && <div data-testid="raw-monitored" className="mb-[var(--space-4)]">
         <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">

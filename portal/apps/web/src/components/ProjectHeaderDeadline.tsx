@@ -4,7 +4,6 @@ import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/compone
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { StatusPill } from "./quincy/StatusPill";
 import { dueIn } from "../lib/deadline-due-in";
-import { cn } from "../lib/utils";
 import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, POPOVER_CONTENT } from "./project-header-popover";
 
 /**
@@ -59,7 +58,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
       </span>
       {due && <span className="w-fit"><StatusPill tone={due.tone}>{due.label}</StatusPill></span>}
     </PopoverTrigger>
-    <PopoverContent align="start" aria-label="Deadline" className={cn(POPOVER_CONTENT)}>
+    <PopoverContent align="start" aria-label="Deadline" className={POPOVER_CONTENT}>
       <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
       <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} />
     </PopoverContent>

@@ -841,9 +841,11 @@ afterEach(async () => {
     const dropboxDialog = await openDropboxDialog(host);
     vi.useFakeTimers();
     await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/p1/sync-dropbox", {});
     for (let cycle = 0; cycle < 6; cycle += 1) await act(async () => { vi.advanceTimersByTime(2500); await Promise.resolve(); await Promise.resolve(); });
     const paths = apiGetMock.mock.calls.map(([path]) => path);
     expect(paths.filter((path) => path.includes("/assets?collection=raw")).length).toBeGreaterThanOrEqual(7);
+    expect(paths.filter((path) => path.includes("/ingest-status")).length).toBeGreaterThanOrEqual(7);
     expect(paths.some((path) => path.includes("/assets?collection=edited"))).toBe(false);
     expect(paths.some((path) => path.includes("/jobs"))).toBe(false);
     expect(paths.some((path) => path.includes("/autohdr-status"))).toBe(false);
@@ -1502,6 +1504,8 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId={externalProjectId} />); await flush(20);
 
     expect(host.querySelector('a[href$="/edit"]')).toBeNull();
+    // dropbox-sync now lives in a closed popover for every role, so gating is proven by the trigger's absence.
+    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
     expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
     expect(host.querySelector('input[type="file"]')).toBeNull();
     expect(host.querySelector('[title="Use as project cover"]')).toBeNull();

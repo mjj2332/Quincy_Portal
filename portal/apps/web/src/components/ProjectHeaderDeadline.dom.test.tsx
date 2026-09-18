@@ -89,6 +89,20 @@ async function pressOutside(element: Element) {
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
 }
 
+/** Opens Set Deadline inside the popover and types a date, leaving an unsaved draft. */
+async function dirtyDraft(dialog: HTMLElement) {
+  const setButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
+  await act(async () => { setButton.click(); await Promise.resolve(); });
+  await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
+}
+
+/** Reopens the popover and checks the earlier draft is gone: the editor is closed again. */
+async function expectDraftDiscarded(host: HTMLElement) {
+  const reopened = await openTrigger(host);
+  expect(reopened.querySelector('input[aria-label="Deadline date"]')).toBeNull();
+  expect([...reopened.querySelectorAll("button")].some((button) => button.textContent === "Set Deadline")).toBe(true);
+}
+
 async function setInput(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
   await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
@@ -221,18 +235,19 @@ describe("ProjectHeaderDeadline", () => {
     expect(dialog.textContent).toContain("Review and reapply my draft");
   });
 
-  it("closes on Escape without saving", async () => {
+  it("closes on Escape without saving, and discards the open draft", async () => {
     const host = await mount(emptySchedule);
-    await openTrigger(host);
+    await dirtyDraft(await openTrigger(host));
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     expect(apiPutMock).not.toHaveBeenCalled();
+    await expectDraftDiscarded(host);
   });
 
-  it("closes on an outside click without saving", async () => {
+  it("closes on an outside click without saving, and discards the open draft", async () => {
     const host = await mount(emptySchedule);
-    await openTrigger(host);
+    await dirtyDraft(await openTrigger(host));
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
     await act(async () => { document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })); await Promise.resolve(); });
     // Base UI's Popover outside-press is "intentional" (docs/lessons.md P2): same click shape as
@@ -240,6 +255,7 @@ describe("ProjectHeaderDeadline", () => {
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     expect(apiPutMock).not.toHaveBeenCalled();
+    await expectDraftDiscarded(host);
   });
 
   it("keeps the popover open behind a real Clear confirm, and only saves once the confirm is accepted", async () => {
