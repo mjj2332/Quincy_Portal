@@ -249,10 +249,15 @@ type GanttProjectSqlRow = {
 
 /** `projectSearchSql`'s street/suburb/agency/agent clause, widened with an `EXISTS` over
  * `project_subtasks` so a Gantt search also matches a checklist item's title (§4: "q filter via
- * projectSearchSql including instr(lower(s.title), …) through an EXISTS over project_subtasks"). */
+ * projectSearchSql including instr(lower(s.title), …) through an EXISTS over project_subtasks").
+ * The `EXISTS` applies the same `r.include_completed` visibility predicate — ordered before the
+ * title match, mirroring the Calendar's own `(r.show_completed = 1 OR s.done = 0) AND (search)`
+ * clause ordering (`production-calendar.ts`'s `candidate_subtasks_raw`) — so a title match on a
+ * done subtask cannot surface a project that the children/density queries would then hide
+ * entirely (fix-218-r1 #3). */
 function withSubtaskTitleExists(clause: string): string {
   if (!clause.endsWith(")")) throw new Error("Unexpected project search clause shape.");
-  const existsClause = "EXISTS (SELECT 1 FROM project_subtasks gantt_search_subtask WHERE gantt_search_subtask.project_id = p.id AND instr(lower(gantt_search_subtask.title), lower(r.search)) > 0)";
+  const existsClause = "EXISTS (SELECT 1 FROM project_subtasks gantt_search_subtask WHERE gantt_search_subtask.project_id = p.id AND (r.include_completed = 1 OR gantt_search_subtask.done = 0) AND instr(lower(gantt_search_subtask.title), lower(r.search)) > 0)";
   return `${clause.slice(0, -1)}\n      OR ${existsClause})`;
 }
 

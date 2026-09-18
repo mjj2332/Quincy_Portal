@@ -46,6 +46,11 @@ const impossibleDateXId = "81777777-7777-4777-8777-777777777770";
 const impossibleDateYId = "81777777-7777-4777-8777-777777777771";
 const impossibleDateZId = "81777777-7777-4777-8777-777777777772";
 
+// fix-218-r1 #3: a search match on a *done* checklist title must respect the same
+// `completed` visibility flag as the children/density queries — otherwise `q` could surface a
+// project whose only visible reason to appear is a row nothing else in the response can see.
+const completedTitleSearchProjectId = "81666666-6666-4666-8666-666666666660";
+
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string): Promise<void> {
@@ -128,6 +133,9 @@ beforeAll(async () => {
   await insertProject(impossibleDateXId, "30 ImpossibleDate Early Street", "editing_autohdr", "2000-01-01");
   await insertProject(impossibleDateYId, "31 ImpossibleDate Invalid Street", "editing_autohdr", "2026-02-30");
   await insertProject(impossibleDateZId, "32 ImpossibleDate Late Street", "editing_autohdr", "9999-01-01");
+
+  await insertProject(completedTitleSearchProjectId, "40 Neutral Street", "editing_autohdr", "2026-08-24");
+  await insertSubtask(completedTitleSearchProjectId, "OnlyDoneMatch Secret Task", 0, true);
 });
 
 describe("production-gantt", () => {
@@ -304,6 +312,14 @@ describe("production-gantt", () => {
     expect(suburbMatch.projects.map((p) => p.id)).toContain(memberProjectId);
     const titleMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Prep+listing", tokens.admin)).json());
     expect(titleMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+  });
+
+  it("a search match on a done-only checklist title is absent by default and present with completed=1", async () => {
+    const defaultResponse = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=OnlyDoneMatch", tokens.admin)).json());
+    expect(defaultResponse.projects.map((p) => p.id)).not.toContain(completedTitleSearchProjectId);
+
+    const completedResponse = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=OnlyDoneMatch&completed=1", tokens.admin)).json());
+    expect(completedResponse.projects.map((p) => p.id)).toContain(completedTitleSearchProjectId);
   });
 
   it("q matching only a checklist title still returns the parent project row", async () => {
