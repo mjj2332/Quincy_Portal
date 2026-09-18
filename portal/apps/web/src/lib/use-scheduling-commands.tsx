@@ -742,7 +742,13 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     const target: CalendarManipulationTarget = subview === "month"
       ? { subview, targetDate: localCivil.slice(0, 10) }
       : { subview, targetDate: localCivil.slice(0, 10), targetCivilMinute: localCivil };
-    runDeadlineProposal({ kind: "deadline", entity: "project_deadline", event, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil);
+    // §216 fix round 4 item 1: the SchedulingProposal's own `event` (what planSchedulingProposal
+    // maps against) is `snapshot.event` — main (ProductionCalendar.tsx:983) mapped
+    // mapProjectDeadlineMoveToCommand from snapshot.event (the freshest accepted source civil
+    // time/expectedVersion/reminder offsets), never the positional `event`. The positional `event`
+    // is still passed separately to runDeadlineProposal for the dialog/focus/proposalFromRequest
+    // uses, matching main exactly there too (see runDeadlineProposal's own docblock).
+    runDeadlineProposal({ kind: "deadline", entity: "project_deadline", event: snapshot.event, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil);
   }, [runDeadlineProposal]);
 
   const mapAndRunUnscheduledProjectProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, entry: ProjectCalendarUnscheduledEntryDto, event: ProjectDeadlineCalendarEventDto, localCivil: string, target: CalendarManipulationTarget, disambiguation: ProjectDeadlineDisambiguation | undefined, drop?: CalendarRevertable) => {

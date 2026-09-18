@@ -23,7 +23,8 @@ import {
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
 import { confirm, confirmStore } from "../lib/confirm";
-import { useProductionCalendarRange } from "../lib/production-calendar-query";
+import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib/production-calendar-query";
+import type { CalendarAcceptedSnapshot } from "./production-calendar-interaction";
 import { useSchedulingCommands, type SchedulingCommands, type SubmitProposalOutcome } from "./use-scheduling-commands";
 import type { SchedulingProposal } from "./scheduling-policy";
 
@@ -257,6 +258,48 @@ describe("useSchedulingCommands submitProposal", () => {
     expect(secondOutcome).toEqual({ ok: true });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
     expect(confirm).toHaveBeenCalledTimes(1);
+    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
+  });
+
+  // §216 fix round 4 item 1
+  it("maps a deadline-drag proposal from snapshot.event, not the positional event — the mutation carries the SNAPSHOT's expectedVersion/offsets", async () => {
+    const snapshotEvent = deadlineEvent("2026-08-27T09:00", 8);
+    await render(response({ events: [snapshotEvent], unscheduled: [] }));
+
+    // A positional `event` that deliberately disagrees with snapshot.event on every field the
+    // mapper/mutation would read (version, civil time, offsets, instant) — main
+    // (ProductionCalendar.tsx:983) mapped mapProjectDeadlineMoveToCommand from snapshot.event, so
+    // if the adapter ever maps from the positional `event` instead, this test's expected PUT body
+    // (below) would come out wrong (a different expectedVersion/localCivil/offsets).
+    const positionalEvent: ProjectDeadlineCalendarEventDto = {
+      ...snapshotEvent,
+      deadlineLocalCivil: "2026-01-01T00:00",
+      deadlineVersion: 99,
+      reminderOffsetsMinutes: [30],
+      timing: { allDay: false, start: "2025-12-31T13:00:00.000Z", end: null },
+    };
+    const snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto> = {
+      event: snapshotEvent,
+      filters: productionCalendarFiltersFor(calendar),
+      principalId: identity.principalId,
+      authorizationEpoch: identity.authorizationEpoch,
+      focus: { eventId: snapshotEvent.id, control: "event" },
+      capturedNow: Date.now(),
+    };
+    const dropInfo = { event: { allDay: false, start: null, startStr: "", end: null, endStr: "", extendedProps: {} }, revert: vi.fn() };
+
+    await act(async () => {
+      commandsRef!.submitDeadlineProposal({ kind: "drop", snapshot, event: positionalEvent, localCivil: "2026-08-29T09:00", subview: "month", drop: dropInfo });
+      await Promise.resolve();
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(dropInfo.revert).not.toHaveBeenCalled();
+    // The mapper shifts snapshot.event's date (2026-08-27 -> 2026-08-29) while preserving ITS
+    // wall-clock time (09:00) — not the positional event's (00:00) — and the request carries
+    // snapshot.event's version (8) and reminder offsets ([1440, 60]), not the positional event's
+    // (99, [30]).
     expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
   });
 });
