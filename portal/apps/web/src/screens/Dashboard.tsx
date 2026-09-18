@@ -266,12 +266,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const activeConfirm = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
   // Calendar owns its accept/settle barriers separately. Board interactionBlocked
   // remains the TB5B state machine and never incorporates either Calendar gate.
-  // `searchActive` (#217): while a query is active, `projects` is a filtered column and Board
-  // positions computed against it are wrong -- so reorder and stage-move drag are blocked the same
-  // way any other in-flight interaction is, reusing the existing disabled affordance rather than
-  // adding new UI.
+  // `searchActive` (#217 fix round 1) is deliberately NOT folded in here anymore: `interactionBlocked`
+  // means "a Board interaction is in flight" (queue refreshes, disable the view switcher) -- a
+  // search is not that, and the accept effect below only ever queues while `interactionBlocked` is
+  // true, so a searched `queryProjects` was never being accepted (Sol's diff review, blocker 1).
+  // Search still has to block Board reorder/stage-move drag specifically (positions computed
+  // against a filtered column are wrong) -- that gating is explicit now, at `canMoveStages` /
+  // `sameStageReorderEnabled` / `movementDisabled` / `runBoardMovement`'s own guard, not smuggled
+  // in through this flag.
   const searchActive = search.query !== "";
-  const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm || searchActive);
+  const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
   const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
