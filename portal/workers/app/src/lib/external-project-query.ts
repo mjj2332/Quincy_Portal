@@ -158,7 +158,23 @@ function canonicalExternalBoardOrder(groups: Iterable<{ project: ProjectRow }>):
   return orderedProjectIdsByStage;
 }
 
-export async function listExternalProjects(env: Env, userId: string, role: Role): Promise<ExternalProjectListResponse> {
+/**
+ * #217 -- the same `instr`-style substring match `/api/projects`'s internal path uses
+ * (`matchingProjectIds`, `workers/app/src/routes/projects.ts`), applied in JS over the already-
+ * decoded summary DTOs rather than a second SQL round trip: this path's rows arrive through a very
+ * different Drizzle shape (grouped services, directory-name fallbacks) than the internal CTE/raw-
+ * SQL query, so matching against the DTO fields the external Dashboard actually renders
+ * (`agencyDisplayName`/`agentDisplayName`, already resolved from the directory-name fallback) is
+ * both simpler and exactly what "matching must agree with what the user sees" requires. Checklist
+ * titles are deliberately NOT matched here -- unlike the internal path, the external list response
+ * carries no checklist data to justify a second query for.
+ */
+function externalProjectMatchesSearch(project: ExternalProjectSummaryDto, needle: string): boolean {
+  const haystacks = [project.address.street, project.address.suburb, project.agencyDisplayName, project.agentDisplayName];
+  return haystacks.some((value) => (value ?? "").toLowerCase().includes(needle));
+}
+
+export async function listExternalProjects(env: Env, userId: string, role: Role, search = ""): Promise<ExternalProjectListResponse> {
   const variant = await boardSchemaVariant(env.DB);
   const db = createDb(env.DB);
   const rows = await projectRows(db, userId, role, variant);
@@ -170,7 +186,7 @@ export async function listExternalProjects(env: Env, userId: string, role: Role)
     grouped.set(project.id, current);
   }
   const editorsByProject = await activeEditorRefsByProject(db, [...grouped.keys()]);
-  const projects = await Promise.all([...grouped.values()].map(async ({ project, services }) => {
+  const allProjects = await Promise.all([...grouped.values()].map(async ({ project, services }) => {
     const editorFolders = await editorFolderAvailability(env, project.id);
     return summaryFields(
       project,
@@ -182,12 +198,17 @@ export async function listExternalProjects(env: Env, userId: string, role: Role)
       editorFolders?.outputReady ?? project.editedUploadAvailable,
     );
   }));
+  const needle = search.toLowerCase();
+  const projects = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle));
   return externalProjectListResponseSchema.parse({
     projects,
     board: {
       contractEnabled: await boardContractEnabled(env.DB, variant),
+      // Built from the full, UNFILTERED group -- the authorised Board-order envelope, not a
+      // rank-within-the-filtered-set. Mirrors the internal path's own `orderedRows`/`matchedRows` split.
       orderedProjectIdsByStage: variant === "tb5a_0037" ? canonicalExternalBoardOrder(grouped.values()) : {},
     },
+    ...(search === "" ? {} : { search: { query: search, matching: projects.length, total: allProjects.length } }),
   });
 }
 

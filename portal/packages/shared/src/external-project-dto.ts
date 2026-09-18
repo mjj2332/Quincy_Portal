@@ -215,9 +215,19 @@ const externalBoardProjectionSchema = z.object({
   }).strict(),
 }).strict();
 
+/** #217 -- present only when the request carried a `q`. Mirrors `/api/projects`'s own envelope
+ * (`workers/app/src/routes/projects.ts`), so the Dashboard's `useDashboardProjectSearch` reads an
+ * identical shape from either role's list response. */
+const externalProjectSearchSchema = z.object({
+  query: z.string(),
+  matching: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+}).strict();
+
 export const externalProjectListResponseSchema = z.object({
   projects: z.array(externalProjectSummarySchema),
   board: externalBoardProjectionSchema,
+  search: externalProjectSearchSchema.optional(),
 }).strict();
 export const externalAssetListResponseSchema = z.object({ assets: z.array(externalAssetSchema) }).strict();
 export const externalAnnotationListResponseSchema = z.object({ annotations: z.array(externalAnnotationSchema) }).strict();
