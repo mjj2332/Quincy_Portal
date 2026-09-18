@@ -32,6 +32,7 @@ import {
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
+import { authorizedProjectsBaseCte, parseReminderOffsets } from "../lib/production-scope-sql";
 import type { AppEnv } from "../env";
 
 type CalendarRole = AppEnv["Variables"]["user"]["role"];
@@ -215,19 +216,6 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
   return { query, startInstant: startResolution.value.epochMs, endInstant: endResolution.value.epochMs, todayDate, now };
 }
 
-function roleSql(role: CalendarRole): { from: string; collaboration: string } {
-  if (role === "external_editor") {
-    return {
-      from: "INNER JOIN project_members assignment ON assignment.project_id = p.id AND assignment.user_id = ?1 AND assignment.role_on_project = 'editor'",
-      collaboration: "1",
-    };
-  }
-  return {
-    from: "",
-    collaboration: role === "admin" ? "1" : "EXISTS (SELECT 1 FROM project_members collaboration_member WHERE collaboration_member.project_id = p.id AND collaboration_member.user_id = ?1)",
-  };
-}
-
 // authorized_projects_base's search filter additionally short-circuits true whenever the
 // checklist layer is requested (a checklist-layer row's own visibility is decided by
 // candidate_subtasks_raw's own search filter below, not by this project-level gate) — insert
@@ -240,7 +228,6 @@ function withChecklistLayerBypass(clause: string): string {
 }
 
 function calendarCtes(role: CalendarRole): string {
-  const branch = roleSql(role);
   const authorizedProjectsSearch = withChecklistLayerBypass(projectSearchSql("r.search", {
     street: "p.street",
     suburb: "p.suburb",
@@ -270,24 +257,7 @@ request AS (
 ),
 request_editors AS (SELECT value AS person_id FROM json_each(?8)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?9)),
-authorized_projects_base AS (
-  SELECT p.id AS project_id, p.street, p.suburb, p.stage_key,
-    CASE WHEN p.stage_key = 'delivered' THEN 1 ELSE 0 END AS delivered,
-    COALESCE(agencies.name, p.agency_name) AS agency_display_name,
-    COALESCE(agents.name, p.agent_name) AS agent_display_name,
-    p.deadline_at, p.deadline_local_civil, p.deadline_version,
-    p.deadline_reminder_offsets_json,
-    ${branch.collaboration} AS can_collaborate
-  FROM projects p
-  ${branch.from}
-  LEFT JOIN agencies ON agencies.id = p.agency_id
-  LEFT JOIN agents ON agents.id = p.agent_id
-  CROSS JOIN request r
-  WHERE p.archived_at IS NULL
-    AND (r.show_delivered = 1 OR p.stage_key <> 'delivered')
-    AND (NOT EXISTS (SELECT 1 FROM request_stages) OR EXISTS (SELECT 1 FROM request_stages rs WHERE rs.stage_key = p.stage_key))
-    AND ${authorizedProjectsSearch}
-),
+${authorizedProjectsBaseCte(role, { includeDeliveredColumn: "r.show_delivered", searchPredicate: authorizedProjectsSearch })},
 project_candidate_universe AS (
   SELECT ap.*
   FROM authorized_projects_base ap
@@ -574,16 +544,6 @@ function bindValues(parsed: ParsedCalendarRequest): unknown[] {
   ];
 }
 
-function parseOffsets(value: string | null): number[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) && parsed.every((item) => typeof item === "number" && Number.isSafeInteger(item) && item > 0)
-      ? [...new Set(parsed)].sort((a, b) => b - a)
-      : [];
-  } catch { return []; }
-}
-
 function projectContext(row: CalendarSqlRow, role: CalendarRole) {
   if (!row.project_id || row.street === null || row.stage_key === null) throw new Error("Calendar project row is incomplete.");
   return {
@@ -677,7 +637,7 @@ function projectDeadlineEvent(row: CalendarSqlRow, role: CalendarRole, parsed: P
     permissions: { canDrag: roleHasCapability(role, "editProject") && !project.delivered, canResize: false },
     deadlineLocalCivil: row.deadline_local_civil,
     deadlineVersion: Number(row.deadline_version),
-    reminderOffsetsMinutes: parseOffsets(row.deadline_reminder_offsets_json),
+    reminderOffsetsMinutes: parseReminderOffsets(row.deadline_reminder_offsets_json),
   };
 }
 
