@@ -101,33 +101,61 @@ describe("buildDeadlineUndoTicket", () => {
 });
 
 describe("applyUndo", () => {
-  it("reports conflict on subtask_schedule_version_conflict", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "stale", code: "subtask_schedule_version_conflict" }), { status: 409, headers: { "content-type": "application/json" } }));
+  const checklistTicket = { kind: "checklist" as const, projectId: PROJECT_ID, subtaskId: `checklist:${PERSON_ID}`, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range" as const, start: { kind: "date" as const, localCivil: "2026-08-27" }, end: { kind: "date" as const, localCivil: "2026-08-27" } } } };
+  const deadlineTicket = { kind: "deadline" as const, projectId: PROJECT_ID, expectedVersion: 9, request: { expectedVersion: 9, deadline: { localCivil: "2026-08-27T09:00" }, reminderOffsetsMinutes: [1440, 60] } };
+
+  it("sends the exact PATCH body (incl. expectedVersion) to the same subtask endpoint the forward edit used, and only reports conflict when that exact body was sent", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${PROJECT_ID}/subtasks/${encodeURIComponent(checklistTicket.subtaskId)}`);
+      expect(init?.method).toBe("PATCH");
+      const body = JSON.parse(String(init?.body)) as { schedule?: { expectedVersion?: unknown } };
+      expect(body).toEqual({ schedule: checklistTicket.request });
+      // Conditional on the request, not unconditional: a dropped or corrupted expectedVersion
+      // would not match here, the mock would fall through to the 400 below, and the "conflict"
+      // assertion would then fail on the outcome instead of the mock silently agreeing.
+      if (body.schedule?.expectedVersion !== checklistTicket.expectedVersion) {
+        return new Response(JSON.stringify({ message: "unexpected body" }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ message: "stale", code: "subtask_schedule_version_conflict" }), { status: 409, headers: { "content-type": "application/json" } });
+    });
     vi.stubGlobal("fetch", fetchMock);
-    const outcome = await applyUndo({ kind: "checklist", projectId: PROJECT_ID, subtaskId: `checklist:${PERSON_ID}`, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-27" } } } });
+    const outcome = await applyUndo(checklistTicket);
     expect(outcome).toEqual({ ok: false, reason: "conflict" });
   });
 
-  it("reports conflict on deadline_version_conflict", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "stale", code: "deadline_version_conflict" }), { status: 409, headers: { "content-type": "application/json" } }));
+  it("sends the exact PUT body (incl. expectedVersion) to the same deadline endpoint the forward edit used, and only reports conflict when that exact body was sent", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${PROJECT_ID}/deadline`);
+      expect(init?.method).toBe("PUT");
+      const body = JSON.parse(String(init?.body)) as { expectedVersion?: unknown };
+      expect(body).toEqual(deadlineTicket.request);
+      if (body.expectedVersion !== deadlineTicket.expectedVersion) {
+        return new Response(JSON.stringify({ message: "unexpected body" }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ message: "stale", code: "deadline_version_conflict" }), { status: 409, headers: { "content-type": "application/json" } });
+    });
     vi.stubGlobal("fetch", fetchMock);
-    const outcome = await applyUndo({ kind: "deadline", projectId: PROJECT_ID, expectedVersion: 9, request: { expectedVersion: 9, deadline: { localCivil: "2026-08-27T09:00" }, reminderOffsetsMinutes: [1440, 60] } });
+    const outcome = await applyUndo(deadlineTicket);
     expect(outcome).toEqual({ ok: false, reason: "conflict" });
   });
 
   it("reports failed on a 500", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "boom" }), { status: 500, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
-    const outcome = await applyUndo({ kind: "checklist", projectId: PROJECT_ID, subtaskId: `checklist:${PERSON_ID}`, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-27" } } } });
+    const outcome = await applyUndo(checklistTicket);
     expect(outcome).toEqual({ ok: false, reason: "failed" });
   });
 
-  it("succeeds and hits the same endpoint the forward edit used", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } }));
+  it("succeeds and hits the same endpoint the forward edit used, with the exact PUT body", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${PROJECT_ID}/deadline`);
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).toEqual(deadlineTicket.request);
+      return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+    });
     vi.stubGlobal("fetch", fetchMock);
-    const outcome = await applyUndo({ kind: "deadline", projectId: PROJECT_ID, expectedVersion: 9, request: { expectedVersion: 9, deadline: { localCivil: "2026-08-27T09:00" }, reminderOffsetsMinutes: [1440, 60] } });
+    const outcome = await applyUndo(deadlineTicket);
     expect(outcome).toEqual({ ok: true });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/projects/${PROJECT_ID}/deadline`);
-    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PUT" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
