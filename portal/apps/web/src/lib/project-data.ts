@@ -355,6 +355,18 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
    * double-refetch a drag), but its cross-tab broadcast still fires so other tabs converge.
    */
   producer?: "dashboard" | "calendar";
+  /**
+   * #217 fix round 1, item 4. When `dashboard` is true, scope the in-tab convergence scan to
+   * `dashboard-projects` queries carrying a non-empty `q` in their trailing key object -- a
+   * checklist title change can flip whether a project matches an ACTIVE search (titles now
+   * participate in matching, #217), but it never changes the unfiltered list content itself, so a
+   * q-less baseline query has nothing to gain from refetching. The cross-tab broadcast still
+   * publishes the same generic `dashboard-board-invalidated` message regardless -- a receiving
+   * tab's own handler (`project-query-sync.ts`) invalidates broadly there, same as it already does
+   * for every other producer of that message; narrowing that shared handler for this one caller
+   * is out of scope here.
+   */
+  dashboardSearchOnly?: boolean;
 }): Promise<void> {
   const resources = [...new Map(input.resources.map((resource) => [JSON.stringify(resource), resource])).values()];
   await invalidateProjectResources(queryClient, { projectId: input.projectId, resources }, true);
@@ -364,7 +376,14 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
   const pending: Promise<unknown>[] = [];
   const converge = (surface: "dashboard" | "calendar", prefix: string, message: Parameters<ProjectQueryRuntime["publish"]>[0]) => {
     if (input.producer !== surface) {
-      const active = queryClient.getQueryCache().getAll().filter((query) => query.queryKey[0] === prefix && query.getObserversCount() > 0);
+      const active = queryClient.getQueryCache().getAll().filter((query) => {
+        if (query.queryKey[0] !== prefix || query.getObserversCount() === 0) return false;
+        if (surface === "dashboard" && input.dashboardSearchOnly) {
+          const trailing = query.queryKey[4] as { q?: string } | undefined;
+          return Boolean(trailing?.q);
+        }
+        return true;
+      });
       for (const query of active) pending.push(runtime.requestInvalidation(query.queryKey));
     }
     runtime.publish(message);
