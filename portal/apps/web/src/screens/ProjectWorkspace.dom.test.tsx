@@ -151,6 +151,21 @@ function editedTabButton(host: HTMLElement): HTMLButtonElement {
   return button;
 }
 
+// #205 — the Deadline/Dropbox blocks moved behind dashed trigger buttons that open a
+// `reui/popover.tsx` popover portalled to `document.body`, outside `host`. Callers that need the
+// dialog's own content query `document`, not `host`.
+async function openDeadlineDialog(host: HTMLElement): Promise<HTMLElement> {
+  await click(host.querySelector<HTMLButtonElement>('[data-testid="project-deadline-trigger"]')!);
+  await flush(5);
+  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Deadline"]')!;
+}
+
+async function openDropboxDialog(host: HTMLElement): Promise<HTMLElement> {
+  await click(host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!);
+  await flush(5);
+  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!;
+}
+
 // `.project-collaboration__head` was retired to Tailwind (TB8-07 §7.1) — the Hide button carries
 // no class hook of its own, so it is found by its accessible name instead.
 function hideCollaborationButton(host: HTMLElement): HTMLButtonElement {
@@ -371,13 +386,14 @@ afterEach(async () => {
     // file's default authState.role = "editor" would hide the "Set Deadline" button entirely.
     authState.role = "admin";
     await render(<ProjectWorkspace key="p1" projectId="p1" />); await flush(20);
-    const setDeadline = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
+    const p1Dialog = await openDeadlineDialog(host);
+    const setDeadline = [...p1Dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
     await click(setDeadline);
-    const dateInput = host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
+    const dateInput = p1Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
     expect(dateInput).not.toBeNull();
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setter.call(dateInput, "2027-01-15"); dateInput.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    expect(p1Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
 
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p2") return Promise.resolve({
@@ -405,10 +421,13 @@ afterEach(async () => {
     // fresh p2 tree, exactly like App.tsx's key={route.projectId}.
     await render(<ProjectWorkspace key="p2" projectId="p2" />); await flush(20);
 
-    expect(host.querySelector('input[aria-label="Deadline date"]')).toBeNull();
-    expect(host.textContent).not.toContain("2027-01-15");
-    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Edit Deadline")).toBe(true);
-    expect(host.textContent).toContain("2028-06-01 10:00");
+    // The whole p1 fiber tree — including its Deadline popover's portal — was unmounted by the
+    // key swap, so nothing from it survives in `document` at all.
+    expect(document.querySelector('input[aria-label="Deadline date"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("2027-01-15");
+    const p2Dialog = await openDeadlineDialog(host);
+    expect([...p2Dialog.querySelectorAll("button")].some((button) => button.textContent === "Edit Deadline")).toBe(true);
+    expect(p2Dialog.textContent).toContain("2028-06-01 10:00");
   });
 
   it("hides passive-RAW private data in the same render as a membership 403", async () => {
@@ -819,8 +838,9 @@ afterEach(async () => {
     });
     apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    const dropboxDialog = await openDropboxDialog(host);
     vi.useFakeTimers();
-    await click(host.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+    await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
     for (let cycle = 0; cycle < 6; cycle += 1) await act(async () => { vi.advanceTimersByTime(2500); await Promise.resolve(); await Promise.resolve(); });
     const paths = apiGetMock.mock.calls.map(([path]) => path);
     expect(paths.filter((path) => path.includes("/assets?collection=raw")).length).toBeGreaterThanOrEqual(7);
