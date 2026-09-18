@@ -141,6 +141,53 @@ describe("ShellSearch — collapsed", () => {
       expect(document.activeElement).toBe(input);
     });
   });
+
+  // #217 fix round 1, item 8 (test gap Sol listed): the trigger's own `aria-expanded`/
+  // `aria-haspopup` and the popup's `role="dialog"` semantics, not just presence/absence.
+  it("the trigger carries aria-haspopup=dialog and aria-expanded reflects open state", async () => {
+    await renderInProvider({ variant: "collapsed" });
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+    expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    });
+  });
+
+  // Restores real-popover Escape/focus-return coverage: the earlier Escape suite only proves the
+  // keystroke bubbles past a synthetic listener, not that an ACTUAL popover closes and returns
+  // focus to its trigger, the behaviour a Sheet/dialog ancestor relies on in production.
+  it("Escape on an empty draft closes the real popover and returns focus to the trigger", async () => {
+    await renderInProvider({ variant: "collapsed" });
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+    const input = await new Promise<HTMLInputElement>((resolve) => {
+      void waitFor(() => {
+        const element = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]');
+        expect(element).not.toBeNull();
+        resolve(element!);
+      });
+    });
+    expect(getDashboardSearchSnapshot().draft).toBe("");
+
+    await keydown(input, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+    expect(document.activeElement).toBe(trigger);
+  });
 });
 
 describe("ShellSearch — sheet", () => {

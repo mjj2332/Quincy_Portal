@@ -213,15 +213,25 @@ describe("/api/projects — q (#217)", () => {
 });
 
 describe("/api/projects — q, external_editor checklist-title matching (#217 follow-up)", () => {
-  it("a title-only match on a visible project is present, with correct counts", async () => {
-    const { status, body } = await request("/api/projects?q=externallyvisibleneedle", tokens.external);
-    expect(status).toBe(200);
-    const ids = (body.projects as Array<{ id: string }>).map((p) => p.id);
-    expect(ids).toEqual([externalVisibleChecklistId]);
-    expect(body.search).toMatchObject({ matching: 1 });
-    // total counts the external's full authorised (member) set, not just the match --
-    // `externalOtherVisibleId` is also a member project and must be counted there.
-    expect((body.search as { total: number }).total).toBeGreaterThanOrEqual(2);
+  it("a title-only match on a visible project is present, with exact counts and board ids (#217 fix round 1, item 8)", async () => {
+    const [unfiltered, filtered] = await Promise.all([
+      request("/api/projects", tokens.external),
+      request("/api/projects?q=externallyvisibleneedle", tokens.external),
+    ]);
+    expect(filtered.status).toBe(200);
+    // The external's full authorised (member) set is EXACTLY these two fixture projects --
+    // `externalVisibleChecklistId` (the match) and `externalOtherVisibleId` (a member project
+    // with no match) -- asserted exactly, not merely ">= 2", against the unfiltered run's own ids.
+    const unfilteredIds = (unfiltered.body.projects as Array<{ id: string }>).map((p) => p.id).sort();
+    expect(unfilteredIds).toEqual([externalOtherVisibleId, externalVisibleChecklistId].sort());
+
+    const filteredIds = (filtered.body.projects as Array<{ id: string }>).map((p) => p.id);
+    expect(filteredIds).toEqual([externalVisibleChecklistId]);
+    expect(filtered.body.search).toEqual({ query: "externallyvisibleneedle", matching: 1, total: 2 });
+    // The authorised Board-order envelope is built from the UNFILTERED set -- both member
+    // projects' ids appear in it regardless of the active `q`, exactly matching the unfiltered
+    // run's own envelope.
+    expect(filtered.body.board).toEqual(unfiltered.body.board);
   });
 
   it("the identical title on a project the external is NOT a member of is absent, and not counted", async () => {
@@ -230,6 +240,6 @@ describe("/api/projects — q, external_editor checklist-title matching (#217 fo
     expect(ids).not.toContain(externalHiddenChecklistId);
     // Exactly one match (the visible project) despite two projects sharing the same checklist
     // title text -- the hidden one must not inflate `matching` or `total` either.
-    expect(body.search).toMatchObject({ matching: 1 });
+    expect(body.search).toEqual({ query: "externallyvisibleneedle", matching: 1, total: 2 });
   });
 });
