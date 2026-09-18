@@ -91,7 +91,11 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter") {
       commitDashboardSearchNow();
-      if (!isDashboard) locationStore().push(staffPathFor({ kind: "dashboard", search: search.draft }));
+      // #217 fix round 1, item 5: the store's normalised/capped `query` after the commit above,
+      // not the raw render-time `search.draft` -- a 201-character draft must carry 200 into the
+      // URL, and a whitespace-only draft (normalises to "") must navigate with no `q` at all,
+      // neither of which the uncommitted draft value guarantees.
+      if (!isDashboard) locationStore().push(staffPathFor({ kind: "dashboard", search: getDashboardSearchSnapshot().query }));
       return;
     }
     if (event.key === "Escape") {

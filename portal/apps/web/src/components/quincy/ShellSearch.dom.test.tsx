@@ -200,6 +200,28 @@ describe("ShellSearch — Enter", () => {
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     expect(routerMock.push).toHaveBeenCalledWith("/?q=smith");
   });
+
+  it("off the Dashboard: a 201-character draft pushes the committed, 200-character-capped value, not the raw draft (#217 fix round 1, item 5)", async () => {
+    await renderInProvider({ variant: "expanded", isDashboard: false });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await type(input, "a".repeat(201));
+    await keydown(input, { key: "Enter" });
+    expect(getDashboardSearchSnapshot().query.length).toBe(200);
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    const pushed = routerMock.push.mock.calls[0]?.[0] as string;
+    const pushedQuery = new URL(pushed, "https://example.test").searchParams.get("q");
+    expect(pushedQuery?.length).toBe(200);
+  });
+
+  it("off the Dashboard: a whitespace-only draft navigates to the Dashboard with no q (#217 fix round 1, item 5)", async () => {
+    await renderInProvider({ variant: "expanded", isDashboard: false });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await type(input, "   ");
+    await keydown(input, { key: "Enter" });
+    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    expect(routerMock.push).toHaveBeenCalledWith("/");
+  });
 });
 
 describe("ShellSearch — Escape", () => {
