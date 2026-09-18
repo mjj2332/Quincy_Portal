@@ -613,8 +613,10 @@ describe("ProductionCalendar checklist manipulation", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(states.at(-1)).toBe(false);
     expect(getCount).toBe(2);
-    expect(publish).toHaveBeenCalledTimes(2);
-    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "production-calendar-invalidated"]));
+    // One more broadcast than before #218: invalidateProjectSurfaces now also converges the
+    // Production Gantt projection alongside the Calendar's own.
+    expect(publish).toHaveBeenCalledTimes(3);
+    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "production-calendar-invalidated", "production-gantt-invalidated"]));
     expect(publish.mock.calls.find(([message]) => message.type === "project-data-invalidated")?.[0]).toMatchObject({ projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }] });
     expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(false);
     expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);

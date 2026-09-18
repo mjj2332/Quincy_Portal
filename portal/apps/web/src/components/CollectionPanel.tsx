@@ -116,7 +116,7 @@ export function CollectionPanel({ projectId, collection, assets, canManage, canD
     if (loadToken.current === token) setLinks(response.links);
   }, [collection, external, projectId]);
   async function invalidateActivity() {
-    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }], dashboard: false, calendar: false });
+    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "activity" }], dashboard: false, calendar: false, gantt: false });
   }
   useEffect(() => { let active = true; void loadLinks().catch((error: unknown) => { terminateOnUnauthorized(error); if (active) onToast(error instanceof Error ? error.message : "Delivered links could not be loaded.", "error"); }); return () => { active = false; }; }, [loadLinks, onToast, terminateOnUnauthorized]);
   async function addLink(event: FormEvent) {

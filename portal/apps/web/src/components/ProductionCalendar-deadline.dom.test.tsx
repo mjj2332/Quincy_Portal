@@ -397,8 +397,11 @@ describe("ProductionCalendar Project Deadline mutation", () => {
     expect(apiGetMock).toHaveBeenCalledTimes(2);
     expect(settleStates.some((state) => state.pending && state.recoveryReason === null)).toBe(true);
     expect(settleStates.at(-1)).toEqual({ pending: false, recoveryReason: null });
-    expect(publish).toHaveBeenCalledTimes(3);
-    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "dashboard-board-invalidated", "production-calendar-invalidated"]));
+    // One more broadcast than before #218: invalidateProjectSurfaces now also converges the
+    // Production Gantt projection (gantt: true) alongside the Calendar's own producer-suppressed
+    // in-tab refetch, since a Calendar deadline/checklist move can change Gantt's data too.
+    expect(publish).toHaveBeenCalledTimes(4);
+    expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "dashboard-board-invalidated", "production-calendar-invalidated", "production-gantt-invalidated"]));
     expect(publish.mock.calls.find(([message]) => message.type === "production-calendar-invalidated")?.[0]).toMatchObject({ version: 1, type: "production-calendar-invalidated" });
     expect(publish.mock.calls.find(([message]) => message.type === "production-calendar-invalidated")?.[0]).not.toHaveProperty("projectId");
     expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);
