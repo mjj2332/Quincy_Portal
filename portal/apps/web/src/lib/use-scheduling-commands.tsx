@@ -686,12 +686,14 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     if (!planned.ok) {
       const attemptedLocalCivil = attemptedDeadlineLocalCivil(proposal, event);
       if (planned.error.code === "repeated_local_time" && planned.error.choices) {
+        // §216 fix round 3 item 2: no announce here on main — a drag OR a placement opens the fold
+        // dialog silently for a repeated_local_time. Only the nonexistent_local_time (gap) branch
+        // below announces "dst-gap", on both paths, per main.
         if (isPlace) drop?.revert();
         setMoveDialog({
           event, snapshot, initialCivil: attemptedLocalCivil, foldChoices: planned.error.choices, drop,
           ...(isPlace ? { unscheduledEntry: proposal.entry } : { subview: proposal.target.subview === "month" ? "month" as const : "week" as const }),
         });
-        announceLifecycle("fold-choice", { entity: "deadline" });
         return;
       }
       if (planned.error.code === "nonexistent_local_time") {
