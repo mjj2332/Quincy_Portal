@@ -22,6 +22,7 @@ import {
   editorProductionGanttResponseSchema,
   encodeGanttChildCursor,
   encodeGanttProjectCursor,
+  isSydneyCalendarDate,
   productionGanttChildPageSchema,
   roleHasCapability,
   serializeChecklistSchedule,
@@ -255,7 +256,18 @@ function withSubtaskTitleExists(clause: string): string {
   return `${clause.slice(0, -1)}\n      OR ${existsClause})`;
 }
 
-const BAR_START_DATE_EXPR = "CASE WHEN p.shoot_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN p.shoot_date ELSE strftime('%Y-%m-%d', p.created_at/1000, 'unixepoch') END AS bar_start_date";
+/**
+ * `GLOB` alone only checks the `YYYY-MM-DD` shape — a stored `2026-02-30` (impossible calendar
+ * day, e.g. Tonomo free text) passes it. `date(p.shoot_date) = p.shoot_date` is SQLite's own
+ * calendar-validity check: `date()` silently rolls an impossible day forward (`2026-02-30` ->
+ * `2026-03-02`) rather than rejecting it, so comparing the rolled value back against the original
+ * string is true only for a genuinely valid Gregorian calendar date — confirmed to agree with
+ * `isSydneyCalendarDate` (the same check `shootDateCivil` below uses) across leap-year and
+ * century-boundary cases (1900, 2000, 2100, 2400) before relying on it here (fix-218-r1 #2). Both
+ * checks must keep agreeing, since this SQL expression is the sort/keyset key and
+ * `shootDateCivil`/`barStartDate` must never diverge from it.
+ */
+const BAR_START_DATE_EXPR = "CASE WHEN p.shoot_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(p.shoot_date) = p.shoot_date THEN p.shoot_date ELSE strftime('%Y-%m-%d', p.created_at/1000, 'unixepoch') END AS bar_start_date";
 
 /**
  * Statement 1: the projects page, keyset-paginated on `(bar_start_date, project_id)`. Binds, in
@@ -570,8 +582,11 @@ export function serializeGanttDeadline(row: Pick<GanttProjectSqlRow, "deadline_a
   };
 }
 
+/** Real calendar validity (leap years, days-in-month), not just the `YYYY-MM-DD` shape — a stored
+ * `2026-02-30` (impossible day) must serialize as `shootDateCivil: null`, matching the SQL sort
+ * key's own `date(shoot_date) = shoot_date` check (`BAR_START_DATE_EXPR` above). */
 function shootDateCivil(shootDate: string | null): string | null {
-  return shootDate !== null && /^\d{4}-\d{2}-\d{2}$/u.test(shootDate) ? shootDate : null;
+  return shootDate !== null && isSydneyCalendarDate(shootDate) ? shootDate : null;
 }
 
 function serializeGanttProjectRow(

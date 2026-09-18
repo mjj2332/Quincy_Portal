@@ -37,6 +37,15 @@ const MIXED_CHILDREN_TOTAL = 210;
  * when `completed=1` includes everything and comfortably over it for the not-done set too. */
 const MIXED_CHILDREN_DONE_COUNT = Math.ceil(MIXED_CHILDREN_TOTAL / 3);
 
+// fix-218-r1 #2: an impossible stored shoot_date ("2026-02-30") must never reach
+// encodeGanttProjectCursor as a literal — it must fall back to the created_at-derived
+// bar_start_date both in SQL (the sort/keyset key) and in the serialized DTO. X sorts first
+// (year 2000), Y is the impossible date (falls back to "today", whenever the suite runs — always
+// well after 2000 and well before 9999), Z sorts last (year 9999) regardless of the real date.
+const impossibleDateXId = "81777777-7777-4777-8777-777777777770";
+const impossibleDateYId = "81777777-7777-4777-8777-777777777771";
+const impossibleDateZId = "81777777-7777-4777-8777-777777777772";
+
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string): Promise<void> {
@@ -115,6 +124,10 @@ beforeAll(async () => {
 
   await insertProject(mixedChildrenProjectId, "22 Mixed Children Street", "editing_autohdr", "2026-08-23");
   for (let i = 0; i < MIXED_CHILDREN_TOTAL; i++) await insertSubtask(mixedChildrenProjectId, `Mixed Task ${i}`, i, i % 3 === 0);
+
+  await insertProject(impossibleDateXId, "30 ImpossibleDate Early Street", "editing_autohdr", "2000-01-01");
+  await insertProject(impossibleDateYId, "31 ImpossibleDate Invalid Street", "editing_autohdr", "2026-02-30");
+  await insertProject(impossibleDateZId, "32 ImpossibleDate Late Street", "editing_autohdr", "9999-01-01");
 });
 
 describe("production-gantt", () => {
@@ -260,6 +273,28 @@ describe("production-gantt", () => {
     const project = response.projects.find((p) => p.id === noDeadlineProjectId)!;
     expect(project.deadline).toBeNull();
     expect(project.deadlineVersion).toBe(0);
+  });
+
+  it("an impossible stored shoot_date as the last row of a truncated page never 500s and pagination has no dup or skip", async () => {
+    const page1Response = await request("/api/production-gantt?scope=active&q=ImpossibleDate&limit=2", tokens.admin);
+    expect(page1Response.status).toBe(200);
+    const page1 = adminProductionGanttResponseSchema.parse(await page1Response.json());
+    expect(page1.projects.map((p) => p.id)).toEqual([impossibleDateXId, impossibleDateYId]);
+    const invalidProject = page1.projects.find((p) => p.id === impossibleDateYId)!;
+    expect(invalidProject.shootDate).toBe("2026-02-30");
+    expect(invalidProject.shootDateCivil).toBeNull();
+    expect(invalidProject.barStartDate).not.toBe("2026-02-30");
+    expect(invalidProject.barStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(page1.page.nextCursor).not.toBeNull();
+
+    const page2Response = await request(`/api/production-gantt?scope=active&q=ImpossibleDate&limit=2&cursor=${encodeURIComponent(page1.page.nextCursor!)}`, tokens.admin);
+    expect(page2Response.status).toBe(200);
+    const page2 = adminProductionGanttResponseSchema.parse(await page2Response.json());
+    expect(page2.projects.map((p) => p.id)).toEqual([impossibleDateZId]);
+    expect(page2.page.nextCursor).toBeNull();
+
+    const allIds = [...page1.projects.map((p) => p.id), ...page2.projects.map((p) => p.id)];
+    expect(allIds).toEqual([impossibleDateXId, impossibleDateYId, impossibleDateZId]);
   });
 
   it("q matches street, suburb, agency, agent and checklist title", async () => {
