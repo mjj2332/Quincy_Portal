@@ -6,6 +6,7 @@ import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
+import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot, setDashboardSearchDraft } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,9 +82,10 @@ describe("Dashboard Calendar routing", () => {
     const storage = new Map<string, string>();
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
     window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
-  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); });
+  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
 
   // Dashboard code-splits ProductionCalendar behind React.lazy; warm the dynamic
   // import so the Suspense boundary resolves within the render helper's ticks.
@@ -96,12 +98,12 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   }
 
+  // #217: the Dashboard no longer owns a search field -- the rail's `ShellSearch` does, and
+  // neither `render()` nor `DashboardRouteHarness` mount the rail. Drives the shared store
+  // directly, exactly as `ShellSearch`'s own `onChange` would.
   async function typeSearch(value: string) {
-    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]');
-    if (!input) throw new Error("Dashboard search input is missing");
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      setDashboardSearchDraft(value);
       await Promise.resolve();
     });
   }
@@ -225,12 +227,12 @@ describe("Dashboard Calendar routing", () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch(`smith\\${String.fromCharCode(7)} street`);
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+    expect(getDashboardSearchSnapshot().draft).toBe("smith street");
     expect(window.location.search).toBe("?view=list");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith+street");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+    expect(getDashboardSearchSnapshot().draft).toBe("smith street");
   });
 
   // #217: the #122 P3 "latched focus request" tests that lived here (`requestProjectSearchFocus`
@@ -243,10 +245,10 @@ describe("Dashboard Calendar routing", () => {
 
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {
     await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith street" } });
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+    expect(getDashboardSearchSnapshot().draft).toBe("smith street");
     const lengthBefore = window.history.length;
     await typeSearch("a b ");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("a b ");
+    expect(getDashboardSearchSnapshot().draft).toBe("a b ");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
     expect(window.history.length).toBe(lengthBefore);
     expect(window.location.search).toContain("q=a+b");
@@ -269,7 +271,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     window.history.pushState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist&q=harbour");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("harbour");
+    expect(getDashboardSearchSnapshot().draft).toBe("harbour");
   });
 
   it("pushes committed filter changes and keeps them beside a debounced q", async () => {

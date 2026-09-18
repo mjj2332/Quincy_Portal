@@ -18,14 +18,15 @@ import { Eyebrow } from "../components/quincy/Eyebrow";
 import { Select, type SelectOption } from "../components/quincy/Select";
 import { SEGMENT_GROUP, SEGMENT_BUTTON } from "../components/quincy/segment";
 import { Skeleton } from "../components/reui/skeleton";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/reui/input-group";
+import { Badge } from "../components/reui/badge";
+import { XIcon } from "lucide-react";
 import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { cn } from "../lib/utils";
 import { CALENDAR_STATE_BOX } from "../components/production-calendar-classes";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
-import { dashboardProjectsKey, useDashboardProjects } from "../lib/dashboard-projects";
+import { dashboardProjectsKey, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
 import {
@@ -53,7 +54,15 @@ import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // Photographer dashboard.
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
-import { consumeProjectSearchFocus, getProjectSearchFocusToken, subscribeProjectSearchFocus } from "../lib/shell-search";
+import {
+  adoptDashboardSearchFromUrl,
+  clearDashboardSearch,
+  getDashboardSearchSnapshot,
+  resetDashboardSearchForPrincipal,
+  setDashboardSearchDraft,
+  setDashboardSearchUrlWriter,
+  subscribeDashboardSearch,
+} from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
@@ -175,18 +184,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     write: (key: string, value: string) => window.localStorage.setItem(key, value),
   };
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
-  const [query, setQuery] = useState("");
-  // The rail's search control and ⌘K (`lib/shell-search.ts`) never touch `query` — only where the
-  // caret lands. `useSyncExternalStore` on the store's own token, not a plain `useEffect` on mount,
-  // is what makes this work both when the request precedes this component's mount (the token this
-  // component first reads is already the one the request bumped) and when it arrives while already
-  // mounted (the token changes again, re-running the layout effect below). `useLayoutEffect`, not
-  // `useEffect`, so the caret lands before the browser paints a frame with the field still unfocused.
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchFocusToken = useSyncExternalStore(subscribeProjectSearchFocus, getProjectSearchFocusToken, getProjectSearchFocusToken);
-  useLayoutEffect(() => {
-    if (consumeProjectSearchFocus()) searchInputRef.current?.focus();
-  }, [searchFocusToken]);
+  // #217: the single Dashboard search store — the rail's `ShellSearch` is the one search input
+  // now, so there is no local field or focus latch here to own.
+  const search = useSyncExternalStore(subscribeDashboardSearch, getDashboardSearchSnapshot, getDashboardSearchSnapshot);
   const [view, setView] = useState<DashboardView>(() => {
     // A route's own explicit "calendar" gets the same capability check the stored preference
     // already gets below — otherwise a role without it landed here with `view` already "calendar"
@@ -245,9 +245,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [canViewProductionCalendar]);
   const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
-  const projectsQuery = useDashboardProjects(viewingArchived, identity);
+  const projectsQuery = useDashboardProjects(viewingArchived, identity, search.query);
+  const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, search.query);
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
   const dashboardKeyString = JSON.stringify(dashboardKey);
+  // #217: resets the shared search store when the principal this scope belongs to changes -- a
+  // no-op (the store's own `principalId === id` guard) on every OTHER dashboardKeyString change
+  // (archived toggle, role/epoch untouched). Declared BEFORE the route-reconciliation effect below
+  // (React commits effects in hook-declaration order): on a fresh mount the store's `principalId`
+  // starts `""`, genuinely different from any real `currentUserId`, so this must run and settle
+  // first or it would clobber whatever the reconciliation effect's URL-search adoption just wrote.
+  useEffect(() => {
+    resetDashboardSearchForPrincipal(currentUserId);
+  }, [dashboardKeyString, currentUserId]);
   const queryProjects = projectsQuery.data;
   const queryDataUpdatedAt = projectsQuery.dataUpdatedAt;
   const [acceptedProjects, setAcceptedProjects] = useState<{ key: string; projects: ProjectSummary[] }>();
@@ -256,7 +266,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const activeConfirm = useSyncExternalStore(confirmStore.subscribe, confirmStore.getSnapshot, () => null);
   // Calendar owns its accept/settle barriers separately. Board interactionBlocked
   // remains the TB5B state machine and never incorporates either Calendar gate.
-  const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
+  // `searchActive` (#217): while a query is active, `projects` is a filtered column and Board
+  // positions computed against it are wrong -- so reorder and stage-move drag are blocked the same
+  // way any other in-flight interaction is, reusing the existing disabled affordance rather than
+  // adding new UI.
+  const searchActive = search.query !== "";
+  const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm || searchActive);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
   const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
@@ -265,7 +280,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
   // own canonical URL in the same handler) is never mistaken for a fresh arrival at a stale one.
   const lastReconciledLocationRef = useRef(currentLocation);
-  const calendarSearchTimerRef = useRef<number | null>(null);
   const movementSettlePendingRef = useRef(false);
   movementSettlePendingRef.current = movementSettlePending;
   const movementBusyRef = useRef(false);
@@ -372,6 +386,21 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // explicit URL must not immediately bounce the Staff member back out of archived.
     const arrivedAtNewLocation = currentLocation !== lastReconciledLocationRef.current;
     lastReconciledLocationRef.current = currentLocation;
+    // Adopts a bare/List/Kanban route's own `q` into the shared search store (#217), symmetric
+    // with the Calendar facet's own adoption further down. Guarded against `search.query` so this
+    // component's own writes -- the store's URL writer (List/Kanban/bare) or `history.replace`
+    // (Calendar) -- never re-adopt their own write back into the store. Scoped to the two branches
+    // below that actually reach it (List/Kanban and the genuinely-bare fallthrough), NOT called
+    // unconditionally up here: `currentDashboardRoute` is URL-derived and can disagree with
+    // `effectiveRouteCalendar` (which falls back to the `calendar` PROP), so adopting from the
+    // route on every pass — including while the Calendar-prop branch below is the one that
+    // actually governs — fought that branch's own adoption of the SAME `search.query` on every
+    // render and looped.
+    const adoptRouteSearch = () => {
+      if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute)) return;
+      const routeSearch = currentDashboardRoute.search ?? "";
+      if (routeSearch !== search.query) adoptDashboardSearchFromUrl(routeSearch);
+    };
     // `locationHasCalendar`, not `effectiveRouteCalendar !== null` — the latter falls back to the
     // `calendar` PROP whenever the URL itself carries no facet, and that prop can outlive the URL
     // that produced it (a direct-mount caller that never re-renders it away, `Dashboard-calendar.
@@ -400,15 +429,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         if (view !== "calendar") setView("calendar");
         return;
       }
+      adoptRouteSearch();
       if (view !== routeDashboardView) setView(routeDashboardView);
       return;
     }
     if (effectiveRouteCalendar) {
       calendarFallbackLocationRef.current = false;
       setCalendarState(effectiveRouteCalendar);
-      // Keep live input whitespace while avoiding a redundant state update when
-      // this is the route produced by our own debounced search replacement.
-      setQuery((current) => normalizeDashboardCalendarSearch(current) === effectiveRouteCalendar.search ? current : effectiveRouteCalendar.search);
+      // Guarded the same way as the generic adoption above, against a redundant re-adopt of this
+      // component's own debounced search replacement.
+      if (search.query !== effectiveRouteCalendar.search) adoptDashboardSearchFromUrl(effectiveRouteCalendar.search);
       setView("calendar");
       return;
     }
@@ -424,8 +454,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // rather than leaving `view` at whatever an earlier explicit push left it — this is what
     // makes Back actually undo an explicit List/Kanban switch (D2 gave each one its own history
     // entry), not just the pre-existing "leaving Calendar via a stale bare arrival" case.
+    adoptRouteSearch();
     if (view !== bareRouteFallbackViewRef.current) setView(bareRouteFallbackViewRef.current);
-  }, [calendarState, canViewProductionCalendar, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, view, viewingArchived]);
+  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, search.query, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
@@ -438,29 +469,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (replace) history.replace(built); else history.push(built);
   }, [calendarInteractionBlocked, canViewProductionCalendar, history, viewingArchived]);
 
-  useEffect(() => {
-    if (calendarSearchTimerRef.current !== null) {
-      window.clearTimeout(calendarSearchTimerRef.current);
-      calendarSearchTimerRef.current = null;
-    }
-    if (view !== "calendar" || !calendarState) return;
-
-    const next = normalizeDashboardCalendarSearch(query);
-    if (next === calendarState.search) return;
-
-    calendarSearchTimerRef.current = window.setTimeout(() => {
-      calendarSearchTimerRef.current = null;
-      const committed = normalizeDashboardCalendarSearch(query);
-      if (committed !== calendarState.search) navigateCalendar({ ...calendarState, search: committed, view: "calendar" }, true);
-    }, 300);
-
-    return () => {
-      if (calendarSearchTimerRef.current !== null) {
-        window.clearTimeout(calendarSearchTimerRef.current);
-        calendarSearchTimerRef.current = null;
-      }
-    };
-  }, [calendarState, navigateCalendar, query, view]);
+  // #217: the single store's own debounce timer replaces this effect's bespoke one. Registers the
+  // URL write the store calls once a debounced (or Enter-committed) query settles -- Calendar
+  // replaces its own facet URL (never floods history while typing, same as the effect this
+  // replaces); every other view replaces the bare/List/Kanban URL through `staffPathFor`.
+  useEffect(() => setDashboardSearchUrlWriter((q) => {
+    if (view === "calendar" && calendarState) navigateCalendar({ ...calendarState, search: q, view: "calendar" }, true);
+    else history.replace(staffPathFor({ kind: "dashboard", dashboardView: view === "calendar" ? "list" : view, search: q }));
+  }), [calendarState, history, navigateCalendar, view]);
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
     if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
@@ -622,13 +638,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
   }, [projectsQuery.refetch]);
 
-  const filteredProjects = useMemo(() => {
-    const term = query.trim().toLocaleLowerCase();
-    if (!term) return projects;
-    return projects.filter((project) => [project.street, project.suburb, project.agencyName, project.agentName]
-      .some((value) => (value ?? "").toLocaleLowerCase().includes(term)));
-  }, [projects, query]);
-
   const activeCount = projects.filter((project) => project.stageKey !== "delivered").length;
   const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
   const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
@@ -663,10 +672,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
-      const enteringSearch = effectiveRouteCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : query);
+      const enteringSearch = effectiveRouteCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : search.draft);
       const sanitizedSearch = sanitizeDashboardCalendarSearch(enteringSearch);
       calendarFallbackLocationRef.current = false;
-      setQuery(sanitizedSearch);
+      setDashboardSearchDraft(sanitizedSearch);
       setView("calendar");
       try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
       navigateCalendar({ ...nextCalendar, search: normalizeDashboardCalendarSearch(sanitizedSearch), view: "calendar" });
@@ -985,7 +994,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
       {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} />}
 
-      {!viewingArchived && <section aria-label="Project summary" className="[display:grid] grid-cols-4 [border-block-style:solid] border-y-[length:var(--border-width-hair)] border-y-border bg-transparent mb-[var(--space-6)] max-[1080px]:grid-cols-2">
+      {!viewingArchived && !searchActive && <section aria-label="Project summary" className="[display:grid] grid-cols-4 [border-block-style:solid] border-y-[length:var(--border-width-hair)] border-y-border bg-transparent mb-[var(--space-6)] max-[1080px]:grid-cols-2">
         <div className="py-[var(--space-5)] pr-[var(--space-5)]">
           <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]">{activeCount}</div>
           <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Active shoots</div>
@@ -1009,12 +1018,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
-          <InputGroup className="w-auto min-w-[300px] max-[721px]:basis-full max-[721px]:min-w-0">
-            <InputGroupAddon>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="size-[15px] shrink-0"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-            </InputGroupAddon>
-            <InputGroupInput ref={searchInputRef} data-testid="dashboard-search-input" aria-label="Search projects" value={query} onChange={(event) => setQuery(sanitizeDashboardCalendarSearch(event.target.value))} placeholder="Search address, suburb, client…" />
-          </InputGroup>
+          {/* #217: the rail's `ShellSearch` is the one search input now -- this chip is the
+              Dashboard's only trace of an active query, not a second field. */}
+          {searchActive && (
+            <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" radius="full" className="gap-[var(--space-2)]">
+              {searchCountsQuery.data
+                ? `${searchCountsQuery.data.matching} of ${searchCountsQuery.data.total} projects — '${search.query}'`
+                : `'${search.query}'`}
+              <button type="button" aria-label="Clear search" onClick={() => clearDashboardSearch()} className="inline-flex items-center">
+                <XIcon aria-hidden="true" className="size-3" />
+              </button>
+            </Badge>
+          )}
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
         <div className="flex items-center flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] ml-auto max-[721px]:basis-full max-[721px]:justify-start">
@@ -1093,14 +1108,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </EmptyState>
       )}
 
-      {!isCalendarView && !isLoading && !error && filteredProjects.length === 0 && (
-        <EmptyState title={query ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
-          {query ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
-          {!query && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
+      {!isCalendarView && !isLoading && !error && projects.length === 0 && (
+        <EmptyState title={searchActive ? "Nothing here yet." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
+          {searchActive ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
+          {!searchActive && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
         </EmptyState>
       )}
 
-      {!isCalendarView && !isLoading && !error && filteredProjects.length > 0 && (viewingArchived || view === "list") && (
+      {!isCalendarView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "list") && (
         <div className="border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
           <div className={cn(PROW_GRID, "bg-secondary cursor-default")}>
             <div />
@@ -1110,13 +1125,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
             <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
           </div>
-          {filteredProjects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}
+          {projects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}
         </div>
       )}
 
-      {!isCalendarView && !isLoading && !error && !viewingArchived && filteredProjects.length > 0 && view === "kanban" && (
+      {!isCalendarView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "kanban" && (
         <ProjectKanbanBoard2
-          projects={filteredProjects}
+          projects={projects}
           activeStages={activeStages}
           canMoveStages={canMoveStages}
           canPrioritize={canPrioritize && hasAuthorizedBoardMap}
