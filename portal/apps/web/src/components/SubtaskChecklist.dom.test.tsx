@@ -240,7 +240,8 @@ describe("SubtaskChecklist", () => {
 
   it("moves the Assignee popover's keyboard highlight with Arrow keys and selects with Enter (§10.3)", async () => {
     // Regression coverage for the keyboard-highlight tracking added to `AssigneeControl` (round
-    // 3) — it previously had no `activeIndex`/Arrow-key wiring at all, unlike `TeamPicker`.
+    // 3) — it previously had no `activeIndex`/Arrow-key wiring at all, unlike the retired
+    // `ProjectTeamControl`'s `TeamPicker` (replaced by `ProjectTeamCombobox` in #204).
     const host = mount(); await render();
     const trigger = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Assignee for Call client"]')!;
     await click(trigger);

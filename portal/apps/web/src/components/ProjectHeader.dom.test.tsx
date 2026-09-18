@@ -20,7 +20,7 @@ vi.mock("../lib/stages", () => ({
     return { stages: stages.map((stage) => stage.key === "edited_review" && roleState.inactive ? { ...stage, active: false } : stage), presentationStageKey: (key: string) => !admin && key === "editing_autohdr" ? "editing" : key };
   },
 }));
-vi.mock("./ProjectTeamControl", () => ({ ProjectTeamControl: () => <div /> }));
+vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: () => <div /> }));
 vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: () => <div /> }));
 
 function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {

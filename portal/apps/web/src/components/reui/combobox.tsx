@@ -34,6 +34,11 @@ import {
  * 5. **Remove `outline-hidden`.** It is dead: a LAYERED Tailwind utility loses to the unlayered
  *    `:focus-visible { outline }` (`tokens/base.css:25-28`) regardless of specificity — the same
  *    removal as `reui/popover.tsx` divergence 4.
+ * 6. **`ComboboxChip` gains a `removeProps` prop**, spread onto its internal `ChipRemove`. The
+ *    vendored component gives the chip's own `className`/`showRemove` a pass-through but has no
+ *    way to reach the remove button itself — no `aria-label`, no `data-testid`, no `disabled`,
+ *    no larger hit-area styling. `ProjectTeamCombobox.tsx` (#204) needs all four per chip. Added
+ *    for #204, not present in the base-nova registry version.
  */
 
 const Combobox = ComboboxPrimitive.Root
@@ -257,9 +262,15 @@ function ComboboxChip({
   className,
   children,
   showRemove = true,
+  removeProps,
   ...props
 }: ComboboxPrimitive.Chip.Props & {
   showRemove?: boolean
+  /** Conformance divergence 6 (see file header) — props for the internal `ChipRemove`. The
+   *  `data-*` index signature is not part of Base UI's own type (TSX only special-cases `data-*`
+   *  on a literal JSX element, not on an object assigned to a typed prop) but every caller needs
+   *  a `data-testid` here. */
+  removeProps?: ComboboxPrimitive.ChipRemove.Props & { [key: `data-${string}`]: string | undefined }
 }) {
   return (
     <ComboboxPrimitive.Chip
@@ -274,8 +285,9 @@ function ComboboxChip({
       {showRemove && (
         <ComboboxPrimitive.ChipRemove
           render={<Button variant="ghost" size="icon-xs" />}
-          className="-ml-1 opacity-50 hover:opacity-100"
           data-slot="combobox-chip-remove"
+          {...removeProps}
+          className={cn("-ml-1 opacity-50 hover:opacity-100", removeProps?.className)}
         >
           <XIcon className="pointer-events-none" />
         </ComboboxPrimitive.ChipRemove>

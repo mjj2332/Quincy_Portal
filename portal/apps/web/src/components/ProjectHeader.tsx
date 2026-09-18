@@ -2,7 +2,7 @@ import type { CollectionKind } from "@quincy/shared";
 import { RefreshCw } from "lucide-react";
 import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
-import { ProjectTeamControl } from "./ProjectTeamControl";
+import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
@@ -181,7 +181,7 @@ export function ProjectHeader({
 
       <section aria-labelledby="project-overview-team">
         <div className={HEADER_SECTION_LABEL} id="project-overview-team">Team</div>
-        <ProjectTeamControl projectId={project.id} members={project.members} canEdit={canEdit} />
+        <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} />
       </section>
 
       {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <section aria-labelledby="project-overview-dropbox">
