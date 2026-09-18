@@ -27,6 +27,7 @@ import {
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
+import type { SaveResponse } from "./scheduling-types";
 import { ApiError, apiPatch, apiPut } from "./api";
 import { confirm, confirmStore } from "./confirm";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "./project-data";
@@ -95,17 +96,6 @@ export type MoveDialogState = {
   drop?: CalendarRevertable;
   subview?: "month" | "week";
   unscheduledEntry?: ProjectCalendarUnscheduledEntryDto;
-};
-
-export type SaveResponse = {
-  changed: boolean;
-  current: {
-    version: number;
-    deadline: null | { localCivil: string; instant: string };
-    reminderOffsetsMinutes: number[];
-  };
-  eventIntent: unknown;
-  publicationIds: string[];
 };
 
 export type DeadlineProposal = {

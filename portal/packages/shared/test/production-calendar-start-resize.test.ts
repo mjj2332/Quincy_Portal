@@ -45,7 +45,15 @@ describe("TB5C mapChecklistStartResizeToCommand", () => {
   it("keeps the end endpoint verbatim", () => {
     const timed = checklistEvent(rangeSchedule(timedEndpoint("2026-08-27T09:00", "2026-08-26T23:00:00.000Z"), timedEndpoint("2026-08-27T11:00", "2026-08-27T01:00:00.000Z")));
     const resized = mapChecklistStartResizeToCommand({ event: timed, target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T08:00" } });
-    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { localCivil: "2026-08-27T11:00" } } } });
+    // Full endpoint, not just localCivil — endpointToInput (:660-663) carries fold through as a
+    // disambiguation on the *preserved* end, which a partial match would let silently drop.
+    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { kind: "timed", localCivil: "2026-08-27T11:00", disambiguation: "earlier" } } } });
+  });
+
+  it("keeps the end endpoint's later-fold disambiguation verbatim too", () => {
+    const timed = checklistEvent(rangeSchedule(timedEndpoint("2026-08-27T09:00", "2026-08-26T23:00:00.000Z"), timedEndpoint("2026-08-27T11:00", "2026-08-27T01:00:00.000Z", 1)));
+    const resized = mapChecklistStartResizeToCommand({ event: timed, target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T08:00" } });
+    expect(resized).toMatchObject({ ok: true, value: { schedule: { end: { kind: "timed", localCivil: "2026-08-27T11:00", disambiguation: "later" } } } });
   });
 
   it("floors a timed start to the 15-minute slot", () => {
@@ -60,9 +68,15 @@ describe("TB5C mapChecklistStartResizeToCommand", () => {
     expect(resized).toMatchObject({ ok: false, error: { code: "unsupported_subview" } });
   });
 
-  it("rejects the end edge", () => {
+  it("rejects the end edge via target.edge", () => {
     const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
     const resized = mapChecklistStartResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-26", edge: "end" } });
+    expect(resized).toMatchObject({ ok: false, error: { code: "end_resize_not_this_mapper" } });
+  });
+
+  it("rejects the end edge via input.edge, independent of target.edge", () => {
+    const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
+    const resized = mapChecklistStartResizeToCommand({ event: allDay, edge: "end", target: { subview: "month", targetDate: "2026-08-26" } });
     expect(resized).toMatchObject({ ok: false, error: { code: "end_resize_not_this_mapper" } });
   });
 
