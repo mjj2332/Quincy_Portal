@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type { Combobox as ComboboxPrimitive } from "@base-ui/react";
+import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import type { ProjectMemberRole } from "@quincy/shared";
 import { ApiError, apiDeleteWithBody, apiPutWithStatus } from "../lib/api";
 import { confirm } from "../lib/confirm";
@@ -79,8 +80,36 @@ const TEAM_CHIP_REMOVE_HIT_AREA =
   // (24 + 10 + 10) without growing the chip itself.
   "relative before:absolute before:content-[''] before:-inset-[10px]";
 
+/** The chip's base look, identical for the real `ComboboxChip` (merged over its own vendor
+ *  defaults via `cn`/`twMerge`) and the read-only `<span>`, which has no vendor component to fall
+ *  back on and so needs the full class list spelled out itself. Kept as one constant instead of
+ *  two hand-duplicated class strings (review fix #204). `has-disabled:*` and
+ *  `has-data-[slot=combobox-chip-remove]:pr-0` are dead weight on the read-only span (it has
+ *  neither a disabled descendant nor a chip-remove child) but harmless there. */
+const TEAM_CHIP =
+  "flex h-[calc(--spacing(5.25))] w-fit items-center justify-center gap-1.5 rounded-[var(--radius-pill)] " +
+  "bg-muted px-1.5 text-xs font-medium whitespace-nowrap text-foreground has-disabled:pointer-events-none " +
+  "has-disabled:cursor-not-allowed has-disabled:opacity-50 has-data-[slot=combobox-chip-remove]:pr-0 " +
+  // 44px touch target at the narrow breakpoint (spec §10.5, docs/lessons.md:1333). This repo's
+  // `≤720px` spelling is `max-[721px]:`, not `max-[720px]:` — `max-[720px]:` alone compiles to
+  // `width < 720`, excluding exactly 720 (docs/lessons.md:1141-1146).
+  "max-[721px]:min-h-[44px]";
+
+type TeamChipDataState = "idle" | "pending" | "error" | "conflict";
+
+/** Per-chip mutation-state styling (review fix #204 "visible per-chip state") — tokens only. */
+function teamChipStateClasses(dataState: TeamChipDataState) {
+  switch (dataState) {
+    case "pending": return "opacity-70";
+    case "error": return "border border-[color:var(--signal-critical)] ring-1 ring-[color:var(--signal-critical)]";
+    case "conflict": return "border border-[color:var(--signal-caution-text)] ring-1 ring-[color:var(--signal-caution-text)]";
+    default: return "";
+  }
+}
+
 function cellKey(roleOnProject: ProjectMemberRole, userId: string) { return `${roleOnProject}:${userId}`; }
 function roleLabel(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photographer" : "Editor"; }
+function shortRoleTag(roleOnProject: ProjectMemberRole) { return roleOnProject === "photographer" ? "Photo" : "Edit"; }
 function globalRoleLabel(role: string) { return role === "admin" ? "Admin" : role === "photographer" ? "Photographer" : role === "external_editor" ? "External editor" : "Editor"; }
 function details(error: unknown): Record<string, unknown> | null { return error instanceof ApiError && error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : null; }
 function displayName(name: string, email: string) { return name || email; }
@@ -178,16 +207,32 @@ function useTeamMutations(projectId: string) {
   return { mutationStates, pending, add, remove };
 }
 
-function TeamChipContent({ option }: { option: TeamOption }) {
+/** Small icon + sr-only label per non-idle mutation state, on both the real chip and the
+ *  read-only span — review fix #204 "visible per-chip state". */
+function TeamChipStateIcon({ dataState }: { dataState: TeamChipDataState }) {
+  if (dataState === "pending") return <>
+    <Loader2 className="size-3 shrink-0 motion-safe:animate-spin text-muted-foreground" aria-hidden="true" />
+    <span className="sr-only">Working…</span>
+  </>;
+  if (dataState === "error") return <AlertCircle className="size-3 shrink-0 text-[color:var(--signal-critical)]" aria-hidden="true" />;
+  if (dataState === "conflict") return <AlertTriangle className="size-3 shrink-0 text-[color:var(--signal-caution-text)]" aria-hidden="true" />;
+  return null;
+}
+
+function TeamChipContent({ option, dataState, roleTag }: { option: TeamOption; dataState: TeamChipDataState; roleTag?: string }) {
   const name = displayName(option.name, option.email);
   return <>
     <Avatar size="sm" className="size-4">
-      <AvatarFallback className="text-[8px]">{initials(option.name, option.email)}</AvatarFallback>
+      <AvatarFallback className="text-[length:var(--text-2xs)] leading-none">{initials(option.name, option.email)}</AvatarFallback>
     </Avatar>
     <span className="[overflow-wrap:anywhere]">
       {firstName(option.name, option.email)}
+      {/* Dual-role disambiguation (review fix #204): visible when this userId is displayed in
+       *  both the photographer and editor roles, so the two chips are not identical text. */}
+      {roleTag && <span className="ml-[var(--space-1)] text-[length:var(--text-2xs)] text-foreground-secondary">{roleTag}</span>}
       {!option.active && <em className="ml-[var(--space-1)] not-italic uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]"> Inactive</em>}
     </span>
+    <TeamChipStateIcon dataState={dataState} />
     <span className="sr-only">{name}</span>
   </>;
 }
@@ -271,21 +316,39 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
     }
   }
 
-  const visible = expanded ? value : value.slice(0, 3);
+  function chipDataState(option: TeamOption): TeamChipDataState {
+    const state = mutationStates[option.key];
+    return state?.kind === "pending" ? "pending" : state?.kind === "error" ? "error" : state?.kind === "conflict" ? "conflict" : "idle";
+  }
+
+  // "+N" must never hide a non-idle chip (review fix #204): auto-expand — on top of whatever the
+  // user last chose — while any member beyond the first three is mid-mutation. `ChipRemove`
+  // removes by DOM index, so the visible set must stay a prefix of `value`; expanding the whole
+  // row is the only way to guarantee a hidden non-idle chip is never the one that gets removed.
+  const hasHiddenNonIdle = value.slice(3).some((option) => chipDataState(option) !== "idle");
+  const effectiveExpanded = expanded || hasHiddenNonIdle;
+  const visible = effectiveExpanded ? value : value.slice(0, 3);
   const hiddenCount = value.length - visible.length;
 
+  // Dual-role disambiguation (review fix #204): a userId displayed under both roles gets a short
+  // visible role tag on each of its two chips so they are not identical text.
+  const roleCountsByUserId = new Map<string, number>();
+  for (const option of value) roleCountsByUserId.set(option.userId, (roleCountsByUserId.get(option.userId) ?? 0) + 1);
+  const dualRoleUserIds = new Set([...roleCountsByUserId].filter(([, count]) => count > 1).map(([userId]) => userId));
+
   function chipProps(option: TeamOption) {
+    const dataState = chipDataState(option);
     const state = mutationStates[option.key];
-    const dataState = state?.kind === "pending" ? "pending" : state?.kind === "error" ? "error" : state?.kind === "conflict" ? "conflict" : "idle";
     const isPending = dataState === "pending";
     const hasMessage = Boolean(state && state.kind !== "pending");
     const messageId = hasMessage ? `project-member-message-${option.key}` : undefined;
     const name = displayName(option.name, option.email);
-    return { dataState, isPending, messageId, name };
+    const roleTag = dualRoleUserIds.has(option.userId) ? shortRoleTag(option.role) : undefined;
+    return { dataState, isPending, messageId, name, roleTag };
   }
 
   return <div className="grid gap-[var(--space-3)]" data-testid="project-team-control">
-    {canEdit && candidatesQuery.isError && <p className={cn(PROJECT_TEAM_MESSAGE)} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
+    {canEdit && candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>}
 
     {canEdit ? <Combobox
       multiple
@@ -301,14 +364,17 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
         return `${item.name} ${item.email} ${roleLabel(item.role)} ${globalRoleLabel(item.globalRole)}`.toLocaleLowerCase().includes(needle);
       }}
     >
-      <ComboboxChips ref={anchor} className="rounded-full has-data-[slot=combobox-chip]:pl-1">
+      {/* No `has-data-[slot=combobox-chip]:pl-1` override here: the vendor default already
+       *  carries `has-data-[slot=combobox-chip]:px-1` (both sides, `reui/combobox.tsx`), which
+       *  subsumes the left-only version this file used to duplicate by hand. */}
+      <ComboboxChips ref={anchor} className="rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]">
         <ComboboxValue>
           {() => visible.map((option) => {
-            const { dataState, isPending, messageId, name } = chipProps(option);
+            const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
             return <ComboboxChip
               key={option.key}
               showRemove
-              className="rounded-full gap-1.5"
+              className={cn(TEAM_CHIP, teamChipStateClasses(dataState))}
               data-testid={`project-member-${option.key}`}
               data-state={dataState}
               aria-busy={isPending || undefined}
@@ -321,11 +387,11 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
                 className: TEAM_CHIP_REMOVE_HIT_AREA,
               }}
             >
-              <TeamChipContent option={option} />
+              <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
             </ComboboxChip>;
           })}
         </ComboboxValue>
-        <TeamMoreToggle hiddenCount={hiddenCount} expanded={expanded} onToggle={() => setExpanded((current) => !current)} />
+        <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
         <ComboboxChipsInput aria-label="Add team member" placeholder="Add team member…" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
       </ComboboxChips>
       <ComboboxContent anchor={anchor} className="max-w-(--anchor-width) min-w-(--anchor-width)">
@@ -334,7 +400,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
           {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>
             <ComboboxLabel>{group.label}</ComboboxLabel>
             <ComboboxCollection>
-              {(option: TeamOption) => <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key)}>
+              {(option: TeamOption) => <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key)} className="max-[721px]:min-h-[44px]">
                 <Item size="xs" className="p-0">
                   <Avatar size="sm" className="size-6">
                     <AvatarFallback>{initials(option.name, option.email)}</AvatarFallback>
@@ -352,25 +418,26 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
     </Combobox> : <div className="flex flex-wrap items-center gap-1.5">
       {displayed.length ? <>
         {visible.map((option) => {
-          const { dataState, name } = chipProps(option);
+          const { dataState, messageId, name, roleTag } = chipProps(option);
           return <span
             key={option.key}
             data-testid={`project-member-${option.key}`}
             data-state={dataState}
+            aria-describedby={messageId}
             title={`${name} · ${roleLabel(option.role)}`}
-            className="flex h-[calc(--spacing(5.25))] w-fit items-center justify-center gap-1.5 rounded-full bg-muted px-1.5 text-xs font-medium whitespace-nowrap text-foreground"
+            className={cn(TEAM_CHIP, teamChipStateClasses(dataState))}
           >
-            <TeamChipContent option={option} />
+            <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />
           </span>;
         })}
-        <TeamMoreToggle hiddenCount={hiddenCount} expanded={expanded} onToggle={() => setExpanded((current) => !current)} />
+        <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
       </> : <p className="m-0 [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Not assigned</p>}
     </div>}
 
     {Object.entries(mutationStates).filter(([, state]) => state.kind !== "pending").map(([key, state]) => {
       if (state.kind === "pending") return null;
       const name = state.retry === "add" ? displayName(state.candidate.name, state.candidate.email) : displayName(state.member.name, state.member.email);
-      return <div key={key} id={`project-member-message-${key}`} data-testid={`project-member-message-${key}`} role="alert" className={cn(PROJECT_TEAM_MESSAGE)}>
+      return <div key={key} id={`project-member-message-${key}`} data-testid={`project-member-message-${key}`} role="alert" className={PROJECT_TEAM_MESSAGE}>
         {name}: {state.message}
         {state.kind === "error" && <button type="button" className={buttonClasses("text", { className: "ml-[var(--space-2)] min-h-[44px]" })} onClick={() => state.retry === "add" ? void add(state.role, state.candidate) : void removeWithSnapshot(state.member)}>Retry</button>}
       </div>;

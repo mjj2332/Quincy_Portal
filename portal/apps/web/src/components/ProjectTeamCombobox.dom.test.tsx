@@ -14,9 +14,8 @@ import "../styles/index.css";
  * Ports every `ProjectTeamControl.dom.test.tsx` / `.confirm.dom.test.tsx` assertion against the
  * real `ProjectHeader`, mounting the real `ProjectTeamCombobox` (no team-module mock) — #204.
  *
- * Step 0 spike (this file's first test): before porting the rest, prove Base UI's Combobox opens
- * by typing, selects an option, and removes a chip under happy-dom. Everything else in this file
- * depends on that working.
+ * The "step 0 spike" describe block below proves Base UI's Combobox opens by typing, selects an
+ * option, and removes a chip under happy-dom.
  */
 
 const roleState = vi.hoisted(() => ({ role: "editor" as "admin" | "editor" | "photographer", inactive: false }));
@@ -186,7 +185,7 @@ describe("ProjectTeamCombobox", () => {
     expect(publish.mock.calls.some(([message]) => message.type === "production-calendar-invalidated")).toBe(true);
   });
 
-  it("2. names the combobox 'Add team member', shows a listbox, focuses the input, moves the keyboard highlight with ArrowDown, and Escape closes while focus stays put", async () => {
+  it("2. names the combobox 'Add team member', shows a listbox named 'Team candidates' with group labels, focuses the input, moves the keyboard highlight with ArrowDown to a specific option, and Escape closes while focus stays put", async () => {
     apiGetMock.mockResolvedValue({ photographers: [photographer, { ...photographer, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Bea Photographer" }], editors: [editor] });
     const host = await mount([]);
     const input = chipsInput(host);
@@ -195,12 +194,31 @@ describe("ProjectTeamCombobox", () => {
     await waitFor(() => expect(document.querySelector('[role="listbox"]')).not.toBeNull());
     expect(document.activeElement).toBe(input);
 
+    const listbox = document.querySelector('[role="listbox"]')!;
+    expect(listbox.getAttribute("aria-label")).toBe("Team candidates");
+    expect(listbox.textContent).toContain("Photographers");
+    expect(listbox.textContent).toContain("Editors");
+
+    // Photographers first (Ari, Bea) then Editors (Eli) — ArrowDown twice from no highlight
+    // lands on the second option (Bea Photographer), a specific target rather than "some option".
+    await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); await Promise.resolve(); });
     await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); await Promise.resolve(); });
     await waitFor(() => expect(document.querySelector('[role="option"][data-highlighted]')).not.toBeNull());
+    const secondOption = options()[1]!;
+    expect(document.querySelector('[role="option"][data-highlighted]')).toBe(secondOption);
+    expect(secondOption.textContent).toContain("Bea Photographer");
 
     await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
     await waitFor(() => expect(document.querySelector('[role="listbox"]')).toBeNull());
     expect(document.activeElement).toBe(input);
+  });
+
+  it("search: typing 'ari' excludes Eli Editor's option", async () => {
+    const host = await mount([]);
+    const input = await openPicker(host);
+    await typeQuery(input, "ari");
+    await waitFor(() => expect(options().some((option) => option.textContent?.includes("Ari Photographer"))).toBe(true));
+    expect(options().some((option) => option.textContent?.includes("Eli Editor"))).toBe(false);
   });
 
   it("3. disables only the pending option while another candidate stays actionable", async () => {
@@ -298,6 +316,10 @@ describe("ProjectTeamCombobox", () => {
     expect(document.querySelector('[role="listbox"]')).not.toBeNull();
     expect(apiDeleteMock).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: projectDataKeys.detail(projectId), exact: true }));
+    // The member still exists (under the same userId/role) after the refresh, so its chip carries
+    // the conflict state rather than disappearing.
+    const editorChipAfter = host.querySelector<HTMLElement>(`[data-testid="project-member-editor:${members[0]!.userId}"]`)!;
+    expect(editorChipAfter.getAttribute("data-state")).toBe("conflict");
   });
 
   it("9. rolls back only the failed cell and keeps an ordinary failure local", async () => {
@@ -310,9 +332,17 @@ describe("ProjectTeamCombobox", () => {
     await act(async () => { editorChip.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
     await flush(4);
     expect(queryClient.getQueryData<typeof detail>(projectDataKeys.detail(projectId))?.members).toEqual(expect.arrayContaining([members[0], other]));
-    const message = host.querySelector(`[data-testid="project-member-message-editor:${members[0]!.userId}"]`);
-    expect(message?.textContent).toContain("No network");
+    const message = host.querySelector(`[data-testid="project-member-message-editor:${members[0]!.userId}"]`)!;
+    expect(message.textContent).toContain("No network");
     expect(host.querySelector(`[data-testid="project-member-photographer:${other.userId}"]`)).not.toBeNull();
+
+    // The failed member's chip is styled as an error and is associated with the alert via
+    // aria-describedby (review fix #204).
+    const failedChip = host.querySelector<HTMLElement>(`[data-testid="project-member-editor:${members[0]!.userId}"]`)!;
+    expect(failedChip.getAttribute("data-state")).toBe("error");
+    const describedBy = failedChip.getAttribute("aria-describedby");
+    expect(describedBy).toBe(message.id);
+    expect(document.getElementById(describedBy!)?.textContent).toContain("No network");
   });
 
   it("10. shows inactive roster members truthfully, keeps × enabled, and never offers them as a candidate", async () => {
@@ -357,6 +387,38 @@ describe("ProjectTeamCombobox", () => {
     expect(dualOptions).toHaveLength(2);
   });
 
+  it("picking a dual-role person's option calls the matching role's endpoint (photographer PUT vs editor PUT)", async () => {
+    const dual = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Dana Dual", email: "dana@example.test", globalRole: "admin" as const, active: true as const };
+    apiGetMock.mockResolvedValue({ photographers: [photographer, dual], editors: [editor, dual] });
+
+    const photographerHost = await mount([]);
+    await openPicker(photographerHost);
+    const [firstDual] = options().filter((option) => option.textContent?.includes("Dana Dual"));
+    await act(async () => { firstDual!.click(); await Promise.resolve(); });
+    await flush(2);
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/photographers/${dual.id}`);
+    expect(apiPutMock).not.toHaveBeenCalledWith(`/api/projects/${projectId}/editors/${dual.id}`);
+
+    apiPutMock.mockClear();
+    const editorHost = await mount([]);
+    await openPicker(editorHost);
+    const [, secondDual] = options().filter((option) => option.textContent?.includes("Dana Dual"));
+    await act(async () => { secondDual!.click(); await Promise.resolve(); });
+    await flush(2);
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/editors/${dual.id}`);
+    expect(apiPutMock).not.toHaveBeenCalledWith(`/api/projects/${projectId}/photographers/${dual.id}`);
+  });
+
+  it("tags a dual-role member's chips with a visible short role label ('Photo' / 'Edit')", async () => {
+    const dualPhotographer: ProjectMember = { id: "dual-photo-membership", userId: "dual-user", roleOnProject: "photographer", name: "Dana Dual", email: "dana@example.test", globalRole: "admin", active: true, assignedSubtaskCount: 0 };
+    const dualEditor: ProjectMember = { id: "dual-edit-membership", userId: "dual-user", roleOnProject: "editor", name: "Dana Dual", email: "dana@example.test", globalRole: "admin", active: true, assignedSubtaskCount: 0 };
+    const host = await mount([dualPhotographer, dualEditor]);
+    const photographerChip = host.querySelector<HTMLElement>('[data-testid="project-member-photographer:dual-user"]')!;
+    const editorChip = host.querySelector<HTMLElement>('[data-testid="project-member-editor:dual-user"]')!;
+    expect(photographerChip.textContent).toContain("Photo");
+    expect(editorChip.textContent).toContain("Edit");
+  });
+
   it("collapses beyond three chips into a +N toggle, expands, and lets × work on a hidden member", async () => {
     const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({
       id: `member-${index}`, userId: `user-${index}`, roleOnProject: index % 2 === 0 ? "photographer" : "editor",
@@ -378,7 +440,8 @@ describe("ProjectTeamCombobox", () => {
     expect(apiDeleteMock).toHaveBeenCalled();
   });
 
-  it("renders read-only static chips with no × / input, and the +N disclosure still works", async () => {
+  it("renders read-only static chips with no × / input, and the +N disclosure still works (read-only photographer, no candidates GET)", async () => {
+    roleState.role = "photographer";
     const many: ProjectMember[] = Array.from({ length: 4 }, (_, index) => ({
       id: `ro-member-${index}`, userId: `ro-user-${index}`, roleOnProject: index % 2 === 0 ? "photographer" : "editor",
       name: `RO Person ${index}`, email: `ro${index}@example.test`, globalRole: "editor", active: true, assignedSubtaskCount: 0,
@@ -387,6 +450,7 @@ describe("ProjectTeamCombobox", () => {
     expect(host.querySelector('[aria-label="Add team member"]')).toBeNull();
     expect(host.querySelector('[data-testid="project-member-remove"]')).toBeNull();
     expect(chipTestIds(host)).toHaveLength(3);
+    expect(apiGetMock).not.toHaveBeenCalled();
     const toggle = host.querySelector<HTMLButtonElement>('[aria-label="Show 1 more team members"]')!;
     expect(toggle).not.toBeNull();
     await act(async () => { toggle.click(); await Promise.resolve(); });
@@ -427,6 +491,7 @@ describe("ProjectTeamCombobox", () => {
     const pendingChip = host.querySelector<HTMLElement>(`[data-testid="project-member-editor:${members[0]!.userId}"]`);
     expect(pendingChip).not.toBeNull();
     expect(pendingChip!.getAttribute("aria-busy")).toBe("true");
+    expect(pendingChip!.getAttribute("data-state")).toBe("pending");
 
     resolveDelete({ outcome: "removed", removed: { membershipCycle: members[0]!.id, userId: members[0]!.userId, roleOnProject: "editor" }, subtaskAssignmentsCleared: 0 });
     await flush(2);
