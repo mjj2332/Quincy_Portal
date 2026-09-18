@@ -186,8 +186,11 @@ function ScheduleControl({ owner, label, value, open, setOpen, onSave, onUseLate
 
 function AssigneeControl({ owner, label, assignee, users, open, setOpen, onSelect, busy, compact = false }: { owner: string; label: string; assignee: { id: string; name: string } | null; users: MentionableUser[]; open: boolean; setOpen: (open: boolean) => void; onSelect: (id: string | null) => void; busy: boolean; compact?: boolean }) {
   const [query, setQuery] = useState(""); const searchRef = useRef<HTMLInputElement>(null);
-  // Keyboard highlight (§10.3) — mirrors `ProjectTeamControl`'s `TeamPicker` (`activeIndex`,
-  // Arrow navigation, `aria-current`), not previously wired up for this list.
+  // Keyboard highlight (§10.3) — mirrors the retired `ProjectTeamControl`'s `TeamPicker`
+  // (`activeIndex`, Arrow navigation, `aria-current`), not previously wired up for this list.
+  // `ProjectTeamControl` was replaced by `ProjectTeamCombobox` in #204, which delegates keyboard
+  // highlighting to Base UI's Combobox instead of reimplementing it — this list's own wiring
+  // stands alone now, but the pattern it borrowed came from there.
   const [activeIndex, setActiveIndex] = useState(0);
   const close = useCallback(() => setOpen(false), [setOpen]); const floating = useAnchoredPopover({ open, onClose: close, placement: "bottom-end" });
   useEffect(() => { if (!open) setQuery(""); else setActiveIndex(0); }, [open]);

@@ -122,7 +122,8 @@ export function dataSlotsIn(selector: string): string[] {
  *
  * Stripping brackets first stops at the `]` inside `members[0]`, leaving `!.userId}"]` behind,
  * and the guard then flags `userId` as a class. That is a real line in
- * ProjectTeamControl.dom.test.tsx, not a hypothetical. Holes first leaves the empty string.
+ * ProjectTeamCombobox.dom.test.tsx (formerly ProjectTeamControl.dom.test.tsx, retired in #204),
+ * not a hypothetical. Holes first leaves the empty string.
  */
 export function hasClassSelector(selector: string): boolean {
   if (/\[\s*class\b/.test(selector)) return true;

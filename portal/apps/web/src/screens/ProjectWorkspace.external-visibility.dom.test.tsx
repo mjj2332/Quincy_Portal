@@ -378,6 +378,19 @@ describe("external-editor visibility inventory", () => {
 // has no accessible name and no `type`, so `accessibleName` renders it as `"[input]"` — additive,
 // present once per tab for both roles alike, and changes neither role's relative visibility.
 // Nothing else in either literal moved.
+//
+// Re-frozen again, deliberately, for #204 (2026-09-18): `ProjectTeamControl` (per-role "+ Add"
+// popovers, "Add Editor" / "Add Photographer" buttons) was replaced by `ProjectTeamCombobox`, one
+// Base UI multi-select combobox with a single chips input. `FROZEN_ADMIN`'s five `controls`
+// arrays lose "Add Editor" and "Add Photographer" and gain "Add team member" (the chips input's
+// accessible name) in their place, and gain a second `[input]` entry per tab (on top of #203's) — Base UI's Combobox
+// renders its own `aria-hidden` mirror `<input>` for native form association, which this file's
+// `accessibleName()` helper does not special-case for `aria-hidden` (same treatment as every
+// other control this file inventories by DOM presence, not by AT-visibility). Re-captured with
+// DUMP_VISIBILITY_INVENTORY on the tree rebased over #203, not hand-merged. Nothing else moved:
+// the `project-team-control` testid, its count, and every `roles` entry are unchanged, and
+// `FROZEN_EXTERNAL_EDITOR` needs no edit at all — an external editor never gets `canEdit` on the
+// Team section, so it never rendered the old buttons and never renders the new combobox either.
 // ---------------------------------------------------------------------------
 
 const FROZEN_EXTERNAL_EDITOR = {
@@ -729,8 +742,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add Editor",
-      "Add Photographer",
+      "Add team member",
       "All2",
       "Approve",
       "Bold",
@@ -813,8 +825,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add Editor",
-      "Add Photographer",
+      "Add team member",
       "All1",
       "Approve",
       "Bold",
@@ -887,9 +898,8 @@ const FROZEN_ADMIN = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add Editor",
-      "Add Photographer",
       "Add link",
+      "Add team member",
       "Bold",
       "Bullet list",
       "Checklist",
@@ -952,8 +962,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add Editor",
-      "Add Photographer",
+      "Add team member",
       "Bold",
       "Bullet list",
       "Checklist",
@@ -1016,8 +1025,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add Editor",
-      "Add Photographer",
+      "Add team member",
       "Bold",
       "Bullet list",
       "Checklist",
