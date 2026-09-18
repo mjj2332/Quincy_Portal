@@ -2932,3 +2932,59 @@ crumb and hairline from 2a):
   `w-fit` and the "Add…" input `flex-none`, since a flexing input is what claimed the rest of
   the line. The candidate list stops copying the anchor's width the moment the anchor becomes
   content-sized, or a one-member team gets a one-chip-wide list.
+
+## The shell search (#217): a debounce and a popstate race, an envelope that must stay unfiltered, and an escape sequence that stopped being text
+
+Four defects from replacing the Dashboard's own search field with a single rail-owned store and
+server-side `q`, each the kind this file exists for because none showed up in a type error.
+
+- **A debounce timer and a popstate landing in the same tick is a race, and the debounce must lose
+  every time.** `lib/dashboard-search-store.ts`'s `adoptDashboardSearchFromUrl` (Back/Forward, or
+  a route the URL itself carries `q` on) cancels the pending debounce timer *before* adopting the
+  URL's value — not after, and not by relying on the timer's own guard. A keystroke typed a moment
+  before Back is pressed schedules a commit 300ms out; if that commit is allowed to fire after the
+  popstate has already landed, it silently overwrites the destination the user actually navigated
+  to with whatever they were mid-typing when they left. The fix is one call ordered first in the
+  function, not a comparison — there is no correct value to compare against once both writers are
+  racing for the same field.
+- **Two adoption effects both touching the same field is itself a race, and effect declaration
+  order decides who wins.** Dashboard.tsx's principal-reset effect
+  (`resetDashboardSearchForPrincipal`) and its route-reconciliation effect (which adopts a route's
+  `q` into the store) both run on first mount. React commits effects in hook-declaration order,
+  not dependency order, so the reset effect has to be declared *before* the reconciliation effect
+  — the store's `principalId` starts empty on a cold module, genuinely different from any real
+  `currentUserId`, so an out-of-order reset would clobber the URL's adopted search a commit after
+  it landed. Declaring the "generic" adoption call unconditionally at the top of the
+  reconciliation effect had the same class of bug from a different angle: `currentDashboardRoute`
+  (URL-derived) and `effectiveRouteCalendar` (which falls back to a `calendar` PROP that can
+  outlive the URL that produced it, per this file's own docblock) can disagree about which branch
+  governs, and adopting from the route on every pass — including while the Calendar-prop branch is
+  the one actually deciding — fought that branch's own adoption of the identical field and looped
+  (a "Maximum update depth exceeded" React error, caught by `Dashboard-calendar.dom.test.tsx`
+  before the fix shipped). The rule that generalizes: when two effects write the same
+  external-store field from different sources of truth, scope each write to the exact branch that
+  owns it, never a shared prelude both branches fall through.
+- **The Board's authorized-order envelope has to be built from the unfiltered row set, not the
+  search-filtered one, or reorder math silently corrupts.** `/api/projects?q=...` runs two
+  queries — the base project list (still every authorized row) and a separate `SELECT DISTINCT
+  p.id` matching query — and only the SECOND filters. `board.orderedProjectIdsByStage` and
+  `total` are built from the first. Read as "filter, then build the envelope" instead, `boardRank`
+  becomes a rank-within-the-filtered-set, and a drag computed against it lands the dropped card at
+  the wrong neighbor the moment fewer than all rows match. Reading the issue text alone this was
+  invisible; only tracing where `boardRank` is consumed downstream (Kanban's own reorder gap math)
+  surfaces it.
+- **An edit tool that accepts backslash-`u`-style escape text in a parameter is not guaranteed to
+  preserve it as source text.** Typing a fresh character-class regex literal covering the NUL byte
+  through the DEL byte (the same control-character class the client-side search sanitizer already
+  strips) into an `Edit` call rewrote it into three *raw control bytes* in the committed file —
+  confirmed with `file(1)` (reported "data", not "ASCII/UTF-8 text") and `od -c` (literal control
+  bytes where six-character escape text should have been) — silently, with no error from the tool
+  and no complaint from `tsc` (it happily typechecks a NUL byte inside a regex literal). `grep` on
+  the corrupted file returned "binary file matches" instead of line numbers, which was the first
+  visible symptom. The fix was mechanical once found — rewrite the same character-class check as
+  `codePointAt(0)` numeric comparisons against hex code-point constants, which has no
+  backslash-escape sequences for anything downstream to misinterpret — but the rule going forward
+  is to treat any freshly-typed backslash-`u` escape in an edit as suspect and verify the file
+  round-trips as clean text (`file`, or `grep` returning line numbers instead of "binary file
+  matches") before trusting it compiled correctly, since a passing `tsc` run is not evidence the
+  bytes on disk are what was intended.
