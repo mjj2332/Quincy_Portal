@@ -688,17 +688,57 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
     expect(document.activeElement).toBe(host.querySelector('[data-testid="shell-search"]'));
   });
 
-  it("is inert below 772px — no focus move, no URL change (no rail search control to focus behind the closed Sheet)", async () => {
+  // #217 fix round 1, item 6: Sol's diff review found the narrow/Sheet case's "inert" assertion
+  // wrong -- with the Sheet already open (its input visible), ⌘K must focus it; with the Sheet
+  // closed, ⌘K must open it and focus the input once it mounts. Neither ever navigates.
+  it("narrow, Sheet closed: ⌘K opens the Sheet and focuses its search input", async () => {
     await renderAt("/admin");
     await resizeTo(600);
     await tick();
-    const before = document.activeElement;
+    expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull();
+
+    await keydown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull());
+
+    expect(window.location.pathname).toBe("/admin");
+    const searchInput = document.querySelector('[data-testid="shell-search"]');
+    expect(searchInput).not.toBeNull();
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  it("narrow, Sheet already open: ⌘K focuses its search input directly", async () => {
+    const host = await renderAt("/admin");
+    await resizeTo(600);
+    await tick();
+    await click(sheetTrigger(host)!);
+    const searchInput = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    // Move focus away first, so a passing test can't be an accident of where it already was.
+    sheetTrigger(host)!.focus();
+    expect(document.activeElement).not.toBe(searchInput);
 
     await keydown(window, { key: "k", metaKey: true });
 
     expect(window.location.pathname).toBe("/admin");
-    expect(document.activeElement).toBe(before);
-    expect(document.querySelector('[data-testid="shell-search"]')).toBeNull();
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  // Restores the Sheet focus-return regression coverage removed alongside the old
+  // `suppressSheetFinalFocusRef` mechanism (#217): a ⌘K-triggered open, unlike the deleted
+  // navigate-then-latch flow, never suppresses the Sheet's own default close-restores-focus-to-
+  // trigger behaviour, since there is no longer a second, Dashboard-owned input to preserve focus
+  // toward.
+  it("does not leave focus restoration broken after a ⌘K-triggered Sheet open", async () => {
+    const host = await renderAt("/admin");
+    await resizeTo(600);
+    await tick();
+
+    await keydown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull());
+    expect(document.activeElement).toBe(document.querySelector('[data-testid="shell-search"]'));
+
+    await keydown(document.querySelector('[data-testid="rail-sheet"]')!, { key: "Escape" });
+    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+    expect(document.activeElement).toBe(sheetTrigger(host));
   });
 
   it("ignores an editable target and a held-key repeat", async () => {

@@ -47,8 +47,17 @@ import type { RailMode } from "../../lib/shell-rail";
  * `RailedShell` never navigates on the shortcut, unlike #122 P3's `activateProjectSearch` — typing
  * and Enter are what navigate now (below), matching a real input's own affordance instead of a
  * click-to-latch button's.
+ *
+ * `getElement()` (#217 fix round 1, item 6) exists for the SAME reason `focus()` alone isn't
+ * enough for the `sheet` variant: `RailedShell`'s own Sheet has its OWN deferred initial-focus
+ * behaviour (a `FloatingFocusManager`-style animation-completion wait, same shape as the one this
+ * codebase's Sheet-close handling already documents elsewhere), which races an imperative
+ * `focus()` call from an ancestor effect and wins. Base UI's `initialFocus` prop on the Sheet's
+ * own Popup is the reliable mechanism instead — the SAME one `collapsed`'s `PopoverContent`
+ * already uses via a raw ref — so `RailedShell` needs the raw element, not just a method that
+ * calls `.focus()` on it.
  */
-export type ShellSearchHandle = { focus: () => void };
+export type ShellSearchHandle = { focus: () => void; getElement: () => HTMLInputElement | null };
 
 export type ShellSearchProps = {
   variant: RailMode;
@@ -82,6 +91,7 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
       }
       inputRef.current?.focus();
     },
+    getElement: () => inputRef.current,
   }), [isCollapsed]);
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {

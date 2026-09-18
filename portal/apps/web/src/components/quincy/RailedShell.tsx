@@ -54,13 +54,20 @@ import { ShellHeader } from "./ShellHeader";
  * `.app--railed`'s.
  *
  * The ⌘K window listener (#217, replacing #122 P3's `activateProjectSearch`) focuses
- * `NavigationRail`'s own `ShellSearch` input through `searchRef` — it never navigates, and it
- * installs nothing while `mode === "sheet"`, the same inertness `isRailShortcut`'s own effect
- * gives ⌘B while narrow (`reui/sidebar.tsx` patch 3): there is no visible search control to focus
- * behind an unopened Sheet. The old `suppressSheetFinalFocusRef`/custom `finalFocus` dance is gone
- * with it — the rail no longer has a second, Dashboard-owned input to preserve focus toward, so
- * `RailSheet`'s Sheet closing (on any location change, below) can restore focus to its own trigger
- * the ordinary way.
+ * `NavigationRail`'s own `ShellSearch` input through `searchRef` — it never navigates. Unlike ⌘B
+ * (`isRailShortcut`'s own effect, inert while narrow — `reui/sidebar.tsx` patch 3), ⌘K stays live
+ * in `mode === "sheet"` (#217 fix round 1, item 6): with the Sheet already open, it focuses the
+ * Sheet's own `ShellSearch` instance (a second ref, `sheetSearchRef`, since it is a genuinely
+ * different mounted component from the wide/collapsed one); with the Sheet closed, it opens the
+ * Sheet and focuses that same input once its content actually mounts, via `RailSheet`'s own
+ * `initialFocus` (a one-shot pending flag, `pendingSheetSearchFocusRef`, consumed and cleared by
+ * `sheetInitialFocus` below) — an imperative `.focus()` call from an ancestor effect is not
+ * reliable here: the Sheet's own default open-focus behaviour resolves on its own
+ * animation-completion timing and wins that race. `initialFocus` returning `undefined` for an
+ * ORDINARY hamburger-tap open keeps the Sheet's own default target. The old
+ * `suppressSheetFinalFocusRef`/custom `finalFocus` dance is gone — the rail no longer has a
+ * second, Dashboard-owned input to preserve focus toward, so `RailSheet`'s Sheet closing (on any
+ * location change, below) can restore focus to its own trigger the ordinary way.
  */
 
 function safeLocalStorage(): Storage | null {
@@ -108,13 +115,16 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
 
   const isDashboard = parseStaffLocation(location).kind === "dashboard";
   const searchRef = useRef<ShellSearchHandle>(null);
+  const sheetSearchRef = useRef<ShellSearchHandle>(null);
+  // Set when ⌘K opens the (closed) Sheet itself — consumed by the effect below once `sheetOpen`
+  // actually flips, so a ⌘K-triggered open focuses search and an ordinary hamburger-tap open does
+  // not.
+  const pendingSheetSearchFocusRef = useRef(false);
 
-  // ⌘K, mirroring `reui/sidebar.tsx`'s own ⌘B effect (patch 3) — inert while `mode === "sheet"`,
-  // where there is no visible search control to focus behind the (closed) Sheet in the first
-  // place. Only focuses; #217 replaces #122 P3's navigate-then-latch with a real input, so typing
-  // and Enter are what navigate, not the shortcut itself.
+  // ⌘K. Only focuses; #217 replaces #122 P3's navigate-then-latch with a real input, so typing and
+  // Enter are what navigate, not the shortcut itself. Unlike ⌘B, this stays live while
+  // `mode === "sheet"` (#217 fix round 1, item 6) — see this file's own docblock.
   useEffect(() => {
-    if (mode === "sheet") return undefined;
     function handleKeyDown(event: KeyboardEvent) {
       if (
         !isSearchShortcut({
@@ -132,11 +142,25 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
         return;
       }
       event.preventDefault();
+      if (mode === "sheet") {
+        if (sheetOpen) sheetSearchRef.current?.focus();
+        else { pendingSheetSearchFocusRef.current = true; setSheetOpen(true); }
+        return;
+      }
       searchRef.current?.focus();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mode]);
+  }, [mode, sheetOpen]);
+
+  // Base UI's own `initialFocus` mechanism (`RailSheet` -> `SheetContent` -> `Dialog.Popup`),
+  // called once per open — one-shot, not a `useEffect`, so an ORDINARY hamburger-tap open (which
+  // never sets the pending flag) returns `undefined` and keeps the Sheet's own default target.
+  function sheetInitialFocus(): HTMLElement | undefined {
+    if (!pendingSheetSearchFocusRef.current) return undefined;
+    pendingSheetSearchFocusRef.current = false;
+    return sheetSearchRef.current?.getElement() ?? undefined;
+  }
 
   const contentColumn = (
     <div
@@ -168,9 +192,9 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
 
   const railSlot = (
     <>
-      <RailSheet>
+      <RailSheet initialFocus={sheetInitialFocus}>
         <div className="contents" onClick={closeSheetOnLinkClick}>
-          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} isDashboard={isDashboard} />
+          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} isDashboard={isDashboard} searchRef={sheetSearchRef} />
         </div>
       </RailSheet>
       {mode !== "sheet" && <NavigationRail navigation={navigation} user={user} variant={mode} isDashboard={isDashboard} searchRef={searchRef} />}
