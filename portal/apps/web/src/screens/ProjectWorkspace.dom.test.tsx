@@ -289,9 +289,9 @@ afterEach(async () => {
     await click(editedTabButton(host)); await flush(20);
     const tabsAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     const rawTab = tabsAfter.find((item) => item.textContent?.includes("RAW"))!;
-    expect(rawTab.getAttribute("aria-pressed")).toBe("true");
+    expect(rawTab.getAttribute("aria-selected")).toBe("true");
     expect(tabsAfter.some((item) => item.textContent?.includes("Edited"))).toBe(false);
-    expect(tabsAfter.filter((item) => item.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(tabsAfter.filter((item) => item.getAttribute("aria-selected") === "true")).toHaveLength(1);
     expect(host.textContent).toContain("raw-1.jpg");
   });
 
@@ -306,7 +306,7 @@ afterEach(async () => {
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     const editedTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"))!;
-    expect(editedTab.getAttribute("aria-pressed")).toBe("true");
+    expect(editedTab.getAttribute("aria-selected")).toBe("true");
     expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("RAW"))).toBe(false);
     expect(host.textContent).toContain("edited-1.jpg");
   });
@@ -318,7 +318,7 @@ afterEach(async () => {
     await flush();
     expect(host.textContent).toContain("edited-1.jpg");
     const editedTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"))!;
-    expect(editedTab.getAttribute("aria-pressed")).toBe("true");
+    expect(editedTab.getAttribute("aria-selected")).toBe("true");
 
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p2") return Promise.resolve(projectFixture("p2"));
@@ -337,7 +337,7 @@ afterEach(async () => {
     await flush(20);
 
     const rawTabAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!;
-    expect(rawTabAfter.getAttribute("aria-pressed")).toBe("true");
+    expect(rawTabAfter.getAttribute("aria-selected")).toBe("true");
     expect(host.textContent).not.toContain("edited-1.jpg");
     expect(host.textContent).toContain("p2-raw-1.jpg");
   });
@@ -618,7 +618,7 @@ afterEach(async () => {
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("/autohdr-status"))).toBe(true);
   });
 
-  it("moves Stage from the rail through the shared confirmation retry", async () => {
+  it("moves Stage from the header through the shared confirmation retry", async () => {
     authState.role = "admin";
     let stageKey: "raw_review" | "awaiting_raw" = "raw_review";
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;

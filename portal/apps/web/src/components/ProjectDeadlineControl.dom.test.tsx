@@ -144,8 +144,8 @@ describe("ProjectDeadlineControl", () => {
     // hand-written and does NOT go through buttonClasses(). Of these three, only (a) and (b)
     // actually render in this specific test: emptySchedule has no reminders configured yet, so no
     // custom-reminder chip — and therefore no (c) remove button — exists in this test's DOM; the
-    // loop below still checks whichever controls emptySchedule does produce. (ProjectOverviewRail.
-    // tsx and CollectionPanel.tsx have their own hardcoded outline literals too, but those belong
+    // loop below still checks whichever controls emptySchedule does produce. (ProjectHeader.tsx
+    // and CollectionPanel.tsx have their own hardcoded outline literals too, but those belong
     // to separate components this test never mounts — out of scope for this inventory, not part
     // of it.) Each of (a)-(c) keeps the outline visible, but by two different routes. (a) and (c)
     // spell it out: `outline-solid` (never `outline-none`/`outline-hidden`), a non-zero

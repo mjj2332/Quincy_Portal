@@ -1,10 +1,9 @@
-// happy-dom does not prove PointerSensor / TouchSensor / KeyboardSensor activation, real collision geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance items.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionKind } from "@quincy/shared";
-import { ProjectOverviewRail } from "./ProjectOverviewRail";
+import { ProjectHeader } from "./ProjectHeader";
 import type { ProjectDetail } from "../lib/project-data";
 
 const roleState = vi.hoisted(() => ({ role: "editor" as "admin" | "editor" | "photographer", inactive: false }));
@@ -40,7 +39,7 @@ function render(value: ReactNode) {
   act(() => { root.render(value); });
 }
 
-describe("Project Overview rail Stage control", () => {
+describe("Project header Stage control", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     roleState.role = "editor"; roleState.inactive = false;
@@ -53,17 +52,17 @@ describe("Project Overview rail Stage control", () => {
   });
 
   it("uses neutral Editing for Editor and the internal label for Admin", () => {
-    render(<ProjectOverviewRail {...baseProps(project({ stageKey: "editing" }))} />);
+    render(<ProjectHeader {...baseProps(project({ stageKey: "editing" }))} />);
     expect(host.textContent).toContain("Editing");
     expect(host.textContent).not.toContain("editing_autohdr");
-    act(() => { roleState.role = "admin"; root.render(<ProjectOverviewRail {...baseProps(project({ stageKey: "editing_autohdr" }))} />); });
+    act(() => { roleState.role = "admin"; root.render(<ProjectHeader {...baseProps(project({ stageKey: "editing_autohdr" }))} />); });
     expect(host.textContent).toContain("editing_autohdr");
   });
 
   it("does not request a stay, keeps an inactive current Stage visible, and allows escape", () => {
     const onStageMove = vi.fn();
     roleState.inactive = true;
-    render(<ProjectOverviewRail {...baseProps(project({ stageKey: "edited_review" }), onStageMove)} />);
+    render(<ProjectHeader {...baseProps(project({ stageKey: "edited_review" }), onStageMove)} />);
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
     expect(select.getAttribute("data-focus-key")).toBe("rail-stage:project-1");
     expect(select.disabled).toBe(false);
@@ -78,7 +77,7 @@ describe("Project Overview rail Stage control", () => {
 
   it("disables quietly when the contract is off and hides for archive or missing capability", () => {
     const onStageMove = vi.fn();
-    render(<ProjectOverviewRail {...baseProps(project({ contractEnabled: false }), onStageMove)} />);
+    render(<ProjectHeader {...baseProps(project({ contractEnabled: false }), onStageMove)} />);
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
     expect(select).toHaveProperty("disabled", true);
     expect(host.textContent).toContain("temporarily unavailable");
@@ -86,73 +85,73 @@ describe("Project Overview rail Stage control", () => {
     select.value = "raw_review";
     act(() => select.dispatchEvent(new Event("change", { bubbles: true })));
     expect(onStageMove).not.toHaveBeenCalled();
-    act(() => { root.render(<ProjectOverviewRail {...baseProps(project({ archivedAt: Date.now() }))} />); });
+    act(() => { root.render(<ProjectHeader {...baseProps(project({ archivedAt: Date.now() }))} />); });
     expect(host.querySelector('[aria-label="Move project Stage"]')).toBeNull();
-    act(() => { roleState.role = "photographer"; root.render(<ProjectOverviewRail {...baseProps(project())} />); });
+    act(() => { roleState.role = "photographer"; root.render(<ProjectHeader {...baseProps(project())} />); });
     expect(host.querySelector('[aria-label="Move project Stage"]')).toBeNull();
   });
 
   it("keeps the Dropbox sync button non-activatable while syncing is in progress", () => {
     const onSyncDropbox = vi.fn();
-    render(<ProjectOverviewRail {...baseProps(project())} canUpload hasRawFolder isSyncing onSyncDropbox={onSyncDropbox} />);
+    render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder isSyncing onSyncDropbox={onSyncDropbox} />);
     const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Syncing Dropbox"))!;
     expect(syncButton.disabled).toBe(true);
     act(() => syncButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
     expect(onSyncDropbox).not.toHaveBeenCalled();
   });
 
-  it("labels the rail landmark and marks the active collection switcher tab pressed", () => {
+  it("labels the header landmark and marks the active collection switcher tab selected", () => {
     const onActiveTabChange = vi.fn();
-    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
-    expect(host.querySelector('aside[aria-label="Project Overview"]')).not.toBeNull();
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+    expect(host.querySelector('section[aria-label="Project Overview"]')).not.toBeNull();
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(2);
     const rawTab = tabs.find((button) => button.textContent?.includes("RAW"))!;
     const editedTab = tabs.find((button) => button.textContent?.includes("Edited"))!;
-    expect(rawTab.getAttribute("aria-pressed")).toBe("true");
-    expect(editedTab.getAttribute("aria-pressed")).toBe("false");
+    expect(rawTab.getAttribute("aria-selected")).toBe("true");
+    expect(editedTab.getAttribute("aria-selected")).toBe("false");
     act(() => editedTab.click());
     expect(onActiveTabChange).toHaveBeenCalledWith("edited");
   });
 
-  it("renders only the passed-in available tabs, with exactly one pressed and every other unpressed", () => {
-    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "video", "copy"] as CollectionKind[]} activeTab={"video" as CollectionKind} />);
+  it("renders only the passed-in available tabs, with exactly one selected and every other unselected", () => {
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "video", "copy"] as CollectionKind[]} activeTab={"video" as CollectionKind} />);
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(3);
     expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
     expect(tabs.some((button) => button.textContent?.includes("Floorplan"))).toBe(false);
-    const pressed = tabs.filter((button) => button.getAttribute("aria-pressed") === "true");
-    expect(pressed).toHaveLength(1);
-    expect(pressed[0]!.textContent).toContain("Video");
+    const selected = tabs.filter((button) => button.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]!.textContent).toContain("Video");
     for (const button of tabs) {
-      if (button !== pressed[0]) expect(button.getAttribute("aria-pressed")).toBe("false");
+      if (button !== selected[0]) expect(button.getAttribute("aria-selected")).toBe("false");
     }
   });
 
-  it("renders a single available tab as the only switcher entry, pressed", () => {
-    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
+  it("renders a single available tab as the only switcher entry, selected", () => {
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(1);
-    expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect(tabs[0]!.getAttribute("aria-selected")).toBe("true");
   });
 
   it("drops a switcher tab from the list the instant it is no longer in availableTabs, without renaming or reordering the rest", () => {
     const onActiveTabChange = vi.fn();
-    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
     expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')]).toHaveLength(3);
     act(() => {
-      root.render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+      root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
     });
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs).toHaveLength(2);
     expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
     expect(tabs.some((button) => button.textContent?.includes("Video"))).toBe(true);
     const raw = tabs.find((button) => button.textContent?.includes("RAW"))!;
-    expect(raw.getAttribute("aria-pressed")).toBe("true");
+    expect(raw.getAttribute("aria-selected")).toBe("true");
   });
 
   it("hides the Stage chevron and Dropbox sync icons from assistive tech, gives the sync button its exact accessible name, keeps the Blocked status readable, and nests no interactive element inside another", () => {
-    render(<ProjectOverviewRail {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} canUpload hasRawFolder autohdrBlocked isSyncing={false} />);
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} canUpload hasRawFolder autohdrBlocked isSyncing={false} />);
 
     const chevron = host.querySelector('[aria-label="Move project Stage"]')!.parentElement!.querySelector("svg")!;
     expect(chevron.getAttribute("aria-hidden")).toBe("true");
@@ -181,7 +180,7 @@ describe("Project Overview rail Stage control", () => {
   });
 
   it("shows the monitored Editor Input folder above Sync, an Open-in-Dropbox link, and demotes the Tonomo folder to Not monitored", () => {
-    render(<ProjectOverviewRail {...baseProps(project({
+    render(<ProjectHeader {...baseProps(project({
       rawFolderPath: "/Tonomo/Raw Files/12 Example St",
       rawFolderLink: "https://www.dropbox.com/scl/fo/legacy",
       monitoredRawFolder: {
@@ -218,13 +217,13 @@ describe("Project Overview rail Stage control", () => {
   });
 
   it("renders neither monitored nor Tonomo-secondary testid when there is no ready Editor mapping, even with a Tonomo path set", () => {
-    render(<ProjectOverviewRail {...baseProps(project({ rawFolderPath: "/Tonomo/Raw Files/12 Example St", monitoredRawFolder: null }))} canUpload hasRawFolder />);
+    render(<ProjectHeader {...baseProps(project({ rawFolderPath: "/Tonomo/Raw Files/12 Example St", monitoredRawFolder: null }))} canUpload hasRawFolder />);
     expect(host.querySelector('[data-testid="raw-monitored"]')).toBeNull();
     expect(host.querySelector('[data-testid="raw-tonomo-secondary"]')).toBeNull();
   });
 
   it("never renders an Open-in-Dropbox link when webUrl is null, and never falls back to the legacy rawFolderLink", () => {
-    render(<ProjectOverviewRail {...baseProps(project({
+    render(<ProjectHeader {...baseProps(project({
       rawFolderLink: "https://www.dropbox.com/scl/fo/legacy-shared-link",
       monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: null, extraPaths: [] },
     }))} canUpload hasRawFolder />);
@@ -236,9 +235,73 @@ describe("Project Overview rail Stage control", () => {
 
   it("still shows the monitored block to a photographer", () => {
     roleState.role = "photographer";
-    render(<ProjectOverviewRail {...baseProps(project({
+    render(<ProjectHeader {...baseProps(project({
       monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: "https://www.dropbox.com/home/x", extraPaths: [] },
     }))} canUpload hasRawFolder />);
     expect(host.querySelector('[data-testid="raw-monitored"]')).not.toBeNull();
+  });
+
+  it("row 1 renders suburb · postcode, Shoot date pending when unset, — for a missing agency/agent pair, and Edit details only when canEdit", () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    expect(host.textContent).toContain("Suburbia · 2000");
+    expect(host.textContent).toContain("Shoot date pending");
+    expect(host.textContent).not.toContain("— · —");
+    expect(host.textContent).toContain("Client —");
+    act(() => { root.render(<ProjectHeader {...baseProps(project({ agencyName: "Ray White" }))} />); });
+    expect(host.textContent).toContain("Ray White · —");
+    expect(host.querySelector('a[href="/projects/project-1/edit"]')).toBeNull();
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} canEdit />); });
+    const editLink = host.querySelector<HTMLAnchorElement>('a[href="/projects/project-1/edit"]');
+    expect(editLink).not.toBeNull();
+    expect(editLink!.textContent).toBe("Edit details");
+  });
+
+  it("renders the production notes paragraph only when it is non-empty", () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    expect(host.textContent).not.toContain("Handle with care");
+    expect(host.querySelector('[data-testid="project-header"] p')).toBeNull();
+    act(() => { root.render(<ProjectHeader {...baseProps(project({ productionNotes: "Handle with care" }))} />); });
+    expect(host.textContent).toContain("Handle with care");
+  });
+
+  it("labels the tab strip Collections and does not point tabs at a tabpanel that does not exist", () => {
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
+    const tablist = host.querySelector('[role="tablist"]');
+    expect(tablist?.getAttribute("aria-label")).toBe("Collections");
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
+    expect(tabs.length).toBeGreaterThan(0);
+    for (const tab of tabs) expect(tab.hasAttribute("aria-controls")).toBe(false);
+  });
+
+  it("does not re-emit the active Collection when its own tab is clicked again", () => {
+    const onActiveTabChange = vi.fn();
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
+    const rawTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((b) => b.textContent?.includes("RAW"))!;
+    act(() => rawTab.click());
+    expect(onActiveTabChange).not.toHaveBeenCalled();
+  });
+
+  // Arrow-key movement between tabs is Base UI composite navigation; happy-dom does not drive it. #206 covers it in a real browser.
+
+  it("keeps the street heading as the property label target", () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    expect(host.querySelector("h2#project-overview-property")!.textContent).toBe("12 Example St");
+  });
+
+  it("omits the Dropbox block when uploads are allowed but there is no folder, mapping, or backend admin", () => {
+    render(<ProjectHeader {...baseProps(project())} canUpload />);
+    expect(host.querySelector('[aria-labelledby="project-overview-dropbox"]')).toBeNull();
+    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+  });
+
+  it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", () => {
+    render(<ProjectHeader {...baseProps(project())} stageMovePending />);
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Move project Stage"]')!;
+    expect(select.disabled).toBe(true);
+    expect(select.getAttribute("aria-busy")).toBe("true");
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} stageMoveDisabledReason="Stage movement is paused." />); });
+    expect(select.disabled).toBe(false);
+    expect(select.getAttribute("aria-disabled")).toBe("true");
+    expect(host.textContent).toContain("Stage movement is paused.");
   });
 });

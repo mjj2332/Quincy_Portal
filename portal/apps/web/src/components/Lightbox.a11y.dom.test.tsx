@@ -30,7 +30,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1
 /**
  * Not a full accessible-name computation — the four sources these controls actually use, in spec
  * order. This repo has no `dom-accessibility-api` and no `@testing-library/dom`, and this release
- * deliberately does not add one: `ProjectOverviewRail.dom.test.tsx:163` already establishes the
+ * deliberately does not add one: `ProjectHeader.dom.test.tsx:168` already establishes the
  * manual approach. Adding a dependency to assert a name is a bigger change than the fix it guards.
  */
 function accessibleName(el: HTMLElement): string {

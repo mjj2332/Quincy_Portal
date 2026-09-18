@@ -1,0 +1,225 @@
+import type { CollectionKind } from "@quincy/shared";
+import { ChevronDown, RefreshCw } from "lucide-react";
+import { StatusBadge } from "./atoms";
+import { InternalLink } from "./InternalLink";
+import { ProjectTeamControl } from "./ProjectTeamControl";
+import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
+import { buttonClasses } from "./quincy/Button";
+import { StatusPill } from "./quincy/StatusPill";
+import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
+import { Badge } from "@/components/reui/badge";
+import { cn } from "../lib/utils";
+import { useStages } from "../lib/stages";
+import { useCapabilities } from "../lib/capabilities";
+import type { ProjectDetail } from "../lib/project-data";
+
+function date(value: string | null) {
+  return value
+    ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value))
+    : "Shoot date pending";
+}
+
+function collectionLabel(value: string) {
+  return value === "raw" ? "RAW" : value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+const HEADER_SECTION_LABEL =
+  "mb-[var(--space-3)] " +
+  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] " +
+  "uppercase tracking-[var(--tracking-wide)] text-foreground";
+
+const HEADER_KV_KEY =
+  "k [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
+  "uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
+
+const HEADER_KV_VALUE =
+  "vv [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
+  "text-foreground [overflow-wrap:anywhere]";
+
+// Stage select styling — carried over verbatim from ProjectOverviewRail.tsx (#202).
+const STAGE_SELECT =
+  "w-full appearance-none cursor-pointer text-left " +
+  "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
+  "pl-[14px] pr-[var(--space-7)] py-[9px] " +
+  "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] " +
+  "bg-card border-border text-foreground " +
+  "[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] " +
+  "transition-[background-color,color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
+  "hover:not-disabled:bg-secondary hover:not-disabled:border-border-hover " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2 " +
+  "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:border-border disabled:cursor-not-allowed";
+
+function StageControl({ project, currentStageKey, stages, contractEnabled, pending, disabledReason, onMove }: {
+  project: ProjectDetail;
+  currentStageKey: ProjectDetail["stageKey"];
+  stages: ReturnType<typeof useStages>["stages"];
+  contractEnabled: boolean;
+  pending: boolean;
+  disabledReason?: string | null;
+  onMove?: (stageKey: ProjectDetail["stageKey"]) => void;
+}) {
+  const current = stages.find((item) => item.key === currentStageKey);
+  const unavailable = disabledReason ?? (!contractEnabled ? "Stage movement is temporarily unavailable." : null);
+  // Keep an already-focused select focusable after a command-level 503 so the
+  // workspace can return focus to the same control while exposing the reason.
+  // The contract-off state remains a genuinely disabled control.
+  const disabled = pending || (!contractEnabled && !disabledReason);
+  return <div className="grid gap-[var(--space-1)]">
+    <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+      <span className={HEADER_KV_KEY}>Stage</span>
+      <span className={HEADER_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span>
+    </div>
+    <label className="sr-only" htmlFor={`project-stage-${project.id}`}>Move project Stage</label>
+    <div className="relative">
+      <select id={`project-stage-${project.id}`} data-focus-key={`rail-stage:${project.id}`} aria-label="Move project Stage" value={currentStageKey} disabled={disabled} aria-disabled={unavailable ? "true" : undefined} aria-busy={pending || undefined} className={STAGE_SELECT} onChange={(event) => {
+        const next = event.target.value as ProjectDetail["stageKey"];
+        if (!unavailable && next !== currentStageKey) onMove?.(next);
+      }}>
+        {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => <option value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>{stage.label}</option>)}
+        {!current && <option value={currentStageKey}>{currentStageKey}</option>}
+      </select>
+      <ChevronDown aria-hidden="true"
+        className="pointer-events-none absolute right-[var(--space-3)] top-1/2 -translate-y-1/2
+                   size-[var(--space-3)] stroke-[1.5] text-foreground" />
+    </div>
+    {unavailable && <span className="block mt-[var(--space-1)]
+                     [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
+                     text-foreground-secondary">{unavailable}</span>}
+  </div>;
+}
+
+export function ProjectHeader({
+  project,
+  activeTab,
+  availableTabs,
+  canUpload,
+  canAdminBackend,
+  canEdit,
+  hasRawFolder,
+  autohdrBlocked,
+  isSyncing,
+  onSyncDropbox,
+  onActiveTabChange,
+  onStageMove,
+  stageMovePending = false,
+  stageMoveDisabledReason = null,
+}: {
+  project: ProjectDetail;
+  activeTab: CollectionKind;
+  availableTabs: CollectionKind[];
+  canUpload: boolean;
+  canAdminBackend: boolean;
+  canEdit: boolean;
+  hasRawFolder: boolean;
+  autohdrBlocked: boolean;
+  isSyncing: boolean;
+  onSyncDropbox: () => void;
+  onActiveTabChange: (kind: CollectionKind) => void;
+  onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void;
+  stageMovePending?: boolean;
+  stageMoveDisabledReason?: string | null;
+}) {
+  const { presentationStageKey, stages } = useStages();
+  const { can } = useCapabilities();
+  const currentStageKey = presentationStageKey(project.stageKey);
+  const canMoveStage = can("moveProjectStage") && !project.archivedAt;
+
+  return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
+    <div className="project-header__identity">
+      <h2 id="project-overview-property"
+          className="[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground [text-wrap:pretty]">
+        {project.street}
+      </h2>
+      <div className="project-header__meta">
+        <span className="[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)]
+                        uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">
+          {[project.suburb, project.postcode].filter(Boolean).join(" · ")}
+        </span>
+        <span><span className={HEADER_KV_KEY}>Shoot</span> <span className={HEADER_KV_VALUE}>{date(project.shootDate)}</span></span>
+        <span><span className={HEADER_KV_KEY}>Client</span> <span className={HEADER_KV_VALUE}>{project.agencyName || project.agentName ? `${project.agencyName ?? "—"} · ${project.agentName ?? "—"}` : "—"}</span></span>
+        {canEdit && <InternalLink className={buttonClasses("secondary", { className: "min-h-[44px]" })} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
+      </div>
+      {project.productionNotes && <p className={cn("project-header__notes", "m-0 [white-space:pre-wrap]",
+                    "[font:var(--weight-regular)_var(--text-sm)/var(--leading-relaxed)_var(--font-body-serif)]",
+                    "text-foreground-secondary")}>{project.productionNotes}</p>}
+    </div>
+
+    <div className="project-header__controls">
+      <section aria-labelledby="project-overview-production">
+        <div className={HEADER_SECTION_LABEL} id="project-overview-production">Production</div>
+        {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={HEADER_KV_KEY}>Stage</span><span className={HEADER_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span></div>}
+        <ProjectDeadlineControl projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
+      </section>
+
+      <section aria-labelledby="project-overview-team">
+        <div className={HEADER_SECTION_LABEL} id="project-overview-team">Team</div>
+        <ProjectTeamControl projectId={project.id} members={project.members} canEdit={canEdit} />
+      </section>
+
+      {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <section aria-labelledby="project-overview-dropbox">
+        <div className={HEADER_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
+        {project.monitoredRawFolder && <div data-testid="raw-monitored" className="mb-[var(--space-4)]">
+          <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+            <span className={HEADER_KV_KEY}>Monitored RAW folder</span>
+            <span className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)]")}>{project.monitoredRawFolder.path}</span>
+          </div>
+          <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
+            <StatusPill tone="positive">Monitored</StatusPill>
+          </div>
+          {project.monitoredRawFolder.webUrl
+            ? <a href={project.monitoredRawFolder.webUrl} target="_blank" rel="noreferrer" className={buttonClasses("secondary", { className: "min-h-[44px]" })}>Open in Dropbox</a>
+            : null}
+          {project.monitoredRawFolder.extraPaths.length > 0 && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+            <span className={HEADER_KV_KEY}>Also monitored</span>
+            {project.monitoredRawFolder.extraPaths.map((path) => (
+              <span key={path} className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)] block")}>{path}</span>
+            ))}
+          </div>}
+        </div>}
+        {(project.rawFolderPath || project.rawFolderLink) && project.monitoredRawFolder && <div data-testid="raw-tonomo-secondary" className="mb-[var(--space-4)]">
+          {project.rawFolderPath && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+            <span className={HEADER_KV_KEY}>Tonomo folder path</span>
+            <span className={HEADER_KV_VALUE}>{project.rawFolderPath}</span>
+          </div>}
+          {project.rawFolderLink && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+            <span className={HEADER_KV_KEY}>Tonomo folder link</span>
+            <span className={HEADER_KV_VALUE}>{project.rawFolderLink}</span>
+          </div>}
+          <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
+            <StatusPill tone="neutral">Not monitored</StatusPill>
+          </div>
+          <p className="m-0 text-foreground-secondary
+                        [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]">
+            RAW is read from the Editor Input folder. This folder is kept for Tonomo change detection and AutoHDR naming.
+          </p>
+        </div>}
+        <button
+          type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
+          className={buttonClasses("secondary", { className: "min-h-[44px]" })}
+          onClick={onSyncDropbox}
+        >
+          <RefreshCw aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5]" />
+          <span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span>
+        </button>
+        {autohdrBlocked && (
+          <p role="status" className="mt-[var(--space-2)] m-0
+               [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
+               uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Blocked</p>
+        )}
+      </section>}
+    </div>
+
+    <div className="project-header__tabs">
+      <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as CollectionKind); }}>
+        <TabsList variant="line" aria-label="Collections">
+          {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
+            <TabsTrigger key={tab} value={tab} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+              {collectionLabel(tab)}
+              <Badge variant="primary-light" size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
+            </TabsTrigger>); })}
+        </TabsList>
+      </Tabs>
+    </div>
+  </section>;
+}
