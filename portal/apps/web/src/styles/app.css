@@ -36,8 +36,8 @@ button { font-family: var(--font-sans); }
    element: `.app` above is UNLAYERED, and an unlayered declaration beats anything in Tailwind's
    `@layer utilities` regardless of specificity — the utility would be a silent no-op, the same
    trap `tokens/reui.css` records for --radius and the type scale. The class is `app--railed`, not
-   `app--rail`: `.rail` is already taken by ProjectOverviewRail (see `.app--impersonating .rail`
-   just below).
+   `app--rail`: `.rail` has been unused since #202 (the Project header replaced
+   ProjectOverviewRail), and `app--rail` stays unused too, so the two are not confused.
 
    #122 (ADR 0005): `.app`'s only in-flow child under the rail is now `SidebarProvider`'s own
    `data-slot="sidebar-wrapper"` (`reui/sidebar.tsx`, `group/sidebar-wrapper flex min-h-svh
@@ -94,7 +94,6 @@ button { font-family: var(--font-sans); }
 [data-rail-mode="collapsed"] { --app-rail-inline-size: calc(3rem + var(--space-4) + var(--space-2)); }
 [data-rail-mode="sheet"] { --app-rail-inline-size: 0px; }
 [data-rail-mode] { --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left))); }
-.app--impersonating .rail { top: calc(var(--shell-header-height) + 42px); max-height: calc(100vh - var(--shell-header-height) - 42px); }
 .app--impersonating .worktools { top: calc(var(--shell-header-height) + 42px); }
 .app--impersonating .viewer { inset: 42px 0 0; }
 
@@ -166,7 +165,7 @@ button { font-family: var(--font-sans); }
    --------------------------------------------------------------------- */
 .legacy-grid { display: grid; gap: var(--gap, 14px); grid-template-columns: repeat(var(--cols, 4), 1fr); }
 .work .workspace-photo-grid {
-  /* 205px minimum: 5×205 + 4×14 gap + 288px rail + 64px workgrid padding = 1433px. */
+  /* 205px minimum: 260px shell rail + 5×205 + 4×14 gap + 64px workgrid padding = 1405px. */
   grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
 }
 .tile {
@@ -240,8 +239,7 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Review workspace layout
    --------------------------------------------------------------------- */
-.work { display: grid; grid-template-columns: 288px 1fr; flex: 1; min-height: 0; }
-.rail { border-right: 1px solid var(--border-hairline); background: var(--paper-000); position: sticky; top: var(--shell-header-height); align-self: start; max-height: calc(100vh - var(--shell-header-height)); overflow: auto; }
+.work { display: grid; grid-template-rows: auto 1fr; flex: 1; min-height: 0; }
 /* Panel-level properties (z-index, width, border, background, shadow) now owned by
    `AnchoredPopover` (§7.3/§7.4) — this class stays only as the content wrapper / test hook. */
 .project-team-picker > input { display: block; width: calc(100% - var(--space-4)); margin: var(--space-2); padding: var(--space-2) var(--space-3); border: var(--border-width-hair) solid var(--border-hairline); border-radius: var(--radius-sm); background: var(--paper-000); color: var(--text-primary); font: var(--type-body); font-size: var(--text-sm); }
@@ -268,6 +266,15 @@ button { font-family: var(--font-sans); }
 .kv .vv { text-align: right; }
 .project-deadline__overdue { display: block; margin-top: 3px; font-size: 11px; color: var(--signal-critical); }
 .workmain { min-width: 0; display: flex; flex-direction: column; }
+.project-header { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-4); padding: var(--space-5) var(--space-6); background: var(--paper-000); border-bottom: 1px solid var(--border-hairline); }
+.project-header__identity { display: grid; gap: var(--space-2); }
+.project-header__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); }
+.project-header__controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4) var(--space-6); }
+.project-header__controls > section { min-width: 0; flex: 1 1 240px; max-width: 420px; }
+.project-header__tabs { min-width: 0; overflow-x: auto; }
+.project-header__tabs [role="tablist"] { height: auto; }
+.project-header__tabs [role="tab"] { min-height: 44px; /* WCAG 2.5.5 Enhanced target, not a spacing token */ flex: none; }
+@media (max-width: 720px) { .project-header { padding: var(--space-4); } }
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }
@@ -451,14 +458,12 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Responsive
    --------------------------------------------------------------------- */
-/* Cap auto-fill at five tiles once the rail layout can still give each tile 205px. */
-@media (min-width: 1433px) {
+/* Cap auto-fill at five tiles once the layout can still give each tile 205px. The Project rail no
+   longer subtracts 288px (#202), but this query is viewport-based, so the SHELL navigation rail
+   (260px, ADR 0006, --quincy-rail-width) has to be in the sum instead: 260 shell rail + 5×205 +
+   4×14 gap + 64 workgrid padding = 1405px. */
+@media (min-width: 1405px) {
   .work .workspace-photo-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-}
-@media (max-width: 1080px) {
-  .work { grid-template-columns: 1fr; }
-  .rail { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--border-hairline); }
-  .app--impersonating .rail { max-height: none; }
 }
 @media (max-width: 720px) {
   .page { padding: var(--space-6) var(--space-4) var(--space-9); }
