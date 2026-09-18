@@ -56,7 +56,7 @@ import App from "./App";
 import { apiGet } from "./lib/api";
 import { signOut } from "./lib/auth";
 import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
-import { consumeProjectSearchFocus } from "./lib/shell-search";
+import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot } from "./lib/dashboard-search-store";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -135,9 +135,9 @@ beforeEach(() => {
   window.localStorage.clear();
   setViewportWidth(1024);
   vi.mocked(signOut).mockClear();
-  // Drains any request a previous test left latched — `lib/shell-search.ts` is a module-level
-  // singleton, shared by every test in this file the same way `window.localStorage` would be.
-  consumeProjectSearchFocus();
+  // `lib/dashboard-search-store.ts` is a module-level singleton, shared by every test in this
+  // file the same way `window.localStorage` would be.
+  __resetDashboardSearchStoreForTest();
 });
 
 afterEach(async () => {
@@ -153,6 +153,7 @@ afterEach(async () => {
   // nonzero-badge one below) that overrides it — the mock itself is one `vi.fn()` shared by the
   // whole file, not reconstructed per test.
   vi.mocked(apiGet).mockResolvedValue({ notifications: [], unreadCount: 0 });
+  __resetDashboardSearchStoreForTest();
 });
 
 async function renderAt(path: string) {
@@ -667,35 +668,37 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
   });
 });
 
-describe("⌘K project search (#122 P3)", () => {
-  it("wide, from Admin: pushes the Dashboard href and latches a focus request", async () => {
-    await renderAt("/admin");
+describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", () => {
+  it("wide, from Admin: focuses the rail's search input without navigating", async () => {
+    const host = await renderAt("/admin");
     expect(window.location.pathname).toBe("/admin");
 
     await keydown(window, { key: "k", metaKey: true });
 
-    expect(window.location.pathname).toBe("/");
-    expect(consumeProjectSearchFocus()).toBe(true);
+    expect(window.location.pathname).toBe("/admin");
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="shell-search"]'));
   });
 
-  it("wide, already on a Dashboard view: requests focus without touching the URL", async () => {
-    await renderAt("/?view=kanban");
+  it("wide, already on a Dashboard view: focuses the input without touching the URL", async () => {
+    const host = await renderAt("/?view=kanban");
 
     await keydown(window, { key: "k", metaKey: true });
 
     expect(window.location.search).toBe("?view=kanban");
-    expect(consumeProjectSearchFocus()).toBe(true);
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="shell-search"]'));
   });
 
-  it("is inert below 772px — no push, no latched request", async () => {
+  it("is inert below 772px — no focus move, no URL change (no rail search control to focus behind the closed Sheet)", async () => {
     await renderAt("/admin");
     await resizeTo(600);
     await tick();
+    const before = document.activeElement;
 
     await keydown(window, { key: "k", metaKey: true });
 
     expect(window.location.pathname).toBe("/admin");
-    expect(consumeProjectSearchFocus()).toBe(false);
+    expect(document.activeElement).toBe(before);
+    expect(document.querySelector('[data-testid="shell-search"]')).toBeNull();
   });
 
   it("ignores an editable target and a held-key repeat", async () => {
@@ -706,58 +709,35 @@ describe("⌘K project search (#122 P3)", () => {
 
     await keydown(input, { key: "k", metaKey: true });
     expect(window.location.pathname).toBe("/admin");
-    expect(consumeProjectSearchFocus()).toBe(false);
+    expect(document.activeElement).toBe(input);
 
     await keydown(window, { key: "k", metaKey: true, repeat: true });
     expect(window.location.pathname).toBe("/admin");
-    expect(consumeProjectSearchFocus()).toBe(false);
+    expect(document.activeElement).toBe(input);
 
     input.remove();
   });
 
-  it("a Sheet search tap closes the Sheet and navigates", async () => {
+  it("typing then Enter inside the Sheet's search closes the Sheet and navigates", async () => {
     const host = await renderAt("/admin");
     await resizeTo(600);
     await tick();
 
     await click(sheetTrigger(host)!);
     const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
-    const searchControl = sheet.querySelector<HTMLButtonElement>('[data-testid="shell-search"]')!;
+    const searchInput = sheet.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
 
-    await click(searchControl);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(searchInput, "smith");
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await keydown(searchInput, { key: "Enter" });
 
     await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
     expect(window.location.pathname).toBe("/");
-    expect(consumeProjectSearchFocus()).toBe(true);
-    // `finalFocus → false` for this one close — the point of suppressing it is that the
-    // (about to vanish) sheet trigger does NOT reclaim focus from the Dashboard input.
-    expect(document.activeElement).not.toBe(sheetTrigger(host));
-  });
-
-  it("does not leave a stale suppression latched across a reopened Sheet", async () => {
-    // Regression cover for the ref-goes-stale bug: `FloatingFocusManager`'s return-focus cleanup
-    // only runs once the popup finishes unmounting after its exit transition, so reopening the
-    // Sheet before that completes could otherwise leave `suppressSheetFinalFocusRef` latched
-    // `true` from the previous search-triggered close, skipping focus restoration on the NEXT
-    // close too. If happy-dom unmounts the popup synchronously (no real exit transition to race),
-    // this cannot reproduce the leak pre-fix — it stays as regression cover for the real browser
-    // timing regardless.
-    const host = await renderAt("/admin");
-    await resizeTo(600);
-    await tick();
-
-    await click(sheetTrigger(host)!);
-    const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
-    const searchControl = sheet.querySelector<HTMLButtonElement>('[data-testid="shell-search"]')!;
-    await click(searchControl);
-    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
-
-    await click(sheetTrigger(host)!);
-    expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull();
-    await keydown(document.querySelector('[data-testid="rail-sheet"]')!, { key: "Escape" });
-    await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
-
-    expect(document.activeElement).toBe(sheetTrigger(host));
+    expect(window.location.search).toBe("?q=smith");
+    expect(getDashboardSearchSnapshot().query).toBe("smith");
   });
 
   it("leaves ⌘B untouched", async () => {

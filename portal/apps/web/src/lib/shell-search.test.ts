@@ -1,30 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const routerMock = vi.hoisted(() => ({
-  push: vi.fn<(location: string) => void>(),
-  location: "/",
-}));
-
-vi.mock("./router", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./router")>();
-  return {
-    ...actual,
-    locationStore: () => ({
-      getLocation: () => routerMock.location,
-      push: routerMock.push,
-    }),
-  };
-});
-
-import {
-  activateProjectSearch,
-  consumeProjectSearchFocus,
-  getProjectSearchFocusToken,
-  isSearchShortcut,
-  requestProjectSearchFocus,
-  subscribeProjectSearchFocus,
-} from "./shell-search";
+import { describe, expect, it } from "vitest";
+import { isSearchShortcut } from "./shell-search";
 import type { RailShortcutEvent } from "./shell-rail";
+
+/**
+ * #217 rewrite: `isSearchShortcut` is all that is left of this module — the one-shot latched
+ * focus request (`requestProjectSearchFocus`/`consumeProjectSearchFocus`/etc.) and
+ * `activateProjectSearch` are deleted along with the Dashboard's now-retired second search input.
+ * `lib/dashboard-search-store.test.ts` covers the store that replaced them.
+ */
 
 const BASE_EVENT: RailShortcutEvent = {
   key: "k",
@@ -37,92 +20,6 @@ const BASE_EVENT: RailShortcutEvent = {
   defaultPrevented: false,
   target: null,
 };
-
-beforeEach(() => {
-  routerMock.push.mockClear();
-  routerMock.location = "/";
-  // Drain any request left latched by a previous test — `consumeProjectSearchFocus` is the only
-  // way to clear the module-level store, since there is no cancel.
-  consumeProjectSearchFocus();
-});
-
-describe("requestProjectSearchFocus / consumeProjectSearchFocus — the latch", () => {
-  it("latches a request made before anything subscribes", () => {
-    requestProjectSearchFocus();
-    expect(consumeProjectSearchFocus()).toBe(true);
-  });
-
-  it("a second consume with no new request in between reports false", () => {
-    requestProjectSearchFocus();
-    expect(consumeProjectSearchFocus()).toBe(true);
-    expect(consumeProjectSearchFocus()).toBe(false);
-  });
-
-  it("consuming with nothing pending reports false", () => {
-    expect(consumeProjectSearchFocus()).toBe(false);
-  });
-
-  it("a request made after a consume can be consumed again", () => {
-    requestProjectSearchFocus();
-    expect(consumeProjectSearchFocus()).toBe(true);
-    requestProjectSearchFocus();
-    expect(consumeProjectSearchFocus()).toBe(true);
-  });
-});
-
-describe("subscribeProjectSearchFocus / getProjectSearchFocusToken — the useSyncExternalStore shape", () => {
-  it("notifies every subscriber on a request", () => {
-    const listener = vi.fn();
-    const unsubscribe = subscribeProjectSearchFocus(listener);
-    requestProjectSearchFocus();
-    expect(listener).toHaveBeenCalledTimes(1);
-    unsubscribe();
-  });
-
-  it("stops notifying once unsubscribed", () => {
-    const listener = vi.fn();
-    const unsubscribe = subscribeProjectSearchFocus(listener);
-    unsubscribe();
-    requestProjectSearchFocus();
-    expect(listener).not.toHaveBeenCalled();
-  });
-
-  it("bumps the token on every request, so a snapshot read differs", () => {
-    const before = getProjectSearchFocusToken();
-    requestProjectSearchFocus();
-    expect(getProjectSearchFocusToken()).not.toBe(before);
-  });
-
-  it("does not bump the token on a mere consume", () => {
-    requestProjectSearchFocus();
-    const afterRequest = getProjectSearchFocusToken();
-    consumeProjectSearchFocus();
-    expect(getProjectSearchFocusToken()).toBe(afterRequest);
-  });
-});
-
-describe("activateProjectSearch — navigate off-dashboard, then latch", () => {
-  it("pushes the Dashboard href when the current location is not the Dashboard", () => {
-    routerMock.location = "/admin";
-    activateProjectSearch("/");
-    expect(routerMock.push).toHaveBeenCalledOnce();
-    expect(routerMock.push).toHaveBeenCalledWith("/");
-    expect(consumeProjectSearchFocus()).toBe(true);
-  });
-
-  it("does not push when the current location is already a Dashboard view", () => {
-    routerMock.location = "/?view=kanban";
-    activateProjectSearch("/");
-    expect(routerMock.push).not.toHaveBeenCalled();
-    expect(consumeProjectSearchFocus()).toBe(true);
-  });
-
-  it("leaves a Dashboard Calendar facet URL untouched", () => {
-    routerMock.location = "/?view=calendar&date=2026-08-12&sub=month&layers=project";
-    activateProjectSearch("/");
-    expect(routerMock.push).not.toHaveBeenCalled();
-  });
-});
 
 describe("isSearchShortcut — ⌘K/Ctrl+K", () => {
   it("fires on Meta+K", () => {

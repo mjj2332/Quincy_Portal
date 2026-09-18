@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef, useState, type MouseEvent, type Ref } from "react";
 import {
   LayoutDashboard,
   List,
@@ -32,7 +32,7 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
 import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
-import { ShellSearch } from "./ShellSearch";
+import { ShellSearch, type ShellSearchHandle } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
 import { cn } from "../../lib/utils";
 import type { RailMode } from "../../lib/shell-rail";
@@ -237,13 +237,19 @@ export type NavigationRailProps = {
    */
   showBell?: boolean;
   /**
-   * Runs `lib/shell-search.ts`'s activation from `ShellSearch` — the rail renders the control and
-   * decides nothing about where the request lands. Defaults to a no-op.
+   * Whether the current route is already a Dashboard route — forwarded straight to `ShellSearch`,
+   * which only navigates on Enter when it isn't. Defaults to `false` so every #111/#112 call site
+   * that predates #217 keeps compiling.
    */
-  onSearch?: () => void;
+  isDashboard?: boolean;
+  /**
+   * `RailedShell`'s ⌘K listener focuses `ShellSearch`'s real input through this ref — the rail
+   * renders the control and decides nothing about when the shortcut fires.
+   */
+  searchRef?: Ref<ShellSearchHandle>;
 };
 
-export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, onSearch = () => {} }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, isDashboard = false, searchRef }: NavigationRailProps) {
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
 
@@ -336,9 +342,9 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
           — so rendering the rail without this would silently remove primary navigation from a
           screen reader's landmark list. */}
       <SidebarContent>
-        {/* The search control sits above the nav landmark, not inside it — it is not a
-            destination, only a trigger for `lib/shell-search.ts`'s focus request. */}
-        <ShellSearch variant={variant} onActivate={onSearch} />
+        {/* The search control sits above the nav landmark, not inside it — it is a real input now
+            (#217), not a destination. */}
+        <ShellSearch ref={searchRef} variant={variant} isDashboard={isDashboard} />
         <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">
