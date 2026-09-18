@@ -33,6 +33,17 @@ const EDIT_DETAILS_LINK =
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2";
 
+// #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title,
+// moved here from the work area's `.wsbar` chip. The 44px target is kept by the min-height; the
+// negative block margin gives that height back so the identity row keeps the prototype's 8px rhythm.
+const DASHBOARD_CRUMB =
+  "inline-flex items-center w-fit min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
+  "[margin-block:-12px] no-underline " +
+  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground-secondary hover:text-foreground " +
+  "transition-[color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2";
+
 const HEADER_KV_KEY =
   "k [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
   "uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
@@ -43,9 +54,11 @@ const HEADER_KV_VALUE =
 
 // Stage select styling — carried over from ProjectOverviewRail.tsx (#202), restyled from a
 // native <select> onto the ReUI select's SelectTrigger <button> (#203). `disabled:opacity-100`
-// keeps the rail's sunken disabled treatment instead of also fading it.
+// keeps the rail's sunken disabled treatment instead of also fading it. #213 follow-up: `w-fit`,
+// not the rail's `w-full` — in the stacked and two-per-line layouts the other three triggers are
+// content-sized, and a lone full-width select read as a different kind of control.
 const STAGE_SELECT =
-  "w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
+  "w-fit max-w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
   "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
   "pl-[14px] pr-[14px] py-[9px] " +
   "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] " +
@@ -162,6 +175,7 @@ export function ProjectHeader({
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
     <div className="project-header__identity">
+      <InternalLink className={DASHBOARD_CRUMB} to="/">← Dashboard</InternalLink>
       <h2 id="project-overview-property"
           className="[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground [text-wrap:pretty]">
         {project.street}

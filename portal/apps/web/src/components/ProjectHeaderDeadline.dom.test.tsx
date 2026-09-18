@@ -89,18 +89,16 @@ async function pressOutside(element: Element) {
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
 }
 
-/** Opens Set Deadline inside the popover and types a date, leaving an unsaved draft. */
+/** Types a date into the popover's live editor (#213 follow-up: no Set Deadline step), leaving an unsaved draft. */
 async function dirtyDraft(dialog: HTMLElement) {
-  const setButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
-  await act(async () => { setButton.click(); await Promise.resolve(); });
   await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
 }
 
-/** Reopens the popover and checks the earlier draft is gone: the editor is closed again. */
+/** Reopens the popover and checks the earlier draft is gone: the editor is reseeded from the (unset) schedule. */
 async function expectDraftDiscarded(host: HTMLElement) {
   const reopened = await openTrigger(host);
-  expect(reopened.querySelector('input[aria-label="Deadline date"]')).toBeNull();
-  expect([...reopened.querySelectorAll("button")].some((button) => button.textContent === "Set Deadline")).toBe(true);
+  expect(reopened.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("");
+  expect(reopened.textContent).not.toContain("2027-01-15");
 }
 
 async function setInput(input: HTMLInputElement, value: string) {
@@ -241,32 +239,44 @@ describe("ProjectHeaderDeadline", () => {
     }
   });
 
-  it("opens a dialog labelled Deadline showing Set Deadline for an unset schedule", async () => {
+  it("opens a dialog labelled Deadline with the live 1b editor for an unset schedule (#213)", async () => {
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    expect(dialog.textContent).toContain("Set Deadline");
-
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!.click(); await Promise.resolve(); });
-    expect(dialog.querySelector('input[aria-label="Deadline date"]')).not.toBeNull();
+    expect(dialog.textContent).not.toContain("Set Deadline");
+    expect(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("");
     expect(dialog.querySelector('input[aria-label="Deadline time"]')).not.toBeNull();
+    expect([...dialog.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].map((button) => button.textContent)).toEqual(["1 day", "4 hours", "1 hour"]);
+    // "+ custom" reveals the minutes field; it is not open by default.
+    expect(dialog.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "+ custom")!.click(); await Promise.resolve(); });
     expect(dialog.querySelector('input[aria-label="Custom reminder minutes"]')).not.toBeNull();
     expect(dialog.textContent).toContain("Due-now reminder is mandatory.");
-    expect([...dialog.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Save Deadline")).toBe(true);
+    expect([...dialog.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Save")).toBe(true);
+    // No deadline yet, so nothing to Clear.
+    expect([...dialog.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "Clear")).toBe(false);
   });
 
-  it("shows no Set/Edit Deadline control when canEdit is false", async () => {
+  it("closes the popover once a Save succeeds (#213)", async () => {
+    const host = await mount(emptySchedule);
+    const dialog = await openTrigger(host);
+    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
+    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!.click(); await Promise.resolve(); });
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
+  });
+
+  it("shows no editor at all when canEdit is false", async () => {
     const host = await mount(emptySchedule, false);
     const dialog = await openTrigger(host);
-    expect(dialog.textContent).not.toContain("Set Deadline");
-    expect(dialog.textContent).not.toContain("Edit Deadline");
+    expect(dialog.querySelector("input")).toBeNull();
     expect(dialog.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("keeps a dirty draft through a rerender with a new schedule object of the same version", async () => {
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    const setButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
-    await act(async () => { setButton.click(); await Promise.resolve(); });
     await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
 
     // A new object, same version — an ordinary background refresh, not a save conflict.
@@ -282,10 +292,9 @@ describe("ProjectHeaderDeadline", () => {
     }));
     const host = await mount(emptySchedule);
     const dialog = await openTrigger(host);
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!.click(); await Promise.resolve(); });
     await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
     await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save Deadline")!.click(); await Promise.resolve(); });
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!.click(); await Promise.resolve(); });
     await flush();
 
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
@@ -325,11 +334,9 @@ describe("ProjectHeaderDeadline", () => {
     await expectDraftDiscarded(host);
   });
 
-  it("keeps the popover open behind a real Clear confirm, and only saves once the confirm is accepted", async () => {
+  it("keeps the popover open behind a real Clear confirm, saves only once the confirm is accepted, then closes", async () => {
     const host = await mount(scheduleAt("2027-01-15T09:00:00.000Z"), true, true);
     const dialog = await openTrigger(host);
-    const editButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit Deadline")!;
-    await act(async () => { editButton.click(); await Promise.resolve(); });
 
     async function clickClear() {
       const clearButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Clear")!;
@@ -365,7 +372,8 @@ describe("ProjectHeaderDeadline", () => {
     expect(document.querySelector('[data-testid="confirm-modal"]')).not.toBeNull();
     await pressOutside(document.querySelector<HTMLButtonElement>('[data-testid="confirm-modal-confirm"]')!);
     await flush();
-    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
+    // #213 follow-up: a successful Clear, like a Save, closes the popover.
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, expect.objectContaining({ deadline: null }));
   });
 });

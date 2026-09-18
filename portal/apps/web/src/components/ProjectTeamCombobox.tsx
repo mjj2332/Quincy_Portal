@@ -242,7 +242,10 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   const label = expanded ? "Show fewer team members" : `Show ${hiddenCount} more team members`;
   return <button
     type="button"
-    className={buttonClasses("text", { className: "min-h-[44px] shrink-0 !normal-case" })}
+    // #213 follow-up: chip-height among the chips (a 44px button made the box two tall rows); the
+    // 44px target comes from the same transparent hit-area the chip × uses, and the narrow
+    // breakpoint keeps the real 44px height like the chips do.
+    className={cn(buttonClasses("text", { className: "min-h-0 h-[calc(--spacing(5.25))] py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px]" }), TEAM_CHIP_REMOVE_HIT_AREA)}
     aria-expanded={expanded}
     aria-label={label}
     // Base UI's Chips container opens the popup on most interaction inside it — this toggle
@@ -367,7 +370,10 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
       {/* No `has-data-[slot=combobox-chip]:pl-1` override here: the vendor default already
        *  carries `has-data-[slot=combobox-chip]:px-1` (both sides, `reui/combobox.tsx`), which
        *  subsumes the left-only version this file used to duplicate by hand. */}
-      <ComboboxChips ref={anchor} className="rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]">
+      {/* #213 follow-up: content-sized like prototype 2a's Team `.sel` (chips · Add… · chevron), not a
+       *  box stretched to its cell — `w-fit` sizes to the chips and `max-w-full` still wraps them
+       *  inside the cell. */}
+      <ComboboxChips ref={anchor} className="w-fit max-w-full rounded-[var(--radius-pill)] max-[721px]:min-h-[44px]">
         <ComboboxValue>
           {() => visible.map((option) => {
             const { dataState, isPending, messageId, name, roleTag } = chipProps(option);
@@ -406,9 +412,15 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
           })}
         </ComboboxValue>
         <TeamMoreToggle hiddenCount={hiddenCount} expanded={effectiveExpanded} onToggle={() => setExpanded(!effectiveExpanded)} />
-        <ComboboxChipsInput aria-label="Add team member" placeholder="Add…" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
+        {/* `flex-none w-[6ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
+         *  and a flexing input is what claimed the rest of the line as white space. No focus growth:
+         *  this box is the popup's anchor, so a width change on focus would jump the open list. */}
+        <ComboboxChipsInput aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[6ch]" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
       </ComboboxChips>
-      <ComboboxContent anchor={anchor} className="max-w-(--anchor-width) min-w-(--anchor-width)">
+      {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
+       *  a one-member box would give an unusably narrow list. Prototype 2a's list is 300px; it
+       *  still never runs narrower than its anchor or wider than the viewport. */}
+      <ComboboxContent anchor={anchor} className="min-w-[max(var(--anchor-width),300px)] max-w-[calc(100vw-2*var(--space-4))]">
         <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
         <ComboboxList aria-label="Team candidates">
           {(group: (typeof groups)[number]) => <ComboboxGroup key={group.value} items={group.items}>

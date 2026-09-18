@@ -90,19 +90,26 @@ let runtime: ProjectQueryRuntime;
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
 
+const onSaved = vi.fn();
+
+/** The advance-reminder toggle chip with this visible label (#213 follow-up: chips, not checkboxes). */
+function toggle(host: HTMLElement, label: string) {
+  return [...host.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find((button) => button.textContent === label)!;
+}
+
 async function mount(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const host = document.createElement("div"); document.body.appendChild(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   runtime = new ProjectQueryRuntime(queryClient);
   root = createRoot(host);
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
   return host;
 }
 
 async function rerenderSchedule(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
 }
 
 async function setInput(input: HTMLInputElement, value: string) {
@@ -113,6 +120,7 @@ async function setInput(input: HTMLInputElement, value: string) {
 beforeEach(() => {
   apiPutMock.mockReset().mockResolvedValue({ changed: true, current: activeSchedule, eventIntent: null, publicationIds: [] });
   confirmMock.mockReset().mockResolvedValue(true);
+  onSaved.mockReset();
 });
 
 afterEach(async () => {
@@ -138,13 +146,11 @@ describe("ProjectDeadlineControl", () => {
     // a hardcoded string literal, from one of three sites local to it: (a) rail-field.ts:11-12 —
     // RAIL_FIELD, imported here as DEADLINE_FIELD for the date/time inputs; (b) reui/button.tsx:32
     // — buttonVariants()'s cva base string, composed into buttonClasses()'s shared BASE class via
-    // quincy/Button.tsx:53-63, applied to every button built through buttonClasses() (Set/Edit
-    // Deadline, Cancel, Resume reminders, Add); and (c)
-    // ProjectDeadlineControl.tsx:264-265 — the custom reminder chip's own remove button, which is
-    // hand-written and does NOT go through buttonClasses(). Of these three, only (a) and (b)
-    // actually render in this specific test: emptySchedule has no reminders configured yet, so no
-    // custom-reminder chip — and therefore no (c) remove button — exists in this test's DOM; the
-    // loop below still checks whichever controls emptySchedule does produce. (ProjectHeader.tsx
+    // quincy/Button.tsx:53-63, applied to every button built through buttonClasses() (Clear,
+    // Save, Resume reminders, Add); and (c) ProjectDeadlineControl.tsx's REMINDER_TOGGLE — the
+    // advance-reminder toggle chips (#213 follow-up), hand-written and NOT built through
+    // buttonClasses(). All three render in this specific test: the editor is live from mount, and
+    // the preset chips exist even for emptySchedule; the loop below checks every control. (ProjectHeader.tsx
     // and CollectionPanel.tsx have their own hardcoded outline literals too, but those belong
     // to separate components this test never mounts — out of scope for this inventory, not part
     // of it.) Each of (a)-(c) keeps the outline visible, but by two different routes. (a) and (c)
@@ -158,7 +164,6 @@ describe("ProjectDeadlineControl", () => {
     // these three sites construct their outline classes dynamically, so nothing outside this
     // fixed, inspected set can ever reach this test's mounted controls' className.
     const host = await mount(emptySchedule);
-    await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     const controls = [...host.querySelectorAll<HTMLElement>("input, button")];
     expect(controls.length).toBeGreaterThan(0);
     for (const control of controls) {
@@ -262,12 +267,10 @@ describe("ProjectDeadlineControl", () => {
     queryClient.setQueryData(projectDataKeys.detail(projectId), { id: projectId });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const publish = vi.spyOn(runtime, "publish");
-    const set = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
-    await act(async () => { set.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
-    const preset = [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((input) => input.parentElement?.textContent?.includes("1 day"))!;
-    await act(async () => { preset.click(); await Promise.resolve(); });
+    await act(async () => { toggle(host, "1 day").click(); await Promise.resolve(); });
+    const onSavedCalls = onSaved.mock.calls.length;
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 0, deadline: { localCivil: "2027-01-15T09:00" }, reminderOffsetsMinutes: [1440] });
@@ -276,13 +279,15 @@ describe("ProjectDeadlineControl", () => {
     expect(invalidate.mock.calls.some(([options]) => options?.queryKey?.[0] === "production-calendar")).toBe(false);
     expect(publish.mock.calls.map(([message]) => message.type)).toEqual(expect.arrayContaining(["project-data-invalidated", "dashboard-board-invalidated", "production-calendar-invalidated"]));
     expect(publish.mock.calls.find(([message]) => message.type === "project-data-invalidated")?.[0]).toMatchObject({ projectId, resources: [{ kind: "detail" }, { kind: "activity" }] });
-    expect(host.textContent).toContain("2027-01-15 09:00");
+    // The draft is reseeded from the authoritative response and the popover is told to close.
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("09:00");
+    expect(onSaved.mock.calls.length).toBe(onSavedCalls + 1);
   });
 
   it("keeps the exact draft and exposes reapply controls on a version conflict", async () => {
     apiPutMock.mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: { ...activeSchedule, version: 2 } }));
     const host = await mount(emptySchedule);
-    await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
@@ -302,10 +307,9 @@ describe("ProjectDeadlineControl", () => {
       .mockRejectedValueOnce(new ApiError("Project deadline changed; reload before saving.", 409, { current: authorityAfterConflict }))
       .mockResolvedValueOnce({ changed: true, current: savedDraftSchedule, eventIntent: null, publicationIds: [] });
     const host = await mount(emptySchedule);
-    await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2026-04-05");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "02:30");
-    await act(async () => { host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(); await Promise.resolve(); });
+    await act(async () => { toggle(host, "1 day").click(); await Promise.resolve(); });
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
     await flush();
     await act(async () => { host.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1]!.click(); await Promise.resolve(); });
@@ -321,7 +325,7 @@ describe("ProjectDeadlineControl", () => {
     await act(async () => { [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Review and reapply my draft")!.click(); await Promise.resolve(); });
     expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2026-04-05");
     expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("02:30");
-    expect(host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(true);
+    expect(toggle(host, "1 day").getAttribute("aria-pressed")).toBe("true");
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
     await flush();
     expect(apiPutMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/deadline`, { expectedVersion: 2, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [1440] });
@@ -329,7 +333,6 @@ describe("ProjectDeadlineControl", () => {
 
   it("keeps a dirty, unsaved draft through a background schedule refresh unrelated to any save attempt", async () => {
     const host = await mount(emptySchedule);
-    await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
 
@@ -361,13 +364,48 @@ describe("ProjectDeadlineControl", () => {
     expect(host.querySelectorAll("button")).toHaveLength(0);
   });
 
+  it("is a live editor from mount, seeded from the schedule, and holds the project-detail query owner only for a writer (#213)", async () => {
+    const host = await mount(activeSchedule);
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-01-15");
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("09:00");
+    expect(toggle(host, "1 day").getAttribute("aria-pressed")).toBe("true");
+    expect(toggle(host, "4 hours").getAttribute("aria-pressed")).toBe("false");
+    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["Clear", "Save"]));
+    expect(host.textContent).not.toContain("Edit Deadline");
+    expect(runtime.isOwned(projectDataKeys.detail(projectId))).toBe(true);
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    expect(runtime.isOwned(projectDataKeys.detail(projectId))).toBe(false);
+    root = null;
+
+    const viewer = await mount(activeSchedule, false);
+    expect(viewer.querySelector('input[aria-label="Deadline date"]')).toBeNull();
+    expect(viewer.querySelectorAll("button")).toHaveLength(0);
+    expect(runtime.isOwned(projectDataKeys.detail(projectId))).toBe(false);
+  });
+
+  it("adds a custom reminder as a pressed chip through + custom, and pressing that chip off removes it (#213)", async () => {
+    const host = await mount(emptySchedule);
+    expect(host.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
+    const custom = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "+ custom")!;
+    expect(custom.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => { custom.click(); await Promise.resolve(); });
+    expect(custom.getAttribute("aria-expanded")).toBe("true");
+    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Custom reminder minutes"]')!, "45");
+    await act(async () => { [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!.click(); await Promise.resolve(); });
+    expect(host.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
+    expect(toggle(host, "45 minutes").getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).toContain("(1/8)");
+    await act(async () => { toggle(host, "45 minutes").click(); await Promise.resolve(); });
+    expect([...host.querySelectorAll("button[aria-pressed]")].map((button) => button.textContent)).not.toContain("45 minutes");
+    expect(host.textContent).toContain("(0/8)");
+  });
+
   it("keeps a repeated Sydney time draft until an explicit fold is chosen", async () => {
     apiPutMock.mockRejectedValueOnce(new ApiError("That Sydney time occurs twice. Choose Earlier or Later.", 400, {
       code: "deadline_repeated_local_time",
       choices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }],
     }));
     const host = await mount(emptySchedule);
-    await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2026-04-05");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "02:30");
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
@@ -382,7 +420,6 @@ describe("ProjectDeadlineControl", () => {
   it("keeps the date and time draft attached when Sydney rejects a DST gap", async () => {
     apiPutMock.mockRejectedValueOnce(new ApiError("That Sydney time does not exist because the clocks move forward.", 400, { code: "deadline_nonexistent_local_time" }));
     const host = await mount(emptySchedule);
-    await act(async () => { host.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); });
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2026-10-04");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "02:30");
     await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });

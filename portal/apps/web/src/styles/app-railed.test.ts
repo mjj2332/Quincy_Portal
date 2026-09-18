@@ -439,7 +439,11 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     const controls = ruleBody(appCss, ".project-header__controls");
     expect(controls, ".project-header__controls base rule").not.toBeNull();
     expect(controls).toMatch(/display:\s*grid/);
-    expect(controls).toMatch(/grid-template-columns:\s*max-content minmax\(0, 1fr\) max-content max-content/);
+    // #213 follow-up: Team is `auto`, not `1fr`, and the grid packs to the start — the Team box
+    // sizes to its chips and a short team leaves the row's free space at the end (prototype 2a),
+    // instead of a box stretched across whatever the other three cells leave.
+    expect(controls).toMatch(/grid-template-columns:\s*max-content minmax\(0, auto\) max-content max-content/);
+    expect(controls).toMatch(/justify-content:\s*start/);
     const cell = ruleBody(appCss, ".project-header__control");
     expect(cell, ".project-header__control base rule").not.toBeNull();
     expect(cell).toMatch(/border-inline-start:\s*1px solid var\(--border-hairline\)/);
@@ -469,5 +473,17 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     expect(appCss.indexOf("@container project-header (max-width: 859px) {")).toBeLessThan(appCss.indexOf(".project-header { padding: var(--space-4); }"));
     // The two-per-line layout must not also hang off the viewport — one source of truth.
     expect(mediaRule("1024px", ".project-header__controls")).toBeNull();
+  });
+
+  // #213 follow-up: prototype 2a closes the identity row with a hairline spanning the header's
+  // full width, so the rule sits on the identity row and bleeds through the header's side padding
+  // (`--space-6`, or `--space-4` at the 720px viewport where the header's own padding shrinks).
+  it("draws a full-bleed hairline under the header's identity row, in step with the header's side padding (#213)", () => {
+    const identity = ruleBody(appCss, ".project-header__identity");
+    expect(identity).toMatch(/border-bottom:\s*1px solid var\(--border-hairline\)/);
+    expect(identity).toMatch(/margin-inline:\s*calc\(-1 \* var\(--space-6\)\)/);
+    expect(identity).toMatch(/padding-inline:\s*var\(--space-6\)/);
+    expect(mediaRule("720px", ".project-header__identity")).toMatch(/margin-inline:\s*calc\(-1 \* var\(--space-4\)\)/);
+    expect(mediaRule("720px", ".project-header__identity")).toMatch(/padding-inline:\s*var\(--space-4\)/);
   });
 });

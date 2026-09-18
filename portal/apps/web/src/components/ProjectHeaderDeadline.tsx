@@ -11,7 +11,8 @@ import { DASHED_TRIGGER, HEADER_KV_VALUE, POPOVER_CONTENT, TRIGGER_CHEVRON } fro
 /**
  * #205 — the header's Deadline control (then a block in the rail's Production section, since #213 a
  * cell in the flat control row) is a dashed trigger that opens
- * `ProjectDeadlineControl` (unchanged) inside a `reui/popover.tsx` popover, the same primitive
+ * `ProjectDeadlineControl` (since the #213 follow-up a live editor laid out as prototype 1b, which
+ * closes this popover through `onSaved`) inside a `reui/popover.tsx` popover, the same primitive
  * `quincy/NotificationBell.tsx` vendored (see that file's own header for the Popover-not-Menu
  * rationale). The countdown badge (`lib/deadline-due-in.ts`) refreshes on a 60s interval — no
  * `setTimeout` chain, since a missed tick here is cosmetic, not a correctness bug.
@@ -82,7 +83,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
     </PopoverTrigger>
     <PopoverContent align="start" aria-label="Deadline" className={POPOVER_CONTENT}>
       <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
-      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} />
+      <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={() => setOpen(false)} />
     </PopoverContent>
   </Popover>;
 }

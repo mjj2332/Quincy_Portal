@@ -246,13 +246,19 @@ button { font-family: var(--font-sans); }
 .project-deadline__overdue { display: block; margin-top: 3px; font-size: 11px; color: var(--signal-critical); }
 .workmain { min-width: 0; display: flex; flex-direction: column; }
 .project-header { container: project-header / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-4); padding: var(--space-5) var(--space-6); background: var(--paper-000); border-bottom: 1px solid var(--border-hairline); }
-.project-header__identity { display: grid; gap: var(--space-2); }
+/* #213 follow-up: prototype 2a's row 1 closes with a hairline that spans the header's full width
+   (its own padding included) — so the rule is on the identity row and bleeds out through the
+   header's side padding; the 720px rule below narrows both values together with that padding. */
+.project-header__identity { display: grid; gap: var(--space-2); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-hairline); margin-inline: calc(-1 * var(--space-6)); padding-inline: var(--space-6); }
 .project-header__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); }
 /* #213: prototype 2a's row 2 — Stage · Team · Deadline · Dropbox in one line, a hairline divider
    between neighbours. A grid, not flex-wrap: the 1024/720 layouts below are then deterministic and
    each row's first cell can drop its divider by column position (CSS cannot see a flex wrap).
-   Team is the only fluid column; the other three size to their trigger. */
-.project-header__controls { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content max-content; align-items: start; row-gap: var(--space-4); }
+   Team is the only fluid column; the other three size to their trigger. Team is `auto`, not
+   `1fr`, with the grid packed to the start: an auto track only grows to its content, so a short
+   team leaves the row's free space at the end like the prototype instead of stretching the box,
+   and it still shrinks (from 0) when the row is short of room. */
+.project-header__controls { display: grid; grid-template-columns: max-content minmax(0, auto) max-content max-content; justify-content: start; align-items: start; row-gap: var(--space-4); }
 .project-header__control { min-width: 0; display: grid; align-content: start; gap: var(--space-2); padding-inline: var(--space-4); border-inline-start: 1px solid var(--border-hairline); }
 .project-header__control:first-child { padding-inline-start: 0; border-inline-start: 0; }
 .project-header__control:last-child { padding-inline-end: 0; }
@@ -277,6 +283,7 @@ button { font-family: var(--font-sans); }
 }
 @media (max-width: 720px) {
   .project-header { padding: var(--space-4); }
+  .project-header__identity { margin-inline: calc(-1 * var(--space-4)); padding-inline: var(--space-4); }
   /* #206: at 720px the shell is in sheet mode and the controls stack one per line. This one stays
      a viewport rule: with the padding above, the header's content is 688px here — wider than the
      693px a 1024px railed viewport gives — so the container width alone cannot tell the two apart.

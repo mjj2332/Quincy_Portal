@@ -383,12 +383,10 @@ afterEach(async () => {
     // itself prove what actually prevents cross-project draft leakage in production.
     // canEdit (and so ProjectDeadlineControl's canWrite) requires the editProject capability,
     // which only the admin role carries (portal/packages/shared/src/capabilities.ts) — the
-    // file's default authState.role = "editor" would hide the "Set Deadline" button entirely.
+    // file's default authState.role = "editor" would render the popover read-only, with no editor.
     authState.role = "admin";
     await render(<ProjectWorkspace key="p1" projectId="p1" />); await flush(20);
     const p1Dialog = await openDeadlineDialog(host);
-    const setDeadline = [...p1Dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Set Deadline")!;
-    await click(setDeadline);
     const dateInput = p1Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
     expect(dateInput).not.toBeNull();
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
@@ -426,8 +424,9 @@ afterEach(async () => {
     expect(document.querySelector('input[aria-label="Deadline date"]')).toBeNull();
     expect(document.body.textContent).not.toContain("2027-01-15");
     const p2Dialog = await openDeadlineDialog(host);
-    expect([...p2Dialog.querySelectorAll("button")].some((button) => button.textContent === "Edit Deadline")).toBe(true);
-    expect(p2Dialog.textContent).toContain("2028-06-01 10:00");
+    // p2's live editor is seeded from p2's own schedule, not p1's draft.
+    expect(p2Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2028-06-01");
+    expect(p2Dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')?.value).toBe("10:00");
   });
 
   it("hides passive-RAW private data in the same render as a membership 403", async () => {
