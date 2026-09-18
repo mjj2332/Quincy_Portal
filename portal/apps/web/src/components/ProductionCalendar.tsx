@@ -20,6 +20,7 @@ import { ApiError } from "../lib/api";
 import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib/production-calendar-query";
 import { fullCalendarCallbackToSydneyCivil } from "../lib/production-calendar-fullcalendar";
 import { checklistCurrentCivil, projectDeadlinePlaceholder, proposedCivilForAllDay } from "../lib/scheduling-policy";
+import type { CalendarDropInfo, CalendarResizeInfo } from "../lib/scheduling-types";
 import {
   applyOptimisticOverlay,
   type CalendarAcceptedSnapshot,
@@ -62,15 +63,10 @@ export type ProductionCalendarProps = {
 };
 
 // FullCalendar info shapes: the FC handlers below translate these into a SchedulingProposal
-// and call the hook. Exported so use-scheduling-commands.tsx can type its own moved state
-// (MoveDialogState.drop, ChecklistOperationInfo.drop/resize) against the same shapes.
-export type CalendarDropInfo = {
-  event: { allDay: boolean; start: Date | null; startStr: string; end: Date | null; endStr: string; extendedProps: { dto?: unknown } };
-  revert: () => void;
-};
-
-export type CalendarRevertable = { revert: () => void };
-
+// and call the hook. `CalendarDropInfo`/`CalendarRevertable`/`CalendarResizeInfo` moved to
+// `lib/scheduling-types.ts` (§216 fix round 5 item 2) since `use-scheduling-commands.tsx` types
+// its own moved state (MoveDialogState.drop, ChecklistOperationInfo.drop/resize) against them,
+// and a hook in `lib/` importing a type from a component contradicted the rule that file states.
 export type CalendarExternalDropInfo = {
   date: Date;
   dateStr: string;
@@ -81,11 +77,6 @@ export type CalendarExternalDropInfo = {
 export type CalendarExternalReceiveInfo = {
   event: { extendedProps?: { unscheduledId?: unknown; unscheduledKind?: unknown } };
   revert: () => void;
-};
-
-export type CalendarResizeInfo = CalendarDropInfo & {
-  startDelta?: { milliseconds?: number; days?: number; months?: number } | null;
-  endDelta?: { milliseconds?: number; days?: number; months?: number } | null;
 };
 
 function errorCode(error: unknown): string | undefined {

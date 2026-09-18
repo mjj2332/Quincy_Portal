@@ -73,7 +73,7 @@ import type {
   CalendarDropInfo,
   CalendarRevertable,
   CalendarResizeInfo,
-} from "../components/ProductionCalendar";
+} from "./scheduling-types";
 
 /**
  * §216 step 4: the scheduling/mutation controller extracted from `ProductionCalendar.tsx`. A
