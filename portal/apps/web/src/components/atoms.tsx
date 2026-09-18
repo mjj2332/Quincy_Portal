@@ -9,6 +9,10 @@ const stageColors: Record<ProjectStageKey, string> = {
   delivered: "var(--signal-positive)",
 };
 
+export function StageDot({ stageKey }: { stageKey: ProjectStageKey }) {
+  return <span aria-hidden="true" className="sdot" style={{ background: stageColors[stageKey] ?? stageColors.awaiting_raw }} />;
+}
+
 export function StatusBadge({ stageKey }: { stageKey: ProjectStageKey }) {
   const { presentationStageKey, stages } = useStages();
   const visibleStageKey = presentationStageKey(stageKey);
@@ -16,7 +20,7 @@ export function StatusBadge({ stageKey }: { stageKey: ProjectStageKey }) {
 
   return (
     <span className="row gap2">
-      <span className="sdot" style={{ background: stageColors[visibleStageKey] }} />
+      <StageDot stageKey={visibleStageKey} />
       <span className="ey">{stage?.label ?? visibleStageKey}</span>
     </span>
   );

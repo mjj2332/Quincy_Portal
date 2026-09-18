@@ -424,7 +424,7 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
   useLayoutEffect(() => {
     if (!restoreStageFocusRef.current || stageMovePending) return;
     restoreStageFocusRef.current = false;
-    const control = document.querySelector<HTMLSelectElement>(`[data-focus-key="rail-stage:${project.id}"]`);
+    const control = document.querySelector<HTMLButtonElement>(`[data-focus-key="rail-stage:${project.id}"]`);
     if (control && !control.disabled) control.focus();
   }, [project.id, project.stageKey, stageMovePending]);
   const autoHdrApiJobs = props.jobs.filter((job) => job.kind === "autohdr_api_send"); const latestAutoHdrApiJob = autoHdrApiJobs[0]; const autoHdrApiSendActive = autoHdrApiJobs.some(activeJob); const usesSendOnlyAutoHdrApi = autoHdrApiJobs.length > 0; const hasRawFolder = project.editedUploadAvailable ?? Boolean(project.rawFolderPath || project.rawFolderLink);

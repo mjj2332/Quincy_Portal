@@ -125,6 +125,18 @@ function click(el: Element) {
   });
 }
 
+function stageOption(label: string) {
+  return [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')]
+    .find((element) => element.textContent === label) ?? null;
+}
+
+async function chooseStage(trigger: HTMLButtonElement, label: string) {
+  await act(async () => { trigger.focus(); trigger.click(); await Promise.resolve(); });
+  const option = stageOption(label);
+  if (!option) throw new Error(`Missing Stage option ${label}`);
+  await act(async () => { option.click(); await Promise.resolve(); });
+}
+
 async function typeIntoEditor(editor: HTMLElement, text: string) {
   await act(async () => {
     editor.focus(); editor.textContent = text;
@@ -643,10 +655,9 @@ afterEach(async () => {
     queryClient!.setQueryData(dashboardKey, []);
     const dashboardObserver = new QueryObserver(queryClient!, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
     const stopDashboardObserver = dashboardObserver.subscribe(() => undefined);
-    const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]');
-    expect(select).not.toBeNull();
-    select!.value = "awaiting_raw";
-    await act(async () => { select!.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Move project Stage"]');
+    expect(trigger).not.toBeNull();
+    await chooseStage(trigger!, "Awaiting RAW"); await flush(20);
     expect(confirmMock).toHaveBeenCalledWith({ title: "Confirm Stage move", message: "This move moves backward. Continue?", confirmLabel: "Move project" });
     expect(apiPostMock).toHaveBeenNthCalledWith(2, "/api/projects/p1/stage", {
       expected: { stageKey: "raw_review", boardRevision: 7 }, targetStageKey: "awaiting_raw", placement: { kind: "append" }, confirmation: { reasons: ["backward"] },
@@ -677,17 +688,15 @@ afterEach(async () => {
     const runtime = getProjectQueryRuntime(queryClient!);
     const publish = vi.spyOn(runtime!, "publish");
     const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
-    const select = host.querySelector<HTMLSelectElement>('[data-focus-key="rail-stage:p1"]')!;
-    select.value = "edited_review";
-    await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-focus-key="rail-stage:p1"]')!;
+    await chooseStage(trigger, "Edited review"); await flush(20);
     expect(host.textContent).toContain("Already in Edited review.");
     expect(document.activeElement?.getAttribute("data-focus-key")).toBe("rail-stage:p1");
     expect(publish).not.toHaveBeenCalled();
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["dashboard-projects"], refetchType: "active" });
 
     apiPostMock.mockRejectedValueOnce(new ApiError("Board unavailable", 503, { code: "board_schema_maintenance" }));
-    select.value = "awaiting_raw";
-    await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    await chooseStage(trigger, "Awaiting RAW"); await flush(20);
     expect(host.textContent).toContain("Stage movement is temporarily unavailable while the Board is being updated.");
     expect(document.activeElement?.getAttribute("data-focus-key")).toBe("rail-stage:p1");
   });
@@ -704,9 +713,8 @@ afterEach(async () => {
     });
     apiPostMock.mockRejectedValueOnce(new ApiError("Stage movement forbidden", 403, { capability: "moveProjectStage" }));
     await render(<ProjectWorkspace projectId="p1" />); await flush();
-    const select = host.querySelector<HTMLSelectElement>('[data-focus-key="rail-stage:p1"]')!;
-    select.value = "awaiting_raw";
-    await act(async () => { select.focus(); select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); await flush(20);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-focus-key="rail-stage:p1"]')!;
+    await chooseStage(trigger, "Awaiting RAW"); await flush(20);
     expect(host.textContent).toContain("12 Example St");
     expect(host.textContent).toContain("Stage movement forbidden");
   });

@@ -370,6 +370,14 @@ describe("external-editor visibility inventory", () => {
 // per tab, identically for `external_editor` and `admin`, so it changes neither role's relative
 // visibility nor the leak/disappearance checks this file exists to enforce — see #110's build
 // report for the verification. Nothing else in either literal moved.
+//
+// Re-frozen again for #203: every `controls` list below gained one `"[input]"` entry per tab.
+// #203 replaces the Stage control's native `<select>` with the ReUI `Select` (Base UI
+// `@base-ui/react/select`), whose `Select.Root` always renders one visually-hidden `<input>`
+// (for form submission) as a sibling of the trigger/content, regardless of `name`. That element
+// has no accessible name and no `type`, so `accessibleName` renders it as `"[input]"` — additive,
+// present once per tab for both roles alike, and changes neither role's relative visibility.
+// Nothing else in either literal moved.
 // ---------------------------------------------------------------------------
 
 const FROZEN_EXTERNAL_EDITOR = {
@@ -436,6 +444,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Undo",
       "Video0",
       "[div]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   },
@@ -503,6 +512,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   },
@@ -560,6 +570,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Undo",
       "Video0",
       "[div]",
+      "[input]",
       "[placeholder] Final walkthrough",
       "[placeholder] https://vimeo.com/\u2026",
       "\u2190 Dashboard"
@@ -619,6 +630,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   },
@@ -676,6 +688,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   }
@@ -763,6 +776,7 @@ const FROZEN_ADMIN = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   },
@@ -838,6 +852,7 @@ const FROZEN_ADMIN = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   },
@@ -901,6 +916,7 @@ const FROZEN_ADMIN = {
       "Undo",
       "Video0",
       "[div]",
+      "[input]",
       "[placeholder] Final walkthrough",
       "[placeholder] https://vimeo.com/\u2026",
       "\u2190 Dashboard"
@@ -966,6 +982,7 @@ const FROZEN_ADMIN = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   },
@@ -1029,6 +1046,7 @@ const FROZEN_ADMIN = {
       "Video0",
       "[div]",
       "[input:file]",
+      "[input]",
       "\u2190 Dashboard"
     ]
   }

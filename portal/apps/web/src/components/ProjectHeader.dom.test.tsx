@@ -39,6 +39,23 @@ function render(value: ReactNode) {
   act(() => { root.render(value); });
 }
 
+function stageTrigger() {
+  return host.querySelector<HTMLButtonElement>('[aria-label="Move project Stage"][role="combobox"]');
+}
+
+async function openStage(trigger: HTMLButtonElement) {
+  await act(async () => { trigger.click(); await Promise.resolve(); });
+}
+
+function stageOption(label: string) {
+  return [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')]
+    .find((element) => element.textContent === label) ?? null;
+}
+
+async function clickOption(option: HTMLElement) {
+  await act(async () => { option.click(); await Promise.resolve(); });
+}
+
 describe("Project header Stage control", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -59,36 +76,48 @@ describe("Project header Stage control", () => {
     expect(host.textContent).toContain("editing_autohdr");
   });
 
-  it("does not request a stay, keeps an inactive current Stage visible, and allows escape", () => {
+  it("does not request a stay, keeps an inactive current Stage visible, and allows escape", async () => {
     const onStageMove = vi.fn();
     roleState.inactive = true;
     render(<ProjectHeader {...baseProps(project({ stageKey: "edited_review" }), onStageMove)} />);
-    const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
-    expect(select.getAttribute("data-focus-key")).toBe("rail-stage:project-1");
-    expect(select.disabled).toBe(false);
-    expect((select.querySelector('option[value="edited_review"]') as HTMLOptionElement | null)?.disabled).toBe(true);
-    select.value = "edited_review";
-    act(() => select.dispatchEvent(new Event("change", { bubbles: true })));
+    const trigger = stageTrigger()!;
+    expect(trigger.getAttribute("data-focus-key")).toBe("rail-stage:project-1");
+    expect(trigger.disabled).toBe(false);
+    await openStage(trigger);
+    const currentOption = stageOption("Edited review")!;
+    expect(currentOption).not.toBeNull();
+    expect(currentOption.getAttribute("aria-disabled")).toBe("true");
+    // Every option, and the trigger, renders the Stage's status dot beside its label.
+    const statusDot = (el: Element) => el.querySelector('span[aria-hidden="true"][style*="background"]');
+    const options = [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')];
+    expect(options.length).toBeGreaterThan(1);
+    for (const option of options) expect(statusDot(option)).not.toBeNull();
+    expect(statusDot(trigger)).not.toBeNull();
+    await clickOption(currentOption);
     expect(onStageMove).not.toHaveBeenCalled();
-    select.value = "raw_review";
-    act(() => select.dispatchEvent(new Event("change", { bubbles: true })));
+
+    // Clicking a disabled option leaves the listbox open (Base UI ignores the press); the next
+    // option is already on the page without re-opening the trigger.
+    const rawReviewOption = stageOption("RAW review")!;
+    expect(rawReviewOption).not.toBeNull();
+    await clickOption(rawReviewOption);
     expect(onStageMove).toHaveBeenCalledWith("raw_review");
   });
 
-  it("disables quietly when the contract is off and hides for archive or missing capability", () => {
+  it("disables quietly when the contract is off and hides for archive or missing capability", async () => {
     const onStageMove = vi.fn();
     render(<ProjectHeader {...baseProps(project({ contractEnabled: false }), onStageMove)} />);
-    const select = host.querySelector<HTMLSelectElement>('[aria-label="Move project Stage"]')!;
-    expect(select).toHaveProperty("disabled", true);
+    const trigger = stageTrigger()!;
+    expect(trigger).toHaveProperty("disabled", true);
     expect(host.textContent).toContain("temporarily unavailable");
-    // A disabled select must remain non-activatable: a change event must not move Stage.
-    select.value = "raw_review";
-    act(() => select.dispatchEvent(new Event("change", { bubbles: true })));
+    // A disabled trigger must remain non-activatable: opening it must not surface a listbox.
+    await openStage(trigger);
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
     expect(onStageMove).not.toHaveBeenCalled();
     act(() => { root.render(<ProjectHeader {...baseProps(project({ archivedAt: Date.now() }))} />); });
-    expect(host.querySelector('[aria-label="Move project Stage"]')).toBeNull();
+    expect(stageTrigger()).toBeNull();
     act(() => { roleState.role = "photographer"; root.render(<ProjectHeader {...baseProps(project())} />); });
-    expect(host.querySelector('[aria-label="Move project Stage"]')).toBeNull();
+    expect(stageTrigger()).toBeNull();
   });
 
   it("keeps the Dropbox sync button non-activatable while syncing is in progress", () => {
@@ -153,7 +182,7 @@ describe("Project header Stage control", () => {
   it("hides the Stage chevron and Dropbox sync icons from assistive tech, gives the sync button its exact accessible name, keeps the Blocked status readable, and nests no interactive element inside another", () => {
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} canUpload hasRawFolder autohdrBlocked isSyncing={false} />);
 
-    const chevron = host.querySelector('[aria-label="Move project Stage"]')!.parentElement!.querySelector("svg")!;
+    const chevron = stageTrigger()!.querySelector("svg")!;
     expect(chevron.getAttribute("aria-hidden")).toBe("true");
 
     const syncButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Sync from Dropbox"))!;
@@ -294,14 +323,17 @@ describe("Project header Stage control", () => {
     expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
   });
 
-  it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", () => {
+  it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", async () => {
     render(<ProjectHeader {...baseProps(project())} stageMovePending />);
-    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Move project Stage"]')!;
-    expect(select.disabled).toBe(true);
-    expect(select.getAttribute("aria-busy")).toBe("true");
+    const trigger = stageTrigger()!;
+    expect(trigger.disabled).toBe(true);
+    expect(trigger.getAttribute("aria-busy")).toBe("true");
     act(() => { root.render(<ProjectHeader {...baseProps(project())} stageMoveDisabledReason="Stage movement is paused." />); });
-    expect(select.disabled).toBe(false);
-    expect(select.getAttribute("aria-disabled")).toBe("true");
+    expect(trigger.disabled).toBe(false);
+    expect(trigger.getAttribute("aria-disabled")).toBe("true");
     expect(host.textContent).toContain("Stage movement is paused.");
+    // readOnly while the disabled reason is present: opening it must not surface a listbox.
+    await openStage(trigger);
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
 });

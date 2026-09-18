@@ -1,6 +1,6 @@
 import type { CollectionKind } from "@quincy/shared";
-import { ChevronDown, RefreshCw } from "lucide-react";
-import { StatusBadge } from "./atoms";
+import { RefreshCw } from "lucide-react";
+import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { ProjectTeamControl } from "./ProjectTeamControl";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
@@ -8,6 +8,7 @@ import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
 import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 import { Badge } from "@/components/reui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import { cn } from "../lib/utils";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
@@ -36,11 +37,13 @@ const HEADER_KV_VALUE =
   "vv [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
   "text-foreground [overflow-wrap:anywhere]";
 
-// Stage select styling — carried over verbatim from ProjectOverviewRail.tsx (#202).
+// Stage select styling — carried over from ProjectOverviewRail.tsx (#202), restyled from a
+// native <select> onto the ReUI select's SelectTrigger <button> (#203). `disabled:opacity-100`
+// keeps the rail's sunken disabled treatment instead of also fading it.
 const STAGE_SELECT =
-  "w-full appearance-none cursor-pointer text-left " +
+  "w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
   "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
-  "pl-[14px] pr-[var(--space-7)] py-[9px] " +
+  "pl-[14px] pr-[14px] py-[9px] " +
   "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] " +
   "bg-card border-border text-foreground " +
   "[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] " +
@@ -49,6 +52,13 @@ const STAGE_SELECT =
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2 " +
   "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:border-border disabled:cursor-not-allowed";
+
+function StageOption({ stageKey, label }: { stageKey: ProjectDetail["stageKey"]; label: string }) {
+  return <span className="inline-flex items-center gap-[var(--space-2)]">
+    <StageDot stageKey={stageKey} />
+    <span>{label}</span>
+  </span>;
+}
 
 function StageControl({ project, currentStageKey, stages, contractEnabled, pending, disabledReason, onMove }: {
   project: ProjectDetail;
@@ -65,24 +75,41 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
   // workspace can return focus to the same control while exposing the reason.
   // The contract-off state remains a genuinely disabled control.
   const disabled = pending || (!contractEnabled && !disabledReason);
+  const labelFor = (key: ProjectDetail["stageKey"]) => stages.find((item) => item.key === key)?.label ?? key;
   return <div className="grid gap-[var(--space-1)]">
     <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
       <span className={HEADER_KV_KEY}>Stage</span>
-      <span className={HEADER_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span>
     </div>
-    <label className="sr-only" htmlFor={`project-stage-${project.id}`}>Move project Stage</label>
-    <div className="relative">
-      <select id={`project-stage-${project.id}`} data-focus-key={`rail-stage:${project.id}`} aria-label="Move project Stage" value={currentStageKey} disabled={disabled} aria-disabled={unavailable ? "true" : undefined} aria-busy={pending || undefined} className={STAGE_SELECT} onChange={(event) => {
-        const next = event.target.value as ProjectDetail["stageKey"];
-        if (!unavailable && next !== currentStageKey) onMove?.(next);
-      }}>
-        {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => <option value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>{stage.label}</option>)}
-        {!current && <option value={currentStageKey}>{currentStageKey}</option>}
-      </select>
-      <ChevronDown aria-hidden="true"
-        className="pointer-events-none absolute right-[var(--space-3)] top-1/2 -translate-y-1/2
-                   size-[var(--space-3)] stroke-[1.5] text-foreground" />
-    </div>
+    <Select
+      value={currentStageKey}
+      disabled={disabled}
+      readOnly={Boolean(unavailable) && !disabled}
+      onValueChange={(next) => {
+        if (next == null || unavailable || next === currentStageKey) return;
+        const stage = stages.find((item) => item.key === next);
+        if (!stage?.active) return;
+        onMove?.(next as ProjectDetail["stageKey"]);
+      }}
+    >
+      <SelectTrigger
+        id={`project-stage-${project.id}`}
+        data-focus-key={`rail-stage:${project.id}`}
+        aria-label="Move project Stage"
+        aria-busy={pending || undefined}
+        aria-disabled={unavailable ? "true" : undefined}
+        className={STAGE_SELECT}
+      >
+        <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => (
+          <SelectItem value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>
+            <StageOption stageKey={stage.key} label={stage.label} />
+          </SelectItem>
+        ))}
+        {!current && <SelectItem value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
+      </SelectContent>
+    </Select>
     {unavailable && <span className="block mt-[var(--space-1)]
                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
                      text-foreground-secondary">{unavailable}</span>}
