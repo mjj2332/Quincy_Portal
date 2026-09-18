@@ -57,4 +57,37 @@ describe("ToastViewport action", () => {
     await flush();
     expect(container.querySelector('[data-testid="toast-action"]')).toBeNull();
   });
+
+  it("announcedElsewhere + action: wrapper has no aria-hidden, the message span is aria-hidden, and the action button is reachable by role/name (#216 fix round 1 item 1)", async () => {
+    const container = await mount(<ToastViewport />);
+    await act(async () => { pushToast("Undo available", "success", { announcedElsewhere: true, action: { label: "Undo", onAction: vi.fn() } }); await Promise.resolve(); });
+    await flush();
+    const wrapper = container.querySelector('[data-testid="toast"]');
+    expect(wrapper?.hasAttribute("aria-hidden")).toBe(false);
+    const spans = wrapper?.querySelectorAll("span") ?? [];
+    const glyphSpan = spans[0];
+    const messageSpan = spans[1];
+    expect(glyphSpan?.getAttribute("aria-hidden")).toBe("true");
+    expect(messageSpan?.getAttribute("aria-hidden")).toBe("true");
+    expect(messageSpan?.textContent).toBe("Undo available");
+    const actionButton = [...container.querySelectorAll("button")].find((button) => button.getAttribute("role") !== "presentation" && button.textContent === "Undo");
+    expect(actionButton).toBeDefined();
+    expect(actionButton?.getAttribute("data-testid")).toBe("toast-action");
+    expect(actionButton?.hasAttribute("aria-hidden")).toBe(false);
+  });
+
+  it("action without announcedElsewhere: nothing is aria-hidden but the glyph", async () => {
+    const container = await mount(<ToastViewport />);
+    await act(async () => { pushToast("Undo available", "success", { action: { label: "Undo", onAction: vi.fn() } }); await Promise.resolve(); });
+    await flush();
+    const wrapper = container.querySelector('[data-testid="toast"]');
+    expect(wrapper?.hasAttribute("aria-hidden")).toBe(false);
+    const spans = wrapper?.querySelectorAll("span") ?? [];
+    const glyphSpan = spans[0];
+    const messageSpan = spans[1];
+    expect(glyphSpan?.getAttribute("aria-hidden")).toBe("true");
+    expect(messageSpan?.hasAttribute("aria-hidden")).toBe(false);
+    const actionButton = container.querySelector('[data-testid="toast-action"]');
+    expect(actionButton?.hasAttribute("aria-hidden")).toBe(false);
+  });
 });

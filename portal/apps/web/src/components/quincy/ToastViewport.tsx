@@ -24,10 +24,17 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
       {toasts.map((item) => (
         <div
           key={item.id}
-          // Hidden from the accessibility tree, not from the screen: the event was already announced
-          // in the screen's own live region, and an aria-hidden node mutating inside a live region
-          // produces no announcement. #99
-          aria-hidden={item.announcedElsewhere ? "true" : undefined}
+          // Hidden from the accessibility tree, not from the screen: the event was already
+          // announced in the screen's own live region, and an aria-hidden node mutating inside a
+          // live region produces no announcement. #99. Two branches, per #216 fix round 1 item 1:
+          // an announcedElsewhere toast with no action hides the whole wrapper, as before — but a
+          // focusable control (the action button) must never sit inside an aria-hidden subtree
+          // (focusable + aria-hidden is itself invalid), so when there's an action the wrapper
+          // stays in the tree and only the message span is hidden instead (glyph span stays
+          // hidden either way) — the live region then announces just the action's label, which is
+          // exactly what's wanted: the toast's own message was already announced elsewhere, but an
+          // available action wasn't.
+          aria-hidden={item.announcedElsewhere && !item.action ? "true" : undefined}
           data-testid={toastTestId}
           data-tone={item.tone}
           className={cn(
@@ -36,7 +43,7 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
           )}
         >
           <span aria-hidden="true" className="shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{item.tone === "error" ? "!" : "✓"}</span>
-          <span>{item.message}</span>
+          <span aria-hidden={item.announcedElsewhere && item.action ? "true" : undefined}>{item.message}</span>
           {item.action && <button type="button" data-testid="toast-action" className="underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)]" onClick={() => { item.action!.onAction(); dismissToast(item.id); }}>{item.action.label}</button>}
         </div>
       ))}
