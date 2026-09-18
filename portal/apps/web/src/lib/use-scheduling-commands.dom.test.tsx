@@ -17,13 +17,14 @@ import {
   type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleDto,
   type DashboardCalendarState,
+  type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type ProductionCalendarRangeResponse,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
 import { confirm, confirmStore } from "../lib/confirm";
 import { useProductionCalendarRange } from "../lib/production-calendar-query";
-import { useSchedulingCommands, type SchedulingCommands } from "./use-scheduling-commands";
+import { useSchedulingCommands, type SchedulingCommands, type SubmitProposalOutcome } from "./use-scheduling-commands";
 import type { SchedulingProposal } from "./scheduling-policy";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,6 +73,10 @@ function deadlineEvent(deadlineLocalCivil = "2026-08-27T09:00", version = 8): Pr
     permissions: { canDrag: true, canResize: false },
     deadlineLocalCivil, deadlineVersion: version, reminderOffsetsMinutes: [1440, 60],
   };
+}
+
+function unscheduledProjectEntry(version = 8): ProjectCalendarUnscheduledEntryDto {
+  return { id: `project-deadline:${projectId}`, kind: "project_deadline", reason: "unscheduled", title: "Project handoff", project, permissions: { canDrag: true, canResize: false }, deadlineVersion: version, reminderOffsetsMinutes: [] };
 }
 
 function mutationBody(event: ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto, schedule: ChecklistScheduleDto) {
@@ -183,5 +188,49 @@ describe("useSchedulingCommands submitProposal", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
+  });
+
+  // §216 fix round 2 item 1
+  it("rejects a second submitProposal while the first is pending confirmation, with no side effects", async () => {
+    const event = deadlineEvent("2026-08-27T09:00", 8);
+    await render(response({ events: [event], unscheduled: [] }));
+    let resolveConfirm: (value: boolean) => void = () => {};
+    (confirm as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<boolean>((resolve) => { resolveConfirm = resolve; }));
+
+    const firstProposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "month", targetDate: "2026-08-29" } };
+    let firstOutcome: SubmitProposalOutcome | undefined;
+    await act(async () => { firstOutcome = commandsRef!.submitProposal(firstProposal); await Promise.resolve(); });
+    expect(firstOutcome).toEqual({ ok: true });
+    // The first submission is now mid-confirm (awaiting `resolveConfirm`) — commandLockRef stays
+    // active and settleRef.pending stays false, so a second submission must be rejected purely by
+    // canStartCommand()'s command-lock half of the gate, before it ever calls acceptForInteraction.
+    const secondProposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "month", targetDate: "2026-08-30" } };
+    let secondOutcome: SubmitProposalOutcome | undefined;
+    await act(async () => { secondOutcome = commandsRef!.submitProposal(secondProposal); await Promise.resolve(); });
+    expect(secondOutcome).toEqual({ ok: false, reason: "busy" });
+    expect(confirm).toHaveBeenCalledTimes(1);
+
+    await act(async () => { resolveConfirm(true); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
+    // Exactly one mutation fired, and it is the FIRST proposal's target (2026-08-29) — proof the
+    // rejected second call never touched the active snapshot/lock.
+    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
+  });
+
+  // §216 fix round 2 item 2
+  it("seeds the fold dialog with the attempted target civil time (not the pre-move/'Not scheduled' one), and completes the retry with the chosen fold", async () => {
+    const entry = unscheduledProjectEntry(8);
+    await render(response({ events: [], unscheduled: [entry] }));
+    const proposal: SchedulingProposal = { kind: "place", entity: "project_deadline", entry, target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T02:30" } };
+    await act(async () => { commandsRef!.submitProposal(proposal); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
+
+    expect(commandsRef!.moveDialog?.initialCivil).toBe("2026-04-05T02:30");
+    expect(commandsRef!.moveDialog?.foldChoices).toEqual([{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }]);
+
+    await act(async () => { commandsRef!.submitMoveDialog("2026-04-05T02:30", "later"); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [] }]);
   });
 });
