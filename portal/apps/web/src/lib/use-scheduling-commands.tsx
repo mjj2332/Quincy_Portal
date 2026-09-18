@@ -12,6 +12,7 @@ import {
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
   type CalendarEventTiming,
   type CalendarManipulationTarget,
+  type CalendarUnscheduledEntryDto,
   type ChecklistCalendarEventDto,
   type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistDisambiguation,
@@ -200,6 +201,13 @@ export type SchedulingCommands = {
   cancelChecklistFold: () => void;
   acceptForInteraction: <TEvent extends CalendarInteractionSource>(event: TEvent, focus: CalendarFocusDescriptor) => CalendarAcceptedSnapshot<TEvent> | null;
   canStartCommand: () => boolean;
+  /**
+   * #216 fix round 1 item 2: reads `acceptedResponseRef.current` (hook-private, synchronously
+   * fresh), not the `acceptedResponse` render-state snapshot — the external-drop handler stayed
+   * in `ProductionCalendar.tsx` and on `main` read the ref for exactly this reason; a render-state
+   * read there is a stale-closure risk the ref read never was.
+   */
+  findUnscheduledEntry: (id: string | undefined, kind: string | undefined) => CalendarUnscheduledEntryDto | undefined;
   refreshRecovery: () => Promise<void>;
   clearSettleOnNavigation: () => void;
   /** Announcement helpers the FullCalendar handlers (stayed in ProductionCalendar.tsx) still
@@ -431,6 +439,12 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
   // (`settleRef.current.pending`, `canStartCalendarCommand(commandLockRef.current)`) into one
   // predicate the component can call without reaching into hook-private refs.
   const canStartCommand = useCallback((): boolean => !settleRef.current.pending && canStartCalendarCommand(commandLockRef.current), []);
+
+  const findUnscheduledEntry = useCallback((id: string | undefined, kind: string | undefined): CalendarUnscheduledEntryDto | undefined => {
+    return acceptedResponseRef.current?.unscheduled.find((candidate) => candidate.id === id && (
+      kind === "project" ? candidate.kind === "project_deadline" : kind === "checklist" && candidate.kind === "checklist"
+    ));
+  }, []);
 
   const refetchAuthoritative = useCallback(async (): Promise<{ ok: boolean; data?: ProductionCalendarRangeResponse }> => {
     const token = operationTokenRef.current;
@@ -1109,6 +1123,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     cancelChecklistFold: handleChecklistFoldCancel,
     acceptForInteraction,
     canStartCommand,
+    findUnscheduledEntry,
     refreshRecovery,
     clearSettleOnNavigation,
     announceLifecycle,

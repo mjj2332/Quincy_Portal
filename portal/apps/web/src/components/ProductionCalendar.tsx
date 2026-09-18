@@ -206,6 +206,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     cancelChecklistFold: handleChecklistFoldCancel,
     acceptForInteraction,
     canStartCommand,
+    findUnscheduledEntry,
     refreshRecovery,
     clearSettleOnNavigation,
     announceLifecycle,
@@ -394,9 +395,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     }
     const unscheduledId = info.draggedEl.dataset.unscheduledId;
     const unscheduledKind = info.draggedEl.dataset.unscheduledKind;
-    const entry = acceptedResponse?.unscheduled.find((candidate) => candidate.id === unscheduledId && (
-      unscheduledKind === "project" ? candidate.kind === "project_deadline" : unscheduledKind === "checklist" && candidate.kind === "checklist"
-    ));
+    const entry = findUnscheduledEntry(unscheduledId, unscheduledKind);
     if (!entry || !canDragUnscheduledEntry(entry, rangesEnabled)) {
       return;
     }
@@ -434,7 +433,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       return;
     }
     mapChecklistCommand(snapshot as ChecklistSnapshot, entry, target, { external: true });
-  }, [acceptForInteraction, acceptedResponse, actionOnlyWeek, announceChecklistLifecycle, announceLifecycle, calendar.subview, calendarInteractionBlocked, canStartCommand, mapChecklistCommand, rangesEnabled, submitDeadlineProposal]);
+  }, [acceptForInteraction, actionOnlyWeek, announceChecklistLifecycle, announceLifecycle, calendar.subview, calendarInteractionBlocked, canStartCommand, findUnscheduledEntry, mapChecklistCommand, rangesEnabled, submitDeadlineProposal]);
 
   const handleUnscheduledReceive = useCallback((info: CalendarExternalReceiveInfo) => {
     info.revert();
