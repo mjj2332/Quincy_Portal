@@ -351,6 +351,32 @@ describe("Dashboard Calendar routing", () => {
     expect(host.textContent).toContain("Archived projects");
   });
 
+  // #217 fix round 2, item 1 (Sol's diff review). `selectProjectScope` never pushes a URL when
+  // `next === "archived"` and `view` is ALREADY "list" (the common case) -- the class-level bug is
+  // that `viewingArchived` changing recreates `navigateCalendar` (its own dep list), which
+  // re-registers the search-store's URL writer, and a re-registration must not strand a search
+  // that is still mid-debounce (or, defensively, one already committed) regardless of which
+  // specific call site triggered it.
+  it("type then select Archived while already on List (inside the debounce) still carries q into the URL", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    // Selected BEFORE the 300ms debounce elapses.
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  it("a committed q survives selecting Archived while already on List", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(window.location.search).toContain("q=smith");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("q=smith");
+  });
+
   it("disables Dashboard view navigation only while the Calendar accept gate is active", async () => {
     await render({ calendar: routeCalendar });
     const list = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;

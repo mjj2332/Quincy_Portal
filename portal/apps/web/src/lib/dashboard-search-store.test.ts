@@ -102,18 +102,43 @@ describe("dashboard-search-store", () => {
     expect(writer).not.toHaveBeenCalled();
   });
 
-  it("unregister FLUSHES the pending draft into query/lastWritten instead of dropping it (#217 fix round 1, item 3)", () => {
-    // Re-registration (a view/Calendar-facet change) must not silently lose whatever was
-    // mid-debounce: a caller synchronously reads the flushed `query` right after triggering the
-    // transition that causes re-registration, and builds its own URL from it.
-    const unregister = setDashboardSearchUrlWriter(vi.fn());
+  // #217 fix round 2, item 1 (Sol's diff review): superseded fix round 1 item 3's own
+  // "flush-on-unregister" design. That design settled `query` internally on unregister, but only a
+  // caller that ALSO happened to build its own URL synchronously right after triggering the
+  // transition ever got the value into a URL -- a re-registration with no such call site (e.g.
+  // `viewingArchived` flipping while already on List recreates `navigateCalendar` for reasons
+  // having nothing to do with search) silently stranded the pending value regardless. The pending
+  // timer must survive ANY unregister and fire later against whichever writer is registered then.
+  it("unregister does NOT flush or cancel a pending write -- the timer survives and fires later, against whichever writer is registered when it elapses", () => {
+    const oldWriter = vi.fn();
+    const newWriter = vi.fn();
+    const unregisterOld = setDashboardSearchUrlWriter(oldWriter);
     setDashboardSearchDraft("smith");
+    unregisterOld();
+    // Re-registration -- a view/Calendar-facet change tearing the writer down and back up, with no
+    // URL write of its own to carry the pending value.
+    setDashboardSearchUrlWriter(newWriter);
+
     expect(getDashboardSearchSnapshot().query).toBe("");
-    unregister();
-    expect(getDashboardSearchSnapshot().query).toBe("smith");
-    // The flush also cancelled the timer -- nothing left pending to fire later.
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
+
     expect(getDashboardSearchSnapshot().query).toBe("smith");
+    expect(oldWriter).not.toHaveBeenCalled();
+    expect(newWriter).toHaveBeenCalledExactlyOnceWith("smith");
+  });
+
+  it("an out-of-order unregister call does not null a writer a NEWER registration already installed", () => {
+    const oldWriter = vi.fn();
+    const newWriter = vi.fn();
+    const unregisterOld = setDashboardSearchUrlWriter(oldWriter);
+    setDashboardSearchUrlWriter(newWriter);
+    // The OLD registration's own unregister fires late (e.g. a stale effect cleanup) -- it must
+    // only null the writer if it is STILL the one it owns, never a newer one already in place.
+    unregisterOld();
+    commitDashboardSearchNow();
+    setDashboardSearchDraft("smith");
+    commitDashboardSearchNow();
+    expect(newWriter).toHaveBeenCalledWith("smith");
   });
 
   it("snapshot identity is stable across a no-op set", () => {

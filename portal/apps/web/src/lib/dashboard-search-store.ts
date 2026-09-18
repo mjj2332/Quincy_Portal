@@ -117,24 +117,29 @@ export function resetDashboardSearchForPrincipal(id: string): void {
 }
 
 /**
- * Returns an unregister function that nulls the writer and FLUSHES (not cancels) any pending
- * write (#217 fix round 1, item 3). `writer` is nulled first, so `commit()`'s own `if (writer
- * && ...)` check never fires the writer that is about to be torn down — this settles `query`/
- * `lastWritten` state only, a safety net for a re-registration this module cannot see coming
- * (a `view`/Calendar-facet change re-runs Dashboard.tsx's writer-registration effect, which
- * previously cancelled a pending commit outright and silently dropped it, Sol's diff review).
- * It does not, by itself, put the flushed value into a new URL: a caller that builds its OWN URL
- * synchronously for a reason other than typing (`selectView`, `reconcileAppliedCalendarFilters`)
- * still has to flush explicitly and read the fresh value into that URL itself, since this
- * teardown callback runs strictly after such a caller's own synchronous `history` write already
- * happened (effects run after render, not during the click handler) — firing the old writer here
- * would rewrite the URL with the OLD (pre-transition) view/facet a moment later, wrong.
+ * Returns an unregister function. #217 fix round 2, item 1 (Sol's diff review): a re-registration
+ * must not strand a search mid-debounce, REGARDLESS of which call site triggered it. The earlier
+ * fix (flush-on-unregister, round 1 item 3) only covered the two call sites that happened to flush
+ * for themselves before their own synchronous URL write; it did NOT cover a re-registration caused
+ * by something ELSE re-rendering with no URL write of its own to catch the flushed value — e.g.
+ * `viewingArchived` flipping while already on List recreates `navigateCalendar` (its own dep
+ * list includes `viewingArchived`) purely as a side effect, tearing the writer down and back up
+ * with no corresponding `history` call anywhere to carry a pending "smith" into. Flushing there
+ * (nulling `writer` then calling `commit()`) settled `query` internally but the writer was already
+ * gone, so the value was silently never written.
+ *
+ * The fix is at the class, not any one call site: unregistering NEVER touches the pending timer or
+ * `draft` — only the `writer` reference itself, guarded so an out-of-order call can't null a writer
+ * a NEWER registration already installed. A pending debounce keeps ticking across any number of
+ * re-registrations and fires `commit()` against whichever writer is registered when it elapses,
+ * which is exactly "keep the pending value in the store across unregister and commit it through
+ * the next registered writer". `adoptDashboardSearchFromUrl`'s own `clearTimer()` (the Back/Forward
+ * race fix) is unaffected — that is a deliberate, unrelated cancellation of a DIFFERENT kind.
  */
 export function setDashboardSearchUrlWriter(nextWriter: ((query: string) => void) | null): () => void {
   writer = nextWriter;
   return () => {
-    writer = null;
-    commit();
+    if (writer === nextWriter) writer = null;
   };
 }
 
