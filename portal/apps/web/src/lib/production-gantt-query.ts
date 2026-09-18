@@ -80,30 +80,82 @@ export type ProductionGanttInfiniteData = InfiniteData<ProductionGanttResponse, 
  * `mergeGanttChildPage` below are the two required call sites for that rule; do not flatten pages
  * any other way.
  */
-export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse[]): GanttProjectRowDto[] {
-  const byId = new Map<string, GanttProjectRowDto>();
-  for (const page of pages) {
-    for (const project of page.projects) {
+
+/**
+ * Single-slot memo for `flattenGanttProjectPages` (fix-218-r3 #2): `useInfiniteQuery` grows
+ * `pages` by appending one new page per fetch, keeping every earlier page's object reference
+ * unchanged. When the incoming `pages` array is an extension of the last array we fully walked
+ * (same references at every prior index), we only need to walk the NEW page(s) into the
+ * already-built `byId` map, instead of re-walking every accumulated row on every call — that
+ * re-walk was the O(n^2 / pageSize) cost this memo removes. Any other shape (a refetch that
+ * replaces one or more earlier pages with new objects, a shorter array, an unrelated query's
+ * pages) fails the reference check and falls back to a full rebuild, so this is a pure
+ * optimization: `flattenGanttProjectPages` always returns the same content for the same input,
+ * it just avoids redoing work it already did.
+ */
+let projectFlattenCache: { pages: readonly ProductionGanttResponse[]; byId: Map<string, GanttProjectRowDto> } | null = null;
+
+function pagesShareIndexablePrefix<T>(prev: readonly T[], next: readonly T[]): boolean {
+  if (prev.length > next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    if (prev[i] !== next[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * `onRowVisit`, when supplied, is called once per project row actually walked into the
+ * accumulator (not once per row in the final result) — it exists purely so tests can assert the
+ * walk stays linear without depending on wall-clock timing.
+ */
+export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse[], onRowVisit?: (row: GanttProjectRowDto) => void): GanttProjectRowDto[] {
+  const canReuse = projectFlattenCache !== null && pagesShareIndexablePrefix(projectFlattenCache.pages, pages);
+  const byId = canReuse ? projectFlattenCache!.byId : new Map<string, GanttProjectRowDto>();
+  const startIndex = canReuse ? projectFlattenCache!.pages.length : 0;
+  for (let i = startIndex; i < pages.length; i++) {
+    for (const project of pages[i].projects) {
       // Re-inserting an existing key moves it to the end of Map iteration order, so a duplicated
       // id lands at the position of its LATEST occurrence, carrying that occurrence's data.
       byId.delete(project.id);
       byId.set(project.id, project);
+      onRowVisit?.(project);
     }
   }
+  projectFlattenCache = { pages, byId };
   return [...byId.values()];
 }
 
+/**
+ * Single-slot memo for `mergeGanttChildPage`, same rationale as `projectFlattenCache` above: a
+ * caller re-invokes this with `existingRows` set to ITS OWN previous return value plus one new
+ * page, so when `existingRows` is reference-identical to the last array this function produced,
+ * we reuse the accumulator instead of rebuilding it from every already-merged row. A caller that
+ * passes a fresh `existingRows` (e.g. resetting state on a refetch) misses the cache and gets a
+ * correct full rebuild — never stale data.
+ */
+let childMergeCache: { existingRows: readonly GanttChecklistRowDto[]; byId: Map<string, GanttChecklistRowDto> } | null = null;
+
 /** Same latest-page-wins dedupe rule as `flattenGanttProjectPages`, for a project's children
  * accumulated one child page at a time (`fetchGanttChildPage`). `existingRows` is the
- * already-accumulated list; `page` is the newly fetched page to merge in. */
-export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[], page: ProductionGanttChildPageResponse): GanttChecklistRowDto[] {
-  const byId = new Map<string, GanttChecklistRowDto>();
-  for (const row of existingRows) byId.set(row.id, row);
+ * already-accumulated list; `page` is the newly fetched page to merge in. `onRowVisit` is the
+ * same test-only walk counter as `flattenGanttProjectPages`. */
+export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[], page: ProductionGanttChildPageResponse, onRowVisit?: (row: GanttChecklistRowDto) => void): GanttChecklistRowDto[] {
+  const canReuse = childMergeCache !== null && childMergeCache.existingRows === existingRows;
+  const byId = canReuse ? childMergeCache!.byId : new Map<string, GanttChecklistRowDto>();
+  if (!canReuse) {
+    for (const row of existingRows) {
+      byId.set(row.id, row);
+      onRowVisit?.(row);
+    }
+  }
   for (const row of page.children.rows) {
     byId.delete(row.id);
     byId.set(row.id, row);
+    onRowVisit?.(row);
   }
-  return [...byId.values()];
+  const result = [...byId.values()];
+  childMergeCache = { existingRows: result, byId };
+  return result;
 }
 
 export type ProductionGanttSelectedData = ProductionGanttInfiniteData & { projects: GanttProjectRowDto[] };

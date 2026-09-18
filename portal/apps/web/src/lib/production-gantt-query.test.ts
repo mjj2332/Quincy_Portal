@@ -208,6 +208,64 @@ describe("flattenGanttProjectPages (fix-218-r2 #1: live-data pagination contract
   });
 });
 
+describe("flattenGanttProjectPages incremental memo (fix-218-r3 #2: O(n), not O(n^2 / pageSize))", () => {
+  it("is a pure function: the same pages array yields the same content on repeat calls", () => {
+    const pages = [page([project("a"), project("b")]), page([project("c")])];
+    const first = flattenGanttProjectPages(pages);
+    const second = flattenGanttProjectPages(pages);
+    expect(second).toEqual(first);
+    expect(second.map((p) => p.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("merges correctly when pages grow by immutable append (the real useInfiniteQuery shape)", () => {
+    let pages: ProductionGanttResponse[] = [];
+    pages = [...pages, page([project("a"), project("b")])];
+    let flattened = flattenGanttProjectPages(pages);
+    expect(flattened.map((p) => p.id)).toEqual(["a", "b"]);
+
+    pages = [...pages, page([project("c")])];
+    flattened = flattenGanttProjectPages(pages);
+    expect(flattened.map((p) => p.id)).toEqual(["a", "b", "c"]);
+
+    // A duplicate arriving on the newly appended page still wins per the latest-page-wins rule.
+    pages = [...pages, page([project("a", { street: "Moved" })])];
+    flattened = flattenGanttProjectPages(pages);
+    expect(flattened.map((p) => p.id)).toEqual(["b", "c", "a"]);
+    expect(flattened.find((p) => p.id === "a")!.street).toBe("Moved");
+  });
+
+  it("never serves stale merged rows when a refetch replaces an earlier page (same length, new objects)", () => {
+    const firstPageV1 = page([project("a", { street: "A v1" })]);
+    const secondPage = page([project("b")]);
+    const before = flattenGanttProjectPages([firstPageV1, secondPage]);
+    expect(before.find((p) => p.id === "a")!.street).toBe("A v1");
+
+    // A fresh walk (e.g. after an invalidation) rebuilds page one with new data; the pages array
+    // is a new object at every index, so this must NOT reuse the earlier accumulator.
+    const firstPageV2 = page([project("a", { street: "A v2" })]);
+    const after = flattenGanttProjectPages([firstPageV2, secondPage]);
+    expect(after.find((p) => p.id === "a")!.street).toBe("A v2");
+    expect(after.map((p) => p.id)).toEqual(["a", "b"]);
+  });
+
+  it("walks each row exactly once across 200 sequential page arrivals (linear, not quadratic)", () => {
+    let visits = 0;
+    let pages: ProductionGanttResponse[] = [];
+    let result: GanttProjectRowDto[] = [];
+    for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+      const rows = Array.from({ length: 100 }, (_, rowIndex) => project(`p${pageIndex}-${rowIndex}`));
+      pages = [...pages, page(rows)];
+      result = flattenGanttProjectPages(pages, () => {
+        visits += 1;
+      });
+    }
+    expect(result).toHaveLength(20_000);
+    // 200 pages x 100 rows, each row visited exactly once across the whole 200-call walk: O(n),
+    // not the O(n^2 / pageSize) re-walk-every-accumulated-row behaviour this memo replaces.
+    expect(visits).toBe(20_000);
+  });
+});
+
 describe("mergeGanttChildPage (fix-218-r2 #1: same contract for a project's children)", () => {
   it("dedupes a child across pages, keeping the later page's data and position", () => {
     const early = checklistRow("dup", { position: 0, title: "Old title" });
@@ -224,5 +282,35 @@ describe("mergeGanttChildPage (fix-218-r2 #1: same contract for a project's chil
     const afterFirst = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a"), checklistRow("b")], total: 3, returned: 2, truncated: true, nextCursor: "x" } });
     const merged = mergeGanttChildPage(afterFirst, { projectId: "p1", children: { rows: [checklistRow("c")], total: 3, returned: 1, truncated: false, nextCursor: null } });
     expect(merged.map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("mergeGanttChildPage incremental memo (fix-218-r3 #2: O(n), not O(n^2 / pageSize))", () => {
+  it("never serves stale merged rows when the caller resets existingRows (fresh accumulation)", () => {
+    const afterFirst = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a", { title: "A v1" })], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    expect(afterFirst.find((r) => r.id === "a")!.title).toBe("A v1");
+
+    // Caller resets its own state (e.g. re-expanding after a refetch) and starts a fresh walk
+    // from an empty accumulator, not the previous chain's `afterFirst`.
+    const fresh = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a", { title: "A v2" })], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    expect(fresh.find((r) => r.id === "a")!.title).toBe("A v2");
+  });
+
+  it("walks each row exactly once across 200 sequential child-page arrivals (linear, not quadratic)", () => {
+    let visits = 0;
+    let existingRows: GanttChecklistRowDto[] = [];
+    for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+      const rows = Array.from({ length: 100 }, (_, rowIndex) => checklistRow(`c${pageIndex}-${rowIndex}`, { position: pageIndex * 100 + rowIndex }));
+      const isLast = pageIndex === 199;
+      existingRows = mergeGanttChildPage(
+        existingRows,
+        { projectId: "p1", children: { rows, total: 20_000, returned: 100, truncated: !isLast, nextCursor: isLast ? null : "x" } },
+        () => {
+          visits += 1;
+        },
+      );
+    }
+    expect(existingRows).toHaveLength(20_000);
+    expect(visits).toBe(20_000);
   });
 });
