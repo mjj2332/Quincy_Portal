@@ -1,6 +1,6 @@
 import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type SaveChecklistScheduleRequest, type SaveProjectDeadlineRequest } from "@quincy/shared";
 import { ApiError, apiPatch, apiPut } from "./api";
-import type { ChecklistMutationResult } from "./production-calendar-query";
+import type { ChecklistMutationResult } from "./scheduling-types";
 import { checklistInputFromSchedule, type ChecklistSource } from "./scheduling-policy";
 
 /**

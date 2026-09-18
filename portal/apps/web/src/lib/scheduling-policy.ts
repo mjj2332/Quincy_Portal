@@ -31,8 +31,7 @@ import {
 } from "@quincy/shared";
 import { ApiError } from "./api";
 import { cloneSource } from "./production-calendar-interaction";
-import type { ChecklistMutationResult } from "./production-calendar-query";
-import type { SaveResponse } from "./scheduling-types";
+import type { ChecklistMutationResult, SaveResponse } from "./scheduling-types";
 
 export type ChecklistSource = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 

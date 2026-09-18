@@ -23,6 +23,7 @@ import { projectQueryRetry } from "./project-data";
 import { staffPathFor } from "./router";
 import type { DashboardIdentity } from "./dashboard-projects";
 import { normalizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
+import type { ChecklistMutationResult } from "./scheduling-types";
 
 const DEFAULT_WINDOW = { start: "1970-01-01", end: "1970-01-02" } as const;
 const DEFAULT_FILTERS = productionCalendarFiltersSchema.parse({});
@@ -83,15 +84,10 @@ function responseSchemaFor(role: Role): { parse: (value: unknown) => ProductionC
   throw new RangeError("Photographers do not have a Production Calendar response domain.");
 }
 
-export type ChecklistMutationResult = {
-  id: string;
-  title: string;
-  done: boolean;
-  assignee: CalendarPerson | null;
-  position: number;
-  schedule: ChecklistScheduleDto;
-  scheduleVersion: number;
-};
+// §216 fix round 2 item 4: single definition lives in scheduling-types.ts (a neutral module, so
+// scheduling-policy.ts/scheduling-undo.ts import no query-layer file for this type); re-exported
+// here so this module's own (query-layer) importers are untouched.
+export type { ChecklistMutationResult } from "./scheduling-types";
 
 const mutationEndpointSchema = z.object({
   kind: z.enum(["date", "timed"]),
