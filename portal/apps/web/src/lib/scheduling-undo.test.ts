@@ -26,13 +26,13 @@ function checklistEvent(version: number, start: string, end: string): ChecklistC
   };
 }
 
-function deadlineEvent(version: number, deadlineLocalCivil: string, reminderOffsetsMinutes: number[]): ProjectDeadlineCalendarEventDto<"editing"> {
+function deadlineEvent(version: number, deadlineLocalCivil: string, reminderOffsetsMinutes: number[], instant = "2026-08-26T23:00:00.000Z"): ProjectDeadlineCalendarEventDto<"editing"> {
   return {
     id: `project-deadline:${PROJECT_ID}`,
     kind: "project_deadline",
     title: "Deadline",
     project: project(),
-    timing: { allDay: false, start: "2026-08-26T23:00:00.000Z", end: null },
+    timing: { allDay: false, start: instant, end: null },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     permissions: { canDrag: true, canResize: false },
     deadlineLocalCivil,
@@ -77,6 +77,26 @@ describe("buildDeadlineUndoTicket", () => {
     const before = deadlineEvent(8, "2026-08-27T09:00", [1440, 60]);
     const ticket = buildDeadlineUndoTicket(before, { version: 8, deadline: { localCivil: "2026-08-27T09:00", instant: "2026-08-26T23:00:00.000Z" }, reminderOffsetsMinutes: [1440, 60] });
     expect(ticket).toBeNull();
+  });
+
+  it("does not send a disambiguation for a non-ambiguous civil time", () => {
+    const before = deadlineEvent(8, "2026-08-27T09:00", [1440, 60], "2026-08-26T23:00:00.000Z");
+    const ticket = buildDeadlineUndoTicket(before, { version: 9, deadline: { localCivil: "2026-08-29T09:00", instant: "2026-08-28T23:00:00.000Z" }, reminderOffsetsMinutes: [1440, 60] });
+    expect(ticket?.kind).toBe("deadline");
+    if (ticket?.kind !== "deadline") throw new Error("expected a deadline ticket");
+    expect(ticket.request.deadline).toEqual({ localCivil: "2026-08-27T09:00" });
+  });
+
+  it("round-trips the earlier fold occurrence of the April DST repeat (2026-04-05T02:30)", () => {
+    const before = deadlineEvent(8, "2026-04-05T02:30", [1440, 60], "2026-04-04T15:30:00.000Z");
+    const ticket = buildDeadlineUndoTicket(before, { version: 9, deadline: { localCivil: "2026-04-06T09:00", instant: "2026-04-05T23:00:00.000Z" }, reminderOffsetsMinutes: [1440, 60] });
+    expect(ticket).toMatchObject({ request: { deadline: { localCivil: "2026-04-05T02:30", disambiguation: "earlier" } } });
+  });
+
+  it("round-trips the later fold occurrence of the April DST repeat (2026-04-05T02:30)", () => {
+    const before = deadlineEvent(8, "2026-04-05T02:30", [1440, 60], "2026-04-04T16:30:00.000Z");
+    const ticket = buildDeadlineUndoTicket(before, { version: 9, deadline: { localCivil: "2026-04-06T09:00", instant: "2026-04-05T23:00:00.000Z" }, reminderOffsetsMinutes: [1440, 60] });
+    expect(ticket).toMatchObject({ request: { deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" } } });
   });
 });
 

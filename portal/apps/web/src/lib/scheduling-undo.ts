@@ -1,4 +1,4 @@
-import type { ProjectDeadlineCalendarEventDto, SaveChecklistScheduleRequest, SaveProjectDeadlineRequest } from "@quincy/shared";
+import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type SaveChecklistScheduleRequest, type SaveProjectDeadlineRequest } from "@quincy/shared";
 import { ApiError, apiPatch, apiPut } from "./api";
 import type { ChecklistMutationResult } from "./production-calendar-query";
 import { checklistInputFromSchedule, type ChecklistSource } from "./scheduling-policy";
@@ -32,19 +32,46 @@ export function buildChecklistUndoTicket(before: ChecklistSource, result: Checkl
 }
 
 /**
+ * Sydney civil time is ambiguous exactly once a year (the April DST fold) — restoring a repeated
+ * civil string without a disambiguation resolves it against the *current* wall-clock rule, which
+ * can silently land on the wrong side of the fold, or (if the resolver requires one) reject the
+ * restore outright with `repeated_local_time`. Reuses the existing shared resolver
+ * (`resolveSydneyCivilMinute`) rather than a second one: call it once with no disambiguation to
+ * detect ambiguity, then once per side to find which side reproduces `before`'s original instant.
+ * Returns `undefined` for a non-ambiguous civil time (the common case) — no field is sent.
+ */
+function deadlineDisambiguationFor(before: ProjectDeadlineCalendarEventDto): "earlier" | "later" | undefined {
+  const localCivil = before.deadlineLocalCivil;
+  const plain = resolveSydneyCivilMinute(localCivil);
+  if (plain.ok || plain.code !== "repeated_local_time") return undefined;
+  const beforeInstant = before.timing.start;
+  const earlier = resolveSydneyCivilMinute(localCivil, "earlier");
+  if (earlier.ok && earlier.value.instant === beforeInstant) return "earlier";
+  const later = resolveSydneyCivilMinute(localCivil, "later");
+  if (later.ok && later.value.instant === beforeInstant) return "later";
+  // Neither side reproduces the original instant (defensive only — before.timing.start should
+  // always be one of the two candidates for its own deadlineLocalCivil). Sending no
+  // disambiguation here is the fail-safe: the resolver still accepts an unambiguous restore and
+  // only asks again if the wall-clock time really is repeated.
+  return undefined;
+}
+
+/**
  * `null` when the forward edit produced no version change — nothing to undo. Otherwise the
  * ticket's `expectedVersion` is the version the server returned from the forward edit, and the
- * payload restores `before.deadlineLocalCivil` + `before.reminderOffsetsMinutes`.
+ * payload restores `before.deadlineLocalCivil` + `before.reminderOffsetsMinutes`, with a
+ * `disambiguation` only when `before.deadlineLocalCivil` is itself an ambiguous (fold) civil time.
  */
 export function buildDeadlineUndoTicket(before: ProjectDeadlineCalendarEventDto, current: { version: number; deadline: null | { localCivil: string; instant: string }; reminderOffsetsMinutes: number[] }): UndoTicket | null {
   if (current.version === before.deadlineVersion) return null;
+  const disambiguation = deadlineDisambiguationFor(before);
   return {
     kind: "deadline",
     projectId: before.project.id,
     expectedVersion: current.version,
     request: {
       expectedVersion: current.version,
-      deadline: { localCivil: before.deadlineLocalCivil },
+      deadline: { localCivil: before.deadlineLocalCivil, ...(disambiguation ? { disambiguation } : {}) },
       reminderOffsetsMinutes: [...before.reminderOffsetsMinutes],
     },
   };
