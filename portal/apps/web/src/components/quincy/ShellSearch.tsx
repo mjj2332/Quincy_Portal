@@ -71,8 +71,10 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
 ) {
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
-  // The ⌘K hint means nothing once the Sheet is open — `RailedShell`'s own listener is inert
-  // there — so it is dropped alongside the collapsed case, not just hidden by width.
+  // The ⌘K hint has nowhere useful to point inside the Sheet — there is no persistent trigger to
+  // land on, only the inline input itself (which ⌘K now focuses directly, opening the Sheet if
+  // closed; see `RailedShell`) — so it is dropped alongside the collapsed case, not just hidden by
+  // width.
   const showShortcutHint = !isCollapsed && !isSheet;
   const search = useSyncExternalStore(subscribeDashboardSearch, getDashboardSearchSnapshot, getDashboardSearchSnapshot);
   const inputRef = useRef<HTMLInputElement>(null);

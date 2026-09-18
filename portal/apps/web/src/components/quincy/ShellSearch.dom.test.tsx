@@ -191,7 +191,7 @@ describe("ShellSearch — collapsed", () => {
 });
 
 describe("ShellSearch — sheet", () => {
-  it("shows the input inline, drops the ⌘K hint (inert there), and carries the touch-target seam", async () => {
+  it("shows the input inline, drops the ⌘K hint (nothing persistent for it to point at), and carries the touch-target seam", async () => {
     await renderInProvider({ variant: "sheet" });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     expect(input.getAttribute("aria-label")).toBe("Search projects");
