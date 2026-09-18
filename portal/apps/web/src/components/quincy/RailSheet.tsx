@@ -30,8 +30,10 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
  * just opened for it — the Sheet's own default open-focus behaviour (an animation-completion wait
  * an ancestor's plain `useEffect` cannot reliably out-race) is the reason this goes through Base
  * UI's own mechanism rather than an imperative `.focus()` call, same as `ShellSearch`'s `collapsed`
- * Popover already does. `RailedShell` returns `undefined` from its `initialFocus` function for an
- * ORDINARY hamburger-tap open, which keeps the Sheet's own default initial focus.
+ * Popover already does. `RailedShell` returns `true` (not `undefined` — `@base-ui/react/dialog`'s
+ * own `DialogPopup` prop docs spell that out as "do nothing", leaving focus on the trigger outside
+ * the modal, #217 fix round 2 item 2) from its `initialFocus` function for an ORDINARY
+ * hamburger-tap open, which uses the Sheet's own default initial focus.
  */
 export type RailSheetProps = {
   children: ReactNode;

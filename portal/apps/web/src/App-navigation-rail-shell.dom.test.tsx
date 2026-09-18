@@ -392,6 +392,24 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
       expect(document.activeElement).toBe(sheetTrigger(host));
     });
 
+    // #217 fix round 2, item 2 (Sol's diff review): `sheetInitialFocus()` returned `undefined` for
+    // an ORDINARY hamburger-tap open, which `@base-ui/react/dialog`'s own `DialogPopup` prop docs
+    // define as "do nothing" -- not "use the default behaviour" (that is `true`/`null`) -- so focus
+    // was left on the (now inert, outside the modal) trigger instead of moving into the Sheet.
+    it("an ordinary hamburger-tap open moves focus inside the Sheet, not left on the inert trigger", async () => {
+      const host = await renderAt("/");
+      await resizeTo(600);
+      await tick();
+      const trigger = sheetTrigger(host)!;
+
+      await click(trigger);
+
+      const dialog = document.querySelector('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      expect(document.activeElement).not.toBe(trigger);
+      expect(dialog?.contains(document.activeElement)).toBe(true);
+    });
+
     it("a scrim click closes the Sheet", async () => {
       const host = await renderAt("/");
       await resizeTo(600);

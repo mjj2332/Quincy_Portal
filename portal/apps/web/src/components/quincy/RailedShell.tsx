@@ -63,8 +63,11 @@ import { ShellHeader } from "./ShellHeader";
  * `initialFocus` (a one-shot pending flag, `pendingSheetSearchFocusRef`, consumed and cleared by
  * `sheetInitialFocus` below) — an imperative `.focus()` call from an ancestor effect is not
  * reliable here: the Sheet's own default open-focus behaviour resolves on its own
- * animation-completion timing and wins that race. `initialFocus` returning `undefined` for an
- * ORDINARY hamburger-tap open keeps the Sheet's own default target. The old
+ * animation-completion timing and wins that race. `initialFocus` returning `true` for an ORDINARY
+ * hamburger-tap open uses the Sheet's own default target — NOT `undefined`, which
+ * `@base-ui/react/dialog`'s own `DialogPopup` prop docs spell out as "do nothing" (leave focus on
+ * the, now inert, trigger outside the modal), a real #217 fix round 2 regression this file shipped
+ * with, not a hypothetical. The old
  * `suppressSheetFinalFocusRef`/custom `finalFocus` dance is gone — the rail no longer has a
  * second, Dashboard-owned input to preserve focus toward, so `RailSheet`'s Sheet closing (on any
  * location change, below) can restore focus to its own trigger the ordinary way.
@@ -154,12 +157,19 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
   }, [mode, sheetOpen]);
 
   // Base UI's own `initialFocus` mechanism (`RailSheet` -> `SheetContent` -> `Dialog.Popup`),
-  // called once per open — one-shot, not a `useEffect`, so an ORDINARY hamburger-tap open (which
-  // never sets the pending flag) returns `undefined` and keeps the Sheet's own default target.
-  function sheetInitialFocus(): HTMLElement | undefined {
-    if (!pendingSheetSearchFocusRef.current) return undefined;
+  // called once per open — one-shot, not a `useEffect`. Per `@base-ui/react/dialog`'s own
+  // `DialogPopup` prop docs (confirmed against the installed package, not assumed): a `function`
+  // return of an `HTMLElement` focuses it; `true` (or `null`) uses/falls back to the Popup's
+  // default behaviour; `false`/`undefined` mean "do nothing" — i.e. LEAVE focus where it was,
+  // outside the modal, on the (now inert) trigger (#217 fix round 2, item 2: the original
+  // `undefined` return for an ordinary hamburger-tap open was exactly this bug, not a no-op).
+  // An ORDINARY open (the pending flag never set) returns `true` for the Popup's own default
+  // target; a ⌘K-triggered open returns the search input, falling back to `true` rather than
+  // `undefined` in the unexpected case that element isn't available yet either.
+  function sheetInitialFocus(): true | HTMLElement {
+    if (!pendingSheetSearchFocusRef.current) return true;
     pendingSheetSearchFocusRef.current = false;
-    return sheetSearchRef.current?.getElement() ?? undefined;
+    return sheetSearchRef.current?.getElement() ?? true;
   }
 
   const contentColumn = (
