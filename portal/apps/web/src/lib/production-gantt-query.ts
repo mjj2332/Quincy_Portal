@@ -3,6 +3,8 @@ import {
   editorProductionGanttResponseSchema,
   externalProductionGanttSchema,
   productionGanttChildPageSchema,
+  type GanttChecklistRowDto,
+  type GanttProjectRowDto,
   type ProductionGanttChildPageResponse,
   type ProductionGanttResponse,
   type Role,
@@ -65,6 +67,47 @@ export function removeProductionGanttQueries(client: QueryClient, principalId: s
 
 export type ProductionGanttInfiniteData = InfiniteData<ProductionGanttResponse, string | undefined>;
 
+/**
+ * **Contract (fix-218-r2 #1):** a page is read against live data, not a snapshot. A project's
+ * sort key (`barStartDate`, derived from its `shoot_date`) can change between the request that
+ * minted a cursor and the request that consumes it — a keyset cursor over live data cannot
+ * prevent this server-side without a point-in-time snapshot, and this API intentionally does not
+ * add one (see `routes/production-gantt.ts` and `packages/shared/src/production-gantt.ts` for the
+ * matching server/DTO-side docblocks). Concretely: a row can appear on more than one page of the
+ * same walk if its sort key moves across the cursor boundary mid-walk. **Every consumer of
+ * multiple Gantt pages must dedupe by id, latest page wins** — the later occurrence carries the
+ * freshest data and reflects where the row currently sorts. `flattenGanttProjectPages` and
+ * `mergeGanttChildPage` below are the two required call sites for that rule; do not flatten pages
+ * any other way.
+ */
+export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse[]): GanttProjectRowDto[] {
+  const byId = new Map<string, GanttProjectRowDto>();
+  for (const page of pages) {
+    for (const project of page.projects) {
+      // Re-inserting an existing key moves it to the end of Map iteration order, so a duplicated
+      // id lands at the position of its LATEST occurrence, carrying that occurrence's data.
+      byId.delete(project.id);
+      byId.set(project.id, project);
+    }
+  }
+  return [...byId.values()];
+}
+
+/** Same latest-page-wins dedupe rule as `flattenGanttProjectPages`, for a project's children
+ * accumulated one child page at a time (`fetchGanttChildPage`). `existingRows` is the
+ * already-accumulated list; `page` is the newly fetched page to merge in. */
+export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[], page: ProductionGanttChildPageResponse): GanttChecklistRowDto[] {
+  const byId = new Map<string, GanttChecklistRowDto>();
+  for (const row of existingRows) byId.set(row.id, row);
+  for (const row of page.children.rows) {
+    byId.delete(row.id);
+    byId.set(row.id, row);
+  }
+  return [...byId.values()];
+}
+
+export type ProductionGanttSelectedData = ProductionGanttInfiniteData & { projects: GanttProjectRowDto[] };
+
 export function productionGanttInfiniteQueryOptions(identity: DashboardIdentity, filters: ProductionGanttFilters = DEFAULT_FILTERS, enabled = true) {
   const queryKey = productionGanttKey(identity, "active", filters);
   return {
@@ -78,6 +121,9 @@ export function productionGanttInfiniteQueryOptions(identity: DashboardIdentity,
       return decodeProductionGanttResponse(identity.role, response);
     },
     getNextPageParam: (lastPage: ProductionGanttResponse) => lastPage.page.nextCursor ?? undefined,
+    // The hook's selected data is always the deduped, flattened project list (fix-218-r2 #1) —
+    // callers never flatten `data.pages` themselves.
+    select: (data: ProductionGanttInfiniteData): ProductionGanttSelectedData => ({ ...data, projects: flattenGanttProjectPages(data.pages) }),
     enabled,
     staleTime: 15_000,
     gcTime: 5 * 60_000,
@@ -89,9 +135,9 @@ export function productionGanttInfiniteQueryOptions(identity: DashboardIdentity,
   } as const;
 }
 
-export function useProductionGanttProjects(identity: DashboardIdentity, filters: ProductionGanttFilters = DEFAULT_FILTERS, enabled = true): UseInfiniteQueryResult<ProductionGanttInfiniteData, Error> {
+export function useProductionGanttProjects(identity: DashboardIdentity, filters: ProductionGanttFilters = DEFAULT_FILTERS, enabled = true): UseInfiniteQueryResult<ProductionGanttSelectedData, Error> {
   const options = productionGanttInfiniteQueryOptions(identity, filters, enabled);
-  return useInfiniteQuery<ProductionGanttResponse, Error, ProductionGanttInfiniteData, typeof options.queryKey, string | undefined>(options) as UseInfiniteQueryResult<ProductionGanttInfiniteData, Error>;
+  return useInfiniteQuery<ProductionGanttResponse, Error, ProductionGanttSelectedData, typeof options.queryKey, string | undefined>(options) as UseInfiniteQueryResult<ProductionGanttSelectedData, Error>;
 }
 
 /**

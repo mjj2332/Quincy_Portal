@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import { PRODUCTION_GANTT_ZONE } from "@quincy/shared";
+import { PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionGanttResponse } from "@quincy/shared";
 import {
   decodeProductionGanttResponse,
+  flattenGanttProjectPages,
+  mergeGanttChildPage,
   productionGanttInfiniteQueryOptions,
   productionGanttKey,
   removeProductionGanttQueries,
@@ -21,6 +23,47 @@ function baseResponse() {
     projects: [],
     page: { limit: 100, returned: 0, nextCursor: null as string | null },
     density: { matchedProjects: 0, matchedRows: 0, drawCap: 2000, tooManyToDraw: false },
+  };
+}
+
+function project(id: string, overrides: Partial<GanttProjectRowDto> = {}): GanttProjectRowDto {
+  return {
+    id,
+    street: `${id} Street`,
+    suburb: null,
+    agencyName: null,
+    agentName: null,
+    stageKey: "awaiting_raw",
+    delivered: false,
+    shootDate: null,
+    shootDateCivil: null,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    barStartDate: "2026-08-01",
+    deadline: null,
+    deadlineVersion: 0,
+    editors: [],
+    checklist: { completed: 0, total: 0 },
+    permissions: { canEditDeadline: true, canEditChildren: true },
+    children: { rows: [], total: 0, returned: 0, truncated: false, nextCursor: null },
+    ...overrides,
+  };
+}
+
+function page(projects: GanttProjectRowDto[]): ProductionGanttResponse {
+  return { ...baseResponse(), projects, page: { limit: 100, returned: projects.length, nextCursor: null } };
+}
+
+function checklistRow(id: string, overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklistRowDto {
+  return {
+    id,
+    projectId: "p1",
+    title: `${id} title`,
+    done: false,
+    position: 0,
+    assignee: null,
+    schedule: { state: "unscheduled", version: 1, zone: "Australia/Sydney", start: null, end: null, due: null },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+    ...overrides,
   };
 }
 
@@ -110,5 +153,45 @@ describe("production gantt query family", () => {
     stop();
     runtime.dispose();
     queryClient.clear();
+  });
+});
+
+describe("flattenGanttProjectPages (fix-218-r2 #1: live-data pagination contract)", () => {
+  it("dedupes a project across pages, keeping the later page's data and position", () => {
+    const early = project("dup", { barStartDate: "2026-08-01", street: "Old Street" });
+    const late = project("dup", { barStartDate: "9999-01-01", street: "New Street" });
+    const flattened = flattenGanttProjectPages([page([early, project("a")]), page([project("b"), late])]);
+    expect(flattened.map((p) => p.id)).toEqual(["a", "b", "dup"]);
+    const kept = flattened.find((p) => p.id === "dup")!;
+    expect(kept).toBe(late);
+    expect(kept.street).toBe("New Street");
+  });
+
+  it("leaves order untouched when there are no duplicates", () => {
+    const flattened = flattenGanttProjectPages([page([project("a"), project("b")]), page([project("c")])]);
+    expect(flattened.map((p) => p.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("returns an empty list for no pages", () => {
+    expect(flattenGanttProjectPages([])).toEqual([]);
+  });
+});
+
+describe("mergeGanttChildPage (fix-218-r2 #1: same contract for a project's children)", () => {
+  it("dedupes a child across pages, keeping the later page's data and position", () => {
+    const early = checklistRow("dup", { position: 0, title: "Old title" });
+    const late = checklistRow("dup", { position: 50, title: "New title" });
+    const afterFirst = mergeGanttChildPage([], { projectId: "p1", children: { rows: [early, checklistRow("a")], total: 2, returned: 2, truncated: false, nextCursor: null } });
+    const merged = mergeGanttChildPage(afterFirst, { projectId: "p1", children: { rows: [checklistRow("b"), late], total: 2, returned: 2, truncated: false, nextCursor: null } });
+    expect(merged.map((r) => r.id)).toEqual(["a", "b", "dup"]);
+    const kept = merged.find((r) => r.id === "dup")!;
+    expect(kept).toBe(late);
+    expect(kept.title).toBe("New title");
+  });
+
+  it("leaves order untouched when there are no duplicates", () => {
+    const afterFirst = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a"), checklistRow("b")], total: 3, returned: 2, truncated: true, nextCursor: "x" } });
+    const merged = mergeGanttChildPage(afterFirst, { projectId: "p1", children: { rows: [checklistRow("c")], total: 3, returned: 1, truncated: false, nextCursor: null } });
+    expect(merged.map((r) => r.id)).toEqual(["a", "b", "c"]);
   });
 });

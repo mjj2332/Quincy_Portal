@@ -146,6 +146,18 @@ export type GanttProjectDeadlineDto = {
   overdue: boolean;
 } | null;
 
+/**
+ * **Live-data pagination contract (fix-218-r2 #1):** `ProductionGanttResponse.page` and a
+ * project's `children` page are both read against live data, not a point-in-time snapshot. A
+ * row's sort key (`barStartDate` for a project, `position` for a checklist row) can change
+ * between the request that minted a `nextCursor` and the request that consumes it, so a row whose
+ * sort key moves across the cursor boundary mid-walk may appear on more than one page of the same
+ * walk — a keyset cursor over live data cannot prevent this without a point-in-time snapshot, and
+ * this API intentionally does not add one. **Every client that accumulates multiple pages must
+ * dedupe by id, latest page wins** (the later occurrence carries the freshest data and reflects
+ * where the row currently sorts). `apps/web/src/lib/production-gantt-query.ts`'s
+ * `flattenGanttProjectPages`/`mergeGanttChildPage` are the required implementations of that rule.
+ */
 export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransportKey> = {
   id: string;
   street: string;
