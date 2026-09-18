@@ -4,7 +4,6 @@ import { InternalLink } from "./InternalLink";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
 import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
-import { buttonClasses } from "./quincy/Button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 import { Badge } from "@/components/reui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
@@ -23,10 +22,27 @@ function collectionLabel(value: string) {
   return value === "raw" ? "RAW" : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-const HEADER_SECTION_LABEL =
-  "mb-[var(--space-3)] " +
-  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] " +
-  "uppercase tracking-[var(--tracking-wide)] text-foreground";
+// #213: prototype 2a's "Edit details" is an underlined text link in the identity row, not a
+// button. `buttonClasses` deliberately carries `no-underline`, so this is its own small idiom;
+// inline-flex + min-height keeps the 44px target the rest of the header holds.
+const EDIT_DETAILS_LINK =
+  "inline-flex items-center min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
+  "underline [text-underline-offset:3px] decoration-border hover:decoration-foreground " +
+  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground " +
+  "transition-[text-decoration-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2";
+
+// #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title,
+// moved here from the work area's `.wsbar` chip. The 44px target is kept by the min-height; the
+// negative block margin gives that height back so the identity row keeps the prototype's 8px rhythm.
+const DASHBOARD_CRUMB =
+  "inline-flex items-center w-fit min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
+  "[margin-block:-12px] no-underline " +
+  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground-secondary hover:text-foreground " +
+  "transition-[color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
+  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
+  "focus-visible:outline-ring focus-visible:outline-offset-2";
 
 const HEADER_KV_KEY =
   "k [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
@@ -38,9 +54,11 @@ const HEADER_KV_VALUE =
 
 // Stage select styling — carried over from ProjectOverviewRail.tsx (#202), restyled from a
 // native <select> onto the ReUI select's SelectTrigger <button> (#203). `disabled:opacity-100`
-// keeps the rail's sunken disabled treatment instead of also fading it.
+// keeps the rail's sunken disabled treatment instead of also fading it. #213 follow-up: `w-fit`,
+// not the rail's `w-full` — in the stacked and two-per-line layouts the other three triggers are
+// content-sized, and a lone full-width select read as a different kind of control.
 const STAGE_SELECT =
-  "w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
+  "w-fit max-w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
   "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
   "pl-[14px] pr-[14px] py-[9px] " +
   "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] " +
@@ -75,10 +93,8 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
   // The contract-off state remains a genuinely disabled control.
   const disabled = pending || (!contractEnabled && !disabledReason);
   const labelFor = (key: ProjectDetail["stageKey"]) => stages.find((item) => item.key === key)?.label ?? key;
+  const reasonId = `project-stage-reason-${project.id}`;
   return <div className="grid gap-[var(--space-1)]">
-    <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-      <span className={HEADER_KV_KEY}>Stage</span>
-    </div>
     <Select
       value={currentStageKey}
       disabled={disabled}
@@ -96,6 +112,9 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         aria-label="Move project Stage"
         aria-busy={pending || undefined}
         aria-disabled={unavailable ? "true" : undefined}
+        // #206: the reason must be described, not just visually adjacent — only wired when a
+        // reason is actually shown below, since an absent target id would be worse than none.
+        aria-describedby={unavailable ? reasonId : undefined}
         className={STAGE_SELECT}
       >
         <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
@@ -109,7 +128,10 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         {!current && <SelectItem value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
       </SelectContent>
     </Select>
-    {unavailable && <span className="block mt-[var(--space-1)]
+    {/* #213 (Sol): the Stage column is `max-content`, so an unconstrained reason (75–89 characters)
+        would size the column to the sentence and push the row past 1280. `width: 0` removes it from
+        the column's intrinsic size; `min-width: 100%` then lets it wrap at the select's width. */}
+    {unavailable && <span id={reasonId} className="block mt-[var(--space-1)] [width:0] [min-width:100%]
                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
                      text-foreground-secondary">{unavailable}</span>}
   </div>;
@@ -153,6 +175,7 @@ export function ProjectHeader({
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
     <div className="project-header__identity">
+      <InternalLink className={DASHBOARD_CRUMB} to="/">← Dashboard</InternalLink>
       <h2 id="project-overview-property"
           className="[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground [text-wrap:pretty]">
         {project.street}
@@ -164,29 +187,36 @@ export function ProjectHeader({
         </span>
         <span><span className={HEADER_KV_KEY}>Shoot</span> <span className={HEADER_KV_VALUE}>{date(project.shootDate)}</span></span>
         <span><span className={HEADER_KV_KEY}>Client</span> <span className={HEADER_KV_VALUE}>{project.agencyName || project.agentName ? `${project.agencyName ?? "—"} · ${project.agentName ?? "—"}` : "—"}</span></span>
-        {canEdit && <InternalLink className={buttonClasses("secondary", { className: "min-h-[44px]" })} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
+        {canEdit && <InternalLink className={EDIT_DETAILS_LINK} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
       </div>
       {project.productionNotes && <p className={cn("project-header__notes", "m-0 [white-space:pre-wrap]",
                     "[font:var(--weight-regular)_var(--text-sm)/var(--leading-relaxed)_var(--font-body-serif)]",
                     "text-foreground-secondary")}>{project.productionNotes}</p>}
     </div>
 
+    {/* #213: prototype 2a's flat control row — four cells, one small label each, no section
+        headings. The cells are plain layout divs (a generic div cannot carry a name, #206 lesson);
+        every control inside already has its own accessible name. */}
     <div className="project-header__controls">
-      <section aria-labelledby="project-overview-production">
-        <div className={HEADER_SECTION_LABEL} id="project-overview-production">Production</div>
-        {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <div className="grid gap-[var(--space-1)] py-[var(--space-2)]"><span className={HEADER_KV_KEY}>Stage</span><span className={HEADER_KV_VALUE}><StatusBadge stageKey={project.stageKey} /></span></div>}
-        <ProjectHeaderDeadline projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
-      </section>
+      <div className="project-header__control">
+        <span className={HEADER_KV_KEY}>Stage</span>
+        {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={onStageMove} /> : <span className={cn(HEADER_KV_VALUE, "py-[var(--space-2)]")}><StatusBadge stageKey={project.stageKey} /></span>}
+      </div>
 
-      <section aria-labelledby="project-overview-team">
-        <div className={HEADER_SECTION_LABEL} id="project-overview-team">Team</div>
+      <div className="project-header__control">
+        <span className={HEADER_KV_KEY}>Team</span>
         <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} />
-      </section>
+      </div>
 
-      {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <section aria-labelledby="project-overview-dropbox">
-        <div className={HEADER_SECTION_LABEL} id="project-overview-dropbox">Dropbox</div>
+      <div className="project-header__control">
+        <span className={HEADER_KV_KEY}>Deadline</span>
+        <ProjectHeaderDeadline projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} />
+      </div>
+
+      {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <div className="project-header__control">
+        <span className={HEADER_KV_KEY}>Dropbox</span>
         <ProjectHeaderDropbox project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} />
-      </section>}
+      </div>}
     </div>
 
     <div className="project-header__tabs">
@@ -195,7 +225,8 @@ export function ProjectHeader({
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
             <TabsTrigger key={tab} value={tab} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
               {collectionLabel(tab)}
-              <Badge variant="primary-light" size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
+              {/* #213: the active tab's count is the filled ink badge, the rest stay muted (prototype 2a). */}
+              <Badge variant={tab === activeTab ? "default" : "primary-light"} size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
             </TabsTrigger>); })}
         </TabsList>
       </Tabs>

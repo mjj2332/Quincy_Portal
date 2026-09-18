@@ -245,15 +245,52 @@ button { font-family: var(--font-sans); }
 .kv .vv { text-align: right; }
 .project-deadline__overdue { display: block; margin-top: 3px; font-size: 11px; color: var(--signal-critical); }
 .workmain { min-width: 0; display: flex; flex-direction: column; }
-.project-header { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-4); padding: var(--space-5) var(--space-6); background: var(--paper-000); border-bottom: 1px solid var(--border-hairline); }
-.project-header__identity { display: grid; gap: var(--space-2); }
+.project-header { container: project-header / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-4); padding: var(--space-5) var(--space-6); background: var(--paper-000); border-bottom: 1px solid var(--border-hairline); }
+/* #213 follow-up: prototype 2a's row 1 closes with a hairline that spans the header's full width
+   (its own padding included) — so the rule is on the identity row and bleeds out through the
+   header's side padding; the 720px rule below narrows both values together with that padding. */
+.project-header__identity { display: grid; gap: var(--space-2); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-hairline); margin-inline: calc(-1 * var(--space-6)); padding-inline: var(--space-6); }
 .project-header__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); }
-.project-header__controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-4) var(--space-6); }
-.project-header__controls > section { min-width: 0; flex: 1 1 240px; max-width: 420px; }
+/* #213: prototype 2a's row 2 — Stage · Team · Deadline · Dropbox in one line, a hairline divider
+   between neighbours. A grid, not flex-wrap: the 1024/720 layouts below are then deterministic and
+   each row's first cell can drop its divider by column position (CSS cannot see a flex wrap).
+   Team is the only fluid column; the other three size to their trigger. Team is `auto`, not
+   `1fr`, with the grid packed to the start: an auto track only grows to its content, so a short
+   team leaves the row's free space at the end like the prototype instead of stretching the box,
+   and it still shrinks (from 0) when the row is short of room. */
+.project-header__controls { display: grid; grid-template-columns: max-content minmax(0, auto) max-content max-content; justify-content: start; align-items: start; row-gap: var(--space-4); }
+.project-header__control { min-width: 0; display: grid; align-content: start; gap: var(--space-2); padding-inline: var(--space-4); border-inline-start: 1px solid var(--border-hairline); }
+.project-header__control:first-child { padding-inline-start: 0; border-inline-start: 0; }
+.project-header__control:last-child { padding-inline-end: 0; }
 .project-header__tabs { min-width: 0; overflow-x: auto; }
 .project-header__tabs [role="tablist"] { height: auto; }
 .project-header__tabs [role="tab"] { min-height: 44px; /* WCAG 2.5.5 Enhanced target, not a spacing token */ flex: none; }
-@media (max-width: 720px) { .project-header { padding: var(--space-4); } }
+/* #206/#213: the control row wraps by the HEADER's width, not the viewport's — the rail (260px)
+   may or may not be open, so the same viewport can offer very different room. A container query
+   measures the content box (header width minus its side padding). Measured on the real header:
+   Stage 153 + Team's smallest useful width 180 + a scheduled Deadline with its Due/Overdue pill
+   ~300 + Dropbox 186 ≈ 820px, so four cells from 860px (a 1280px railed viewport gives 948);
+   two per line below that (1024 railed gives 693, each cell 347); one per line below 640px, where
+   a 320px cell no longer fits a scheduled Deadline (800 railed gives 468). */
+@container project-header (max-width: 859px) {
+  .project-header__controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .project-header__control:nth-child(odd) { padding-inline-start: 0; border-inline-start: 0; }
+  .project-header__control:nth-child(even) { padding-inline-end: 0; }
+}
+@container project-header (max-width: 639px) {
+  .project-header__controls { grid-template-columns: minmax(0, 1fr); }
+  .project-header__control { padding-inline: 0; border-inline-start: 0; }
+}
+@media (max-width: 720px) {
+  .project-header { padding: var(--space-4); }
+  .project-header__identity { margin-inline: calc(-1 * var(--space-4)); padding-inline: var(--space-4); }
+  /* #206: at 720px the shell is in sheet mode and the controls stack one per line. This one stays
+     a viewport rule: with the padding above, the header's content is 688px here — wider than the
+     693px a 1024px railed viewport gives — so the container width alone cannot tell the two apart.
+     It follows the container rules so that it wins at equal specificity. */
+  .project-header__controls { grid-template-columns: minmax(0, 1fr); }
+  .project-header__control { padding-inline: 0; border-inline-start: 0; }
+}
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }

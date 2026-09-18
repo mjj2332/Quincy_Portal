@@ -2819,3 +2819,116 @@ What the blind plan reviews caught:
 
 **Rule:** a column that stores "the latest X" is a list the moment X can happen twice inside the
 window you care about. And before a report goes on a screen, decide what clears it.
+
+## A focusable child inside a composite that owns keydown is a trap until you say otherwise (#206)
+
+The Team chip's × is a real `<button>`, but Base UI ships it with `tabIndex=-1` and expects
+removal to come from the chip's own Backspace/Delete path. #204 rejects that path on purpose
+(reason `"none"`), so keyboard users had no way to remove a member. Making the × a Tab stop
+(`removeProps.tabIndex = 0`) was the smallest fix and both blind plan reviews proposed it.
+
+What Sol's diff review caught, and the Base UI source confirmed:
+
+- **The parent chip answers every key it does not recognise with "stay here".** `ComboboxChip`'s
+  keydown returns its own index for Tab and then calls `.focus()` on the chip `div`. The
+  browser's default Tab then steps *from the chip div* to the next tabbable, which is the × inside
+  it. Forward Tab bounced back onto the same button. jsdom does no default Tab move, so
+  "activeElement is still the ×" after a bubbled Tab keydown is exactly the assertion that fails
+  before the fix and passes after: the parent did not steal focus.
+- **Stop the key, not the move.** `stopPropagation` on Tab in the ×'s own keydown keeps it from
+  the chip; `preventDefault` would have killed the traversal we were trying to enable. Arrow keys
+  still bubble so chip-to-chip navigation keeps working.
+- **The vendor's own gate can skip your handler.** The first fix used `onKeyDown`. Base UI's
+  `useButton` wraps the merged bubble handler and returns early while `disabled`, and the pending
+  × is disabled *and* still focusable (`focusableWhenDisabled`), so mid-removal the guard never
+  ran and that one state stayed trapped. The Spec review caught it from the `useButton` source;
+  `onKeyDownCapture` runs before the gate. When you attach a handler through a vendor's props
+  merge, read what wraps it, not just what it merges with.
+- **A named element's naming rules travel with its role.** `aria-label` on a plain `<div>` is not
+  a name, it is a lint error waiting for a checker. `role="group"` made the Deadline reminder
+  summary a legal target. Only a fixture with a deadline *set* renders that block, so the a11y
+  scan has to run against one.
+
+Two smaller ones from the same ticket:
+
+- **`ruleBody` finds the first matching selector, not the one in your media block**, and it splits
+  selector lists on commas, so a comment with a comma inside the block hides the rule that follows
+  it. Walk the braces to the block's end and strip comments before handing it the slice.
+- **A browser pass against a local Worker is only as current as the local D1.** Luna's first run
+  reported every criterion BLOCKED: the project API returned 500 because `0046` (#195) had never
+  been applied locally. `npx wrangler d1 migrations list DB --local` before a pass, not after.
+
+**Rule:** when a vendor composite owns keyboard handling and you make one of its children
+tabbable, read the parent's keydown for what it does with keys it does not handle. "Nothing"
+is rarely the answer.
+
+## A ticket without the design file builds the ticket, not the design (#213)
+
+Five header tickets (#202–#206) shipped, each with Sol's diff review, Luna's browser pass and a
+spec/standards code review, and the result still did not look like the prototype the owner had
+signed off. Row 2 carried the old rail's "Production / Team / Dropbox" section headings, a nested
+"Dropbox" label under the "Dropbox" heading, ISO dates in a dashed box, and a Sync-only popover.
+Every gate had passed because every gate compared the code against the ticket, and the ticket
+never carried the picture.
+
+How it happened, step by step:
+
+- `/to-spec` wrote #201 from the prototype in words: ReUI example ids (`c-select-19`,
+  `c-combobox-19`), behaviours, test seams. It did not link the design file or attach a screenshot.
+- `/to-tickets` split #201 into a behaviour-preserving scaffold (#202, "port the rail's controls
+  **unchanged**") plus one ticket per control. "Unchanged" carried the rail's section chrome into
+  the header. No ticket said "and remove it".
+- Each builder (fast-worker for #202, peers for #203–#205) had the ticket text and the codebase.
+  None had the prototype. They built exactly what they were given.
+- #206's planning noted "three sections, not four controls" and judged no restructuring needed —
+  correct for a responsive/a11y ticket, wrong for the product. The gap was visible and nobody
+  owned it.
+- The prototype itself had a bug: no CSS rule for its `.hrow` container, so Claude Design rendered
+  row 2 stacked while its own caption said "Row 2: Stage · Team · Deadline · Dropbox". Read the
+  markup and the caption, not just the render, before treating a prototype as truth.
+
+What fixed it (#213): a ticket that links the design file, embeds a side-by-side screenshot of
+prototype and build, and lists each delta as its own acceptance criterion. Luna's pass then has
+something to compare against.
+
+Three build-level lessons from the same ticket:
+
+- **A copy change on a control is an accessible-name change.** The first cut kept the Deadline
+  trigger's `aria-label` at "Deadline: Not set" while the visible text became "Set deadline", to
+  avoid re-freezing the external-visibility inventory. Sol caught it: WCAG 2.5.3 (Label in Name)
+  wants the name to contain the visible text, or a speech-control user saying "Set deadline" hits
+  nothing. The name is now the visible text with the cell's key in front ("Deadline: Set
+  deadline"), and the inventory was re-frozen on purpose — that is what the freeze is for.
+- **Viewport breakpoints cannot see the rail.** The control row first wrapped on
+  `@media (max-width: 1024px)`; at 1025–1279px with the rail open the four columns still ran and
+  Team collapsed to 33px whenever a Deadline was set. The header is now its own container
+  (`container: project-header / inline-size`) and the row wraps on the header's width, measured
+  against the worst-case cell contents, not on the viewport. One trap: a container query reads the
+  content box, so the 720px "stacks" state — where the header's padding also shrinks and its
+  content (688px) is wider than a 1024px railed viewport's (693px) — stays a viewport rule placed
+  after the container rules.
+- **Do not ask `Intl` for a three-letter month.** Recent ICU data abbreviates September as
+  "Sept" for en-AU and en-GB. A twelve-entry table is the whole fix.
+
+**Rule:** a UI ticket links the design file and carries a "matches the prototype at 1280px"
+criterion with a screenshot. Review axes that never look at the design cannot catch a design
+deviation, however many of them run.
+
+Two more from the owner's follow-up on the same header (deadline popover as 1b, Team box narrowed,
+crumb and hairline from 2a):
+
+- **"Render only" is a claim the plan reviewers should test.** The 1b popover has no "Edit"
+  step, so the editor had to be live from mount — and the old `open`/`closeEditing` pair also
+  owned the project-detail query (`runtime.acquireOwner`) and released it after a save. Opus and
+  Codex both read the plan's "rewrite the render only" and pointed at the lifecycle underneath:
+  who closes the popover on success, who holds the owner for a read-only viewer, and — the one
+  that failed a test — that `invalidateProjectSurfaces` defers the detail invalidation behind the
+  very owner the editor holds, so it only ever flushed because the old `closeEditing` released
+  it. The editor now holds the owner in an effect (writers only) and cycles it after a save.
+- **A grid column that should hug its content is `auto` with `justify-content: start`, not
+  `1fr`.** `1fr` stretches the Team cell to whatever the other three leave, and a chips box in
+  it fills that width with white space. `minmax(0, auto)` sizes the track to its content, packs
+  the row from the start, and still shrinks when the row is short of room; the chips box is then
+  `w-fit` and the "Add…" input `flex-none`, since a flexing input is what claimed the rest of
+  the line. The candidate list stops copying the anchor's width the moment the anchor becomes
+  content-sized, or a one-member team gets a one-chip-wide list.
