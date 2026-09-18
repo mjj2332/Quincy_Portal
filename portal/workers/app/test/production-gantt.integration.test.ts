@@ -107,8 +107,8 @@ beforeAll(async () => {
   await insertUser(photographerId, "photographer", tokens.photographer);
 
   await insertProject(memberProjectId, "1 Gantt Street", "editing_autohdr", "2026-08-27");
-  await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-08-27T09:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 600, deadline_fold = 0, deadline_reminder_offsets_json = '[60,1440]', deadline_version = 1 WHERE id = ?")
-    .bind(Date.now() + 86_400_000, memberProjectId).run();
+  await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-08-27T09:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 600, deadline_fold = 0, deadline_reminder_offsets_json = '[60,1440]', deadline_version = 1, agency_name = ?, agent_name = ? WHERE id = ?")
+    .bind(Date.now() + 86_400_000, "Ray White Realty", "Jordan Fields", memberProjectId).run();
   await insertMember(memberProjectId, externalId, "editor");
   await insertMember(memberProjectId, editorId, "editor");
   await insertMember(memberProjectId, photographerId, "photographer");
@@ -322,6 +322,14 @@ describe("production-gantt", () => {
     expect(streetMatch.projects.map((p) => p.id)).toContain(memberProjectId);
     const suburbMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Suburb", tokens.admin)).json());
     expect(suburbMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const agencyMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Ray+White", tokens.admin)).json());
+    expect(agencyMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const agencyProject = agencyMatch.projects.find((p) => p.id === memberProjectId);
+    expect(agencyProject?.agencyName).toBe("Ray White Realty");
+    const agentMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Jordan+Fields", tokens.admin)).json());
+    expect(agentMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const agentProject = agentMatch.projects.find((p) => p.id === memberProjectId);
+    expect(agentProject?.agentName).toBe("Jordan Fields");
     const titleMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Prep+listing", tokens.admin)).json());
     expect(titleMatch.projects.map((p) => p.id)).toContain(memberProjectId);
   });
