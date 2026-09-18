@@ -21,12 +21,14 @@ export type DashboardIdentity = { principalId: string; role: Role; authorization
  * ["dashboard-projects", principalId] prefix, and exact Dashboard invalidations rely on the full
  * tuple. Future key widening must audit both consumers.
  *
- * `q` (#217) widens the trailing object rather than adding a sixth element, and defaults to `""`
- * so every existing call site (and the manually-constructed literal keys in
- * `project-data.test.ts`, which never call this function) keeps compiling. `dashboardProjectsKey`
- * is the sole producer of its own key shape, so nothing depends on `{ archived }` (no `q`) hashing
- * the same as `{ archived, q }` — a manually-constructed key is compared to itself, not to this
- * function's output.
+ * `q` (#217) widens the trailing object rather than adding a sixth element -- but ONLY when
+ * non-empty (#217 fix round 1, item 7). An empty `q` produces exactly `{ archived }`, with no `q`
+ * property at all: byte-identical to the pre-#217 tuple shape react-query hashes, so every
+ * existing q-less call site's query key hashes to the SAME string it always did, not merely a
+ * structurally-equivalent one. `react-query`'s own key hashing is order-and-shape-sensitive
+ * (`{ archived }` and `{ archived, q: "" }` are different hashes), so this is a real compatibility
+ * concern, not a cosmetic one -- `useQuery`'s cache would otherwise miss the pre-existing entry
+ * for every already-mounted q-less observer the moment this file changed to write `q` unconditionally.
  *
  * The cached VALUE under this key stays `ProjectSummary[]` — never `{ projects, search }` — because
  * production code (`Dashboard.tsx`'s optimistic Board `setQueryData<ProjectSummary[]>`) and the
@@ -35,7 +37,7 @@ export type DashboardIdentity = { principalId: string; role: Role; authorization
  * `dashboardProjectSearchKey` cache entry instead, written once per fetch by this hook's `queryFn`.
  */
 export function dashboardProjectsKey(principalId: string, role: Role, authorizationEpoch: number, archived: boolean, q: string = "") {
-  return ["dashboard-projects", principalId, role, authorizationEpoch, { archived, q }] as const;
+  return ["dashboard-projects", principalId, role, authorizationEpoch, q ? { archived, q } : { archived }] as const;
 }
 
 /**

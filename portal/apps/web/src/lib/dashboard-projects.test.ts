@@ -3,7 +3,7 @@
  * `removeProjectFromDashboardQueries` purge, independent of any component or network call.
  */
 import { describe, expect, it } from "vitest";
-import { QueryClient } from "@tanstack/react-query";
+import { hashKey, QueryClient } from "@tanstack/react-query";
 import { dashboardProjectSearchKey, dashboardProjectsKey, removeProjectFromDashboardQueries } from "./dashboard-projects";
 import type { ProjectSummary } from "./kanban-interaction";
 
@@ -13,9 +13,25 @@ function project(id: string): ProjectSummary {
 }
 
 describe("dashboardProjectsKey / dashboardProjectSearchKey (#217)", () => {
-  it("defaults q to an empty string, byte-identical to the pre-#217 tuple shape", () => {
-    expect(dashboardProjectsKey("p", "admin", 0, false)).toEqual(["dashboard-projects", "p", "admin", 0, { archived: false, q: "" }]);
+  // #217 fix round 1, item 7: an empty `q` must hash IDENTICALLY to the pre-#217 key, not merely
+  // look similar -- react-query's own key hashing is shape-sensitive, so `{ archived }` and
+  // `{ archived, q: "" }` are different cache entries. This asserts deep equality against the
+  // literal pre-#217 tuple shape (no `q` property at all when `q` is empty), not a same-shape
+  // "byte-identical" claim that was actually asserting a changed shape.
+  const PRE_217_KEY = ["dashboard-projects", "p", "admin", 0, { archived: false }] as const;
+
+  it("an empty q produces the exact pre-#217 key literal -- no q property at all", () => {
+    expect(dashboardProjectsKey("p", "admin", 0, false)).toEqual(PRE_217_KEY);
+    expect(dashboardProjectsKey("p", "admin", 0, false)[4]).not.toHaveProperty("q");
+  });
+
+  it("an empty q hashes IDENTICALLY to the pre-#217 key under react-query's own hashKey, not merely structurally-equal", () => {
+    expect(hashKey(dashboardProjectsKey("p", "admin", 0, false))).toBe(hashKey(PRE_217_KEY));
+  });
+
+  it("a non-empty q widens the trailing object instead of adding a sixth element", () => {
     expect(dashboardProjectsKey("p", "admin", 0, false, "smith")).toEqual(["dashboard-projects", "p", "admin", 0, { archived: false, q: "smith" }]);
+    expect(dashboardProjectsKey("p", "admin", 0, false, "smith")).not.toEqual(PRE_217_KEY);
   });
 
   it("uses a distinct key[0] for the search-counts sibling, so prefix scans on \"dashboard-projects\" never match it", () => {
