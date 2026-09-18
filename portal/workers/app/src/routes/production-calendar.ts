@@ -31,6 +31,7 @@ import {
 } from "@quincy/shared";
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
+import { projectSearchSql } from "../lib/project-search";
 import type { AppEnv } from "../env";
 
 type CalendarRole = AppEnv["Variables"]["user"]["role"];
@@ -227,8 +228,38 @@ function roleSql(role: CalendarRole): { from: string; collaboration: string } {
   };
 }
 
+// authorized_projects_base's search filter additionally short-circuits true whenever the
+// checklist layer is requested (a checklist-layer row's own visibility is decided by
+// candidate_subtasks_raw's own search filter below, not by this project-level gate) — insert
+// that extra disjunct right after projectSearchSql's own `search = ''` short-circuit so the
+// emitted text stays byte-identical to the pre-refactor inline SQL.
+function withChecklistLayerBypass(clause: string): string {
+  const marker = "(r.search = '' OR ";
+  if (!clause.startsWith(marker)) throw new Error("Unexpected project search clause shape.");
+  return `${marker}r.checklist_layer = 1 OR ${clause.slice(marker.length)}`;
+}
+
 function calendarCtes(role: CalendarRole): string {
   const branch = roleSql(role);
+  const authorizedProjectsSearch = withChecklistLayerBypass(projectSearchSql("r.search", {
+    street: "p.street",
+    suburb: "p.suburb",
+    agency: "COALESCE(agencies.name, p.agency_name)",
+    agent: "COALESCE(agents.name, p.agent_name)",
+  }));
+  const projectCandidateSearch = projectSearchSql("r.search", {
+    street: "ap.street",
+    suburb: "ap.suburb",
+    agency: "ap.agency_display_name",
+    agent: "ap.agent_display_name",
+  });
+  const checklistCandidateSearch = projectSearchSql("r.search", {
+    checklistTitle: "s.title",
+    street: "vp.street",
+    suburb: "vp.suburb",
+    agency: "vp.agency_display_name",
+    agent: "vp.agent_display_name",
+  });
   return `WITH
 request AS (
   SELECT ?1 AS me, ?2 AS start_instant, ?3 AS end_instant, ?4 AS start_date,
@@ -255,20 +286,14 @@ authorized_projects_base AS (
   WHERE p.archived_at IS NULL
     AND (r.show_delivered = 1 OR p.stage_key <> 'delivered')
     AND (NOT EXISTS (SELECT 1 FROM request_stages) OR EXISTS (SELECT 1 FROM request_stages rs WHERE rs.stage_key = p.stage_key))
-    AND (r.search = '' OR r.checklist_layer = 1 OR instr(lower(p.street), lower(r.search)) > 0
-      OR instr(lower(p.suburb), lower(r.search)) > 0
-      OR instr(lower(COALESCE(agencies.name, p.agency_name)), lower(r.search)) > 0
-      OR instr(lower(COALESCE(agents.name, p.agent_name)), lower(r.search)) > 0)
+    AND ${authorizedProjectsSearch}
 ),
 project_candidate_universe AS (
   SELECT ap.*
   FROM authorized_projects_base ap
   CROSS JOIN request r
   WHERE r.project_layer = 1
-    AND (r.search = '' OR instr(lower(ap.street), lower(r.search)) > 0
-      OR instr(lower(ap.suburb), lower(r.search)) > 0
-      OR instr(lower(ap.agency_display_name), lower(r.search)) > 0
-      OR instr(lower(ap.agent_display_name), lower(r.search)) > 0)
+    AND ${projectCandidateSearch}
     AND (ap.deadline_at IS NULL OR (ap.deadline_at >= r.start_instant AND ap.deadline_at < r.end_instant
       AND (r.overdue_only = 0 OR (ap.deadline_at < r.now AND ap.delivered = 0))))
 ),
@@ -352,11 +377,7 @@ candidate_subtasks_raw AS (
         OR (s.schedule_start_kind = 'timed' AND s.schedule_end_at < r.now)
         OR (s.schedule_version = 0 AND s.schedule_start_kind IS NULL AND s.schedule_end_kind IS NULL AND instr(COALESCE(s.due_date, ''), 'T') > 0)
       )))
-    AND (r.search = '' OR instr(lower(s.title), lower(r.search)) > 0
-      OR instr(lower(vp.street), lower(r.search)) > 0
-      OR instr(lower(vp.suburb), lower(r.search)) > 0
-      OR instr(lower(vp.agency_display_name), lower(r.search)) > 0
-      OR instr(lower(vp.agent_display_name), lower(r.search)) > 0)
+    AND ${checklistCandidateSearch}
 ),
 candidate_subtasks_unfiltered AS (
   SELECT c.*
