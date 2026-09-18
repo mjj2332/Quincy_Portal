@@ -2891,7 +2891,7 @@ What fixed it (#213): a ticket that links the design file, embeds a side-by-side
 prototype and build, and lists each delta as its own acceptance criterion. Luna's pass then has
 something to compare against.
 
-Two build-level lessons from the same ticket:
+Three build-level lessons from the same ticket:
 
 - **A copy change on a control is an accessible-name change.** The first cut kept the Deadline
   trigger's `aria-label` at "Deadline: Not set" while the visible text became "Set deadline", to

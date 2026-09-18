@@ -5,10 +5,11 @@ import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
 import { cn } from "../lib/utils";
 import type { ProjectDetail } from "../lib/project-data";
-import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, POPOVER_CONTENT } from "./project-header-popover";
+import { DASHED_TRIGGER, HEADER_KV_KEY, HEADER_KV_VALUE, POPOVER_CONTENT, TRIGGER_CHEVRON } from "./project-header-popover";
 
 /**
- * #205 — the Dropbox `<section>`'s always-visible content becomes a dashed trigger that opens the
+ * #205 — the header's Dropbox control (then a `<section>` in the rail, since #213 a cell in the flat
+ * control row) is a dashed trigger that opens the
  * same content (raw-monitored, raw-tonomo-secondary, the sync button, the Blocked status line)
  * inside a `reui/popover.tsx` popover. No `keepMounted`: the unmount-on-close is intentional, same
  * rationale as `ProjectHeaderDeadline.tsx`, though this popover holds no draft state to discard —
@@ -45,7 +46,7 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
       className={DASHED_TRIGGER}
     >
       <StatusPill tone={state.tone}>{state.label}</StatusPill>
-      <ChevronDown aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5] text-foreground-secondary" />
+      <ChevronDown aria-hidden="true" className={TRIGGER_CHEVRON} />
     </PopoverTrigger>
     <PopoverContent align="start" aria-label="Dropbox" className={POPOVER_CONTENT}>
       <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-3)]">

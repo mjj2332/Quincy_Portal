@@ -28,5 +28,9 @@ export const DASHED_TRIGGER =
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2";
 
+// The chevron both triggers end with (`.chev` in prototype 2a) — decorative, so `aria-hidden`
+// is set at the call site alongside this class.
+export const TRIGGER_CHEVRON = "size-[var(--space-4)] shrink-0 stroke-[1.5] text-foreground-secondary";
+
 export const POPOVER_CONTENT =
   "w-[360px] max-w-[calc(100vw-2*var(--space-4))] max-h-[var(--available-height)] overflow-y-auto";

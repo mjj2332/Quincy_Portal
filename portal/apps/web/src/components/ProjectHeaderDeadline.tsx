@@ -6,10 +6,11 @@ import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { StatusPill } from "./quincy/StatusPill";
 import { dueIn } from "../lib/deadline-due-in";
 import { cn } from "../lib/utils";
-import { DASHED_TRIGGER, HEADER_KV_VALUE, POPOVER_CONTENT } from "./project-header-popover";
+import { DASHED_TRIGGER, HEADER_KV_VALUE, POPOVER_CONTENT, TRIGGER_CHEVRON } from "./project-header-popover";
 
 /**
- * #205 — the Production section's Deadline block becomes a dashed trigger that opens
+ * #205 — the header's Deadline control (then a block in the rail's Production section, since #213 a
+ * cell in the flat control row) is a dashed trigger that opens
  * `ProjectDeadlineControl` (unchanged) inside a `reui/popover.tsx` popover, the same primitive
  * `quincy/NotificationBell.tsx` vendored (see that file's own header for the Popover-not-Menu
  * rationale). The countdown badge (`lib/deadline-due-in.ts`) refreshes on a 60s interval — no
@@ -77,7 +78,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
     >
       <span className={cn(HEADER_KV_VALUE, "[white-space:nowrap]")}>{triggerText}</span>
       {due && <StatusPill tone={due.tone}>{due.label}</StatusPill>}
-      <ChevronDown aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5] text-foreground-secondary" />
+      <ChevronDown aria-hidden="true" className={TRIGGER_CHEVRON} />
     </PopoverTrigger>
     <PopoverContent align="start" aria-label="Deadline" className={POPOVER_CONTENT}>
       <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
