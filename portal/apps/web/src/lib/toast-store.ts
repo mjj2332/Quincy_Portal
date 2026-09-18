@@ -15,7 +15,8 @@
  */
 
 export type ToastTone = "success" | "error";
-export type Toast = { id: number; message: string; tone: ToastTone; announcedElsewhere?: boolean };
+export type ToastAction = { label: string; onAction: () => void };
+export type Toast = { id: number; message: string; tone: ToastTone; announcedElsewhere?: boolean; action?: ToastAction };
 
 export const TOAST_TTL_MS = 3600;
 
@@ -29,9 +30,9 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
-export function pushToast(message: string, tone: ToastTone = "success", options?: { announcedElsewhere?: boolean }): number {
+export function pushToast(message: string, tone: ToastTone = "success", options?: { announcedElsewhere?: boolean; action?: ToastAction }): number {
   const id = nextId++;
-  const toast: Toast = { id, message, tone, announcedElsewhere: options?.announcedElsewhere };
+  const toast: Toast = { id, message, tone, announcedElsewhere: options?.announcedElsewhere, action: options?.action };
   snapshot = [...snapshot, toast];
   timers.set(id, setTimeout(() => dismissToast(id), TOAST_TTL_MS));
   if (mountedToastViewports() === 0) {

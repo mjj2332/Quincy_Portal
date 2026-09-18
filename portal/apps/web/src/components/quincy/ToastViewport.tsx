@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { cn } from "../../lib/utils";
-import { getToasts, registerToastViewport, subscribeToasts } from "../../lib/toast-store";
+import { dismissToast, getToasts, registerToastViewport, subscribeToasts } from "../../lib/toast-store";
 
 /**
  * The single toast surface — issue #110. Rendered in-tree, with no portal, by exactly the three
@@ -37,6 +37,7 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
         >
           <span aria-hidden="true" className="shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{item.tone === "error" ? "!" : "✓"}</span>
           <span>{item.message}</span>
+          {item.action && <button type="button" data-testid="toast-action" className="underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)]" onClick={() => { item.action!.onAction(); dismissToast(item.id); }}>{item.action.label}</button>}
         </div>
       ))}
     </div>
