@@ -2913,3 +2913,22 @@ Three build-level lessons from the same ticket:
 **Rule:** a UI ticket links the design file and carries a "matches the prototype at 1280px"
 criterion with a screenshot. Review axes that never look at the design cannot catch a design
 deviation, however many of them run.
+
+Two more from the owner's follow-up on the same header (deadline popover as 1b, Team box narrowed,
+crumb and hairline from 2a):
+
+- **"Render only" is a claim the plan reviewers should test.** The 1b popover has no "Edit"
+  step, so the editor had to be live from mount — and the old `open`/`closeEditing` pair also
+  owned the project-detail query (`runtime.acquireOwner`) and released it after a save. Opus and
+  Codex both read the plan's "rewrite the render only" and pointed at the lifecycle underneath:
+  who closes the popover on success, who holds the owner for a read-only viewer, and — the one
+  that failed a test — that `invalidateProjectSurfaces` defers the detail invalidation behind the
+  very owner the editor holds, so it only ever flushed because the old `closeEditing` released
+  it. The editor now holds the owner in an effect (writers only) and cycles it after a save.
+- **A grid column that should hug its content is `auto` with `justify-content: start`, not
+  `1fr`.** `1fr` stretches the Team cell to whatever the other three leave, and a chips box in
+  it fills that width with white space. `minmax(0, auto)` sizes the track to its content, packs
+  the row from the start, and still shrinks when the row is short of room; the chips box is then
+  `w-fit` and the "Add…" input `flex-none`, since a flexing input is what claimed the rest of
+  the line. The candidate list stops copying the anchor's width the moment the anchor becomes
+  content-sized, or a one-member team gets a one-chip-wide list.
