@@ -3,6 +3,7 @@ import {
   checklistScheduleToDto,
   mapChecklistEndResizeToCommand,
   mapChecklistMoveToCommand,
+  mapChecklistStartResizeToCommand,
   mapProjectDeadlineMoveToCommand,
   mapUnscheduledChecklistDropToCommand,
   mapUnscheduledProjectDropToCommand,
@@ -46,10 +47,12 @@ import {
   endpointOfError,
   inputDisambiguation,
   optimisticChecklistEvent,
+  planSchedulingProposal,
   projectDeadlinePlaceholder,
   responseEvent,
   timingFromChecklistSchedule,
   type ChecklistSource,
+  type SchedulingProposal,
 } from "./scheduling-policy";
 import {
   applyOptimisticOverlay,
@@ -139,7 +142,13 @@ export type ChecklistProposal = {
   timing: CalendarEventTiming | null;
   operation: ChecklistOperationInfo;
   target?: CalendarManipulationTarget;
-  edge?: "end";
+  /**
+   * #216 fix round 1 item 4: widened from `"end"`-only so a `submitProposal` start-resize can
+   * retry through the same fold-dialog path as an end-resize. Purely additive — every pre-#216
+   * caller (`handleChecklistDrop`/`handleChecklistResize`) still only ever passes `"end"` or
+   * `undefined`, so this changes no existing behaviour.
+   */
+  edge?: "start" | "end";
 };
 export type ChecklistFoldState = {
   proposal: ChecklistProposal;
@@ -188,7 +197,16 @@ export type SchedulingCommands = {
   scheduleEditor: ScheduleEditorState | null;
   checklistFold: ChecklistFoldState | null;
   submitDeadlineProposal: (proposal: SubmitDeadlineProposalInput) => void;
-  submitChecklistProposal: (snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => void;
+  submitChecklistProposal: (snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "start" | "end") => void;
+  /**
+   * #216 fix round 1 item 4: the typed-proposal entry point. Plans the `SchedulingProposal` via
+   * `planSchedulingProposal` (the same shared mappers the FullCalendar handlers already use, incl.
+   * `mapChecklistStartResizeToCommand` for a `resize`+`edge:"start"`), then feeds the plan into the
+   * SAME accept/confirm/mutate path (`acceptForInteraction` → `runChecklistMutation` /
+   * `runConfirmedProposal`) as every other command. Not called by the FullCalendar handlers in
+   * this slice — they keep their existing path; this is a second, additive entry point.
+   */
+  submitProposal: (proposal: SchedulingProposal) => void;
   openMoveDialog: (event: ProjectDeadlineCalendarEventDto) => void;
   openUnscheduledProjectDialog: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: InitialChecklistScheduleInput) => void;
@@ -954,12 +972,14 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     }
   }, [acceptRange, announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
-  const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => {
-    const mapped = edge
-      ? mapChecklistEndResizeToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target: { ...target, edge: "end" }, edge: "end", ...(disambiguation ? { disambiguation } : {}) })
-      : "reason" in event && event.reason === "unscheduled"
-        ? mapUnscheduledChecklistDropToCommand({ event: snapshot.event as ChecklistCalendarUnscheduledEntryDto, target, ...(disambiguation ? { disambiguation } : {}) })
-        : mapChecklistMoveToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target, ...(disambiguation ? { disambiguation } : {}) });
+  const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "start" | "end") => {
+    const mapped = edge === "start"
+      ? mapChecklistStartResizeToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target: { ...target, edge: "start" }, edge: "start", ...(disambiguation ? { disambiguation } : {}) })
+      : edge === "end"
+        ? mapChecklistEndResizeToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target: { ...target, edge: "end" }, edge: "end", ...(disambiguation ? { disambiguation } : {}) })
+        : "reason" in event && event.reason === "unscheduled"
+          ? mapUnscheduledChecklistDropToCommand({ event: snapshot.event as ChecklistCalendarUnscheduledEntryDto, target, ...(disambiguation ? { disambiguation } : {}) })
+          : mapChecklistMoveToCommand({ event: snapshot.event as ChecklistCalendarEventDto, target, ...(disambiguation ? { disambiguation } : {}) });
     if (!mapped.ok) {
       const repeated = mapped.error.code === "repeated_local_time" || mapped.error.code === "subtask_schedule_repeated_local_time";
       const nonexistent = mapped.error.code === "nonexistent_local_time" || mapped.error.code === "subtask_schedule_nonexistent_local_time";
@@ -994,6 +1014,93 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     };
     void runChecklistMutation(proposal);
   }, [announceChecklistLifecycle, finishChecklistInteraction, rangesEnabled, runChecklistMutation]);
+
+  const submitProposal = useCallback((proposal: SchedulingProposal) => {
+    if (proposal.entity === "checklist") {
+      const source: ChecklistSource = proposal.kind === "place" ? proposal.entry : proposal.source;
+      const snapshot = acceptForInteraction(source, { eventId: source.id, control: "event" });
+      if (!snapshot) return;
+      const planned = planSchedulingProposal(proposal);
+      if (!planned.ok) {
+        const repeated = planned.error.code === "repeated_local_time" || planned.error.code === "subtask_schedule_repeated_local_time";
+        const nonexistent = planned.error.code === "nonexistent_local_time" || planned.error.code === "subtask_schedule_nonexistent_local_time";
+        if (repeated && planned.error.choices && planned.error.endpoint) {
+          const sourceSchedule = checklistInputFromSchedule(source.schedule);
+          const edge = proposal.kind === "resize" ? proposal.edge : undefined;
+          const foldProposal: ChecklistProposal = { snapshot, source, request: { expectedVersion: source.schedule.version, schedule: sourceSchedule }, schedule: sourceSchedule, timing: "timing" in source ? source.timing : null, operation: {}, target: proposal.target, ...(edge ? { edge } : {}) };
+          setChecklistFold({ proposal: foldProposal, disambiguation: {}, endpoint: planned.error.endpoint, choices: planned.error.choices });
+          announceChecklistLifecycle("fold-choice", {});
+          return;
+        }
+        finishChecklistInteraction({}, source, { kind: nonexistent ? "dst-gap" : "invalid" });
+        return;
+      }
+      if (planned.value.kind !== "checklist") return;
+      if (!rangesEnabled && planned.value.schedule.state === "range") {
+        finishChecklistInteraction({}, source, { kind: "range-disabled" });
+        return;
+      }
+      const mutationProposal: ChecklistProposal = {
+        snapshot,
+        source,
+        request: planned.value.request,
+        schedule: planned.value.schedule,
+        timing: planned.value.timing,
+        operation: {},
+        target: proposal.target,
+        ...(proposal.kind === "resize" ? { edge: proposal.edge } : {}),
+      };
+      void runChecklistMutation(mutationProposal);
+      return;
+    }
+
+    const event = proposal.kind === "place" ? projectDeadlinePlaceholder(proposal.entry) : proposal.event;
+    const snapshot = acceptForInteraction(event, { eventId: event.id, control: "event" });
+    if (!snapshot) return;
+    const planned = planSchedulingProposal(proposal);
+    if (!planned.ok) {
+      if (planned.error.code === "repeated_local_time" && planned.error.choices) {
+        setMoveDialog({ event, snapshot, initialCivil: event.deadlineLocalCivil, foldChoices: planned.error.choices, ...(proposal.kind === "place" ? { unscheduledEntry: proposal.entry } : {}) });
+        announceLifecycle("fold-choice", { entity: "deadline" });
+        return;
+      }
+      if (planned.error.code === "nonexistent_local_time") {
+        setMoveDialog({ event, snapshot, initialCivil: event.deadlineLocalCivil, ...(proposal.kind === "place" ? { unscheduledEntry: proposal.entry } : {}) });
+        announceLifecycle("dst-gap", { entity: "deadline" });
+        return;
+      }
+      setAcceptGate(false);
+      commandLockRef.current.active = false;
+      snapshotRef.current = null;
+      announceLifecycle("invalid", { entity: "deadline" });
+      focusDescriptor({ eventId: event.id, control: "event" });
+      flushQueuedRefetch();
+      return;
+    }
+    if (planned.value.kind !== "deadline") return;
+    const proposalResult = proposalFromRequest(snapshot, event, planned.value.localCivil, proposal.disambiguation, planned.value.request);
+    if (!proposalResult.ok) {
+      if (proposalResult.reason === "fold") {
+        setAcceptGate(true);
+        setMoveDialog({ event, snapshot, initialCivil: planned.value.localCivil, foldChoices: proposalResult.choices, ...(proposal.kind === "place" ? { unscheduledEntry: proposal.entry } : {}) });
+        announceLifecycle("fold-choice", { entity: "deadline" });
+        return;
+      }
+      setAcceptGate(false);
+      commandLockRef.current.active = false;
+      snapshotRef.current = null;
+      announceLifecycle(proposalResult.reason === "gap" ? "dst-gap" : "invalid", { entity: "deadline" });
+      focusDescriptor({ eventId: event.id, control: "event" });
+      flushQueuedRefetch();
+      return;
+    }
+    const deadlineProposal = proposalResult.proposal;
+    if (isUnchangedDeadlineProposal(event, deadlineProposal)) {
+      finishInteraction(undefined, event.deadlineLocalCivil);
+      return;
+    }
+    void runConfirmedProposal(proposal.kind === "place" ? { ...deadlineProposal, unscheduledEntry: proposal.entry } : deadlineProposal);
+  }, [acceptForInteraction, announceChecklistLifecycle, announceLifecycle, finishChecklistInteraction, finishInteraction, flushQueuedRefetch, focusDescriptor, isUnchangedDeadlineProposal, proposalFromRequest, rangesEnabled, runChecklistMutation, runConfirmedProposal, setAcceptGate]);
 
   const handleChecklistFoldSubmit = useCallback((choice: "earlier" | "later") => {
     const state = checklistFold;
@@ -1111,6 +1218,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     checklistFold,
     submitDeadlineProposal,
     submitChecklistProposal: mapChecklistCommand,
+    submitProposal,
     openMoveDialog,
     openUnscheduledProjectDialog,
     openChecklistScheduleEditor,
