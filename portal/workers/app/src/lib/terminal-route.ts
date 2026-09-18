@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt";
 };
 type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
