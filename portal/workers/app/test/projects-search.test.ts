@@ -16,7 +16,8 @@ declare const __PORTAL_MIGRATION_SQL__: string;
 
 const adminId = "81111111-1111-4111-8111-111111111111";
 const photographerId = "81222222-2222-4222-8222-222222222222";
-const tokens = { admin: "tb217-search-admin", photographer: "tb217-search-photographer" };
+const externalEditorId = "81333333-3333-4333-8333-333333333333";
+const tokens = { admin: "tb217-search-admin", photographer: "tb217-search-photographer", external: "tb217-search-external" };
 
 // Every field the matcher covers, one project each, plus a control with none matching.
 const streetMatchId = "81a00000-0000-4000-8000-000000000001";
@@ -31,6 +32,9 @@ const archivedMatchId = "81a00000-0000-4000-8000-000000000009";
 const metacharMatchId = "81a00000-0000-4000-8000-00000000000a";
 const metacharPercentControlId = "81a00000-0000-4000-8000-00000000000b"; // would falsely match a `%` LIKE wildcard
 const metacharUnderscoreControlId = "81a00000-0000-4000-8000-00000000000c"; // would falsely match a `_` LIKE wildcard
+const externalVisibleChecklistId = "81a00000-0000-4000-8000-00000000000d"; // external IS a member, checklist-title-only match
+const externalOtherVisibleId = "81a00000-0000-4000-8000-00000000000e"; // external IS a member, no match -- makes total > matching
+const externalHiddenChecklistId = "81a00000-0000-4000-8000-00000000000f"; // external is NOT a member, checklist title would match
 
 async function executeSql(sql: string): Promise<void> {
   for (const chunk of sql.split("--> statement-breakpoint")) {
@@ -79,6 +83,7 @@ beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
   await insertUser(adminId, "admin", tokens.admin);
   await insertUser(photographerId, "photographer", tokens.photographer);
+  await insertUser(externalEditorId, "external_editor", tokens.external);
 
   await insertProject(streetMatchId, { street: "12 Harbour View Road", suburb: "Manly" });
   await insertProject(suburbMatchId, { street: "1 Other Street", suburb: "Harbourside" });
@@ -98,6 +103,17 @@ beforeAll(async () => {
   await insertProject(metacharMatchId, { street: "9 100%_off Harbour Street" });
   await insertProject(metacharPercentControlId, { street: "9a 100xxxoff Harbour Street" });
   await insertProject(metacharUnderscoreControlId, { street: "9b 100Xoff Harbour Street" });
+
+  // External visibility requires a `project_members` row with role_on_project = "editor"
+  // (`visible-project-scope.ts`'s own `visibleProjectWhere`) -- membership, not stage, is what
+  // gates these three.
+  await insertProject(externalVisibleChecklistId, { street: "10 Plain External Street" });
+  await insertMember(externalVisibleChecklistId, externalEditorId, "editor");
+  await insertSubtask(externalVisibleChecklistId, "Upload externallyvisibleneedle photos");
+  await insertProject(externalOtherVisibleId, { street: "11 Other External Street" });
+  await insertMember(externalOtherVisibleId, externalEditorId, "editor");
+  await insertProject(externalHiddenChecklistId, { street: "12 Hidden External Street" });
+  await insertSubtask(externalHiddenChecklistId, "Upload externallyvisibleneedle photos");
 });
 
 describe("/api/projects — q (#217)", () => {
@@ -193,5 +209,27 @@ describe("/api/projects — q (#217)", () => {
   it("omits `search` from the response entirely when no q was supplied", async () => {
     const { body } = await request("/api/projects", tokens.admin);
     expect(body.search).toBeUndefined();
+  });
+});
+
+describe("/api/projects — q, external_editor checklist-title matching (#217 follow-up)", () => {
+  it("a title-only match on a visible project is present, with correct counts", async () => {
+    const { status, body } = await request("/api/projects?q=externallyvisibleneedle", tokens.external);
+    expect(status).toBe(200);
+    const ids = (body.projects as Array<{ id: string }>).map((p) => p.id);
+    expect(ids).toEqual([externalVisibleChecklistId]);
+    expect(body.search).toMatchObject({ matching: 1 });
+    // total counts the external's full authorised (member) set, not just the match --
+    // `externalOtherVisibleId` is also a member project and must be counted there.
+    expect((body.search as { total: number }).total).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the identical title on a project the external is NOT a member of is absent, and not counted", async () => {
+    const { body } = await request("/api/projects?q=externallyvisibleneedle", tokens.external);
+    const ids = (body.projects as Array<{ id: string }>).map((p) => p.id);
+    expect(ids).not.toContain(externalHiddenChecklistId);
+    // Exactly one match (the visible project) despite two projects sharing the same checklist
+    // title text -- the hidden one must not inflate `matching` or `total` either.
+    expect(body.search).toMatchObject({ matching: 1 });
   });
 });

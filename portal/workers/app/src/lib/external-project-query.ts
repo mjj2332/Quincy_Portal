@@ -8,6 +8,7 @@ import { compareBoardOrder } from "./project-board-order";
 import { visibleProjectWhere } from "./visible-project-scope";
 import { editorFolderAvailability } from "./editor-folders";
 import { readEditorFolderAttention } from "./attention";
+import { matchingProjectIds } from "./project-search";
 
 type Db = ReturnType<typeof createDb>;
 
@@ -160,14 +161,18 @@ function canonicalExternalBoardOrder(groups: Iterable<{ project: ProjectRow }>):
 
 /**
  * #217 -- the same `instr`-style substring match `/api/projects`'s internal path uses
- * (`matchingProjectIds`, `workers/app/src/routes/projects.ts`), applied in JS over the already-
- * decoded summary DTOs rather than a second SQL round trip: this path's rows arrive through a very
- * different Drizzle shape (grouped services, directory-name fallbacks) than the internal CTE/raw-
- * SQL query, so matching against the DTO fields the external Dashboard actually renders
- * (`agencyDisplayName`/`agentDisplayName`, already resolved from the directory-name fallback) is
- * both simpler and exactly what "matching must agree with what the user sees" requires. Checklist
- * titles are deliberately NOT matched here -- unlike the internal path, the external list response
- * carries no checklist data to justify a second query for.
+ * (`matchingProjectIds`, `lib/project-search.ts`), applied in JS over the already-decoded summary
+ * DTOs for the four address/agency/agent fields rather than a second SQL round trip: this path's
+ * rows arrive through a very different Drizzle shape (grouped services, directory-name fallbacks)
+ * than the internal CTE/raw-SQL query, so matching against the DTO fields the external Dashboard
+ * actually renders (`agencyDisplayName`/`agentDisplayName`, already resolved from the
+ * directory-name fallback) is both simpler and exactly what "matching must agree with what the
+ * user sees" requires. Checklist-title matches are unioned in separately, below --
+ * `GET /projects/:projectId/subtasks`'s own `externalSubtaskQuery`
+ * (`routes/project-subtasks.ts`) filters subtasks by NOTHING beyond the same project-level
+ * `visibleProjectWhere` this list already applies (no assignee/hidden-flag predicate), so an
+ * external can read every subtask on every project in `allProjects`, and a title match on one of
+ * them belongs in this result on the same terms as a street/agency match.
  */
 function externalProjectMatchesSearch(project: ExternalProjectSummaryDto, needle: string): boolean {
   const haystacks = [project.address.street, project.address.suburb, project.agencyDisplayName, project.agentDisplayName];
@@ -199,7 +204,15 @@ export async function listExternalProjects(env: Env, userId: string, role: Role,
     );
   }));
   const needle = search.toLowerCase();
-  const projects = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle));
+  // Title-only variant of the shared matcher: no `p.agency_name`/`p.street`/etc reference at all
+  // (this `fromClause` never joins `projects`), so an external's agency/agent match stays scoped
+  // to the DTO's own display-name fields above, never the raw denormalised columns.
+  const checklistMatchingIds = search === "" ? new Set<string>() : await matchingProjectIds(env.DB, [...grouped.keys()], search, {
+    idColumn: "s.project_id",
+    fromClause: "project_subtasks s",
+    columns: { checklistTitle: "s.title", street: "''", suburb: "''", agency: "''", agent: "''" },
+  });
+  const projects = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle) || checklistMatchingIds.has(project.id));
   return externalProjectListResponseSchema.parse({
     projects,
     board: {

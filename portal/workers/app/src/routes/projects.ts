@@ -25,7 +25,7 @@ import { moveProjectStage } from "../lib/project-stage";
 import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
-import { PROJECT_SEARCH_MAX_LENGTH, normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
+import { PROJECT_SEARCH_MAX_LENGTH, matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -220,35 +220,23 @@ function normalizeProjectListSearch(raw: string): string {
 }
 
 /**
- * The authorised id set IS the authorisation boundary here -- `p.id IN (...)` scopes every match
- * to ids the caller already has (`orderedRows`), so this introduces no second authorisation path.
- * `instr(lower(col), lower(?1))`, never `LIKE`: the precedent is
- * `production-calendar.ts`'s own `calendarCtes` (now `projectSearchSql`, #218) -- `instr` has no
- * metacharacters, so there is no wildcard escaping to get wrong. Chunked (D1's bound-parameter
- * ceiling) with the search term as `?1`, reused across every generated clause but bound once;
- * the authorised ids fill the remaining numbered slots per chunk.
+ * The internal path's own column/table shape for `lib/project-search.ts`'s shared
+ * `matchingProjectIds` (#217) -- `projects p LEFT JOIN project_subtasks s`, matching
+ * `p.agency_name`/`p.agent_name` directly (not the Calendar's own `COALESCE(agencies.name,
+ * ...)`), since the list response renders the denormalised columns.
  */
-async function matchingProjectIds(database: D1Database, authorizedIds: string[], search: string): Promise<Set<string>> {
-  const matches = new Set<string>();
-  if (authorizedIds.length === 0 || search === "") return matches;
-  const clause = projectSearchSql("?1", {
-    checklistTitle: "s.title",
-    street: "p.street",
-    suburb: "COALESCE(p.suburb, '')",
-    agency: "COALESCE(p.agency_name, '')",
-    agent: "COALESCE(p.agent_name, '')",
+async function matchingInternalProjectIds(database: D1Database, authorizedIds: string[], search: string): Promise<Set<string>> {
+  return matchingProjectIds(database, authorizedIds, search, {
+    idColumn: "p.id",
+    fromClause: "projects p LEFT JOIN project_subtasks s ON s.project_id = p.id",
+    columns: {
+      checklistTitle: "s.title",
+      street: "p.street",
+      suburb: "COALESCE(p.suburb, '')",
+      agency: "COALESCE(p.agency_name, '')",
+      agent: "COALESCE(p.agent_name, '')",
+    },
   });
-  for (const ids of chunked(authorizedIds)) {
-    const placeholders = ids.map((_, index) => `?${index + 2}`).join(", ");
-    const result = await database.prepare(`
-      SELECT DISTINCT p.id AS id FROM projects p
-      LEFT JOIN project_subtasks s ON s.project_id = p.id
-      WHERE p.id IN (${placeholders})
-        AND ${clause}
-    `).bind(search, ...ids).all<{ id: string }>();
-    for (const row of result.results ?? []) matches.add(row.id);
-  }
-  return matches;
 }
 
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
@@ -416,7 +404,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   // both of which describe the full authorised set regardless of `q`. Filtering it here would
   // make `boardRank` a rank-within-the-filtered-set and corrupt drag positions.
   const orderedRows = orderDashboardStreetTies(rows);
-  const matchingIds = search === "" ? null : await matchingProjectIds(c.env.DB, orderedRows.map(({ project }) => project.id), search);
+  const matchingIds = search === "" ? null : await matchingInternalProjectIds(c.env.DB, orderedRows.map(({ project }) => project.id), search);
   const matchedRows = matchingIds === null ? orderedRows : orderedRows.filter(({ project }) => matchingIds.has(project.id));
   // Enrichment (covers, editors) runs only over matches, not the full authorised set.
   const projectIds = matchedRows.map(({ project }) => project.id);
