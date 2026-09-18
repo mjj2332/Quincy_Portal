@@ -108,6 +108,17 @@ export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[
 
 export type ProductionGanttSelectedData = ProductionGanttInfiniteData & { projects: GanttProjectRowDto[] };
 
+/**
+ * Hoisted to module scope (fix-218-r3 #1) so its function identity is stable across renders.
+ * `productionGanttInfiniteQueryOptions` is re-invoked on every render of
+ * `useProductionGanttProjects`; an inline arrow there would be a brand-new function each time,
+ * which defeats TanStack Query's `select` memoization (keyed on select-fn identity + `data`
+ * identity) and forces a full re-flatten of every accumulated page on unrelated re-renders.
+ */
+function selectProductionGanttData(data: ProductionGanttInfiniteData): ProductionGanttSelectedData {
+  return { ...data, projects: flattenGanttProjectPages(data.pages) };
+}
+
 export function productionGanttInfiniteQueryOptions(identity: DashboardIdentity, filters: ProductionGanttFilters = DEFAULT_FILTERS, enabled = true) {
   const queryKey = productionGanttKey(identity, "active", filters);
   return {
@@ -122,8 +133,10 @@ export function productionGanttInfiniteQueryOptions(identity: DashboardIdentity,
     },
     getNextPageParam: (lastPage: ProductionGanttResponse) => lastPage.page.nextCursor ?? undefined,
     // The hook's selected data is always the deduped, flattened project list (fix-218-r2 #1) —
-    // callers never flatten `data.pages` themselves.
-    select: (data: ProductionGanttInfiniteData): ProductionGanttSelectedData => ({ ...data, projects: flattenGanttProjectPages(data.pages) }),
+    // callers never flatten `data.pages` themselves. `selectProductionGanttData` is a stable,
+    // module-scope reference (fix-218-r3 #1) so TanStack Query can skip re-running it when `data`
+    // is unchanged.
+    select: selectProductionGanttData,
     enabled,
     staleTime: 15_000,
     gcTime: 5 * 60_000,

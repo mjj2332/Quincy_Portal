@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { InfiniteQueryObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionGanttResponse } from "@quincy/shared";
 import {
   decodeProductionGanttResponse,
@@ -101,6 +101,37 @@ describe("production gantt query family", () => {
   it("initialPageParam is undefined (no cursor on the first page)", () => {
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
     expect(productionGanttInfiniteQueryOptions(identity).initialPageParam).toBeUndefined();
+  });
+
+  it("select is a stable, module-scope function reference across separate options calls (fix-218-r3 #1)", () => {
+    const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
+    const first = productionGanttInfiniteQueryOptions(identity);
+    const second = productionGanttInfiniteQueryOptions(identity);
+    expect(second.select).toBe(first.select);
+  });
+
+  it("keeps the selected data's referential identity across a re-render with unchanged pages (fix-218-r3 #1)", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
+    const filters = { q: "", editorIds: [], stageKeys: [], delivered: false, completed: false };
+    const queryKey = productionGanttKey(identity, "active", filters);
+    const infiniteData = { pages: [page([project("a")])], pageParams: [undefined] };
+    client.setQueryData(queryKey, infiniteData);
+
+    // First "render": mount the observer with a fresh options object (as the hook does on every
+    // render), and read the selected data.
+    const optionsA = productionGanttInfiniteQueryOptions(identity, filters);
+    const observer = new InfiniteQueryObserver(client, optionsA as never);
+    const firstResult = observer.getCurrentResult();
+    const firstProjects = firstResult.data!.projects;
+
+    // Second "render": a brand-new options object (new object identity, same `select` reference
+    // because it is hoisted to module scope) with the same, unchanged query data.
+    const optionsB = productionGanttInfiniteQueryOptions(identity, filters);
+    observer.setOptions(optionsB as never);
+    const secondResult = observer.getCurrentResult();
+
+    expect(secondResult.data!.projects).toBe(firstProjects);
   });
 
   it("selects exactly one role decoder with no permissive fallback, and photographers throw", () => {
