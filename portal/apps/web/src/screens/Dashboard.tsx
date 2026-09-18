@@ -302,7 +302,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const boardContractDisabled = projects.some((project) => project.boardContractEnabled === false);
   const boardUnavailableMessage = recoveryReason ?? boardUnavailableReason ?? (boardContractDisabled ? "Board interactions are temporarily unavailable while the Board contract is disabled." : null);
   const boardMutationEnabled = boardContractEnabled && !boardUnavailableMessage;
-  const canMoveStages = boardMutationEnabled && canMoveStagesCapability;
+  // #217 fix round 1, item 2: explicit now that `searchActive` no longer rides along inside
+  // `interactionBlocked`. Board positions computed against a filtered column are wrong, so
+  // cross-Stage moves, same-Stage reorder and the Move-to menu are all disabled the same way a
+  // disabled Board contract already disables them -- see `movementDisabled`/
+  // `sameStageReorderEnabled` below, and `runBoardMovement`'s own guard as the last line of defence.
+  const canMoveStages = boardMutationEnabled && canMoveStagesCapability && !searchActive;
   const isLoading = projectsQuery.isPending && !projectsQuery.data;
   const hasAcceptedDashboard = acceptedProjects?.key === dashboardKeyString;
   const error = !hasAcceptedDashboard && !queryProjects
@@ -754,7 +759,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const isMovementTerminal = useCallback((projectId: string) => Boolean(queryRuntime?.principalTerminal || queryRuntime?.isProjectRemoved(projectId)), [queryRuntime]);
 
   async function runBoardMovement(intent: BoardMovementIntent) {
-    if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.size > 0) return;
+    // Last line of defence (#217 fix round 1, item 2): `canMoveStages`/`sameStageReorderEnabled`
+    // already withhold the UI affordances that would normally reach this, but a stale drag gesture
+    // in flight when a search commits must not be allowed to slip a mutation through regardless.
+    if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.size > 0 || searchActive) return;
     const baselineModel = boardModelFromProjects(projects);
     const movingProject = baselineModel.projects.find((project) => project.id === intent.projectId);
     if (!movingProject) {
@@ -1141,8 +1149,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           canPrioritize={canPrioritize && hasAuthorizedBoardMap}
           role={role}
           boardMutationEnabled={boardMutationEnabled}
-          movementDisabled={movementSettlePending || !boardMutationEnabled}
-          sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board"}
+          movementDisabled={movementSettlePending || !boardMutationEnabled || searchActive}
+          sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board" && !searchActive}
           effectiveKanbanSort={effectiveKanbanSort}
           pendingMoves={pendingMoves}
           pendingOrdering={pendingOrdering}

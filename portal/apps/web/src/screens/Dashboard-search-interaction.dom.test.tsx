@@ -11,6 +11,7 @@ import {
   __resetDashboardSearchStoreForTest,
   clearDashboardSearch,
   commitDashboardSearchNow,
+  getDashboardSearchSnapshot,
   setDashboardSearchDraft,
 } from "../lib/dashboard-search-store";
 
@@ -20,20 +21,37 @@ function ClientCapture({ onClient }: { onClient: (client: QueryClient) => void }
 }
 
 /**
- * #217 fix round 1, item 1 (Sol's diff review, blocker). Root cause: `searchActive` had been
- * folded into `interactionBlocked` (Dashboard.tsx), which meant the project-accept effect only
- * ever queued while a search was active -- searched results never displaced the pre-search list.
- * Removing `searchActive` from `interactionBlocked` restores the accept path for a searched
- * `queryProjects`, the same way an unsearched load already worked.
+ * #217 fix round 1, items 1-2 (Sol's diff review, both blockers). Root cause shared by both:
+ * `searchActive` had been folded into `interactionBlocked` (Dashboard.tsx), which meant "a Board
+ * interaction is in flight: queue refreshes, disable the view switcher" -- a search is not that.
+ * Item 1: the project-accept effect only ever queued while `interactionBlocked` was true, so a
+ * searched `queryProjects` was never being accepted. Removing `searchActive` from
+ * `interactionBlocked` restores the accept path for a searched result the same way an unsearched
+ * load already worked -- but it also removes the incidental Board-movement blocking that flag used
+ * to provide while searching. Item 2 restores that gating explicitly: `canMoveStages` /
+ * `sameStageReorderEnabled` / `movementDisabled` now carry `searchActive` themselves, and
+ * `runBoardMovement`'s own guard refuses as a last line of defence.
  */
 
 const authState = vi.hoisted(() => ({ role: "admin" as const }));
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPostMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
+type DndTestEvent = { active: { id: string }; over: { id: string } | null; activatorEvent?: Event };
+const dnd = vi.hoisted(() => ({ handlers: [] as Array<{ props: Parameters<typeof import("@dnd-kit/core").DndContext>[0]; start?: (event: DndTestEvent) => void; over?: (event: DndTestEvent) => void; end?: (event: DndTestEvent) => void }> }));
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
   return { ...actual, apiGet: (path: string) => apiGetMock(path), apiPost: (path: string, body: unknown) => apiPostMock(path, body) };
+});
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  return {
+    ...actual,
+    DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
+      dnd.handlers.push({ props, start: props.onDragStart as ((event: DndTestEvent) => void) | undefined, over: props.onDragOver as ((event: DndTestEvent) => void) | undefined, end: props.onDragEnd as ((event: DndTestEvent) => void) | undefined });
+      return createElement(actual.DndContext, props);
+    },
+  };
 });
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } } }) }));
 vi.mock("../lib/capabilities", () => ({
@@ -73,6 +91,22 @@ const smithOnlyBoard = {
   board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["target"] } },
 };
 
+async function dndStart(activeId: string) {
+  const handler = dnd.handlers.at(-1)?.start;
+  if (!handler) throw new Error("No DndContext drag-start handler was rendered");
+  await act(async () => { handler({ active: { id: activeId }, over: null }); await Promise.resolve(); });
+}
+async function dndOver(activeId: string, overId: string) {
+  const handler = dnd.handlers.at(-1)?.over;
+  if (!handler) throw new Error("No DndContext drag-over handler was rendered");
+  await act(async () => { handler({ active: { id: activeId }, over: { id: overId } }); await Promise.resolve(); });
+}
+async function dndEnd(activeId: string, overId: string | null) {
+  const handler = dnd.handlers.at(-1)?.end;
+  if (!handler) throw new Error("No DndContext drag-end handler was rendered");
+  await act(async () => { handler({ active: { id: activeId }, over: overId === null ? null : { id: overId } }); await Promise.resolve(); });
+}
+
 function addresses(host: HTMLElement): string[] {
   return [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-card-address"], [data-testid="project-list-row"] span')].map((element) => element.textContent ?? "");
 }
@@ -84,10 +118,11 @@ async function flush() {
 let root: Root;
 let host: HTMLElement;
 
-describe("Dashboard search results (#217 fix round 1, item 1)", () => {
+describe("Dashboard search results and Kanban movement gating (#217 fix round 1, items 1-2)", () => {
   beforeEach(() => {
     authState.role = "admin";
     apiGetMock.mockReset(); apiPostMock.mockReset();
+    dnd.handlers.length = 0;
     apiGetMock.mockImplementation((path) => {
       if (!path.startsWith("/api/projects")) return Promise.resolve({});
       return Promise.resolve(path.includes("q=smith") ? smithOnlyBoard : fullBoard);
@@ -148,5 +183,46 @@ describe("Dashboard search results (#217 fix round 1, item 1)", () => {
     await act(async () => { await queryClient!.invalidateQueries({ predicate: (query) => query.queryKey[0] === "dashboard-projects" }); });
     await flush();
     expect(addresses(host)).toEqual(["Renamed Target Street"]);
+  });
+
+  it("item 2: pointer/keyboard drag issues no mutation while searching (last-line-of-defence guard)", async () => {
+    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    apiGetMock.mockImplementation((path) => {
+      if (!path.startsWith("/api/projects")) return Promise.resolve({});
+      // Full board still "matches" here -- the point of this test is movement gating, not result
+      // filtering, which item 1's tests already cover.
+      return Promise.resolve(fullBoard);
+    });
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    expect(getDashboardSearchSnapshot().query).toBe("smith");
+
+    // The mocked DndContext handler is invoked directly, bypassing whatever visual/pointer-level
+    // affordance would normally stop a drag from starting -- this is deliberately the strictest
+    // check available in this harness for "last line of defence, not just UI disabled".
+    await dndStart("before");
+    await dndOver("before", "target");
+    await dndEnd("before", "target");
+    await flush();
+    expect(apiPostMock).not.toHaveBeenCalled();
+  });
+
+  it("item 2: the keyboard reorder arrows do not render while searching", async () => {
+    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    expect(host.querySelector('[data-focus-key^="arrow-up:"]')).toBeNull();
+    expect(host.querySelector('[data-focus-key^="arrow-down:"]')).toBeNull();
+  });
+
+  it("item 2: the Move-to trigger is disabled while searching", async () => {
+    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    const triggers = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="kanban2-move-to"]')];
+    expect(triggers.length).toBeGreaterThan(0);
+    for (const trigger of triggers) expect(trigger.disabled).toBe(true);
+    await act(async () => { triggers[0]!.click(); await Promise.resolve(); });
+    await flush();
+    expect(apiPostMock).not.toHaveBeenCalled();
   });
 });
