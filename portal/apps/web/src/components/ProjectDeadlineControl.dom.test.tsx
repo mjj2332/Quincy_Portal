@@ -395,9 +395,28 @@ describe("ProjectDeadlineControl", () => {
     expect(host.querySelector('input[aria-label="Custom reminder minutes"]')).toBeNull();
     expect(toggle(host, "45 minutes").getAttribute("aria-pressed")).toBe("true");
     expect(host.textContent).toContain("(1/8)");
+    // The field and Add button just unmounted — focus lands on "+ custom", not on <body>.
+    expect(document.activeElement).toBe(custom);
     await act(async () => { toggle(host, "45 minutes").click(); await Promise.resolve(); });
     expect([...host.querySelectorAll("button[aria-pressed]")].map((button) => button.textContent)).not.toContain("45 minutes");
     expect(host.textContent).toContain("(0/8)");
+    expect(document.activeElement).toBe(custom);
+  });
+
+  it("ignores a save that resolves after the editor unmounted: no reseed, no onSaved (Sol, #213)", async () => {
+    let resolveSave!: (value: unknown) => void;
+    apiPutMock.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve; }));
+    const host = await mount(emptySchedule);
+    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
+    await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await Promise.resolve(); });
+    // Escape / outside press: the popover unmounts the editor while the request is in flight.
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null;
+    await act(async () => { resolveSave({ changed: true, current: activeSchedule, eventIntent: null, publicationIds: [] }); await Promise.resolve(); await Promise.resolve(); });
+    await flush();
+    expect(apiPutMock).toHaveBeenCalledTimes(1);
+    expect(onSaved).not.toHaveBeenCalled();
   });
 
   it("keeps a repeated Sydney time draft until an explicit fold is chosen", async () => {

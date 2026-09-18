@@ -242,10 +242,11 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   const label = expanded ? "Show fewer team members" : `Show ${hiddenCount} more team members`;
   return <button
     type="button"
-    // #213 follow-up: chip-height among the chips (a 44px button made the box two tall rows); the
-    // 44px target comes from the same transparent hit-area the chip × uses, and the narrow
-    // breakpoint keeps the real 44px height like the chips do.
-    className={cn(buttonClasses("text", { className: "min-h-0 h-[calc(--spacing(5.25))] py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px]" }), TEAM_CHIP_REMOVE_HIT_AREA)}
+    // #213 follow-up: chip-height among the chips (a 44px button made the box two tall rows). The
+    // 44px target comes from the same transparent hit-area the chip × uses, whose ±10px inset is
+    // sized for that ×'s 24px box — so this is 24px too (`size-6`-tall), not the chips' 21px, or
+    // the sum would be 41. The narrow breakpoint keeps the real 44px height like the chips do.
+    className={cn(buttonClasses("text", { className: "min-h-0 h-6 py-0 px-1.5 shrink-0 !normal-case max-[721px]:min-h-[44px]" }), TEAM_CHIP_REMOVE_HIT_AREA)}
     aria-expanded={expanded}
     aria-label={label}
     // Base UI's Chips container opens the popup on most interaction inside it — this toggle

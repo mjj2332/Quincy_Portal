@@ -152,6 +152,12 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
     ownerRelease.current = runtime.acquireOwner(projectDataKeys.detail(projectId));
     return () => { ownerRelease.current?.(); ownerRelease.current = null; };
   }, [canWrite, projectId, runtime]);
+  // (Sol, #213 follow-up) A request can outlive its editor: Escape unmounts this while a Save is in
+  // flight, and the user may reopen the popover and start a new draft before it resolves. The
+  // invalidation still runs, but the stale completion must not reseed or close the NEW session.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const customToggle = useRef<HTMLButtonElement>(null);
 
   // A successful save leaves nothing to protect, and the invalidation it just fired is deferred
   // behind this very owner — so release it (which flushes that invalidation) and hold it again
@@ -176,11 +182,25 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
     const value = Number(custom);
     if (!Number.isSafeInteger(value) || value < 1 || value > 43200 || offsets.includes(value) || offsets.length >= 8) return;
     setOffsets((current) => [...current, value].sort((a, b) => b - a)); setCustom(""); setCustomOpen(false);
+    // The field and its Add button unmount here — hand focus to "+ custom" so a keyboard user
+    // keeps their place in the popover (Sol, #213 follow-up).
+    customToggle.current?.focus();
   }
 
-  function applySaved(current: ProjectDeadlineSchedule) {
+  function removeCustomOffset(value: number) {
+    toggleOffset(value, false);
+    customToggle.current?.focus();
+  }
+
+  /** Everything a successful save, clear or resume does with the authoritative schedule. */
+  async function commit(current: ProjectDeadlineSchedule) {
     setVisibleSchedule(current);
     queryClient?.setQueryData<ProjectDetail>(projectDataKeys.detail(projectId), (detail) => detail ? { ...detail, deadlineSchedule: current } : detail);
+    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
+    if (!mounted.current) return;
+    seedDraft(current);
+    cycleOwner();
+    onSaved?.();
   }
 
   async function save(deadline: SaveProjectDeadlineRequest["deadline"], resume = false) {
@@ -190,11 +210,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
       : { expectedVersion: baseVersion, deadline, reminderOffsetsMinutes: offsets, ...(resume ? { resume: true as const } : {}) };
     try {
       const response = await apiPut<SaveResponse, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(projectId)}/deadline`, body);
-      applySaved(response.current);
-      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
-      seedDraft(response.current);
-      cycleOwner();
-      onSaved?.();
+      await commit(response.current);
     } catch (reason) {
       const details = reason instanceof ApiError && reason.details && typeof reason.details === "object" ? reason.details as Record<string, unknown> : null;
       if (details?.code === "deadline_repeated_local_time" && Array.isArray(details.choices)) {
@@ -224,11 +240,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
         reminderOffsetsMinutes: visibleSchedule.reminderOffsetsMinutes,
         resume: true,
       });
-      applySaved(response.current);
-      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
-      seedDraft(response.current);
-      cycleOwner();
-      onSaved?.();
+      await commit(response.current);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409 && reason.details && typeof reason.details === "object" && "current" in reason.details) {
         setConflict((reason.details as { current: ProjectDeadlineSchedule }).current);
@@ -306,10 +318,12 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
       <legend className={DEADLINE_LEGEND}>Advance reminders <span>({offsets.length}/8)</span></legend>
       {/* Prototype 1b's chip row: one toggle per offset. A custom offset is a pressed chip too —
           pressing it off removes it — and "+ custom" opens the minutes field below. */}
-      <div className="flex flex-wrap gap-[var(--space-3)] gap-y-[var(--space-3)] py-[var(--space-1)]" role="group" aria-label="Advance reminders">
+      {/* 16px gaps, not 12: each chip's hit area reaches 8px past its box on every side, so anything
+          tighter would let neighbouring targets overlap (Sol, #213 follow-up). */}
+      <div className="flex flex-wrap gap-[var(--space-4)] py-[var(--space-1)]" role="group" aria-label="Advance reminders">
         {PROJECT_DEADLINE_PRESETS.map((preset) => <button key={preset} type="button" className={REMINDER_TOGGLE} aria-pressed={selected.has(preset)} onClick={() => toggleOffset(preset, !selected.has(preset))}>{deadlineOffsetLabel(preset)}</button>)}
-        {customOffsets.map((value) => <button key={value} type="button" className={REMINDER_TOGGLE} aria-pressed onClick={() => toggleOffset(value, false)}>{deadlineOffsetLabel(value)}</button>)}
-        <button type="button" className={REMINDER_TOGGLE} aria-expanded={customOpen} aria-controls={`project-deadline-custom-${projectId}`} disabled={offsets.length >= 8} onClick={() => setCustomOpen((open) => !open)}>+ custom</button>
+        {customOffsets.map((value) => <button key={value} type="button" className={REMINDER_TOGGLE} aria-pressed onClick={() => removeCustomOffset(value)}>{deadlineOffsetLabel(value)}</button>)}
+        <button ref={customToggle} type="button" className={REMINDER_TOGGLE} aria-expanded={customOpen} aria-controls={`project-deadline-custom-${projectId}`} disabled={offsets.length >= 8} onClick={() => setCustomOpen((open) => !open)}>+ custom</button>
       </div>
       {customOpen && <div id={`project-deadline-custom-${projectId}`} className="flex flex-wrap items-end gap-[var(--space-2)]">
         <input className={cn(DEADLINE_FIELD, "flex-1 min-w-0")} aria-label="Custom reminder minutes" type="number" min="1" max="43200" step="1" value={custom} onChange={(event) => setCustom(event.target.value)} placeholder="Minutes before" autoFocus />

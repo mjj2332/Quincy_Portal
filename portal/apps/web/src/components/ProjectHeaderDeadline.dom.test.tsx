@@ -267,6 +267,25 @@ describe("ProjectHeaderDeadline", () => {
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
   });
 
+  it("does not let a Save that was in flight when the popover closed close a session reopened later (Sol, #213)", async () => {
+    let resolveSave!: (value: unknown) => void;
+    apiPutMock.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve; }));
+    const host = await mount(emptySchedule);
+    const dialog = await openTrigger(host);
+    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
+    await setInput(dialog.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
+    await act(async () => { [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!.click(); await Promise.resolve(); });
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
+    const reopened = await openTrigger(host);
+    await setInput(reopened.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-03-03");
+    await act(async () => { resolveSave({ changed: true, current: scheduleAt("2027-01-14T22:00:00.000Z", { version: 1 }), eventIntent: null, publicationIds: [] }); await Promise.resolve(); await Promise.resolve(); });
+    await flush();
+    // The stale completion neither closed the new session nor replaced its draft.
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).not.toBeNull();
+    expect(reopened.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')?.value).toBe("2027-03-03");
+  });
+
   it("shows no editor at all when canEdit is false", async () => {
     const host = await mount(emptySchedule, false);
     const dialog = await openTrigger(host);
