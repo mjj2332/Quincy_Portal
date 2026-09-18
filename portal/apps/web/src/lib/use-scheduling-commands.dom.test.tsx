@@ -233,4 +233,30 @@ describe("useSchedulingCommands submitProposal", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [] }]);
   });
+
+  // §216 fix round 3 item 1
+  it("clears the active snapshot and releases the lock on a generic-invalid deadline error for a DRAG (not just a placement) — a following submitProposal is then accepted", async () => {
+    const event = deadlineEvent("2026-08-27T09:00", 8);
+    await render(response({ events: [event], unscheduled: [] }));
+
+    // target.subview:"agenda" fails mapProjectDeadlineMoveToCommand with unsupported_subview — a
+    // "generic-invalid" error (neither repeated_local_time nor nonexistent_local_time) for a
+    // "deadline" (drag), not "place", proposal. On the round-2 drift, snapshotRef/commandLockRef
+    // were only unconditionally cleared for placements, so a drag hitting this branch left the
+    // lock held and a following submitProposal would be wrongly rejected as "busy".
+    const invalidProposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "agenda", targetDate: "2026-08-29" } };
+    let firstOutcome: SubmitProposalOutcome | undefined;
+    await act(async () => { firstOutcome = commandsRef!.submitProposal(invalidProposal); await Promise.resolve(); });
+    expect(firstOutcome).toEqual({ ok: true });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
+    expect(confirm).not.toHaveBeenCalled();
+
+    const secondProposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "month", targetDate: "2026-08-29" } };
+    let secondOutcome: SubmitProposalOutcome | undefined;
+    await act(async () => { secondOutcome = commandsRef!.submitProposal(secondProposal); await Promise.resolve(); });
+    expect(secondOutcome).toEqual({ ok: true });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
+  });
 });

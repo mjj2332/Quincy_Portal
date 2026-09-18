@@ -704,7 +704,10 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       if (isPlace) setOverlay(null);
       setAcceptGate(false);
       commandLockRef.current.active = false;
-      if (isPlace) snapshotRef.current = null;
+      // §216 fix round 3 item 1: unconditional — main (ProductionCalendar.tsx:995-1001) cleared
+      // snapshotRef on this generic-invalid branch for a drag too, not just a placement. Only the
+      // overlay clear above stays placement-only, per main.
+      snapshotRef.current = null;
       announceLifecycle("invalid", { entity: "deadline" });
       focusDescriptor({ eventId: event.id, control: "event" });
       flushQueuedRefetch();
