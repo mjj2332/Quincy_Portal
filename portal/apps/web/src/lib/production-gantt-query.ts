@@ -112,8 +112,8 @@ export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse
   const canReuse = projectFlattenCache !== null && pagesShareIndexablePrefix(projectFlattenCache.pages, pages);
   const byId = canReuse ? projectFlattenCache!.byId : new Map<string, GanttProjectRowDto>();
   const startIndex = canReuse ? projectFlattenCache!.pages.length : 0;
-  for (let i = startIndex; i < pages.length; i++) {
-    for (const project of pages[i].projects) {
+  for (const newPage of pages.slice(startIndex)) {
+    for (const project of newPage.projects) {
       // Re-inserting an existing key moves it to the end of Map iteration order, so a duplicated
       // id lands at the position of its LATEST occurrence, carrying that occurrence's data.
       byId.delete(project.id);

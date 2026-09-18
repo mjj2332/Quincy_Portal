@@ -8,6 +8,7 @@ import {
   productionGanttInfiniteQueryOptions,
   productionGanttKey,
   removeProductionGanttQueries,
+  type ProductionGanttSelectedData,
 } from "./production-gantt-query";
 import { invalidateProjectSurfaces } from "./project-data";
 import { ProjectQueryRuntime } from "./project-query-sync";
@@ -121,14 +122,14 @@ describe("production gantt query family", () => {
     // First "render": mount the observer with a fresh options object (as the hook does on every
     // render), and read the selected data.
     const optionsA = productionGanttInfiniteQueryOptions(identity, filters);
-    const observer = new InfiniteQueryObserver(client, optionsA as never);
+    const observer = new InfiniteQueryObserver<ProductionGanttResponse, Error, ProductionGanttSelectedData, typeof optionsA.queryKey, string | undefined>(client, optionsA);
     const firstResult = observer.getCurrentResult();
     const firstProjects = firstResult.data!.projects;
 
     // Second "render": a brand-new options object (new object identity, same `select` reference
     // because it is hoisted to module scope) with the same, unchanged query data.
     const optionsB = productionGanttInfiniteQueryOptions(identity, filters);
-    observer.setOptions(optionsB as never);
+    observer.setOptions(optionsB);
     const secondResult = observer.getCurrentResult();
 
     expect(secondResult.data!.projects).toBe(firstProjects);
