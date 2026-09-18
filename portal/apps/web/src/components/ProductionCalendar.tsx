@@ -44,6 +44,29 @@ import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib
 import { decodeChecklistMutationResponse, productionCalendarFiltersFor, removeProductionCalendarQueries, useProductionCalendarRange, type ChecklistMutationResult } from "../lib/production-calendar-query";
 import { fullCalendarCallbackToSydneyCivil } from "../lib/production-calendar-fullcalendar";
 import {
+  adoptChecklistResult,
+  canonicalChecklistEvent,
+  canonicalEventFromSchedule,
+  checklistAssigneeForResult,
+  checklistCurrentCivil,
+  checklistInputFromSchedule,
+  checklistSchedulesEqual,
+  checklistSourceFromResponse,
+  choicesFromError,
+  cloneFilters,
+  cloneResponse,
+  currentMatchesSource,
+  endpointChoicesFromError,
+  endpointOfError,
+  inputDisambiguation,
+  optimisticChecklistEvent,
+  projectDeadlinePlaceholder,
+  proposedCivilForAllDay,
+  responseEvent,
+  stableScheduleValue,
+  timingFromChecklistSchedule,
+} from "../lib/scheduling-policy";
+import {
   applyOptimisticOverlay,
   beginCalendarInteraction,
   canStartCalendarCommand,
@@ -214,238 +237,15 @@ function viewForSubview(subview: ProductionCalendarSubview): "dayGridMonth" | "t
   return "list";
 }
 
-function cloneFilters(filters: ProductionCalendarFilters): ProductionCalendarFilters {
-  return { ...filters, layers: [...filters.layers], editorIds: [...filters.editorIds], stageKeys: [...filters.stageKeys] };
-}
-
-function cloneResponse(response: ProductionCalendarRangeResponse): ProductionCalendarRangeResponse {
-  return {
-    ...response,
-    range: { ...response.range, appliedFilters: cloneFilters(response.range.appliedFilters) },
-    events: response.events.map((event) => cloneSource(event)),
-    unscheduled: response.unscheduled.map((entry) => cloneSource(entry)),
-  };
-}
-
-function responseEvent(response: ProductionCalendarRangeResponse | null, eventId: string): ProjectDeadlineCalendarEventDto | undefined {
-  const event = response?.events.find((candidate) => candidate.id === eventId);
-  return event?.kind === "project_deadline" ? event : undefined;
-}
-
-function projectDeadlinePlaceholder(entry: ProjectCalendarUnscheduledEntryDto): ProjectDeadlineCalendarEventDto {
-  return {
-    id: entry.id,
-    kind: "project_deadline",
-    title: entry.title,
-    project: cloneSource(entry).project,
-    timing: { allDay: false, start: "1970-01-01T00:00:00.000Z", end: null },
-    status: { overdue: false, delivered: entry.project.delivered, completed: false, sameAssigneeOverlap: false },
-    permissions: { canDrag: entry.permissions.canDrag, canResize: false },
-    deadlineLocalCivil: "Not scheduled",
-    deadlineVersion: entry.deadlineVersion,
-    reminderOffsetsMinutes: [],
-  };
-}
-
 function canDragUnscheduledEntry(entry: CalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
   return entry.kind === "project_deadline"
     ? unscheduledProjectDraggable(entry)
     : unscheduledChecklistDraggable(entry, rangesEnabled);
 }
 
-function currentMatchesSource(event: ProjectDeadlineCalendarEventDto, current: SaveResponse["current"]): boolean {
-  return current.version === event.deadlineVersion
-    && current.deadline?.localCivil === event.deadlineLocalCivil
-    // Project Deadlines are stored as timed instants; an all-day DTO is only a
-    // defensive presentation shape, never a reason to skip the instant check.
-    && current.deadline?.instant === event.timing.start
-    && JSON.stringify(current.reminderOffsetsMinutes) === JSON.stringify(event.reminderOffsetsMinutes);
-}
-
-function canonicalEventFromSchedule(event: ProjectDeadlineCalendarEventDto, current: SaveResponse["current"]): ProjectDeadlineCalendarEventDto {
-  const nextDeadline = current.deadline;
-  return {
-    ...cloneSource(event),
-    deadlineLocalCivil: nextDeadline?.localCivil ?? event.deadlineLocalCivil,
-    deadlineVersion: current.version,
-    reminderOffsetsMinutes: [...current.reminderOffsetsMinutes],
-    timing: nextDeadline ? { allDay: false, start: nextDeadline.instant, end: null } : event.timing,
-  };
-}
-
-function proposedCivilForAllDay(source: ProjectDeadlineCalendarEventDto, date: string): string {
-  return `${date}T${source.deadlineLocalCivil.slice(11, 16)}`;
-}
-
-function choicesFromError(error: unknown): Array<{ disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number }> {
-  if (!(error instanceof ApiError) || !error.details || typeof error.details !== "object") return [];
-  const choices = (error.details as { choices?: unknown }).choices;
-  if (!Array.isArray(choices)) return [];
-  return choices.filter((choice): choice is { disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number } => {
-    if (!choice || typeof choice !== "object") return false;
-    const value = choice as Record<string, unknown>;
-    return (value.disambiguation === "earlier" || value.disambiguation === "later") && typeof value.utcOffsetMinutes === "number";
-  });
-}
-
-function endpointChoicesFromError(error: unknown): Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> {
-  if (!(error instanceof ApiError) || !error.details || typeof error.details !== "object") return [];
-  const details = error.details as { details?: unknown; choices?: unknown };
-  const choices = Array.isArray(details.choices) ? details.choices : details.details && typeof details.details === "object" && Array.isArray((details.details as { choices?: unknown }).choices) ? (details.details as { choices: unknown[] }).choices : [];
-  return choices.filter((choice): choice is { disambiguation: "earlier" | "later"; utcOffsetMinutes: number } => {
-    if (!choice || typeof choice !== "object") return false;
-    const value = choice as Record<string, unknown>;
-    return (value.disambiguation === "earlier" || value.disambiguation === "later") && typeof value.utcOffsetMinutes === "number";
-  });
-}
-
-function endpointOfError(error: unknown): "start" | "end" | undefined {
-  if (!(error instanceof ApiError) || !error.details || typeof error.details !== "object") return undefined;
-  const details = error.details as { endpoint?: unknown; details?: unknown };
-  if (details.endpoint === "start" || details.endpoint === "end") return details.endpoint;
-  if (details.details && typeof details.details === "object") {
-    const endpoint = (details.details as { endpoint?: unknown }).endpoint;
-    if (endpoint === "start" || endpoint === "end") return endpoint;
-  }
-  return undefined;
-}
-
 function durationNonZero(value: CalendarResizeInfo["startDelta"]): boolean {
   if (!value) return false;
   return (value.milliseconds ?? 0) !== 0 || (value.days ?? 0) !== 0 || (value.months ?? 0) !== 0;
-}
-
-function stableScheduleValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableScheduleValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, stableScheduleValue(child)]));
-}
-
-function checklistSchedulesEqual(left: ChecklistScheduleDto, right: ChecklistScheduleDto): boolean {
-  return JSON.stringify(stableScheduleValue(left)) === JSON.stringify(stableScheduleValue(right));
-}
-
-function timingFromChecklistSchedule(schedule: ChecklistScheduleDto): CalendarEventTiming | null {
-  if (schedule.state === "unscheduled" || schedule.state === "legacy_unresolved" || schedule.state === "invalid" || !schedule.end) return null;
-  if (schedule.state === "due_only") {
-    return schedule.end.kind === "date"
-      ? { allDay: true, start: schedule.end.localCivil, end: null }
-      : { allDay: false, start: schedule.end.instant ?? "", end: null };
-  }
-  if (!schedule.start) return null;
-  if (schedule.start.kind === "date" && schedule.end.kind === "date") {
-    const exclusive = shiftSydneyCalendarDate(schedule.end.localCivil, 1);
-    return exclusive.ok ? { allDay: true, start: schedule.start.localCivil, end: exclusive.value } : null;
-  }
-  if (schedule.start.kind !== "timed" || schedule.end.kind !== "timed" || !schedule.start.instant || !schedule.end.instant) return null;
-  return { allDay: false, start: schedule.start.instant, end: schedule.end.instant };
-}
-
-function checklistInputFromSchedule(schedule: ChecklistScheduleDto): InitialChecklistScheduleInput {
-  if (schedule.state === "unscheduled") return { state: "unscheduled" };
-  if (schedule.state === "legacy_unresolved" || schedule.state === "invalid") {
-    const due = schedule.due ?? "";
-    const kind = due.includes("T") ? "timed" : "date";
-    return { state: "due_only", end: { kind, localCivil: due } };
-  }
-  if (schedule.state === "due_only") {
-    return { state: "due_only", end: schedule.end ? { kind: schedule.end.kind, localCivil: schedule.end.localCivil, ...(schedule.end.fold === 1 ? { disambiguation: "later" as const } : schedule.end.fold === 0 ? { disambiguation: "earlier" as const } : {}) } : { kind: "date", localCivil: schedule.due ?? "" } };
-  }
-  return {
-    state: "range",
-    start: schedule.start ? { kind: schedule.start.kind, localCivil: schedule.start.localCivil, ...(schedule.start.fold === 1 ? { disambiguation: "later" as const } : schedule.start.fold === 0 ? { disambiguation: "earlier" as const } : {}) } : { kind: "date", localCivil: "" },
-    end: schedule.end ? { kind: schedule.end.kind, localCivil: schedule.end.localCivil, ...(schedule.end.fold === 1 ? { disambiguation: "later" as const } : schedule.end.fold === 0 ? { disambiguation: "earlier" as const } : {}) } : { kind: "date", localCivil: "" },
-  };
-}
-
-function checklistCurrentCivil(event: ChecklistCalendarEventDto): string {
-  if (event.schedule.state === "due_only") return event.schedule.end?.localCivil ?? event.timing.start;
-  if (event.schedule.state === "range") return event.schedule.start?.localCivil ?? event.timing.start;
-  return event.timing.start;
-}
-
-function inputDisambiguation(schedule: InitialChecklistScheduleInput, endpoint: "start" | "end"): "earlier" | "later" | undefined {
-  const value = schedule.state === "range" ? schedule[endpoint] : schedule.state === "due_only" && endpoint === "end" ? schedule.end : undefined;
-  return value?.kind === "timed" ? value.disambiguation : undefined;
-}
-
-function checklistSourceFromResponse(response: ProductionCalendarRangeResponse | null, id: string): ChecklistSource | undefined {
-  const event = response?.events.find((candidate) => candidate.id === id);
-  if (event?.kind === "checklist") return event;
-  const entry = response?.unscheduled.find((candidate) => candidate.id === id);
-  return entry?.kind === "checklist" ? entry : undefined;
-}
-
-function checklistAssigneeForResult(source: ChecklistSource, result: ChecklistMutationResult): CalendarPerson | null {
-  if (source.assignee && result.assignee && source.assignee.id === result.assignee.id) return source.assignee;
-  return result.assignee;
-}
-
-function canonicalChecklistEvent(source: ChecklistSource, result: ChecklistMutationResult): ChecklistCalendarEventDto | null {
-  const schedule = result.schedule;
-  const timing = timingFromChecklistSchedule(schedule);
-  if (!timing) return null;
-  const permissions = source.permissions;
-  const common = {
-    id: result.id,
-    kind: "checklist" as const,
-    title: result.title,
-    project: { ...source.project, checklist: { ...source.project.checklist } },
-    assignee: checklistAssigneeForResult(source, result),
-    timing,
-    status: { ...("timing" in source ? source.status : { overdue: false, delivered: source.project.delivered, completed: false, sameAssigneeOverlap: false }), completed: result.done },
-  };
-  if (schedule.state === "due_only") return {
-    ...common,
-    schedule: schedule as DueOnlyChecklistScheduleDto,
-    permissions: { canDrag: permissions.canDrag, canResize: false, canOpenScheduleEditor: permissions.canOpenScheduleEditor, canScheduleRange: permissions.canScheduleRange },
-  };
-  if (schedule.state !== "range") return null;
-  return {
-    ...common,
-    schedule: schedule as RangeChecklistScheduleDto,
-    permissions: { canDrag: permissions.canDrag, canResize: permissions.canResize, canOpenScheduleEditor: permissions.canOpenScheduleEditor, canScheduleRange: permissions.canScheduleRange },
-  };
-}
-
-function optimisticChecklistEvent(source: ChecklistSource, schedule: ChecklistScheduleDto): ChecklistCalendarEventDto | null {
-  return canonicalChecklistEvent(source, {
-    id: source.id,
-    title: source.title,
-    done: "status" in source ? source.status.completed : false,
-    assignee: source.assignee,
-    position: 0,
-    schedule,
-    scheduleVersion: schedule.version,
-  });
-}
-
-function adoptChecklistResult(response: ProductionCalendarRangeResponse, source: ChecklistSource, result: ChecklistMutationResult): ProductionCalendarRangeResponse {
-  const nextEvent = canonicalChecklistEvent(source, result);
-  const schedule = result.schedule;
-  const sourceWasEvent = "timing" in source;
-  const events = response.events.filter((event) => event.id !== result.id);
-  if (nextEvent) events.push(nextEvent);
-  const unscheduled = response.unscheduled.filter((entry) => entry.id !== result.id);
-  if (!nextEvent && schedule.state === "unscheduled") {
-    const entry: ChecklistCalendarUnscheduledEntryDto = {
-      id: result.id,
-      kind: "checklist",
-      reason: "unscheduled",
-      title: result.title,
-      project: { ...source.project, checklist: { ...source.project.checklist } },
-      assignee: checklistAssigneeForResult(source, result),
-      schedule: schedule as UnscheduledChecklistScheduleDto,
-      permissions: {
-        canDrag: source.permissions.canDrag,
-        canResize: false,
-        canOpenScheduleEditor: source.permissions.canOpenScheduleEditor,
-        canScheduleRange: source.permissions.canScheduleRange,
-      },
-    };
-    unscheduled.push(entry);
-  }
-  return { ...response, events: sourceWasEvent || nextEvent ? events : response.events, unscheduled };
 }
 
 /**
