@@ -2912,7 +2912,9 @@ Three build-level lessons from the same ticket:
 
 **Rule:** a UI ticket links the design file and carries a "matches the prototype at 1280px"
 criterion with a screenshot. Review axes that never look at the design cannot catch a design
-deviation, however many of them run.
+deviation, however many of them run. The browser pass is therefore two stages
+(`docs/subagents/Subagent-Orchestration.md` §2a): Luna measures, then an Opus design-reviewer
+looks at the screenshots as a designer and audits her table.
 
 Two more from the owner's follow-up on the same header (deadline popover as 1b, Team box narrowed,
 crumb and hairline from 2a):
