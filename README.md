@@ -1,11 +1,9 @@
 # Quincy Portal
 
 An internal media-pipeline + client-delivery web app for **Quincy Productions**, a
-real-estate photography studio — replacing our [Pixieset site](https://quincyproductions.pixieset.com).
+real-estate photography studio.
 It runs the full pipeline for a shoot: RAW capture → internal QA & markup → editing handoff →
 client delivery, with role-based access for admin, photographers, and editors.
-
-**Production is live at <https://quincy.flamingfire.my>.**
 
 ## What's in this repo
 
