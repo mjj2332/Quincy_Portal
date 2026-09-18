@@ -75,6 +75,7 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
   // The contract-off state remains a genuinely disabled control.
   const disabled = pending || (!contractEnabled && !disabledReason);
   const labelFor = (key: ProjectDetail["stageKey"]) => stages.find((item) => item.key === key)?.label ?? key;
+  const reasonId = `project-stage-reason-${project.id}`;
   return <div className="grid gap-[var(--space-1)]">
     <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
       <span className={HEADER_KV_KEY}>Stage</span>
@@ -98,7 +99,7 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         aria-disabled={unavailable ? "true" : undefined}
         // #206: the reason must be described, not just visually adjacent — only wired when a
         // reason is actually shown below, since an absent target id would be worse than none.
-        aria-describedby={unavailable ? `project-stage-reason-${project.id}` : undefined}
+        aria-describedby={unavailable ? reasonId : undefined}
         className={STAGE_SELECT}
       >
         <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
@@ -112,7 +113,7 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
         {!current && <SelectItem value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
       </SelectContent>
     </Select>
-    {unavailable && <span id={`project-stage-reason-${project.id}`} className="block mt-[var(--space-1)]
+    {unavailable && <span id={reasonId} className="block mt-[var(--space-1)]
                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
                      text-foreground-secondary">{unavailable}</span>}
   </div>;

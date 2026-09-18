@@ -395,7 +395,10 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
                 // keydown handler, so the browser's default Tab would then step from the chip
                 // back onto this × — a trap. Keep Tab from reaching the chip; the default move
                 // still happens. Arrow keys deliberately still bubble (chip-to-chip navigation).
-                onKeyDown: (event) => { if (event.key === "Tab") event.stopPropagation(); },
+                // Capture phase, not `onKeyDown`: Base UI's `useButton` wraps the merged bubble
+                // handler and skips it while `disabled` — and the pending × is disabled yet still
+                // focusable, so a bubble-phase guard would leave exactly that state trapped.
+                onKeyDownCapture: (event) => { if (event.key === "Tab") event.stopPropagation(); },
               }}
             >
               <TeamChipContent option={option} dataState={dataState} roleTag={roleTag} />

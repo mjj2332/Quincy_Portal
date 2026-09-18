@@ -2838,6 +2838,12 @@ What Sol's diff review caught, and the Base UI source confirmed:
 - **Stop the key, not the move.** `stopPropagation` on Tab in the ×'s own keydown keeps it from
   the chip; `preventDefault` would have killed the traversal we were trying to enable. Arrow keys
   still bubble so chip-to-chip navigation keeps working.
+- **The vendor's own gate can skip your handler.** The first fix used `onKeyDown`. Base UI's
+  `useButton` wraps the merged bubble handler and returns early while `disabled`, and the pending
+  × is disabled *and* still focusable (`focusableWhenDisabled`), so mid-removal the guard never
+  ran and that one state stayed trapped. The Spec review caught it from the `useButton` source;
+  `onKeyDownCapture` runs before the gate. When you attach a handler through a vendor's props
+  merge, read what wraps it, not just what it merges with.
 - **A named element's naming rules travel with its role.** `aria-label` on a plain `<div>` is not
   a name, it is a lint error waiting for a checker. `role="group"` made the Deadline reminder
   summary a legal target. Only a fixture with a deadline *set* renders that block, so the a11y
