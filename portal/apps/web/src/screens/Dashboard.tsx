@@ -57,6 +57,7 @@ import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
   adoptDashboardSearchFromUrl,
   clearDashboardSearch,
+  commitDashboardSearchNow,
   getDashboardSearchSnapshot,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
@@ -469,11 +470,20 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
-    const built = staffPathFor({ kind: "dashboard", calendar: next });
-    setCalendarState(next);
+    // #217 fix round 1, item 3: flush and override `next.search` with the just-flushed value --
+    // every direct Calendar-facet change (Unassigned, a date/subview change, ...) goes through
+    // `ProductionCalendarFilters`'s own `onChange` -> `onNavigate` -> here, building `next` from
+    // its OWN `calendar` prop snapshot, which is the last COMMITTED search, not necessarily
+    // whatever is still mid-debounce right as the facet changes. One override point here covers
+    // every caller (this one, `selectView`'s calendar branch, and the store's own writer) instead
+    // of each having to remember to flush for itself.
+    commitDashboardSearchNow();
+    const withCurrentSearch: DashboardCalendarState = { ...next, search: getDashboardSearchSnapshot().query };
+    const built = staffPathFor({ kind: "dashboard", calendar: withCurrentSearch });
+    setCalendarState(withCurrentSearch);
     try {
-      calendarStorage.write(DASHBOARD_CALENDAR_SUBVIEW_KEY, next.subview);
-      calendarStorage.write(DASHBOARD_CALENDAR_LAST_DATE_KEY, next.date);
+      calendarStorage.write(DASHBOARD_CALENDAR_SUBVIEW_KEY, withCurrentSearch.subview);
+      calendarStorage.write(DASHBOARD_CALENDAR_LAST_DATE_KEY, withCurrentSearch.date);
     } catch { /* Calendar fallback storage is best effort. */ }
     if (replace) history.replace(built); else history.push(built);
   }, [calendarInteractionBlocked, canViewProductionCalendar, history, viewingArchived]);
@@ -489,7 +499,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
     if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
-    const next: DashboardCalendarState = { ...calendarState, ...filters, view: "calendar" };
+    // #217 fix round 1, item 3: flush BEFORE reading the search to carry, same reasoning as
+    // `selectView` -- `calendarState.search` alone can be the last COMMITTED value, stale against
+    // whatever is still mid-debounce right as this facet change fires.
+    commitDashboardSearchNow();
+    const currentSearch = getDashboardSearchSnapshot().query;
+    const next: DashboardCalendarState = { ...calendarState, ...filters, search: currentSearch, view: "calendar" };
     if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
     const built = staffPathFor({ kind: "dashboard", calendar: next });
     setCalendarState(next);
@@ -698,7 +713,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
       calendarFallbackLocationRef.current = false;
-      history.push(staffPathFor({ kind: "dashboard", dashboardView: next }));
+      // #217 fix round 1, item 3: flush BEFORE building this push -- the writer-registration
+      // effect's own cleanup (which now also flushes, `dashboard-search-store.ts`) only runs
+      // AFTER this synchronous handler returns and React re-renders, too late to make it into
+      // the URL built here. Reading the just-flushed value directly is what carries a committed
+      // OR still-debouncing search across a view switch instead of silently dropping it.
+      commitDashboardSearchNow();
+      const currentSearch = getDashboardSearchSnapshot().query;
+      history.push(staffPathFor({ kind: "dashboard", dashboardView: next, ...(currentSearch ? { search: currentSearch } : {}) }));
     }
   }
 
@@ -712,7 +734,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       lastNonCalendarViewRef.current = "list";
       try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
       calendarFallbackLocationRef.current = false;
-      if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") history.push(staffPathFor({ kind: "dashboard", dashboardView: "list" }));
+      if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") {
+        // Same flush-then-read as `selectView` above.
+        commitDashboardSearchNow();
+        const currentSearch = getDashboardSearchSnapshot().query;
+        history.push(staffPathFor({ kind: "dashboard", dashboardView: "list", ...(currentSearch ? { search: currentSearch } : {}) }));
+      }
     }
   }
 

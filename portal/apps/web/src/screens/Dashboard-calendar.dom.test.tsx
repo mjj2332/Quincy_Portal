@@ -290,6 +290,42 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search.indexOf("unassigned=1")).toBeLessThan(window.location.search.indexOf("q="));
   });
 
+  // #217 fix round 1, item 3 (Sol's diff review). Restores the coverage this suite had before:
+  // a committed search must survive a view switch or a Calendar facet change, and view-switching
+  // must not be disabled just because a search is active.
+  it("type then switch view inside the debounce carries q into the new view's URL", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    // Switched BEFORE the 300ms debounce elapses -- the pending draft must not be dropped.
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("view=kanban");
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  it("type then change a Calendar facet inside the debounce keeps q", async () => {
+    window.history.replaceState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist");
+    await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await typeSearch("smith");
+    // Toggled BEFORE the 300ms debounce elapses.
+    await act(async () => { [...host.querySelectorAll("label")].find((label) => label.textContent?.includes("Unassigned"))?.querySelector<HTMLInputElement>("input")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("unassigned=1");
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  it("a committed search survives a view switch and does not disable the view buttons", async () => {
+    await render();
+    await typeSearch("smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(window.location.search).toContain("q=smith");
+    const listButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;
+    expect(listButton.disabled).toBe(false);
+    await act(async () => { listButton.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("view=list");
+    expect(window.location.search).toContain("q=smith");
+  });
+
   it("silently replaces a URL after the server drops an inaccessible Editor", async () => {
     apiGetMock.mockImplementation((path) => path.startsWith("/api/production-calendar") ? Promise.resolve(calendarResponse([])) : Promise.resolve(projectResponse()));
     await render({ calendar: routeCalendar });

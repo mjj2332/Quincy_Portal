@@ -93,13 +93,27 @@ describe("dashboard-search-store", () => {
     expect(getDashboardSearchSnapshot().query).toBe("jones");
   });
 
-  it("unregister cancels a pending write", () => {
+  it("unregister never fires the writer being torn down", () => {
     const writer = vi.fn();
     const unregister = setDashboardSearchUrlWriter(writer);
     setDashboardSearchDraft("smith");
     unregister();
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
     expect(writer).not.toHaveBeenCalled();
+  });
+
+  it("unregister FLUSHES the pending draft into query/lastWritten instead of dropping it (#217 fix round 1, item 3)", () => {
+    // Re-registration (a view/Calendar-facet change) must not silently lose whatever was
+    // mid-debounce: a caller synchronously reads the flushed `query` right after triggering the
+    // transition that causes re-registration, and builds its own URL from it.
+    const unregister = setDashboardSearchUrlWriter(vi.fn());
+    setDashboardSearchDraft("smith");
+    expect(getDashboardSearchSnapshot().query).toBe("");
+    unregister();
+    expect(getDashboardSearchSnapshot().query).toBe("smith");
+    // The flush also cancelled the timer -- nothing left pending to fire later.
+    vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
+    expect(getDashboardSearchSnapshot().query).toBe("smith");
   });
 
   it("snapshot identity is stable across a no-op set", () => {
