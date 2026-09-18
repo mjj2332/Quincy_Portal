@@ -1,18 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
+  checklistScheduleToDto,
   mapChecklistEndResizeToCommand,
   mapChecklistMoveToCommand,
   mapChecklistStartResizeToCommand,
   mapProjectDeadlineMoveToCommand,
   mapUnscheduledChecklistDropToCommand,
   mapUnscheduledProjectDropToCommand,
+  normalizeChecklistSchedule,
+  resolveSydneyCivilMinute,
   PRODUCTION_CALENDAR_ZONE,
+  type CalendarMappingResult,
   type ChecklistCalendarEventDto,
   type ChecklistCalendarUnscheduledEntryDto,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
+  type SaveChecklistScheduleRequest,
+  type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
-import { checkScheduleBounds, planSchedulingProposal, type SchedulingProposal } from "./scheduling-policy";
+import { checkScheduleBounds, planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
+
+/** Independently recomputes the timing a checklist plan should carry, from the SAME public
+ * helpers `planSchedulingProposal` itself uses — so the assertion below is not tautological. */
+function expectedChecklistTiming(direct: Extract<CalendarMappingResult<SaveChecklistScheduleRequest>, { ok: true }>) {
+  const normalized = normalizeChecklistSchedule(direct.value.schedule, direct.value.expectedVersion);
+  if (!normalized.ok) throw new Error("fixture schedule failed to normalize");
+  return timingFromChecklistSchedule(checklistScheduleToDto(normalized.value));
+}
+
+/** Same, for a deadline plan — independently resolves the civil minute the mapper produced. */
+function expectedDeadlineTiming(direct: Extract<CalendarMappingResult<SaveProjectDeadlineRequest>, { ok: true }>) {
+  if (direct.value.deadline === null) throw new Error("expected a scheduled deadline");
+  const resolved = resolveSydneyCivilMinute(direct.value.deadline.localCivil, direct.value.deadline.disambiguation);
+  if (!resolved.ok) throw new Error("fixture deadline failed to resolve");
+  return { allDay: false as const, start: resolved.value.instant, end: null };
+}
 
 const EDITOR_STAGE = "editing" as const;
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -68,9 +90,10 @@ describe("planSchedulingProposal", () => {
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapChecklistMoveToCommand({ event: source, target });
-    expect(plan.ok).toBe(true);
-    expect(direct.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist" && direct.ok) expect(plan.value.request).toEqual(direct.value);
+    if (!direct.ok) throw new Error("expected mapChecklistMoveToCommand to succeed");
+    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
+    if (plan.value.kind !== "checklist") throw new Error(`expected a checklist plan, got ${plan.value.kind}`);
+    expect(plan.value).toEqual({ kind: "checklist", request: direct.value, schedule: direct.value.schedule, timing: expectedChecklistTiming(direct), warnings: [] });
   });
 
   it("end-resizes a checklist range exactly as mapChecklistEndResizeToCommand", () => {
@@ -79,9 +102,10 @@ describe("planSchedulingProposal", () => {
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "end", target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapChecklistEndResizeToCommand({ event: source, target });
-    expect(plan.ok).toBe(true);
-    expect(direct.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist" && direct.ok) expect(plan.value.request).toEqual(direct.value);
+    if (!direct.ok) throw new Error("expected mapChecklistEndResizeToCommand to succeed");
+    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
+    if (plan.value.kind !== "checklist") throw new Error(`expected a checklist plan, got ${plan.value.kind}`);
+    expect(plan.value).toEqual({ kind: "checklist", request: direct.value, schedule: direct.value.schedule, timing: expectedChecklistTiming(direct), warnings: [] });
   });
 
   it("start-resizes a checklist range exactly as mapChecklistStartResizeToCommand", () => {
@@ -90,9 +114,10 @@ describe("planSchedulingProposal", () => {
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "start", target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapChecklistStartResizeToCommand({ event: source, target });
-    expect(plan.ok).toBe(true);
-    expect(direct.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist" && direct.ok) expect(plan.value.request).toEqual(direct.value);
+    if (!direct.ok) throw new Error("expected mapChecklistStartResizeToCommand to succeed");
+    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
+    if (plan.value.kind !== "checklist") throw new Error(`expected a checklist plan, got ${plan.value.kind}`);
+    expect(plan.value).toEqual({ kind: "checklist", request: direct.value, schedule: direct.value.schedule, timing: expectedChecklistTiming(direct), warnings: [] });
   });
 
   it("places an unscheduled checklist entry exactly as mapUnscheduledChecklistDropToCommand", () => {
@@ -101,9 +126,10 @@ describe("planSchedulingProposal", () => {
     const proposal: SchedulingProposal = { kind: "place", entity: "checklist", entry, target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapUnscheduledChecklistDropToCommand({ event: entry, target });
-    expect(plan.ok).toBe(true);
-    expect(direct.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist" && direct.ok) expect(plan.value.request).toEqual(direct.value);
+    if (!direct.ok) throw new Error("expected mapUnscheduledChecklistDropToCommand to succeed");
+    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
+    if (plan.value.kind !== "checklist") throw new Error(`expected a checklist plan, got ${plan.value.kind}`);
+    expect(plan.value).toEqual({ kind: "checklist", request: direct.value, schedule: direct.value.schedule, timing: expectedChecklistTiming(direct), warnings: [] });
   });
 
   it("places an unscheduled project deadline exactly as mapUnscheduledProjectDropToCommand", () => {
@@ -112,9 +138,11 @@ describe("planSchedulingProposal", () => {
     const proposal: SchedulingProposal = { kind: "place", entity: "project_deadline", entry, target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapUnscheduledProjectDropToCommand({ event: entry, target });
-    expect(plan.ok).toBe(true);
-    expect(direct.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "deadline" && direct.ok) expect(plan.value.request).toEqual(direct.value);
+    if (!direct.ok) throw new Error("expected mapUnscheduledProjectDropToCommand to succeed");
+    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
+    if (plan.value.kind !== "deadline") throw new Error(`expected a deadline plan, got ${plan.value.kind}`);
+    if (direct.value.deadline === null) throw new Error("expected a scheduled deadline");
+    expect(plan.value).toEqual({ kind: "deadline", request: direct.value, localCivil: direct.value.deadline.localCivil, timing: expectedDeadlineTiming(direct), warnings: [] });
   });
 
   it("moves a project deadline exactly as mapProjectDeadlineMoveToCommand", () => {
@@ -123,9 +151,11 @@ describe("planSchedulingProposal", () => {
     const proposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target };
     const plan = planSchedulingProposal(proposal);
     const direct = mapProjectDeadlineMoveToCommand({ event, target });
-    expect(plan.ok).toBe(true);
-    expect(direct.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "deadline" && direct.ok) expect(plan.value.request).toEqual(direct.value);
+    if (!direct.ok) throw new Error("expected mapProjectDeadlineMoveToCommand to succeed");
+    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
+    if (plan.value.kind !== "deadline") throw new Error(`expected a deadline plan, got ${plan.value.kind}`);
+    if (direct.value.deadline === null) throw new Error("expected a scheduled deadline");
+    expect(plan.value).toEqual({ kind: "deadline", request: direct.value, localCivil: direct.value.deadline.localCivil, timing: expectedDeadlineTiming(direct), warnings: [] });
   });
 
   it("propagates mapper errors unchanged", () => {
