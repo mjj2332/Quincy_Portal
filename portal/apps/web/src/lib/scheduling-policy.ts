@@ -32,6 +32,7 @@ import {
 import { ApiError } from "./api";
 import { cloneSource } from "./production-calendar-interaction";
 import type { ChecklistMutationResult } from "./production-calendar-query";
+import type { SaveResponse } from "./use-scheduling-commands";
 
 export type ChecklistSource = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 
@@ -49,17 +50,6 @@ export type ScheduleBounds = { shootDate: string | null; deadlineLocalCivil: str
 export type SchedulingPlan =
   | { kind: "checklist"; request: SaveChecklistScheduleRequest; schedule: InitialChecklistScheduleInput; timing: CalendarEventTiming | null; warnings: SchedulingWarning[] }
   | { kind: "deadline"; request: SaveProjectDeadlineRequest; localCivil: string; timing: CalendarEventTiming; warnings: SchedulingWarning[] };
-
-/**
- * Structurally matches `SaveResponse["current"]` in `ProductionCalendar.tsx` — the shape a
- * project-deadline save returns. Kept local (rather than importing `SaveResponse`) because that
- * type stays with the FullCalendar handlers/`use-scheduling-commands` hook.
- */
-type SaveResponseCurrent = {
-  version: number;
-  deadline: null | { localCivil: string; instant: string };
-  reminderOffsetsMinutes: number[];
-};
 
 export function cloneFilters(filters: ProductionCalendarFilters): ProductionCalendarFilters {
   return { ...filters, layers: [...filters.layers], editorIds: [...filters.editorIds], stageKeys: [...filters.stageKeys] };
@@ -94,7 +84,7 @@ export function projectDeadlinePlaceholder(entry: ProjectCalendarUnscheduledEntr
   };
 }
 
-export function currentMatchesSource(event: ProjectDeadlineCalendarEventDto, current: SaveResponseCurrent): boolean {
+export function currentMatchesSource(event: ProjectDeadlineCalendarEventDto, current: SaveResponse["current"]): boolean {
   return current.version === event.deadlineVersion
     && current.deadline?.localCivil === event.deadlineLocalCivil
     // Project Deadlines are stored as timed instants; an all-day DTO is only a
@@ -103,7 +93,7 @@ export function currentMatchesSource(event: ProjectDeadlineCalendarEventDto, cur
     && JSON.stringify(current.reminderOffsetsMinutes) === JSON.stringify(event.reminderOffsetsMinutes);
 }
 
-export function canonicalEventFromSchedule(event: ProjectDeadlineCalendarEventDto, current: SaveResponseCurrent): ProjectDeadlineCalendarEventDto {
+export function canonicalEventFromSchedule(event: ProjectDeadlineCalendarEventDto, current: SaveResponse["current"]): ProjectDeadlineCalendarEventDto {
   const nextDeadline = current.deadline;
   return {
     ...cloneSource(event),
