@@ -90,18 +90,25 @@ export function decodeGanttProjectCursor(value: unknown): GanttProjectCursor | n
   try { return encodeGanttProjectCursor(result.data) === value ? result.data : null; } catch { return null; }
 }
 
-export type GanttChildCursor = { projectId: string; position: number; id: string };
+/**
+ * `completed` carries the child list's own visibility mode (the "include done rows" flag) so a
+ * continuation request can never disagree with the page that minted the cursor — otherwise a
+ * client that changed its own `completed` query value between page one and page two would get a
+ * silently inconsistent `total` and a possible duplicate/gap (fix-218-r1 #1).
+ */
+export type GanttChildCursor = { projectId: string; position: number; id: string; completed: boolean };
 
 export const ganttChildCursorSchema = z.object({
   projectId: z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX),
   position: z.number().int(),
   id: z.string().regex(CANONICAL_LOWERCASE_UUID_REGEX),
+  completed: z.boolean(),
 }).strict();
 
 export function encodeGanttChildCursor(cursor: GanttChildCursor): string {
   const parsed = ganttChildCursorSchema.safeParse(cursor);
   if (!parsed.success) throw new TypeError("Invalid Gantt child cursor");
-  const json = JSON.stringify({ projectId: parsed.data.projectId, position: parsed.data.position, id: parsed.data.id });
+  const json = JSON.stringify({ projectId: parsed.data.projectId, position: parsed.data.position, id: parsed.data.id, completed: parsed.data.completed });
   const jsonBytes = new TextEncoder().encode(json);
   if (jsonBytes.byteLength > CURSOR_MAX_DECODED_BYTES) throw new RangeError("Gantt child cursor exceeds its size limit");
   const encoded = bytesToBase64(jsonBytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
@@ -119,7 +126,7 @@ export function decodeGanttChildCursor(value: unknown): GanttChildCursor | null 
   try { parsed = JSON.parse(json); } catch { return null; }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const keys = Object.keys(parsed);
-  if (keys.length !== 3 || keys[0] !== "projectId" || keys[1] !== "position" || keys[2] !== "id") return null;
+  if (keys.length !== 4 || keys[0] !== "projectId" || keys[1] !== "position" || keys[2] !== "id" || keys[3] !== "completed") return null;
   const result = ganttChildCursorSchema.safeParse(parsed);
   if (!result.success) return null;
   try { return encodeGanttChildCursor(result.data) === value ? result.data : null; } catch { return null; }

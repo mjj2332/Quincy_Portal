@@ -99,10 +99,17 @@ export function useProductionGanttProjects(identity: DashboardIdentity, filters:
  * project's children) owns its own loading/pagination state. The child-page response carries no
  * role-varying field (checklist rows have no `stageKey`), so every role shares one schema — no
  * external projection branch needed, unlike the page endpoint.
+ *
+ * `completed` selects the child list's own "include done rows" mode for a **first** page (no
+ * `childCursor`), matching the page endpoint's own default of `false` when omitted. It is only
+ * meaningful there: a continuation's mode is carried inside `childCursor` itself
+ * (fix-218-r1 #1), so passing both is a caller error the server rejects with
+ * `gantt_query_invalid` — omit `completed` once you have a cursor.
  */
-export async function fetchGanttChildPage(projectId: string, childCursor?: string, signal?: AbortSignal): Promise<ProductionGanttChildPageResponse> {
+export async function fetchGanttChildPage(projectId: string, childCursor?: string, completed?: boolean, signal?: AbortSignal): Promise<ProductionGanttChildPageResponse> {
   const params = new URLSearchParams({ scope: "active", childrenOf: projectId });
   if (childCursor) params.set("childCursor", childCursor);
+  else if (completed) params.set("completed", "1");
   const path = `/api/production-gantt?${params.toString()}`;
   const response = await apiGet<unknown>(path, signal ? { signal } : undefined);
   return productionGanttChildPageSchema.parse(response);

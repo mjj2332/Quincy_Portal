@@ -105,6 +105,12 @@ export type ParsedGanttChildQuery = {
   mode: "children";
   childrenOf: string;
   childCursor: GanttChildCursor | null;
+  /** The child list's own "include done rows" mode. On a first page (no `childCursor`) this comes
+   * from the `completed` query param, defaulting to `false` exactly like page mode; on a
+   * continuation it comes from the cursor itself (fix-218-r1 #1) — the cursor is the sole source
+   * of truth there, so an explicit `completed` alongside `childCursor` is rejected rather than
+   * silently ignored or trusted to agree. */
+  completed: boolean;
 };
 
 export type ParsedGanttQuery = ParsedGanttPageQuery | ParsedGanttChildQuery;
@@ -150,13 +156,20 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   if (childrenOf !== undefined) {
     if (rawCursor !== undefined || rawLimit !== undefined) return parseFailure("childrenOf cannot be combined with cursor or limit.", "gantt_query_invalid");
     if (!UUID_RE.test(childrenOf)) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+    const rawChildCompletedFlag = valueFor("completed");
+    if (rawChildCompletedFlag !== undefined && rawChildCompletedFlag !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
     let childCursor: GanttChildCursor | null = null;
+    let childCompleted = rawChildCompletedFlag === "1";
     if (rawChildCursor !== undefined) {
+      // The cursor is the sole source of truth for `completed` on a continuation — reject an
+      // explicit query value here instead of silently trusting or overriding it.
+      if (rawChildCompletedFlag !== undefined) return parseFailure("completed cannot be combined with childCursor; it is carried inside the cursor.", "gantt_query_invalid");
       const decoded = decodeGanttChildCursor(rawChildCursor);
       if (!decoded || decoded.projectId !== childrenOf) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
       childCursor = decoded;
+      childCompleted = decoded.completed;
     }
-    return { mode: "children", childrenOf, childCursor };
+    return { mode: "children", childrenOf, childCursor, completed: childCompleted };
   }
   if (rawChildCursor !== undefined) return parseFailure("childCursor requires childrenOf.", "gantt_query_invalid");
 
@@ -567,6 +580,7 @@ function serializeGanttProjectRow(
   now: number,
   editorsByProject: Map<string, { id: string; name: string }[]>,
   childrenByProject: Map<string, GanttChildSqlRow[]>,
+  completed: boolean,
 ): GanttProjectRowDto {
   if (row.project_id === null || row.street === null || row.stage_key === null || row.bar_start_date === null || row.created_at === null) {
     throw new Error("Gantt project row is incomplete.");
@@ -599,7 +613,7 @@ function serializeGanttProjectRow(
       returned,
       truncated: total > returned,
       nextCursor: total > returned
-        ? encodeGanttChildCursor({ projectId: row.project_id, position: children[returned - 1]!.position, id: children[returned - 1]!.subtask_id })
+        ? encodeGanttChildCursor({ projectId: row.project_id, position: children[returned - 1]!.position, id: children[returned - 1]!.subtask_id, completed })
         : null,
     },
   };
@@ -622,10 +636,7 @@ function parseGanttResponse(role: GanttRole, response: ProductionGanttResponse):
 async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery): Promise<Response> {
   const user = c.get("user");
   const role = user.role;
-  // The dedicated child-page endpoint has no `completed` parameter of its own (§3's table lists
-  // only childrenOf/childCursor as legal alongside it), so it applies the same default the page
-  // endpoint uses when `completed` is unspecified there: done rows excluded.
-  const params = ganttChildPageBindValues(user.id, parsed.childrenOf, false, parsed.childCursor);
+  const params = ganttChildPageBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.childCursor);
   const result = await c.env.DB.prepare(productionGanttChildPageSql(role)).bind(...params).all<GanttChildPageSqlRow>();
   const rows = result.results ?? [];
   const total = rows.length > 0 ? rows[0]!.total : 0;
@@ -633,7 +644,7 @@ async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery)
   const pageRows = truncated ? rows.slice(0, PRODUCTION_GANTT_CHILD_PAGE_LIMIT) : rows;
   const lastRow = pageRows.at(-1);
   const nextCursor = truncated && lastRow
-    ? encodeGanttChildCursor({ projectId: parsed.childrenOf, position: lastRow.position, id: lastRow.subtask_id })
+    ? encodeGanttChildCursor({ projectId: parsed.childrenOf, position: lastRow.position, id: lastRow.subtask_id, completed: parsed.completed })
     : null;
   const response: ProductionGanttChildPageResponse = {
     projectId: parsed.childrenOf,
@@ -689,7 +700,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     childrenByProject.set(row.project_id, list);
   }
 
-  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject));
+  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed));
   const lastRow = pageRows.at(-1);
   const nextCursor = truncatedPage && lastRow
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })

@@ -66,20 +66,29 @@ describe("Gantt project cursor", () => {
 
 describe("Gantt child cursor", () => {
   it("round-trips the canonical unpadded base64url cursor", () => {
-    const cursor: GanttChildCursor = { projectId: id, position: 3, id };
+    const cursor: GanttChildCursor = { projectId: id, position: 3, id, completed: true };
     const encoded = encodeGanttChildCursor(cursor);
     expect(encoded).not.toMatch(/[+/=]/u);
     expect(decodeGanttChildCursor(encoded)).toEqual(cursor);
-    expect(encoded).toBe(encodedJson(`{"projectId":"${id}","position":3,"id":"${id}"}`));
+    expect(encoded).toBe(encodedJson(`{"projectId":"${id}","position":3,"id":"${id}","completed":true}`));
     expect(ganttChildCursorSchema.safeParse(cursor).success).toBe(true);
   });
 
+  it("carries the completed visibility mode distinctly from position/id", () => {
+    const incomplete = encodeGanttChildCursor({ projectId: id, position: 3, id, completed: false });
+    const complete = encodeGanttChildCursor({ projectId: id, position: 3, id, completed: true });
+    expect(incomplete).not.toBe(complete);
+    expect(decodeGanttChildCursor(incomplete)).toEqual({ projectId: id, position: 3, id, completed: false });
+    expect(decodeGanttChildCursor(complete)).toEqual({ projectId: id, position: 3, id, completed: true });
+  });
+
   it("rejects wrong key order", () => {
-    expect(decodeGanttChildCursor(encodedJson(`{"id":"${id}","projectId":"${id}","position":3}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"id":"${id}","projectId":"${id}","position":3,"completed":false}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":3,"completed":false,"id":"${id}"}`))).toBeNull();
   });
 
   it("rejects a padded base64 value", () => {
-    const withPadding = `${encodeGanttChildCursor({ projectId: id, position: 0, id })}=`;
+    const withPadding = `${encodeGanttChildCursor({ projectId: id, position: 0, id, completed: false })}=`;
     expect(decodeGanttChildCursor(withPadding)).toBeNull();
   });
 
@@ -88,17 +97,22 @@ describe("Gantt child cursor", () => {
   });
 
   it("rejects a non-lowercase UUID on either id field", () => {
-    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA","position":0,"id":"${id}"}`))).toBeNull();
-    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":0,"id":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA","position":0,"id":"${id}","completed":false}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":0,"id":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA","completed":false}`))).toBeNull();
   });
 
   it("rejects a non-integer position", () => {
-    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":1.5,"id":"${id}"}`))).toBeNull();
-    expect(() => encodeGanttChildCursor({ projectId: id, position: 1.5, id })).toThrow();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":1.5,"id":"${id}","completed":false}`))).toBeNull();
+    expect(() => encodeGanttChildCursor({ projectId: id, position: 1.5, id, completed: false })).toThrow();
+  });
+
+  it("rejects a missing or non-boolean completed field", () => {
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":0,"id":"${id}"}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":0,"id":"${id}","completed":1}`))).toBeNull();
   });
 
   it("rejects an extra key", () => {
-    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":0,"id":"${id}","extra":1}`))).toBeNull();
+    expect(decodeGanttChildCursor(encodedJson(`{"projectId":"${id}","position":0,"id":"${id}","completed":false,"extra":1}`))).toBeNull();
   });
 });
 

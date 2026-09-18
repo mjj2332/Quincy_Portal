@@ -31,6 +31,11 @@ const tieProjectAId = "81eeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const tieProjectBId = "81eeeeee-eeee-4eee-8eee-eeeeeeeeeeef";
 const manyChildrenProjectId = "81ffffff-ffff-4fff-8fff-fffffffffff0";
 const noDeadlineProjectId = "81ffffff-ffff-4fff-8fff-fffffffffff1";
+const mixedChildrenProjectId = "81888888-8888-4888-8888-888888888880";
+const MIXED_CHILDREN_TOTAL = 210;
+/** `done` on every third row (0, 3, 6, ...) — 70 done, 140 not done, both over CHILD_PAGE_LIMIT
+ * when `completed=1` includes everything and comfortably over it for the not-done set too. */
+const MIXED_CHILDREN_DONE_COUNT = Math.ceil(MIXED_CHILDREN_TOTAL / 3);
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 
@@ -107,6 +112,9 @@ beforeAll(async () => {
   for (let i = 0; i < PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 3; i++) await insertSubtask(manyChildrenProjectId, `Task ${i}`, i);
 
   await insertProject(noDeadlineProjectId, "7 No Deadline Street", "raw_review", null);
+
+  await insertProject(mixedChildrenProjectId, "22 Mixed Children Street", "editing_autohdr", "2026-08-23");
+  for (let i = 0; i < MIXED_CHILDREN_TOTAL; i++) await insertSubtask(mixedChildrenProjectId, `Mixed Task ${i}`, i, i % 3 === 0);
 });
 
 describe("production-gantt", () => {
@@ -190,6 +198,49 @@ describe("production-gantt", () => {
     const remainderIds = body.children.rows.map((row) => row.id);
     expect(remainderIds).toHaveLength(3);
     for (const id of remainderIds) expect(firstPageIds.has(id)).toBe(false);
+  });
+
+  async function walkAllChildren(projectId: string, completed: boolean): Promise<{ ids: string[]; totals: number[] }> {
+    const listPath = `/api/production-gantt?scope=active&q=Mixed+Children${completed ? "&completed=1" : ""}`;
+    const first = adminProductionGanttResponseSchema.parse(await (await request(listPath, tokens.admin)).json());
+    const project = first.projects.find((p) => p.id === projectId)!;
+    const ids = project.children.rows.map((row) => row.id);
+    const totals = [project.children.total];
+    let cursor = project.children.nextCursor;
+    while (cursor) {
+      const response = await request(`/api/production-gantt?scope=active&childrenOf=${projectId}&childCursor=${encodeURIComponent(cursor)}`, tokens.admin);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { children: { rows: { id: string }[]; total: number; nextCursor: string | null } };
+      ids.push(...body.children.rows.map((row) => row.id));
+      totals.push(body.children.total);
+      cursor = body.children.nextCursor;
+    }
+    return { ids, totals };
+  }
+
+  it("a >100-child project walked with completed=1 returns every child exactly once with a stable total", async () => {
+    const { ids, totals } = await walkAllChildren(mixedChildrenProjectId, true);
+    expect(ids).toHaveLength(MIXED_CHILDREN_TOTAL);
+    expect(new Set(ids).size).toBe(MIXED_CHILDREN_TOTAL);
+    expect(totals.every((total) => total === MIXED_CHILDREN_TOTAL)).toBe(true);
+  });
+
+  it("the same >100-child project walked in default (completed=0) mode returns only not-done children exactly once with a stable total", async () => {
+    const notDoneTotal = MIXED_CHILDREN_TOTAL - MIXED_CHILDREN_DONE_COUNT;
+    const { ids, totals } = await walkAllChildren(mixedChildrenProjectId, false);
+    expect(ids).toHaveLength(notDoneTotal);
+    expect(new Set(ids).size).toBe(notDoneTotal);
+    expect(totals.every((total) => total === notDoneTotal)).toBe(true);
+  });
+
+  it("a completed=1 continuation cursor cannot be reused with an explicit completed query param", async () => {
+    const listPath = "/api/production-gantt?scope=active&q=Mixed+Children&completed=1";
+    const first = adminProductionGanttResponseSchema.parse(await (await request(listPath, tokens.admin)).json());
+    const project = first.projects.find((p) => p.id === mixedChildrenProjectId)!;
+    expect(project.children.nextCursor).not.toBeNull();
+    const response = await request(`/api/production-gantt?scope=active&childrenOf=${mixedChildrenProjectId}&childCursor=${encodeURIComponent(project.children.nextCursor!)}&completed=1`, tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
   });
 
   it("childrenOf outside scope returns an empty child page, not 404", async () => {
