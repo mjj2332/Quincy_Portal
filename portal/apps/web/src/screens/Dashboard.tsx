@@ -1167,7 +1167,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               <span className="normal-case" data-testid="dashboard-search-chip-query">
                 '{search.query}'
               </span>
-              <button type="button" aria-label="Clear search" onClick={() => clearDashboardSearch(currentUserId)} className="inline-flex items-center">
+              {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
+                  rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
+                  `after:absolute after:-inset-2`) pads the actual hit target to >=24px without
+                  growing the chip's own visible box. */}
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => clearDashboardSearch(currentUserId)}
+                className="relative inline-flex items-center after:absolute after:-inset-2"
+              >
                 <XIcon aria-hidden="true" className="size-3" />
               </button>
             </Badge>

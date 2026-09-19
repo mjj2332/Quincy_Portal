@@ -142,6 +142,20 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     expect(queryNode?.className).toContain("normal-case");
   });
 
+  it("expands the chip's clear target past its 12px glyph, keeping an accessible name (#217 design-review, item 2)", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 3 },
+    });
+
+    const clearButton = host.querySelector<HTMLButtonElement>('[aria-label="Clear search"]');
+    expect(clearButton, "no clear button rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(clearButton!.className).toContain("relative");
+    expect(clearButton!.className).toContain("after:absolute");
+    expect(clearButton!.className).toContain("after:-inset-2");
+  });
+
   it("preserves q when switching views from a searched Dashboard", async () => {
     await renderAt("/?view=list&q=smith", {
       projects: match,
