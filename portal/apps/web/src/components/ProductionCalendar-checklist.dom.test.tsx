@@ -8,6 +8,7 @@ import {
   externalCalendarRangeSchema,
   resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
+  subtaskIdFromCalendarEntityId,
   type CalendarEventDto,
   type ChecklistCalendarEventDto,
   type ChecklistCalendarUnscheduledEntryDto,
@@ -126,8 +127,10 @@ function response(events: CalendarEventDto[], subview: DashboardCalendarState["s
   return (role === "external_editor" ? externalCalendarRangeSchema : adminProductionCalendarRangeResponseSchema).parse(raw);
 }
 
+// Honest fixture (#226): the real worker's PATCH response carries the BARE subtask uuid in
+// `id`, never the `checklist:`-prefixed Calendar entity id (workers/app/src/lib/project-subtasks.ts).
 function mutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistScheduleDto = event.schedule) {
-  return { id: event.id, title: event.title, done: event.status.completed, assignee: event.assignee ? { id: event.assignee.id, name: event.assignee.name } : null, position: 1, schedule };
+  return { id: subtaskIdFromCalendarEntityId(event.id) ?? event.id, title: event.title, done: event.status.completed, assignee: event.assignee ? { id: event.assignee.id, name: event.assignee.name } : null, position: 1, schedule };
 }
 
 function externalMutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistScheduleDto = event.schedule) {
@@ -200,6 +203,56 @@ describe("ProductionCalendar checklist manipulation", () => {
     expect(patchBodies).toHaveLength(0);
     expect(revertCalls).toBe(1);
     expect(host.textContent).toContain("That schedule change isn't valid.");
+  });
+
+  it("adopts a scheduled PATCH result (bare id in the response) as exactly one row keyed by the prefixed entity id (#226)", async () => {
+    const event = dueEvent("checklist:adopt-scheduled", "2026-08-12");
+    patchPayload = mutationBody(event, { ...event.schedule, version: 5, due: "2026-08-15", end: dateEndpoint("2026-08-15") });
+    const range = response([event], "month");
+    let getCount = 0;
+    let releaseRefetch!: () => void;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") { patchBodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify(patchPayload), { status: 200, headers: { "content-type": "application/json" } }); }
+      getCount += 1;
+      if (getCount === 1) return new Response(JSON.stringify(range), { status: 200, headers: { "content-type": "application/json" } });
+      return new Promise<Response>((resolve) => { releaseRefetch = () => resolve(new Response(JSON.stringify(range), { status: 200, headers: { "content-type": "application/json" } })); });
+    }));
+    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar("month")} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    surfaceAction = { event: { allDay: true, start: new Date("2026-08-15T00:00:00Z"), startStr: "2026-08-15", end: null, endStr: "" } };
+    await click(`drop-${event.id}`);
+    // Adopted (pre-refetch-settle) state: a duplicate un-prefixed row here means adoptChecklistResult
+    // compared/wrote the bare PATCH-response id instead of re-minting the `checklist:` entity id.
+    expect(lastSurfaceProps?.events).toHaveLength(1);
+    expect(lastSurfaceProps?.events[0]?.id).toBe(event.id);
+    releaseRefetch();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  });
+
+  it("adopts a PATCH result that becomes unscheduled (bare id in the response) as exactly one row keyed by the prefixed entity id (#226)", async () => {
+    const event = dueEvent("checklist:adopt-unscheduled", "2026-08-12");
+    const unscheduledSchedule: ChecklistScheduleDto = { state: "unscheduled", version: 5, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null };
+    patchPayload = mutationBody(event, unscheduledSchedule);
+    const range = response([event], "month");
+    let getCount = 0;
+    let releaseRefetch!: () => void;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") { patchBodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify(patchPayload), { status: 200, headers: { "content-type": "application/json" } }); }
+      getCount += 1;
+      if (getCount === 1) return new Response(JSON.stringify(range), { status: 200, headers: { "content-type": "application/json" } });
+      return new Promise<Response>((resolve) => { releaseRefetch = () => resolve(new Response(JSON.stringify(range), { status: 200, headers: { "content-type": "application/json" } })); });
+    }));
+    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar("month")} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    await clickFocus(`calendar-move:${event.id}`);
+    await change(document.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!, "unscheduled");
+    await click("calendar-schedule-submit");
+    expect(patchBodies).toHaveLength(1);
+    expect(host.querySelectorAll("[data-event-id]")).toHaveLength(0);
+    expect(host.querySelectorAll("[data-unscheduled-id]")).toHaveLength(1);
+    expect(host.querySelector("[data-unscheduled-id]")?.getAttribute("data-unscheduled-id")).toBe(event.id);
+    releaseRefetch();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   });
 
   it("maps due-only Month drag to a date-only versioned PATCH", async () => {

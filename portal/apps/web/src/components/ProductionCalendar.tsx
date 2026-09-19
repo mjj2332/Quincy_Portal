@@ -11,6 +11,7 @@ import {
   previewProjectDeadlineReminderConsequences,
   resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
+  calendarChecklistEntityId,
   subtaskIdFromCalendarEntityId,
   checklistScheduleToDto,
   STAGE_PRESENTATION_KEYS,
@@ -422,15 +423,22 @@ function optimisticChecklistEvent(source: ChecklistSource, schedule: ChecklistSc
 }
 
 function adoptChecklistResult(response: ProductionCalendarRangeResponse, source: ChecklistSource, result: ChecklistMutationResult): ProductionCalendarRangeResponse {
-  const nextEvent = canonicalChecklistEvent(source, result);
+  // The subtasks route's PATCH response carries the BARE subtask uuid in `result.id`
+  // (workers/app/src/lib/project-subtasks.ts), never the `checklist:`-prefixed Calendar
+  // entity id. Re-mint it here before it becomes an entity id anywhere below — comparing
+  // it against `event.id`/`entry.id` (which are entity ids) or writing it straight into a
+  // new event/entry would otherwise leave a duplicate, un-prefixed row until the next
+  // authoritative refetch overwrote it (#226).
+  const entityId = calendarChecklistEntityId(result.id);
+  const nextEvent = canonicalChecklistEvent(source, { ...result, id: entityId });
   const schedule = result.schedule;
   const sourceWasEvent = "timing" in source;
-  const events = response.events.filter((event) => event.id !== result.id);
+  const events = response.events.filter((event) => event.id !== entityId);
   if (nextEvent) events.push(nextEvent);
-  const unscheduled = response.unscheduled.filter((entry) => entry.id !== result.id);
+  const unscheduled = response.unscheduled.filter((entry) => entry.id !== entityId);
   if (!nextEvent && schedule.state === "unscheduled") {
     const entry: ChecklistCalendarUnscheduledEntryDto = {
-      id: result.id,
+      id: entityId,
       kind: "checklist",
       reason: "unscheduled",
       title: result.title,
