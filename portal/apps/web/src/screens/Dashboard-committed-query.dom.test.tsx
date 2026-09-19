@@ -237,6 +237,10 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     });
 
     expect(captures.length).toBeGreaterThan(0);
+    // The chip is route-derived at render, so it has no intermediate commit to excuse: EVERY
+    // captured commit after the popstate must already show it gone. Only the input (a store draft,
+    // written by the layout-effect sync) is allowed the pre-paint catch-up commit described above.
+    for (const capture of captures) expect(capture.chip).toBe(false);
     const settled = captures.at(-1)!;
     expect(settled.chip).toBe(false);
     expect(settled.inputValue).toBe("");
