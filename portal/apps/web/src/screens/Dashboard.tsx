@@ -55,7 +55,6 @@ import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
-  cancelPendingDashboardSearchWrite,
   clearDashboardSearch,
   getDashboardSearchSnapshotForPrincipal,
   resetDashboardSearchForPrincipal,
@@ -554,52 +553,34 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // That mattered because it conflated two different events the store needs to tell apart: a
   // RE-REGISTRATION (the writer's identity churns, but a Dashboard is still mounted and a pending
   // debounce must survive it -- f40b19d, kept exactly as it was, in `dashboard-search-store.ts`)
-  // and an actual UNMOUNT (this Dashboard instance is going away -- a pending debounce must NOT
-  // fire later into whatever mounts next, since it has no writer of its own to receive it and the
-  // store is a singleton). Registering once per mount makes unmount the ONLY unregister this
-  // component ever triggers, so the cleanup below can now safely call
-  // `cancelPendingDashboardSearchWrite` -- previously dead code -- to close exactly that gap. The
-  // `draft` itself is deliberately left alone: it is what lets an off-Dashboard Enter (the rail's
-  // `ShellSearch`, mounted everywhere) still navigate with whatever text is showing.
+  // and an actual UNMOUNT (this Dashboard instance is going away -- there is no Dashboard left to
+  // receive a later URL write, and the store is a singleton with no way to route one anywhere
+  // sane). Registering once per mount makes unmount the ONLY unregister this component ever
+  // triggers. The `draft` itself is deliberately left alone: it is what lets an off-Dashboard
+  // Enter (the rail's `ShellSearch`, mounted everywhere) still navigate with whatever text is
+  // showing.
+  //
+  // #217 fix round 4, item 4 (SHOULD-FIX) used to need a `writerGenerationRef`/`queueMicrotask`
+  // dance here, deferring the cleanup's own `cancelPendingDashboardSearchWrite()` call so a
+  // same-tick `<StrictMode>` replay (mount, cleanup, mount again, all synchronous in one commit)
+  // could back off before it cancelled a debounce armed off-Dashboard that was, once the replay
+  // settled, still going to have a live Dashboard to receive it. #217 build, step 5 removes the
+  // reason that dance was needed: `commit()` now simply drops a fire with no writer registered --
+  // there is no local committed copy left for it to update either -- so the cleanup below can
+  // unregister unconditionally with no deferred check. Both scenarios the dance used to
+  // distinguish now fall out of that alone: a StrictMode replay re-registers a writer before the
+  // timer can fire (still commits); a real unmount never re-registers one (never commits) --
+  // `Dashboard-search-interaction.dom.test.tsx`'s own StrictMode suite covers both, unchanged in
+  // outcome.
   const writerContextRef = useRef({ view, calendarState, history, navigateCalendar });
   writerContextRef.current = { view, calendarState, history, navigateCalendar };
-  // #217 fix round 4, item 4 (SHOULD-FIX). `<StrictMode>` (`main.tsx`) double-invokes an initial
-  // mount's effects — mount, cleanup, mount again — synchronously, in the same commit. The cleanup
-  // below used to call `cancelPendingDashboardSearchWrite()` unconditionally, which is correct for
-  // a REAL unmount but wrong for StrictMode's own synthetic one: a debounce armed off-Dashboard
-  // (the rail's `ShellSearch`, mounted everywhere) before this component ever mounted got cancelled
-  // by the synthetic cleanup, even though Dashboard is — once the dance settles — still mounted.
-  // Scenario: type "smith" on `/admin`, navigate to `/` within 300ms; the draft stayed visible but
-  // never committed.
-  //
-  // The fix is at the lifecycle, not the symptom: `writerGenerationRef` counts effect INVOCATIONS
-  // (bumped at the top of the effect body, read by its own cleanup's deferred check). The
-  // cancellation itself is deferred to a microtask — `queueMicrotask` runs strictly after the
-  // CURRENT synchronous execution finishes, and StrictMode's mount→cleanup→mount replay is entirely
-  // synchronous (no microtask boundary between them), so a same-tick re-registration has ALREADY
-  // bumped the generation counter by the time the deferred check runs, and it backs off. A REAL
-  // unmount has no such follow-up invocation — the generation is unchanged when the microtask
-  // fires, so it cancels exactly as before (`Dashboard-search-interaction... "cancels a pending
-  // debounce on unmount"` test, kept passing unmodified: `act()`'s own microtask flush runs this
-  // deferred check well within its 350ms wait).
-  const writerGenerationRef = useRef(0);
   useEffect(() => {
-    writerGenerationRef.current += 1;
-    const myGeneration = writerGenerationRef.current;
     const unregister = setDashboardSearchUrlWriter((q) => {
       const { view: currentView, calendarState: currentCalendarState, history: currentHistory, navigateCalendar: currentNavigateCalendar } = writerContextRef.current;
       if (currentView === "calendar" && currentCalendarState) currentNavigateCalendar({ ...currentCalendarState, search: q, view: "calendar" }, true);
       else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "list" : currentView, search: q }));
     });
-    return () => {
-      unregister();
-      queueMicrotask(() => {
-        // A same-tick re-registration (StrictMode's own replay) already bumped the generation —
-        // that NEWER invocation owns the pending debounce now; leave it alone. Only a genuine
-        // unmount, with no follow-up invocation, still owns `myGeneration` here.
-        if (writerGenerationRef.current === myGeneration) cancelPendingDashboardSearchWrite();
-      });
-    };
+    return unregister;
   }, []);
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
