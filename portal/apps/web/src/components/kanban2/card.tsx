@@ -194,7 +194,11 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
         // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token — carried over from
         // the handle on the Board this replaced (deleted in #83).
         <KanbanItemHandle
-          className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary text-[20px] leading-none [touch-action:none] focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2"
+          // Disabled state paints `bg-surface-sunken`, the SAME technique `quincy/icon-button.tsx`
+          // documents for a disabled affordance on an already-quiet colour (#217 design-review,
+          // item 5) -- an opacity multiplier there is what took a disabled drag handle to 1.72:1
+          // (TB8-06) and this exact grip to 2.51:1 (TB8-07 §2.1). `cursor-not-allowed` pairs it.
+          className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[2] size-9 max-[641px]:size-11 pointer-coarse:size-11 inline-grid place-items-center border border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary text-[20px] leading-none [touch-action:none] disabled:bg-surface-sunken disabled:cursor-not-allowed focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-2"
           cursor={!dragDisabled}
           render={<button ref={(element) => handleRef?.(project.id, element)} type="button" data-testid="kanban2-card-handle" data-focus-key={`move-handle:${project.id}`} aria-label={`Move ${project.street}`} disabled={dragDisabled} />}
         >
