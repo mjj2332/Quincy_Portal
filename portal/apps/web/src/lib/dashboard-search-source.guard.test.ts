@@ -111,7 +111,7 @@ export function stripComments(source: string): string {
       const quote = ch;
       out += ch; i++;
       while (i < n && source[i] !== quote) {
-        if (source[i] === "\\" && i + 1 < n) { out += source[i] + source[i + 1]; i += 2; continue; }
+        if (source[i] === "\\" && i + 1 < n) { out += source[i]! + source[i + 1]!; i += 2; continue; }
         out += source[i]; i++;
       }
       if (i < n) { out += source[i]; i++; }
