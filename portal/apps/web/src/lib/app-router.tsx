@@ -116,8 +116,9 @@ const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
  * `draft`, not `query`: the input already renders the draft directly, and building the href from
  * the same value means a rail click mid-debounce (before the 300ms commit) still carries the
  * in-progress text, with no separate "flush before navigating" step needed here (unlike
- * `selectView`'s in-app switch, which must flush because it reads the store's `query` to build its
- * `history.push` synchronously).
+ * `selectView`'s in-app switch, which must flush because it reads the draft, normalised, to build
+ * its `history.push` synchronously — URL-authoritative committed query; the store holds
+ * draft/timer/owner only).
  *
  * List/Kanban map the search onto `q` directly, through `staffPathFor`. Calendar does too now
  * (#217 fix round 4, item 1, BLOCKER): the bare intent became a legal spelling for `q`
@@ -137,8 +138,9 @@ const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
  * Neither branch pre-normalises `query` before handing it to `staffPathFor`/`calendarPathFor`
  * (#217 fix round 4, item 2, do-with-1): both now run every `search` through the one shared
  * `normalizeDashboardSearchText` themselves, so a raw, not-yet-committed draft (`"  smith   street
- * "`) reaches the URL exactly as normalised as the store's own committed `query` would be — no
- * caller-side pre-processing left to get out of sync with it.
+ * "`) reaches the URL exactly as normalised as a commit through the store would write it — no
+ * caller-side pre-processing left to get out of sync with it. URL-authoritative committed query;
+ * the store holds draft/timer/owner only.
  */
 function withLiveDashboardSearch(navigation: StaffNavigation, query: string, dashboardCalendar: DashboardCalendarState | null): StaffNavigation {
   function hrefFor(child: StaffNavigationItem): string {

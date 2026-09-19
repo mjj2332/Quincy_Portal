@@ -292,10 +292,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const dashboardKeyString = JSON.stringify(dashboardKey);
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
   // no-op (the store's own `principalId === id` guard) on every OTHER dashboardKeyString change
-  // (archived toggle, role/epoch untouched). Declared BEFORE the route-reconciliation effect below
-  // (React commits effects in hook-declaration order): on a fresh mount the store's `principalId`
-  // starts `""`, genuinely different from any real `currentUserId`, so this must run and settle
-  // first or it would clobber whatever the reconciliation effect's URL-search adoption just wrote.
+  // (archived toggle, role/epoch untouched). Declared BEFORE the Calendar route-reconciliation
+  // effect below (React commits effects in hook-declaration order): on a fresh mount the store's
+  // `principalId` starts `""`, genuinely different from any real `currentUserId`, so this must run
+  // and settle first or a stale draft could still be showing when that effect's own canonicalising
+  // URL write lands. URL-authoritative committed query; the store holds draft/timer/owner only --
+  // there is no URL-search adoption left for either effect to race.
   //
   // #217 fix round 3, item 2 (Sol's whole-branch review): `PrincipalFreshnessBoundary` now ALSO
   // calls `resetDashboardSearchForPrincipal` on every principal change, at shell level -- it wraps
@@ -306,7 +308,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // the same commit, and child effects (this component's) run before the parent's (React's
   // bottom-up commit order) -- this is what sets the store's `principalId` to `currentUserId`
   // BEFORE the boundary's own reset runs and finds it already current, a guaranteed no-op, rather
-  // than a race that could occasionally clobber the URL-search adoption below.
+  // than a race that could otherwise leave a stale draft showing momentarily.
   useEffect(() => {
     resetDashboardSearchForPrincipal(currentUserId);
   }, [dashboardKeyString, currentUserId]);

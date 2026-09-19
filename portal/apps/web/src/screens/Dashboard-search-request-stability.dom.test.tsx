@@ -163,17 +163,14 @@ async function mountAt(location: string) {
  * empty-search request self-correcting into a second, different, q=Probe request) could satisfy a
  * bare count ceiling while still being the defect item 1 found and fixed.
  *
- * Projects: `search.query` (fed to `useDashboardProjects`) is read from the external
- * `dashboard-search-store`, adopted from the route's own `q` only inside a PASSIVE effect
- * (`adoptDashboardSearchFromUrl`, further down in `Dashboard.tsx`), so the raw store value alone
- * was genuinely `q:""` on a cold load's first commit. Design-fix round 3, item 1 closes this the
- * same way round 2, item 1 closed it for the Calendar, but WITHOUT a local `useState` to seed (the
- * store is shared across every route, not just this screen): a render-time-only `effectiveQuery`
- * -- the currently governing parsed route's own `q` while the store has not yet adopted this
- * location, the store's own query once it has -- feeds the projects query, the search-counts
- * query, `searchActive` and the chip text, all from the ONE value, without ever writing the store
- * during render. Ceiling is 2, same derivation as Calendar: identity × StrictMode replay, and
- * every request checked to carry `q=Probe`.
+ * Projects: URL-authoritative committed query; the store holds draft/timer/owner only.
+ * `committedQuery` (fed to `useDashboardProjects`) is derived at RENDER, straight from the
+ * currently governing parsed route (`dashboardSearchOf`, `@quincy/shared`) -- never adopted from
+ * the store, and never lagging a commit by even one render -- so it is already `q:"Probe"` on a
+ * cold load's very first commit, feeding the projects query, the search-counts query,
+ * `searchActive` and the chip text all from the ONE value, without ever writing the store during
+ * render. Ceiling is 2, same derivation as Calendar: identity × StrictMode replay, and every
+ * request checked to carry `q=Probe`.
  */
 async function assertIdleAfterSettling(location: string, calendarCeiling: number, projectsCeiling: number) {
   const stableChecks = await mountAt(location);
@@ -210,8 +207,8 @@ async function assertIdleAfterSettling(location: string, calendarCeiling: number
 describe("Dashboard search + Calendar request stability (#217 design-review, item 10; hardened #217 design-fix round 2, item 1)", () => {
   it("(a) the bare Calendar intent + q, from an EMPTY store -- the canonicalising rewrite runs once on settle, then stays idle", async () => {
     // calendar: 2, projects: 2 -- both identity × StrictMode replay, every request on either
-    // endpoint already carrying q=Probe (design-fix round 2 item 1 for the calendar state, round
-    // 3 item 1's render-derived `effectiveQuery` for projects).
+    // endpoint already carrying q=Probe (design-fix round 2 item 1 for the calendar state,
+    // URL-authoritative render-derived `committedQuery` for projects).
     await assertIdleAfterSettling("/?view=calendar&q=Probe", 2, 2);
   });
 

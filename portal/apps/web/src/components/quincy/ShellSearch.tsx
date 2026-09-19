@@ -38,8 +38,9 @@ import type { RailMode } from "../../lib/shell-rail";
 
 /**
  * The rail's project search — #217. A REAL input now, not the input-LOOKING latch button #122 P3
- * shipped: the Dashboard no longer owns a second, duplicate search field, so there is exactly one
- * source of truth for the query, `lib/dashboard-search-store.ts`, read and written here directly.
+ * shipped: the Dashboard no longer owns a second, duplicate search field. The URL is the ONLY
+ * committed Dashboard search; `lib/dashboard-search-store.ts` holds the draft/timer/owner only
+ * (never a committed copy) and is read and written here directly.
  *
  * Three modes off the existing `variant`, all composing the same `InputGroup` field:
  * - `expanded`: inline in the rail's own `SidebarGroup`, the shortcut hint trailing.
