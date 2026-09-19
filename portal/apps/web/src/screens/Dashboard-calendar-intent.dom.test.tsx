@@ -22,10 +22,21 @@ vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSu
 const rememberedDate = "2026-08-30";
 const rememberedSubview = "week";
 
+// `filterFacets.myTasksUserId` is `z.string().uuid()`, NOT nullable
+// (`packages/shared/src/production-calendar.ts:586`) -- a real UUID here, not `null`
+// (#217 design-fix round 3, item 4). A `null` here validates fine when THIS file builds the
+// fixture (`adminProductionCalendarRangeResponseSchema.parse` below accepts it -- the schema
+// field itself is what's strict, and nothing here re-checks it), but `Dashboard.tsx`'s own
+// `decodeProductionCalendarResponse` re-parses the SAME object against the per-role schema
+// inside the real `queryFn`, where it fails and the query silently retries/errors instead of
+// succeeding -- see `Dashboard-search-request-stability.dom.test.tsx`'s own investigation note
+// for the mechanics (three attempts at 0s/1s/3s under react-query's default retry backoff).
+const noOneId = "00000000-0000-4000-8000-000000000000";
+
 function calendarResponse(date: string) {
   return adminProductionCalendarRangeResponseSchema.parse({
     range: { start: "2026-08-24", end: "2026-08-31", date, subview: rememberedSubview, zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
-    events: [], unscheduled: [], filterFacets: { projects: [], people: [], myTasksUserId: null, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+    events: [], unscheduled: [], filterFacets: { projects: [], people: [], myTasksUserId: noOneId, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
   });
 }
 

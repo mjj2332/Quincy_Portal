@@ -133,13 +133,14 @@ function InputGroupAddon({
 // group wrapper, which is already painting them. `focus-visible:ring-0` stays: ReUI's ring is a
 // box-shadow, so suppressing it here does NOT suppress a focus indicator — `tokens/base.css`'s
 // unlayered `:focus-visible { outline: … }` still paints on the focused input, and the wrapper
-// draws its own `focus-within` outline besides — TWO indicators on one field (#217 design-review,
-// item 4). `focus-visible:!outline-none` below is the fix, and the `!` is required for the SAME
-// reason `quincy/icon-button.tsx`'s own `focus-visible:!outline` needs it in the other direction:
+// draws its own outline besides — TWO indicators on one field (#217 design-review, item 4).
+// `focus-visible:!outline-none` below is the fix, and the `!` is required for the SAME reason
+// `quincy/icon-button.tsx`'s own `focus-visible:!outline` needs it in the other direction:
 // `tokens/base.css:25`'s `:focus-visible { outline: … }` is unlayered author CSS, which beats
 // Tailwind's `@layer utilities` regardless of source order or specificity, so a bare
-// `outline-none` here would never suppress it. The group's own `focus-within:outline-*` is
-// Tailwind utility-layer, unaffected, and remains the field's single visible indicator.
+// `outline-none` here would never suppress it. The group's own `has-[input:focus-visible]:outline-*`
+// (scoped to the INPUT specifically, not `focus-within:` — #217 design-fix round 2, item 2, divergence
+// 2 above) is Tailwind utility-layer, unaffected, and remains the field's single visible indicator.
 //
 // Type is spelled as four LONGHANDS (`text-sm`, `leading-`, `font-[…]` weight, `font-[family-name:…]`)
 // and deliberately NOT as the `[font:var(--weight-regular)_var(--text-sm)/…]` shorthand the shipped
