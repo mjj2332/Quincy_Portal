@@ -124,6 +124,15 @@ describe("terminal route manifest", () => {
     expect(() => assertSecurityRouteManifest(duplicate)).not.toThrow();
   });
 
+  it("classifies GET /api/production-gantt as scoped-project / external-safe", () => {
+    for (const path of ["/api/production-gantt", "/api/production-gantt/"]) {
+      const route = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === "GET" && entry.path === path);
+      expect(route, path).toBeDefined();
+      expect(route!.class, path).toBe("scoped-project");
+      expect(route!.projection, path).toBe("external-safe");
+    }
+  });
+
   it("drives every manifest-declared External projection through its live route and schema", async () => {
     const probes = {
       "ingest-status": {
@@ -141,6 +150,10 @@ describe("terminal route manifest", () => {
       calendar: {
         path: "/api/production-calendar?start=2026-08-24&end=2026-09-05&date=2026-08-27&sub=month&scope=active&layers=project,checklist",
         parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS.calendar.parse(body),
+      },
+      gantt: {
+        path: "/api/production-gantt?scope=active",
+        parse: (body: unknown) => EXTERNAL_API_RESPONSE_SCHEMAS.gantt.parse(body),
       },
       stage: {
         path: `/api/projects/${manifestProjectId}/stage`,
@@ -165,6 +178,7 @@ describe("terminal route manifest", () => {
       "collection-links": "assigned-project",
       stages: "global-self",
       calendar: "assigned-project",
+      gantt: "assigned-project",
       stage: "assigned-project",
       activity: "assigned-project",
     };

@@ -196,7 +196,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
   async function commit(current: ProjectDeadlineSchedule) {
     setVisibleSchedule(current);
     queryClient?.setQueryData<ProjectDetail>(projectDataKeys.detail(projectId), (detail) => detail ? { ...detail, deadlineSchedule: current } : detail);
-    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
+    if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
     if (!mounted.current) return;
     seedDraft(current);
     cycleOwner();

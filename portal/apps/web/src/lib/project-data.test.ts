@@ -179,6 +179,7 @@ describe("project data key and request seam", () => {
       resources: [{ kind: "detail" }, { kind: "activity" }, { kind: "detail" }],
       dashboard: true,
       calendar: true,
+      gantt: false,
     });
 
     expect(invalidate).toHaveBeenCalledTimes(4);
@@ -199,6 +200,7 @@ describe("project data key and request seam", () => {
       resources: [{ kind: "detail" }],
       dashboard: false,
       calendar: false,
+      gantt: false,
     });
     expect(invalidate.mock.calls).toEqual([[{ queryKey: detailKey, exact: true, refetchType: "active" }]]);
     expect(publish).toHaveBeenCalledTimes(1);
@@ -224,7 +226,7 @@ describe("project data key and request seam", () => {
     const publish = vi.spyOn(runtime, "publish");
 
     // producer: "calendar" — Calendar self-refreshes; Dashboard must converge in-tab.
-    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: true, producer: "calendar" });
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: true, gantt: false, producer: "calendar" });
     const keysHit = invalidate.mock.calls.map(([options]) => JSON.stringify((options as { queryKey: unknown }).queryKey));
     expect(keysHit).toContain(JSON.stringify(dashboardKey));
     expect(keysHit).not.toContain(JSON.stringify(calendarKey));
@@ -233,7 +235,7 @@ describe("project data key and request seam", () => {
 
     invalidate.mockClear(); publish.mockClear();
     // producer: "dashboard" — mirror.
-    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: true, producer: "dashboard" });
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: true, gantt: false, producer: "dashboard" });
     const keysHit2 = invalidate.mock.calls.map(([options]) => JSON.stringify((options as { queryKey: unknown }).queryKey));
     expect(keysHit2).toContain(JSON.stringify(calendarKey));
     expect(keysHit2).not.toContain(JSON.stringify(dashboardKey));
@@ -243,7 +245,7 @@ describe("project data key and request seam", () => {
     // A non-producing surface key that is owned defers, then flushes exactly once on release.
     invalidate.mockClear();
     const release = runtime.acquireOwner(dashboardKey);
-    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: false, producer: "calendar" });
+    await invalidateProjectSurfaces(queryClient, { projectId: "p", resources: [{ kind: "detail" }], dashboard: true, calendar: false, gantt: false, producer: "calendar" });
     expect(invalidate.mock.calls.some(([o]) => JSON.stringify((o as { queryKey: unknown }).queryKey) === JSON.stringify(dashboardKey))).toBe(false);
     release();
     expect(invalidate.mock.calls.filter(([o]) => JSON.stringify((o as { queryKey: unknown }).queryKey) === JSON.stringify(dashboardKey))).toHaveLength(1);

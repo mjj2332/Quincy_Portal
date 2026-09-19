@@ -48,7 +48,7 @@ export function CreateProject({ onNavigate }: { onNavigate: (path: string, notic
       const project = await apiPost<ProjectDetail, Record<string, unknown>>("/api/projects", {
         street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode), agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone), shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), orderNo: optionalValue(form.orderNo), orderId: optionalValue(form.orderId), invoiceAmount: invoiceAmount ? Number(invoiceAmount) : null, paymentStatus: optionalValue(form.paymentStatus), productionNotes: optionalValue(form.productionNotes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath), orderedServices: form.orderedServices, photographerUserIds: form.photographerUserIds, editorUserIds: form.editorUserIds,
       });
-      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [], dashboard: true, calendar: true });
+      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [], dashboard: true, calendar: true, gantt: true });
       onNavigate(`/projects/${encodeURIComponent(project.id)}`, "Shoot created.");
     } catch (reason) { setSubmitError(reason instanceof Error ? reason.message : "The shoot could not be created."); }
     finally { setIsSubmitting(false); }

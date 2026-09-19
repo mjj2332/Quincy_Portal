@@ -498,7 +498,20 @@ function calendarProjectContextSchema<TStage extends StageTransportKey>(stageSch
   }).strict() as z.ZodType<CalendarProjectContext<TStage>>;
 }
 
-const calendarPersonZodSchema: z.ZodType<CalendarPerson> = calendarPersonSchema;
+/** Exported for reuse by any other surface serializing the same person shape (e.g. Gantt, #218). */
+export const calendarPersonZodSchema: z.ZodType<CalendarPerson> = calendarPersonSchema;
+/** Exported for reuse by any other surface reusing the checklist schedule DTO shape (Gantt, #218). */
+export { checklistScheduleEndpointSchema };
+/** The full `ChecklistScheduleDto` union — every state a stored checklist schedule can serialize
+ * to, including the two repair states. Exported so Gantt (#218) can reuse it verbatim rather than
+ * re-declaring the same five-branch union. */
+export const checklistScheduleDtoSchema: z.ZodType<ChecklistScheduleDto> = z.union([
+  unscheduledChecklistScheduleSchema,
+  dueOnlyChecklistScheduleSchema,
+  rangeChecklistScheduleSchema,
+  legacyUnresolvedChecklistScheduleSchema,
+  invalidChecklistScheduleSchema,
+]);
 
 function projectDeadlineEventSchema<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>) {
   return z.object({

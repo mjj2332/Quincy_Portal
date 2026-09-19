@@ -47,6 +47,12 @@ export type ProjectDataSyncMessage =
       type: "production-calendar-invalidated";
       sourceTabId: string;
       committedAt: string;
+    }
+  | {
+      version: 1;
+      type: "production-gantt-invalidated";
+      sourceTabId: string;
+      committedAt: string;
     };
 
 export type ProjectDataOutgoingMessage =
@@ -54,7 +60,8 @@ export type ProjectDataOutgoingMessage =
   | Omit<Extract<ProjectDataSyncMessage, { type: "project-data-removed" }>, "sourceTabId">
   | Omit<Extract<ProjectDataSyncMessage, { type: "active-project-details-invalidated" }>, "sourceTabId">
   | Omit<Extract<ProjectDataSyncMessage, { type: "dashboard-board-invalidated" }>, "sourceTabId">
-  | Omit<Extract<ProjectDataSyncMessage, { type: "production-calendar-invalidated" }>, "sourceTabId">;
+  | Omit<Extract<ProjectDataSyncMessage, { type: "production-calendar-invalidated" }>, "sourceTabId">
+  | Omit<Extract<ProjectDataSyncMessage, { type: "production-gantt-invalidated" }>, "sourceTabId">;
 
 type Listener = () => void;
 
@@ -98,6 +105,11 @@ export function parseProjectDataSyncMessage(value: unknown): ProjectDataSyncMess
     return { version: 1, type: message.type, sourceTabId: message.sourceTabId, committedAt: message.committedAt };
   }
   if (message.type === "production-calendar-invalidated") {
+    if (!nonEmptyString(message.committedAt)) return null;
+    if (Object.keys(message).some((key) => !["version", "type", "sourceTabId", "committedAt"].includes(key))) return null;
+    return { version: 1, type: message.type, sourceTabId: message.sourceTabId, committedAt: message.committedAt };
+  }
+  if (message.type === "production-gantt-invalidated") {
     if (!nonEmptyString(message.committedAt)) return null;
     if (Object.keys(message).some((key) => !["version", "type", "sourceTabId", "committedAt"].includes(key))) return null;
     return { version: 1, type: message.type, sourceTabId: message.sourceTabId, committedAt: message.committedAt };
@@ -272,6 +284,13 @@ export class ProjectQueryRuntime {
       }
       return;
     }
+    if (message.type === "production-gantt-invalidated") {
+      for (const query of this.queryClient.getQueryCache().getAll()) {
+        if (query.queryKey[0] !== "production-gantt" || query.getObserversCount() === 0) continue;
+        this.requestInvalidation(query.queryKey);
+      }
+      return;
+    }
     for (const resource of message.resources) {
       const key = projectResourceKey(message.projectId, resource);
       this.requestInvalidation(key);
@@ -313,4 +332,8 @@ export function createDashboardBoardInvalidatedMessage(): ProjectDataOutgoingMes
 
 export function createProductionCalendarInvalidatedMessage(): ProjectDataOutgoingMessage {
   return { version: 1, type: "production-calendar-invalidated", committedAt: new Date().toISOString() };
+}
+
+export function createProductionGanttInvalidatedMessage(): ProjectDataOutgoingMessage {
+  return { version: 1, type: "production-gantt-invalidated", committedAt: new Date().toISOString() };
 }
