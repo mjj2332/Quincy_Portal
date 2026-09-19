@@ -1,3 +1,5 @@
+import type { Role } from "@quincy/shared";
+
 /**
  * Shared SQL fragments for the two "authorized-projects" surfaces (Calendar, Gantt) that read
  * `projects` under the same role-scoped visibility rule. `production-calendar.ts` imports all
@@ -5,16 +7,15 @@
  * `test/project-search.test.ts`'s SHA-256 fixture. Never inline a copy of this logic elsewhere —
  * a project-visibility rule with two independent spellings is exactly the kind of drift that has
  * previously shipped an authorization bug in this repo (see `docs/lessons.md`, Hono middleware
- * leak entry).
+ * leak entry). `Role` (CONTEXT-MAP.md single-definition rule, fix-218-r5 #2) comes from
+ * `@quincy/shared` — this file must not re-declare the role union locally.
  */
-
-export type ProductionScopeRole = "admin" | "photographer" | "editor" | "external_editor";
 
 /**
  * `?1` is always the bound principal ID in every statement built on top of this fragment — every
  * caller's parameter list must bind it first.
  */
-export function productionRoleSql(role: ProductionScopeRole): { from: string; collaboration: string } {
+export function productionRoleSql(role: Role): { from: string; collaboration: string } {
   if (role === "external_editor") {
     return {
       from: "INNER JOIN project_members assignment ON assignment.project_id = p.id AND assignment.user_id = ?1 AND assignment.role_on_project = 'editor'",
@@ -68,7 +69,7 @@ export type AuthorizedProjectsBaseOptions = {
  * and `request_stages` (one row per requested stage key, column `stage_key`) ahead of this
  * fragment — every caller of this helper must shape its own request CTEs to match.
  */
-export function authorizedProjectsBaseCte(role: ProductionScopeRole, options: AuthorizedProjectsBaseOptions): string {
+export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProjectsBaseOptions): string {
   const branch = productionRoleSql(role);
   const extraColumns = options.extraColumns ? `,\n    ${options.extraColumns}` : "";
   return `authorized_projects_base AS (
