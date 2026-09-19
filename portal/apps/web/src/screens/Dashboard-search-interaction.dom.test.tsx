@@ -195,8 +195,8 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
 
   it("item 2: pointer/keyboard drag issues no mutation while searching (last-line-of-defence guard)", async () => {
     window.history.replaceState(null, "", "/?view=kanban&q=smith");
-    // #217 build, step 4: `Dashboard.tsx` no longer adopts a route's own `q` into the shared store
-    // -- that is `ShellRoute`'s job now (`syncDashboardSearchDraftFromLocation`, `lib/app-router.tsx`).
+    // #217 build, step 4: `Dashboard.tsx` reads the committed `q` from the route at render; nothing adopts it --
+    // `ShellRoute` only syncs the input DRAFT from the location (`syncDashboardSearchDraftFromLocation`, `lib/app-router.tsx`).
     // Mirrored here directly, matching a real arrival.
     const route = parseStaffLocation("/?view=kanban&q=smith");
     if (route.kind === "dashboard") syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "admin-1");
