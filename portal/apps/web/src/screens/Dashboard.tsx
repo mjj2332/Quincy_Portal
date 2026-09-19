@@ -773,11 +773,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
       calendarFallbackLocationRef.current = false;
-      // #217 fix round 1, item 3: flush BEFORE building this push -- the writer-registration
-      // effect's own cleanup (which now also flushes, `dashboard-search-store.ts`) only runs
-      // AFTER this synchronous handler returns and React re-renders, too late to make it into
-      // the URL built here. Reading the just-flushed value directly is what carries a committed
-      // OR still-debouncing search across a view switch instead of silently dropping it.
+      // #217 fix round 1, item 3: flush BEFORE building this push. The writer-registration
+      // effect's own cleanup does NOT flush a pending debounce (#217 fix round 3, item 2 --
+      // `dashboard-search-store.ts`'s unregister callback only ever nulls the `writer` reference
+      // on a re-registration, and only an actual Dashboard UNMOUNT cancels the timer outright,
+      // never commits it), and it would run too late for this push either way -- AFTER this
+      // synchronous handler returns and React re-renders. Reading the just-flushed value directly,
+      // here, is what carries a committed OR still-debouncing search across a view switch instead
+      // of silently dropping it.
       commitDashboardSearchNow();
       const currentSearch = getDashboardSearchSnapshot().query;
       history.push(staffPathFor({ kind: "dashboard", dashboardView: next, ...(currentSearch ? { search: currentSearch } : {}) }));

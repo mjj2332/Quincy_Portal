@@ -160,13 +160,23 @@ growth pattern documented above.
 `NotificationBell.dom.test.tsx` covers the panel's own dialog semantics, focus handoff and click
 behaviour.
 
-## P3 addendum — the account menu keeps its nav-workspace shape; search is a latched focus request
+## P3 addendum — the account menu keeps its nav-workspace shape; search is now a real input
 
 The footer identity moved onto `SidebarMenuButton size="lg"` as `quincy/menu.tsx`'s own
 `triggerRender`, unchanged as the app's menu primitive; its panel gained a preferences link
 (`MenuPrimitive.LinkItem`/`GroupLabel`) and `reui/separator.tsx` — Base UI's Menu has no separator
 part. In `sheet`, that menu opens `side="top"` rather than `"right"` (`docs/lessons.md`'s #122
-entry has why). The rail's search control is a `SidebarMenuButton` that looks like an input but is
-not one; activating it (click, or ⌘K) runs `lib/shell-search.ts`'s one-shot, latched focus request
-onto the Dashboard's own existing search field — no dialog, no endpoint, `query` untouched. `kbd`
-(the ⌘K hint) is vendored through the sandbox; its only edit is in its own header.
+entry has why).
+
+The rail's search control described here originally (#122 P3) was a `SidebarMenuButton` that
+looked like an input but was not one — activating it (click, or ⌘K) ran `lib/shell-search.ts`'s
+one-shot, latched focus request onto the Dashboard's OWN existing search field, which only existed
+while a Dashboard was mounted. #217 replaced that whole design: `components/quincy/ShellSearch.tsx`
+is a real, always-mounted `<input>`, rendered once per `NavigationRail` variant (`expanded`,
+`collapsed` — inside a `PopoverContent` — and `sheet`), reading and writing the single module-level
+`lib/dashboard-search-store.ts` rather than any one screen's local state. Typing debounces into a
+URL `q`; Enter commits immediately and, off the Dashboard, navigates there; `lib/shell-search.ts`'s
+`isSearchShortcut` still gates ⌘K, but ⌘K now *focuses* the real input (opening the Sheet first if
+narrow and closed) instead of latching a one-shot request — see `RailedShell.tsx`'s own docblock
+for the focus mechanics. `kbd` (the ⌘K hint, dropped in `sheet` — nothing persistent there for it
+to point at) is vendored through the sandbox; its only edit is in its own header.

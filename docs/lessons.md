@@ -2988,3 +2988,41 @@ server-side `q`, each the kind this file exists for because none showed up in a 
   round-trips as clean text (`file`, or `grep` returning line numbers instead of "binary file
   matches") before trusting it compiled correctly, since a passing `tsc` run is not evidence the
   bytes on disk are what was intended.
+
+## A module-singleton store outlives whatever mounted it — scope its reset to the identity that owns it, not the component that happened to create it (#217 fix round 3)
+
+Sol's whole-branch review, after the shell search (#217) had already shipped several rounds of
+debounce/race fixes (the section above): `lib/dashboard-search-store.ts` is a module-level
+singleton — deliberately, so the rail's `ShellSearch` (mounted on every staff route) and
+`Dashboard.tsx` read the same `draft`/`query` without a React context or provider. Its principal
+reset (`resetDashboardSearchForPrincipal`) lived only inside `Dashboard.tsx`, guarded correctly
+against races on the SAME principal — but scoped to the wrong lifetime entirely: a module
+singleton has no idea a principal changed unless something tells it, and the only thing that told
+it was a component that is not even mounted for most of the app. Sign out, or switch who you are
+impersonating, while parked on `/admin` or a project route (no Dashboard instance to run that
+reset), and the NEXT principal's rail search box showed the PREVIOUS principal's draft/committed
+text until a Dashboard happened to mount again — an actual cross-principal data leak in the UI, not
+merely stale cache.
+
+**The rule: a module singleton's reset belongs at the identity boundary the WHOLE APP already
+tracks, not inside whichever screen first needed the reset.** `components/PrincipalFreshnessBoundary.tsx`
+already wraps every staff route and is already keyed off `principalId` for its own cache-purge
+concerns — that is the right home, not a second one. `Dashboard.tsx`'s own reset was kept
+alongside it rather than deleted, and that is deliberate, not an oversight: on a COLD mount landing
+directly on a Dashboard route, both mount in the same commit, and child effects run before the
+parent's (React's bottom-up commit order) — Dashboard's own reset sets the store's `principalId`
+first, so the boundary's later reset in the same commit finds it already current and is a
+guaranteed no-op, rather than a race that could occasionally clobber the URL's own adopted search.
+Removing the "local" reset once a "global" one exists can silently break the one ordering guarantee
+the local one was providing.
+
+A related trap in the same store: distinguish a writer being TORN DOWN AND RE-REGISTERED (identity
+churn while the owning component is still mounted — a pending debounce must survive it, since
+there is still somewhere for it to land) from the owning component actually UNMOUNTING (a pending
+debounce must NOT survive it — there is no writer left to receive it, and letting the timer fire
+anyway writes into whatever mounts next with no relation to who typed it). The fix was registering
+a STABLE writer once per mount, through a ref updated every render rather than a dependency list
+that changed on every view/facet switch — which turns "was this an unregister-then-reregister, or
+a real unmount?" from something the store had to guess (and had guessed wrong twice already,
+across two earlier rounds) into something structurally impossible to conflate: unmount becomes the
+ONLY unregister the component ever triggers.
