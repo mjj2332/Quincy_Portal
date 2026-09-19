@@ -37,12 +37,14 @@ export type DashboardCalendarState = {
  * now falls through to `not-found`, not to a redirect or a normalisation.
  *
  * `calendar` joined the allow-list in #111 and is not symmetrical with the other two. `list` and
- * `kanban` are destinations; a bare `/?view=calendar` is an *intent*, legal only as the sole query
- * field. The navigation rail links to it and the Dashboard canonicalises it to the parameterised
- * facet URL that `DashboardCalendarFacetRoute` describes, using the remembered subview and last
- * date it already reads. The rail resolving those preferences itself was rejected: it would put the
- * preference logic in two places. The accepted cost is one URL rewrite on arrival, which is why
- * this spelling should never be observed in the address bar for more than a commit.
+ * `kanban` are destinations; a bare `/?view=calendar` is an *intent*, legal as the sole query
+ * field OR paired with exactly one `q` (#217 fix round 4, item 1 -- `DashboardCalendarIntentRoute`'s
+ * own docblock has why). The navigation rail links to it and the Dashboard canonicalises it to the
+ * parameterised facet URL that `DashboardCalendarFacetRoute` describes, using the remembered
+ * subview and last date it already reads. The rail resolving those preferences itself was
+ * rejected: it would put the preference logic in two places. The accepted cost is one URL rewrite
+ * on arrival, which is why this spelling should never be observed in the address bar for more than
+ * a commit.
  */
 /** List/Kanban carry the Dashboard's own `q` (#217). */
 export type DashboardListKanbanRoute = {
