@@ -268,7 +268,7 @@ function ShellRoute() {
 
   return (
     <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
-      <RailedShell navigation={navigation} user={user}>{routedContent}</RailedShell>
+      <RailedShell navigation={navigation} user={user} principalId={user.id}>{routedContent}</RailedShell>
     </div>
   );
 }

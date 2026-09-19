@@ -86,10 +86,12 @@ function safeLocalStorage(): Storage | null {
 export type RailedShellProps = {
   navigation: StaffNavigation;
   user: { name?: string | null; email?: string | null };
+  /** Forwarded to `NavigationRail`/`ShellSearch` — see `NavigationRailProps.principalId`. */
+  principalId?: string;
   children: ReactNode;
 };
 
-export function RailedShell({ navigation, user, children }: RailedShellProps) {
+export function RailedShell({ navigation, user, principalId, children }: RailedShellProps) {
   const [preference, setPreference] = useState<RailPreference>(() => {
     const storage = safeLocalStorage();
     return storage ? readRailPreference(storage) : "expanded";
@@ -204,10 +206,10 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
     <>
       <RailSheet initialFocus={sheetInitialFocus}>
         <div className="contents" onClick={closeSheetOnLinkClick}>
-          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} isDashboard={isDashboard} searchRef={sheetSearchRef} />
+          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} isDashboard={isDashboard} searchRef={sheetSearchRef} principalId={principalId} />
         </div>
       </RailSheet>
-      {mode !== "sheet" && <NavigationRail navigation={navigation} user={user} variant={mode} isDashboard={isDashboard} searchRef={searchRef} />}
+      {mode !== "sheet" && <NavigationRail navigation={navigation} user={user} variant={mode} isDashboard={isDashboard} searchRef={searchRef} principalId={principalId} />}
     </>
   );
 

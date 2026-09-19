@@ -247,9 +247,17 @@ export type NavigationRailProps = {
    * renders the control and decides nothing about when the shortcut fires.
    */
   searchRef?: Ref<ShellSearchHandle>;
+  /**
+   * Forwarded straight to `ShellSearch` (#217 fix round 4, item 3) — the render-time-current
+   * principal, for isolating the search box from a principal change with no flash. A SEPARATE prop
+   * from `user` (name/email only) rather than widening that type, so existing call sites/tests that
+   * construct a bare `{ name, email }` stay unaffected; optional, defaults through to `ShellSearch`'s
+   * own `""` default.
+   */
+  principalId?: string;
 };
 
-export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, isDashboard = false, searchRef }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, isDashboard = false, searchRef, principalId }: NavigationRailProps) {
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
 
@@ -344,7 +352,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
       <SidebarContent>
         {/* The search control sits above the nav landmark, not inside it — it is a real input now
             (#217), not a destination. */}
-        <ShellSearch ref={searchRef} variant={variant} isDashboard={isDashboard} />
+        <ShellSearch ref={searchRef} variant={variant} isDashboard={isDashboard} principalId={principalId} />
         <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">

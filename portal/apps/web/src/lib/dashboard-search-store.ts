@@ -26,12 +26,22 @@ let query = "";
 let lastWritten = "";
 let principalId = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
+// The principal the ARMED timer was set for — captured at arm time, checked at fire time. A
+// principal switch between those two moments (#217 fix round 4, item 3) must drop the commit
+// entirely, not run it against whichever principal happens to be current when it fires.
+let timerOwner = "";
 let writer: ((query: string) => void) | null = null;
 let snapshot: DashboardSearchSnapshot = { draft, query, principalId };
+// A stable reference PER viewer id for the "wrong owner" render-time snapshot — `useSyncExternalStore`
+// requires `getSnapshot()` to return the SAME reference across repeated calls within a render pass
+// whenever nothing has changed, or React treats it as tearing and can loop. Recomputed only when
+// either the mismatched viewer or the store's own state actually changes (`notify()` below).
+let mismatchCache: { viewer: string; snapshot: DashboardSearchSnapshot } | null = null;
 const listeners = new Set<() => void>();
 
 function notify(): void {
   snapshot = { draft, query, principalId };
+  mismatchCache = null;
   for (const listener of listeners) listener();
 }
 
@@ -40,6 +50,19 @@ function clearTimer(): void {
     clearTimeout(timer);
     timer = null;
   }
+}
+
+/**
+ * Ownership switch used by every direct write path (draft/commit-now/clear): if the caller's own
+ * id disagrees with the store's current owner, the OLD owner's draft/query/timer are cleared first
+ * — a write by a new principal must never land on top of a previous principal's in-flight state.
+ * Guarded (a same-id call is a no-op) so a normal keystroke burst from the SAME principal never
+ * clears itself; `resetDashboardSearchForPrincipal` below shares this same guard for the same
+ * reason (Dashboard's own mount effect, `dashboard-search-store.test.ts`'s "a principal change
+ * clears the store" test).
+ */
+function ensureOwner(viewerId: string): void {
+  if (viewerId !== principalId) resetDashboardSearchForPrincipal(viewerId);
 }
 
 function commit(): void {
@@ -72,20 +95,54 @@ export function getDashboardSearchSnapshot(): DashboardSearchSnapshot {
   return snapshot;
 }
 
-export function setDashboardSearchDraft(value: string): void {
+/**
+ * Principal-scoped read (#217 fix round 4, item 3, BLOCKER) — for a component (`ShellSearch`) that
+ * renders on EVERY staff route and must never show one principal's text during another's render
+ * pass. Compares the CALLER's own, render-time-current `viewerId` against the store's recorded
+ * `principalId` DURING RENDER: if they disagree, this returns an empty snapshot regardless of
+ * whether any reset effect has run yet — there is no flash and no dependence on effect ordering,
+ * because the comparison itself, not a prior side effect, is what keeps A and B apart. Stable
+ * per-viewer reference (`mismatchCache`) so `useSyncExternalStore` never sees a "changed" snapshot
+ * on repeated same-render calls it makes to detect tearing.
+ */
+export function getDashboardSearchSnapshotForPrincipal(viewerId: string): DashboardSearchSnapshot {
+  if (viewerId === principalId) return snapshot;
+  if (mismatchCache && mismatchCache.viewer === viewerId) return mismatchCache.snapshot;
+  mismatchCache = { viewer: viewerId, snapshot: { draft: "", query: "", principalId: viewerId } };
+  return mismatchCache.snapshot;
+}
+
+/**
+ * `viewerId` defaults to the store's own current owner — a caller that doesn't pass one (every
+ * pre-#217-fix-round-4 call site, including the existing tests below) is therefore always a no-op
+ * ownership check, unchanged behaviour. Real callers (`ShellSearch`) pass the render-time-current
+ * principal, so a write from a DIFFERENT principal than the store's recorded owner first clears the
+ * old owner's state (`ensureOwner`) before applying.
+ */
+export function setDashboardSearchDraft(value: string, viewerId: string = principalId): void {
+  ensureOwner(viewerId);
   draft = sanitizeDashboardCalendarSearch(value);
   notify();
   clearTimer();
-  timer = setTimeout(commit, DASHBOARD_SEARCH_DEBOUNCE_MS);
+  // The owner this timer is armed FOR — re-checked at fire time below, so a principal switch
+  // between arming and firing drops the commit instead of running it against whoever is current.
+  timerOwner = principalId;
+  timer = setTimeout(() => {
+    timer = null;
+    if (timerOwner !== principalId) return;
+    commit();
+  }, DASHBOARD_SEARCH_DEBOUNCE_MS);
 }
 
 /** Enter: cancel the timer, commit now. */
-export function commitDashboardSearchNow(): void {
+export function commitDashboardSearchNow(viewerId: string = principalId): void {
+  ensureOwner(viewerId);
   commit();
 }
 
 /** Escape / chip x: draft "" and immediate commit. */
-export function clearDashboardSearch(): void {
+export function clearDashboardSearch(viewerId: string = principalId): void {
+  ensureOwner(viewerId);
   draft = "";
   notify();
   commit();
@@ -115,6 +172,25 @@ export function resetDashboardSearchForPrincipal(id: string): void {
   query = "";
   lastWritten = "";
   principalId = id;
+  notify();
+}
+
+/**
+ * Unconditional — unlike `resetDashboardSearchForPrincipal` above (guarded, so a caller that fires
+ * redundantly with the ALREADY-current id, e.g. Dashboard's own per-render-dependency-change mount
+ * effect, never clobbers an in-progress search), this ALWAYS clears and drops ownership entirely
+ * (`principalId` back to `""`, "no owner"). #217 fix round 4, item 3 (BLOCKER): sign-out unmounts
+ * `PrincipalFreshnessBoundary` with no principal change to reset FOR (there is no next principal
+ * yet), so the guarded reset above can't be the mechanism — and signing back in as the SAME id
+ * afterwards must not hit that same guard and keep the signed-out principal's old search. This is
+ * the boundary's unmount cleanup; the guarded reset stays its mount-time call.
+ */
+export function dropDashboardSearchOwnership(): void {
+  clearTimer();
+  draft = "";
+  query = "";
+  lastWritten = "";
+  principalId = "";
   notify();
 }
 
@@ -151,6 +227,8 @@ export function __resetDashboardSearchStoreForTest(): void {
   query = "";
   lastWritten = "";
   principalId = "";
+  timerOwner = "";
   writer = null;
+  mismatchCache = null;
   notify();
 }
