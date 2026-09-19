@@ -2,7 +2,7 @@
 // geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser
 // focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance
 // items. Mirrors Dashboard-stage-interactions.dom.test.tsx's own harness.
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
@@ -12,6 +12,7 @@ import {
   clearDashboardSearch,
   commitDashboardSearchNow,
   getDashboardSearchSnapshot,
+  resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
 } from "../lib/dashboard-search-store";
 
@@ -19,6 +20,11 @@ function ClientCapture({ onClient }: { onClient: (client: QueryClient) => void }
   onClient(useQueryClient());
   return null;
 }
+
+// #217 fix round 4, item 4: the `<StrictMode>` suite below needs React's own `act()` to behave
+// deterministically across its mount-cleanup-mount replay — the same flag every other `.dom.test.tsx`
+// file in this codebase that exercises `act` sets, this file just never previously needed it.
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /**
  * #217 fix round 1, items 1-2 (Sol's diff review, both blockers). Root cause shared by both:
@@ -224,5 +230,86 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     await act(async () => { triggers[0]!.click(); await Promise.resolve(); });
     await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #217 fix round 4, item 4 (SHOULD-FIX). `main.tsx` mounts the whole app under `<StrictMode>`,
+ * which double-invokes an initial mount's effects (mount, cleanup, mount again) synchronously, in
+ * the SAME commit. `Dashboard.tsx`'s own writer-registration effect cleanup used to call
+ * `cancelPendingDashboardSearchWrite()` unconditionally — correct for a REAL unmount, but wrong for
+ * StrictMode's own synthetic one: a debounce armed OFF-Dashboard (the rail's `ShellSearch`, mounted
+ * everywhere) before Dashboard ever mounted got cancelled by the synthetic cleanup, even though
+ * Dashboard — once the double-invoke dance settles — is still mounted with nothing left to receive
+ * that debounce's eventual commit.
+ */
+describe("Dashboard search writer registration under StrictMode (#217 fix round 4, item 4)", () => {
+  beforeEach(() => {
+    authState.role = "admin";
+    apiGetMock.mockReset(); apiPostMock.mockReset();
+    apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: () => null, setItem: () => undefined } });
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    act(() => root.unmount());
+    host.remove();
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+
+  it("a debounce armed off-Dashboard (typed on /admin) survives StrictMode's mount-cleanup-mount replay and still commits to the URL", async () => {
+    vi.useFakeTimers();
+    try {
+      // `admin-1` is already the store's own recorded owner (as the boundary would have already
+      // settled it, off-Dashboard) -- this test's own concern is the writer-registration effect's
+      // StrictMode replay, not the separate principal-ownership reset Dashboard's own effect
+      // performs on a genuine principal change (unrelated to item 4, already covered elsewhere).
+      resetDashboardSearchForPrincipal("admin-1");
+      // Typed on `/admin` -- no Dashboard mounted yet to own the debounce (mirrors what the rail's
+      // `ShellSearch`, mounted on every route, would do).
+      setDashboardSearchDraft("smith");
+      expect(getDashboardSearchSnapshot().draft).toBe("smith");
+      expect(getDashboardSearchSnapshot().query).toBe("");
+
+      // Navigate to `/` within the 300ms window -- Dashboard's own FIRST mount, under StrictMode,
+      // double-invokes this component's effects (mount, cleanup, mount) synchronously in one commit.
+      await act(async () => {
+        root.render(createElement(StrictMode, null, createElement(Dashboard, { currentUserId: "admin-1", role: "admin" })));
+        await Promise.resolve();
+      });
+
+      await act(async () => { vi.advanceTimersByTime(350); });
+
+      expect(getDashboardSearchSnapshot().query).toBe("smith");
+      expect(window.location.search).toContain("q=smith");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a REAL unmount (no StrictMode replay involved) still cancels a pending debounce — the existing guarantee, unaffected", async () => {
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        root.render(createElement(StrictMode, null, createElement(Dashboard, { currentUserId: "admin-1", role: "admin" })));
+        await Promise.resolve();
+      });
+      const locationBeforeType = window.location.search;
+      act(() => { setDashboardSearchDraft("smith"); });
+      expect(getDashboardSearchSnapshot().draft).toBe("smith");
+      expect(getDashboardSearchSnapshot().query).toBe("");
+
+      await act(async () => { root.unmount(); });
+      await act(async () => { vi.advanceTimersByTime(350); });
+
+      expect(getDashboardSearchSnapshot().query).toBe("");
+      expect(window.location.search).toBe(locationBeforeType);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

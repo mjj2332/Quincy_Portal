@@ -543,7 +543,29 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // `ShellSearch`, mounted everywhere) still navigate with whatever text is showing.
   const writerContextRef = useRef({ view, calendarState, history, navigateCalendar });
   writerContextRef.current = { view, calendarState, history, navigateCalendar };
+  // #217 fix round 4, item 4 (SHOULD-FIX). `<StrictMode>` (`main.tsx`) double-invokes an initial
+  // mount's effects — mount, cleanup, mount again — synchronously, in the same commit. The cleanup
+  // below used to call `cancelPendingDashboardSearchWrite()` unconditionally, which is correct for
+  // a REAL unmount but wrong for StrictMode's own synthetic one: a debounce armed off-Dashboard
+  // (the rail's `ShellSearch`, mounted everywhere) before this component ever mounted got cancelled
+  // by the synthetic cleanup, even though Dashboard is — once the dance settles — still mounted.
+  // Scenario: type "smith" on `/admin`, navigate to `/` within 300ms; the draft stayed visible but
+  // never committed.
+  //
+  // The fix is at the lifecycle, not the symptom: `writerGenerationRef` counts effect INVOCATIONS
+  // (bumped at the top of the effect body, read by its own cleanup's deferred check). The
+  // cancellation itself is deferred to a microtask — `queueMicrotask` runs strictly after the
+  // CURRENT synchronous execution finishes, and StrictMode's mount→cleanup→mount replay is entirely
+  // synchronous (no microtask boundary between them), so a same-tick re-registration has ALREADY
+  // bumped the generation counter by the time the deferred check runs, and it backs off. A REAL
+  // unmount has no such follow-up invocation — the generation is unchanged when the microtask
+  // fires, so it cancels exactly as before (`Dashboard-search-interaction... "cancels a pending
+  // debounce on unmount"` test, kept passing unmodified: `act()`'s own microtask flush runs this
+  // deferred check well within its 350ms wait).
+  const writerGenerationRef = useRef(0);
   useEffect(() => {
+    writerGenerationRef.current += 1;
+    const myGeneration = writerGenerationRef.current;
     const unregister = setDashboardSearchUrlWriter((q) => {
       const { view: currentView, calendarState: currentCalendarState, history: currentHistory, navigateCalendar: currentNavigateCalendar } = writerContextRef.current;
       if (currentView === "calendar" && currentCalendarState) currentNavigateCalendar({ ...currentCalendarState, search: q, view: "calendar" }, true);
@@ -551,7 +573,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     });
     return () => {
       unregister();
-      cancelPendingDashboardSearchWrite();
+      queueMicrotask(() => {
+        // A same-tick re-registration (StrictMode's own replay) already bumped the generation —
+        // that NEWER invocation owns the pending debounce now; leave it alone. Only a genuine
+        // unmount, with no follow-up invocation, still owns `myGeneration` here.
+        if (writerGenerationRef.current === myGeneration) cancelPendingDashboardSearchWrite();
+      });
     };
   }, []);
 
