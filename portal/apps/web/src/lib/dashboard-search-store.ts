@@ -181,8 +181,9 @@ export function cancelPendingDashboardSearchWrite(): void {
 /**
  * The stateless draft-from-URL sync (#217 build, step 3) — one call, in `ShellRoute`'s own
  * `useLayoutEffect` keyed on location + principal, and the ONLY adoption path this store has left
- * (#217 build, step 5 drops the older `adoptDashboardSearchFromUrl`, which existed only to keep a
- * `query` copy in step; there is no `query` left to keep in step). `routeQuery` is the CALLER's own
+ * (#217 build, step 5 drops the older URL-adoption function this file used to also export, which
+ * existed only to keep a committed-query copy in step; there is no such copy left to keep in step).
+ * `routeQuery` is the CALLER's own
  * `dashboardSearchOf(route)` for the CURRENTLY governing route -- this function does not parse a
  * route itself, and does not special-case a non-Dashboard route: the caller is responsible for not
  * calling this at all when `route.kind !== "dashboard"` (its lack of a `q` is not authoritative

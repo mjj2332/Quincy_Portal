@@ -25,13 +25,14 @@ const rememberedSubview = "week";
 
 // `filterFacets.myTasksUserId` is `z.string().uuid()`, NOT nullable
 // (`packages/shared/src/production-calendar.ts:586`) -- a real UUID here, not `null`
-// (#217 design-fix round 3, item 4). A `null` here validates fine when THIS file builds the
-// fixture (`adminProductionCalendarRangeResponseSchema.parse` below accepts it -- the schema
-// field itself is what's strict, and nothing here re-checks it), but `Dashboard.tsx`'s own
-// `decodeProductionCalendarResponse` re-parses the SAME object against the per-role schema
-// inside the real `queryFn`, where it fails and the query silently retries/errors instead of
-// succeeding -- see `Dashboard-search-request-stability.dom.test.tsx`'s own investigation note
-// for the mechanics (three attempts at 0s/1s/3s under react-query's default retry backoff).
+// (#217 design-fix round 3, item 4). Corrected (#217 build, step 7): this comment used to claim a
+// `null` here validates fine when THIS file builds the fixture. It does not -- there is no
+// `.nullable()` on the schema, so `adminProductionCalendarRangeResponseSchema.parse` below throws
+// on a `null` `myTasksUserId` just as readily as `Dashboard.tsx`'s own `decodeProductionCalendarResponse`
+// would, re-parsing the SAME shape against the per-role schema inside the real `queryFn` -- see
+// `Dashboard-search-request-stability.dom.test.tsx`'s own investigation note for the mechanics of
+// what a genuinely invalid response does there (three retry attempts at 0s/1s/3s under
+// react-query's default backoff, not a parse that quietly succeeds).
 const noOneId = "00000000-0000-4000-8000-000000000000";
 
 function calendarResponse(date: string) {

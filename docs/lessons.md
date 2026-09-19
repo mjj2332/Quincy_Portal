@@ -1893,10 +1893,23 @@ Kanban board mounted, the Calendar's own loading region present), and leave the 
 Calendar surface itself renders to `screens/Dashboard-calendar.dom.test.tsx`, which mounts with
 the calendar facet already in hand and so has the surface in its first commit.
 
+**Correction (#217 build, step 7).** The premise above was wrong, not just the test. The Calendar
+surface never resolving under the intent harness was NOT a property of the lazy-boundary timing —
+it was an invalid fixture: `filterFacets.myTasksUserId: null` in this file's own response fixture,
+which the strict `z.string().uuid()` schema rejects, so every load sat in react-query's retry loop
+and never left the loading state. With an honest fixture the range decodes on the first commit and
+the surface renders directly, same as any other Calendar-facet arrival —
+`Dashboard-calendar-intent.dom.test.tsx`'s own "gives the viewport to the Calendar" test asserts
+the surface directly now, not the Suspense fallback. The general rule below about a lazy boundary
+needing a further update to retry is still true; it just was not what this particular test was
+hitting.
+
 **Rule.** When a lazy boundary becomes reachable only as the RESULT of an update (a redirect, a
 canonicalising replace, a route change), do not expect it to resolve within that same settle loop.
 Split the assertion: one test for which branch became active, a separate test — one that mounts
-with the target state already present — for what that branch renders.
+with the target state already present — for what that branch renders. And before blaming the
+harness's timing, check the fixture is actually valid against the schema the real code path
+enforces — an invalid fixture that silently retries forever looks exactly like a timing problem.
 
 ## Vite only replaces `import.meta.env` when it sees a literal member access (#111, 2026-09-13)
 
@@ -3089,6 +3102,17 @@ same-tick synthetic replay), defer the action past the point where a same-tick r
 already announced itself, rather than trying to tell the two events apart from inside the cleanup
 itself (they look identical at that point).
 
+**Correction (#217 build, step 6).** The generation-counter/`queueMicrotask` mechanism this entry
+describes is deleted, not just described in the past tense: #217 build, step 5 removed the reason
+it existed. Once a commit with no writer registered is simply dropped (there is no local committed
+copy left for it to update either), the cleanup can unregister unconditionally with no deferred
+check — a StrictMode replay re-registers a writer before the timer can fire (still commits); a
+real unmount never re-registers one (never commits). The general shape the entry closes with —
+defer a cleanup action that is only safe for one of two same-looking triggers — is still a real
+technique worth knowing; it is just no longer what this particular file does, because the
+asymmetry it was working around (a fire with no writer used to silently update local state) no
+longer exists.
+
 ## A mocked-fetch DOM suite hid a client/route id mismatch in both directions (#226)
 
 The Calendar's checklist event/unscheduled-entry `id` is a `checklist:`-prefixed ENTITY id —
@@ -3118,3 +3142,54 @@ to round-trip. Pin the contract itself with one worker integration test that tak
 id from one route and feeds it into the route that consumes it (here: GET the Calendar range,
 PATCH the subtasks route with the id verbatim, expect 400 for the raw id and 200 for the unwrapped
 one) — a unit test on either side alone can drift with the other without failing.
+
+## A copy of URL state in a store is a seam that finds a new bug every review round — delete the copy, not the bug (#217 build)
+
+The shell search's committed query lived in two places at once: the URL (`q` on bare/List/Kanban/
+calendar-intent, and the calendar facet's own `q`) and a `query` field the shared store also kept,
+"adopted" from the URL by a passive effect. Seven review rounds each found a DIFFERENT bug living
+in the seam between the two — a Back/Forward race, two adoption effects fighting over declaration
+order, a stale adoption marker that ignored the principal, a render reading a ref mutated in an
+effect, and, the release blocker that finally forced the redesign: a role without Calendar
+capability returned from the reconciliation effect before ever adopting a bare/List/Kanban route's
+own `q`, so the filter, chip and Kanban movement gate fell back to an empty store after the first
+commit while the URL still said `q=smith`. Every fix landed in the seam itself — tightening an
+adoption effect's guard, reordering two effects, scoping a marker to a principal — and every fix
+left the seam standing, so the next round found the next bug in it.
+
+The actual fix was structural, not another patch to the seam: stop keeping a second copy at all.
+`Dashboard.tsx` now derives the committed query at RENDER, straight from the currently governing
+parsed route (`committedQuery = dashboardSearchOf(route) ?? ""`), for every role and every view —
+there is no adoption effect left to lag behind, and no store copy left to disagree with the URL for
+even one render. The store keeps only what genuinely is not in the URL: the DRAFT (what is showing
+in the input, including an uncommitted trailing space or mid-debounce keystroke), the debounce
+timer, IME composing state, and the owning principal. Committing is a URL write through a writer
+the currently-mounted Dashboard registers; with no writer registered (off-Dashboard, or after this
+component's own unmount) a debounce firing is simply dropped — there is nothing local left for it
+to fall back to, which is itself new behaviour now that there is no copy to fall into.
+
+What replaced the seam is ONE stateless sync rule, not a smarter adoption effect:
+`syncDashboardSearchDraftFromLocation(routeQuery, viewerId)`, called exactly once, in `ShellRoute`'s
+own `useLayoutEffect` keyed on location + principal. For a non-Dashboard route it returns
+immediately — the route's lack of a `q` is not authoritative off-Dashboard, since an Enter on the
+rail must still navigate with whatever was typed. Otherwise: claim ownership, cancel the pending
+timer UNCONDITIONALLY (the Back/Forward race fix, generalised — a location change must never let an
+in-flight debounce fire after the fact and overwrite what the URL now says), then compare the draft
+NORMALISED against the route's own `q` before ever overwriting it. That comparison is what keeps
+the store's own debounced write from fighting the very typing that produced it: the write emits
+exactly `normalize(draft)`, so the resulting location compares equal once it lands back here, and a
+raw draft (trailing space, mid-collapse whitespace) is left alone. Only a location carrying a
+GENUINELY different committed search — a rail click to a different `q`, Back/Forward, a pasted deep
+link — ever overwrites the draft. One function, one call site, one comparison rule; nowhere left
+for a seventh bug to hide, because there is no longer a second field for two sources of truth to
+disagree about.
+
+**Rule.** When a value already has one authoritative source (here, the URL), a component-local
+"cache" of it that gets "kept in sync" by an effect is not a performance optimisation — it is a
+second source of truth, and every review round will find the next place the two can disagree. If a
+value is cheap to derive from its authoritative source at render (a route parse, here), derive it
+at render and delete the copy entirely, rather than making the sync effect that maintains the copy
+progressively smarter. The one exception worth keeping a local copy for is genuinely
+NOT-yet-authoritative state — the DRAFT here, which is real user input the authoritative source
+does not have yet — and even that copy needs exactly one function that reconciles it against the
+authoritative source on every change, not one adoption path per call site.
