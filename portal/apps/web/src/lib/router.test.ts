@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, shouldInterceptInternalLink } from "./router";
+import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, shouldInterceptInternalLink, stripDashboardSearchFromLocation } from "./router";
 import { beginSignIn, consumeSignInDestinationFrom } from "./auth";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
@@ -90,6 +90,35 @@ describe("staff route contract", () => {
     }
     expect(projectNotificationRoute(null, "mentioned")).toBeUndefined();
     expect(projectNotificationRoute(null, "raw_ready")).toBeUndefined();
+  });
+});
+
+// #217 fix round 5, item 3 (Sol re-review, BLOCKER). Explicit sign-out must scrub the Dashboard
+// search out of the CURRENT location before signing out — otherwise `lib/auth.ts`'s own
+// `beginSignIn`/`consumeSignInDestinationFrom` (see "accepts a canonical Calendar destination and
+// preserves it through OAuth return" above, which this deliberately does NOT touch) faithfully
+// carries it back for whoever signs in next.
+describe("stripDashboardSearchFromLocation (#217 fix round 5, item 3)", () => {
+  it("strips q from the bare, List, Kanban and Calendar-intent Dashboard arms", () => {
+    expect(stripDashboardSearchFromLocation("/?q=smith")).toBe("/");
+    expect(stripDashboardSearchFromLocation("/?view=list&q=smith")).toBe("/?view=list");
+    expect(stripDashboardSearchFromLocation("/?view=kanban&q=smith")).toBe("/?view=kanban");
+    expect(stripDashboardSearchFromLocation("/?view=calendar&q=smith")).toBe("/?view=calendar");
+  });
+
+  it("strips the search field from the canonical Calendar facet, keeping every other filter", () => {
+    const location = "/?view=calendar&date=2026-08-30&sub=week&layers=project%2Cchecklist&mine=1&q=smith+street";
+    expect(stripDashboardSearchFromLocation(location)).toBe("/?view=calendar&date=2026-08-30&sub=week&layers=project%2Cchecklist&mine=1");
+  });
+
+  it("is a no-op on a Dashboard location that already carries no search", () => {
+    expect(stripDashboardSearchFromLocation("/")).toBe("/");
+    expect(stripDashboardSearchFromLocation("/?view=kanban")).toBe("/?view=kanban");
+  });
+
+  it("leaves a non-Dashboard location untouched — nothing there carries a Dashboard search", () => {
+    expect(stripDashboardSearchFromLocation(`/projects/${projectId}`)).toBe(`/projects/${projectId}`);
+    expect(stripDashboardSearchFromLocation("/admin")).toBe("/admin");
   });
 });
 

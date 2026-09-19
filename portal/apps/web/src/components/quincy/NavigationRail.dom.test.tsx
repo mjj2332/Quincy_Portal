@@ -777,6 +777,30 @@ describe("the account menu's sign out", () => {
     expect(signOutMock).toHaveBeenCalledTimes(1);
   });
 
+  // #217 fix round 5, item 3 (Sol re-review, BLOCKER). Sign-out at a URL carrying a Dashboard
+  // search used to leave it there -- `App.tsx` hands that URL to `SignIn`, and `lib/auth.ts`'s
+  // `beginSignIn` preserves it as the OAuth return destination, so signing back in (as anyone)
+  // re-applied it. Only the explicit sign-out ACTION scrubs the CURRENT location; a cold deep link
+  // to the same URL while signed out must still apply after sign-in (`router.test.ts`'s own
+  // "accepts a canonical Calendar destination and preserves it through OAuth return" pins that this
+  // fix does not touch).
+  it("scrubs the Dashboard search from the URL before signing out, via replace not push", async () => {
+    signOutMock.mockClear();
+    window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    const lengthBefore = window.history.length;
+    await renderInProvider(navigationFor("/?view=kanban&q=smith"));
+
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]');
+    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
+    const signOut = document.querySelector<HTMLElement>('[data-testid="navigation-rail-signout"]');
+    await act(async () => { signOut!.click(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=kanban");
+    // `replace`, not `push` -- correcting the current entry creates no new history entry.
+    expect(window.history.length).toBe(lengthBefore);
+    expect(signOutMock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a failure in the rail rather than swallowing it", async () => {
     // The alert deliberately lives OUTSIDE the menu panel: `closeOnClick` unmounts the panel, so an
     // error rendered inside it would vanish before it could be read.

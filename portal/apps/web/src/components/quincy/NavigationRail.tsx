@@ -34,6 +34,7 @@ import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
 import { ShellSearch, type ShellSearchHandle } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
+import { locationStore, stripDashboardSearchFromLocation } from "../../lib/router";
 import { cn } from "../../lib/utils";
 import type { RailMode } from "../../lib/shell-rail";
 import type {
@@ -270,6 +271,16 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
     event.preventDefault();
     setSignOutError(null);
     try {
+      // #217 fix round 5, item 3 (Sol re-review, BLOCKER). Only the explicit sign-out ACTION
+      // scrubs the Dashboard search out of the current URL, before signing out -- `App.tsx` hands
+      // this same URL to `SignIn`, and `lib/auth.ts`'s `beginSignIn` preserves it as the OAuth
+      // return destination, so leaving it alone re-applies whoever was signed out's search to
+      // whoever signs in next, including the same person. `replace`, not `push`: this is a
+      // correction to the CURRENT entry, not a new destination -- see `stripDashboardSearchFromLocation`'s
+      // own docblock for why sign-in itself (and a cold deep link) must NOT do this.
+      const history = locationStore();
+      const stripped = stripDashboardSearchFromLocation(history.getLocation());
+      if (stripped !== history.getLocation()) history.replace(stripped);
       await signOut();
     } catch (error) {
       setSignOutError(

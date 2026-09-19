@@ -44,6 +44,29 @@ export function locationStore() {
   return browserHistory;
 }
 
+/**
+ * #217 fix round 5, item 3 (Sol re-review, BLOCKER). Explicit sign-out (`NavigationRail.tsx`'s own
+ * `handleSignOut`) leaves the URL alone: `App.tsx` hands that same URL to `SignIn`, and
+ * `lib/auth.ts`'s `beginSignIn` preserves it as the OAuth callback / sign-in return path, so
+ * signing out at `/?q=smith` and signing in as ANYONE re-applies `smith` (`Dashboard.tsx`'s own
+ * route-reconciliation effect adopts it from the route, exactly as it would for a genuine deep
+ * link). Deep links must keep working — a shared `/?q=smith` URL opened while signed OUT should
+ * still apply after sign-in — so this is deliberately NOT a parse-level or sign-in-time strip; only
+ * the explicit sign-out ACTION scrubs the CURRENT location's own Dashboard search, through the
+ * shared route parse/serialize (never string surgery, so it can never drift from what the parser
+ * itself considers the search field on each shape): `q` on the bare/List/Kanban/Calendar-intent
+ * arms, the facet's own `search` on the canonical Calendar URL. A location that isn't a Dashboard
+ * route (nothing here carries a search) is returned unchanged.
+ */
+export function stripDashboardSearchFromLocation(location: string): string {
+  const route = parseStaffLocation(location);
+  if (route.kind !== "dashboard") return location;
+  if ("calendar" in route) return staffPathFor({ kind: "dashboard", calendar: { ...route.calendar, search: "" } });
+  if (route.search === undefined) return location;
+  const { search: _search, ...rest } = route;
+  return staffPathFor(rest);
+}
+
 export type LinkClick = {
   button: number;
   detail: number;
