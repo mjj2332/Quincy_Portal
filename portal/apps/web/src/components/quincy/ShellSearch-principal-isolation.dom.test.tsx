@@ -9,7 +9,7 @@ import { ShellSearch } from "./ShellSearch";
 import {
   __resetDashboardSearchStoreForTest,
   DASHBOARD_SEARCH_DEBOUNCE_MS,
-  getDashboardSearchSnapshot,
+  __getDashboardSearchSnapshotForTest,
   setDashboardSearchUrlWriter,
 } from "../../lib/dashboard-search-store";
 
@@ -114,7 +114,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     });
     const inputA = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(inputA, "smith");
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
     mockAccessSnapshotFor("user-b");
     let capturedValue: string | null = null;
@@ -133,7 +133,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     });
     const adminInput = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(adminInput, "smith");
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
     // Impersonation start.
     mockAccessSnapshotFor("editor-2");
@@ -146,7 +146,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     expect(capturedAtStart).toBe("");
     const impersonatedInput = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(impersonatedInput, "jones");
-    expect(getDashboardSearchSnapshot().draft).toBe("jones");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("jones");
 
     // Impersonation stop: back to the admin's own id — must ALSO start empty, not resurrect
     // whatever the admin was typing before impersonation began.
@@ -176,8 +176,8 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
         inputA.dispatchEvent(new Event("input", { bubbles: true }));
       });
       // Still mid-debounce.
-      expect(getDashboardSearchSnapshot().draft).toBe("smith");
-      expect(getDashboardSearchSnapshot().query).toBe("");
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
       // The armed timer is advanced past its debounce from INSIDE the layout-effect callback —
       // strictly before B's own boundary reset (a passive effect) has run — modelling "a
@@ -190,7 +190,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       });
 
       expect(writes).toEqual([]);
-      expect(getDashboardSearchSnapshot().query).toBe("");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
       unregister();
     } finally {
       vi.useRealTimers();
@@ -204,7 +204,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "smith");
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
     // Sign-out: the WHOLE authenticated subtree unmounts (`App.tsx` renders `<SignIn>` instead) —
     // nothing here re-renders with a different principal, it just goes away.
@@ -220,7 +220,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     });
     const inputAfterSignIn = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     expect(inputAfterSignIn.value).toBe("");
-    expect(getDashboardSearchSnapshot().draft).toBe("");
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
   });
 });

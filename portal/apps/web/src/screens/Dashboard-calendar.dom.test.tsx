@@ -6,7 +6,7 @@ import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
-import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot, setDashboardSearchDraft } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -103,7 +103,7 @@ describe("Dashboard Calendar routing", () => {
   // directly, exactly as `ShellSearch`'s own `onChange` would.
   async function typeSearch(value: string) {
     await act(async () => {
-      setDashboardSearchDraft(value);
+      setDashboardSearchDraft(value, "user-1");
       await Promise.resolve();
     });
   }
@@ -227,12 +227,12 @@ describe("Dashboard Calendar routing", () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch(`smith\\${String.fromCharCode(7)} street`);
-    expect(getDashboardSearchSnapshot().draft).toBe("smith street");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
     expect(window.location.search).toBe("?view=list");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith+street");
-    expect(getDashboardSearchSnapshot().draft).toBe("smith street");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
   });
 
   // #217 fix round 3, item 1 (Sol's whole-branch review). Unlike the toolbar's own Calendar switch
@@ -247,7 +247,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch("newterm");
     // Still mid-debounce -- the store's `query` has not committed yet, only `draft` has.
-    expect(getDashboardSearchSnapshot().query).not.toBe("newterm");
+    expect(__getDashboardSearchSnapshotForTest().query).not.toBe("newterm");
 
     await act(async () => { locationStore().push("/?view=calendar"); await Promise.resolve(); });
 
@@ -266,10 +266,10 @@ describe("Dashboard Calendar routing", () => {
 
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {
     await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith street" } });
-    expect(getDashboardSearchSnapshot().draft).toBe("smith street");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
     const lengthBefore = window.history.length;
     await typeSearch("a b ");
-    expect(getDashboardSearchSnapshot().draft).toBe("a b ");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("a b ");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
     expect(window.history.length).toBe(lengthBefore);
     expect(window.location.search).toContain("q=a+b");
@@ -292,7 +292,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     window.history.pushState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist&q=harbour");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(getDashboardSearchSnapshot().draft).toBe("harbour");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("harbour");
   });
 
   it("pushes committed filter changes and keeps them beside a debounced q", async () => {
@@ -338,17 +338,17 @@ describe("Dashboard Calendar routing", () => {
     await typeSearch("smith");
     const locationBeforeUnmount = window.location.search;
     // Still mid-debounce: the draft is live, but nothing has committed yet.
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
     await act(async () => { root.unmount(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
 
     expect(window.location.search).toBe(locationBeforeUnmount);
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     // The draft itself survives -- it is what lets an off-Dashboard Enter (the rail's
     // `ShellSearch`, mounted everywhere) still navigate with whatever text was showing.
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
   });
 
   it("type then change a Calendar facet inside the debounce keeps q", async () => {

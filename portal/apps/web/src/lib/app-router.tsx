@@ -44,7 +44,7 @@ import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
-import { getDashboardSearchSnapshot, subscribeDashboardSearch } from "./dashboard-search-store";
+import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch } from "./dashboard-search-store";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
@@ -257,7 +257,15 @@ function ShellRoute() {
   // `staff-navigation.ts`, which stays pure) so a rail click carries the live search the same way
   // the in-Dashboard view switcher already does. `ShellSearch` reads the identical store, so the
   // input and every rail href this produces can never disagree about what "the current q" is.
-  const dashboardSearchDraft = useSyncExternalStore(subscribeDashboardSearch, getDashboardSearchSnapshot, getDashboardSearchSnapshot).draft;
+  // #217 fix round 5, item 1 (Sol re-review, BLOCKER): principal-scoped -- an unscoped read here
+  // could serialise the PREVIOUS principal's draft into the rail's own hrefs for a render pass
+  // (worst on the narrow layout with the Sheet closed, where no `ShellSearch` instance is even
+  // mounted to make the layout-effect ownership claim).
+  const dashboardSearchDraft = useSyncExternalStore(
+    subscribeDashboardSearch,
+    () => getDashboardSearchSnapshotForPrincipal(user.id),
+    () => getDashboardSearchSnapshotForPrincipal(user.id),
+  ).draft;
   const navigation = useMemo(() => withLiveDashboardSearch(buildStaffNavigation(
     route,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),

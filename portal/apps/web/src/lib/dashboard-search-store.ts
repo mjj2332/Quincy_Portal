@@ -91,7 +91,19 @@ export function subscribeDashboardSearch(listener: () => void): () => void {
   };
 }
 
-export function getDashboardSearchSnapshot(): DashboardSearchSnapshot {
+/**
+ * TEST-ONLY (#217 fix round 5, item 1, BLOCKER). Unscoped: returns the store's raw state
+ * regardless of who is asking. RENDER code must never use this -- `Dashboard.tsx`'s own render
+ * (`~197`) and `lib/app-router.tsx`'s rail-href derivation (`~252`) both used to, and on A→B while
+ * still parked on those screens, a render pass could consume A's `query`/`draft` and serialise it
+ * into the rail's own hrefs or the project query, worst on the narrow layout with the Sheet closed
+ * (no `ShellSearch` instance mounted there to make the layout-effect ownership claim). This export
+ * exists only so a test can assert the store's raw internal state directly without knowing which
+ * principal "owns" it at that point in the test; production code reads exclusively through
+ * `getDashboardSearchSnapshotForPrincipal`, which this file deliberately does not also export
+ * unscoped under any other name.
+ */
+export function __getDashboardSearchSnapshotForTest(): DashboardSearchSnapshot {
   return snapshot;
 }
 
@@ -113,13 +125,14 @@ export function getDashboardSearchSnapshotForPrincipal(viewerId: string): Dashbo
 }
 
 /**
- * `viewerId` defaults to the store's own current owner — a caller that doesn't pass one (every
- * pre-#217-fix-round-4 call site, including the existing tests below) is therefore always a no-op
- * ownership check, unchanged behaviour. Real callers (`ShellSearch`) pass the render-time-current
- * principal, so a write from a DIFFERENT principal than the store's recorded owner first clears the
- * old owner's state (`ensureOwner`) before applying.
+ * `viewerId` is REQUIRED (#217 fix round 5, item 2, SHOULD-FIX) — an earlier version defaulted an
+ * omitted id to the store's OWN current owner, which made the ownership check tautological: a
+ * caller that forgot to pass one silently always "agreed" with whatever the store already thought,
+ * closing none of the isolation gap the check exists for. Every call site now threads the
+ * render-time-current principal through explicitly; a write from a DIFFERENT principal than the
+ * store's recorded owner first clears the old owner's state (`ensureOwner`) before applying.
  */
-export function setDashboardSearchDraft(value: string, viewerId: string = principalId): void {
+export function setDashboardSearchDraft(value: string, viewerId: string): void {
   ensureOwner(viewerId);
   draft = sanitizeDashboardCalendarSearch(value);
   notify();
@@ -134,14 +147,15 @@ export function setDashboardSearchDraft(value: string, viewerId: string = princi
   }, DASHBOARD_SEARCH_DEBOUNCE_MS);
 }
 
-/** Enter: cancel the timer, commit now. */
-export function commitDashboardSearchNow(viewerId: string = principalId): void {
+/** Enter: cancel the timer, commit now. `viewerId` required -- see `setDashboardSearchDraft`. */
+export function commitDashboardSearchNow(viewerId: string): void {
   ensureOwner(viewerId);
   commit();
 }
 
-/** Escape / chip x: draft "" and immediate commit. */
-export function clearDashboardSearch(viewerId: string = principalId): void {
+/** Escape / chip x: draft "" and immediate commit. `viewerId` required -- see
+ * `setDashboardSearchDraft`. */
+export function clearDashboardSearch(viewerId: string): void {
   ensureOwner(viewerId);
   draft = "";
   notify();
@@ -155,10 +169,14 @@ export function cancelPendingDashboardSearchWrite(): void {
 
 /**
  * popstate + mount. Cancels the timer FIRST — the Back/Forward race fix: a pending debounce can
- * never clobber a popstate landing in the same tick.
+ * never clobber a popstate landing in the same tick. `viewerId` required (#217 fix round 5, item 2)
+ * and unconditionally becomes the store's recorded owner: adopting a URL's search is itself an
+ * ownership-establishing write, not merely a value update, so a caller adopting on behalf of a
+ * DIFFERENT principal than the store's current owner does not silently keep the old one recorded.
  */
-export function adoptDashboardSearchFromUrl(value: string): void {
+export function adoptDashboardSearchFromUrl(value: string, viewerId: string): void {
   clearTimer();
+  principalId = viewerId;
   draft = value;
   query = value;
   lastWritten = value;

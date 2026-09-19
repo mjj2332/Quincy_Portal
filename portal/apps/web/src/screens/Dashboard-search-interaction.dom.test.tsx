@@ -2,7 +2,7 @@
 // geometry, autoscroll, scroll containers, link-click suppression, screen-reader delivery, browser
 // focus timing, or active-drag DragOverlay rendering; those are QA-phase real-browser acceptance
 // items. Mirrors Dashboard-stage-interactions.dom.test.tsx's own harness.
-import { act, createElement, StrictMode } from "react";
+import { act, createElement, StrictMode, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +11,7 @@ import {
   __resetDashboardSearchStoreForTest,
   clearDashboardSearch,
   commitDashboardSearchNow,
-  getDashboardSearchSnapshot,
+  __getDashboardSearchSnapshotForTest,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
 } from "../lib/dashboard-search-store";
@@ -149,7 +149,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     expect(addresses(host)).toEqual(expect.arrayContaining(["Source Street", "Before Street", "Target Street"]));
 
-    await act(async () => { setDashboardSearchDraft("smith"); commitDashboardSearchNow(); });
+    await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
     await flush();
 
     expect(addresses(host)).toEqual(["Target Street"]);
@@ -158,11 +158,11 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
 
   it("clearing the search restores the full list", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    await act(async () => { setDashboardSearchDraft("smith"); commitDashboardSearchNow(); });
+    await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
     await flush();
     expect(addresses(host)).toEqual(["Target Street"]);
 
-    await act(async () => { clearDashboardSearch(); });
+    await act(async () => { clearDashboardSearch("admin-1"); });
     await flush();
     expect(addresses(host)).toEqual(expect.arrayContaining(["Source Street", "Before Street", "Target Street"]));
   });
@@ -175,7 +175,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
       await Promise.resolve();
     });
     await flush();
-    await act(async () => { setDashboardSearchDraft("smith"); commitDashboardSearchNow(); });
+    await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
     await flush();
     expect(addresses(host)).toEqual(["Target Street"]);
 
@@ -200,7 +200,7 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
       return Promise.resolve(fullBoard);
     });
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    expect(getDashboardSearchSnapshot().query).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
 
     // The mocked DndContext handler is invoked directly, bypassing whatever visual/pointer-level
     // affordance would normally stop a drag from starting -- this is deliberately the strictest
@@ -271,9 +271,9 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
       resetDashboardSearchForPrincipal("admin-1");
       // Typed on `/admin` -- no Dashboard mounted yet to own the debounce (mirrors what the rail's
       // `ShellSearch`, mounted on every route, would do).
-      setDashboardSearchDraft("smith");
-      expect(getDashboardSearchSnapshot().draft).toBe("smith");
-      expect(getDashboardSearchSnapshot().query).toBe("");
+      setDashboardSearchDraft("smith", "admin-1");
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
       // Navigate to `/` within the 300ms window -- Dashboard's own FIRST mount, under StrictMode,
       // double-invokes this component's effects (mount, cleanup, mount) synchronously in one commit.
@@ -284,7 +284,7 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
 
       await act(async () => { vi.advanceTimersByTime(350); });
 
-      expect(getDashboardSearchSnapshot().query).toBe("smith");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
       expect(window.location.search).toContain("q=smith");
     } finally {
       vi.useRealTimers();
@@ -299,17 +299,73 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
         await Promise.resolve();
       });
       const locationBeforeType = window.location.search;
-      act(() => { setDashboardSearchDraft("smith"); });
-      expect(getDashboardSearchSnapshot().draft).toBe("smith");
-      expect(getDashboardSearchSnapshot().query).toBe("");
+      act(() => { setDashboardSearchDraft("smith", "admin-1"); });
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
       await act(async () => { root.unmount(); });
       await act(async () => { vi.advanceTimersByTime(350); });
 
-      expect(getDashboardSearchSnapshot().query).toBe("");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
       expect(window.location.search).toBe(locationBeforeType);
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * #217 fix round 5, item 1 (Sol re-review, BLOCKER). `Dashboard.tsx`'s own render used to read the
+ * UNSCOPED store snapshot (`getDashboardSearchSnapshot`) — on a principal switch while a Dashboard
+ * for the OLD principal is still mounted, the NEW principal's render could still consume the old
+ * one's committed `query` (`searchActive`, and the chip it gates, are computed straight from that
+ * render-time read, with no effect involved).
+ *
+ * `Dashboard` is rendered STANDALONE here — no `ShellSearch`, no `PrincipalFreshnessBoundary` — so
+ * the only thing that could correct the store before an observer sees it is `Dashboard`'s OWN local
+ * reset effect (`resetDashboardSearchForPrincipal`, keyed off `currentUserId`), a PASSIVE effect.
+ * `Probe`'s `useLayoutEffect` observes strictly before it: React flushes every layout effect in a
+ * commit, tree-wide, before it flushes any passive effect in that same commit — a scheduling
+ * guarantee, not a timing coincidence.
+ */
+describe("Dashboard's own render is principal-scoped, independent of its own reset effect (#217 fix round 5, item 1)", () => {
+  function Probe({ onLayout }: { onLayout: () => void }) {
+    useLayoutEffect(() => { onLayout(); });
+    return null;
+  }
+
+  beforeEach(() => {
+    authState.role = "admin";
+    apiGetMock.mockReset(); apiPostMock.mockReset();
+    apiGetMock.mockImplementation((path) => (path.startsWith("/api/projects") ? Promise.resolve(fullBoard) : Promise.resolve({})));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: () => null, setItem: () => undefined } });
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+
+  it("B's render, captured before Dashboard's own reset effect runs, shows no search chip", async () => {
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
+    await flush();
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
+
+    let probed = false;
+    let capturedChip: Element | null | undefined;
+    act(() => {
+      root.render(<><Dashboard currentUserId="admin-2" role="admin" /><Probe onLayout={() => {
+        probed = true;
+        capturedChip = host.querySelector('[data-testid="dashboard-search-chip"]');
+      }} /></>);
+    });
+
+    expect(probed).toBe(true);
+    expect(capturedChip).toBeNull();
   });
 });

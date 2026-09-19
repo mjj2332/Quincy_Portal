@@ -5,7 +5,7 @@ import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, t
 import { Dashboard } from "./Dashboard";
 import { confirmStore } from "../lib/confirm";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
-import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -125,10 +125,10 @@ describe("the bare Calendar intent, on arrival", () => {
   // `staff-routes.ts`'s `DashboardCalendarIntentRoute`) was the only place the search could still
   // be coming from on arrival.
   it("carries a `q` on the bare Calendar intent into the canonical facet URL, from an EMPTY store", async () => {
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     await renderAt("/?view=calendar&q=smith");
     expect(currentLocation()).toBe(`/?view=calendar&date=${rememberedDate}&sub=${rememberedSubview}&layers=project%2Cchecklist&q=smith`);
-    expect(getDashboardSearchSnapshot().query).toBe("smith");
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
   });
 });

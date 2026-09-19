@@ -59,7 +59,7 @@ import {
   cancelPendingDashboardSearchWrite,
   clearDashboardSearch,
   commitDashboardSearchNow,
-  getDashboardSearchSnapshot,
+  getDashboardSearchSnapshotForPrincipal,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
   setDashboardSearchUrlWriter,
@@ -194,7 +194,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [projectScope, setProjectScope] = useState<ProjectScope>("active");
   // #217: the single Dashboard search store — the rail's `ShellSearch` is the one search input
   // now, so there is no local field or focus latch here to own.
-  const search = useSyncExternalStore(subscribeDashboardSearch, getDashboardSearchSnapshot, getDashboardSearchSnapshot);
+  // #217 fix round 5, item 1 (Sol re-review, BLOCKER): principal-scoped, not the unscoped reader --
+  // on A→B while parked ON the Dashboard, an unscoped read could still consume A's `query`/`draft`
+  // for a render pass, serialising A's search into the rail hrefs `withLiveDashboardSearch` builds
+  // and querying with A's text. See `getDashboardSearchSnapshotForPrincipal`'s own docblock.
+  const search = useSyncExternalStore(
+    subscribeDashboardSearch,
+    () => getDashboardSearchSnapshotForPrincipal(currentUserId),
+    () => getDashboardSearchSnapshotForPrincipal(currentUserId),
+  );
   const [view, setView] = useState<DashboardView>(() => {
     // A route's own explicit "calendar" gets the same capability check the stored preference
     // already gets below — otherwise a role without it landed here with `view` already "calendar"
@@ -427,7 +435,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const adoptRouteSearch = () => {
       if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute)) return;
       const routeSearch = currentDashboardRoute.search ?? "";
-      if (routeSearch !== search.query) adoptDashboardSearchFromUrl(routeSearch);
+      if (routeSearch !== search.query) adoptDashboardSearchFromUrl(routeSearch, currentUserId);
     };
     // `locationHasCalendar`, not `effectiveRouteCalendar !== null` — the latter falls back to the
     // `calendar` PROP whenever the URL itself carries no facet, and that prop can outlive the URL
@@ -473,7 +481,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       setCalendarState(effectiveRouteCalendar);
       // Guarded the same way as the generic adoption above, against a redundant re-adopt of this
       // component's own debounced search replacement.
-      if (search.query !== effectiveRouteCalendar.search) adoptDashboardSearchFromUrl(effectiveRouteCalendar.search);
+      if (search.query !== effectiveRouteCalendar.search) adoptDashboardSearchFromUrl(effectiveRouteCalendar.search, currentUserId);
       setView("calendar");
       return;
     }
@@ -510,8 +518,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // whatever is still mid-debounce right as the facet changes. One override point here covers
     // every caller (this one, `selectView`'s calendar branch, and the store's own writer) instead
     // of each having to remember to flush for itself.
-    commitDashboardSearchNow();
-    const withCurrentSearch: DashboardCalendarState = { ...next, search: getDashboardSearchSnapshot().query };
+    commitDashboardSearchNow(currentUserId);
+    const withCurrentSearch: DashboardCalendarState = { ...next, search: getDashboardSearchSnapshotForPrincipal(currentUserId).query };
     const built = staffPathFor({ kind: "dashboard", calendar: withCurrentSearch });
     setCalendarState(withCurrentSearch);
     try {
@@ -587,8 +595,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // #217 fix round 1, item 3: flush BEFORE reading the search to carry, same reasoning as
     // `selectView` -- `calendarState.search` alone can be the last COMMITTED value, stale against
     // whatever is still mid-debounce right as this facet change fires.
-    commitDashboardSearchNow();
-    const currentSearch = getDashboardSearchSnapshot().query;
+    commitDashboardSearchNow(currentUserId);
+    const currentSearch = getDashboardSearchSnapshotForPrincipal(currentUserId).query;
     const next: DashboardCalendarState = { ...calendarState, ...filters, search: currentSearch, view: "calendar" };
     if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
     const built = staffPathFor({ kind: "dashboard", calendar: next });
@@ -784,7 +792,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const enteringSearch = effectiveRouteCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : search.draft);
       const sanitizedSearch = sanitizeDashboardCalendarSearch(enteringSearch);
       calendarFallbackLocationRef.current = false;
-      setDashboardSearchDraft(sanitizedSearch);
+      setDashboardSearchDraft(sanitizedSearch, currentUserId);
       setView("calendar");
       try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
       navigateCalendar({ ...nextCalendar, search: normalizeDashboardCalendarSearch(sanitizedSearch), view: "calendar" });
@@ -806,8 +814,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // synchronous handler returns and React re-renders. Reading the just-flushed value directly,
       // here, is what carries a committed OR still-debouncing search across a view switch instead
       // of silently dropping it.
-      commitDashboardSearchNow();
-      const currentSearch = getDashboardSearchSnapshot().query;
+      commitDashboardSearchNow(currentUserId);
+      const currentSearch = getDashboardSearchSnapshotForPrincipal(currentUserId).query;
       history.push(staffPathFor({ kind: "dashboard", dashboardView: next, ...(currentSearch ? { search: currentSearch } : {}) }));
     }
   }
@@ -824,8 +832,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarFallbackLocationRef.current = false;
       if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") {
         // Same flush-then-read as `selectView` above.
-        commitDashboardSearchNow();
-        const currentSearch = getDashboardSearchSnapshot().query;
+        commitDashboardSearchNow(currentUserId);
+        const currentSearch = getDashboardSearchSnapshotForPrincipal(currentUserId).query;
         history.push(staffPathFor({ kind: "dashboard", dashboardView: "list", ...(currentSearch ? { search: currentSearch } : {}) }));
       }
     }
@@ -1152,7 +1160,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               {searchCountsQuery.data
                 ? `${searchCountsQuery.data.matching} of ${searchCountsQuery.data.total} projects — '${search.query}'`
                 : `'${search.query}'`}
-              <button type="button" aria-label="Clear search" onClick={() => clearDashboardSearch()} className="inline-flex items-center">
+              <button type="button" aria-label="Clear search" onClick={() => clearDashboardSearch(currentUserId)} className="inline-flex items-center">
                 <XIcon aria-hidden="true" className="size-3" />
               </button>
             </Badge>

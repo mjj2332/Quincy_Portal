@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
 import { ShellSearch, type ShellSearchHandle, type ShellSearchProps } from "./ShellSearch";
-import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot } from "../../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "../../lib/dashboard-search-store";
 
 /**
  * The rail's project-search control — #217 rewrite. A real input now, backed by
@@ -178,7 +178,7 @@ describe("ShellSearch — collapsed", () => {
         resolve(element!);
       });
     });
-    expect(getDashboardSearchSnapshot().draft).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
 
     await keydown(input, { key: "Escape" });
 
@@ -235,7 +235,7 @@ describe("ShellSearch — Enter", () => {
     await type(input, "smith");
     await keydown(input, { key: "Enter" });
     expect(routerMock.push).not.toHaveBeenCalled();
-    expect(getDashboardSearchSnapshot().query).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
   });
 
   it("off the Dashboard: commits the search and pushes the Dashboard route carrying it", async () => {
@@ -243,7 +243,7 @@ describe("ShellSearch — Enter", () => {
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "smith");
     await keydown(input, { key: "Enter" });
-    expect(getDashboardSearchSnapshot().query).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     expect(routerMock.push).toHaveBeenCalledWith("/?q=smith");
   });
@@ -253,7 +253,7 @@ describe("ShellSearch — Enter", () => {
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "a".repeat(201));
     await keydown(input, { key: "Enter" });
-    expect(getDashboardSearchSnapshot().query.length).toBe(200);
+    expect(__getDashboardSearchSnapshotForTest().query.length).toBe(200);
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     const pushed = routerMock.push.mock.calls[0]?.[0] as string;
     const pushedQuery = new URL(pushed, "https://example.test").searchParams.get("q");
@@ -265,7 +265,7 @@ describe("ShellSearch — Enter", () => {
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "   ");
     await keydown(input, { key: "Enter" });
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     expect(routerMock.push).toHaveBeenCalledWith("/");
   });
@@ -276,13 +276,13 @@ describe("ShellSearch — Escape", () => {
     await renderInProvider({ variant: "expanded" });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "smith");
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
 
     // `stopPropagation` alone, never `preventDefault` — the seam under test is that a listener
     // ABOVE the React root never sees the event, checked next; `dispatchEvent`'s return value
     // (false only when `preventDefault` was called on a cancelable event) stays `true`.
     const defaultPrevented = await keydown(input, { key: "Escape" });
-    expect(getDashboardSearchSnapshot()).toMatchObject({ draft: "", query: "" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
     expect(defaultPrevented).toBe(false);
   });
 

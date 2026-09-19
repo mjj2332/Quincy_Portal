@@ -6,7 +6,7 @@ import { productionCalendarKey } from "../lib/production-calendar-query";
 import { projectDataKeys } from "../lib/project-data";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { PrincipalFreshnessBoundary } from "./PrincipalFreshnessBoundary";
-import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot, setDashboardSearchDraft, setDashboardSearchUrlWriter } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft, setDashboardSearchUrlWriter } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -225,18 +225,18 @@ describe("PrincipalFreshnessBoundary resets the Dashboard search store on any pr
 
     const written: string[] = [];
     const unregister = setDashboardSearchUrlWriter((q) => written.push(q));
-    act(() => setDashboardSearchDraft("smith"));
+    act(() => setDashboardSearchDraft("smith", principal));
     // Still mid-debounce -- nothing has committed to `query` yet, only `draft`.
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
     // Simulates a sign-out or impersonation switch while parked off the Dashboard (this test
     // never mounts one) -- the boundary itself is the only thing that changes.
     renderBoundaryFor(otherPrincipal);
     await act(async () => { await flush(); });
 
-    expect(getDashboardSearchSnapshot().draft).toBe("");
-    expect(getDashboardSearchSnapshot().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
     // The reset cancels the pending timer outright -- it must never fire into the NEW principal's
     // session after the fact.
@@ -249,11 +249,11 @@ describe("PrincipalFreshnessBoundary resets the Dashboard search store on any pr
   it("is a no-op across a re-render that does not change the principal", async () => {
     renderBoundaryFor(principal);
     await act(async () => { await flush(); });
-    act(() => setDashboardSearchDraft("smith"));
+    act(() => setDashboardSearchDraft("smith", principal));
 
     renderBoundaryFor(principal);
     await act(async () => { await flush(); });
 
-    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
   });
 });

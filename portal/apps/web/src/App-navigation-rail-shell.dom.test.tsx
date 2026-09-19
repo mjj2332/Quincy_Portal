@@ -56,7 +56,7 @@ import App from "./App";
 import { apiGet } from "./lib/api";
 import { signOut } from "./lib/auth";
 import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
-import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot } from "./lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "./lib/dashboard-search-store";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -795,7 +795,7 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
     await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
     expect(window.location.pathname).toBe("/");
     expect(window.location.search).toBe("?q=smith");
-    expect(getDashboardSearchSnapshot().query).toBe("smith");
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
   });
 
   it("leaves ⌘B untouched", async () => {
