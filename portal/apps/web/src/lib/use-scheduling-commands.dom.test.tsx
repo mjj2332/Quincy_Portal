@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PRODUCTION_CALENDAR_ZONE,
   adminProductionCalendarRangeResponseSchema,
+  calendarChecklistEntityId,
   resolveSydneyCivilMinute,
+  subtaskIdFromCalendarEntityId,
   type ChecklistCalendarEventDto,
   type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleDto,
@@ -34,6 +36,12 @@ vi.mock("../lib/confirm", () => ({ confirm: vi.fn(() => Promise.resolve(true)), 
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const assigneeId = "22222222-2222-4222-8222-222222222222";
+// Bare subtask uuids — the subtasks route's PATCH response and URL carry these, never the
+// `checklist:`-prefixed Calendar entity id. The fixtures below mint the entity id through
+// `calendarChecklistEntityId` exactly like the real worker serializer does, so a regression in
+// the parse/re-mint boundary shows up as a fixture mismatch, not a silently honest-looking id.
+const subtaskId = "33333333-4333-4333-8333-333333333333";
+const unscheduledSubtaskId = "44444444-4444-4444-8444-444444444444";
 const project = { id: projectId, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 3 }, delivered: false };
 const person = { id: assigneeId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true };
 const identity: DashboardIdentity = { principalId: projectId, role: "admin", authorizationEpoch: 0 };
@@ -49,7 +57,7 @@ function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarE
   const startEndpoint = timedEndpoint(start);
   const endEndpoint = timedEndpoint(end);
   return {
-    id: `checklist:${assigneeId}`, kind: "checklist", title: "Select hero images", project, assignee: person,
+    id: calendarChecklistEntityId(subtaskId), kind: "checklist", title: "Select hero images", project, assignee: person,
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
@@ -59,7 +67,7 @@ function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarE
 
 function unscheduledEntry(): ChecklistCalendarUnscheduledEntryDto {
   return {
-    id: `checklist:unscheduled:${assigneeId}`, kind: "checklist", reason: "unscheduled", title: "Draft the gallery blurb", project, assignee: person,
+    id: calendarChecklistEntityId(unscheduledSubtaskId), kind: "checklist", reason: "unscheduled", title: "Draft the gallery blurb", project, assignee: person,
     schedule: { state: "unscheduled", version: 2, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null },
     permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
   };
@@ -81,7 +89,12 @@ function unscheduledProjectEntry(version = 8): ProjectCalendarUnscheduledEntryDt
 }
 
 function mutationBody(event: ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto, schedule: ChecklistScheduleDto) {
-  return { id: event.id, title: event.title, done: false, assignee: { id: person.id, name: person.name }, position: 1, schedule };
+  // The subtasks route's PATCH response carries the BARE subtask uuid, never the
+  // `checklist:`-prefixed Calendar entity id (#227) — mirror that here so a regression in
+  // `adoptChecklistResult`'s re-mint (`calendarChecklistEntityId`) shows up as a broken test
+  // rather than a fixture that was never honest about the wire shape.
+  const bareId = subtaskIdFromCalendarEntityId(event.id) ?? event.id;
+  return { id: bareId, title: event.title, done: false, assignee: { id: person.id, name: person.name }, position: 1, schedule };
 }
 
 function response(range: { events: ProductionCalendarRangeResponse["events"]; unscheduled: ProductionCalendarRangeResponse["unscheduled"] }): ProductionCalendarRangeResponse {

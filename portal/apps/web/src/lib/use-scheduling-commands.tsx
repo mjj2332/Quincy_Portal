@@ -4,6 +4,7 @@ import {
   normalizeChecklistSchedule,
   previewProjectDeadlineReminderConsequences,
   resolveSydneyCivilMinute,
+  subtaskIdFromCalendarEntityId,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
   type CalendarEventTiming,
   type CalendarManipulationTarget,
@@ -597,7 +598,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar"
       // suppresses this tab's own refetch; refetchAuthoritative below is the single settle refetch).
       if (queryClient) {
-        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, producer: "calendar" });
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true, producer: "calendar" });
       }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
@@ -857,6 +858,16 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
   const runChecklistMutation = useCallback(async (proposal: ChecklistProposal) => {
     const token = operationTokenRef.current;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
+    // The Calendar entity id is `checklist:<subtaskId>` — DOM ids, focus descriptors,
+    // and optimistic overlays all depend on that prefix staying on the wire. The
+    // subtasks route needs the bare uuid; a malformed/unprefixed id here is a mapping
+    // defect, not a request worth sending, so bail out through the same revert +
+    // "invalid" announcement path a bad target civil time already uses.
+    const subtaskId = subtaskIdFromCalendarEntityId(proposal.source.id);
+    if (subtaskId === null) {
+      finishChecklistInteraction(proposal.operation, proposal.source, { kind: "invalid" });
+      return;
+    }
     const normalizedSchedule = normalizeChecklistSchedule(proposal.schedule, proposal.source.schedule.version);
     const optimisticEvent = !(("timing" in proposal.source)) && normalizedSchedule.ok
       ? optimisticChecklistEvent(proposal.source, checklistScheduleToDto(normalizedSchedule.value))
@@ -871,7 +882,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       // The captured role chooses the response arm before this request. The
       // internal Worker DTO is intentionally not treated as the External DTO.
       const response = await apiPatch<unknown, { schedule: SaveChecklistScheduleRequest }>(
-        `/api/projects/${encodeURIComponent(proposal.source.project.id)}/subtasks/${encodeURIComponent(proposal.source.id)}`,
+        `/api/projects/${encodeURIComponent(proposal.source.project.id)}/subtasks/${encodeURIComponent(subtaskId)}`,
         { schedule: proposal.request },
       );
       if (accessLostRef.current || token !== operationTokenRef.current) return;
@@ -901,7 +912,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       snapshotRef.current = null;
       // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar").
       if (queryClient) {
-        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, producer: "calendar" });
+        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, gantt: true, producer: "calendar" });
       }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
@@ -979,7 +990,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       setAnnouncement(action.announce);
       if (!action.refetch) flushQueuedRefetch();
     }
-  }, [acceptRange, announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
+  }, [acceptRange, announceChecklistLifecycle, finishChecklistInteraction, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
   /**
    * §216 fix round 3 item 3: the ONE checklist plan/error/mutate path — both `mapChecklistCommand`
