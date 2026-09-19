@@ -798,7 +798,12 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
   });
 
-  it("clicking Dashboard after the 300ms commit (draft already written through) lands on ?q=smith, keeps the input, and the projects request carries q", async () => {
+  // #217 fix round 9, Sol review, item 5. Off-Dashboard, at `/admin`, no writer is registered
+  // (only a mounted `Dashboard` registers one) -- so the debounce firing after 300ms here is
+  // DROPPED, not "written through" to the URL (#217 build step 5). The rail's own href already
+  // carries the live draft (`withLiveDashboardSearch`, `lib/app-router.tsx`), so clicking it is
+  // what lands on `?q=smith`, independent of whether the dropped timer fired first.
+  it("clicking Dashboard after the 300ms debounce fires (and is dropped, off-Dashboard) still lands on ?q=smith via the rail href, keeps the input, and the projects request carries q", async () => {
     const host = await renderApp("/admin");
     await typeIntoShellSearch(host, "smith");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
@@ -830,7 +835,7 @@ describe("the rail's top-level Dashboard link carries the live off-Dashboard dra
  * helpers rather than the file's `renderApp`/`click`/`settle` (which drive real `setTimeout`s) —
  * mixing the two would leave the debounce's own 300ms timer unadvanceable.
  */
-describe("a debounce armed off-Dashboard commits exactly once on arrival, under StrictMode, through the real rail (#217 fix round 9, item 2)", () => {
+describe("off-Dashboard, the draft reaches the URL exactly once through the rail click/Enter itself (never the dropped debounce), under StrictMode (#217 fix round 9, item 2)", () => {
   afterEach(() => { vi.useRealTimers(); });
 
   async function typeIntoShellSearchFakeTimers(host: ParentNode, value: string) {

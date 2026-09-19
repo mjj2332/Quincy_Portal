@@ -219,7 +219,7 @@ describe("PrincipalFreshnessBoundary resets the Dashboard search store on any pr
     });
   }
 
-  it("clears a draft+committed search, and never fires a pending debounce, on a principal change while off the Dashboard", async () => {
+  it("clears the draft, and never fires a pending debounce, on a principal change while off the Dashboard", async () => {
     renderBoundaryFor(principal);
     await act(async () => { await flush(); });
 

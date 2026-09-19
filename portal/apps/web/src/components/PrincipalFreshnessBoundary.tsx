@@ -27,8 +27,10 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
   const history = locationStore();
   const previous = useRef<Snapshot | undefined>(undefined);
   // #217 fix round 3, item 2 (Sol's whole-branch review). `dashboard-search-store.ts` is a module
-  // singleton, so a draft/committed search typed on the Dashboard otherwise outlives the principal
-  // who typed it: sign out, or an impersonation switch, while parked on `/admin` or a project route
+  // singleton, so a DRAFT typed on the Dashboard (never a committed search -- #217 build step 4/5
+  // moved that to the URL, which is deliberately shared, principal-agnostic state) otherwise
+  // outlives the principal who typed it: sign out, or an impersonation switch, while parked on
+  // `/admin` or a project route
   // never remounts `Dashboard` (its own reset lived only inside `Dashboard.tsx`, #217's original
   // cut), so the NEXT principal's rail search box showed the PREVIOUS principal's text until a
   // Dashboard happened to mount again. This boundary is the right place instead: it already wraps
@@ -42,7 +44,8 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
   // SnapshotForPrincipal`, `dashboard-search-store.ts`) is what closes the "first render shows the
   // PREVIOUS principal's text" flash — it compares the render-time-current principal against the
   // store's recorded owner on every render, with no dependence on this effect's timing. What this
-  // effect still owns is the store's own bookkeeping (draft/query/timer), and specifically the
+  // effect still owns is the store's own bookkeeping (draft/timer -- the store carries no committed
+  // copy for it to reset; #217 build step 5), and specifically the
   // UNMOUNT case the guarded reset above cannot cover: sign-out unmounts this boundary entirely,
   // with no NEXT principal to reset FOR yet, so the mount-time call above never runs again until
   // sign-in — and if that sign-in is the SAME person, the guard (`id === principalId`, still true

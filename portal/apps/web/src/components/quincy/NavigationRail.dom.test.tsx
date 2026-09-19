@@ -812,10 +812,12 @@ describe("the account menu's sign out", () => {
   // keystroke within the last `DASHBOARD_SEARCH_DEBOUNCE_MS` has not reached the URL yet -- it is
   // still a pending timer. The URL-level scrub is then a no-op (there is no `q` to strip), and
   // while `signOut()` awaits the network that timer fires, commits through whichever writer is
-  // registered (`Dashboard.tsx`'s own), and puts `q` BACK in the URL -- the next sign-in re-adopts
-  // it. `handleSignOut` must cancel the pending timer and discard the draft/query SYNCHRONOUSLY,
-  // before awaiting anything (including the URL scrub, which reads a location that might otherwise
-  // still be one keystroke stale) -- `dropDashboardSearchOwnership` already does both (it calls the
+  // registered (`Dashboard.tsx`'s own), and puts `q` BACK in the URL -- the next sign-in shows it
+  // again, straight off that URL (`Dashboard.tsx`'s `committedQuery`, derived at render from
+  // `dashboardSearchOf(parsedRoute)` -- #217 build step 4 -- reads no store copy to "adopt").
+  // `handleSignOut` must cancel the pending timer and discard the draft SYNCHRONOUSLY, before
+  // awaiting anything (including the URL scrub, which reads a location that might otherwise still
+  // be one keystroke stale) -- `dropDashboardSearchOwnership` already does both (it calls the
   // store's own `clearTimer()`), so a late timer callback is provably inert: the real `setTimeout`
   // was cancelled outright, not merely out-raced.
   it("cancels a still-pending debounce and discards the draft synchronously, before signOut() resolves", async () => {

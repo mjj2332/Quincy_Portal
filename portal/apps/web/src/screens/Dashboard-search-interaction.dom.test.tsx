@@ -294,9 +294,10 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
   // it pushed `/?q=smith` onto `window.history` directly (never a real rail click or Enter) and
   // drove the draft-to-URL sync through a LOCAL `ArrivalSync` stand-in rather than the real
   // `ShellRoute`'s own `useLayoutEffect`. It is now hosted where the real app shell already exists
-  // to drive it faithfully -- `App-rail-dashboard-agreement.dom.test.tsx`'s own describe block "a
-  // debounce armed off-Dashboard commits exactly once on arrival, under StrictMode, through the
-  // real rail (#217 fix round 9, item 2)": types into the REAL `ShellSearch` at `/admin` under
+  // to drive it faithfully -- `App-rail-dashboard-agreement.dom.test.tsx`'s own describe block
+  // "off-Dashboard, the draft reaches the URL exactly once through the rail click/Enter itself
+  // (never the dropped debounce), under StrictMode (#217 fix round 9, item 2)": types into the
+  // REAL `ShellSearch` at `/admin` under
   // `<StrictMode>`, arrives at Dashboard through (i) a REAL click on the rail's parent Dashboard
   // link and (ii) a REAL Enter keydown, and asserts against a spy on `locationStore()`'s own
   // `push`/`replace` rather than `window.location.search` alone. `ArrivalSync` no longer exists

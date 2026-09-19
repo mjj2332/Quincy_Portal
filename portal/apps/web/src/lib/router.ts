@@ -48,9 +48,10 @@ export function locationStore() {
  * #217 fix round 5, item 3 (Sol re-review, BLOCKER). Explicit sign-out (`NavigationRail.tsx`'s own
  * `handleSignOut`) leaves the URL alone: `App.tsx` hands that same URL to `SignIn`, and
  * `lib/auth.ts`'s `beginSignIn` preserves it as the OAuth callback / sign-in return path, so
- * signing out at `/?q=smith` and signing in as ANYONE re-applies `smith` (`Dashboard.tsx`'s own
- * route-reconciliation effect adopts it from the route, exactly as it would for a genuine deep
- * link). Deep links must keep working — a shared `/?q=smith` URL opened while signed OUT should
+ * signing out at `/?q=smith` and signing in as ANYONE re-applies `smith` (`Dashboard.tsx`'s
+ * `committedQuery` is derived straight from the route at render, `dashboardSearchOf(parsedRoute)`
+ * -- #217 build step 4 -- so it shows for a genuine deep link exactly the same way it would here).
+ * Deep links must keep working — a shared `/?q=smith` URL opened while signed OUT should
  * still apply after sign-in — so this is deliberately NOT a parse-level or sign-in-time strip; only
  * the explicit sign-out ACTION scrubs the CURRENT location's own Dashboard search, through the
  * shared route parse/serialize (never string surgery, so it can never drift from what the parser

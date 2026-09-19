@@ -279,7 +279,9 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
       // that timer time to fire, commit through Dashboard's own registered writer
       // (`lib/dashboard-search-store.ts`'s `commit`/`Dashboard.tsx`'s writer registration), and put
       // `q` BACK in the URL after the scrub had already run -- exactly what the next sign-in would
-      // then re-adopt. `dropDashboardSearchOwnership` cancels the store's own pending timer outright
+      // then SHOW, since `committedQuery` reads straight off the URL at render (#217 build step 4,
+      // no store copy left to "adopt" it from). `dropDashboardSearchOwnership` cancels the store's
+      // own pending timer outright
       // (`clearTimer()`), not merely races it: a timer already cancelled cannot fire at all, late or
       // otherwise, which is what makes this ordering airtight rather than merely narrower.
       dropDashboardSearchOwnership();

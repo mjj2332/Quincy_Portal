@@ -60,7 +60,7 @@ describe("dashboard search ownership adversarial probes (#217)", () => {
     unregister();
   });
 
-  it("clears both draft and committed query immediately on Escape-style clear", () => {
+  it("clears the draft immediately and writes an empty query through the writer on Escape-style clear", () => {
     const writer = vi.fn();
     const unregister = setDashboardSearchUrlWriter(writer);
     setDashboardSearchDraft("smith", "principal-a");
