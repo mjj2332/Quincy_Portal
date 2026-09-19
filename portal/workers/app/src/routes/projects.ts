@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { capDashboardSearchText, COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, stripUnsafeText, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -25,7 +25,7 @@ import { moveProjectStage } from "../lib/project-stage";
 import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
-import { PROJECT_SEARCH_MAX_LENGTH, matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
+import { matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -205,18 +205,22 @@ function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stage
  * #217 -- the Dashboard's `q`. Unsafe characters (backslash, the C0 controls, DEL -- the same
  * class `sanitizeDashboardCalendarSearch` strips client-side) come out first, then
  * `normalizeProjectSearch` (the #218 shared helper) collapses whitespace and trims, then the
- * result is truncated to `PROJECT_SEARCH_MAX_LENGTH` code points. Not lowercased here: the match
+ * result is capped to `PROJECT_SEARCH_MAX_LENGTH` code points. Not lowercased here: the match
  * itself is case-insensitive via SQL `lower(...)` on both sides (`projectSearchSql`), so the
  * ORIGINAL casing survives into the `search.query` echoed back in the response.
+ *
+ * #217 fix round 3, item 4 (Sol's whole-branch review): the strip and the cap now come from
+ * `@quincy/shared` (`stripUnsafeText`/`capDashboardSearchText`) instead of a hand-rolled local
+ * copy of each -- one definition shared with `staff-routes.ts`'s own serializer and the web
+ * store's commit path, so the 200-char cap in particular can never drift between them.
+ * `PROJECT_SEARCH_MAX_LENGTH` itself stays defined in `../lib/project-search.ts`, an unmodified
+ * #218 cherry-pick this file must not edit -- `projects-search.test.ts` asserts it stays
+ * numerically equal to the shared `DASHBOARD_SEARCH_MAX_CHARS` cap instead.
  */
-function isProjectSearchUnsafeChar(char: string): boolean {
-  const code = char.codePointAt(0) ?? 0;
-  return char === "\\" || code <= 0x1f || code === 0x7f;
-}
 function normalizeProjectListSearch(raw: string): string {
-  const stripped = [...raw].filter((char) => !isProjectSearchUnsafeChar(char)).join("");
+  const stripped = stripUnsafeText(raw);
   const collapsed = normalizeProjectSearch(stripped);
-  return [...collapsed].slice(0, PROJECT_SEARCH_MAX_LENGTH).join("");
+  return capDashboardSearchText(collapsed);
 }
 
 /**

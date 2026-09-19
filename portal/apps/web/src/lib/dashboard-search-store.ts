@@ -15,7 +15,7 @@
  * the destination the user actually navigated to.
  */
 import { sanitizeDashboardCalendarSearch, normalizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
-import { DASHBOARD_SEARCH_MAX_CHARS } from "@quincy/shared";
+import { capDashboardSearchText } from "@quincy/shared";
 
 export const DASHBOARD_SEARCH_DEBOUNCE_MS = 300;
 
@@ -35,11 +35,6 @@ function notify(): void {
   for (const listener of listeners) listener();
 }
 
-function truncate(value: string): string {
-  const chars = [...value];
-  return chars.length > DASHBOARD_SEARCH_MAX_CHARS ? chars.slice(0, DASHBOARD_SEARCH_MAX_CHARS).join("") : value;
-}
-
 function clearTimer(): void {
   if (timer !== null) {
     clearTimeout(timer);
@@ -49,7 +44,11 @@ function clearTimer(): void {
 
 function commit(): void {
   clearTimer();
-  const normalized = truncate(normalizeDashboardCalendarSearch(draft));
+  // #217 fix round 3, item 4 (Sol's whole-branch review): the cap is `@quincy/shared`'s own
+  // `capDashboardSearchText` now, the same one `staffPathFor`/`calendarPathFor`
+  // (`staff-routes.ts`) and the worker's `/api/projects?q=` matcher (`routes/projects.ts`) use --
+  // one definition, so the 200-char cap can never drift between the three.
+  const normalized = capDashboardSearchText(normalizeDashboardCalendarSearch(draft));
   if (normalized === query && normalized === lastWritten) return;
   query = normalized;
   notify();
