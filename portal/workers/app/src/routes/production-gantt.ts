@@ -498,6 +498,14 @@ function ganttChildrenForPageBindValues(userId: string, projectIds: string[], in
 // `childrenOf` naming a project outside the caller's authorized scope makes `scoped_project`
 // empty, so both queries report `{ total: 0, rows: [], nextCursor: null }`, identical to a real
 // project with no children.
+//
+// `truncated` (fix-218-r4 #3, full contract in `GanttProjectRowDto["children"]`,
+// packages/shared/src/production-gantt.ts) means "more rows remain after this page/cursor" —
+// NOT `total > returned`. `total` is the project's full visible-row count and `returned` is only
+// this page's row count, so a fully-drained continuation legitimately has `total > returned`
+// while `truncated` is `false` (nothing left to page to). `handleChildren` below derives
+// `truncated` from whether the probe row (`CHILD_PAGE_LIMIT + 1`) came back, never from
+// `total`/`returned`.
 // ---------------------------------------------------------------------------
 
 /**
@@ -695,6 +703,11 @@ function serializeGanttProjectRow(
       rows: children.map(serializeGanttChecklistRow),
       total,
       returned,
+      // `truncated` means "more rows remain" (fix-218-r4 #3) — for THIS embedded, uncursored
+      // batch (always the project's first `CHILD_PAGE_LIMIT` visible rows, fetched fresh every
+      // time), that is equivalent to `total > returned`. It is NOT equivalent for the dedicated,
+      // cursor-paginated `handleChildren` endpoint below, where a drained continuation page can
+      // have `total > returned` with nothing left to page to — see that section's docblock.
       truncated: total > returned,
       nextCursor: total > returned
         ? encodeGanttChildCursor({ projectId: row.project_id, position: children[returned - 1]!.position, id: children[returned - 1]!.subtask_id, completed })

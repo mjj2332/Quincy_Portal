@@ -193,10 +193,21 @@ export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransport
   };
   children: {
     rows: GanttChecklistRowDto[];
-    /** ALL visible checklist rows for this project. */
+    /** ALL visible checklist rows for this project — the full count, independent of which page or
+     * cursor is being fetched. NOT `returned` + "however many are left on THIS page"; it is the
+     * project's true total. */
     total: number;
+    /** Rows on THIS page only. */
     returned: number;
-    /** `total > returned`. */
+    /**
+     * More rows remain after this page/cursor. **NOT** `total > returned` (fix-218-r4 #3: that
+     * was the contract's documented meaning, but it was wrong) — `total` is the full-project
+     * count and `returned` is just this page's, so a fully-drained continuation page correctly
+     * reports `truncated: false` while `total` still exceeds `returned` (e.g. `total: 103,
+     * returned: 3, truncated: false` for a project's last 3-row remainder page, since nothing is
+     * left after it). Always use `truncated` (or equivalently, `nextCursor !== null`) to decide
+     * whether to fetch another page — never derive it from `total`/`returned`.
+     */
     truncated: boolean;
     /** A `GanttChildCursor`, non-null iff `truncated`. */
     nextCursor: string | null;
