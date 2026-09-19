@@ -56,6 +56,7 @@ const ProductionCalendar = lazy(() => import("../components/ProductionCalendar")
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
   adoptDashboardSearchFromUrl,
+  cancelPendingDashboardSearchWrite,
   clearDashboardSearch,
   commitDashboardSearchNow,
   getDashboardSearchSnapshot,
@@ -256,6 +257,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // (React commits effects in hook-declaration order): on a fresh mount the store's `principalId`
   // starts `""`, genuinely different from any real `currentUserId`, so this must run and settle
   // first or it would clobber whatever the reconciliation effect's URL-search adoption just wrote.
+  //
+  // #217 fix round 3, item 2 (Sol's whole-branch review): `PrincipalFreshnessBoundary` now ALSO
+  // calls `resetDashboardSearchForPrincipal` on every principal change, at shell level -- it wraps
+  // every staff route, not only this one, which is what closes the real gap this effect alone
+  // could never cover (a search typed here outliving the principal while parked on `/admin` or a
+  // project route, where no Dashboard is mounted to run this effect at all). This effect stays,
+  // deliberately not removed: on a COLD mount landing directly on a Dashboard route, both mount in
+  // the same commit, and child effects (this component's) run before the parent's (React's
+  // bottom-up commit order) -- this is what sets the store's `principalId` to `currentUserId`
+  // BEFORE the boundary's own reset runs and finds it already current, a guaranteed no-op, rather
+  // than a race that could occasionally clobber the URL-search adoption below.
   useEffect(() => {
     resetDashboardSearchForPrincipal(currentUserId);
   }, [dashboardKeyString, currentUserId]);
@@ -505,10 +517,35 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // URL write the store calls once a debounced (or Enter-committed) query settles -- Calendar
   // replaces its own facet URL (never floods history while typing, same as the effect this
   // replaces); every other view replaces the bare/List/Kanban URL through `staffPathFor`.
-  useEffect(() => setDashboardSearchUrlWriter((q) => {
-    if (view === "calendar" && calendarState) navigateCalendar({ ...calendarState, search: q, view: "calendar" }, true);
-    else history.replace(staffPathFor({ kind: "dashboard", dashboardView: view === "calendar" ? "list" : view, search: q }));
-  }), [calendarState, history, navigateCalendar, view]);
+  //
+  // #217 fix round 3, item 2 (Sol's whole-branch review): registered through a STABLE closure over
+  // a ref, in an effect with an EMPTY dependency list, so `setDashboardSearchUrlWriter` runs
+  // exactly once per Dashboard MOUNT -- never on every `view`/`calendarState`/`history`/
+  // `navigateCalendar` identity change, which used to tear the writer down and re-register it on
+  // every one of those (view switches, Calendar facet changes, `viewingArchived` flipping...).
+  // That mattered because it conflated two different events the store needs to tell apart: a
+  // RE-REGISTRATION (the writer's identity churns, but a Dashboard is still mounted and a pending
+  // debounce must survive it -- f40b19d, kept exactly as it was, in `dashboard-search-store.ts`)
+  // and an actual UNMOUNT (this Dashboard instance is going away -- a pending debounce must NOT
+  // fire later into whatever mounts next, since it has no writer of its own to receive it and the
+  // store is a singleton). Registering once per mount makes unmount the ONLY unregister this
+  // component ever triggers, so the cleanup below can now safely call
+  // `cancelPendingDashboardSearchWrite` -- previously dead code -- to close exactly that gap. The
+  // `draft` itself is deliberately left alone: it is what lets an off-Dashboard Enter (the rail's
+  // `ShellSearch`, mounted everywhere) still navigate with whatever text is showing.
+  const writerContextRef = useRef({ view, calendarState, history, navigateCalendar });
+  writerContextRef.current = { view, calendarState, history, navigateCalendar };
+  useEffect(() => {
+    const unregister = setDashboardSearchUrlWriter((q) => {
+      const { view: currentView, calendarState: currentCalendarState, history: currentHistory, navigateCalendar: currentNavigateCalendar } = writerContextRef.current;
+      if (currentView === "calendar" && currentCalendarState) currentNavigateCalendar({ ...currentCalendarState, search: q, view: "calendar" }, true);
+      else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "list" : currentView, search: q }));
+    });
+    return () => {
+      unregister();
+      cancelPendingDashboardSearchWrite();
+    };
+  }, []);
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
     if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;

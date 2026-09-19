@@ -8,6 +8,7 @@ import { clearPrincipalProjectData, removeProjectData } from "../lib/project-dat
 import { removeProjectFromDashboardQueries } from "../lib/dashboard-projects";
 import { removeProductionCalendarQueries } from "../lib/production-calendar-query";
 import { locationStore } from "../lib/router";
+import { resetDashboardSearchForPrincipal } from "../lib/dashboard-search-store";
 
 type Snapshot = { principal: { id: string; role: Role; authorizationEpoch: number }; authorizationFingerprint: string; projects: Array<{ projectId: string; membershipCycleIds: string[] }> };
 
@@ -24,6 +25,20 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
   const session = useSession();
   const history = locationStore();
   const previous = useRef<Snapshot | undefined>(undefined);
+  // #217 fix round 3, item 2 (Sol's whole-branch review). `dashboard-search-store.ts` is a module
+  // singleton, so a draft/committed search typed on the Dashboard otherwise outlives the principal
+  // who typed it: sign out, or an impersonation switch, while parked on `/admin` or a project route
+  // never remounts `Dashboard` (its own reset lived only inside `Dashboard.tsx`, #217's original
+  // cut), so the NEXT principal's rail search box showed the PREVIOUS principal's text until a
+  // Dashboard happened to mount again. This boundary is the right place instead: it already wraps
+  // `StaffRouter` (every staff route, `App.tsx`) and is keyed off exactly this `principalId` prop
+  // for its own cache-purge concerns, so it observes every principal change regardless of which
+  // screen is current. `resetDashboardSearchForPrincipal` is itself a no-op once this principal is
+  // already the store's own recorded owner (its own `id === principalId` guard), so this fires
+  // harmlessly on every unrelated re-render, not just a genuine change.
+  useEffect(() => {
+    resetDashboardSearchForPrincipal(principalId);
+  }, [principalId]);
   const query = useQuery<Snapshot, Error>({
     queryKey: snapshotKey(principalId, role, authorizationEpoch),
     queryFn: async ({ signal }) => {

@@ -6,6 +6,7 @@ import { productionCalendarKey } from "../lib/production-calendar-query";
 import { projectDataKeys } from "../lib/project-data";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { PrincipalFreshnessBoundary } from "./PrincipalFreshnessBoundary";
+import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot, setDashboardSearchDraft, setDashboardSearchUrlWriter } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -165,4 +166,94 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     await waitFor(() => expect(`${window.location.pathname}${window.location.search}`).toBe("/"));
   });
 
+});
+
+/**
+ * #217 fix round 3, item 2 (Sol's whole-branch review). `dashboard-search-store.ts` is a module
+ * singleton: a search typed on the Dashboard used to outlive the principal who typed it whenever
+ * the principal changed (sign-out, an impersonation switch) while parked on a NON-Dashboard route
+ * — the store's own reset lived only inside `Dashboard.tsx`, which is not mounted there to run it.
+ * This boundary wraps every staff route (`App.tsx`) and is keyed off exactly this `principalId`
+ * prop already, for its own cache-purge concerns, so it is the one place that observes every
+ * principal change regardless of which screen is current.
+ */
+describe("PrincipalFreshnessBoundary resets the Dashboard search store on any principal change", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let client: QueryClient;
+
+  beforeEach(() => {
+    apiGetMock.mockReset();
+    apiGetMock.mockResolvedValue(snapshot([]));
+    window.history.replaceState(null, "", "/");
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    __resetDashboardSearchStoreForTest();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    client.clear();
+    host.remove();
+    __resetDashboardSearchStoreForTest();
+  });
+
+  async function flush() {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.resolve();
+  }
+
+  function renderBoundaryFor(id: string) {
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <PrincipalFreshnessBoundary principalId={id} role="editor" authorizationEpoch={0}>
+            <span>Dashboard</span>
+          </PrincipalFreshnessBoundary>
+        </QueryClientProvider>,
+      );
+    });
+  }
+
+  it("clears a draft+committed search, and never fires a pending debounce, on a principal change while off the Dashboard", async () => {
+    renderBoundaryFor(principal);
+    await act(async () => { await flush(); });
+
+    const written: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => written.push(q));
+    act(() => setDashboardSearchDraft("smith"));
+    // Still mid-debounce -- nothing has committed to `query` yet, only `draft`.
+    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(getDashboardSearchSnapshot().query).toBe("");
+
+    // Simulates a sign-out or impersonation switch while parked off the Dashboard (this test
+    // never mounts one) -- the boundary itself is the only thing that changes.
+    renderBoundaryFor(otherPrincipal);
+    await act(async () => { await flush(); });
+
+    expect(getDashboardSearchSnapshot().draft).toBe("");
+    expect(getDashboardSearchSnapshot().query).toBe("");
+
+    // The reset cancels the pending timer outright -- it must never fire into the NEW principal's
+    // session after the fact.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(written).toEqual([]);
+
+    unregister();
+  });
+
+  it("is a no-op across a re-render that does not change the principal", async () => {
+    renderBoundaryFor(principal);
+    await act(async () => { await flush(); });
+    act(() => setDashboardSearchDraft("smith"));
+
+    renderBoundaryFor(principal);
+    await act(async () => { await flush(); });
+
+    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+  });
 });

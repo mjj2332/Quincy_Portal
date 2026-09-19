@@ -332,6 +332,33 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toContain("q=smith");
   });
 
+  // #217 fix round 3, item 2 (Sol's whole-branch review). The writer-registration effect now
+  // registers a STABLE writer once per Dashboard mount (a ref, not the raw `view`/`calendarState`
+  // dependency list), so unmount is the only thing that ever unregisters it -- which is what makes
+  // it safe for the cleanup to also cancel the pending timer outright (`cancelPendingDashboardSearchWrite`,
+  // previously dead code): a re-registration (view switches, Calendar facet changes while STILL
+  // mounted) must never cancel a pending commit (see the tests above and `dashboard-search-store.
+  // test.ts`), but an actual unmount must, since there is no Dashboard left to receive a later URL
+  // write at all -- the singleton store has no way to route it anywhere sane.
+  it("cancels a pending debounce on unmount: no later commit and no later URL write", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    const locationBeforeUnmount = window.location.search;
+    // Still mid-debounce: the draft is live, but nothing has committed yet.
+    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+    expect(getDashboardSearchSnapshot().query).toBe("");
+
+    await act(async () => { root.unmount(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+
+    expect(window.location.search).toBe(locationBeforeUnmount);
+    expect(getDashboardSearchSnapshot().query).toBe("");
+    // The draft itself survives -- it is what lets an off-Dashboard Enter (the rail's
+    // `ShellSearch`, mounted everywhere) still navigate with whatever text was showing.
+    expect(getDashboardSearchSnapshot().draft).toBe("smith");
+  });
+
   it("type then change a Calendar facet inside the debounce keeps q", async () => {
     window.history.replaceState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist");
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
