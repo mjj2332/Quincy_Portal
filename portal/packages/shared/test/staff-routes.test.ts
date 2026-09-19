@@ -291,6 +291,34 @@ describe("shared staff route contract", () => {
       expect(safeStaffDestination("/?view=kanban&q=hi+there")).toBe("/?view=kanban&q=hi+there");
     });
 
+    // #217 fix round 5, item 4 (Sol re-review, SHOULD-FIX). The parser used to return `q` raw --
+    // a freshly-typed `/?q=++smith+++street++` (padded/multi-space, never something the serializer
+    // itself would emit, but a perfectly legal thing for a human to type or paste into the address
+    // bar) parsed as THAT raw spacing, disagreeing with what `dashboard-search-store.ts`'s own
+    // commit path and the serializer both normalize the identical text down to. The parser now runs
+    // every `q` through the same shared `normalizeDashboardSearchText` the serializer already uses.
+    it("normalizes raw whitespace in a freshly-typed `q`, matching the serializer/store's own normalisation", () => {
+      expect(parseStaffLocation("/?q=++smith+++street++")).toEqual({ kind: "dashboard", search: "smith street" });
+      expect(parseStaffLocation("/?view=list&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "list", search: "smith street" });
+      expect(parseStaffLocation("/?view=kanban&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "kanban", search: "smith street" });
+      expect(parseStaffLocation("/?view=calendar&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "calendar", search: "smith street" });
+      const location = "/?view=calendar&date=2026-08-30&sub=month&layers=project&q=++smith+++street++";
+      const parsed = parseStaffLocation(location);
+      expect(parsed.kind === "dashboard" && "calendar" in parsed ? parsed.calendar.search : null).toBe("smith street");
+    });
+
+    // An all-whitespace `q` normalizes to "" -- the same "no search" the serializer itself never
+    // emits a `q` for -- so it must parse as the search-less route, not a rejected one.
+    it("an all-whitespace `q` parses as no search, not a rejected route", () => {
+      expect(parseStaffLocation("/?q=+++")).toEqual({ kind: "dashboard" });
+      expect(parseStaffLocation("/?view=list&q=+++")).toEqual({ kind: "dashboard", dashboardView: "list" });
+      expect(parseStaffLocation("/?view=kanban&q=+++")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
+      expect(parseStaffLocation("/?view=calendar&q=+++")).toEqual({ kind: "dashboard", dashboardView: "calendar" });
+      const location = "/?view=calendar&date=2026-08-30&sub=month&layers=project&q=+++";
+      const parsed = parseStaffLocation(location);
+      expect(parsed.kind === "dashboard" && "calendar" in parsed ? parsed.calendar.search : null).toBe("");
+    });
+
     /**
      * #217 fix round 3, item 3 (Sol's whole-branch review), widened by round 4, item 1 (Sol
      * re-review) to include the Calendar INTENT as a fourth view once it too could legally carry a
@@ -309,6 +337,7 @@ describe("shared staff route contract", () => {
         ["a q", "smith"],
         [`a ${DASHBOARD_SEARCH_MAX_CHARS + 1}-char q`, overLimit],
         ["a whitespace-only q", "   "],
+        ["a padded, multi-space q", "  smith   street  "],
       ];
 
       it.each(searchCases)("bare/List/Kanban/Calendar-intent, %s", (_label, search) => {

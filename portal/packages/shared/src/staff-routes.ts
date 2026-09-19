@@ -305,8 +305,12 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   const myTasks = parseCalendarFlag(params, "mine");
   if (includeUnassigned === null || showCompletedChecklist === null || showDeliveredProjects === null || overdueOnly === null || myTasks === null) return null;
 
-  const search = params.get("q") ?? "";
-  if ([...search].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
+  const rawSearch = params.get("q") ?? "";
+  if ([...rawSearch].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
+  // #217 fix round 5, item 4 (Sol re-review): normalized here too -- a freshly-typed, padded `q`
+  // on the calendar facet must read back as the same value the store's own commit path and
+  // `calendarPathFor` would both produce, not the raw spacing.
+  const search = normalizeDashboardSearchText(rawSearch);
 
   return {
     view: "calendar",
@@ -325,17 +329,29 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
 }
 
 /**
- * `undefined` = `q` absent (legal); `null` = reject. Reject an empty `q` -- the serializer never
- * emits one, so accepting it would break the `staffPathFor` -> `parseStaffLocation` fixed point --
- * or a value over `DASHBOARD_SEARCH_MAX_CHARS` code points. Unsafe characters, duplicate keys,
- * non-canonical percent-encoding and an oversized query are already rejected upstream by
- * `parseDashboardQuery`; this helper does not re-check them.
+ * `undefined` = `q` absent OR normalizes to no search (legal, both read the same way); `null` =
+ * reject. Reject an empty raw `q` -- the serializer never emits one, so accepting it would break
+ * the `staffPathFor` -> `parseStaffLocation` fixed point -- or a raw value over
+ * `DASHBOARD_SEARCH_MAX_CHARS` code points (checked on the RAW value, before normalising, so an
+ * over-limit `q` still rejects the whole route rather than silently truncating it). Unsafe
+ * characters, duplicate keys, non-canonical percent-encoding and an oversized query are already
+ * rejected upstream by `parseDashboardQuery`; this helper does not re-check them.
+ *
+ * #217 fix round 5, item 4 (Sol re-review, SHOULD-FIX). A within-limit but otherwise raw `q` --
+ * padded, multi-space, e.g. a freshly-typed `/?q=++smith+++street++` that was never something
+ * `staffPathFor`/`dashboard-search-store.ts`'s own commit path would themselves have emitted --
+ * used to be returned exactly as written, disagreeing with what the SAME text normalises to
+ * everywhere else in the app. Every `q` this function accepts now goes through the one shared
+ * `normalizeDashboardSearchText`, the same normaliser the serializer already uses -- so a value
+ * that normalizes down to "" (all-whitespace) reads as "no search", identically to `q` being
+ * absent, rather than a rejected route.
  */
 function parseDashboardSearch(params: URLSearchParams): string | null | undefined {
   if (!params.has("q")) return undefined;
   const value = params.get("q")!;
   if (value === "" || [...value].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
-  return value;
+  const normalized = normalizeDashboardSearchText(value);
+  return normalized === "" ? undefined : normalized;
 }
 
 function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardListKanbanRoute | null {
@@ -371,8 +387,11 @@ export function parseStaffLocation(location: string): StaffRoute {
       if (name !== "q") return { kind: "not-found" };
     }
     const search = parseDashboardSearch(params);
-    if (search === null || search === undefined) return { kind: "not-found" };
-    return { kind: "dashboard", search };
+    if (search === null) return { kind: "not-found" };
+    // #217 fix round 5, item 4: `undefined` now also covers a `q` that NORMALIZES to no search
+    // (all-whitespace) -- that reads as the plain bare route, not a rejection, the same way `q`
+    // being entirely absent already did.
+    return { kind: "dashboard", ...(search !== undefined ? { search } : {}) };
   }
   if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
