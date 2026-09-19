@@ -256,6 +256,36 @@ describe("ShellSearch — collapsed", () => {
     });
     expect(document.activeElement).toBe(trigger);
   });
+
+  // #217 design-review, item 8: previously the FIRST Escape only cleared (and stopped
+  // propagation, so the popover never saw the keystroke) and a SECOND Escape was needed to close
+  // it. One Escape now does both.
+  it("a single Escape on a non-empty draft both clears it and closes the popover, returning focus to the trigger", async () => {
+    await renderInProvider({ variant: "collapsed" });
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+    const input = await new Promise<HTMLInputElement>((resolve) => {
+      void waitFor(() => {
+        const element = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]');
+        expect(element).not.toBeNull();
+        resolve(element!);
+      });
+    });
+    await type(input, "smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+
+    await keydown(input, { key: "Escape" });
+
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
+    await waitFor(() => {
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+    expect(document.activeElement).toBe(trigger);
+  });
 });
 
 describe("ShellSearch — sheet", () => {

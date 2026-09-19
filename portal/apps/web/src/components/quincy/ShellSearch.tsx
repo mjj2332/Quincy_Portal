@@ -146,6 +146,16 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
       return;
     }
     if (event.key === "Escape") {
+      // #217 design-review, item 8: `collapsed`'s field lives inside a real `Popover` -- clearing
+      // AND closing on the SAME Escape (not two) is the expected one-keystroke behaviour, so this
+      // branch deliberately does NOT stop propagation: clearing here is a plain synchronous store
+      // write, and letting the keystroke keep bubbling is what reaches Base UI's own Escape
+      // handling on `PopoverContent`, which closes the popover and returns focus to the trigger.
+      // Expanded and the Sheet are unchanged below -- neither has a popover of its own to close.
+      if (isCollapsed) {
+        if (search.draft !== "") clearDashboardSearch(principalId);
+        return;
+      }
       if (search.draft !== "") {
         clearDashboardSearch(principalId);
         // Consumed here: an empty draft instead lets Escape bubble, so the rail Sheet or any

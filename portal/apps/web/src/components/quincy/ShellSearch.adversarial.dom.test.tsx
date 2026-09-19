@@ -81,7 +81,10 @@ describe("ShellSearch adversarial mode matrix (#217)", () => {
     }
   });
 
-  it("clears a non-empty collapsed-popover draft on Escape but leaves the popover open", async () => {
+  // #217 design-review, item 8: a single Escape on a non-empty collapsed-popover draft now BOTH
+  // clears it and closes the popover, where it previously took two. `keydown`'s dispatch already
+  // bubbles (`bubbles: true`), which is what lets it reach the real Popover's own Escape handling.
+  it("clears a non-empty collapsed-popover draft AND closes the popover on the same Escape", async () => {
     await renderSearch({ variant: "collapsed" });
     const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
     await act(async () => {
@@ -95,7 +98,7 @@ describe("ShellSearch adversarial mode matrix (#217)", () => {
     await keydown(input, { key: "Escape" });
 
     expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("uses the normalized, encoded committed value for Enter from each inline mode off Dashboard", async () => {
