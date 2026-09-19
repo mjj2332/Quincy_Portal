@@ -1,8 +1,8 @@
 /**
- * Dashboard search store — #217. Node-environment tests, fake timers: the debounce/commit/adopt
- * state machine in isolation, independent of any component.
+ * Dashboard search store — #217. Node-environment tests, fake timers: the debounce/commit/draft-from-location
+ * sync state machine in isolation, independent of any component.
  *
- * #217 fix round 5, item 2 (Sol re-review, SHOULD-FIX): every write/adopt call below now passes an
+ * #217 fix round 5, item 2 (Sol re-review, SHOULD-FIX): every write/sync call below now passes an
  * explicit `viewerId` -- the store's own signature requires one, compile-time, so a test can never
  * exercise the tautological "omitted id defaults to whatever the store already thinks" path an
  * earlier version of this store had.
@@ -14,7 +14,7 @@
  * (and how many times), not just what a since-deleted internal field happened to hold. Nothing else
  * about these tests changes. `adoptDashboardSearchFromUrl` is gone too (step 5 also removes it: it
  * existed only to keep that same `query` copy in step, and `syncDashboardSearchDraftFromLocation`,
- * covered in its own `describe` below, is the one adoption path left).
+ * covered in its own `describe` below, is the one way a location's `q` reaches the draft).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {

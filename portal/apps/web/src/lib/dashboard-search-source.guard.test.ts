@@ -390,10 +390,15 @@ export function findSnapshotShapeViolations(source: string): string[] {
   if (!typeMatch) {
     offenses.push("no `export type DashboardSearchSnapshot = { ... }` declaration found");
   } else {
-    for (const name of extractDelimitedNames(typeMatch[1]!, ";")) {
+    const typeNames = extractDelimitedNames(typeMatch[1]!, ";");
+    for (const name of typeNames) {
       if (!DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES.has(name)) {
         offenses.push(`DashboardSearchSnapshot carries a field outside the allowlist: \`${name}\``);
       }
+    }
+    // EXACT set, not a subset: dropping `principalId` would silently un-scope the draft.
+    for (const required of DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES) {
+      if (!typeNames.includes(required)) offenses.push(`DashboardSearchSnapshot is missing the required field \`${required}\``);
     }
   }
 
@@ -405,10 +410,14 @@ export function findSnapshotShapeViolations(source: string): string[] {
     offenses.push("no `snapshot = { ... }` object literal found");
   }
   for (const literal of literalMatches) {
-    for (const name of extractDelimitedNames(literal[1]!, ",")) {
+    const literalNames = extractDelimitedNames(literal[1]!, ",");
+    for (const name of literalNames) {
       if (!DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES.has(name)) {
         offenses.push(`a \`snapshot = { ... }\` object literal carries a property outside the allowlist: \`${name}\``);
       }
+    }
+    for (const required of DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES) {
+      if (!literalNames.includes(required)) offenses.push(`a \`snapshot = { ... }\` object literal is missing the required property \`${required}\``);
     }
   }
   return offenses;
@@ -426,6 +435,9 @@ const PLANTED_SNAPSHOT_COMMENT_ONLY =
   '// this store used to also keep a `committedSearch` field on the snapshot -- it no longer does\n' +
   'export type DashboardSearchSnapshot = { draft: string; principalId: string };\n' +
   'let snapshot: DashboardSearchSnapshot = { draft, principalId };';
+const PLANTED_SNAPSHOT_MISSING_PRINCIPAL =
+  'export type DashboardSearchSnapshot = { draft: string };\n' +
+  'let snapshot: DashboardSearchSnapshot = { draft };';
 
 describe("guard: the snapshot type and its object literals carry no field outside the allowlist (#217 fix round 9, item 3)", () => {
   it("the real store source's DashboardSearchSnapshot type and every `snapshot = { ... }` literal carry none of the offending shapes", () => {
@@ -444,6 +456,13 @@ describe("guard: the snapshot type and its object literals carry no field outsid
     expect(findSnapshotShapeViolations(PLANTED_SNAPSHOT_LITERAL_EXTRA_FIELD_ONLY)).toEqual([
       "a `snapshot = { ... }` object literal carries a property outside the allowlist: `committedSearch`",
       "a `snapshot = { ... }` object literal carries a property outside the allowlist: `committedSearch`",
+    ]);
+  });
+
+  it("self-test: fires when a required field is REMOVED -- the set is exact, not a ceiling", () => {
+    expect(findSnapshotShapeViolations(PLANTED_SNAPSHOT_MISSING_PRINCIPAL)).toEqual([
+      "DashboardSearchSnapshot is missing the required field `principalId`",
+      "a `snapshot = { ... }` object literal is missing the required property `principalId`",
     ]);
   });
 

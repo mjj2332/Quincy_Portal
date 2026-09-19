@@ -240,7 +240,9 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     // The chip is route-derived at render, so it has no intermediate commit to excuse: EVERY
     // captured commit after the popstate must already show it gone. Only the input (a store draft,
     // written by the layout-effect sync) is allowed the pre-paint catch-up commit described above.
-    for (const capture of captures) expect(capture.chip).toBe(false);
+    // Nor has the request: network activity is not paint-dependent, so a stale `q` on ANY commit
+    // would be a real unfiltered-vs-filtered request bug even if its render is never painted.
+    for (const capture of captures) { expect(capture.chip).toBe(false); expect(capture.requestQ).toBe(false); }
     const settled = captures.at(-1)!;
     expect(settled.chip).toBe(false);
     expect(settled.inputValue).toBe("");

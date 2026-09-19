@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe("dashboard search ownership adversarial probes (#217)", () => {
-  it("debounces the latest draft and never lets popstate adoption be overwritten", () => {
+  it("debounces the latest draft and never lets a popstate's draft-from-location sync be overwritten", () => {
     const writer = vi.fn();
     const unregister = setDashboardSearchUrlWriter(writer);
     setDashboardSearchDraft("s", "principal-a");

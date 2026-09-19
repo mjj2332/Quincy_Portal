@@ -180,7 +180,7 @@ export function cancelPendingDashboardSearchWrite(): void {
 
 /**
  * The stateless draft-from-URL sync (#217 build, step 3) — one call, in `ShellRoute`'s own
- * `useLayoutEffect` keyed on location + principal, and the ONLY adoption path this store has left
+ * `useLayoutEffect` keyed on location + principal, and the ONLY way a location's `q` reaches this store's draft
  * (#217 build, step 5 drops the older URL-adoption function this file used to also export, which
  * existed only to keep a committed-query copy in step; there is no such copy left to keep in step).
  * `routeQuery` is the CALLER's own
