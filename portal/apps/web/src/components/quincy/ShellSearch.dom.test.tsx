@@ -344,6 +344,36 @@ describe("ShellSearch — an IME composition never arms or fires a stray commit 
   });
 });
 
+describe("ShellSearch — Enter mid-IME-composition neither commits nor navigates (#217 build, step 1)", () => {
+  it("an Enter that is still part of the composition (native isComposing) is ignored", async () => {
+    await renderInProvider({ variant: "expanded", isDashboard: false });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await compositionStart(input);
+    await typeWithoutInputEvent(input, "す");
+    await act(async () => {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter", isComposing: true });
+      input.dispatchEvent(event);
+      await Promise.resolve();
+    });
+    expect(routerMock.push).not.toHaveBeenCalled();
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+  });
+
+  it("the browser's own 229 keyCode Enter (Process) is also ignored", async () => {
+    await renderInProvider({ variant: "expanded", isDashboard: false });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await compositionStart(input);
+    await typeWithoutInputEvent(input, "す");
+    await act(async () => {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Process" });
+      input.dispatchEvent(event);
+      await Promise.resolve();
+    });
+    expect(routerMock.push).not.toHaveBeenCalled();
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+  });
+});
+
 describe("ShellSearch — collapsed", () => {
   it("renders only the icon trigger, keeping the accessible name, until opened", async () => {
     await renderInProvider({ variant: "collapsed" });

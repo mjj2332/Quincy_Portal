@@ -194,6 +194,15 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    // #217 build, step 1: an Enter (or Escape) that is still PART OF an IME composition must
+    // neither commit nor navigate/clear -- the composition hasn't produced its final text yet.
+    // `isComposingRef` alone (this component's own `compositionstart`/`compositionend` tracking)
+    // is not sufficient: some IMEs on some browsers dispatch the confirming `keydown` with
+    // `event.nativeEvent.isComposing` still `true`, or with a legacy `keyCode` 229 (`key ===
+    // "Process"`) instead, ahead of the `compositionend` event that would otherwise clear the ref.
+    // All three signals are checked so no IME/browser combination slips a half-formed value into a
+    // commit or a clear.
+    if (event.nativeEvent.isComposing || isComposingRef.current || event.key === "Process") return;
     if (event.key === "Enter") {
       commitDashboardSearchNow(principalId);
       // #217 fix round 1, item 5: the store's normalised/capped `query` after the commit above,
