@@ -262,5 +262,59 @@ describe("shared staff route contract", () => {
     it("serializes the canonical view+q spelling with `+` for spaces", () => {
       expect(safeStaffDestination("/?view=kanban&q=hi+there")).toBe("/?view=kanban&q=hi+there");
     });
+
+    /**
+     * #217 fix round 3, item 3 (Sol's whole-branch review). `staffPathFor` used to be a PARTIAL
+     * serializer over `search`: nothing capped it, so a caller-supplied value over
+     * `DASHBOARD_SEARCH_MAX_CHARS` produced a `q` the parser then rejected outright, collapsing
+     * the whole route to `not-found` -- not a round trip at all. Property-style over every
+     * Dashboard view × {no q, a q, a 201-char q, a whitespace-only q}: `staffPathFor` must always
+     * produce a URL `parseStaffLocation` reads back as a `"dashboard"` route, and re-serializing
+     * that reparsed route must reproduce the exact same URL (a fixed point), not merely "some
+     * dashboard route or other".
+     */
+    describe("the serializer is total: every view round-trips for every search shape", () => {
+      const overLimit = "x".repeat(DASHBOARD_SEARCH_MAX_CHARS + 1);
+      const searchCases: Array<[string, string | undefined]> = [
+        ["no q", undefined],
+        ["a q", "smith"],
+        [`a ${DASHBOARD_SEARCH_MAX_CHARS + 1}-char q`, overLimit],
+        ["a whitespace-only q", "   "],
+      ];
+
+      it.each(searchCases)("bare/List/Kanban, %s", (_label, search) => {
+        const routes: StaffRoute[] = [
+          { kind: "dashboard", ...(search !== undefined ? { search } : {}) },
+          { kind: "dashboard", dashboardView: "list", ...(search !== undefined ? { search } : {}) },
+          { kind: "dashboard", dashboardView: "kanban", ...(search !== undefined ? { search } : {}) },
+        ];
+        for (const route of routes) {
+          const path = staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
+          const reparsed = parseStaffLocation(path);
+          expect(reparsed.kind, path).toBe("dashboard");
+          expect(staffPathFor(reparsed as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>), path).toBe(path);
+        }
+      });
+
+      it.each(searchCases)("the Calendar facet, %s", (_label, search) => {
+        const route = { kind: "dashboard", calendar: calendar({ layers: ["project"], search: search ?? "" }) } satisfies StaffRoute;
+        const path = staffPathFor(route);
+        const reparsed = parseStaffLocation(path);
+        expect(reparsed.kind, path).toBe("dashboard");
+        expect(staffPathFor(reparsed as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>), path).toBe(path);
+      });
+
+      // The bare `/?view=calendar` intent deliberately carries no `search` at all (it is not a
+      // legal spelling for it — see `staff-routes.ts`'s own `DashboardCalendarIntentRoute`
+      // docblock), so it is excluded from the search-shape matrix above by construction: a caller
+      // cannot even ask the type system for `{ dashboardView: "calendar", search: "..." }`. This
+      // is the "illegal states unrepresentable" half of the fix, verified at compile time rather
+      // than at runtime — this one test just pins the intent's own round trip.
+      it("the Calendar intent still round-trips with no search shape to vary", () => {
+        const route = { kind: "dashboard", dashboardView: "calendar" } satisfies StaffRoute;
+        const path = staffPathFor(route);
+        expect(parseStaffLocation(path)).toEqual(route);
+      });
+    });
   });
 });

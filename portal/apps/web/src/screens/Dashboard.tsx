@@ -155,6 +155,12 @@ type DashboardRouteArm = Extract<DashboardRoute, { kind: "dashboard" }>;
 // literals silently collapses to `never` instead of failing loudly at the source of the change.
 type DashboardViewRoute = SharedDashboardViewRoute;
 type DashboardCalendarRoute = Extract<DashboardRouteArm, { calendar: DashboardCalendarState }>;
+// #217 fix round 3, item 3: the Calendar arm of `DashboardViewRoute` (`{ dashboardView:
+// "calendar" }`) carries no `search` field at all now (`staff-routes.ts`) -- a real type
+// predicate, not an inline compound `if`, is what lets TypeScript actually narrow it away where
+// that matters (`adoptRouteSearch` below); a compound `"x" in y && y.x === "..."` guard clause
+// does not reliably narrow a union through a negated `&&` the way a declared predicate does.
+type DashboardCalendarIntentRoute = Extract<DashboardViewRoute, { dashboardView: "calendar" }>;
 
 function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewRoute {
   return "dashboardView" in route;
@@ -162,6 +168,10 @@ function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewR
 
 function isDashboardCalendarRoute(route: DashboardRouteArm): route is DashboardCalendarRoute {
   return "calendar" in route;
+}
+
+function isDashboardCalendarIntentRoute(route: DashboardRouteArm): route is DashboardCalendarIntentRoute {
+  return "dashboardView" in route && route.dashboardView === "calendar";
 }
 
 function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
@@ -419,7 +429,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // actually governs — fought that branch's own adoption of the SAME `search.query` on every
     // render and looped.
     const adoptRouteSearch = () => {
-      if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute)) return;
+      if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute) || isDashboardCalendarIntentRoute(currentDashboardRoute)) return;
       const routeSearch = currentDashboardRoute.search ?? "";
       if (routeSearch !== search.query) adoptDashboardSearchFromUrl(routeSearch);
     };
