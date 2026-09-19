@@ -190,8 +190,8 @@ const UTILITY_EXACT = new Set([
   "flex", "grid", "block", "inline", "inline-block", "inline-flex", "hidden", "contents", "isolate",
   "absolute", "relative", "fixed", "sticky", "static", "border", "rounded", "shrink", "grow",
   "transition", "shadow", "ring", "outline", "truncate", "filter", "blur", "peer", "group",
-  "italic", "underline", "uppercase", "lowercase", "capitalize", "antialiased", "invisible",
-  "visible", "sr-only", "not-sr-only",
+  "italic", "underline", "uppercase", "lowercase", "capitalize", "normal-case", "antialiased",
+  "invisible", "visible", "sr-only", "not-sr-only",
 ]);
 
 /**
