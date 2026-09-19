@@ -10,7 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Search } from "lucide-react";
-import { capDashboardSearchText } from "@quincy/shared";
+import { capDashboardSearchText, stripUnsafeText } from "@quincy/shared";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -61,6 +61,20 @@ import type { RailMode } from "../../lib/shell-rail";
  * already uses via a raw ref — so `RailedShell` needs the raw element, not just a method that
  * calls `.focus()` on it.
  */
+/**
+ * Strip THEN cap, never the other order (#217 design-fix round 3, item 2). The shared contract
+ * (`staff-routes.ts`'s own docblock on `capDashboardSearchText`) is strip -> collapse/trim (at
+ * commit) -> cap; capping a still-unstripped value first counts characters `stripUnsafeText`
+ * later removes towards the 200-code-point budget, so a raw 201-character `"\\" + "a".repeat(200)`
+ * capped first keeps the backslash plus 199 "a" and only THEN strips the backslash, landing on
+ * 199 valid characters instead of 200. Both `capDashboardSearchText` and `stripUnsafeText` are the
+ * ONE shared definition (`@quincy/shared`) every other caller in this codebase (the URL
+ * serializer, the store's own commit path) already uses -- never re-implemented here.
+ */
+function capSearchInput(value: string): string {
+  return capDashboardSearchText(stripUnsafeText(value));
+}
+
 export type ShellSearchHandle = { focus: () => void; getElement: () => HTMLInputElement | null };
 
 export type ShellSearchProps = {
@@ -147,7 +161,7 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
     // (never re-implemented), and skipped entirely while a composition is open -- see
     // `isComposingRef`'s own comment above and `handleCompositionEnd` below, which applies the cap
     // once the composition's own final value is known.
-    setDashboardSearchDraft(isComposingRef.current ? event.target.value : capDashboardSearchText(event.target.value), principalId);
+    setDashboardSearchDraft(isComposingRef.current ? event.target.value : capSearchInput(event.target.value), principalId);
   }
 
   function handleCompositionStart() {
@@ -156,7 +170,7 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
 
   function handleCompositionEnd(event: ReactCompositionEvent<HTMLInputElement>) {
     isComposingRef.current = false;
-    setDashboardSearchDraft(capDashboardSearchText(event.currentTarget.value), principalId);
+    setDashboardSearchDraft(capSearchInput(event.currentTarget.value), principalId);
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {

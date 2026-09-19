@@ -254,6 +254,26 @@ describe("ShellSearch — the draft is capped by Unicode code point, not UTF-16 
   });
 });
 
+describe("ShellSearch — strips unsafe characters BEFORE capping, not after (#217 design-fix round 3, item 2)", () => {
+  it("a leading backslash followed by 200 'a' yields all 200 'a', not 199", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    // Capping a 201-character raw value ("\\" + 200 "a") BEFORE stripping keeps the first 200
+    // characters -- the backslash plus 199 "a" -- and only THEN strips the backslash, losing an
+    // "a" that should have survived. Strip-then-cap keeps all 200 "a".
+    await type(input, "\\" + "a".repeat(200));
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("a".repeat(200));
+  });
+
+  it("applies the same strip-then-cap order at compositionend", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await compositionStart(input);
+    await compositionEnd(input, "\\" + "a".repeat(200));
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("a".repeat(200));
+  });
+});
+
 describe("ShellSearch — collapsed", () => {
   it("renders only the icon trigger, keeping the accessible name, until opened", async () => {
     await renderInProvider({ variant: "collapsed" });
