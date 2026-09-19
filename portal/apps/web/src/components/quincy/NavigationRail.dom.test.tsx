@@ -4,6 +4,13 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation, type StaffNavigation } from "../../lib/staff-navigation";
 import { parseStaffLocation } from "../../lib/router";
+import {
+  __getDashboardSearchSnapshotForTest,
+  __resetDashboardSearchStoreForTest,
+  DASHBOARD_SEARCH_DEBOUNCE_MS,
+  setDashboardSearchDraft,
+  setDashboardSearchUrlWriter,
+} from "../../lib/dashboard-search-store";
 import { initials } from "../../lib/initials";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
@@ -799,6 +806,65 @@ describe("the account menu's sign out", () => {
     // `replace`, not `push` -- correcting the current entry creates no new history entry.
     expect(window.history.length).toBe(lengthBefore);
     expect(signOutMock).toHaveBeenCalledTimes(1);
+  });
+
+  // #217 fix round 6, item 1 (Sol re-review, BLOCKER). The scrub above reads the URL, but a
+  // keystroke within the last `DASHBOARD_SEARCH_DEBOUNCE_MS` has not reached the URL yet -- it is
+  // still a pending timer. The URL-level scrub is then a no-op (there is no `q` to strip), and
+  // while `signOut()` awaits the network that timer fires, commits through whichever writer is
+  // registered (`Dashboard.tsx`'s own), and puts `q` BACK in the URL -- the next sign-in re-adopts
+  // it. `handleSignOut` must cancel the pending timer and discard the draft/query SYNCHRONOUSLY,
+  // before awaiting anything (including the URL scrub, which reads a location that might otherwise
+  // still be one keystroke stale) -- `dropDashboardSearchOwnership` already does both (it calls the
+  // store's own `clearTimer()`), so a late timer callback is provably inert: the real `setTimeout`
+  // was cancelled outright, not merely out-raced.
+  it("cancels a still-pending debounce and discards the draft synchronously, before signOut() resolves", async () => {
+    signOutMock.mockClear();
+    __resetDashboardSearchStoreForTest();
+    const writer = vi.fn();
+    const unregisterWriter = setDashboardSearchUrlWriter(writer);
+    window.history.replaceState(null, "", "/");
+    await renderInProvider(navigationFor("/"));
+
+    // Menu opened with real timers (Base UI's own open transition relies on real
+    // rAF/microtask timing); fake timers are only switched on once the pending debounce itself
+    // needs deterministic control.
+    const trigger = document.querySelector<HTMLElement>('[data-testid="navigation-rail-account"]');
+    await act(async () => { trigger!.click(); await Promise.resolve(); await Promise.resolve(); });
+    const signOutButton = document.querySelector<HTMLElement>('[data-testid="navigation-rail-signout"]');
+    expect(signOutButton, "the menu must be open before Sign out can be activated").not.toBeNull();
+
+    vi.useFakeTimers();
+    try {
+      // Typed 100ms ago -- still mid-debounce, nothing committed, no `q` in the URL yet.
+      act(() => { setDashboardSearchDraft("smith", "u1"); });
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smith", query: "" });
+
+      // `signOut()` itself is a pending promise the test controls, so the race window between the
+      // synchronous scrub and the network resolving is exercised directly.
+      let resolveSignOut!: () => void;
+      signOutMock.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveSignOut = resolve; }));
+
+      await act(async () => { signOutButton!.click(); await Promise.resolve(); });
+
+      // Synchronously, before `signOut()` has had any chance to resolve: the debounce is already
+      // gone.
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+
+      act(() => { vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 700); });
+      expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+      expect(writer).not.toHaveBeenCalled();
+
+      await act(async () => { resolveSignOut(); await Promise.resolve(); await Promise.resolve(); });
+      expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+      expect(writer).not.toHaveBeenCalled();
+
+      unregisterWriter();
+    } finally {
+      vi.useRealTimers();
+      __resetDashboardSearchStoreForTest();
+    }
   });
 
   it("surfaces a failure in the rail rather than swallowing it", async () => {

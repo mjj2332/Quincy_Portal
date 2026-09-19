@@ -34,6 +34,7 @@ import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
 import { ShellSearch, type ShellSearchHandle } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
+import { dropDashboardSearchOwnership } from "../../lib/dashboard-search-store";
 import { locationStore, stripDashboardSearchFromLocation } from "../../lib/router";
 import { cn } from "../../lib/utils";
 import type { RailMode } from "../../lib/shell-rail";
@@ -271,6 +272,17 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
     event.preventDefault();
     setSignOutError(null);
     try {
+      // #217 fix round 6, item 1 (Sol re-review, BLOCKER). `dropDashboardSearchOwnership` runs
+      // FIRST, synchronously, before anything else in this handler -- a keystroke inside the last
+      // `DASHBOARD_SEARCH_DEBOUNCE_MS` has not reached the URL yet (still a pending timer, no `q`
+      // there for the scrub below to find), so without this, `signOut()` awaiting the network gave
+      // that timer time to fire, commit through Dashboard's own registered writer
+      // (`lib/dashboard-search-store.ts`'s `commit`/`Dashboard.tsx`'s writer registration), and put
+      // `q` BACK in the URL after the scrub had already run -- exactly what the next sign-in would
+      // then re-adopt. `dropDashboardSearchOwnership` cancels the store's own pending timer outright
+      // (`clearTimer()`), not merely races it: a timer already cancelled cannot fire at all, late or
+      // otherwise, which is what makes this ordering airtight rather than merely narrower.
+      dropDashboardSearchOwnership();
       // #217 fix round 5, item 3 (Sol re-review, BLOCKER). Only the explicit sign-out ACTION
       // scrubs the Dashboard search out of the current URL, before signing out -- `App.tsx` hands
       // this same URL to `SignIn`, and `lib/auth.ts`'s `beginSignIn` preserves it as the OAuth
