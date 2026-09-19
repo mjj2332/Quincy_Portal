@@ -259,6 +259,19 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
  * the cleanup can unregister unconditionally and BOTH scenarios below fall out of that alone: a
  * StrictMode replay re-registers a writer before the timer fires (still commits); a real unmount
  * never re-registers one (never commits).
+ *
+ * #217 fix round 8, Sol review, item 4d — CORRECTION. The first test below used to mount `Dashboard`
+ * directly, with no `ShellRoute` sync ever running, and then advance the fake clock past the stale
+ * off-Dashboard timer to prove it still committed. That models a path production cannot take: by
+ * design (`spec-217-query-source.md` "Design", and #217 fix round 8 item 1) a navigation TO
+ * Dashboard always carries the live draft on the URL itself, either because the rail's own
+ * Dashboard href/Enter already carries it, or because `ShellRoute`'s `syncDashboardSearchDraftFromLocation`
+ * cancels any pending timer unconditionally the moment it observes the arrival — so the stale
+ * off-Dashboard timer this test armed is never the thing that ends up writing `q` into the URL.
+ * Rewritten to the real path: the navigation itself carries `q=smith` (mirroring the rail href),
+ * `ShellRoute`'s own sync (mirrored here, the same way every other file's `DashboardRouteHarness`/
+ * `ShellRouteHarness` already does) cancels the obsolete timer on arrival, and no later URL write
+ * occurs once that timer's original 300ms — and a full second beyond it — elapses.
  */
 describe("Dashboard search writer registration under StrictMode (#217 fix round 4, item 4)", () => {
   beforeEach(() => {
@@ -278,7 +291,7 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
     __resetDashboardSearchStoreForTest();
   });
 
-  it("a debounce armed off-Dashboard (typed on /admin) survives StrictMode's mount-cleanup-mount replay and still commits to the URL", async () => {
+  it("a debounce armed off-Dashboard is cancelled on arrival -- the rail href/Enter already carried the draft, so the stale timer writes nothing, under StrictMode's mount-cleanup-mount replay", async () => {
     vi.useFakeTimers();
     try {
       // `admin-1` is already the store's own recorded owner (as the boundary would have already
@@ -292,16 +305,40 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
       expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
       expect(window.location.search).toBe("");
 
-      // Navigate to `/` within the 300ms window -- Dashboard's own FIRST mount, under StrictMode,
-      // double-invokes this component's effects (mount, cleanup, mount) synchronously in one commit.
+      // The REAL path (#217 fix round 8, item 1): the rail's Dashboard link/Enter already carries
+      // the live draft in its own href, so a navigation reaching Dashboard within the 300ms window
+      // arrives at a URL that ALREADY says `q=smith` -- production never leaves this to the stale
+      // off-Dashboard timer armed above.
+      window.history.pushState(null, "", "/?q=smith");
+      const arrivalRoute = parseStaffLocation("/?q=smith");
+
+      /** Mirrors `ShellRoute`'s own draft-sync wiring, the same way every other file's own
+       * `ShellRouteHarness`/`DashboardRouteHarness` does -- `syncDashboardSearchDraftFromLocation`
+       * unconditionally cancels the pending timer the moment it observes this arrival. */
+      function ArrivalSync({ userId }: { userId: string }) {
+        useLayoutEffect(() => {
+          if (arrivalRoute.kind !== "dashboard") return;
+          syncDashboardSearchDraftFromLocation(dashboardSearchOf(arrivalRoute), userId);
+        }, [userId]);
+        return null;
+      }
+
+      // Dashboard's own FIRST mount, under StrictMode, double-invokes this component's effects
+      // (mount, cleanup, mount) synchronously in one commit.
       await act(async () => {
-        root.render(createElement(StrictMode, null, createElement(Dashboard, { currentUserId: "admin-1", role: "admin" })));
+        root.render(<>{createElement(StrictMode, null, createElement(Dashboard, { currentUserId: "admin-1", role: "admin" }))}<ArrivalSync userId="admin-1" /></>);
         await Promise.resolve();
       });
 
-      await act(async () => { vi.advanceTimersByTime(350); });
+      // The URL already carries `q=smith` -- from the navigation itself, not from the stale timer.
+      expect(window.location.search).toBe("?q=smith");
+      const locationAfterArrival = window.location.search;
 
-      expect(window.location.search).toContain("q=smith");
+      // A full second past the original 300ms debounce -- no LATER write occurs: the arrival sync
+      // cancelled the obsolete timer, so there is nothing left to fire.
+      await act(async () => { vi.advanceTimersByTime(1_000); });
+
+      expect(window.location.search).toBe(locationAfterArrival);
     } finally {
       vi.useRealTimers();
     }

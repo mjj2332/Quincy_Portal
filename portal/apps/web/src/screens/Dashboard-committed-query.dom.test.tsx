@@ -3,7 +3,7 @@
 // six scenarios the design spec required to fail on the OLD code (`effectiveQuery`,
 // `adoptedLocationRef`, the reconciliation effect's early return for a role without Calendar
 // capability) before this refactor, and to pass after it.
-import { act, createElement, useLayoutEffect, useSyncExternalStore } from "react";
+import { act, createElement, useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
@@ -12,6 +12,7 @@ import { dashboardSearchOf } from "@quincy/shared";
 import {
   __getDashboardSearchSnapshotForTest,
   __resetDashboardSearchStoreForTest,
+  clearDashboardSearch,
   setDashboardSearchDraft,
   syncDashboardSearchDraftFromLocation,
 } from "../lib/dashboard-search-store";
@@ -25,6 +26,10 @@ const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "photographer" 
 // (a) below exercise "has Kanban move capability AND lacks Calendar capability" at all: no REAL
 // role in `packages/shared/src/capabilities.ts` combines those two (photographer, the only role
 // without `viewProductionCalendar`, also lacks `moveProjectStage`).
+// #217 fix round 8, Sol review, item 4c: `external_editor` is deliberately NOT the other
+// no-Calendar case here -- it HAS `viewProductionCalendar` via `EXTERNAL_EDITOR_CAPABILITIES`
+// (`packages/shared/src/capabilities.ts:49-61`), unlike `photographer`'s own list
+// (`packages/shared/src/capabilities.ts:129-137`), which omits it.
 vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/api")>(), apiGet: (path: string) => apiGetMock(path) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authState.role } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authState.role, capabilities: ["moveProjectStage"], can: (capability: string) => capability === "moveProjectStage" }) }));
@@ -130,11 +135,28 @@ describe("Dashboard's committed query is derived from the route, not adopted int
   });
 
   it("(b) Back/Forward (popstate) to a q-less URL clears the chip, input and request in the SAME commit", async () => {
-    function Probe({ userId, onLayout }: { userId: string; onLayout: (state: { chip: boolean; requestQ: boolean }) => void }) {
-      useLayoutEffect(() => {
-        onLayout({
+    // #217 fix round 8, Sol review, item 4a. The probe used to capture `requestQ` but never
+    // ASSERT it, and captured no input value at all -- this harness mounts no real `ShellSearch`
+    // (see `ShellRouteHarness`'s own docblock above), so the store's own `draft` is what a real
+    // input would render, and is what "the input" below means. `requestQ` is also now read from
+    // the MOST RECENT `/api/projects` call, not `.some()` over every call ever made: the initial
+    // `/?q=smith` load genuinely did request `q=smith` once, so `.some()` would stay stuck `true`
+    // forever regardless of what the popstate below does -- the only meaningful question is
+    // whether the LATEST request still carries the stale `q`. Every commit the probe observes
+    // after the popstate is captured and asserted, not just one, so a chip/draft/request that
+    // flashes searched for even one extra commit before clearing is caught. A passive `useEffect`,
+    // not `useLayoutEffect`: React flushes every LAYOUT effect for a commit before any PASSIVE
+    // one, and `useDashboardProjects`' own `useQuery` dispatches its refetch for the new (q-less)
+    // key from ITS passive effect -- a layout-effect probe would run first every time and always
+    // observe the STALE previous request, never the one this popstate itself causes.
+    const captures: Array<{ draft: string; chip: boolean; requestQ: boolean }> = [];
+    function Probe({ userId }: { userId: string }) {
+      useEffect(() => {
+        const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+        captures.push({
+          draft: __getDashboardSearchSnapshotForTest().draft,
           chip: host.querySelector('[data-testid="dashboard-search-chip"]') !== null,
-          requestQ: apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith")),
+          requestQ: (projectsCalls.at(-1) ?? "").includes("q=smith"),
         });
       });
       return null;
@@ -149,13 +171,18 @@ describe("Dashboard's committed query is derived from the route, not adopted int
 
     window.history.pushState(null, "", "/?q=smith");
     window.history.replaceState(null, "", "/");
-    let captured: { chip: boolean; requestQ: boolean } | undefined;
+    captures.length = 0;
     act(() => {
-      root.render(<><ShellRouteHarness userId="user-1" role="admin" /><Probe userId="user-1" onLayout={(state) => { captured = state; }} /></>);
+      root.render(<><ShellRouteHarness userId="user-1" role="admin" /><Probe userId="user-1" /></>);
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
 
-    expect(captured?.chip).toBe(false);
+    expect(captures.length).toBeGreaterThan(0);
+    for (const capture of captures) {
+      expect(capture.chip).toBe(false);
+      expect(capture.draft).toBe("");
+      expect(capture.requestQ).toBe(false);
+    }
     expect(window.location.search).toBe("");
   });
 
@@ -209,17 +236,51 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     expect(captured).toContain("smith");
   });
 
-  // (f) "the chip's x and Escape both clear the URL and the list in one step" is deliberately NOT
-  // here. Investigating it surfaced a real, narrow regression this exact commit's own scope cannot
-  // fix without reaching into step 5's territory: once `syncDashboardSearchDraftFromLocation`
-  // (step 3) is the ONLY thing keeping the store's `draft` in step with the URL, the store's
-  // `query`/`lastWritten` fields are never updated by it (only `commit()` itself still writes
-  // them) -- so after landing on a URL that already carries a `q`, `query`/`lastWritten` stay at
-  // their cold-module default `""`. Clearing calls `commit()` with a normalised draft of `""`,
-  // which collides with that stale default and trips `commit()`'s OWN no-op guard
-  // (`normalized === query && normalized === lastWritten`) before the writer is ever called --
-  // the clear button silently does nothing. `dashboard-search-store.ts`'s own docblock already
-  // names the fix: step 5 drops `query`/`lastWritten` entirely and rewrites `commit()` to write
-  // through the writer unconditionally (no-op only when none is registered), which is what this
-  // test needs to pass for a reason, not by accident. Added there instead of weakened here.
+  // #217 fix round 8, Sol review, item 4b. (f) "the chip's x and Escape both clear the URL and
+  // the list in one step" was deliberately left uncovered here -- investigating it at the time
+  // surfaced a real, narrow regression this exact commit's own scope could not fix without
+  // reaching into step 5's territory: once `syncDashboardSearchDraftFromLocation` (step 3) was the
+  // ONLY thing keeping the store's `draft` in step with the URL, the store's `query`/`lastWritten`
+  // fields were never updated by it (only `commit()` itself still wrote them) -- so after landing
+  // on a URL that already carried a `q`, `query`/`lastWritten` stayed at their cold-module default
+  // `""`. Clearing called `commit()` with a normalised draft of `""`, which collided with that
+  // stale default and tripped `commit()`'s OWN no-op guard (`normalized === query && normalized
+  // === lastWritten`) before the writer was ever called -- the clear button silently did nothing.
+  // Step 5 (already shipped -- `dashboard-search-store.ts` carries no `query`/`lastWritten` fields
+  // any more, `commit()` writes through the writer unconditionally) fixed the underlying bug this
+  // scenario exercises; these two cases add the coverage that was deferred until it did.
+  it("(f1) the chip's x clears the URL, the chip and the list in one step", async () => {
+    window.history.replaceState(null, "", "/?view=list&q=smith");
+    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await settle();
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
+    expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
+
+    const clearButton = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-search-chip"] button[aria-label="Clear search"]')!;
+    await act(async () => { clearButton.click(); await Promise.resolve(); });
+    await settle();
+
+    expect(window.location.search).toBe("?view=list");
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
+    const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+    expect(projectsCalls.at(-1)).not.toContain("q=");
+  });
+
+  it("(f2) Escape (`clearDashboardSearch`, the rail's own Escape handler) clears the URL, the chip and the list in one step", async () => {
+    window.history.replaceState(null, "", "/?view=list&q=smith");
+    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await settle();
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
+
+    // `ShellSearch.tsx`'s own Escape handler calls `clearDashboardSearch(principalId)` directly
+    // (this harness mounts no real `ShellSearch` -- see the file-level docblock above); exercised
+    // the same way this file already drives Enter/typing through the store, not a real input.
+    await act(async () => { clearDashboardSearch("user-1"); await Promise.resolve(); });
+    await settle();
+
+    expect(window.location.search).toBe("?view=list");
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
+    const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+    expect(projectsCalls.at(-1)).not.toContain("q=");
+  });
 });
