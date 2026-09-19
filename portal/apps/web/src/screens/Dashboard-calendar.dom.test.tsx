@@ -256,8 +256,8 @@ describe("Dashboard Calendar routing", () => {
     await render({ calendar: { ...routeCalendar, editorIds: [], search: "oldterm" } });
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch("newterm");
-    // Still mid-debounce -- the store's `query` has not committed yet, only `draft` has.
-    expect(__getDashboardSearchSnapshotForTest().query).not.toBe("newterm");
+    // Still mid-debounce -- the URL has not been written yet, only the store's `draft` has changed.
+    expect(window.location.search).not.toContain("newterm");
 
     await act(async () => { locationStore().push("/?view=calendar"); await Promise.resolve(); });
 
@@ -343,28 +343,26 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toContain("q=smith");
   });
 
-  // #217 fix round 3, item 2 (Sol's whole-branch review). The writer-registration effect now
+  // #217 fix round 3, item 2 (Sol's whole-branch review). The writer-registration effect
   // registers a STABLE writer once per Dashboard mount (a ref, not the raw `view`/`calendarState`
-  // dependency list), so unmount is the only thing that ever unregisters it -- which is what makes
-  // it safe for the cleanup to also cancel the pending timer outright (`cancelPendingDashboardSearchWrite`,
-  // previously dead code): a re-registration (view switches, Calendar facet changes while STILL
-  // mounted) must never cancel a pending commit (see the tests above and `dashboard-search-store.
-  // test.ts`), but an actual unmount must, since there is no Dashboard left to receive a later URL
-  // write at all -- the singleton store has no way to route it anywhere sane.
+  // dependency list), so unmount is the only thing that ever unregisters it. #217 build, step 6:
+  // the cleanup no longer needs to cancel the pending timer explicitly either -- `commit()` simply
+  // drops a fire with no writer registered (there is no local committed copy left for it to update
+  // instead), so the SAME outcome (no later commit, no later URL write) now falls out of the
+  // writer being gone, not an explicit `cancelPendingDashboardSearchWrite()` call in the cleanup.
   it("cancels a pending debounce on unmount: no later commit and no later URL write", async () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch("smith");
     const locationBeforeUnmount = window.location.search;
-    // Still mid-debounce: the draft is live, but nothing has committed yet.
+    // Still mid-debounce: the draft is live, but the URL hasn't been written yet.
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(window.location.search).toBe(locationBeforeUnmount);
 
     await act(async () => { root.unmount(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
 
     expect(window.location.search).toBe(locationBeforeUnmount);
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     // The draft itself survives -- it is what lets an off-Dashboard Enter (the rail's
     // `ShellSearch`, mounted everywhere) still navigate with whatever text was showing.
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");

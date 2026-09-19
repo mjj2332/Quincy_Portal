@@ -32,6 +32,7 @@ import {
   setDashboardSearchDraft,
   setDashboardSearchDraftDuringComposition,
   subscribeDashboardSearch,
+  takeDashboardSearchForNavigation,
 } from "../../lib/dashboard-search-store";
 import type { RailMode } from "../../lib/shell-rail";
 
@@ -204,12 +205,17 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
     // commit or a clear.
     if (event.nativeEvent.isComposing || isComposingRef.current || event.key === "Process") return;
     if (event.key === "Enter") {
+      // #217 build, step 5: off-Dashboard there is no registered writer for `commitDashboardSearchNow`
+      // to drive (the store drops a commit with nowhere to write it), so this pushes straight to the
+      // URL the Dashboard will derive `committedQuery` from -- `takeDashboardSearchForNavigation`
+      // cancels the pending debounce and returns the draft normalised/capped exactly the way a real
+      // commit would (#217 fix round 1, item 5's own reasoning: a 201-character draft must carry 200
+      // into the URL, and a whitespace-only draft must navigate with no `q` at all).
+      if (!isDashboard) {
+        locationStore().push(staffPathFor({ kind: "dashboard", search: takeDashboardSearchForNavigation(principalId) }));
+        return;
+      }
       commitDashboardSearchNow(principalId);
-      // #217 fix round 1, item 5: the store's normalised/capped `query` after the commit above,
-      // not the raw render-time `search.draft` -- a 201-character draft must carry 200 into the
-      // URL, and a whitespace-only draft (normalises to "") must navigate with no `q` at all,
-      // neither of which the uncommitted draft value guarantees.
-      if (!isDashboard) locationStore().push(staffPathFor({ kind: "dashboard", search: getDashboardSearchSnapshotForPrincipal(principalId).query }));
       return;
     }
     if (event.key === "Escape") {

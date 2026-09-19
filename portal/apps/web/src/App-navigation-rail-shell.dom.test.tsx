@@ -795,7 +795,6 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
     await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
     expect(window.location.pathname).toBe("/");
     expect(window.location.search).toBe("?q=smith");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
   });
 
   it("leaves ⌘B untouched", async () => {

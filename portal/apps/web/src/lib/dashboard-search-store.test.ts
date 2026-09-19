@@ -6,12 +6,20 @@
  * explicit `viewerId` -- the store's own signature requires one, compile-time, so a test can never
  * exercise the tautological "omitted id defaults to whatever the store already thinks" path an
  * earlier version of this store had.
+ *
+ * #217 build, step 5 (SANCTIONED TEST CHANGE): the store no longer keeps a `query` copy of the
+ * committed search (`Dashboard.tsx` derives it from the route instead) -- every assertion that used
+ * to read `__getDashboardSearchSnapshotForTest().query` is rewritten against a writer spy, the
+ * store's own committing mechanism, which is strictly stronger: it proves what actually got WRITTEN
+ * (and how many times), not just what a since-deleted internal field happened to hold. Nothing else
+ * about these tests changes. `adoptDashboardSearchFromUrl` is gone too (step 5 also removes it: it
+ * existed only to keep that same `query` copy in step, and `syncDashboardSearchDraftFromLocation`,
+ * covered in its own `describe` below, is the one adoption path left).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __getDashboardSearchSnapshotForTest,
   __resetDashboardSearchStoreForTest,
-  adoptDashboardSearchFromUrl,
   cancelPendingDashboardSearchWrite,
   clearDashboardSearch,
   commitDashboardSearchNow,
@@ -39,9 +47,12 @@ afterEach(() => {
 
 describe("dashboard-search-store", () => {
   it("draft is live before the debounce fires", () => {
+    const writer = vi.fn();
+    const unregister = setDashboardSearchUrlWriter(writer);
     setDashboardSearchDraft("smith", USER);
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(writer).not.toHaveBeenCalled();
+    unregister();
   });
 
   it("writes once per keystroke burst, after the debounce settles", () => {
@@ -56,7 +67,6 @@ describe("dashboard-search-store", () => {
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
 
     expect(writes).toEqual(["smi"]);
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smi");
     unregister();
   });
 
@@ -74,44 +84,51 @@ describe("dashboard-search-store", () => {
     unregister();
   });
 
-  it("adopt cancels a pending write — the writer is never called", () => {
+  it("syncDashboardSearchDraftFromLocation cancels a pending write — the writer is never called", () => {
     const writer = vi.fn();
     const unregister = setDashboardSearchUrlWriter(writer);
 
     setDashboardSearchDraft("smith", USER);
-    adoptDashboardSearchFromUrl("from-url", USER);
+    syncDashboardSearchDraftFromLocation("from-url", USER);
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
 
     expect(writer).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "from-url", query: "from-url" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "from-url" });
     unregister();
   });
 
   it("a principal change clears the store", () => {
+    const writer = vi.fn();
+    const unregister = setDashboardSearchUrlWriter(writer);
     resetDashboardSearchForPrincipal("user-1");
     setDashboardSearchDraft("smith", "user-1");
     commitDashboardSearchNow("user-1");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
+    expect(writer).toHaveBeenLastCalledWith("smith");
 
     resetDashboardSearchForPrincipal("user-2");
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "", principalId: "user-2" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", principalId: "user-2" });
 
     // Same principal again: no-op, does not clear an in-progress search.
     setDashboardSearchDraft("jones", "user-2");
     commitDashboardSearchNow("user-2");
     resetDashboardSearchForPrincipal("user-2");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("jones");
+    expect(writer).toHaveBeenLastCalledWith("jones");
+    unregister();
   });
 
   // #217 fix round 5, item 2: a write carrying a DIFFERENT principal's id than the store's current
   // owner clears the old owner's state first and never merges into it.
   it("a write carrying principal B's id while A owns the store clears A's state first and never merges", () => {
+    const writer = vi.fn();
+    const unregister = setDashboardSearchUrlWriter(writer);
     setDashboardSearchDraft("smith", "user-a");
     commitDashboardSearchNow("user-a");
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smith", query: "smith", principalId: "user-a" });
+    expect(writer).toHaveBeenLastCalledWith("smith");
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smith", principalId: "user-a" });
 
     setDashboardSearchDraft("jones", "user-b");
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "jones", query: "", principalId: "user-b" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "jones", principalId: "user-b" });
+    unregister();
   });
 
   it("unregister never fires the writer being torn down", () => {
@@ -124,9 +141,9 @@ describe("dashboard-search-store", () => {
   });
 
   // #217 fix round 2, item 1 (Sol's diff review): superseded fix round 1 item 3's own
-  // "flush-on-unregister" design. That design settled `query` internally on unregister, but only a
-  // caller that ALSO happened to build its own URL synchronously right after triggering the
-  // transition ever got the value into a URL -- a re-registration with no such call site (e.g.
+  // "flush-on-unregister" design. That design settled the committed value internally on unregister,
+  // but only a caller that ALSO happened to build its own URL synchronously right after triggering
+  // the transition ever got the value into a URL -- a re-registration with no such call site (e.g.
   // `viewingArchived` flipping while already on List recreates `navigateCalendar` for reasons
   // having nothing to do with search) silently stranded the pending value regardless. The pending
   // timer must survive ANY unregister and fire later against whichever writer is registered then.
@@ -140,10 +157,10 @@ describe("dashboard-search-store", () => {
     // URL write of its own to carry the pending value.
     setDashboardSearchUrlWriter(newWriter);
 
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(oldWriter).not.toHaveBeenCalled();
+    expect(newWriter).not.toHaveBeenCalled();
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
 
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
     expect(oldWriter).not.toHaveBeenCalled();
     expect(newWriter).toHaveBeenCalledExactlyOnceWith("smith");
   });
@@ -163,12 +180,16 @@ describe("dashboard-search-store", () => {
   });
 
   it("snapshot identity is stable across a no-op set", () => {
+    const writer = vi.fn();
+    const unregister = setDashboardSearchUrlWriter(writer);
     commitDashboardSearchNow(USER);
     const before = __getDashboardSearchSnapshotForTest();
-    // Committing again with no change queued is a no-op: notify() is only called when something
-    // actually changes, so the cached snapshot object must not be replaced.
+    // Committing again is a no-op for the SNAPSHOT (draft/principalId unchanged) even though the
+    // writer itself is called again with the same value -- notify() is only called when draft or
+    // principalId actually changes, so the cached snapshot object must not be replaced.
     commitDashboardSearchNow(USER);
     expect(__getDashboardSearchSnapshotForTest()).toBe(before);
+    unregister();
   });
 
   it("strips control characters from the draft", () => {
@@ -177,10 +198,13 @@ describe("dashboard-search-store", () => {
   });
 
   it("truncates the committed query to the 200-code-point cap", () => {
+    const writer = vi.fn();
+    const unregister = setDashboardSearchUrlWriter(writer);
     const long = "a".repeat(250);
     setDashboardSearchDraft(long, USER);
     commitDashboardSearchNow(USER);
-    expect(__getDashboardSearchSnapshotForTest().query.length).toBe(200);
+    expect(writer).toHaveBeenCalledExactlyOnceWith("a".repeat(200));
+    unregister();
   });
 
   it("clearDashboardSearch empties the draft and commits immediately", () => {
@@ -189,7 +213,7 @@ describe("dashboard-search-store", () => {
     setDashboardSearchDraft("smith", USER);
     commitDashboardSearchNow(USER);
     clearDashboardSearch(USER);
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "" });
     expect(writer).toHaveBeenLastCalledWith("");
     unregister();
   });
@@ -201,24 +225,31 @@ describe("dashboard-search-store", () => {
     cancelPendingDashboardSearchWrite();
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
     expect(writer).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     unregister();
   });
 
-  it("notifies subscribers on draft, commit, adopt and reset", () => {
+  it("notifies subscribers on draft, sync and reset", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeDashboardSearch(listener);
     setDashboardSearchDraft("smith", USER);
     expect(listener).toHaveBeenCalled();
     listener.mockClear();
-    commitDashboardSearchNow(USER);
-    expect(listener).toHaveBeenCalled();
-    listener.mockClear();
-    adoptDashboardSearchFromUrl("x", USER);
+    syncDashboardSearchDraftFromLocation("x", USER);
     expect(listener).toHaveBeenCalled();
     listener.mockClear();
     resetDashboardSearchForPrincipal("someone");
     expect(listener).toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  // A commit itself no longer notifies subscribers -- there is nothing left in the snapshot
+  // (`draft`, `principalId`) that a commit changes, so a commit-only listener sees nothing.
+  it("commitDashboardSearchNow does not itself notify — nothing in the snapshot changes", () => {
+    const listener = vi.fn();
+    setDashboardSearchDraft("smith", USER);
+    const unsubscribe = subscribeDashboardSearch(listener);
+    commitDashboardSearchNow(USER);
+    expect(listener).not.toHaveBeenCalled();
     unsubscribe();
   });
 
@@ -230,7 +261,6 @@ describe("dashboard-search-store", () => {
     it("updates the draft live, but arms no commit timer", () => {
       setDashboardSearchDraftDuringComposition("s", USER);
       expect(__getDashboardSearchSnapshotForTest().draft).toBe("s");
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
 
       const writer = vi.fn();
       const unregister = setDashboardSearchUrlWriter(writer);
@@ -250,7 +280,7 @@ describe("dashboard-search-store", () => {
       vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
 
       expect(writer).not.toHaveBeenCalled();
-      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smi", query: "" });
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smi" });
       unregister();
     });
 
@@ -266,8 +296,7 @@ describe("dashboard-search-store", () => {
     });
   });
 
-  // #217 build, step 3: the stateless draft-from-URL sync -- the ONE thing `ShellRoute`'s own
-  // layout effect calls, in place of every render-side adoption path step 4 goes on to delete.
+  // #217 build, step 3.
   describe("syncDashboardSearchDraftFromLocation", () => {
     it("the store's OWN debounced write landing back as a location does not disturb a draft with trailing whitespace", () => {
       const writer = vi.fn();
@@ -336,6 +365,23 @@ describe("dashboard-search-store", () => {
       setDashboardSearchDraft("smith", "user-a");
       expect(takeDashboardSearchForNavigation("user-b")).toBe("");
       expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", principalId: "user-b" });
+    });
+  });
+
+  // #217 build, step 5: the deliberate behaviour change -- a debounce that fires with no writer
+  // registered (genuinely off-Dashboard, never arriving) is simply dropped. There is no local
+  // `query` copy left for it to update instead, unlike before.
+  describe("a commit with no writer registered is dropped, not stored anywhere", () => {
+    it("a timer firing with no writer registered writes nothing and throws nothing", () => {
+      setDashboardSearchDraft("smith", USER);
+      expect(() => vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS)).not.toThrow();
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    });
+
+    it("commitDashboardSearchNow with no writer registered is a silent no-op", () => {
+      setDashboardSearchDraft("smith", USER);
+      expect(() => commitDashboardSearchNow(USER)).not.toThrow();
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
     });
   });
 });

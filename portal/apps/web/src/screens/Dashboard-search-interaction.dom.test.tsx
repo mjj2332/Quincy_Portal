@@ -208,7 +208,8 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
       return Promise.resolve(fullBoard);
     });
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
+    // #217 build, step 5 (sanctioned): `committedQuery` is derived from the URL, not a store copy.
+    expect(window.location.search).toContain("q=smith");
 
     // The mocked DndContext handler is invoked directly, bypassing whatever visual/pointer-level
     // affordance would normally stop a drag from starting -- this is deliberately the strictest
@@ -250,6 +251,14 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
  * everywhere) before Dashboard ever mounted got cancelled by the synthetic cleanup, even though
  * Dashboard — once the double-invoke dance settles — is still mounted with nothing left to receive
  * that debounce's eventual commit.
+ *
+ * #217 build, step 6: the fix described above (a `writerGenerationRef` / `queueMicrotask` dance
+ * deferring the cancellation so a same-tick StrictMode replay could back off) is deleted along with
+ * the explicit `cancelPendingDashboardSearchWrite()` call itself — a fire with no writer registered
+ * is now simply dropped (step 5: there is no local committed copy left for it to update either), so
+ * the cleanup can unregister unconditionally and BOTH scenarios below fall out of that alone: a
+ * StrictMode replay re-registers a writer before the timer fires (still commits); a real unmount
+ * never re-registers one (never commits).
  */
 describe("Dashboard search writer registration under StrictMode (#217 fix round 4, item 4)", () => {
   beforeEach(() => {
@@ -281,7 +290,7 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
       // `ShellSearch`, mounted on every route, would do).
       setDashboardSearchDraft("smith", "admin-1");
       expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+      expect(window.location.search).toBe("");
 
       // Navigate to `/` within the 300ms window -- Dashboard's own FIRST mount, under StrictMode,
       // double-invokes this component's effects (mount, cleanup, mount) synchronously in one commit.
@@ -292,7 +301,6 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
 
       await act(async () => { vi.advanceTimersByTime(350); });
 
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
       expect(window.location.search).toContain("q=smith");
     } finally {
       vi.useRealTimers();
@@ -309,12 +317,11 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
       const locationBeforeType = window.location.search;
       act(() => { setDashboardSearchDraft("smith", "admin-1"); });
       expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+      expect(window.location.search).toBe(locationBeforeType);
 
       await act(async () => { root.unmount(); });
       await act(async () => { vi.advanceTimersByTime(350); });
 
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
       expect(window.location.search).toBe(locationBeforeType);
     } finally {
       vi.useRealTimers();

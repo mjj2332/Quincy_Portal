@@ -97,7 +97,7 @@ describe("ShellSearch adversarial mode matrix (#217)", () => {
 
     await keydown(input, { key: "Escape" });
 
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "" });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
@@ -107,7 +107,8 @@ describe("ShellSearch adversarial mode matrix (#217)", () => {
       const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
       await inputValue(input, "  smith   + co  ");
       await keydown(input, { key: "Enter" });
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("smith + co");
+      // #217 build, step 5 (sanctioned): the committed value used to be read back from the store's
+      // own `.query`; the URL push IS the commit now, so this asserts on it directly.
       expect(routerMock.push).toHaveBeenLastCalledWith("/?q=smith+%2B+co");
       await renderSearch({ variant, isDashboard: false });
       await act(async () => {

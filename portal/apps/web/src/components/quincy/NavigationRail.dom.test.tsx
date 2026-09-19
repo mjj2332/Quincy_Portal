@@ -838,7 +838,8 @@ describe("the account menu's sign out", () => {
     try {
       // Typed 100ms ago -- still mid-debounce, nothing committed, no `q` in the URL yet.
       act(() => { setDashboardSearchDraft("smith", "u1"); });
-      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smith", query: "" });
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smith" });
+      expect(writer).not.toHaveBeenCalled();
 
       // `signOut()` itself is a pending promise the test controls, so the race window between the
       // synchronous scrub and the network resolving is exercised directly.
@@ -849,11 +850,11 @@ describe("the account menu's sign out", () => {
 
       // Synchronously, before `signOut()` has had any chance to resolve: the debounce is already
       // gone.
-      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "" });
 
       act(() => { vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 700); });
       expect(`${window.location.pathname}${window.location.search}`).toBe("/");
-      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "" });
       expect(writer).not.toHaveBeenCalled();
 
       await act(async () => { resolveSignOut(); await Promise.resolve(); await Promise.resolve(); });

@@ -143,10 +143,9 @@ describe("the bare Calendar intent, on arrival", () => {
   // `staff-routes.ts`'s `DashboardCalendarIntentRoute`) was the only place the search could still
   // be coming from on arrival.
   it("carries a `q` on the bare Calendar intent into the canonical facet URL, from an EMPTY store", async () => {
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
     await renderAt("/?view=calendar&q=smith");
     expect(currentLocation()).toBe(`/?view=calendar&date=${rememberedDate}&sub=${rememberedSubview}&layers=project%2Cchecklist&q=smith`);
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
   });
 });

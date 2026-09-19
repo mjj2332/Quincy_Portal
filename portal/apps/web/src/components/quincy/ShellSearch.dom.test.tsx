@@ -305,7 +305,6 @@ describe("ShellSearch — an IME composition never arms or fires a stray commit 
     });
 
     expect(writes).toEqual([]);
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     unregister();
   });
 
@@ -346,6 +345,8 @@ describe("ShellSearch — an IME composition never arms or fires a stray commit 
 
 describe("ShellSearch — Enter mid-IME-composition neither commits nor navigates (#217 build, step 1)", () => {
   it("an Enter that is still part of the composition (native isComposing) is ignored", async () => {
+    const writes: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => writes.push(q));
     await renderInProvider({ variant: "expanded", isDashboard: false });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await compositionStart(input);
@@ -356,10 +357,13 @@ describe("ShellSearch — Enter mid-IME-composition neither commits nor navigate
       await Promise.resolve();
     });
     expect(routerMock.push).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(writes).toEqual([]);
+    unregister();
   });
 
   it("the browser's own 229 keyCode Enter (Process) is also ignored", async () => {
+    const writes: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => writes.push(q));
     await renderInProvider({ variant: "expanded", isDashboard: false });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await compositionStart(input);
@@ -370,7 +374,8 @@ describe("ShellSearch — Enter mid-IME-composition neither commits nor navigate
       await Promise.resolve();
     });
     expect(routerMock.push).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(writes).toEqual([]);
+    unregister();
   });
 });
 
@@ -556,12 +561,15 @@ describe("ShellSearch — the ref handle (⌘K)", () => {
 
 describe("ShellSearch — Enter", () => {
   it("on the Dashboard: commits the search without navigating", async () => {
+    const writes: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => writes.push(q));
     await renderInProvider({ variant: "expanded", isDashboard: true });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "smith");
     await keydown(input, { key: "Enter" });
     expect(routerMock.push).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
+    expect(writes).toEqual(["smith"]);
+    unregister();
   });
 
   it("off the Dashboard: commits the search and pushes the Dashboard route carrying it", async () => {
@@ -569,7 +577,6 @@ describe("ShellSearch — Enter", () => {
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "smith");
     await keydown(input, { key: "Enter" });
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("smith");
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     expect(routerMock.push).toHaveBeenCalledWith("/?q=smith");
   });
@@ -579,7 +586,6 @@ describe("ShellSearch — Enter", () => {
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "a".repeat(201));
     await keydown(input, { key: "Enter" });
-    expect(__getDashboardSearchSnapshotForTest().query.length).toBe(200);
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     const pushed = routerMock.push.mock.calls[0]?.[0] as string;
     const pushedQuery = new URL(pushed, "https://example.test").searchParams.get("q");
@@ -591,7 +597,6 @@ describe("ShellSearch — Enter", () => {
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     await type(input, "   ");
     await keydown(input, { key: "Enter" });
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
     expect(routerMock.push).toHaveBeenCalledTimes(1);
     expect(routerMock.push).toHaveBeenCalledWith("/");
   });
@@ -608,7 +613,7 @@ describe("ShellSearch — Escape", () => {
     // ABOVE the React root never sees the event, checked next; `dispatchEvent`'s return value
     // (false only when `preventDefault` was called on a cancelable event) stays `true`.
     const defaultPrevented = await keydown(input, { key: "Escape" });
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "" });
     expect(defaultPrevented).toBe(false);
   });
 

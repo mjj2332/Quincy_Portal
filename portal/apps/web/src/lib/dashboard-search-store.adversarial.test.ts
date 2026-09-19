@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __getDashboardSearchSnapshotForTest,
   __resetDashboardSearchStoreForTest,
-  adoptDashboardSearchFromUrl,
   clearDashboardSearch,
   commitDashboardSearchNow,
   DASHBOARD_SEARCH_DEBOUNCE_MS,
@@ -11,6 +10,7 @@ import {
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
   setDashboardSearchUrlWriter,
+  syncDashboardSearchDraftFromLocation,
 } from "./dashboard-search-store";
 
 // Compile-time probe: callers may not silently omit the principal identity.
@@ -40,11 +40,11 @@ describe("dashboard search ownership adversarial probes (#217)", () => {
     setDashboardSearchDraft("s", "principal-a");
     vi.advanceTimersByTime(150);
     setDashboardSearchDraft("smith", "principal-a");
-    adoptDashboardSearchFromUrl("backward", "principal-a");
+    syncDashboardSearchDraftFromLocation("backward", "principal-a");
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 1);
 
     expect(writer).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "backward", query: "backward", principalId: "principal-a" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "backward", principalId: "principal-a" });
     unregister();
   });
 
@@ -56,7 +56,7 @@ describe("dashboard search ownership adversarial probes (#217)", () => {
     vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 1);
 
     expect(writer).not.toHaveBeenCalled();
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "", principalId: "principal-b" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", principalId: "principal-b" });
     unregister();
   });
 
@@ -67,7 +67,7 @@ describe("dashboard search ownership adversarial probes (#217)", () => {
     commitDashboardSearchNow("principal-a");
     clearDashboardSearch("principal-a");
 
-    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", query: "", principalId: "principal-a" });
+    expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", principalId: "principal-a" });
     expect(writer).toHaveBeenLastCalledWith("");
     unregister();
   });
@@ -79,8 +79,8 @@ describe("dashboard search ownership adversarial probes (#217)", () => {
     const second = getDashboardSearchSnapshotForPrincipal("principal-b");
 
     expect(first).toBe(second);
-    expect(first).toEqual({ draft: "", query: "", principalId: "principal-b" });
-    expect(getDashboardSearchSnapshotForPrincipal("principal-a").query).toBe("smith");
+    expect(first).toEqual({ draft: "", principalId: "principal-b" });
+    expect(getDashboardSearchSnapshotForPrincipal("principal-a").draft).toBe("smith");
   });
 
   it("drops ownership on sign-out even when the next sign-in uses the same id", () => {
@@ -89,6 +89,6 @@ describe("dashboard search ownership adversarial probes (#217)", () => {
     dropDashboardSearchOwnership();
     resetDashboardSearchForPrincipal("principal-a");
 
-    expect(__getDashboardSearchSnapshotForTest()).toEqual({ draft: "", query: "", principalId: "principal-a" });
+    expect(__getDashboardSearchSnapshotForTest()).toEqual({ draft: "", principalId: "principal-a" });
   });
 });

@@ -177,7 +177,7 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       });
       // Still mid-debounce.
       expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+      expect(writes).toEqual([]);
 
       // The armed timer is advanced past its debounce from INSIDE the layout-effect callback —
       // strictly before B's own boundary reset (a passive effect) has run — modelling "a
@@ -190,7 +190,6 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
       });
 
       expect(writes).toEqual([]);
-      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
       unregister();
     } finally {
       vi.useRealTimers();
@@ -221,6 +220,5 @@ describe("ShellSearch + PrincipalFreshnessBoundary — principal isolation (#217
     const inputAfterSignIn = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     expect(inputAfterSignIn.value).toBe("");
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
   });
 });

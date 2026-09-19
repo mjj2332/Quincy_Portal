@@ -9,21 +9,27 @@
  * Dashboard screen (which already owns `lib/router.ts`'s `history.replace`/`navigateCalendar`)
  * supplies the writer.
  *
+ * #217 build, step 5: the URL is the ONLY committed Dashboard search — this store no longer keeps
+ * a `query` copy of it at all (it used to; `Dashboard.tsx` now derives `committedQuery` straight
+ * from the currently governing route, `@quincy/shared`'s `dashboardSearchOf`, at render). What
+ * remains here is exactly what the design calls "not in the URL": `draft`, the debounce timer, IME
+ * composing state, and the owning principal. Committing is a URL write through the registered
+ * writer (replace while typing) — with no writer registered (off-Dashboard) a timer fire is simply
+ * dropped; nothing local is left for it to update instead.
+ *
  * The Back/Forward race this store exists to close: a debounced commit and a popstate landing in
- * the same tick must never let the debounce win. `adoptDashboardSearchFromUrl` cancels the pending
- * timer FIRST, then adopts — so a keystroke typed just before Back is never written back out over
- * the destination the user actually navigated to.
+ * the same tick must never let the debounce win. `syncDashboardSearchDraftFromLocation` cancels the
+ * pending timer FIRST, then syncs the draft — so a keystroke typed just before Back is never
+ * written back out over the destination the user actually navigated to.
  */
 import { sanitizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
 import { normalizeDashboardSearchText } from "@quincy/shared";
 
 export const DASHBOARD_SEARCH_DEBOUNCE_MS = 300;
 
-export type DashboardSearchSnapshot = { draft: string; query: string; principalId: string };
+export type DashboardSearchSnapshot = { draft: string; principalId: string };
 
 let draft = "";
-let query = "";
-let lastWritten = "";
 let principalId = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
 // The principal the ARMED timer was set for — captured at arm time, checked at fire time. A
@@ -31,7 +37,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 // entirely, not run it against whichever principal happens to be current when it fires.
 let timerOwner = "";
 let writer: ((query: string) => void) | null = null;
-let snapshot: DashboardSearchSnapshot = { draft, query, principalId };
+let snapshot: DashboardSearchSnapshot = { draft, principalId };
 // A stable reference PER viewer id for the "wrong owner" render-time snapshot — `useSyncExternalStore`
 // requires `getSnapshot()` to return the SAME reference across repeated calls within a render pass
 // whenever nothing has changed, or React treats it as tearing and can loop. Recomputed only when
@@ -40,7 +46,7 @@ let mismatchCache: { viewer: string; snapshot: DashboardSearchSnapshot } | null 
 const listeners = new Set<() => void>();
 
 function notify(): void {
-  snapshot = { draft, query, principalId };
+  snapshot = { draft, principalId };
   mismatchCache = null;
   for (const listener of listeners) listener();
 }
@@ -54,8 +60,8 @@ function clearTimer(): void {
 
 /**
  * Ownership switch used by every direct write path (draft/commit-now/clear): if the caller's own
- * id disagrees with the store's current owner, the OLD owner's draft/query/timer are cleared first
- * — a write by a new principal must never land on top of a previous principal's in-flight state.
+ * id disagrees with the store's current owner, the OLD owner's draft/timer are cleared first — a
+ * write by a new principal must never land on top of a previous principal's in-flight state.
  * Guarded (a same-id call is a no-op) so a normal keystroke burst from the SAME principal never
  * clears itself; `resetDashboardSearchForPrincipal` below shares this same guard for the same
  * reason (Dashboard's own mount effect, `dashboard-search-store.test.ts`'s "a principal change
@@ -65,23 +71,19 @@ function ensureOwner(viewerId: string): void {
   if (viewerId !== principalId) resetDashboardSearchForPrincipal(viewerId);
 }
 
+/**
+ * #217 build, step 5: no internal committed copy left to update or compare against — a commit is
+ * purely "cancel the pending timer, then hand the registered writer the normalised draft". With no
+ * writer registered (off-Dashboard, or after this component's own unmount) the write is simply
+ * dropped: there is nothing local left for it to fall back to, and nothing off-Dashboard ever reads
+ * a "committed" value from this store in the first place (the rail's hrefs and an off-Dashboard
+ * Enter both carry the normalised DRAFT instead — see `takeDashboardSearchForNavigation` below and
+ * `ShellSearch.tsx`'s own Enter handler).
+ */
 function commit(): void {
   clearTimer();
-  // #217 fix round 3, item 4 / round 4, item 2 (Sol's whole-branch review / re-review): the FULL
-  // normaliser now -- `@quincy/shared`'s own `normalizeDashboardSearchText` (strip, collapse
-  // whitespace, trim, cap) -- the same one `staffPathFor`/`calendarPathFor` (`staff-routes.ts`) and
-  // the worker's `/api/projects?q=` matcher (`routes/projects.ts`, cap only there) share, so a
-  // committed `query` can never disagree with what a URL built from the same raw draft normalises
-  // to. Re-stripping an already-`sanitizeDashboardCalendarSearch`d draft here is redundant but
-  // harmless (idempotent).
   const normalized = normalizeDashboardSearchText(draft);
-  if (normalized === query && normalized === lastWritten) return;
-  query = normalized;
-  notify();
-  if (writer && normalized !== lastWritten) {
-    lastWritten = normalized;
-    writer(normalized);
-  }
+  writer?.(normalized);
 }
 
 export function subscribeDashboardSearch(listener: () => void): () => void {
@@ -92,16 +94,9 @@ export function subscribeDashboardSearch(listener: () => void): () => void {
 }
 
 /**
- * TEST-ONLY (#217 fix round 5, item 1, BLOCKER). Unscoped: returns the store's raw state
- * regardless of who is asking. RENDER code must never use this -- `Dashboard.tsx`'s own render
- * (`~197`) and `lib/app-router.tsx`'s rail-href derivation (`~252`) both used to, and on A→B while
- * still parked on those screens, a render pass could consume A's `query`/`draft` and serialise it
- * into the rail's own hrefs or the project query, worst on the narrow layout with the Sheet closed
- * (no `ShellSearch` instance mounted there to make the layout-effect ownership claim). This export
- * exists only so a test can assert the store's raw internal state directly without knowing which
- * principal "owns" it at that point in the test; production code reads exclusively through
- * `getDashboardSearchSnapshotForPrincipal`, which this file deliberately does not also export
- * unscoped under any other name.
+ * TEST-ONLY. Unscoped: returns the store's raw state regardless of who is asking. RENDER code must
+ * never use this — production code reads exclusively through `getDashboardSearchSnapshotForPrincipal`,
+ * which this file deliberately does not also export unscoped under any other name.
  */
 export function __getDashboardSearchSnapshotForTest(): DashboardSearchSnapshot {
   return snapshot;
@@ -120,7 +115,7 @@ export function __getDashboardSearchSnapshotForTest(): DashboardSearchSnapshot {
 export function getDashboardSearchSnapshotForPrincipal(viewerId: string): DashboardSearchSnapshot {
   if (viewerId === principalId) return snapshot;
   if (mismatchCache && mismatchCache.viewer === viewerId) return mismatchCache.snapshot;
-  mismatchCache = { viewer: viewerId, snapshot: { draft: "", query: "", principalId: viewerId } };
+  mismatchCache = { viewer: viewerId, snapshot: { draft: "", principalId: viewerId } };
   return mismatchCache.snapshot;
 }
 
@@ -184,62 +179,27 @@ export function cancelPendingDashboardSearchWrite(): void {
 }
 
 /**
- * popstate + mount. Cancels the timer FIRST — the Back/Forward race fix: a pending debounce can
- * never clobber a popstate landing in the same tick. `viewerId` required (#217 fix round 5, item 2)
- * and unconditionally becomes the store's recorded owner: adopting a URL's search is itself an
- * ownership-establishing write, not merely a value update, so a caller adopting on behalf of a
- * DIFFERENT principal than the store's current owner does not silently keep the old one recorded.
- */
-export function adoptDashboardSearchFromUrl(value: string, viewerId: string): void {
-  clearTimer();
-  principalId = viewerId;
-  draft = value;
-  query = value;
-  lastWritten = value;
-  notify();
-}
-
-/**
  * The stateless draft-from-URL sync (#217 build, step 3) — one call, in `ShellRoute`'s own
- * `useLayoutEffect` keyed on location + principal, replacing every OTHER adoption path this store
- * used to need (`adoptDashboardSearchFromUrl` stays for now, unused by the caller this replaces,
- * until step 4 deletes the render-side machinery that called it). `routeQuery` is the CALLER's own
+ * `useLayoutEffect` keyed on location + principal, and the ONLY adoption path this store has left
+ * (#217 build, step 5 drops the older `adoptDashboardSearchFromUrl`, which existed only to keep a
+ * `query` copy in step; there is no `query` left to keep in step). `routeQuery` is the CALLER's own
  * `dashboardSearchOf(route)` for the CURRENTLY governing route -- this function does not parse a
  * route itself, and does not special-case a non-Dashboard route: the caller is responsible for not
  * calling this at all when `route.kind !== "dashboard"` (its lack of a `q` is not authoritative
  * off-Dashboard -- an Enter on the rail must still navigate with whatever the Staff member typed).
  *
- * Ownership first (`ensureOwner`), then the timer is cancelled UNCONDITIONALLY -- this is itself
- * the Back/Forward race fix `adoptDashboardSearchFromUrl`'s own docblock describes, generalised:
- * a location change (typed navigation, rail click, Back/Forward, or this component's OWN debounced
- * write landing) must never let an in-flight debounce fire after the fact and overwrite whatever
- * the URL now says.
+ * Ownership first (`ensureOwner`), then the timer is cancelled UNCONDITIONALLY -- the Back/Forward
+ * race fix, generalised: a location change (typed navigation, rail click, Back/Forward, or this
+ * component's OWN debounced write landing) must never let an in-flight debounce fire after the fact
+ * and overwrite whatever the URL now says.
  *
  * The draft itself is compared NORMALISED against `routeQuery ?? ""` before it is ever overwritten
  * -- this is what keeps the store's own debounced write from fighting the very typing that produced
- * it: that write emits exactly `normalizeDashboardSearchText(draft)` (`commit()` below), so once the
+ * it: that write emits exactly `normalizeDashboardSearchText(draft)` (`commit()` above), so once the
  * resulting URL lands back here, `normalize(draft) === (routeQuery ?? "")` and the raw draft (a
  * trailing space, mid-collapse whitespace) is left alone. Only a location that carries a GENUINELY
  * different committed search (a rail click to a different q, Back/Forward, a pasted deep link)
  * ever overwrites the draft.
- *
- * #217 build, step 4 (found while wiring `Dashboard.tsx`'s render-time `committedQuery`, not a
- * design change of its own): `query`/`lastWritten` are ALSO brought into step with `routeQuery`
- * here, in the SAME branch that already updates `draft` (not on every call). Once step 4 deletes
- * every render-side path that used to keep `query` current (`adoptDashboardSearchFromUrl`'s own
- * callers), this function -- called on every location change `Dashboard` is mounted under -- is the
- * only thing left that ever touches it, and `commit()`'s own no-op guard below still compares
- * against both fields. Leaving them at their cold-module `""` default after landing on a URL that
- * already carries a `q` made `commit()` silently no-op the FIRST clear (an empty draft normalises
- * to `""`, coincidentally matching that stale default) -- the chip's × visibly did nothing. Scoped
- * to the draft-changed branch, not unconditionally: `query`/`lastWritten` go stale only when
- * `draft` itself is being seeded from `""` on a fresh/reset principal -- the one case a real
- * `commit()` never had a chance to keep them current for. When `draft` already matches (this
- * function's own "stable no-op" case, `dashboard-search-store.test.ts`), `query`/`lastWritten` were
- * already kept correct by whatever `commit()` call put `draft` there in the first place, and this
- * stays a true no-op, exactly as before. `query`/`lastWritten` themselves are already slated for
- * deletion in step 5, alongside a `commit()` rewritten not to need them; this keeps them correct in
- * the meantime rather than shipping that regression for one commit.
  */
 export function syncDashboardSearchDraftFromLocation(routeQuery: string | undefined, viewerId: string): void {
   ensureOwner(viewerId);
@@ -247,8 +207,6 @@ export function syncDashboardSearchDraftFromLocation(routeQuery: string | undefi
   const nextDraft = routeQuery ?? "";
   if (normalizeDashboardSearchText(draft) !== nextDraft) {
     draft = nextDraft;
-    query = nextDraft;
-    lastWritten = nextDraft;
     notify();
   }
 }
@@ -256,11 +214,12 @@ export function syncDashboardSearchDraftFromLocation(routeQuery: string | undefi
 /**
  * Off-Dashboard Enter, and every navigation site that used to flush-then-read `commitDashboardSearchNow`
  * + `getDashboardSearchSnapshotForPrincipal(...).query` as a pair (#217 build, step 3 adds this;
- * step 4 is what actually replaces those call sites). Cancels the pending timer -- the write this
- * function's caller is about to make (a `history.push`/`replace`) IS the commit, so there is nothing
- * left for a debounce to redundantly re-fire -- and returns the draft normalised exactly the way the
- * store's own `commit()` would, so a caller building a URL from this return value can never disagree
- * with what the store itself would have written.
+ * step 4 replaces those call sites; step 5 removes the `.query` this docblock used to describe
+ * reading, since nothing local holds a committed copy any more). Cancels the pending timer -- the
+ * write this function's caller is about to make (a `history.push`/`replace`) IS the commit, so there
+ * is nothing left for a debounce to redundantly re-fire -- and returns the draft normalised exactly
+ * the way the store's own `commit()` would, so a caller building a URL from this return value can
+ * never disagree with what the store itself would have written.
  */
 export function takeDashboardSearchForNavigation(viewerId: string): string {
   ensureOwner(viewerId);
@@ -272,8 +231,6 @@ export function resetDashboardSearchForPrincipal(id: string): void {
   if (id === principalId) return;
   clearTimer();
   draft = "";
-  query = "";
-  lastWritten = "";
   principalId = id;
   notify();
 }
@@ -291,8 +248,6 @@ export function resetDashboardSearchForPrincipal(id: string): void {
 export function dropDashboardSearchOwnership(): void {
   clearTimer();
   draft = "";
-  query = "";
-  lastWritten = "";
   principalId = "";
   notify();
 }
@@ -306,16 +261,21 @@ export function dropDashboardSearchOwnership(): void {
  * `viewingArchived` flipping while already on List recreates `navigateCalendar` (its own dep
  * list includes `viewingArchived`) purely as a side effect, tearing the writer down and back up
  * with no corresponding `history` call anywhere to carry a pending "smith" into. Flushing there
- * (nulling `writer` then calling `commit()`) settled `query` internally but the writer was already
- * gone, so the value was silently never written.
+ * (nulling `writer` then calling `commit()`) settled the committed value internally but the writer
+ * was already gone, so the value was silently never written.
  *
  * The fix is at the class, not any one call site: unregistering NEVER touches the pending timer or
  * `draft` — only the `writer` reference itself, guarded so an out-of-order call can't null a writer
  * a NEWER registration already installed. A pending debounce keeps ticking across any number of
  * re-registrations and fires `commit()` against whichever writer is registered when it elapses,
  * which is exactly "keep the pending value in the store across unregister and commit it through
- * the next registered writer". `adoptDashboardSearchFromUrl`'s own `clearTimer()` (the Back/Forward
- * race fix) is unaffected — that is a deliberate, unrelated cancellation of a DIFFERENT kind.
+ * the next registered writer".
+ *
+ * #217 build, step 6: `Dashboard.tsx`'s own writer-registration effect no longer needs the
+ * `writerGenerationRef` / `queueMicrotask` StrictMode dance this docblock used to describe working
+ * around -- a fire with no writer registered is now simply dropped (there is no local `query` copy
+ * left for it to update either), so an unmount's cleanup can unregister unconditionally without a
+ * deferred check for whether a same-tick StrictMode replay already reclaimed ownership.
  */
 export function setDashboardSearchUrlWriter(nextWriter: ((query: string) => void) | null): () => void {
   writer = nextWriter;
@@ -327,8 +287,6 @@ export function setDashboardSearchUrlWriter(nextWriter: ((query: string) => void
 export function __resetDashboardSearchStoreForTest(): void {
   clearTimer();
   draft = "";
-  query = "";
-  lastWritten = "";
   principalId = "";
   timerOwner = "";
   writer = null;

@@ -226,9 +226,9 @@ describe("PrincipalFreshnessBoundary resets the Dashboard search store on any pr
     const written: string[] = [];
     const unregister = setDashboardSearchUrlWriter((q) => written.push(q));
     act(() => setDashboardSearchDraft("smith", principal));
-    // Still mid-debounce -- nothing has committed to `query` yet, only `draft`.
+    // Still mid-debounce -- nothing has been written to the URL yet, only `draft`.
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(written).toEqual([]);
 
     // Simulates a sign-out or impersonation switch while parked off the Dashboard (this test
     // never mounts one) -- the boundary itself is the only thing that changes.
@@ -236,7 +236,7 @@ describe("PrincipalFreshnessBoundary resets the Dashboard search store on any pr
     await act(async () => { await flush(); });
 
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
-    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    expect(written).toEqual([]);
 
     // The reset cancels the pending timer outright -- it must never fire into the NEW principal's
     // session after the fact.
