@@ -1,4 +1,5 @@
 import {
+  normalizeProductionCalendarSearch,
   PRODUCTION_CALENDAR_LAYERS,
   PRODUCTION_CALENDAR_MAX_EDITOR_IDS,
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
@@ -51,20 +52,28 @@ export type DashboardListKanbanRoute = {
 };
 
 /**
- * The bare `/?view=calendar` intent (#111) -- deliberately carries NO `search` field. #217 fix
- * round 3, item 3 (Sol's whole-branch review): the type used to allow `{ dashboardView:
- * "calendar", search }`, which `staffPathFor` happily serialized to `/?view=calendar&q=...` and
- * `parseStaffLocation` then rejected outright (that spelling isn't the intent — it isn't the sole
- * query field — and isn't a complete facet either), a route the serializer itself could produce
- * but the parser could never read back. Making the illegal combination unrepresentable at the type
- * level closes that hole at the source instead of teaching the parser to accept a spelling this
- * module's own docblock (above) says should never be observed in the address bar. Carrying the
- * search across this intent regardless is `Dashboard.tsx`'s job: it owns the one full-facet
- * rewrite the intent resolves into, and reads the live search store to build it (item 1).
+ * The bare `/?view=calendar` intent (#111) -- CAN carry a `search` field, as of #217 fix round 4,
+ * item 1 (Sol re-review). Round 3, item 3 made `{ dashboardView: "calendar", search }`
+ * unrepresentable specifically because `staffPathFor` could serialize it to
+ * `/?view=calendar&q=...` while `parseStaffLocation` rejected that exact spelling outright -- a
+ * route the serializer could produce but the parser could never read back. That analysis was
+ * right about the MISMATCH; the fix it chose (forbid the state) turned out to be the wrong side of
+ * it. The rail's Calendar link is a plain `<a href>` the browser also owns: keyboard Enter (not
+ * intercepted -- `router.ts`'s own `shouldInterceptInternalLink` only claims a genuine left-click),
+ * cmd/middle-click, "open in new tab" and a reload all load `href` as a fresh document, with a
+ * COLD, empty `lib/dashboard-search-store.ts` singleton -- so a canonicaliser that could only read
+ * the in-memory store from that intent lost the search on every one of those paths. The fix this
+ * round makes instead: `/?view=calendar&q=<text>` is now a legal INTENT spelling too (the parser
+ * accepts `view` plus, optionally, exactly one `q` -- still rejecting every partial facet, exactly
+ * as before), so the search survives in the URL itself regardless of how the browser got there.
+ * `Dashboard.tsx`'s one full-facet rewrite still owns carrying it into the concrete Calendar URL —
+ * that part of item 1's round-3 design was already right — but now reads it FROM THE ROUTE first,
+ * falling back to the live store only for a draft still in flight during an intercepted SPA click.
  */
 export type DashboardCalendarIntentRoute = {
   kind: "dashboard";
   dashboardView: "calendar";
+  search?: string;
 };
 
 export type DashboardViewRoute = DashboardListKanbanRoute | DashboardCalendarIntentRoute;
@@ -133,6 +142,25 @@ export function stripUnsafeText(value: string): string {
 export function capDashboardSearchText(value: string): string {
   const chars = [...value];
   return chars.length > DASHBOARD_SEARCH_MAX_CHARS ? chars.slice(0, DASHBOARD_SEARCH_MAX_CHARS).join("") : value;
+}
+
+/**
+ * The ONE shared normaliser for a Dashboard search value: strip unsafe characters, collapse/trim
+ * whitespace, then cap -- #217 fix round 4, item 2 (Sol re-review). `staffPathFor`/`calendarPathFor`
+ * below used to only strip and cap (#217 fix round 3), so a raw, not-yet-committed draft
+ * (`"  smith   street  "`, reaching a URL straight from `apps/web/src/lib/app-router.tsx`'s rail
+ * hrefs before this fix) served AND parsed back as that exact raw text — never actually collapsed
+ * to the same value `dashboard-search-store.ts`'s own commit path produces, so the URL and the
+ * store's own committed `query` could disagree on what "the same search" even looks like. Every
+ * href/URL this module builds from a live (possibly still-mid-keystroke) search now goes through
+ * this one function, so no caller can reproduce that drift by getting the composition order wrong.
+ * Idempotent by construction (strip/trim/collapse/cap are each idempotent), which is what keeps
+ * `staffPathFor(parseStaffLocation(staffPathFor(x))) === staffPathFor(x)` a fixed point: the parser
+ * itself stays a strict reader of whatever raw text is in `q` — it does not also need to normalise
+ * — because the SERIALIZER's own output is already normalised, and normalising it again is a no-op.
+ */
+export function normalizeDashboardSearchText(value: string): string {
+  return capDashboardSearchText(normalizeProductionCalendarSearch(stripUnsafeText(value)));
 }
 
 /** Parse an unescaped pathname only; query and hash are intentionally out of contract. */
@@ -347,14 +375,21 @@ export function parseStaffLocation(location: string): StaffRoute {
   }
   if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
-    // The bare `/?view=calendar` intent (#111), legal only as the sole query field. Checked before
-    // `parseCalendarLocation` because that function requires a complete facet — a date, a subview
-    // and a non-empty layer list — and would reject this spelling. Every partial facet still falls
-    // through to it and is still rejected: accepting `view=calendar` plus *some* of its parameters
-    // would silently discard the rest. Duplicate keys, a trailing `&`, an oversized query and
-    // non-canonical percent-encoding are already rejected by `parseDashboardQuery` above, so this
-    // arm inherits all of that and only has to count the keys.
-    if ([...params.keys()].length === 1) return { kind: "dashboard", dashboardView: "calendar" };
+    // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
+    // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
+    // docblock for why). Checked before `parseCalendarLocation` because that function requires a
+    // complete facet — a date, a subview and a non-empty layer list — and would reject this
+    // spelling. Every partial facet still falls through to it and is still rejected: accepting
+    // `view=calendar` plus *some* of its parameters (other than `q`) would silently discard the
+    // rest. Duplicate keys, a trailing `&`, an oversized query and non-canonical percent-encoding
+    // are already rejected by `parseDashboardQuery` above, so this arm inherits all of that and
+    // only has to count and name the keys.
+    const keys = [...params.keys()];
+    if (keys.length === 1 || (keys.length === 2 && params.has("q"))) {
+      const search = parseDashboardSearch(params);
+      if (search === null) return { kind: "not-found" };
+      return { kind: "dashboard", dashboardView: "calendar", ...(search ? { search } : {}) };
+    }
     const calendar = parseCalendarLocation(params);
     if (calendar === null) return { kind: "not-found" };
     return { kind: "dashboard", calendar };
@@ -389,9 +424,11 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   if (calendar.showDeliveredProjects !== calendarFilterDefaults.showDeliveredProjects) params.set("delivered", "1");
   if (calendar.overdueOnly !== calendarFilterDefaults.overdueOnly) params.set("overdue", "1");
   if (calendar.myTasks !== calendarFilterDefaults.myTasks) params.set("mine", "1");
-  // #217 fix round 3, item 3: capped as well as stripped, so a caller-supplied search over
-  // `DASHBOARD_SEARCH_MAX_CHARS` can never produce a `q` the parser then rejects outright.
-  const safeSearch = capDashboardSearchText(stripUnsafeText(calendar.search));
+  // #217 fix round 3, item 3 / round 4, item 2: normalised (strip, collapse whitespace, trim, cap)
+  // through the one shared `normalizeDashboardSearchText`, not just stripped and capped -- a raw
+  // draft's stray whitespace must never reach the URL differently than it reaches the store's own
+  // committed `query`.
+  const safeSearch = normalizeDashboardSearchText(calendar.search);
   if (safeSearch !== calendarFilterDefaults.search) params.set("q", safeSearch);
   return `/?${params.toString()}`;
 }
@@ -401,18 +438,12 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
     case "dashboard": {
       if ("calendar" in route) return calendarPathFor(route.calendar);
       const params = new URLSearchParams();
-      // `search` only exists on the bare route and the List/Kanban arm of `DashboardViewRoute` --
-      // the Calendar INTENT arm has none, by construction (#217 fix round 3, item 3) — so it is
-      // read from `route` itself only once `route.dashboardView` is confirmed not `"calendar"`.
-      let search: string | undefined;
-      if ("dashboardView" in route) {
-        params.set("view", route.dashboardView);
-        if (route.dashboardView !== "calendar") search = route.search;
-      } else {
-        search = route.search;
-      }
+      // `search` exists on every arm here now (#217 fix round 4, item 1 gave the Calendar INTENT
+      // arm one too), so it is read from `route` uniformly.
+      if ("dashboardView" in route) params.set("view", route.dashboardView);
+      const search = route.search;
       if (search !== undefined) {
-        const safeSearch = capDashboardSearchText(stripUnsafeText(search));
+        const safeSearch = normalizeDashboardSearchText(search);
         if (safeSearch !== "") params.set("q", safeSearch);
       }
       const qs = params.toString();

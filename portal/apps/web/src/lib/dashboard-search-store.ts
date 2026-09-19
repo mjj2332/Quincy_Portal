@@ -14,8 +14,8 @@
  * timer FIRST, then adopts — so a keystroke typed just before Back is never written back out over
  * the destination the user actually navigated to.
  */
-import { sanitizeDashboardCalendarSearch, normalizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
-import { capDashboardSearchText } from "@quincy/shared";
+import { sanitizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
+import { normalizeDashboardSearchText } from "@quincy/shared";
 
 export const DASHBOARD_SEARCH_DEBOUNCE_MS = 300;
 
@@ -44,11 +44,14 @@ function clearTimer(): void {
 
 function commit(): void {
   clearTimer();
-  // #217 fix round 3, item 4 (Sol's whole-branch review): the cap is `@quincy/shared`'s own
-  // `capDashboardSearchText` now, the same one `staffPathFor`/`calendarPathFor`
-  // (`staff-routes.ts`) and the worker's `/api/projects?q=` matcher (`routes/projects.ts`) use --
-  // one definition, so the 200-char cap can never drift between the three.
-  const normalized = capDashboardSearchText(normalizeDashboardCalendarSearch(draft));
+  // #217 fix round 3, item 4 / round 4, item 2 (Sol's whole-branch review / re-review): the FULL
+  // normaliser now -- `@quincy/shared`'s own `normalizeDashboardSearchText` (strip, collapse
+  // whitespace, trim, cap) -- the same one `staffPathFor`/`calendarPathFor` (`staff-routes.ts`) and
+  // the worker's `/api/projects?q=` matcher (`routes/projects.ts`, cap only there) share, so a
+  // committed `query` can never disagree with what a URL built from the same raw draft normalises
+  // to. Re-stripping an already-`sanitizeDashboardCalendarSearch`d draft here is redundant but
+  // harmless (idempotent).
+  const normalized = normalizeDashboardSearchText(draft);
   if (normalized === query && normalized === lastWritten) return;
   query = normalized;
   notify();

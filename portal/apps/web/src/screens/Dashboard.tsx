@@ -155,12 +155,6 @@ type DashboardRouteArm = Extract<DashboardRoute, { kind: "dashboard" }>;
 // literals silently collapses to `never` instead of failing loudly at the source of the change.
 type DashboardViewRoute = SharedDashboardViewRoute;
 type DashboardCalendarRoute = Extract<DashboardRouteArm, { calendar: DashboardCalendarState }>;
-// #217 fix round 3, item 3: the Calendar arm of `DashboardViewRoute` (`{ dashboardView:
-// "calendar" }`) carries no `search` field at all now (`staff-routes.ts`) -- a real type
-// predicate, not an inline compound `if`, is what lets TypeScript actually narrow it away where
-// that matters (`adoptRouteSearch` below); a compound `"x" in y && y.x === "..."` guard clause
-// does not reliably narrow a union through a negated `&&` the way a declared predicate does.
-type DashboardCalendarIntentRoute = Extract<DashboardViewRoute, { dashboardView: "calendar" }>;
 
 function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewRoute {
   return "dashboardView" in route;
@@ -168,10 +162,6 @@ function isDashboardViewRoute(route: DashboardRouteArm): route is DashboardViewR
 
 function isDashboardCalendarRoute(route: DashboardRouteArm): route is DashboardCalendarRoute {
   return "calendar" in route;
-}
-
-function isDashboardCalendarIntentRoute(route: DashboardRouteArm): route is DashboardCalendarIntentRoute {
-  return "dashboardView" in route && route.dashboardView === "calendar";
 }
 
 function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
@@ -190,6 +180,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const currentDashboardRoute = parsedRoute.kind === "dashboard" ? parsedRoute : null;
   const locationHasCalendar = Boolean(currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute));
   const routeDashboardView = currentDashboardRoute && isDashboardViewRoute(currentDashboardRoute) ? currentDashboardRoute.dashboardView : null;
+  // #217 fix round 4, item 1 (Sol re-review, BLOCKER): every non-facet Dashboard route arm now
+  // carries an optional `search` (the Calendar INTENT arm gained one -- `staff-routes.ts`'s own
+  // `DashboardCalendarIntentRoute` docblock has why), read here once for the two Calendar
+  // canonicalisers below. `undefined` when the route itself carries none (`isDashboardCalendarRoute`
+  // excludes the one arm -- the facet -- that has no `search` field at all).
+  const routeDashboardSearch = currentDashboardRoute && !isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.search : undefined;
   const effectiveRouteCalendar = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.calendar : routeCalendar;
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
@@ -429,7 +425,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // actually governs — fought that branch's own adoption of the SAME `search.query` on every
     // render and looped.
     const adoptRouteSearch = () => {
-      if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute) || isDashboardCalendarIntentRoute(currentDashboardRoute)) return;
+      if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute)) return;
       const routeSearch = currentDashboardRoute.search ?? "";
       if (routeSearch !== search.query) adoptDashboardSearchFromUrl(routeSearch);
     };
@@ -457,14 +453,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // and Sydney-today fallbacks. So this is the same canonicalising replace the stale-bare-
       // arrival case below already performs, reached by a different route.
       if (routeDashboardView === "calendar") {
-        // #217 fix round 3, item 1 (Sol's whole-branch review): `calendarState.search` is
-        // whatever this component last WROTE there, not necessarily the current store value -- a
-        // rail click to the bare `/?view=calendar` intent (the rail deliberately carries no `q`
-        // itself; see `staff-navigation.ts`'s and `app-router.tsx`'s own docblocks) must still
-        // canonicalise with whatever is live in the store right now, mirroring `selectView`'s own
-        // entering-Calendar mapping (`search.draft`, not `search.query` -- the input's own current
-        // text, including anything still mid-debounce).
-        if (calendarState) history.replace(staffPathFor({ kind: "dashboard", calendar: { ...calendarState, search: normalizeDashboardCalendarSearch(sanitizeDashboardCalendarSearch(search.draft)) } }));
+        // #217 fix round 4, item 1 (Sol re-review, BLOCKER): reads `q` FROM THE ROUTE first now --
+        // the rail's Calendar link carries its own `q` (`app-router.tsx`), and the intent itself is
+        // now a legal spelling for one (`staff-routes.ts`'s `DashboardCalendarIntentRoute`), so a
+        // native navigation (keyboard Enter, cmd/middle-click, a reload) that never touches the
+        // in-memory store still canonicalises correctly. Falls back to `search.draft` only when the
+        // route itself carries no `q` at all -- an intercepted SPA click whose href predates a
+        // keystroke still in flight, mirroring `selectView`'s own entering-Calendar mapping.
+        if (calendarState) history.replace(staffPathFor({ kind: "dashboard", calendar: { ...calendarState, search: routeDashboardSearch ?? search.draft } }));
         if (view !== "calendar") setView("calendar");
         return;
       }
@@ -483,9 +479,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     if (locationHasCalendar) return;
     if (calendarFallbackLocationRef.current) {
-      // Same live-value fix as the bare-intent canonicaliser above (#217 fix round 3, item 1).
+      // Same route-first, draft-fallback fix as the bare-intent canonicaliser above (#217 fix
+      // round 4, item 1). `currentDashboardRoute` here is the genuinely bare route (no
+      // `dashboardView`, no facet) -- its own `?q=`, if any, is `routeDashboardSearch`.
       if (calendarState) {
-        history.replace(staffPathFor({ kind: "dashboard", calendar: { ...calendarState, search: normalizeDashboardCalendarSearch(sanitizeDashboardCalendarSearch(search.draft)) } }));
+        history.replace(staffPathFor({ kind: "dashboard", calendar: { ...calendarState, search: routeDashboardSearch ?? search.draft } }));
       }
       calendarFallbackLocationRef.current = false;
       return;
@@ -501,7 +499,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // cheap no-op on a keystroke-driven rerun (the two canonicalisers themselves only ever fire
     // while genuinely arriving at their respective locations, not on every draft change), so this
     // does not turn typing into a per-keystroke URL-rewrite storm.
-  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, search.draft, search.query, view, viewingArchived]);
+  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, search.query, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;

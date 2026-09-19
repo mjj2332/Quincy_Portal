@@ -5,6 +5,7 @@ import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, t
 import { Dashboard } from "./Dashboard";
 import { confirmStore } from "../lib/confirm";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
+import { __resetDashboardSearchStoreForTest, getDashboardSearchSnapshot } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,10 +58,11 @@ describe("the bare Calendar intent, on arrival", () => {
     window.localStorage.setItem(DASHBOARD_CALENDAR_SUBVIEW_KEY, rememberedSubview);
     window.localStorage.setItem(DASHBOARD_CALENDAR_LAST_DATE_KEY, rememberedDate);
     window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await import("../components/ProductionCalendar");
   });
-  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); });
+  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
 
   async function renderAt(location: string, role: typeof authRole.value = "admin") {
     authRole.value = role;
@@ -114,5 +116,19 @@ describe("the bare Calendar intent, on arrival", () => {
     await renderAt("/?view=calendar", "photographer");
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeFalsy();
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
+  });
+
+  // #217 fix round 4, item 1 (Sol re-review, BLOCKER). A fresh document load -- exactly what
+  // keyboard Enter, cmd/middle-click, "open in new tab" and a reload on the rail's Calendar link
+  // all do -- starts with a COLD, empty `dashboard-search-store.ts` singleton. Before this fix the
+  // canonicaliser could only read that empty store, so the intent's own `q` (now legal --
+  // `staff-routes.ts`'s `DashboardCalendarIntentRoute`) was the only place the search could still
+  // be coming from on arrival.
+  it("carries a `q` on the bare Calendar intent into the canonical facet URL, from an EMPTY store", async () => {
+    expect(getDashboardSearchSnapshot().query).toBe("");
+    await renderAt("/?view=calendar&q=smith");
+    expect(currentLocation()).toBe(`/?view=calendar&date=${rememberedDate}&sub=${rememberedSubview}&layers=project%2Cchecklist&q=smith`);
+    expect(getDashboardSearchSnapshot().query).toBe("smith");
+    expect(getDashboardSearchSnapshot().draft).toBe("smith");
   });
 });

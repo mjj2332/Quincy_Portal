@@ -42,7 +42,7 @@ import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
-import { DASHBOARD_VIEW_KEY, readRememberedDashboardView, sanitizeDashboardCalendarSearch, normalizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
+import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
 import { getDashboardSearchSnapshot, subscribeDashboardSearch } from "./dashboard-search-store";
 import { consumeSignInDestination } from "./auth";
@@ -119,24 +119,34 @@ const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
  * `selectView`'s in-app switch, which must flush because it reads the store's `query` to build its
  * `history.push` synchronously).
  *
- * List/Kanban map the search onto `q` directly, through `staffPathFor`, which now normalises and
- * caps it itself (#217 fix round 3, item 3) — so this never has to duplicate that. Calendar maps
- * it onto the calendar facet's own `search` field, the same mapping `selectView` performs when
- * switching INTO Calendar — but only when `dashboardCalendar` is non-null, i.e. the CURRENT route
- * is already a calendar facet with known date/subview/filters to carry forward. Resolving those
- * preferences here for the general case (arriving at Calendar from List/Kanban/elsewhere) was
- * rejected for the same reason `staff-routes.ts`'s own docblock gives for the bare `/?view=calendar`
- * intent: it would put the preference-resolution logic in two places. That case keeps the pure
- * model's bare intent href — `Dashboard.tsx`'s own canonicalisers (fixed alongside this) are what
- * carry the live search across that one full-facet rewrite on arrival.
+ * List/Kanban map the search onto `q` directly, through `staffPathFor`. Calendar does too now
+ * (#217 fix round 4, item 1, BLOCKER): the bare intent became a legal spelling for `q`
+ * (`staff-routes.ts`'s `DashboardCalendarIntentRoute`) specifically because a native navigation —
+ * keyboard Enter (`InternalLink`'s own `shouldInterceptInternalLink` only claims a genuine
+ * left-click), cmd/middle-click, "open in new tab", a reload — loads `href` as a fresh document
+ * with a COLD, empty search store, and the old bare-intent href lost the search on every one of
+ * those paths. When `dashboardCalendar` is non-null (the CURRENT route is already a calendar facet
+ * with known date/subview/filters), the href stays the full facet URL, mapping the search onto its
+ * `search` field the same way `selectView` does when switching INTO Calendar. Resolving those
+ * date/subview preferences here for the general case (arriving at Calendar from List/Kanban/
+ * elsewhere, no facet state to carry forward) was rejected for the same reason `staff-routes.ts`'s
+ * own docblock gives: it would put that preference-resolution logic in two places — `Dashboard.tsx`'s
+ * own canonicaliser is still what owns the one full-facet rewrite for THAT case, reading the search
+ * this href now carries on the intent itself.
+ *
+ * Neither branch pre-normalises `query` before handing it to `staffPathFor`/`calendarPathFor`
+ * (#217 fix round 4, item 2, do-with-1): both now run every `search` through the one shared
+ * `normalizeDashboardSearchText` themselves, so a raw, not-yet-committed draft (`"  smith   street
+ * "`) reaches the URL exactly as normalised as the store's own committed `query` would be — no
+ * caller-side pre-processing left to get out of sync with it.
  */
 function withLiveDashboardSearch(navigation: StaffNavigation, query: string, dashboardCalendar: DashboardCalendarState | null): StaffNavigation {
   function hrefFor(child: StaffNavigationItem): string {
     const view = DASHBOARD_CHILD_VIEW[child.id];
     if (view === "list" || view === "kanban") return staffPathFor({ kind: "dashboard", dashboardView: view, ...(query ? { search: query } : {}) });
-    if (view === "calendar" && dashboardCalendar) {
-      const search = normalizeDashboardCalendarSearch(sanitizeDashboardCalendarSearch(query));
-      return staffPathFor({ kind: "dashboard", calendar: { ...dashboardCalendar, search } });
+    if (view === "calendar") {
+      if (dashboardCalendar) return staffPathFor({ kind: "dashboard", calendar: { ...dashboardCalendar, search: query } });
+      return staffPathFor({ kind: "dashboard", dashboardView: "calendar", ...(query ? { search: query } : {}) });
     }
     return child.href;
   }

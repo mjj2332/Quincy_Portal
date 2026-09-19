@@ -806,16 +806,18 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
 });
 
 /**
- * #217 fix round 3, item 1 (Sol's whole-branch review). `staff-navigation.ts`'s own model stays
- * pure (`NavigationRail.dom.test.tsx` covers it unchanged) — this exercises the REAL shell
- * (`app-router.tsx`'s `ShellRoute`), which grafts the live search store's value back onto the
- * rail's Dashboard child hrefs. `Dashboard` is mocked in this file, so the List/Kanban round trip
- * is asserted through the URL and the rail's own input directly, and the Calendar child's own bare
- * intent (deliberately carrying no `q` of its own — `staff-routes.ts`) is asserted as exactly
- * that; carrying `q` across it into a concrete facet URL is `Dashboard.tsx`'s own canonicaliser,
- * covered separately in `Dashboard-calendar.dom.test.tsx`.
+ * #217 fix round 3, item 1 (Sol's whole-branch review), extended by round 4, item 1 (Sol
+ * re-review, BLOCKER). `staff-navigation.ts`'s own model stays pure (`NavigationRail.dom.test.tsx`
+ * covers it unchanged) — this exercises the REAL shell (`app-router.tsx`'s `ShellRoute`), which
+ * grafts the live search store's value back onto the rail's Dashboard child hrefs. `Dashboard` is
+ * mocked in this file, so every assertion here is on the URL and the rail's own input directly.
+ * The Calendar child link now carries `q` itself, on the bare intent (`staff-routes.ts`'s
+ * `DashboardCalendarIntentRoute` gained one in round 4 specifically because a native navigation —
+ * keyboard Enter, cmd/middle-click, a reload — loads `href` as a fresh document with no in-memory
+ * store left to fall back on); `Dashboard.tsx`'s own canonicaliser reading that same `q` back off
+ * the route into the concrete facet URL is covered separately in `Dashboard-calendar.dom.test.tsx`.
  */
-describe("rail Dashboard child links carry the live search (#217 fix round 3, item 1)", () => {
+describe("rail Dashboard child links carry the live search (#217 fix round 3, item 1; round 4, item 1)", () => {
   function childLink(host: ParentNode, label: string) {
     return [...host.querySelectorAll('[data-testid="navigation-rail-child-link"]')].find((element) => element.textContent?.trim() === label) as HTMLAnchorElement | undefined;
   }
@@ -841,11 +843,11 @@ describe("rail Dashboard child links carry the live search (#217 fix round 3, it
     expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
 
     await click(childLink(host, "Calendar")!);
-    // The Calendar child link is the bare intent — it deliberately carries no `q` itself (the
-    // type does not even allow one; see `staff-routes.ts`'s `DashboardCalendarIntentRoute`).
-    // `q` surviving past this click is `Dashboard.tsx`'s own canonicaliser's job, exercised in
-    // `Dashboard-calendar.dom.test.tsx` instead (`Dashboard` is mocked in this file).
-    expect(window.location.search).toBe("?view=calendar");
+    // The Calendar child link is the bare intent, carrying its OWN `q` now (#217 fix round 4,
+    // item 1) — reading it back off the route into a concrete facet URL is `Dashboard.tsx`'s own
+    // canonicaliser's job, exercised in `Dashboard-calendar.dom.test.tsx` instead (`Dashboard` is
+    // mocked in this file).
+    expect(window.location.search).toBe("?view=calendar&q=smith");
     expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
 
     await click(childLink(host, "List")!);
@@ -872,5 +874,34 @@ describe("rail Dashboard child links carry the live search (#217 fix round 3, it
     expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban");
     expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list");
     expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar");
+  });
+
+  // #217 fix round 4, item 1 (Sol re-review, BLOCKER). The `href` attribute itself, not just the
+  // URL a click ends up at -- this is what a keyboard Enter, cmd/middle-click or "open in new tab"
+  // actually reads, none of which go through React's click handler at all.
+  it("the Calendar child link's href attribute carries q, like List and Kanban", async () => {
+    const host = await renderAt("/?view=list");
+    await typeAndCommit(host, "smith");
+    expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list&q=smith");
+    expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban&q=smith");
+    expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar&q=smith");
+  });
+
+  // #217 fix round 4, item 2 (Sol re-review, do-with-1). A raw, not-yet-committed draft carries
+  // stray whitespace no caller pre-processes any more -- `staffPathFor` normalises it itself
+  // (strip, collapse, trim, cap), so every rail href reflects exactly what the store's own
+  // committed `query` would, never a differently-shaped value.
+  it("every Dashboard child href normalises whitespace in the live draft the same way the store's own commit does", async () => {
+    const host = await renderAt("/?view=list");
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "  smith   street  ");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    // Still mid-debounce: the href reflects the raw draft directly, normalised at build time.
+    expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list&q=smith+street");
+    expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban&q=smith+street");
+    expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar&q=smith+street");
   });
 });
