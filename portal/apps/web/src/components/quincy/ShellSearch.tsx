@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Search } from "lucide-react";
+import { DASHBOARD_SEARCH_MAX_CHARS } from "@quincy/shared";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -166,6 +167,14 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
       <InputGroupInput
         ref={inputRef}
         data-testid="shell-search"
+        // Per-mode, not a fixed literal (#217 design-review, item 6): `RailedShell` keeps the
+        // Sheet's OWN `ShellSearch` mounted in every mode ("RailSheet stays mounted in every mode"
+        // above `RailedShell.tsx`'s own `railSlot`), so when `mode !== "sheet"` the rail's
+        // expanded/collapsed instance and the Sheet's instance are BOTH in the DOM at once. A
+        // fixed `id="shell-search"` on both would be a duplicate id.
+        id={`shell-search-${variant}`}
+        name="q"
+        maxLength={DASHBOARD_SEARCH_MAX_CHARS}
         aria-label="Search projects"
         value={search.draft}
         onChange={handleChange}

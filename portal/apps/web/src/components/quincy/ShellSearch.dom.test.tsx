@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
+import { DASHBOARD_SEARCH_MAX_CHARS } from "@quincy/shared";
 import { ShellSearch, type ShellSearchHandle, type ShellSearchProps } from "./ShellSearch";
 import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "../../lib/dashboard-search-store";
 
@@ -109,6 +110,39 @@ describe("ShellSearch — one focus indicator, not two (#217 design-review, item
     const group = input.closest('[data-testid="shell-search-field"]')!;
     expect(group.className).toContain("focus-within:outline-solid");
     expect(group.className).toContain("focus-within:outline-ring");
+  });
+});
+
+describe("ShellSearch — field attributes the input throws its own text away without (#217 design-review, item 6)", () => {
+  it("caps the input at DASHBOARD_SEARCH_MAX_CHARS and carries an id/name, expanded", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(input.maxLength).toBe(DASHBOARD_SEARCH_MAX_CHARS);
+    expect(input.id).toBe("shell-search-expanded");
+    expect(input.name).toBe("q");
+  });
+
+  it("derives a per-mode id, sheet", async () => {
+    await renderInProvider({ variant: "sheet" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(input.id).toBe("shell-search-sheet");
+  });
+
+  // `RailedShell.tsx` keeps the Sheet's own `ShellSearch` mounted in every mode, so the rail's
+  // expanded/collapsed instance and the Sheet's instance can both be in the DOM at once -- the
+  // per-mode id is what keeps that from being a duplicate id.
+  it("never renders two elements sharing an id when the rail and Sheet instances are both mounted", async () => {
+    await render(
+      <SidebarProvider open onOpenChange={() => {}}>
+        <TooltipProvider delay={0}>
+          <ShellSearch variant="expanded" isDashboard={false} />
+          <ShellSearch variant="sheet" isDashboard={false} />
+        </TooltipProvider>
+      </SidebarProvider>,
+    );
+    const ids = [...host.querySelectorAll('[data-testid="shell-search"]')].map((node) => node.id);
+    expect(ids).toEqual(["shell-search-expanded", "shell-search-sheet"]);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 
