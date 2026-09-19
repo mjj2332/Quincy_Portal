@@ -761,3 +761,57 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(confirmStore.getSnapshot()).toBeNull();
   });
 });
+
+/**
+ * #217 fix round 8, Sol review, item 1 (HIGH). `withLiveDashboardSearch` (`lib/app-router.tsx`)
+ * used to rewrite only the Dashboard CHILD hrefs (List/Kanban/Calendar), leaving the top-level
+ * "Dashboard" rail link (`staff-navigation.ts`'s own `id: "dashboard"` item, rendered as a real
+ * `<a>` by `NavigationRail.tsx`) bare `/`. Clicking it landed on a q-less URL, which `ShellRoute`'s
+ * own sync (`syncDashboardSearchDraftFromLocation`) then treated as authoritative and used to clear
+ * the draft — discarding an off-Dashboard draft that had never been committed anywhere else.
+ */
+function railParentDashboardLink(host: ParentNode): HTMLAnchorElement | undefined {
+  return [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="navigation-rail-link"]')]
+    .find((link) => link.textContent?.trim() === "Dashboard");
+}
+
+describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1)", () => {
+  async function typeIntoShellSearch(host: ParentNode, value: string) {
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+  }
+
+  it("clicking Dashboard mid-debounce (before the 300ms commit) lands on ?q=smith, keeps the input, and the projects request carries q", async () => {
+    const host = await renderApp("/admin");
+    await typeIntoShellSearch(host, "smith");
+    // Still inside the 300ms debounce — no commit has happened anywhere yet.
+    expect(railParentDashboardLink(host)!.getAttribute("href")).toBe("/?q=smith");
+
+    await click(railParentDashboardLink(host)!);
+
+    expect(currentUrl()).toBe("/?q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
+  });
+
+  it("clicking Dashboard after the 300ms commit (draft already written through) lands on ?q=smith, keeps the input, and the projects request carries q", async () => {
+    const host = await renderApp("/admin");
+    await typeIntoShellSearch(host, "smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+
+    await click(railParentDashboardLink(host)!);
+
+    expect(currentUrl()).toBe("/?q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
+  });
+
+  it("an empty draft keeps the top-level Dashboard href bare `/`", async () => {
+    const host = await renderApp("/admin");
+    expect(railParentDashboardLink(host)!.getAttribute("href")).toBe("/");
+  });
+});

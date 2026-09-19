@@ -150,12 +150,20 @@ function withLiveDashboardSearch(navigation: StaffNavigation, query: string, das
     }
     return child.href;
   }
+  // #217 fix round 8, Sol review, item 1 (HIGH). The top-level "Dashboard" item
+  // (`staff-navigation.ts`'s `id: "dashboard"`) is itself a real, clickable rail link
+  // (`NavigationRail.tsx`), not just a container for the children `hrefFor` above already covers.
+  // Left bare `/`, clicking it from off-Dashboard landed on a q-less URL that `ShellRoute`'s own
+  // sync then treated as authoritative and used to clear an in-progress draft that had never been
+  // committed anywhere else. Built with the same `staffPathFor` the List/Kanban children use, so an
+  // empty draft still yields the bare `/` this link has always had.
   return {
     ...navigation,
     groups: navigation.groups.map((group) => ({
       ...group,
       items: group.items.map((item) => !item.children ? item : {
         ...item,
+        ...(item.id === "dashboard" ? { href: staffPathFor({ kind: "dashboard", ...(query ? { search: query } : {}) }) } : {}),
         children: item.children.map((child) => ({ ...child, href: hrefFor(child) })),
       }),
     })),
