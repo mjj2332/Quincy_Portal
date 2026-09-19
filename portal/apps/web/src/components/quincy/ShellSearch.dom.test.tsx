@@ -52,6 +52,30 @@ async function type(input: HTMLInputElement, value: string) {
   });
 }
 
+/** Sets the input's value without dispatching `input`, mirroring a composed keystroke still
+ *  mid-IME-composition -- `handleChange` alone must NOT cap it. */
+async function typeWithoutInputEvent(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    await Promise.resolve();
+  });
+}
+
+async function compositionStart(input: HTMLInputElement) {
+  await act(async () => {
+    input.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+async function compositionEnd(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
 async function keydown(target: EventTarget, init: KeyboardEventInit) {
   let defaultPrevented = false;
   await act(async () => {
@@ -157,10 +181,14 @@ describe("ShellSearch — one focus indicator, not two (#217 design-review, item
 });
 
 describe("ShellSearch — field attributes the input throws its own text away without (#217 design-review, item 6)", () => {
-  it("caps the input at DASHBOARD_SEARCH_MAX_CHARS and carries an id/name, expanded", async () => {
+  it("carries an id/name, expanded", async () => {
     await renderInProvider({ variant: "expanded" });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
-    expect(input.maxLength).toBe(DASHBOARD_SEARCH_MAX_CHARS);
+    // No native `maxLength` (#217 design-fix round 2, item 3): it counts UTF-16 code units, not
+    // the shared contract's Unicode code points -- see the "code-point cap" describe block below
+    // for the replacement, enforced in the change/composition handlers instead. `-1` is the DOM's
+    // own "unset" value for the `maxLength` IDL property.
+    expect(input.maxLength).toBe(-1);
     expect(input.id).toBe("shell-search-expanded");
     expect(input.name).toBe("q");
   });
@@ -186,6 +214,43 @@ describe("ShellSearch — field attributes the input throws its own text away wi
     const ids = [...host.querySelectorAll('[data-testid="shell-search"]')].map((node) => node.id);
     expect(ids).toEqual(["shell-search-expanded", "shell-search-sheet"]);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("ShellSearch — the draft is capped by Unicode code point, not UTF-16 code unit (#217 design-fix round 2, item 3)", () => {
+  it("caps 250 ASCII characters to 200", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await type(input, "a".repeat(250));
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("a".repeat(DASHBOARD_SEARCH_MAX_CHARS));
+    expect(__getDashboardSearchSnapshotForTest().draft.length).toBe(200);
+  });
+
+  it("caps 250 astral emoji to 200 CODE POINTS, not ~100 (a native maxLength=200 would have counted UTF-16 units)", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    const emoji = "🎉".repeat(250); // 250 code points, 500 UTF-16 code units (each emoji is a surrogate pair)
+    await type(input, emoji);
+    const draft = __getDashboardSearchSnapshotForTest().draft;
+    expect([...draft].length).toBe(200);
+    expect(draft).toBe("🎉".repeat(200));
+  });
+
+  it("does not truncate mid-composition — the cap applies only once compositionend reports the final value", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await compositionStart(input);
+    // A composition still in progress, already past the cap -- must survive untouched while the
+    // composition is open, unlike a real (non-composed) keystroke of the same length.
+    await typeWithoutInputEvent(input, "a".repeat(250));
+    await act(async () => {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(__getDashboardSearchSnapshotForTest().draft.length).toBe(250);
+
+    await compositionEnd(input, "a".repeat(250));
+    expect(__getDashboardSearchSnapshotForTest().draft.length).toBe(200);
   });
 });
 

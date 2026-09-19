@@ -6,10 +6,11 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
+  type CompositionEvent as ReactCompositionEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Search } from "lucide-react";
-import { DASHBOARD_SEARCH_MAX_CHARS } from "@quincy/shared";
+import { capDashboardSearchText } from "@quincy/shared";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -113,6 +114,12 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
     resetDashboardSearchForPrincipal(principalId);
   }, [principalId]);
   const inputRef = useRef<HTMLInputElement>(null);
+  // #217 design-fix round 2, item 3: an in-progress IME composition, so `handleChange` below can
+  // skip the code-point cap mid-composition -- truncating a still-open composition can corrupt a
+  // half-formed composed character. `compositionend` (not `compositionstart`'s absence) is the
+  // only reliable signal a composition has actually finished; a ref (not state) because this must
+  // never itself trigger a render.
+  const isComposingRef = useRef(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   // A named intermediate, not an inline object literal — see `NavigationRail.tsx`'s own
   // `accountTooltip` for why (TypeScript's excess-property check).
@@ -132,7 +139,24 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
   }), [isCollapsed]);
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
-    setDashboardSearchDraft(event.target.value, principalId);
+    // #217 design-fix round 2, item 3: native `maxLength` counts UTF-16 code UNITS, but the
+    // shared contract (`DASHBOARD_SEARCH_MAX_CHARS`, `capDashboardSearchText`) is 200 Unicode
+    // code POINTS -- 200 astral emoji (each a surrogate PAIR, two code units) are legal in the
+    // URL, but a native `maxLength={200}` cut the field off at ~100 of them. Capped here instead,
+    // through the SAME helper the URL serializer and the store's own commit path already share
+    // (never re-implemented), and skipped entirely while a composition is open -- see
+    // `isComposingRef`'s own comment above and `handleCompositionEnd` below, which applies the cap
+    // once the composition's own final value is known.
+    setDashboardSearchDraft(isComposingRef.current ? event.target.value : capDashboardSearchText(event.target.value), principalId);
+  }
+
+  function handleCompositionStart() {
+    isComposingRef.current = true;
+  }
+
+  function handleCompositionEnd(event: ReactCompositionEvent<HTMLInputElement>) {
+    isComposingRef.current = false;
+    setDashboardSearchDraft(capDashboardSearchText(event.currentTarget.value), principalId);
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
@@ -184,11 +208,15 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
         // fixed `id="shell-search"` on both would be a duplicate id.
         id={`shell-search-${variant}`}
         name="q"
-        maxLength={DASHBOARD_SEARCH_MAX_CHARS}
         aria-label="Search projects"
         value={search.draft}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        // #217 design-fix round 2, item 3: no native `maxLength` -- see `handleChange`'s own
+        // comment for why (code UNITS vs code POINTS) -- so the cap is enforced entirely through
+        // these two composition handlers plus `handleChange` above.
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         // #217 design-review, item 7: the expanded rail and the collapsed popover are both too
         // narrow to show the long placeholder without clipping it mid-word -- only the Sheet has
         // the width for it. `aria-label` is unchanged either way.
