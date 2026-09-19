@@ -764,9 +764,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setView("list");
     lastNonCalendarViewRef.current = "list";
     try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
-    if (view === "calendar" || routeCalendar !== null || locationHasCalendar) history.push("/");
+    // #217 fix round 8, Sol review, item 3 (MEDIUM). A bare `history.push("/")` dropped any
+    // committed `q` the Calendar facet URL carried -- a Calendar mutation returning 401/403 while
+    // parked at `/?view=calendar&...&q=smith` landed on the bare `/`, and `ShellRoute`'s own sync
+    // then read that q-less arrival as authoritative and cleared the draft too. Built with
+    // `staffPathFor`/`takeDashboardSearchForNavigation` the same way every other navigation site in
+    // this file already carries a committed-or-mid-debounce search across a route change.
+    if (view === "calendar" || routeCalendar !== null || locationHasCalendar) {
+      const currentSearch = takeDashboardSearchForNavigation(currentUserId);
+      history.push(staffPathFor({ kind: "dashboard", ...(currentSearch ? { search: currentSearch } : {}) }));
+    }
     window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-list"]')?.focus(), 0);
-  }, [history, locationHasCalendar, routeCalendar, view]);
+  }, [currentUserId, history, locationHasCalendar, routeCalendar, view]);
 
   const projectHrefFor = useCallback((projectId: string) => `/projects/${encodeURIComponent(projectId)}`, []);
 
