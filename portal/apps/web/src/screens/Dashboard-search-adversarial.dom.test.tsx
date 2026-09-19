@@ -173,6 +173,18 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     expect(chip!.parentElement!.firstElementChild).toBe(chip);
   });
 
+  it("titles a zero-result search 'No matches.', not the unsearched empty-Dashboard copy (#217 design-review, item 9)", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: [],
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: [] } },
+      search: { query: "smith", matching: 0, total: 3 },
+    });
+
+    const emptyStateTitle = host.querySelector("strong")?.textContent;
+    expect(emptyStateTitle).toBe("No matches.");
+    expect(host.textContent).toContain("No projects match this search.");
+  });
+
   it("preserves q when switching views from a searched Dashboard", async () => {
     await renderAt("/?view=list&q=smith", {
       projects: match,
