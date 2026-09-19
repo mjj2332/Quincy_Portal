@@ -179,7 +179,10 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
         value={search.draft}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Search address, suburb, client…"
+        // #217 design-review, item 7: the expanded rail and the collapsed popover are both too
+        // narrow to show the long placeholder without clipping it mid-word -- only the Sheet has
+        // the width for it. `aria-label` is unchanged either way.
+        placeholder={isSheet ? "Search address, suburb, client…" : "Search projects"}
       />
       {showShortcutHint && (
         // `reui/kbd.tsx`'s registry paint (`bg-muted text-muted-foreground`) reads roles

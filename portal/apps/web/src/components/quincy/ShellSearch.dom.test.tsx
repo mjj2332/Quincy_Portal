@@ -100,6 +100,14 @@ describe("ShellSearch — expanded", () => {
     expect(host.querySelector('[data-testid="shell-search-shortcut"]')?.textContent).toBe("⌘K");
     expect(input.closest('[data-testid="shell-search-field"]')?.getAttribute("data-touch-target")).toBeNull();
   });
+
+  // #217 design-review, item 7: the long placeholder clipped mid-word in a rail this narrow.
+  it("uses the short placeholder, not the one clipped mid-word at this width", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(input.placeholder).toBe("Search projects");
+    expect(input.getAttribute("aria-label")).toBe("Search projects");
+  });
 });
 
 describe("ShellSearch — one focus indicator, not two (#217 design-review, item 4)", () => {
@@ -187,6 +195,21 @@ describe("ShellSearch — collapsed", () => {
     });
   });
 
+  // #217 design-review, item 7: the collapsed popover is the same narrow width as the expanded
+  // rail's own field, so it gets the same short placeholder.
+  it("uses the short placeholder once the popover is open", async () => {
+    await renderInProvider({ variant: "collapsed" });
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]');
+      expect(input?.placeholder).toBe("Search projects");
+    });
+  });
+
   // #217 fix round 1, item 8 (test gap Sol listed): the trigger's own `aria-expanded`/
   // `aria-haspopup` and the popup's `role="dialog"` semantics, not just presence/absence.
   it("the trigger carries aria-haspopup=dialog and aria-expanded reflects open state", async () => {
@@ -242,6 +265,14 @@ describe("ShellSearch — sheet", () => {
     expect(input.getAttribute("aria-label")).toBe("Search projects");
     expect(host.querySelector('[data-testid="shell-search-shortcut"]')).toBeNull();
     expect(input.closest('[data-testid="shell-search-field"]')?.getAttribute("data-touch-target")).toBe("true");
+  });
+
+  // #217 design-review, item 7: the Sheet is the one mode with room for the long placeholder.
+  it("keeps the long placeholder, the one mode with room for it", async () => {
+    await renderInProvider({ variant: "sheet" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(input.placeholder).toBe("Search address, suburb, client…");
+    expect(input.getAttribute("aria-label")).toBe("Search projects");
   });
 });
 
