@@ -464,8 +464,8 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   if (calendar.myTasks !== calendarFilterDefaults.myTasks) params.set("mine", "1");
   // #217 fix round 3, item 3 / round 4, item 2: normalised (strip, collapse whitespace, trim, cap)
   // through the one shared `normalizeDashboardSearchText`, not just stripped and capped -- a raw
-  // draft's stray whitespace must never reach the URL differently than it reaches the store's own
-  // committed `query`.
+  // draft's stray whitespace must never reach the URL differently than the store's own debounced
+  // URL write would put there.
   const safeSearch = normalizeDashboardSearchText(calendar.search);
   if (safeSearch !== calendarFilterDefaults.search) params.set("q", safeSearch);
   return `/?${params.toString()}`;

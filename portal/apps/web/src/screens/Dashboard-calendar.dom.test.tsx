@@ -47,8 +47,8 @@ function projectResponse() {
   };
 }
 
-// #217 build, step 4: `Dashboard.tsx` no longer adopts a route's own `q` into the shared store --
-// that is `ShellRoute`'s job now (`syncDashboardSearchDraftFromLocation`, wired in a
+// #217 build, step 4: `Dashboard.tsx` reads the committed `q` from the route at render; nothing adopts it --
+// `ShellRoute` only syncs the input DRAFT from the location (`syncDashboardSearchDraftFromLocation`, wired in a
 // `useLayoutEffect` keyed on location + principal). This harness mirrors exactly that wiring, the
 // same way `lib/app-router.tsx`'s real `ShellRoute` derives the `calendar` prop from the parsed
 // route -- without it, a test that arrives directly at a URL carrying `q` (rather than typing it

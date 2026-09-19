@@ -889,7 +889,7 @@ describe("rail Dashboard child links carry the live search (#217 fix round 3, it
   // #217 fix round 4, item 2 (Sol re-review, do-with-1). A raw, not-yet-committed draft carries
   // stray whitespace no caller pre-processes any more -- `staffPathFor` normalises it itself
   // (strip, collapse, trim, cap), so every rail href reflects exactly what the store's own
-  // committed `query` would, never a differently-shaped value.
+  // debounced URL write would, never a differently-shaped value.
   it("every Dashboard child href normalises whitespace in the live draft the same way the store's own commit does", async () => {
     const host = await renderAt("/?view=list");
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
