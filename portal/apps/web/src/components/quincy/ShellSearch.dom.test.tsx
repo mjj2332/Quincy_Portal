@@ -101,6 +101,17 @@ describe("ShellSearch — expanded", () => {
   });
 });
 
+describe("ShellSearch — one focus indicator, not two (#217 design-review, item 4)", () => {
+  it("suppresses the input's own :focus-visible outline, leaving the group's focus-within outline as the single indicator", async () => {
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(input.className).toContain("focus-visible:!outline-none");
+    const group = input.closest('[data-testid="shell-search-field"]')!;
+    expect(group.className).toContain("focus-within:outline-solid");
+    expect(group.className).toContain("focus-within:outline-ring");
+  });
+});
+
 describe("ShellSearch — collapsed", () => {
   it("renders only the icon trigger, keeping the accessible name, until opened", async () => {
     await renderInProvider({ variant: "collapsed" });

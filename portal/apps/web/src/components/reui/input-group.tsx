@@ -122,7 +122,13 @@ function InputGroupAddon({
 // group wrapper, which is already painting them. `focus-visible:ring-0` stays: ReUI's ring is a
 // box-shadow, so suppressing it here does NOT suppress a focus indicator — `tokens/base.css`'s
 // unlayered `:focus-visible { outline: … }` still paints on the focused input, and the wrapper
-// draws its own `focus-within` outline besides.
+// draws its own `focus-within` outline besides — TWO indicators on one field (#217 design-review,
+// item 4). `focus-visible:!outline-none` below is the fix, and the `!` is required for the SAME
+// reason `quincy/icon-button.tsx`'s own `focus-visible:!outline` needs it in the other direction:
+// `tokens/base.css:25`'s `:focus-visible { outline: … }` is unlayered author CSS, which beats
+// Tailwind's `@layer utilities` regardless of source order or specificity, so a bare
+// `outline-none` here would never suppress it. The group's own `focus-within:outline-*` is
+// Tailwind utility-layer, unaffected, and remains the field's single visible indicator.
 //
 // Type is spelled as four LONGHANDS (`text-sm`, `leading-`, `font-[…]` weight, `font-[family-name:…]`)
 // and deliberately NOT as the `[font:var(--weight-regular)_var(--text-sm)/…]` shorthand the shipped
@@ -142,7 +148,7 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        "flex-1 min-h-0 max-[721px]:min-h-0 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 focus-visible:border-0 px-[var(--space-3)] py-[var(--space-2)] max-[721px]:py-[var(--space-3)] text-foreground text-sm leading-[var(--leading-normal)] font-[var(--weight-regular)] font-[family-name:var(--font-sans)] placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100 aria-invalid:ring-0 aria-invalid:border-0",
+        "flex-1 min-h-0 max-[721px]:min-h-0 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 focus-visible:border-0 focus-visible:!outline-none px-[var(--space-3)] py-[var(--space-2)] max-[721px]:py-[var(--space-3)] text-foreground text-sm leading-[var(--leading-normal)] font-[var(--weight-regular)] font-[family-name:var(--font-sans)] placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100 aria-invalid:ring-0 aria-invalid:border-0",
         className
       )}
       {...props}
