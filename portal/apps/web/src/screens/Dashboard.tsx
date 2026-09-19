@@ -1154,36 +1154,39 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
-          {/* #217: the rail's `ShellSearch` is the one search input now -- this chip is the
-              Dashboard's only trace of an active query, not a second field. */}
-          {searchActive && (
-            <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)]">
-              {searchCountsQuery.data && (
-                <>
-                  {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
-                  {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
-                </>
-              )}
-              <span className="normal-case" data-testid="dashboard-search-chip-query">
-                '{search.query}'
-              </span>
-              {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
-                  rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
-                  `after:absolute after:-inset-2`) pads the actual hit target to >=24px without
-                  growing the chip's own visible box. */}
-              <button
-                type="button"
-                aria-label="Clear search"
-                onClick={() => clearDashboardSearch(currentUserId)}
-                className="relative inline-flex items-center after:absolute after:-inset-2"
-              >
-                <XIcon aria-hidden="true" className="size-3" />
-              </button>
-            </Badge>
-          )}
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
         <div className="flex items-center flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] ml-auto max-[721px]:basis-full max-[721px]:justify-start">
+        {/* #217 design-review, item 3: the chip is the first child of THIS cluster (scope/view/
+            sort), not the left-hand cluster that holds `New shoot` -- otherwise the primary
+            action's position slides with the query's length. */}
+        {/* #217: the rail's `ShellSearch` is the one search input now -- this chip is the
+            Dashboard's only trace of an active query, not a second field. */}
+        {searchActive && (
+          <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)]">
+            {searchCountsQuery.data && (
+              <>
+                {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
+                {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
+              </>
+            )}
+            <span className="normal-case" data-testid="dashboard-search-chip-query">
+              '{search.query}'
+            </span>
+            {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
+                rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
+                `after:absolute after:-inset-2`) pads the actual hit target to >=24px without
+                growing the chip's own visible box. */}
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => clearDashboardSearch(currentUserId)}
+              className="relative inline-flex items-center after:absolute after:-inset-2"
+            >
+              <XIcon aria-hidden="true" className="size-3" />
+            </button>
+          </Badge>
+        )}
         {canViewArchived && <>
           <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">Projects</Eyebrow>
           <div className={SEGMENT_GROUP} aria-label="Project status">

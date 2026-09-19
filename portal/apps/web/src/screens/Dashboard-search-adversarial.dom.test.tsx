@@ -156,6 +156,23 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     expect(clearButton!.className).toContain("after:-inset-2");
   });
 
+  it("keeps 'New shoot' out of the chip's cluster, so its position does not slide with query length (#217 design-review, item 3)", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 3 },
+    });
+
+    const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
+    const newShoot = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
+    expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(newShoot, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
+    expect(chip!.parentElement).not.toBe(newShoot!.parentElement);
+    // The chip is the first child of its own cluster -- the one that also holds the
+    // scope/view/sort controls, not the one that holds "New shoot".
+    expect(chip!.parentElement!.firstElementChild).toBe(chip);
+  });
+
   it("preserves q when switching views from a searched Dashboard", async () => {
     await renderAt("/?view=list&q=smith", {
       projects: match,
