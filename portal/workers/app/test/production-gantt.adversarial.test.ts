@@ -307,7 +307,14 @@ describe("production-gantt adversarial probes", () => {
       // Omitted from the rest of THIS walk: it now sorts before the cursor, so the keyset
       // predicate excludes it, and there is no other row left to page to.
       expect(continued.projects.map((project) => project.id)).not.toContain(backwardLateProjectId);
+      expect(continued.projects).toHaveLength(0);
       expect(continued.page.nextCursor).toBeNull();
+      // fix-218-r5 #3: the page-level density meta is computed independently of the cursor (the
+      // `density` CTE scans every candidate matching the filters, not just this page's rows), so
+      // it must stay intact even on an otherwise-empty continuation page — both matching projects
+      // (backwardLateProjectId included, despite being omitted from `projects` above) still count.
+      expect(continued.density.matchedRows).toBe(2);
+      expect(continued.density.tooManyToDraw).toBe(false);
 
       // A fresh walk (no cursor, starting from page one) converges: the row now sorts first.
       const fresh = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Backward+Sort+Probe&limit=1", tokens.admin)).json());
