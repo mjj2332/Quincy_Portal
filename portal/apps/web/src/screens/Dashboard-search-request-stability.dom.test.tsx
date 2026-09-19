@@ -111,6 +111,10 @@ function calendarCallPaths() {
   return apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/production-calendar"));
 }
 
+function projectsCallPaths() {
+  return apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+}
+
 /**
  * Settles until BOTH fetch counts stop moving for two consecutive 1s checks, not a fixed number
  * of passes: StrictMode's synthetic mount-cleanup-mount replay, on top of the lazy Calendar
@@ -161,17 +165,15 @@ async function mountAt(location: string) {
  *
  * Projects: `search.query` (fed to `useDashboardProjects`) is read from the external
  * `dashboard-search-store`, adopted from the route's own `q` only inside a PASSIVE effect
- * (`adoptDashboardSearchFromUrl`, further down in `Dashboard.tsx`) -- unlike `calendarState`,
- * there is no local `useState` initializer here to seed synchronously, so the first commit's
- * query key is genuinely `q:""` until that effect runs. Ceiling is 3, not 2: 2 empty-search
- * requests (identity × StrictMode replay) + 1 corrected request once the effect adopts `q=Probe`.
- * This is the SAME shape of defect item 1 fixed for the Calendar (a wasted empty-search request
- * before self-correcting), left UNFIXED here -- see the build report for why: unlike
- * `calendarState`'s own local `useState`, `search.query` is a value from a store shared across
- * every route (not just Dashboard's own calendar branch), read through `useSyncExternalStore`,
- * and closing this gap by seeding it synchronously at first render risked a real behavioural
- * regression in the store's own carefully-timed principal-scoping (`Dashboard.tsx`'s own "#217
- * fix round 4/5" comments) that this test file has no standing to restructure.
+ * (`adoptDashboardSearchFromUrl`, further down in `Dashboard.tsx`), so the raw store value alone
+ * was genuinely `q:""` on a cold load's first commit. Design-fix round 3, item 1 closes this the
+ * same way round 2, item 1 closed it for the Calendar, but WITHOUT a local `useState` to seed (the
+ * store is shared across every route, not just this screen): a render-time-only `effectiveQuery`
+ * -- the currently governing parsed route's own `q` while the store has not yet adopted this
+ * location, the store's own query once it has -- feeds the projects query, the search-counts
+ * query, `searchActive` and the chip text, all from the ONE value, without ever writing the store
+ * during render. Ceiling is 2, same derivation as Calendar: identity × StrictMode replay, and
+ * every request checked to carry `q=Probe`.
  */
 async function assertIdleAfterSettling(location: string, calendarCeiling: number, projectsCeiling: number) {
   const stableChecks = await mountAt(location);
@@ -188,6 +190,12 @@ async function assertIdleAfterSettling(location: string, calendarCeiling: number
   for (const path of calendarCallPaths()) {
     expect(path, `a production-calendar request went out without q=Probe: ${path}`).toContain("q=Probe");
   }
+  // Same check for projects (#217 design-fix round 3, item 1): an unfiltered `/api/projects`
+  // (no `q` at all) self-correcting into a second, filtered request is exactly what a bare count
+  // ceiling alone could still miss.
+  for (const path of projectsCallPaths()) {
+    expect(path, `a projects request went out without q=Probe: ${path}`).toContain("q=Probe");
+  }
   const writesBefore = locationWriteCount();
 
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
@@ -201,24 +209,20 @@ async function assertIdleAfterSettling(location: string, calendarCeiling: number
 
 describe("Dashboard search + Calendar request stability (#217 design-review, item 10; hardened #217 design-fix round 2, item 1)", () => {
   it("(a) the bare Calendar intent + q, from an EMPTY store -- the canonicalising rewrite runs once on settle, then stays idle", async () => {
-    // calendar: 2 (identity × StrictMode replay; the fix seeds q=Probe into the FIRST of the two,
-    // so both carry it -- see `calendarCallPaths()` below). projects: 3 (identity × StrictMode
-    // replay = 2 empty-search requests + 1 corrected once the route's own `q` is adopted into the
-    // search store -- see the doc comment above `assertIdleAfterSettling` for why this one is not
-    // also 2).
-    await assertIdleAfterSettling("/?view=calendar&q=Probe", 2, 3);
+    // calendar: 2, projects: 2 -- both identity × StrictMode replay, every request on either
+    // endpoint already carrying q=Probe (design-fix round 2 item 1 for the calendar state, round
+    // 3 item 1's render-derived `effectiveQuery` for projects).
+    await assertIdleAfterSettling("/?view=calendar&q=Probe", 2, 2);
   });
 
   it("(b) no `view` param at all, a remembered kanban preference, + q", async () => {
     window.localStorage.setItem(DASHBOARD_VIEW_KEY, "kanban");
     // No Calendar view at all in this scenario, so no calendar ceiling to prove -- the Kanban
-    // board mounts instead, `production-calendar` should never be requested. projects: 3, same
-    // derivation as scenario (a).
-    await assertIdleAfterSettling("/?q=Probe", 0, 3);
+    // board mounts instead, `production-calendar` should never be requested.
+    await assertIdleAfterSettling("/?q=Probe", 0, 2);
   });
 
   it("(c) the plain list facet + q", async () => {
-    // projects: 3, same derivation as scenario (a).
-    await assertIdleAfterSettling("/?view=list&q=Probe", 0, 3);
+    await assertIdleAfterSettling("/?view=list&q=Probe", 0, 2);
   });
 });

@@ -203,6 +203,38 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     () => getDashboardSearchSnapshotForPrincipal(currentUserId),
     () => getDashboardSearchSnapshotForPrincipal(currentUserId),
   );
+  // #217 design-fix round 3, item 1. Tracks whether the store has had a chance to adopt the
+  // CURRENT `currentLocation` yet -- a render-time ref, not store state (a "have I adopted this
+  // location" flag is a Dashboard-local render concern; the store's other consumer, `ShellSearch`,
+  // mounted on every route, has no use for it). Starts `null`, which can never equal a real
+  // location string, so a cold mount's very FIRST render always reads as "not yet adopted". The
+  // effect that advances it is declared after the reconciliation effect further down (`~325`),
+  // so it always observes that effect having already had its turn in the SAME commit -- effects
+  // within one component run in declaration order, and the reconciliation effect's own store
+  // writes are synchronous, so by the time this ref advances, `search.query` already reflects
+  // whatever THAT effect just adopted (or deliberately left alone).
+  const adoptedLocationRef = useRef<string | null>(null);
+  // The currently governing parsed route's OWN `q`, already normalised by `parseStaffLocation`
+  // (`staff-routes.ts`'s `parseDashboardSearch`/calendar `rawSearch` both run every accepted `q`
+  // through `normalizeDashboardSearchText` before returning it) -- never re-normalised here.
+  const routeQuery = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute)
+    ? effectiveRouteCalendar?.search
+    : routeDashboardSearch;
+  // The ONE value every render-time consumer below reads instead of `search.query` directly:
+  // the projects query, the search-counts query, `searchActive` (and everything gated on it --
+  // the chip, the stats strip, the Kanban movement gates), and the chip's own text. A cold deep
+  // link's FIRST render used to query `search.query` -- always `""` before the reconciliation
+  // effect has run even once -- so `/?q=Probe` fired one genuinely UNFILTERED `/api/projects`
+  // before a second commit corrected it. Falls back to `search.query` once the store has adopted
+  // THIS location (`adoptedLocationRef` below) or when the route carries no `q` of its own at all
+  // (`routeQuery === undefined`) -- so a stale route `q` can never resurrect a query the user has
+  // since cleared: clearing writes the store synchronously, and the URL for the SAME
+  // `currentLocation` string is still "adopted" (the ref already matches it from the render
+  // before the clear), so this falls through to the store's own, now-empty, query immediately,
+  // not the stale route text that clear + rewrite have not yet caught up to serialising away.
+  const effectiveQuery = adoptedLocationRef.current === currentLocation || routeQuery === undefined
+    ? search.query
+    : routeQuery;
   const [view, setView] = useState<DashboardView>(() => {
     // A route's own explicit "calendar" gets the same capability check the stored preference
     // already gets below — otherwise a role without it landed here with `view` already "calendar"
@@ -273,8 +305,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [canViewProductionCalendar]);
   const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
-  const projectsQuery = useDashboardProjects(viewingArchived, identity, search.query);
-  const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, search.query);
+  const projectsQuery = useDashboardProjects(viewingArchived, identity, effectiveQuery);
+  const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, effectiveQuery);
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
   const dashboardKeyString = JSON.stringify(dashboardKey);
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
@@ -313,7 +345,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // against a filtered column are wrong) -- that gating is explicit now, at `canMoveStages` /
   // `sameStageReorderEnabled` / `movementDisabled` / `runBoardMovement`'s own guard, not smuggled
   // in through this flag.
-  const searchActive = search.query !== "";
+  // #217 design-fix round 3, item 1: `effectiveQuery`, not the raw store `search.query` -- see
+  // that constant's own comment above. Everything gated on `searchActive` (the chip, the stats
+  // strip, the Kanban movement gates below) inherits the fix through this one flag.
+  const searchActive = effectiveQuery !== "";
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
@@ -520,6 +555,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // while genuinely arriving at their respective locations, not on every draft change), so this
     // does not turn typing into a per-keystroke URL-rewrite storm.
   }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, search.query, view, viewingArchived]);
+
+  // #217 design-fix round 3, item 1. Declared AFTER the reconciliation effect above on purpose:
+  // React runs one component's passive effects in declaration order, so this always observes
+  // that effect having already had its turn (whichever branch it took, including the early-return
+  // ones that adopt nothing) in the SAME commit before advancing `adoptedLocationRef` to match
+  // `currentLocation` -- which is what `effectiveQuery` above reads to decide the store is
+  // trustworthy for this location. Does not read or write anything the store itself owns; the
+  // reconciliation effect above is untouched.
+  useEffect(() => {
+    adoptedLocationRef.current = currentLocation;
+  }, [currentLocation]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
@@ -1183,7 +1229,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               </>
             )}
             <span className="normal-case" data-testid="dashboard-search-chip-query">
-              '{search.query}'
+              '{effectiveQuery}'
             </span>
             {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
                 rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,

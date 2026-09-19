@@ -200,4 +200,41 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
 
     expect(window.location.search).toBe("?view=kanban&q=smith");
   });
+
+  it("the FIRST /api/projects request on a cold deep link already carries q — never an unfiltered request first (#217 design-fix round 3, item 1)", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 3 },
+    });
+
+    const projectCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+    expect(projectCalls.length, "no /api/projects request observed — the assertions below would be vacuous").toBeGreaterThan(0);
+    for (const path of projectCalls) {
+      expect(path, `an unfiltered /api/projects request went out on a cold q=smith deep link: ${path}`).toContain("q=smith");
+    }
+  });
+
+  it("clearing the search never resurrects a stale route q into a later request (#217 design-fix round 3, item 1)", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 3 },
+    });
+    const clearButton = host.querySelector<HTMLButtonElement>('[aria-label="Clear search"]');
+    expect(clearButton, "no clear button rendered — the assertions below would be vacuous").not.toBeNull();
+
+    const callsBeforeClear = apiGetMock.mock.calls.length;
+    await act(async () => {
+      clearButton!.click();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]'), "chip still shown after clearing").toBeNull();
+    const callsAfterClear = apiGetMock.mock.calls.slice(callsBeforeClear).map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
+    for (const path of callsAfterClear) {
+      expect(path, `a request after clearing the search still carried the stale q: ${path}`).not.toContain("q=smith");
+    }
+  });
 });
