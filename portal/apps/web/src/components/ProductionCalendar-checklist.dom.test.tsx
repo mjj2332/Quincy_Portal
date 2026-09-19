@@ -139,6 +139,7 @@ describe("ProductionCalendar checklist manipulation", () => {
   let root: Root;
   let client: QueryClient;
   let patchBodies: unknown[];
+  let patchUrls: string[];
   let putBodies: unknown[];
   let patchStatus = 200;
   let patchPayload: unknown;
@@ -146,7 +147,7 @@ describe("ProductionCalendar checklist manipulation", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    patchBodies = []; putBodies = []; patchStatus = 200; patchPayload = undefined; surfaceAction = null; lastSurfaceProps = null; revertCalls = 0;
+    patchBodies = []; patchUrls = []; putBodies = []; patchStatus = 200; patchPayload = undefined; surfaceAction = null; lastSurfaceProps = null; revertCalls = 0;
   });
 
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
@@ -155,6 +156,7 @@ describe("ProductionCalendar checklist manipulation", () => {
     const range = response(events, subview, role);
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "PATCH") {
+        patchUrls.push(String(_input));
         patchBodies.push(JSON.parse(String(init.body)));
         return new Response(JSON.stringify(patchPayload ?? mutationBody(events[0] as ChecklistCalendarEventDto)), { status: patchStatus, headers: { "content-type": "application/json" } });
       }
@@ -180,6 +182,25 @@ describe("ProductionCalendar checklist manipulation", () => {
     expect(patchBodies, JSON.stringify({ ids: lastSurfaceProps?.events?.map((item: any) => ({ id: item.id, start: item.start, allDay: item.allDay, extendedProps: item.extendedProps?.dto?.kind })), action: surfaceAction, text: host.textContent })).toHaveLength(1);
     expect((patchBodies[0] as any).schedule.schedule).toEqual(schedule);
   }
+
+  it("PATCHes the bare subtask id, never the checklist: entity id (#226)", async () => {
+    const event = dueEvent("checklist:due-month", "2026-08-12");
+    patchPayload = { ...mutationBody(event, { ...event.schedule, version: 5, due: "2026-08-15", end: dateEndpoint("2026-08-15") }) };
+    await render([event]);
+    surfaceAction = { event: { allDay: true, start: new Date("2026-08-15T00:00:00Z"), startStr: "2026-08-15", end: null, endStr: "" } };
+    await click(`drop-${event.id}`);
+    expect(patchUrls).toEqual([`/api/projects/${projectId}/subtasks/due-month`]);
+  });
+
+  it("reverts and announces invalid, without a request, for a checklist id that isn't a prefixed entity id (#226)", async () => {
+    const event = { ...dueEvent("checklist:", "2026-08-12") };
+    await render([event]);
+    surfaceAction = { event: { allDay: true, start: new Date("2026-08-15T00:00:00Z"), startStr: "2026-08-15", end: null, endStr: "" } };
+    await click(`drop-${event.id}`);
+    expect(patchBodies).toHaveLength(0);
+    expect(revertCalls).toBe(1);
+    expect(host.textContent).toContain("That schedule change isn't valid.");
+  });
 
   it("maps due-only Month drag to a date-only versioned PATCH", async () => {
     const event = dueEvent("checklist:due-month", "2026-08-12");

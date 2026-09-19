@@ -11,6 +11,7 @@ import {
   previewProjectDeadlineReminderConsequences,
   resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
+  subtaskIdFromCalendarEntityId,
   checklistScheduleToDto,
   STAGE_PRESENTATION_KEYS,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
@@ -1180,6 +1181,23 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const runChecklistMutation = useCallback(async (proposal: ChecklistProposal) => {
     const token = operationTokenRef.current;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
+    // The Calendar entity id is `checklist:<subtaskId>` — DOM ids, focus descriptors,
+    // and optimistic overlays all depend on that prefix staying on the wire. The
+    // subtasks route needs the bare uuid; a malformed/unprefixed id here is a mapping
+    // defect, not a request worth sending, so bail out through the same revert +
+    // "invalid" announcement path a bad target civil time already uses.
+    const subtaskId = subtaskIdFromCalendarEntityId(proposal.source.id);
+    if (subtaskId === null) {
+      proposal.operation.drop?.revert();
+      proposal.operation.resize?.revert();
+      commandLockRef.current.active = false;
+      snapshotRef.current = null;
+      setAcceptGate(false);
+      setOverlay(null);
+      announceChecklistLifecycle("invalid", {});
+      focusDescriptor({ eventId: proposal.source.id, control: "event" });
+      return;
+    }
     const normalizedSchedule = normalizeChecklistSchedule(proposal.schedule, proposal.source.schedule.version);
     const optimisticEvent = !(("timing" in proposal.source)) && normalizedSchedule.ok
       ? optimisticChecklistEvent(proposal.source, checklistScheduleToDto(normalizedSchedule.value))
@@ -1194,7 +1212,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       // The captured role chooses the response arm before this request. The
       // internal Worker DTO is intentionally not treated as the External DTO.
       const response = await apiPatch<unknown, { schedule: SaveChecklistScheduleRequest }>(
-        `/api/projects/${encodeURIComponent(proposal.source.project.id)}/subtasks/${encodeURIComponent(proposal.source.id)}`,
+        `/api/projects/${encodeURIComponent(proposal.source.project.id)}/subtasks/${encodeURIComponent(subtaskId)}`,
         { schedule: proposal.request },
       );
       if (accessLostRef.current || token !== operationTokenRef.current) return;
