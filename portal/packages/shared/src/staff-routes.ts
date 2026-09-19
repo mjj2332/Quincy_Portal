@@ -419,6 +419,22 @@ export function parseStaffLocation(location: string): StaffRoute {
   return { kind: "not-found" };
 }
 
+/**
+ * The ONE accessor for "what committed search does this route carry" — #217 build, step 2. Every
+ * Dashboard route arm's own `search` (bare/List/Kanban/the Calendar intent) or the Calendar
+ * facet's own `calendar.search` is already normalised by the parser (`parseDashboardSearch`/
+ * `parseCalendarLocation`'s own `normalizeDashboardSearchText` calls above) before it ever reaches
+ * here, so this never re-normalises. `undefined` for any non-Dashboard route, and for a Dashboard
+ * route that carries no `q` at all — never `""` for "absent" (the Calendar facet's own `search` is
+ * a required `string`, so an intentionally-empty facet search is a real `""`, distinguishable from
+ * "the route carries no search field").
+ */
+export function dashboardSearchOf(route: StaffRoute): string | undefined {
+  if (route.kind !== "dashboard") return undefined;
+  if ("calendar" in route) return route.calendar.search;
+  return route.search;
+}
+
 function serializedList(values: readonly string[], order: readonly string[]): string {
   const unique = [...new Set(values)];
   const rank = new Map(order.map((value, index) => [value, index]));
