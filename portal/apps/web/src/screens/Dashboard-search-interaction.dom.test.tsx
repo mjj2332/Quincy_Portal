@@ -14,7 +14,6 @@ import {
   clearDashboardSearch,
   commitDashboardSearchNow,
   __getDashboardSearchSnapshotForTest,
-  resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
   syncDashboardSearchDraftFromLocation,
 } from "../lib/dashboard-search-store";
@@ -291,58 +290,17 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
     __resetDashboardSearchStoreForTest();
   });
 
-  it("a debounce armed off-Dashboard is cancelled on arrival -- the rail href/Enter already carried the draft, so the stale timer writes nothing, under StrictMode's mount-cleanup-mount replay", async () => {
-    vi.useFakeTimers();
-    try {
-      // `admin-1` is already the store's own recorded owner (as the boundary would have already
-      // settled it, off-Dashboard) -- this test's own concern is the writer-registration effect's
-      // StrictMode replay, not the separate principal-ownership reset Dashboard's own effect
-      // performs on a genuine principal change (unrelated to item 4, already covered elsewhere).
-      resetDashboardSearchForPrincipal("admin-1");
-      // Typed on `/admin` -- no Dashboard mounted yet to own the debounce (mirrors what the rail's
-      // `ShellSearch`, mounted on every route, would do).
-      setDashboardSearchDraft("smith", "admin-1");
-      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
-      expect(window.location.search).toBe("");
-
-      // The REAL path (#217 fix round 8, item 1): the rail's Dashboard link/Enter already carries
-      // the live draft in its own href, so a navigation reaching Dashboard within the 300ms window
-      // arrives at a URL that ALREADY says `q=smith` -- production never leaves this to the stale
-      // off-Dashboard timer armed above.
-      window.history.pushState(null, "", "/?q=smith");
-      const arrivalRoute = parseStaffLocation("/?q=smith");
-
-      /** Mirrors `ShellRoute`'s own draft-sync wiring, the same way every other file's own
-       * `ShellRouteHarness`/`DashboardRouteHarness` does -- `syncDashboardSearchDraftFromLocation`
-       * unconditionally cancels the pending timer the moment it observes this arrival. */
-      function ArrivalSync({ userId }: { userId: string }) {
-        useLayoutEffect(() => {
-          if (arrivalRoute.kind !== "dashboard") return;
-          syncDashboardSearchDraftFromLocation(dashboardSearchOf(arrivalRoute), userId);
-        }, [userId]);
-        return null;
-      }
-
-      // Dashboard's own FIRST mount, under StrictMode, double-invokes this component's effects
-      // (mount, cleanup, mount) synchronously in one commit.
-      await act(async () => {
-        root.render(<>{createElement(StrictMode, null, createElement(Dashboard, { currentUserId: "admin-1", role: "admin" }))}<ArrivalSync userId="admin-1" /></>);
-        await Promise.resolve();
-      });
-
-      // The URL already carries `q=smith` -- from the navigation itself, not from the stale timer.
-      expect(window.location.search).toBe("?q=smith");
-      const locationAfterArrival = window.location.search;
-
-      // A full second past the original 300ms debounce -- no LATER write occurs: the arrival sync
-      // cancelled the obsolete timer, so there is nothing left to fire.
-      await act(async () => { vi.advanceTimersByTime(1_000); });
-
-      expect(window.location.search).toBe(locationAfterArrival);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+  // #217 fix round 9, Sol review, item 2. This scenario used to live here as a probe-only harness:
+  // it pushed `/?q=smith` onto `window.history` directly (never a real rail click or Enter) and
+  // drove the draft-to-URL sync through a LOCAL `ArrivalSync` stand-in rather than the real
+  // `ShellRoute`'s own `useLayoutEffect`. It is now hosted where the real app shell already exists
+  // to drive it faithfully -- `App-rail-dashboard-agreement.dom.test.tsx`'s own describe block "a
+  // debounce armed off-Dashboard commits exactly once on arrival, under StrictMode, through the
+  // real rail (#217 fix round 9, item 2)": types into the REAL `ShellSearch` at `/admin` under
+  // `<StrictMode>`, arrives at Dashboard through (i) a REAL click on the rail's parent Dashboard
+  // link and (ii) a REAL Enter keydown, and asserts against a spy on `locationStore()`'s own
+  // `push`/`replace` rather than `window.location.search` alone. `ArrivalSync` no longer exists
+  // anywhere in this codebase.
 
   it("a REAL unmount (no StrictMode replay involved) still cancels a pending debounce — the existing guarantee, unaffected", async () => {
     vi.useFakeTimers();
