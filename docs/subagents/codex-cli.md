@@ -165,6 +165,27 @@ cat <prompt> | codex exec --dangerously-bypass-approvals-and-sandbox \
   --output-last-message <report> > <run.log> 2>&1
 ```
 
+**Standing owner authorization (2026-09-19).** The owner has approved this exact invocation —
+Luna, unsandboxed, `chrome-devtools-mcp` attached to the dedicated debugging Chrome — for browser
+passes against **local dev (`http://localhost:8787`) only**. It does not extend to production, to
+any other model or task, or to an unsandboxed run without the browser. The session's auto-mode
+permission classifier may still stop the command the first time in a session: that is a request
+for the owner's say-so in chat, not a missing rule (`Bash(codex exec *)` already covers it) and
+not something to route around. Ask, then run it as written. A session cannot add its own
+permission rules — `.claude/settings.local.json` is the owner's to edit; the rule, if the owner
+wants it persistent, is `Bash(codex exec --dangerously-bypass-approvals-and-sandbox *)`.
+
+Two set-up facts that cost a round when missed (#216, 2026-09-19):
+
+- **The dev server serves whichever checkout started it**, normally the main checkout on `main`,
+  not the worktree under test. A worktree cannot run its own server — it has no `.dev.vars` and no
+  local D1 session, and neither may be copied. With the owner's OK, detach the main checkout to
+  the branch under test (`git checkout --detach <branch>`), rebuild web
+  (`npm run build -w @quincy/web`), test, and restore `main` afterwards.
+- **Confirm the debug port answers before launching** (`curl -s http://127.0.0.1:9333/json/version`).
+  A Chrome listening on 9222 that returns nothing is the everyday profile, which refuses remote
+  debugging.
+
 The unsandboxed flag is required for MCP browser measurements that use `evaluate_script`. The
 native path needs it too, since the Chrome plugin spawns a native host and writes session state
 under `~/.codex`. Apply the browser-testing restrictions in `Subagent-Orchestration.md`, including
