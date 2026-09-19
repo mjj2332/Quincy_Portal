@@ -62,7 +62,11 @@ export function stripDashboardSearchFromLocation(location: string): string {
   const route = parseStaffLocation(location);
   if (route.kind !== "dashboard") return location;
   if ("calendar" in route) return staffPathFor({ kind: "dashboard", calendar: { ...route.calendar, search: "" } });
-  if (route.search === undefined) return location;
+  // #217 fix round 6, item 2 (Sol re-review, NIT). Always re-serialises from the PARSED route,
+  // never the raw input string — a whitespace-only `q` (`/?q=+++`) normalises to NO search at
+  // parse time (#217 fix round 5, item 4), so `route.search` is already `undefined` here and an
+  // early "already stripped, return `location` unchanged" path handed back the literal `q=+++`
+  // param untouched. `staffPathFor` on the searchless route is what actually removes it.
   const { search: _search, ...rest } = route;
   return staffPathFor(rest);
 }

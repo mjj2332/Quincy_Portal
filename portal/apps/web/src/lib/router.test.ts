@@ -116,6 +116,20 @@ describe("stripDashboardSearchFromLocation (#217 fix round 5, item 3)", () => {
     expect(stripDashboardSearchFromLocation("/?view=kanban")).toBe("/?view=kanban");
   });
 
+  // #217 fix round 6, item 2 (Sol re-review, NIT). A whitespace-only `q` normalises to no search
+  // at PARSE time (#217 fix round 5, item 4) -- `parseStaffLocation("/?q=+++")` already reads as
+  // the plain `{ kind: "dashboard" }` route, with no `search` field to remove. The early-return
+  // "unchanged" path treated that as already-stripped and handed back the ORIGINAL location,
+  // literal `q=+++` and all, rather than the canonical URL the parsed (searchless) route actually
+  // describes. Serialising from the parsed route unconditionally (never returning the raw input
+  // string except for a non-Dashboard location, where there is nothing to strip in the first
+  // place) is what removes the literal param regardless of whether it was semantically empty.
+  it("removes a whitespace-only q param entirely, not just the search it normalises to", () => {
+    expect(stripDashboardSearchFromLocation("/?q=+++")).toBe("/");
+    expect(stripDashboardSearchFromLocation("/?view=kanban&q=+++")).toBe("/?view=kanban");
+    expect(stripDashboardSearchFromLocation("/?view=calendar&q=+++")).toBe("/?view=calendar");
+  });
+
   it("leaves a non-Dashboard location untouched — nothing there carries a Dashboard search", () => {
     expect(stripDashboardSearchFromLocation(`/projects/${projectId}`)).toBe(`/projects/${projectId}`);
     expect(stripDashboardSearchFromLocation("/admin")).toBe("/admin");
