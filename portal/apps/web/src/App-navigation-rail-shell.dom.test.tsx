@@ -804,3 +804,73 @@ describe("⌘K project search (#217, replacing #122 P3's navigate-then-latch)", 
     expect(rail(host)?.getAttribute("data-state")).toBe("collapsed");
   });
 });
+
+/**
+ * #217 fix round 3, item 1 (Sol's whole-branch review). `staff-navigation.ts`'s own model stays
+ * pure (`NavigationRail.dom.test.tsx` covers it unchanged) — this exercises the REAL shell
+ * (`app-router.tsx`'s `ShellRoute`), which grafts the live search store's value back onto the
+ * rail's Dashboard child hrefs. `Dashboard` is mocked in this file, so the List/Kanban round trip
+ * is asserted through the URL and the rail's own input directly, and the Calendar child's own bare
+ * intent (deliberately carrying no `q` of its own — `staff-routes.ts`) is asserted as exactly
+ * that; carrying `q` across it into a concrete facet URL is `Dashboard.tsx`'s own canonicaliser,
+ * covered separately in `Dashboard-calendar.dom.test.tsx`.
+ */
+describe("rail Dashboard child links carry the live search (#217 fix round 3, item 1)", () => {
+  function childLink(host: ParentNode, label: string) {
+    return [...host.querySelectorAll('[data-testid="navigation-rail-child-link"]')].find((element) => element.textContent?.trim() === label) as HTMLAnchorElement | undefined;
+  }
+
+  async function typeAndCommit(host: ParentNode, value: string) {
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await keydown(input, { key: "Enter" });
+  }
+
+  it("click List → Kanban → Calendar → List with a committed q keeps it in the URL and the input at every step", async () => {
+    const host = await renderAt("/?view=list");
+    await typeAndCommit(host, "smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+
+    await click(childLink(host, "Kanban")!);
+    expect(window.location.search).toContain("view=kanban");
+    expect(window.location.search).toContain("q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+
+    await click(childLink(host, "Calendar")!);
+    // The Calendar child link is the bare intent — it deliberately carries no `q` itself (the
+    // type does not even allow one; see `staff-routes.ts`'s `DashboardCalendarIntentRoute`).
+    // `q` surviving past this click is `Dashboard.tsx`'s own canonicaliser's job, exercised in
+    // `Dashboard-calendar.dom.test.tsx` instead (`Dashboard` is mocked in this file).
+    expect(window.location.search).toBe("?view=calendar");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+
+    await click(childLink(host, "List")!);
+    expect(window.location.search).toContain("view=list");
+    expect(window.location.search).toContain("q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+  });
+
+  it("carries the search into a List/Kanban rail click even mid-debounce, before the 300ms commit", async () => {
+    const host = await renderAt("/?view=list");
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "smith");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    // No Enter, no wait: still inside the 300ms debounce when the rail link is clicked.
+    await click(childLink(host, "Kanban")!);
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  it("an empty search omits `q` from every Dashboard child href", async () => {
+    const host = await renderAt("/?view=list");
+    expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban");
+    expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list");
+    expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar");
+  });
+});

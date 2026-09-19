@@ -235,6 +235,35 @@ describe("Dashboard Calendar routing", () => {
     expect(getDashboardSearchSnapshot().draft).toBe("smith street");
   });
 
+  // #217 fix round 3, item 1 (Sol's whole-branch review). Unlike the toolbar's own Calendar switch
+  // above (`selectView` builds the full facet URL itself, straight from the live store — it never
+  // touches this path at all), the RAIL's Calendar child link is the BARE `/?view=calendar` intent
+  // (it carries no `q` of its own — `staff-routes.ts`'s `DashboardCalendarIntentRoute`). Arriving
+  // at that bare intent is what reaches the reconciliation effect's OWN canonicaliser
+  // (`Dashboard.tsx:~437`), which used to read `calendarState.search` — whatever this component
+  // last wrote there, not necessarily what is live in the store right now.
+  it("canonicalises a bare `/?view=calendar` arrival (the rail's own link) with the LIVE search, not a stale remembered one", async () => {
+    await render({ calendar: { ...routeCalendar, editorIds: [], search: "oldterm" } });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("newterm");
+    // Still mid-debounce -- the store's `query` has not committed yet, only `draft` has.
+    expect(getDashboardSearchSnapshot().query).not.toBe("newterm");
+
+    await act(async () => { locationStore().push("/?view=calendar"); await Promise.resolve(); });
+
+    expect(window.location.search).toContain("view=calendar");
+    expect(window.location.search).toContain("q=newterm");
+    expect(window.location.search).not.toContain("oldterm");
+  });
+
+  // #217: the #122 P3 "latched focus request" tests that lived here (`requestProjectSearchFocus`
+  // firing before/after mount) are deleted, not rewritten — the scenario they covered (a request
+  // that must outlive the Dashboard not yet existing to mount its OWN search field) no longer
+  // exists. The rail's `ShellSearch` is the one search input now, always present regardless of
+  // which screen is showing, so there is nothing left to latch a request for. Superseded by
+  // `dashboard-search-store.test.ts` (the store) and `ShellSearch.dom.test.tsx` (the rail's ⌘K
+  // ref-focus, including the collapsed popover-then-focus case).
+
   // #217: the #122 P3 "latched focus request" tests that lived here (`requestProjectSearchFocus`
   // firing before/after mount) are deleted, not rewritten — the scenario they covered (a request
   // that must outlive the Dashboard not yet existing to mount its OWN search field) no longer

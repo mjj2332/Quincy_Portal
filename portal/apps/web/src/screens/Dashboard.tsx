@@ -435,7 +435,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // and Sydney-today fallbacks. So this is the same canonicalising replace the stale-bare-
       // arrival case below already performs, reached by a different route.
       if (routeDashboardView === "calendar") {
-        if (calendarState) history.replace(staffPathFor({ kind: "dashboard", calendar: calendarState }));
+        // #217 fix round 3, item 1 (Sol's whole-branch review): `calendarState.search` is
+        // whatever this component last WROTE there, not necessarily the current store value -- a
+        // rail click to the bare `/?view=calendar` intent (the rail deliberately carries no `q`
+        // itself; see `staff-navigation.ts`'s and `app-router.tsx`'s own docblocks) must still
+        // canonicalise with whatever is live in the store right now, mirroring `selectView`'s own
+        // entering-Calendar mapping (`search.draft`, not `search.query` -- the input's own current
+        // text, including anything still mid-debounce).
+        if (calendarState) history.replace(staffPathFor({ kind: "dashboard", calendar: { ...calendarState, search: normalizeDashboardCalendarSearch(sanitizeDashboardCalendarSearch(search.draft)) } }));
         if (view !== "calendar") setView("calendar");
         return;
       }
@@ -454,8 +461,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     if (locationHasCalendar) return;
     if (calendarFallbackLocationRef.current) {
+      // Same live-value fix as the bare-intent canonicaliser above (#217 fix round 3, item 1).
       if (calendarState) {
-        history.replace(staffPathFor({ kind: "dashboard", calendar: calendarState }));
+        history.replace(staffPathFor({ kind: "dashboard", calendar: { ...calendarState, search: normalizeDashboardCalendarSearch(sanitizeDashboardCalendarSearch(search.draft)) } }));
       }
       calendarFallbackLocationRef.current = false;
       return;
@@ -466,7 +474,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // entry), not just the pre-existing "leaving Calendar via a stale bare arrival" case.
     adoptRouteSearch();
     if (view !== bareRouteFallbackViewRef.current) setView(bareRouteFallbackViewRef.current);
-  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, search.query, view, viewingArchived]);
+    // `search.draft` joins the list alongside `search.query` (#217 fix round 3, item 1): the two
+    // Calendar canonicalisers above now read it. Every OTHER branch this effect can take is a
+    // cheap no-op on a keystroke-driven rerun (the two canonicalisers themselves only ever fire
+    // while genuinely arriving at their respective locations, not on every draft change), so this
+    // does not turn typing into a per-keystroke URL-rewrite storm.
+  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardView, search.draft, search.query, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;

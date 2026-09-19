@@ -41,9 +41,10 @@ import { roleHasCapability, type DashboardCalendarState, type Role } from "@quin
 import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from "./router";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
-import { buildStaffNavigation } from "./staff-navigation";
-import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
+import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
+import { DASHBOARD_VIEW_KEY, readRememberedDashboardView, sanitizeDashboardCalendarSearch, normalizeDashboardCalendarSearch } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
+import { getDashboardSearchSnapshot, subscribeDashboardSearch } from "./dashboard-search-store";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
@@ -98,6 +99,57 @@ function NotAvailable() {
       </div>
     </main>
   );
+}
+
+/** `staff-navigation.ts`'s own Dashboard child ids, mapped back onto the view they mean — kept
+ * here rather than exported from that module, since ids are its own implementation detail. */
+const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
+  "dashboard-list": "list",
+  "dashboard-kanban": "kanban",
+  "dashboard-calendar": "calendar",
+};
+
+/**
+ * #217 fix round 3, item 1 (Sol's whole-branch review). `staff-navigation.ts` stays pure — no
+ * search-store or route-serializer knowledge — so this is where the rail's Dashboard child hrefs
+ * get the LIVE search grafted back on, after the pure model has already built them. Reads
+ * `draft`, not `query`: the input already renders the draft directly, and building the href from
+ * the same value means a rail click mid-debounce (before the 300ms commit) still carries the
+ * in-progress text, with no separate "flush before navigating" step needed here (unlike
+ * `selectView`'s in-app switch, which must flush because it reads the store's `query` to build its
+ * `history.push` synchronously).
+ *
+ * List/Kanban map the search onto `q` directly, through `staffPathFor`, which now normalises and
+ * caps it itself (#217 fix round 3, item 3) — so this never has to duplicate that. Calendar maps
+ * it onto the calendar facet's own `search` field, the same mapping `selectView` performs when
+ * switching INTO Calendar — but only when `dashboardCalendar` is non-null, i.e. the CURRENT route
+ * is already a calendar facet with known date/subview/filters to carry forward. Resolving those
+ * preferences here for the general case (arriving at Calendar from List/Kanban/elsewhere) was
+ * rejected for the same reason `staff-routes.ts`'s own docblock gives for the bare `/?view=calendar`
+ * intent: it would put the preference-resolution logic in two places. That case keeps the pure
+ * model's bare intent href — `Dashboard.tsx`'s own canonicalisers (fixed alongside this) are what
+ * carry the live search across that one full-facet rewrite on arrival.
+ */
+function withLiveDashboardSearch(navigation: StaffNavigation, query: string, dashboardCalendar: DashboardCalendarState | null): StaffNavigation {
+  function hrefFor(child: StaffNavigationItem): string {
+    const view = DASHBOARD_CHILD_VIEW[child.id];
+    if (view === "list" || view === "kanban") return staffPathFor({ kind: "dashboard", dashboardView: view, ...(query ? { search: query } : {}) });
+    if (view === "calendar" && dashboardCalendar) {
+      const search = normalizeDashboardCalendarSearch(sanitizeDashboardCalendarSearch(query));
+      return staffPathFor({ kind: "dashboard", calendar: { ...dashboardCalendar, search } });
+    }
+    return child.href;
+  }
+  return {
+    ...navigation,
+    groups: navigation.groups.map((group) => ({
+      ...group,
+      items: group.items.map((item) => !item.children ? item : {
+        ...item,
+        children: item.children.map((child) => ({ ...child, href: hrefFor(child) })),
+      }),
+    })),
+  };
 }
 
 /**
@@ -182,13 +234,18 @@ function ShellRoute() {
   // must not come back. The remembered preference remains the pre-mount fallback, for the single
   // frame before any Dashboard instance has published.
   const publishedDashboardView = useSyncExternalStore(subscribeDashboardView, readDashboardView, () => null);
-  const navigation = useMemo(() => buildStaffNavigation(
+  const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
+  // #217 fix round 3, item 1: the rail's own Dashboard child links, read here (not inside
+  // `staff-navigation.ts`, which stays pure) so a rail click carries the live search the same way
+  // the in-Dashboard view switcher already does. `ShellSearch` reads the identical store, so the
+  // input and every rail href this produces can never disagree about what "the current q" is.
+  const dashboardSearchDraft = useSyncExternalStore(subscribeDashboardSearch, getDashboardSearchSnapshot, getDashboardSearchSnapshot).draft;
+  const navigation = useMemo(() => withLiveDashboardSearch(buildStaffNavigation(
     route,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
     { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar") },
     publishedDashboardView,
-  ), [canAccessAdmin, publishedDashboardView, route, user.role]);
-  const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
+  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, route, user.role]);
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
