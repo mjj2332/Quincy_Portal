@@ -1182,9 +1182,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 and truncating here, full text in `title`. `tracking-normal` finishes what
                 `normal-case` started -- the user's own text is shown as typed, not with the
                 Badge's eyebrow letter-spacing. `mr` on the Badge keeps the chip from reading as
-                part of the `Projects` eyebrow beside it. */}
+                part of the `Projects` eyebrow beside it. 12ch is what the toolbar holds on ONE row
+                beside the rail at 1440 (measured in the browser: 28ch still wrapped it to three);
+                28ch only from 1600 up. */}
             <span
-              className="inline-block max-w-[28ch] truncate align-bottom normal-case tracking-normal"
+              className="inline-block max-w-[12ch] min-[1600px]:max-w-[28ch] truncate align-bottom normal-case tracking-normal"
               data-testid="dashboard-search-chip-query"
               title={committedQuery}
             >
