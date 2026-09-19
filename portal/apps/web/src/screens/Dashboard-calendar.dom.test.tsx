@@ -281,6 +281,30 @@ describe("Dashboard Calendar routing", () => {
   // `dashboardRoute`), so this test now puts the search on the actual URL too, through
   // `DashboardRouteHarness` (mirrors `ShellRoute`'s own draft-sync wiring), rather than a prop that
   // could never arise this way for real.
+  // #217 fix round 8, Sol review, item 2 (MEDIUM). Clicking the already-active Calendar control
+  // (`selectView("calendar")` while `view` is already "calendar") used to read
+  // `effectiveRouteCalendar.search`/`calendarState.search` (the STALE, already-committed `q`) and
+  // write that value back into the shared draft via `setDashboardSearchDraft` -- clobbering
+  // whatever the user had typed since, one line before `navigateCalendar` reads the draft back out
+  // through `takeDashboardSearchForNavigation`. The fix deletes that Calendar-state search read
+  // entirely: `navigateCalendar` already flushes and reads the CURRENT draft itself.
+  it("clicking the already-active Calendar control carries a mid-debounce draft, not the stale committed q", async () => {
+    window.history.replaceState(null, "", `/?view=calendar&date=${routeCalendar.date}&sub=month&layers=project%2Cchecklist&q=smith`);
+    await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(window.location.search).toContain("q=smith");
+
+    await typeSearch("jones");
+    // Still mid-debounce -- the URL has not been written yet, only the store's `draft` has changed.
+    expect(window.location.search).toContain("q=smith");
+
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
+
+    expect(window.location.search).toContain("q=jones");
+    expect(window.location.search).not.toContain("q=smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("jones");
+  });
+
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {
     window.history.replaceState(null, "", `/?view=calendar&date=${routeCalendar.date}&sub=month&layers=project%2Cchecklist&q=smith+street`);
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });

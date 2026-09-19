@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, normalizeDashboardCalendarSearch, sanitizeDashboardCalendarSearch, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
@@ -58,7 +58,6 @@ import {
   clearDashboardSearch,
   getDashboardSearchSnapshotForPrincipal,
   resetDashboardSearchForPrincipal,
-  setDashboardSearchDraft,
   setDashboardSearchUrlWriter,
   subscribeDashboardSearch,
   takeDashboardSearchForNavigation,
@@ -781,13 +780,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
-      const enteringSearch = effectiveRouteCalendar?.search ?? (view === "calendar" ? calendarState?.search ?? "" : search.draft);
-      const sanitizedSearch = sanitizeDashboardCalendarSearch(enteringSearch);
       calendarFallbackLocationRef.current = false;
-      setDashboardSearchDraft(sanitizedSearch, currentUserId);
       setView("calendar");
       try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
-      navigateCalendar({ ...nextCalendar, search: normalizeDashboardCalendarSearch(sanitizedSearch), view: "calendar" });
+      // #217 fix round 8, Sol review, item 2 (MEDIUM). No Calendar-state search read here any
+      // more, and no `setDashboardSearchDraft` call to clobber the draft with it: reading
+      // `effectiveRouteCalendar.search`/`calendarState.search` (the last COMMITTED `q`) and
+      // writing it back into the store, one line before `navigateCalendar` reads the draft back
+      // out via `takeDashboardSearchForNavigation`, discarded whatever the user had typed SINCE
+      // that commit -- a click on the already-active Calendar control while mid-debounce restored
+      // stale text instead of carrying the in-progress one. `navigateCalendar` already flushes and
+      // reads the current draft itself; `search` here is inert (overwritten there unconditionally)
+      // but keeps `nextCalendar`'s own shape.
+      navigateCalendar({ ...nextCalendar, view: "calendar" });
       return;
     }
     const alreadyAtView = routeDashboardView === next;
