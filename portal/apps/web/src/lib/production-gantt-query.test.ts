@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { InfiniteQueryObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
-import { PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionGanttResponse } from "@quincy/shared";
+import { PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionGanttChildPageResponse, type ProductionGanttResponse } from "@quincy/shared";
 import {
   decodeProductionGanttResponse,
   flattenGanttProjectPages,
@@ -289,6 +289,20 @@ describe("flattenGanttProjectPages incremental memo (fix-218-r3 #2: O(n), not O(
     expect(shrunk.map((p) => p.id)).toEqual(["a"]);
   });
 
+  it("regression (fix-218-r6): a caller that mutates the pages array in place (push, not immutable append) still gets the new page", () => {
+    const first = page([project("a")]);
+    const pages: ProductionGanttResponse[] = [first];
+    flattenGanttProjectPages(pages);
+
+    // A caller that violates the immutable-append contract and pushes onto the SAME array
+    // object — TanStack Query itself never does this (structural sharing never mutates in
+    // place), but the memo must not silently drop the pushed page if some other caller does.
+    const second = page([project("b")]);
+    pages.push(second);
+    const flattened = flattenGanttProjectPages(pages);
+    expect(flattened.map((p) => p.id)).toEqual(["a", "b"]);
+  });
+
   it("walks each row exactly once across 200 sequential page arrivals (linear, not quadratic)", () => {
     let visits = 0;
     let pages: ProductionGanttResponse[] = [];
@@ -385,6 +399,26 @@ describe("mergeGanttChildPage incremental memo (fix-218-r3 #2: O(n), not O(n^2 /
     // `base` itself is a plain array from `mergeGanttChildPage`'s point of view and was never
     // mutated by either branch.
     expect(base.map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("regression (fix-218-r6): a caller that pushes onto the returned array in place still gets a correct merge (matches a from-scratch merge)", () => {
+    const base = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a")], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    expect(base.map((r) => r.id)).toEqual(["a"]);
+
+    // A caller that violates the immutable-accumulator contract and pushes directly onto the
+    // array `mergeGanttChildPage` returned — TanStack Query consumers never do this
+    // (`mergeGanttChildPage`'s own contract treats every array as immutable), but the memo must
+    // not go stale if some other caller does.
+    const c = checklistRow("c");
+    base.push(c);
+
+    const nextPage: ProductionGanttChildPageResponse = { projectId: "p1", children: { rows: [checklistRow("b")], total: 3, returned: 1, truncated: false, nextCursor: null } };
+    const merged = mergeGanttChildPage(base, nextPage);
+    // A from-scratch merge over the SAME (now-mutated) content, via a brand-new array the cache
+    // has never seen, must produce the identical result.
+    const scratch = mergeGanttChildPage([...base], nextPage);
+    expect(merged.map((r) => r.id)).toEqual(scratch.map((r) => r.id));
+    expect(merged.map((r) => r.id)).toEqual(["a", "c", "b"]);
   });
 
   it("walks each row exactly once across 200 sequential child-page arrivals (linear, not quadratic)", () => {

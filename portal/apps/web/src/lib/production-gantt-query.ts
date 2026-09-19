@@ -96,6 +96,31 @@ export type ProductionGanttInfiniteData = InfiniteData<ProductionGanttResponse, 
  * completely different chain that happens to collide — it won't, `WeakMap` keys are exact object
  * identity) falls back to a full, correct rebuild. Pure function of `pages`: same content in,
  * same content out, this just avoids redoing work it already did.
+ *
+ * **fix-218-r6:** `processedPages` is stored as `pages.slice()` — the caller's OWN array
+ * snapshotted, never the caller's live array by reference. If a caller mutated `pages` in place
+ * (`pages.push(newPage)` instead of the expected `[...pages, newPage]`), storing the caller's
+ * array by reference would let that mutation silently extend `processedPages.length` right along
+ * with it, so the next call would see `processedPages.length === pages.length` and skip the
+ * pushed page as "already walked" without ever having visited it. A snapshot can't be mutated out
+ * from under the cache.
+ *
+ * **Accepted limit:** this only guards against length changes (push/pop/splice-that-resizes).
+ * Same-length in-place element replacement (`pages[0] = otherPage`) is NOT detected — the
+ * snapshot's reference at that index still matches `pages`' old reference in memory, but nothing
+ * observes the swap without walking every index unconditionally, which is exactly the O(n^2) cost
+ * this memo exists to avoid. Every input here is treated as immutable once returned/passed on,
+ * matching TanStack Query's own contract (its structural sharing never mutates a `pages` array or
+ * a page object in place — it always produces new array/object references); a caller that breaks
+ * that contract via same-length in-place replacement is outside what this memo can detect.
+ *
+ * **Not frozen (fix-218-r6, considered and declined):** `Object.freeze`ing the returned array
+ * would change its type from `GanttProjectRowDto[]` to `readonly GanttProjectRowDto[]`, which
+ * `ProductionGanttSelectedData.projects` below and every consumer of it would need to widen to
+ * match — `packages/shared/src/production-gantt.ts`'s `GanttProjectRowDto`/`ProductionGanttResponse`
+ * DTOs type their array fields as plain (non-`readonly`) arrays today, so that widening is NOT a
+ * same-file, already-`readonly`-everywhere change. Skipped per the "only if it doesn't cascade"
+ * condition; the length/reference guards above are the enforcement instead.
  */
 const projectFlattenCache = new WeakMap<ProductionGanttResponse, { processedPages: readonly ProductionGanttResponse[]; byId: Map<string, GanttProjectRowDto> }>();
 
@@ -128,7 +153,8 @@ export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse
       onRowVisit?.(project);
     }
   }
-  projectFlattenCache.set(firstPage, { processedPages: pages, byId });
+  // fix-218-r6: snapshot, never the caller's live `pages` reference — see docblock above.
+  projectFlattenCache.set(firstPage, { processedPages: pages.slice(), byId });
   return [...byId.values()];
 }
 
@@ -149,17 +175,40 @@ export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse
  * page) would read the first branch's already-mutated `Map` back out of the cache and silently
  * carry that branch's rows into a walk that never asked for them. Deleting on reuse makes a
  * second read of the same parent a correct, if uncached, full rebuild instead.
+ *
+ * **fix-218-r6:** the cache KEY here is the array `mergeGanttChildPage` itself returned — unlike
+ * `projectFlattenCache` above, there is no separate anchor object to snapshot against. If a
+ * caller mutates that returned array in place (`base.push(row)`) instead of treating it as
+ * immutable, the array's `.length` changes but its identity doesn't, so a later
+ * `childMergeCache.get(existingRows)` would still hit and hand back a `byId` that never saw the
+ * pushed row. `length` is recorded alongside `byId` at cache-set time and re-checked at lookup: a
+ * mismatch is treated as a miss, forcing a full, correct rebuild from the (now-mutated)
+ * `existingRows` array's actual current content.
+ *
+ * **Accepted limit:** only a length change is detected. Same-length in-place element replacement
+ * (`existingRows[0] = otherRow`) is not — this function treats every array it's handed as
+ * immutable once returned, the same contract TanStack Query's own structural sharing relies on
+ * (it never mutates a page or accumulated array in place; it always produces new references).
+ *
+ * **Not frozen (fix-218-r6, considered and declined):** same reasoning as `flattenGanttProjectPages`
+ * above — `GanttChecklistRowDto`'s array fields (`GanttProjectRowDto["children"]["rows"]` in
+ * `packages/shared/src/production-gantt.ts`) are plain arrays, not `readonly`, so freezing here
+ * would cascade a type widening beyond this file. Skipped; the length guard above is the
+ * enforcement instead.
  */
-const childMergeCache = new WeakMap<readonly GanttChecklistRowDto[], Map<string, GanttChecklistRowDto>>();
+const childMergeCache = new WeakMap<readonly GanttChecklistRowDto[], { length: number; byId: Map<string, GanttChecklistRowDto> }>();
 
 /** Same latest-page-wins dedupe rule as `flattenGanttProjectPages`, for a project's children
  * accumulated one child page at a time (`fetchGanttChildPage`). `existingRows` is the
  * already-accumulated list; `page` is the newly fetched page to merge in. `onRowVisit` is the
  * same test-only walk counter as `flattenGanttProjectPages`. */
 export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[], page: ProductionGanttChildPageResponse, onRowVisit?: (row: GanttChecklistRowDto) => void): GanttChecklistRowDto[] {
-  const cached = childMergeCache.get(existingRows);
-  const byId = cached ?? new Map<string, GanttChecklistRowDto>();
-  if (cached) {
+  const cachedEntry = childMergeCache.get(existingRows);
+  // fix-218-r6: a length mismatch means `existingRows` was mutated in place since it was cached
+  // (e.g. `.push`) — treat it exactly like a cache miss below, never reuse `cachedEntry.byId`.
+  const canReuse = cachedEntry !== undefined && cachedEntry.length === existingRows.length;
+  const byId = canReuse ? cachedEntry!.byId : new Map<string, GanttChecklistRowDto>();
+  if (canReuse) {
     // Ownership transfer (fix-218-r5 #1): about to mutate `byId` in place, so the entry keyed on
     // `existingRows` must not keep pointing at it — a second, branched call from this same
     // `existingRows` must miss and rebuild, not observe THIS call's mutation.
@@ -176,7 +225,7 @@ export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[
     onRowVisit?.(row);
   }
   const result = [...byId.values()];
-  childMergeCache.set(result, byId);
+  childMergeCache.set(result, { length: result.length, byId });
   return result;
 }
 
