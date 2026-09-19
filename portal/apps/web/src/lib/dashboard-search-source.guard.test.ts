@@ -360,6 +360,100 @@ describe("guard: the store's module-level state is an allowlist (#217 fix round 
   });
 });
 
+/**
+ * Pure detector 6 (#217 fix round 9, Sol review, item 3). Detector 5 above only walks MODULE-LEVEL
+ * `let`/`const` declarations against an allowlist -- a renamed committed-query copy added as a
+ * PROPERTY of the allowlisted `snapshot` variable itself (`{ draft, principalId, committedSearch }`)
+ * never declares a new top-level binding, so it passes detector 5 outright. This pins the EXACT
+ * property set of `DashboardSearchSnapshot` (the exported type) and of every `snapshot = { ... }`
+ * object literal in the file (the initial declaration and `notify()`'s own reassignment) against
+ * the same allowlist -- `draft` and `principalId`, the two fields the store's own docblock (top of
+ * file) and `getDashboardSearchSnapshotForPrincipal`'s own return shape claim are all it holds.
+ * Comments are stripped first (same reasoning as detector 2/4) so a docblock mentioning a
+ * hypothetical extra field in prose does not offend.
+ */
+const DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES = new Set(["draft", "principalId"]);
+
+function extractDelimitedNames(body: string, delimiter: string): string[] {
+  return body
+    .split(delimiter)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => part.split(":")[0]!.trim());
+}
+
+export function findSnapshotShapeViolations(source: string): string[] {
+  const code = stripComments(source);
+  const offenses: string[] = [];
+
+  const typeMatch = code.match(/export type DashboardSearchSnapshot\s*=\s*\{([^}]*)\}/);
+  if (!typeMatch) {
+    offenses.push("no `export type DashboardSearchSnapshot = { ... }` declaration found");
+  } else {
+    for (const name of extractDelimitedNames(typeMatch[1]!, ";")) {
+      if (!DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES.has(name)) {
+        offenses.push(`DashboardSearchSnapshot carries a field outside the allowlist: \`${name}\``);
+      }
+    }
+  }
+
+  // Every `snapshot = { ... }` object literal (the initial declaration, optionally typed, and
+  // `notify()`'s own bare reassignment) -- NOT `mismatchCache`'s own `snapshot: { ... }` PROPERTY,
+  // which this pattern deliberately does not match: no `=` follows that colon, only `{` does.
+  const literalMatches = [...code.matchAll(/\bsnapshot\s*(?::\s*DashboardSearchSnapshot\s*)?=\s*\{([^}]*)\}/g)];
+  if (literalMatches.length === 0) {
+    offenses.push("no `snapshot = { ... }` object literal found");
+  }
+  for (const literal of literalMatches) {
+    for (const name of extractDelimitedNames(literal[1]!, ",")) {
+      if (!DASHBOARD_SEARCH_SNAPSHOT_ALLOWED_PROPERTIES.has(name)) {
+        offenses.push(`a \`snapshot = { ... }\` object literal carries a property outside the allowlist: \`${name}\``);
+      }
+    }
+  }
+  return offenses;
+}
+
+/** Self-test fixtures for detector 6. */
+const PLANTED_SNAPSHOT_TYPE_EXTRA_FIELD =
+  'export type DashboardSearchSnapshot = { draft: string; principalId: string; committedSearch: string };\n' +
+  'let snapshot: DashboardSearchSnapshot = { draft, principalId, committedSearch };';
+const PLANTED_SNAPSHOT_LITERAL_EXTRA_FIELD_ONLY =
+  'export type DashboardSearchSnapshot = { draft: string; principalId: string };\n' +
+  'let snapshot: DashboardSearchSnapshot = { draft, principalId, committedSearch };\n' +
+  'function notify() {\n  snapshot = { draft, principalId, committedSearch };\n}';
+const PLANTED_SNAPSHOT_COMMENT_ONLY =
+  '// this store used to also keep a `committedSearch` field on the snapshot -- it no longer does\n' +
+  'export type DashboardSearchSnapshot = { draft: string; principalId: string };\n' +
+  'let snapshot: DashboardSearchSnapshot = { draft, principalId };';
+
+describe("guard: the snapshot type and its object literals carry no field outside the allowlist (#217 fix round 9, item 3)", () => {
+  it("the real store source's DashboardSearchSnapshot type and every `snapshot = { ... }` literal carry none of the offending shapes", () => {
+    const source = readFileSync(join(libDir, "dashboard-search-store.ts"), "utf8");
+    expect(findSnapshotShapeViolations(source)).toEqual([]);
+  });
+
+  it("self-test: fires when DashboardSearchSnapshot's own type gains a renamed committed-query field", () => {
+    expect(findSnapshotShapeViolations(PLANTED_SNAPSHOT_TYPE_EXTRA_FIELD)).toEqual([
+      "DashboardSearchSnapshot carries a field outside the allowlist: `committedSearch`",
+      "a `snapshot = { ... }` object literal carries a property outside the allowlist: `committedSearch`",
+    ]);
+  });
+
+  it("self-test: fires when a renamed committed-query copy is added INSIDE the allowlisted `snapshot` variable's own object literals, even with the type left alone", () => {
+    expect(findSnapshotShapeViolations(PLANTED_SNAPSHOT_LITERAL_EXTRA_FIELD_ONLY)).toEqual([
+      "a `snapshot = { ... }` object literal carries a property outside the allowlist: `committedSearch`",
+      "a `snapshot = { ... }` object literal carries a property outside the allowlist: `committedSearch`",
+    ]);
+  });
+
+  // #217 fix round 8, Sol review, item 5(iii)'s same reasoning: a comment-only mention of a
+  // hypothetical extra field must not offend.
+  it("self-test: a comment-only mention of an extra field does not offend", () => {
+    expect(findSnapshotShapeViolations(PLANTED_SNAPSHOT_COMMENT_ONLY)).toEqual([]);
+  });
+});
+
 describe("the file scan itself", () => {
   it("reads the real application source", () => {
     const files = appFiles();
