@@ -222,9 +222,21 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // the browser's native Back button actually undo an explicit view switch, since D2 made
   // List/Kanban selection push its own history entry.
   const bareRouteFallbackViewRef = useRef(view);
-  const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => effectiveRouteCalendar && canViewProductionCalendar
-    ? effectiveRouteCalendar
-    : canViewProductionCalendar ? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false }) : null);
+  const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => {
+    if (effectiveRouteCalendar && canViewProductionCalendar) return effectiveRouteCalendar;
+    if (!canViewProductionCalendar) return null;
+    const initial = initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
+    // #217 design-fix round 2, item 1: when THIS render already resolves to Calendar (the
+    // explicit `?view=calendar` intent, or a bare "/" landing on a remembered Calendar
+    // preference -- both already decided by `view`'s own initializer above), seed the initial
+    // state's `search` from whatever `q` is already known: the route's own (authoritative when
+    // the URL carries one) or the live draft otherwise -- the SAME fallback order the
+    // reconciliation effect below already uses once it runs. Without this, the FIRST
+    // `/api/production-calendar` request the initial mount fires carries no search at all (a
+    // wasted request, and an unfiltered flash), and only a SECOND commit -- after that effect
+    // corrects `calendarState` -- carries `q`.
+    return view === "calendar" ? { ...initial, search: routeDashboardSearch ?? search.draft } : initial;
+  });
   const [kanbanSort, setKanbanSort] = useState<KanbanSortMode>(() => initializeKanbanSortMode({
     read: () => window.localStorage.getItem("quincy:dashboard:kanbanSort"),
     write: (next) => window.localStorage.setItem("quincy:dashboard:kanbanSort", next),
