@@ -12,6 +12,7 @@ vi.mock("@quincy/shared", async () => ({ ...(await vi.importActual<typeof import
 import {
   PRODUCTION_CALENDAR_ZONE,
   adminProductionCalendarRangeResponseSchema,
+  subtaskIdFromCalendarEntityId,
   type ChecklistCalendarEventDto,
   type DashboardCalendarState,
 } from "@quincy/shared";
@@ -75,7 +76,9 @@ describe("ProductionCalendar checklist inert mode", () => {
   async function render(events: ChecklistCalendarEventDto[]) {
     const body = response(events);
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === "PATCH") { patchBodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify(patchPayload ?? { ...events[0], position: 1, schedule: (events[0] as ChecklistCalendarEventDto).schedule, assignee: person, done: false }), { status: patchStatus, headers: { "content-type": "application/json" } }); }
+      // Honest fixture (#226): the real worker's PATCH response carries the BARE subtask uuid in
+      // `id`, never the `checklist:`-prefixed Calendar entity id (workers/app/src/lib/project-subtasks.ts).
+      if (init?.method === "PATCH") { patchBodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify(patchPayload ?? { ...events[0], id: subtaskIdFromCalendarEntityId((events[0] as ChecklistCalendarEventDto).id) ?? (events[0] as ChecklistCalendarEventDto).id, position: 1, schedule: (events[0] as ChecklistCalendarEventDto).schedule, assignee: person, done: false }), { status: patchStatus, headers: { "content-type": "application/json" } }); }
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }));
     await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar()} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
@@ -95,7 +98,7 @@ describe("ProductionCalendar checklist inert mode", () => {
 
   it("keeps due-only drag and replacement scheduling available when ranges are inert", async () => {
     const event = due("checklist:inert-due");
-    patchPayload = { id: event.id, title: event.title, done: false, assignee: person, position: 1, schedule: { ...event.schedule, version: 5, due: "2026-08-13", end: endpoint("2026-08-13") } };
+    patchPayload = { id: subtaskIdFromCalendarEntityId(event.id) ?? event.id, title: event.title, done: false, assignee: person, position: 1, schedule: { ...event.schedule, version: 5, due: "2026-08-13", end: endpoint("2026-08-13") } };
     await render([event]);
     action = { event: { allDay: true, start: new Date("2026-08-13T00:00:00Z"), startStr: "2026-08-13" } };
     await act(async () => { document.querySelector<HTMLButtonElement>(`[data-testid="drop-${event.id}"]`)!.click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
