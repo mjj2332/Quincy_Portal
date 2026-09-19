@@ -249,6 +249,46 @@ describe("flattenGanttProjectPages incremental memo (fix-218-r3 #2: O(n), not O(
     expect(after.map((p) => p.id)).toEqual(["a", "b"]);
   });
 
+  // fix-218-r5 #1: the children memo's "same cached base, second branched extension" bug had no
+  // direct analogue here, because `pagesShareIndexablePrefix` re-validates the ENTIRE cached
+  // `processedPages` (not just key presence) before reusing `byId` — any divergence anywhere in
+  // the previously-processed prefix forces a full rebuild instead of reusing the (possibly
+  // already-mutated-by-another-branch) Map. These two tests pin that this already holds.
+  it("regression (fix-218-r5 #1 class, projects side): re-extending the same cached first page with a DIFFERENT later page never leaks the other branch's rows", () => {
+    const first = page([project("a")]);
+    const branchB = page([project("b")]);
+    const branchC = page([project("c")]);
+
+    const baseline = flattenGanttProjectPages([first]);
+    expect(baseline.map((p) => p.id)).toEqual(["a"]);
+
+    // Branch 1: extend the cached [first] with page B. This is the call that, in the children
+    // memo's equivalent, mutated the cached accumulator in place.
+    const extendedB = flattenGanttProjectPages([first, branchB]);
+    expect(extendedB.map((p) => p.id)).toEqual(["a", "b"]);
+
+    // Branch 2: re-extend the SAME [first] base, but with a DIFFERENT second page (a
+    // retried/branched continuation). `pagesShareIndexablePrefix([first, branchB], [first,
+    // branchC])` mismatches at index 1, so this is a full rebuild — "b" must not leak in.
+    const extendedC = flattenGanttProjectPages([first, branchC]);
+    expect(extendedC.map((p) => p.id)).toEqual(["a", "c"]);
+  });
+
+  it("regression (fix-218-r5 #1 class, projects side): a refetch that shrinks the pages array (same first page, fewer pages) never leaks the dropped pages' rows", () => {
+    const first = page([project("a")]);
+    const second = page([project("b")]);
+
+    const grown = flattenGanttProjectPages([first, second]);
+    expect(grown.map((p) => p.id)).toEqual(["a", "b"]);
+
+    // A refetch collapses the walk back down to just the first page (same object reference) —
+    // the pages array SHRINKS. `pagesShareIndexablePrefix` rejects this immediately
+    // (`prev.length > next.length`), forcing a full rebuild that reflects only what's actually in
+    // `pages` now, not the previously-cached, now-stale longer chain.
+    const shrunk = flattenGanttProjectPages([first]);
+    expect(shrunk.map((p) => p.id)).toEqual(["a"]);
+  });
+
   it("walks each row exactly once across 200 sequential page arrivals (linear, not quadratic)", () => {
     let visits = 0;
     let pages: ProductionGanttResponse[] = [];
@@ -323,6 +363,28 @@ describe("mergeGanttChildPage incremental memo (fix-218-r3 #2: O(n), not O(n^2 /
     // from an empty accumulator, not the previous chain's `afterFirst`.
     const fresh = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a", { title: "A v2" })], total: 1, returned: 1, truncated: false, nextCursor: null } });
     expect(fresh.find((r) => r.id === "a")!.title).toBe("A v2");
+  });
+
+  it("regression (fix-218-r5 #1): a second merge from the SAME cached base never observes the first branch's mutation", () => {
+    const base = mergeGanttChildPage([], { projectId: "p1", children: { rows: [checklistRow("a")], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    expect(base.map((r) => r.id)).toEqual(["a"]);
+
+    // Branch 1: extend `base` with page b. This is the call that used to mutate the Map cached
+    // under `base` in place.
+    const branch1 = mergeGanttChildPage(base, { projectId: "p1", children: { rows: [checklistRow("b")], total: 2, returned: 1, truncated: false, nextCursor: null } });
+    expect(branch1.map((r) => r.id)).toEqual(["a", "b"]);
+
+    // Branch 2: extend the SAME `base` again, with a DIFFERENT page (a retried/branched
+    // continuation — e.g. a re-fetch of "the next page after a" that came back different).
+    // Before the fix, this re-read the branch-1-mutated Map (still cached under `base`) and
+    // returned ["a", "b", "c"]; `base` itself was never touched, so the correct answer is ["a",
+    // "c"] — branch 1's "b" must not leak into branch 2.
+    const branch2 = mergeGanttChildPage(base, { projectId: "p1", children: { rows: [checklistRow("c")], total: 2, returned: 1, truncated: false, nextCursor: null } });
+    expect(branch2.map((r) => r.id)).toEqual(["a", "c"]);
+
+    // `base` itself is a plain array from `mergeGanttChildPage`'s point of view and was never
+    // mutated by either branch.
+    expect(base.map((r) => r.id)).toEqual(["a"]);
   });
 
   it("walks each row exactly once across 200 sequential child-page arrivals (linear, not quadratic)", () => {

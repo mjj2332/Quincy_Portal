@@ -140,6 +140,15 @@ export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse
  * collected once nothing still references its `existingRows`. A caller that passes a fresh
  * `existingRows` (e.g. resetting state on a refetch) misses the cache and gets a correct full
  * rebuild — never stale data.
+ *
+ * **fix-218-r5 #1:** reusing a cached entry means MUTATING its `Map` in place (the whole point of
+ * the memo — see below), which is only safe if that `Map` is retired from the cache the moment
+ * it's reused: `existingRows`' entry is deleted before its `byId` is touched, transferring
+ * ownership to the new result. Without that delete, a SECOND call from the same `existingRows`
+ * (a retried/branched continuation — the same accumulated base re-extended with a different next
+ * page) would read the first branch's already-mutated `Map` back out of the cache and silently
+ * carry that branch's rows into a walk that never asked for them. Deleting on reuse makes a
+ * second read of the same parent a correct, if uncached, full rebuild instead.
  */
 const childMergeCache = new WeakMap<readonly GanttChecklistRowDto[], Map<string, GanttChecklistRowDto>>();
 
@@ -150,7 +159,12 @@ const childMergeCache = new WeakMap<readonly GanttChecklistRowDto[], Map<string,
 export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[], page: ProductionGanttChildPageResponse, onRowVisit?: (row: GanttChecklistRowDto) => void): GanttChecklistRowDto[] {
   const cached = childMergeCache.get(existingRows);
   const byId = cached ?? new Map<string, GanttChecklistRowDto>();
-  if (!cached) {
+  if (cached) {
+    // Ownership transfer (fix-218-r5 #1): about to mutate `byId` in place, so the entry keyed on
+    // `existingRows` must not keep pointing at it — a second, branched call from this same
+    // `existingRows` must miss and rebuild, not observe THIS call's mutation.
+    childMergeCache.delete(existingRows);
+  } else {
     for (const row of existingRows) {
       byId.set(row.id, row);
       onRowVisit?.(row);
