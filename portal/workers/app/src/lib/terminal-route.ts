@@ -44,7 +44,7 @@ export type SecurityRouteRegistration = {
   scope: SecurityRouteScope;
   projection: SecurityRouteProjection;
   response: SecurityRouteResponse;
-  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar";
+  externalSurface?: "ingest-status" | "collection-links" | "stage" | "stages" | "activity" | "calendar" | "gantt";
 };
 type LegacySecurityRouteClass = "scoped" | "constant-capability-denial" | "global-self" | "withheld" | "terminal-fallback";
 type LegacySecurityRouteRegistrationSeed = { method: string; path: string; class: LegacySecurityRouteClass; externalSurface?: SecurityRouteRegistration["externalSurface"] };
@@ -203,6 +203,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/projects", class: "scoped" },
   { method: "GET", path: "/api/production-calendar", class: "scoped", externalSurface: "calendar" },
   { method: "GET", path: "/api/production-calendar/", class: "scoped", externalSurface: "calendar" },
+  { method: "GET", path: "/api/production-gantt", class: "scoped", externalSurface: "gantt" },
+  { method: "GET", path: "/api/production-gantt/", class: "scoped", externalSurface: "gantt" },
   { method: "POST", path: "/api/projects", class: "withheld" },
   { method: "GET", path: "/api/stages", class: "global-self", externalSurface: "stages" },
   { method: "POST", path: "/api/uploads/complete", class: "withheld" },
@@ -248,7 +250,7 @@ function securityClassForSeed(route: LegacySecurityRouteRegistrationSeed): Secur
   if (route.path === "/api/auth/*" || route.path === "/api/auth/sign-in/social") return "auth-protocol";
   if (CONSTANT_CAPABILITY_DENIAL_KEYS.has(key)) return "constant-capability-denial";
   if (route.class === "scoped") {
-    return route.path === "/api/projects" || route.path === "/api/production-calendar" || route.path === "/api/production-calendar/" || route.path === "/api/projects/:id" && (route.method === "GET" || route.method === "PATCH")
+    return route.path === "/api/projects" || route.path === "/api/production-calendar" || route.path === "/api/production-calendar/" || route.path === "/api/production-gantt" || route.path === "/api/production-gantt/" || route.path === "/api/projects/:id" && (route.method === "GET" || route.method === "PATCH")
       ? "scoped-project"
       : "scoped-child-resource";
   }
@@ -279,6 +281,7 @@ export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
   ["GET", "/api/projects/:id/manual-upload-jobs"],
   ["POST", "/api/assets/:id/select"], ["DELETE", "/api/assets/:id/select"],
   ["ALL", "/api/production-calendar"], ["ALL", "/api/production-calendar/"],
+  ["ALL", "/api/production-gantt"], ["ALL", "/api/production-gantt/"],
 ] as const;
 
 export type HonoRouteLike = { method: string; path: string; handler: unknown };

@@ -21,6 +21,7 @@ export * from "./project-members";
 export * from "./attention";
 export * from "./project-deadline";
 export * from "./production-calendar";
+export * from "./production-gantt";
 export {
   SYDNEY_TIME_ZONE,
   resolveSydneyCivilMinute,

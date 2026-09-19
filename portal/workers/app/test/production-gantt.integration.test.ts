@@ -1,0 +1,453 @@
+import { env, SELF } from "cloudflare:test";
+import { makeSignature } from "better-auth/crypto";
+import { beforeAll, describe, expect, it } from "vitest";
+import {
+  adminProductionGanttResponseSchema,
+  editorProductionGanttResponseSchema,
+  encodeGanttChildCursor,
+  encodeGanttProjectCursor,
+  EXTERNAL_API_RESPONSE_SCHEMAS,
+  PRODUCTION_GANTT_CHILD_PAGE_LIMIT,
+  PRODUCTION_GANTT_DRAW_CAP,
+  PRODUCTION_GANTT_MAX_MATCHED_ROWS,
+} from "@quincy/shared";
+import { createAuth } from "../src/auth";
+import { serializeGanttDeadline } from "../src/routes/production-gantt";
+import type { Env } from "../src/env";
+
+const database = env as unknown as { DB: D1Database };
+const baseEnv = env as unknown as Env;
+const authSecret = baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes";
+
+const adminId = "81111111-1111-4111-8111-111111111111";
+const editorId = "81222222-2222-4222-8222-222222222222";
+const externalId = "81333333-3333-4333-8333-333333333333";
+const photographerId = "81444444-4444-4444-8444-444444444444";
+
+const memberProjectId = "81aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const deliveredProjectId = "81cccccc-cccc-4ccc-8ccc-cccccccccccc";
+const archivedProjectId = "81dddddd-dddd-4ddd-8ddd-dddddddddddd";
+const tieProjectAId = "81eeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const tieProjectBId = "81eeeeee-eeee-4eee-8eee-eeeeeeeeeeef";
+const manyChildrenProjectId = "81ffffff-ffff-4fff-8fff-fffffffffff0";
+const noDeadlineProjectId = "81ffffff-ffff-4fff-8fff-fffffffffff1";
+const mixedChildrenProjectId = "81888888-8888-4888-8888-888888888880";
+const MIXED_CHILDREN_TOTAL = 210;
+/** `done` on every third row (0, 3, 6, ...) — 70 done, 140 not done, both over CHILD_PAGE_LIMIT
+ * when `completed=1` includes everything and comfortably over it for the not-done set too. */
+const MIXED_CHILDREN_DONE_COUNT = Math.ceil(MIXED_CHILDREN_TOTAL / 3);
+
+// fix-218-r1 #2: an impossible stored shoot_date ("2026-02-30") must never reach
+// encodeGanttProjectCursor as a literal — it must fall back to the created_at-derived
+// bar_start_date both in SQL (the sort/keyset key) and in the serialized DTO. X sorts first
+// (year 2000), Y is the impossible date (falls back to "today", whenever the suite runs — always
+// well after 2000 and well before 9999), Z sorts last (year 9999) regardless of the real date.
+const impossibleDateXId = "81777777-7777-4777-8777-777777777770";
+const impossibleDateYId = "81777777-7777-4777-8777-777777777771";
+const impossibleDateZId = "81777777-7777-4777-8777-777777777772";
+
+// fix-218-r1 #3: a search match on a *done* checklist title must respect the same
+// `completed` visibility flag as the children/density queries — otherwise `q` could surface a
+// project whose only visible reason to appear is a row nothing else in the response can see.
+const completedTitleSearchProjectId = "81666666-6666-4666-8666-666666666660";
+
+declare const __PORTAL_MIGRATION_SQL__: string;
+
+async function executeSql(source: string): Promise<void> {
+  for (const chunk of source.split("--> statement-breakpoint")) {
+    const sql = chunk.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+    for (const statement of sql.split(";")) {
+      const flat = statement.replace(/\s+/g, " ").trim();
+      if (flat) await database.DB.exec(`${flat};`);
+    }
+  }
+}
+
+async function cookie(token: string): Promise<string> {
+  const context = await createAuth(baseEnv).$context;
+  return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
+}
+
+async function request(path: string, token: string): Promise<Response> {
+  return SELF.fetch(`https://portal.test${path}`, { headers: { cookie: await cookie(token) } });
+}
+
+async function insertUser(id: string, role: string, token: string): Promise<void> {
+  const now = Date.now();
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} Gantt`, `${id}@gantt.test`, role, now, now),
+    database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), now + 3_600_000, token, id, now, now),
+  ]);
+}
+
+async function insertProject(id: string, street: string, stage: string, shootDate: string | null = null, createdAtOffsetMs = 0): Promise<void> {
+  const now = Date.now() + createdAtOffsetMs;
+  await database.DB.prepare("INSERT INTO projects (id, street, suburb, stage_key, shoot_date, created_at, updated_at) VALUES (?, ?, 'Suburb', ?, ?, ?, ?)").bind(id, street, stage, shootDate, now, now).run();
+}
+
+async function insertMember(projectId: string, userId: string, roleOnProject: "editor" | "photographer"): Promise<void> {
+  await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), projectId, userId, roleOnProject, Date.now()).run();
+}
+
+async function insertSubtask(projectId: string, title: string, position: number, done = false): Promise<string> {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)")
+    .bind(id, projectId, title, done ? 1 : 0, position, adminId, now, now).run();
+  return id;
+}
+
+const tokens = { admin: "tb218-gantt-admin", editor: "tb218-gantt-editor", external: "tb218-gantt-external", photographer: "tb218-gantt-photographer" };
+
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await insertUser(adminId, "admin", tokens.admin);
+  await insertUser(editorId, "editor", tokens.editor);
+  await insertUser(externalId, "external_editor", tokens.external);
+  await insertUser(photographerId, "photographer", tokens.photographer);
+
+  await insertProject(memberProjectId, "1 Gantt Street", "editing_autohdr", "2026-08-27");
+  await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-08-27T09:00', deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = 600, deadline_fold = 0, deadline_reminder_offsets_json = '[60,1440]', deadline_version = 1, agency_name = ?, agent_name = ? WHERE id = ?")
+    .bind(Date.now() + 86_400_000, "Ray White Realty", "Jordan Fields", memberProjectId).run();
+  await insertMember(memberProjectId, externalId, "editor");
+  await insertMember(memberProjectId, editorId, "editor");
+  await insertMember(memberProjectId, photographerId, "photographer");
+  await insertSubtask(memberProjectId, "Prep listing", 0);
+  await insertSubtask(memberProjectId, "Done task", 1, true);
+
+  await insertProject(deliveredProjectId, "3 Delivered Street", "delivered", "2026-08-20");
+  await insertProject(archivedProjectId, "4 Archived Street", "editing_autohdr", "2026-08-21");
+  await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), archivedProjectId).run();
+
+  await insertProject(tieProjectAId, "5A Tie Street", "raw_review", "2026-09-01");
+  await insertProject(tieProjectBId, "5B Tie Street", "raw_review", "2026-09-01");
+
+  await insertProject(manyChildrenProjectId, "6 Many Children Street", "editing_autohdr", "2026-08-22");
+  for (let i = 0; i < PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 3; i++) await insertSubtask(manyChildrenProjectId, `Task ${i}`, i);
+
+  await insertProject(noDeadlineProjectId, "7 No Deadline Street", "raw_review", null);
+
+  await insertProject(mixedChildrenProjectId, "22 Mixed Children Street", "editing_autohdr", "2026-08-23");
+  for (let i = 0; i < MIXED_CHILDREN_TOTAL; i++) await insertSubtask(mixedChildrenProjectId, `Mixed Task ${i}`, i, i % 3 === 0);
+
+  await insertProject(impossibleDateXId, "30 ImpossibleDate Early Street", "editing_autohdr", "2000-01-01");
+  await insertProject(impossibleDateYId, "31 ImpossibleDate Invalid Street", "editing_autohdr", "2026-02-30");
+  await insertProject(impossibleDateZId, "32 ImpossibleDate Late Street", "editing_autohdr", "9999-01-01");
+
+  await insertProject(completedTitleSearchProjectId, "40 Neutral Street", "editing_autohdr", "2026-08-24");
+  await insertSubtask(completedTitleSearchProjectId, "OnlyDoneMatch Secret Task", 0, true);
+});
+
+describe("production-gantt", () => {
+  it("admin sees every non-archived project", async () => {
+    const response = await request("/api/production-gantt?scope=active", tokens.admin);
+    expect(response.status).toBe(200);
+    const body = adminProductionGanttResponseSchema.parse(await response.json());
+    const ids = body.projects.map((project) => project.id);
+    expect(ids).toContain(memberProjectId);
+    expect(ids).not.toContain(archivedProjectId);
+    expect(ids).not.toContain(deliveredProjectId);
+  });
+
+  it("includes delivered when delivered=1", async () => {
+    const response = await request("/api/production-gantt?scope=active&delivered=1", tokens.admin);
+    const body = adminProductionGanttResponseSchema.parse(await response.json());
+    expect(body.projects.map((p) => p.id)).toContain(deliveredProjectId);
+  });
+
+  it("photographer receives 403", async () => {
+    const response = await request("/api/production-gantt?scope=active", tokens.photographer);
+    expect(response.status).toBe(403);
+  });
+
+  it("stage keys are role-projected: admin gets editing_autohdr, editor gets editing", async () => {
+    const adminResponse = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.admin)).json());
+    const editorResponse = editorProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.editor)).json());
+    const adminProject = adminResponse.projects.find((p) => p.id === memberProjectId)!;
+    const editorProject = editorResponse.projects.find((p) => p.id === memberProjectId)!;
+    expect(adminProject.stageKey).toBe("editing_autohdr");
+    expect(editorProject.stageKey).toBe("editing");
+  });
+
+  it("external editor sees only assigned projects", async () => {
+    const response = await request("/api/production-gantt?scope=active", tokens.external);
+    const body = EXTERNAL_API_RESPONSE_SCHEMAS.gantt.parse(await response.json()) as { projects: { id: string }[] };
+    expect(body.projects.map((p) => p.id)).toEqual([memberProjectId]);
+  });
+
+  it("cursor ties: two projects sharing bar start date both appear exactly once across pages", async () => {
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      const path = `/api/production-gantt?scope=active&limit=1&stages=raw_review${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const page = adminProductionGanttResponseSchema.parse(await (await request(path, tokens.admin)).json());
+      ids.push(...page.projects.map((p) => p.id));
+      cursor = page.page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids)).toEqual(new Set([tieProjectAId, tieProjectBId, noDeadlineProjectId]));
+  });
+
+  it("cursor round-trip rejects a mutated cursor", async () => {
+    const response = await request("/api/production-gantt?scope=active&cursor=not-a-real-cursor", tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
+  });
+
+  it("an explicit empty editors= is rejected, not treated as no filter", async () => {
+    const response = await request("/api/production-gantt?scope=active&editors=", tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
+  });
+
+  it("an explicit empty stages= is rejected, not treated as no filter", async () => {
+    const response = await request("/api/production-gantt?scope=active&stages=", tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
+  });
+
+  it("a project with CHILD_PAGE_LIMIT+3 subtasks reports total, truncated and a nextCursor", async () => {
+    const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.admin)).json());
+    const project = response.projects.find((p) => p.id === manyChildrenProjectId)!;
+    expect(project.children.total).toBe(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 3);
+    expect(project.children.returned).toBe(PRODUCTION_GANTT_CHILD_PAGE_LIMIT);
+    expect(project.children.truncated).toBe(true);
+    expect(project.children.nextCursor).not.toBeNull();
+  });
+
+  it("the child page returns the remainder with no overlap or gap", async () => {
+    const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.admin)).json());
+    const project = response.projects.find((p) => p.id === manyChildrenProjectId)!;
+    const childPage = await request(`/api/production-gantt?scope=active&childrenOf=${manyChildrenProjectId}&childCursor=${encodeURIComponent(project.children.nextCursor!)}`, tokens.admin);
+    expect(childPage.status).toBe(200);
+    const body = await childPage.json() as { projectId: string; children: { rows: { id: string }[]; total: number; returned: number; truncated: boolean; nextCursor: string | null } };
+    expect(body.projectId).toBe(manyChildrenProjectId);
+    expect(body.children.total).toBe(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 3);
+    expect(body.children.returned).toBe(3);
+    expect(body.children.truncated).toBe(false);
+    expect(body.children.nextCursor).toBeNull();
+    const firstPageIds = new Set(project.children.rows.map((row) => row.id));
+    const remainderIds = body.children.rows.map((row) => row.id);
+    expect(remainderIds).toHaveLength(3);
+    for (const id of remainderIds) expect(firstPageIds.has(id)).toBe(false);
+  });
+
+  async function walkAllChildren(projectId: string, completed: boolean): Promise<{ ids: string[]; totals: number[] }> {
+    const listPath = `/api/production-gantt?scope=active&q=Mixed+Children${completed ? "&completed=1" : ""}`;
+    const first = adminProductionGanttResponseSchema.parse(await (await request(listPath, tokens.admin)).json());
+    const project = first.projects.find((p) => p.id === projectId)!;
+    const ids = project.children.rows.map((row) => row.id);
+    const totals = [project.children.total];
+    let cursor = project.children.nextCursor;
+    while (cursor) {
+      const response = await request(`/api/production-gantt?scope=active&childrenOf=${projectId}&childCursor=${encodeURIComponent(cursor)}`, tokens.admin);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { children: { rows: { id: string }[]; total: number; nextCursor: string | null } };
+      ids.push(...body.children.rows.map((row) => row.id));
+      totals.push(body.children.total);
+      cursor = body.children.nextCursor;
+    }
+    return { ids, totals };
+  }
+
+  it("a >100-child project walked with completed=1 returns every child exactly once with a stable total", async () => {
+    const { ids, totals } = await walkAllChildren(mixedChildrenProjectId, true);
+    expect(ids).toHaveLength(MIXED_CHILDREN_TOTAL);
+    expect(new Set(ids).size).toBe(MIXED_CHILDREN_TOTAL);
+    expect(totals.every((total) => total === MIXED_CHILDREN_TOTAL)).toBe(true);
+  });
+
+  it("the same >100-child project walked in default (completed=0) mode returns only not-done children exactly once with a stable total", async () => {
+    const notDoneTotal = MIXED_CHILDREN_TOTAL - MIXED_CHILDREN_DONE_COUNT;
+    const { ids, totals } = await walkAllChildren(mixedChildrenProjectId, false);
+    expect(ids).toHaveLength(notDoneTotal);
+    expect(new Set(ids).size).toBe(notDoneTotal);
+    expect(totals.every((total) => total === notDoneTotal)).toBe(true);
+  });
+
+  it("a completed=1 continuation cursor cannot be reused with an explicit completed query param", async () => {
+    const listPath = "/api/production-gantt?scope=active&q=Mixed+Children&completed=1";
+    const first = adminProductionGanttResponseSchema.parse(await (await request(listPath, tokens.admin)).json());
+    const project = first.projects.find((p) => p.id === mixedChildrenProjectId)!;
+    expect(project.children.nextCursor).not.toBeNull();
+    const response = await request(`/api/production-gantt?scope=active&childrenOf=${mixedChildrenProjectId}&childCursor=${encodeURIComponent(project.children.nextCursor!)}&completed=1`, tokens.admin);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "gantt_query_invalid" });
+  });
+
+  it("childrenOf outside scope returns an empty child page, not 404", async () => {
+    const response = await request(`/api/production-gantt?scope=active&childrenOf=${noDeadlineProjectId}`, tokens.external);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ projectId: noDeadlineProjectId, children: { rows: [], total: 0, returned: 0, truncated: false, nextCursor: null } });
+  });
+
+  it("reminder offsets survive a set deadline", async () => {
+    const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.admin)).json());
+    const project = response.projects.find((p) => p.id === memberProjectId)!;
+    expect(project.deadline?.reminderOffsetsMinutes).toEqual([1440, 60]);
+  });
+
+  it("deadline version is present for a project with no deadline", async () => {
+    const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&stages=raw_review", tokens.admin)).json());
+    const project = response.projects.find((p) => p.id === noDeadlineProjectId)!;
+    expect(project.deadline).toBeNull();
+    expect(project.deadlineVersion).toBe(0);
+  });
+
+  it("an impossible stored shoot_date as the last row of a truncated page never 500s and pagination has no dup or skip", async () => {
+    const page1Response = await request("/api/production-gantt?scope=active&q=ImpossibleDate&limit=2", tokens.admin);
+    expect(page1Response.status).toBe(200);
+    const page1 = adminProductionGanttResponseSchema.parse(await page1Response.json());
+    expect(page1.projects.map((p) => p.id)).toEqual([impossibleDateXId, impossibleDateYId]);
+    const invalidProject = page1.projects.find((p) => p.id === impossibleDateYId)!;
+    expect(invalidProject.shootDate).toBe("2026-02-30");
+    expect(invalidProject.shootDateCivil).toBeNull();
+    expect(invalidProject.barStartDate).not.toBe("2026-02-30");
+    expect(invalidProject.barStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(page1.page.nextCursor).not.toBeNull();
+
+    const page2Response = await request(`/api/production-gantt?scope=active&q=ImpossibleDate&limit=2&cursor=${encodeURIComponent(page1.page.nextCursor!)}`, tokens.admin);
+    expect(page2Response.status).toBe(200);
+    const page2 = adminProductionGanttResponseSchema.parse(await page2Response.json());
+    expect(page2.projects.map((p) => p.id)).toEqual([impossibleDateZId]);
+    expect(page2.page.nextCursor).toBeNull();
+
+    const allIds = [...page1.projects.map((p) => p.id), ...page2.projects.map((p) => p.id)];
+    expect(allIds).toEqual([impossibleDateXId, impossibleDateYId, impossibleDateZId]);
+  });
+
+  it("q matches street, suburb, agency, agent and checklist title", async () => {
+    const streetMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Gantt+Street", tokens.admin)).json());
+    expect(streetMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const suburbMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Suburb", tokens.admin)).json());
+    expect(suburbMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const agencyMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Ray+White", tokens.admin)).json());
+    expect(agencyMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const agencyProject = agencyMatch.projects.find((p) => p.id === memberProjectId);
+    expect(agencyProject?.agencyName).toBe("Ray White Realty");
+    const agentMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Jordan+Fields", tokens.admin)).json());
+    expect(agentMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+    const agentProject = agentMatch.projects.find((p) => p.id === memberProjectId);
+    expect(agentProject?.agentName).toBe("Jordan Fields");
+    const titleMatch = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Prep+listing", tokens.admin)).json());
+    expect(titleMatch.projects.map((p) => p.id)).toContain(memberProjectId);
+  });
+
+  it("a search match on a done-only checklist title is absent by default and present with completed=1", async () => {
+    const defaultResponse = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=OnlyDoneMatch", tokens.admin)).json());
+    expect(defaultResponse.projects.map((p) => p.id)).not.toContain(completedTitleSearchProjectId);
+
+    const completedResponse = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=OnlyDoneMatch&completed=1", tokens.admin)).json());
+    expect(completedResponse.projects.map((p) => p.id)).toContain(completedTitleSearchProjectId);
+  });
+
+  it("q matching only a checklist title still returns the parent project row", async () => {
+    const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&q=Prep+listing", tokens.admin)).json());
+    const project = response.projects.find((p) => p.id === memberProjectId);
+    expect(project).toBeDefined();
+    expect(project!.street).toBe("1 Gantt Street");
+  });
+
+  it("editor sees every non-archived project", async () => {
+    const response = editorProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.editor)).json());
+    const ids = response.projects.map((p) => p.id);
+    expect(ids).toContain(memberProjectId);
+    expect(ids).not.toContain(archivedProjectId);
+  });
+
+  it("archived projects never appear for any role", async () => {
+    const admin = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&delivered=1", tokens.admin)).json());
+    const editor = editorProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&delivered=1", tokens.editor)).json());
+    const external = EXTERNAL_API_RESPONSE_SCHEMAS.gantt.parse(await (await request("/api/production-gantt?scope=active&delivered=1", tokens.external)).json()) as { projects: { id: string }[] };
+    expect(admin.projects.map((p) => p.id)).not.toContain(archivedProjectId);
+    expect(editor.projects.map((p) => p.id)).not.toContain(archivedProjectId);
+    expect(external.projects.map((p) => p.id)).not.toContain(archivedProjectId);
+  });
+
+  it("revocation: removing the external editor's membership removes the project from the next page", async () => {
+    const before = EXTERNAL_API_RESPONSE_SCHEMAS.gantt.parse(await (await request("/api/production-gantt?scope=active", tokens.external)).json()) as { projects: { id: string }[] };
+    expect(before.projects.map((p) => p.id)).toContain(memberProjectId);
+    await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(memberProjectId, externalId).run();
+    try {
+      const after = EXTERNAL_API_RESPONSE_SCHEMAS.gantt.parse(await (await request("/api/production-gantt?scope=active", tokens.external)).json()) as { projects: { id: string }[] };
+      expect(after.projects.map((p) => p.id)).not.toContain(memberProjectId);
+    } finally {
+      await insertMember(memberProjectId, externalId, "editor");
+    }
+  });
+
+  // Density fixtures are seeded in this nested describe's own beforeAll, which vitest's default
+  // sequential runner executes strictly after every `it` declared above has already run — so
+  // these large row counts never distort an earlier, unfiltered assertion (e.g. "admin sees every
+  // non-archived project"). Each test below scopes itself to one dedicated, otherwise-unused stage
+  // key so the two density fixtures don't also inflate each other's counts.
+  // fix-218-r2 #5: pins BOTH the exact boundary (N: still 200, not-yet-too-dense) and one row
+  // past it (N+1: crosses into tooManyToDraw / 422) for both caps, seeded via the same bulk
+  // INSERT...SELECT-from-a-recursive-CTE technique the N+1-only version already used (proven fast
+  // — this whole file runs in well under a second). `matchedRows` counts the project row itself
+  // plus its visible checklist rows, so a project needs exactly `CAP - 1` subtasks to land
+  // matchedRows on `CAP` precisely; one more subtask (a single-row insert) then lands on `CAP + 1`.
+  describe("density", () => {
+    const drawCapProjectId = "81999999-9999-4999-8999-999999999990";
+    const maxRowsProjectId = "81999999-9999-4999-8999-999999999991";
+
+    beforeAll(async () => {
+      await insertProject(drawCapProjectId, "20 Draw Cap Street", "awaiting_raw");
+      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < ${PRODUCTION_GANTT_DRAW_CAP - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('92000000-0000-4000-8000-%012d', n), '${drawCapProjectId}', printf('Draw cap row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
+
+      await insertProject(maxRowsProjectId, "21 Max Rows Street", "edited_review");
+      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d CROSS JOIN digits e WHERE a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n < ${PRODUCTION_GANTT_MAX_MATCHED_ROWS - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('93000000-0000-4000-8000-%012d', n), '${maxRowsProjectId}', printf('Max rows row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
+    });
+
+    it("matchedRows exactly at DRAW_CAP is not yet tooManyToDraw", async () => {
+      const response = await request("/api/production-gantt?scope=active&stages=awaiting_raw", tokens.admin);
+      expect(response.status).toBe(200);
+      const body = adminProductionGanttResponseSchema.parse(await response.json());
+      expect(body.density.matchedRows).toBe(PRODUCTION_GANTT_DRAW_CAP);
+      expect(body.density.tooManyToDraw).toBe(false);
+    });
+
+    it("matchedRows one over DRAW_CAP sets tooManyToDraw and still returns a page", async () => {
+      await insertSubtask(drawCapProjectId, "one over draw cap", PRODUCTION_GANTT_DRAW_CAP - 1);
+      const response = await request("/api/production-gantt?scope=active&stages=awaiting_raw", tokens.admin);
+      expect(response.status).toBe(200);
+      const body = adminProductionGanttResponseSchema.parse(await response.json());
+      expect(body.density.matchedRows).toBe(PRODUCTION_GANTT_DRAW_CAP + 1);
+      expect(body.density.tooManyToDraw).toBe(true);
+      expect(body.projects.length).toBeGreaterThan(0);
+    });
+
+    it("matchedRows exactly at MAX_MATCHED_ROWS is still a 200", async () => {
+      const response = await request("/api/production-gantt?scope=active&stages=edited_review", tokens.admin);
+      expect(response.status).toBe(200);
+      const body = adminProductionGanttResponseSchema.parse(await response.json());
+      expect(body.density.matchedRows).toBe(PRODUCTION_GANTT_MAX_MATCHED_ROWS);
+    });
+
+    it("matchedRows one over MAX_MATCHED_ROWS returns 422 gantt_scope_too_dense", async () => {
+      await insertSubtask(maxRowsProjectId, "one over max rows", PRODUCTION_GANTT_MAX_MATCHED_ROWS - 1);
+      const response = await request("/api/production-gantt?scope=active&stages=edited_review", tokens.admin);
+      expect(response.status).toBe(422);
+      const body = await response.json() as { code: string; count: number; max: number };
+      expect(body.code).toBe("gantt_scope_too_dense");
+      expect(body.count).toBe(PRODUCTION_GANTT_MAX_MATCHED_ROWS + 1);
+      expect(body.max).toBe(PRODUCTION_GANTT_MAX_MATCHED_ROWS);
+    });
+  });
+});
+
+// Coordinator decision on #218 step 6 (spec flag #5 withdrawn): a null deadline carries no
+// reminderOffsetsMinutes, because deadline_at and deadline_reminder_offsets_json are always
+// written together (lib/project-deadline.ts:233-249) — there is nothing stored to lose.
+describe("serializeGanttDeadline", () => {
+  it("returns null when deadline_at IS NULL", () => {
+    expect(serializeGanttDeadline({ deadline_at: null, deadline_local_civil: null, deadline_version: null, deadline_reminder_offsets_json: null, delivered: 0 }, Date.now())).toBeNull();
+  });
+
+  it("returns the stored offsets, deduped and sorted descending, when a deadline is set", () => {
+    const at = Date.parse("2026-09-01T00:00:00.000Z");
+    const result = serializeGanttDeadline({ deadline_at: at, deadline_local_civil: "2026-09-01T10:00", deadline_version: 3, deadline_reminder_offsets_json: "[60,1440,60]", delivered: 0 }, at - 1);
+    expect(result).toMatchObject({ at: new Date(at).toISOString(), localCivil: "2026-09-01T10:00", version: 3, reminderOffsetsMinutes: [1440, 60], overdue: false });
+  });
+});

@@ -498,7 +498,20 @@ function calendarProjectContextSchema<TStage extends StageTransportKey>(stageSch
   }).strict() as z.ZodType<CalendarProjectContext<TStage>>;
 }
 
-const calendarPersonZodSchema: z.ZodType<CalendarPerson> = calendarPersonSchema;
+/** Exported for reuse by any other surface serializing the same person shape (e.g. Gantt, #218). */
+export const calendarPersonZodSchema: z.ZodType<CalendarPerson> = calendarPersonSchema;
+/** Exported for reuse by any other surface reusing the checklist schedule DTO shape (Gantt, #218). */
+export { checklistScheduleEndpointSchema };
+/** The full `ChecklistScheduleDto` union — every state a stored checklist schedule can serialize
+ * to, including the two repair states. Exported so Gantt (#218) can reuse it verbatim rather than
+ * re-declaring the same five-branch union. */
+export const checklistScheduleDtoSchema: z.ZodType<ChecklistScheduleDto> = z.union([
+  unscheduledChecklistScheduleSchema,
+  dueOnlyChecklistScheduleSchema,
+  rangeChecklistScheduleSchema,
+  legacyUnresolvedChecklistScheduleSchema,
+  invalidChecklistScheduleSchema,
+]);
 
 function projectDeadlineEventSchema<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>) {
   return z.object({
@@ -922,4 +935,27 @@ export function previewProjectDeadlineReminderConsequences(input: ProjectDeadlin
         : "future";
     return { offsetMinutes, label, oldFireAt, newFireAt, oldLocalCivil, newLocalCivil };
   });
+}
+
+/**
+ * The Calendar's checklist-event/unscheduled-entry `id` is an ENTITY id, not a
+ * bare subtask id: FullCalendar/DOM ids, focus descriptors, `data-event-id` /
+ * `data-unscheduled-id`, optimistic overlays, `checklistSourceFromResponse`, and
+ * the unscheduled-panel drag dataset all depend on the `checklist:` prefix
+ * staying on the wire exactly as-is. It must never be sent as-is to
+ * `PATCH /api/projects/:projectId/subtasks/:subtaskId`, which requires the bare
+ * uuid — mint/parse through these two functions at that boundary instead of
+ * string-slicing ad hoc. (The Gantt DTOs from #218 use BARE uuids; this prefix
+ * is Calendar-only.)
+ */
+export const CALENDAR_CHECKLIST_ID_PREFIX = "checklist:";
+
+export function calendarChecklistEntityId(subtaskId: string): string {
+  return `${CALENDAR_CHECKLIST_ID_PREFIX}${subtaskId}`;
+}
+
+export function subtaskIdFromCalendarEntityId(id: string): string | null {
+  if (!id.startsWith(CALENDAR_CHECKLIST_ID_PREFIX)) return null;
+  const remainder = id.slice(CALENDAR_CHECKLIST_ID_PREFIX.length);
+  return remainder.length > 0 ? remainder : null;
 }

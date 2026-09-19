@@ -8,6 +8,7 @@ import {
   externalCalendarRangeSchema,
   PRODUCTION_CALENDAR_ZONE,
   resolveSydneyCivilMinute,
+  subtaskIdFromCalendarEntityId,
   type CalendarUnscheduledEntryDto,
   type ChecklistCalendarUnscheduledEntryDto,
   type DashboardCalendarState,
@@ -68,8 +69,10 @@ function timedSchedule(localCivil: string, version = 5) {
   return { state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "timed" as const, localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" as const }, due: localCivil };
 }
 
+// Honest fixture (#226): the real worker's PATCH response carries the BARE subtask uuid in
+// `id`, never the `checklist:`-prefixed Calendar entity id (workers/app/src/lib/project-subtasks.ts).
 function mutationResponse(entry: Extract<CalendarUnscheduledEntryDto, { kind: "checklist" }>, schedule: any) {
-  return { id: entry.id, title: entry.title, done: false, assignee: entry.assignee ? { id: entry.assignee.id, name: entry.assignee.name } : null, position: 1, schedule };
+  return { id: subtaskIdFromCalendarEntityId(entry.id) ?? entry.id, title: entry.title, done: false, assignee: entry.assignee ? { id: entry.assignee.id, name: entry.assignee.name } : null, position: 1, schedule };
 }
 
 describe("ProductionCalendar unscheduled external drops", () => {

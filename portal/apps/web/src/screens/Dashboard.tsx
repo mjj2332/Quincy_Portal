@@ -866,6 +866,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             resources: [{ kind: "detail" }, { kind: "activity" }],
             dashboard: true,
             calendar: true,
+            gantt: true,
             producer: "dashboard",
           });
         } else {
@@ -946,7 +947,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
       updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item));
       queueDashboardRefresh();
-      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: false, producer: "dashboard" });
+      if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: false, gantt: false, producer: "dashboard" });
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && ((reason.details as { code?: unknown }).code === "board_contract_disabled" || (reason.details as { code?: unknown }).code === "board_schema_maintenance")) setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
       updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
