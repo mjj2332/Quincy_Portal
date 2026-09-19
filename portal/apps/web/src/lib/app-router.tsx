@@ -227,9 +227,17 @@ function ShellRoute() {
     if (blocked) history.replace("/");
   }, [blocked, history]);
 
+  // #217 fix round 5, item 5 (Sol re-review, SHOULD-FIX). Calendar itself stays inaccessible
+  // either way, but the redirect used to drop straight to "/", discarding whatever `q` the blocked
+  // URL carried -- unlike every OTHER q-carrying redirect in this app. `route` already has the
+  // parsed search on either Calendar shape (`calendar` in route: the facet's own `search` field;
+  // `dashboardView === "calendar"`: the intent's own optional `search`), so this reads it from
+  // there rather than re-parsing anything.
   useEffect(() => {
-    if (calendarBlocked) history.replace("/");
-  }, [calendarBlocked, history]);
+    if (!calendarBlocked || route.kind !== "dashboard") return;
+    const search = "calendar" in route ? route.calendar.search : "dashboardView" in route ? route.search : undefined;
+    history.replace(staffPathFor({ kind: "dashboard", ...(search ? { search } : {}) }));
+  }, [calendarBlocked, history, route]);
 
   function navigate(path: string, message?: string, replace = false) {
     if (message) setNotice({ path, message });

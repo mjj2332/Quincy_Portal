@@ -120,6 +120,32 @@ describe("capability redirects still run above the route tree", () => {
     expect(`${window.location.pathname}${window.location.search}`).toBe("/");
     expect(host.textContent).not.toContain("CREATE SCREEN");
   });
+
+  // #217 fix round 5, item 5 (Sol re-review, SHOULD-FIX). The unauthorised-Calendar redirect used
+  // to drop straight to "/", discarding whatever `q` the blocked URL carried -- Calendar itself
+  // stays inaccessible either way, but the search a photographer typed (or arrived via a shared
+  // link with) should survive landing on List instead, the same way every other q-carrying
+  // redirect in this app preserves it.
+  it("sends a photographer away from the Calendar facet to the bare Dashboard, keeping q", async () => {
+    sessionState.value = { data: { user: { id: "p1", name: "Pat", role: "photographer" } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
+    const host = await renderAt("/?view=calendar&date=2026-08-30&sub=month&layers=project&q=smith");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?q=smith");
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+  });
+
+  it("sends a photographer away from the bare Calendar intent to the bare Dashboard, keeping q", async () => {
+    sessionState.value = { data: { user: { id: "p1", name: "Pat", role: "photographer" } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
+    const host = await renderAt("/?view=calendar&q=smith");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?q=smith");
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+  });
+
+  it("sends a photographer away from a q-less Calendar facet to the plain bare Dashboard", async () => {
+    sessionState.value = { data: { user: { id: "p1", name: "Pat", role: "photographer" } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
+    const host = await renderAt("/?view=calendar&date=2026-08-30&sub=month&layers=project");
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/");
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+  });
 });
 
 describe("StrictMode", () => {
