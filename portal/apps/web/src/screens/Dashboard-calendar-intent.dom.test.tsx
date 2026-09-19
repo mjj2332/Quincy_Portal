@@ -98,15 +98,15 @@ describe("the bare Calendar intent, on arrival", () => {
 
   it("gives the viewport to the Calendar, not the Kanban", async () => {
     await renderAt("/?view=calendar");
-    // The Calendar branch is asserted by its own Suspense region rather than by the calendar
-    // surface inside it: the lazy chunk does not resolve under this harness, because Calendar
-    // becomes the view only after the canonicalising replace and React never re-attempts the
-    // boundary without a further update. `Dashboard-calendar.dom.test.tsx` mounts with the facet
-    // already in hand and so does see the surface — that suite owns the surface, this one owns
-    // which branch the intent selects. Either way the region below belongs to the Calendar and
-    // the Kanban board is not mounted, which is the whole claim of the intent.
+    // The claim of the intent is which BRANCH owns the viewport: the Calendar's surface is mounted
+    // and the Kanban board is not. This used to be asserted through the Calendar's "Loading
+    // calendar…" status, with a note that the surface never resolved under this harness. That was
+    // an accident, not a property of the harness: the range fixture carried
+    // `filterFacets.myTasksUserId: null`, which the strict response schema rejects, so every load
+    // sat in react-query's retry loop and never left the loading state (#217 design-fix round 3).
+    // With an honest fixture the range decodes and the surface renders, so assert it directly.
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeFalsy();
-    expect([...host.querySelectorAll('[role="status"]')].some((node) => node.textContent === "Loading calendar…")).toBe(true);
+    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeTruthy();
   });
 
   it("requests the range for the remembered date, not for today", async () => {
