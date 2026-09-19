@@ -80,9 +80,54 @@ const PLANTED_SNAPSHOT_QUERY_FIELD = 'export type DashboardSearchSnapshot = { dr
 const PLANTED_MODULE_QUERY_VARIABLE = 'let draft = "";\nlet query = "";\nlet principalId = "";';
 
 /**
+ * #217 fix round 8, Sol review, item 5(i). A char-by-char pass, not a full parser -- tracks
+ * whether the cursor is inside a `//` line comment, a `/* ... *\/` block comment, or a string/
+ * template literal, and blanks only the comment bodies (preserving line breaks, so downstream
+ * line-based reasoning is unaffected). Without this, a PRODUCTION docblock explaining what #217
+ * build steps 4/5 deleted -- prose like "do not restore `effectiveQuery`" -- trips the very same
+ * raw-substring scan a real reintroduced reference would.
+ */
+export function stripComments(source: string): string {
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const two = source.slice(i, i + 2);
+    if (two === "//") {
+      while (i < n && source[i] !== "\n") i++;
+      continue;
+    }
+    if (two === "/*") {
+      i += 2;
+      while (i < n && source.slice(i, i + 2) !== "*/") {
+        if (source[i] === "\n") out += "\n";
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    const ch = source[i]!;
+    if (ch === "\"" || ch === "'" || ch === "`") {
+      const quote = ch;
+      out += ch; i++;
+      while (i < n && source[i] !== quote) {
+        if (source[i] === "\\" && i + 1 < n) { out += source[i] + source[i + 1]; i += 2; continue; }
+        out += source[i]; i++;
+      }
+      if (i < n) { out += source[i]; i++; }
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/**
  * Pure detector 2: which files (excluding this guard suite's own planted fixtures, handled by
  * `appFiles()`'s test-file exclusion) still reference one of the three deleted render-side
- * adoption paths #217 build steps 4/5 replaced with the ONE stateless sync rule.
+ * adoption paths #217 build steps 4/5 replaced with the ONE stateless sync rule. Comments are
+ * stripped first (#217 fix round 8, item 5(i)) -- only a real, live reference in code offends.
  */
 const FORBIDDEN_IDENTIFIERS = ["adoptDashboardSearch", "effectiveQuery", "adoptedLocationRef"] as const;
 
@@ -91,8 +136,9 @@ export function findForbiddenIdentifierReferences(
 ): Array<{ path: string; identifier: string }> {
   const offenders: Array<{ path: string; identifier: string }> = [];
   for (const { path, source } of files) {
+    const code = stripComments(source);
     for (const identifier of FORBIDDEN_IDENTIFIERS) {
-      if (source.includes(identifier)) offenders.push({ path, identifier });
+      if (code.includes(identifier)) offenders.push({ path, identifier });
     }
   }
   return offenders;
@@ -120,6 +166,81 @@ export function readsSearchQueryFromStoreInsteadOfRoute(source: string): string[
 /** Self-test fixtures for detector 3. */
 const PLANTED_DASHBOARD_NO_ROUTE_ACCESSOR = "const committedQuery = getDashboardSearchSnapshotForPrincipal(currentUserId).draft;";
 const PLANTED_DASHBOARD_READS_QUERY = "const committedQuery = dashboardSearchOf(parsedRoute) ?? getDashboardSearchSnapshotForPrincipal(currentUserId).query;";
+
+/**
+ * Pure detector 4 (#217 fix round 8, Sol review, item 5(ii)). Detector 3 above only checks that
+ * SOME `dashboardSearchOf(` call exists in the file and that `.query` is never read off a store
+ * snapshot -- it would not catch a `committedQuery` that quietly reads the store instead (e.g.
+ * `const committedQuery = search.draft;` sitting beside an unrelated `dashboardSearchOf(` call
+ * elsewhere in the file), nor a second, shadowing `committedQuery` declared somewhere else. This
+ * pins the invariant literally: exactly one `committedQuery` declaration, whose initializer is
+ * exactly `dashboardSearchOf(parsedRoute) ?? ""`. Comments are stripped first (same reasoning as
+ * detector 2) so a docblock mentioning `committedQuery` in prose does not offend.
+ */
+export function findCommittedQueryInvariantViolations(source: string): string[] {
+  const code = stripComments(source);
+  const declarations = [...code.matchAll(/\b(?:const|let)\s+committedQuery\s*=\s*([^;\n]+);/g)];
+  if (declarations.length === 0) {
+    return ["no `committedQuery` declaration found"];
+  }
+  if (declarations.length > 1) {
+    return [`expected exactly one \`committedQuery\` declaration, found ${declarations.length}`];
+  }
+  const initializer = declarations[0]![1]!.trim();
+  if (initializer !== 'dashboardSearchOf(parsedRoute) ?? ""') {
+    return [`\`committedQuery\` initializer must be \`dashboardSearchOf(parsedRoute) ?? ""\`, found: \`${initializer}\``];
+  }
+  return [];
+}
+
+/** Self-test fixtures for detector 4. */
+const PLANTED_COMMITTED_QUERY_READS_STORE = 'const committedQuery = search.draft;\nconst other = dashboardSearchOf(parsedRoute);';
+const PLANTED_COMMITTED_QUERY_DUPLICATED =
+  'const committedQuery = dashboardSearchOf(parsedRoute) ?? "";\nconst committedQuery = dashboardSearchOf(parsedRoute) ?? "";';
+const PLANTED_COMMITTED_QUERY_COMMENT_ONLY =
+  '// #217 build, step 4: committedQuery is derived from the route, never `const committedQuery = search.draft`.\nconst committedQuery = dashboardSearchOf(parsedRoute) ?? "";';
+
+/**
+ * Pure detector 5 (#217 fix round 8, Sol review, item 5(ii)). Detector 1 above only rules out a
+ * field literally named `query` -- a renamed copy of the committed value (`committedSearch`,
+ * `lastQuery`) would pass it outright since neither name is `query`. This treats the store's
+ * module-level state as an ALLOWLIST instead: the real state this store's own docblock (above)
+ * claims to hold is exactly `draft` (the draft text), `timer`/`timerOwner` (the debounce timer and
+ * the principal it is armed for), and `principalId` (the owning principal) -- plus the
+ * infrastructure every module-singleton store needs regardless of what state it holds (`writer`,
+ * `snapshot`, `mismatchCache`, `listeners`). UPPER_SNAKE_CASE module constants
+ * (`DASHBOARD_SEARCH_DEBOUNCE_MS`) are excluded -- they are not per-render state. Comments are
+ * stripped first so a docblock mentioning a hypothetical field name in prose does not offend.
+ */
+const DASHBOARD_SEARCH_STORE_STATE_ALLOWLIST = new Set([
+  "draft",
+  "principalId",
+  "timer",
+  "timerOwner",
+  "writer",
+  "snapshot",
+  "mismatchCache",
+  "listeners",
+]);
+
+export function findNonAllowlistedStoreStateFields(source: string): string[] {
+  const code = stripComments(source);
+  const offenders: string[] = [];
+  const pattern = /^(?:export\s+)?(?:let|const)\s+(\w+)\s*[:=]/gm;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(code))) {
+    const name = match[1]!;
+    if (/^[A-Z][A-Z0-9_]*$/.test(name)) continue;
+    if (!DASHBOARD_SEARCH_STORE_STATE_ALLOWLIST.has(name)) offenders.push(name);
+  }
+  return offenders;
+}
+
+/** Self-test fixtures for detector 5. */
+const PLANTED_STORE_RENAMED_COPY = 'let draft = "";\nlet committedSearch = "";\nlet principalId = "";';
+const PLANTED_STORE_RENAMED_COPY_2 = 'let draft = "";\nlet lastQuery = "";\nlet principalId = "";';
+const PLANTED_STORE_COMMENT_ONLY =
+  '// this store used to also keep a `committedSearch`/`lastQuery` copy of the URL -- it no longer does\nlet draft = "";\nlet principalId = "";';
 
 describe("guard: the store keeps no committed `query` copy (#217 build, step 5)", () => {
   it("the real store source carries none of the offending shapes", () => {
@@ -161,6 +282,16 @@ describe("guard: no file references a deleted render-side adoption path", () => 
     ];
     expect(findForbiddenIdentifierReferences(planted).map((o) => o.path)).toEqual(["a.ts", "b.tsx", "c.tsx"]);
   });
+
+  // #217 fix round 8, Sol review, item 5(i)/5(iii). A comment-only mention -- exactly the shape a
+  // docblock explaining what #217 build steps 4/5 deleted actually looks like -- must NOT offend.
+  it("self-test: a comment-only mention of a forbidden identifier does not offend", () => {
+    const planted = [
+      { path: "e.ts", source: "// #217 build, step 4: do not restore effectiveQuery, adoptedLocationRef or adoptDashboardSearchFromUrl.\nconst committedQuery = dashboardSearchOf(route) ?? \"\";" },
+      { path: "f.ts", source: "/**\n * adoptDashboardSearchFromUrl used to live here; effectiveQuery and adoptedLocationRef went\n * with it -- see docs/lessons.md.\n */\nexport const x = 1;" },
+    ];
+    expect(findForbiddenIdentifierReferences(planted)).toEqual([]);
+  });
 });
 
 describe("guard: Dashboard.tsx derives the committed search from the route, never a store copy", () => {
@@ -179,6 +310,53 @@ describe("guard: Dashboard.tsx derives the committed search from the route, neve
     expect(readsSearchQueryFromStoreInsteadOfRoute(PLANTED_DASHBOARD_READS_QUERY)).toEqual([
       "reads .query off getDashboardSearchSnapshotForPrincipal(...)",
     ]);
+  });
+});
+
+describe("guard: Dashboard.tsx's committedQuery declaration is pinned literally (#217 fix round 8, item 5(ii))", () => {
+  it("the real Dashboard.tsx source declares committedQuery exactly once, from dashboardSearchOf(parsedRoute) ?? \"\"", () => {
+    const source = readFileSync(join(srcDir, "screens", "Dashboard.tsx"), "utf8");
+    expect(findCommittedQueryInvariantViolations(source)).toEqual([]);
+  });
+
+  it("self-test: fires when committedQuery reads the store instead of the route", () => {
+    expect(findCommittedQueryInvariantViolations(PLANTED_COMMITTED_QUERY_READS_STORE)).toEqual([
+      '`committedQuery` initializer must be `dashboardSearchOf(parsedRoute) ?? ""`, found: `search.draft`',
+    ]);
+  });
+
+  it("self-test: fires when committedQuery is declared more than once", () => {
+    expect(findCommittedQueryInvariantViolations(PLANTED_COMMITTED_QUERY_DUPLICATED)).toEqual([
+      "expected exactly one `committedQuery` declaration, found 2",
+    ]);
+  });
+
+  // #217 fix round 8, Sol review, item 5(iii). A comment-only mention of `const committedQuery =
+  // search.draft` -- exactly the shape a docblock warning against the old bug looks like -- must
+  // NOT offend; only the real, live declaration is checked.
+  it("self-test: a comment-only mention of the forbidden shape does not offend", () => {
+    expect(findCommittedQueryInvariantViolations(PLANTED_COMMITTED_QUERY_COMMENT_ONLY)).toEqual([]);
+  });
+});
+
+describe("guard: the store's module-level state is an allowlist (#217 fix round 8, item 5(ii))", () => {
+  it("the real store source declares no state outside the allowlist", () => {
+    const source = readFileSync(join(libDir, "dashboard-search-store.ts"), "utf8");
+    expect(findNonAllowlistedStoreStateFields(source)).toEqual([]);
+  });
+
+  it("self-test: fires on a renamed committed-query copy (`committedSearch`)", () => {
+    expect(findNonAllowlistedStoreStateFields(PLANTED_STORE_RENAMED_COPY)).toEqual(["committedSearch"]);
+  });
+
+  it("self-test: fires on a renamed committed-query copy (`lastQuery`)", () => {
+    expect(findNonAllowlistedStoreStateFields(PLANTED_STORE_RENAMED_COPY_2)).toEqual(["lastQuery"]);
+  });
+
+  // #217 fix round 8, Sol review, item 5(iii). A comment-only mention of `committedSearch`/
+  // `lastQuery` -- prose explaining the store no longer keeps such a copy -- must NOT offend.
+  it("self-test: a comment-only mention of a renamed-copy name does not offend", () => {
+    expect(findNonAllowlistedStoreStateFields(PLANTED_STORE_COMMENT_ONLY)).toEqual([]);
   });
 });
 
