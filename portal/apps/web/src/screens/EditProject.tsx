@@ -85,7 +85,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       const response = await apiPatch<ProjectResponse, Record<string, unknown>>(`/api/projects/${projectId}`, editProjectPayload(form));
       if (queryClient) {
         queryClient.setQueryData(projectDataKeys.detail(projectId), response);
-        await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true });
+        await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
       }
       onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Shoot details saved.");
     } catch (reason) {
@@ -97,7 +97,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   async function archiveProject() {
     if (!await confirm({ title: "Archive project?", message: "Archive this project? It will be hidden from the dashboard and can be restored later.", confirmLabel: "Archive" })) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be archived."); }
     finally { setIsDangerAction(false); }
   }
@@ -105,7 +105,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   async function restoreProject() {
     if (!await confirm({ title: "Restore project?", message: "Restore this project to the dashboard?", confirmLabel: "Restore" })) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be restored."); }
     finally { setIsDangerAction(false); }
   }

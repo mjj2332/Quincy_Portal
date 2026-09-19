@@ -456,6 +456,7 @@ function WorkspaceBody(props: WorkspaceBodyProps) {
           resources: [{ kind: "detail" }, { kind: "activity" }],
           dashboard: true,
           calendar: true,
+          gantt: true,
         });
       }
       try {

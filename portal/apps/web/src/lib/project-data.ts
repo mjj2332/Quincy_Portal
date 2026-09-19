@@ -4,7 +4,7 @@ import { useCallback, useContext, useEffect, useState, useSyncExternalStore } fr
 import { ApiError, apiGet } from "./api";
 import { externalApiGet, externalProjectDetailToWorkspace } from "./external-api-response";
 import type { ExternalProjectDetailDto } from "@quincy/shared";
-import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
+import { createActiveProjectDetailsInvalidatedMessage, createDashboardBoardInvalidatedMessage, createProductionCalendarInvalidatedMessage, createProductionGanttInvalidatedMessage, getProjectQueryRuntime, projectResourceKey, useProjectQueryRuntime, type ProjectDataResource, type ProjectQueryRuntime } from "./project-query-sync";
 import type { ReviewPatch, WorkspaceAsset, Review } from "../components/PhotoGrid";
 import type { ProjectStageKey } from "./stages";
 
@@ -348,13 +348,15 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
   dashboard: boolean;
   /** Whether the Production Calendar projection can change for this committed op. */
   calendar: boolean;
+  /** Whether the Production Gantt projection can change for this committed op. */
+  gantt: boolean;
   /**
    * The surface (if any) that performed the mutation and already owns its single
    * post-settle refetch (`Dashboard.tsx` queuedRefreshRef / `ProductionCalendar.tsx`
    * refetchAuthoritative). Its in-tab query is NOT invalidated here (that would
    * double-refetch a drag), but its cross-tab broadcast still fires so other tabs converge.
    */
-  producer?: "dashboard" | "calendar";
+  producer?: "dashboard" | "calendar" | "gantt";
   /**
    * #217 fix round 1, item 4. When `dashboard` is true, scope the in-tab convergence scan to
    * `dashboard-projects` queries carrying a non-empty `q` in their trailing key object -- a
@@ -374,7 +376,7 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
   const runtime = getProjectQueryRuntime(queryClient);
   if (!runtime) return;
   const pending: Promise<unknown>[] = [];
-  const converge = (surface: "dashboard" | "calendar", prefix: string, message: Parameters<ProjectQueryRuntime["publish"]>[0]) => {
+  const converge = (surface: "dashboard" | "calendar" | "gantt", prefix: string, message: Parameters<ProjectQueryRuntime["publish"]>[0]) => {
     if (input.producer !== surface) {
       const active = queryClient.getQueryCache().getAll().filter((query) => {
         if (query.queryKey[0] !== prefix || query.getObserversCount() === 0) return false;
@@ -390,6 +392,7 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
   };
   if (input.dashboard) converge("dashboard", "dashboard-projects", createDashboardBoardInvalidatedMessage());
   if (input.calendar) converge("calendar", "production-calendar", createProductionCalendarInvalidatedMessage());
+  if (input.gantt) converge("gantt", "production-gantt", createProductionGanttInvalidatedMessage());
   // Await the non-producing surface refetches so a caller that navigates immediately
   // (e.g. ProjectWorkspace #moveStage) lands on fresh data, matching the awaited
   // invalidateQueries this replaced. Owned/ledger-deferred keys resolve immediately.

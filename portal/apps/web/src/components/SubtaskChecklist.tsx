@@ -329,8 +329,9 @@ export function SubtaskChecklist({ projectId, onAccessFailure }: { projectId: st
   // can flip whether this project matches an active Dashboard search -- every other subtask
   // mutation (done, schedule, assignee, reorder) cannot, so `dashboard` stays `false` for those,
   // byte-identical to before. `dashboardSearchOnly` keeps a q-less baseline query from refetching
-  // for nothing.
-  async function invalidateAfterMutation(searchRelevant = false) { if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: searchRelevant, calendar: true, dashboardSearchOnly: searchRelevant }); }
+  // for nothing. `gantt: true` (#218) always invalidates the Gantt surface regardless of search
+  // relevance, since a checklist mutation can affect Gantt density independent of the Dashboard search.
+  async function invalidateAfterMutation(searchRelevant = false) { if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: searchRelevant, calendar: true, dashboardSearchOnly: searchRelevant, gantt: true }); }
   function itemIsBusy(id: string) { return [...busy].some((key) => key.startsWith(`${id}:`)); }
   function beginEditing(item: Subtask) { if (itemIsBusy(item.id)) return; cancelledTitles.current.delete(item.id); setDraftTitles((current) => ({ ...current, [item.id]: current[item.id] ?? item.title })); setEditingId(item.id); }
   function useLatestSchedule(item: Subtask, schedule: ChecklistScheduleDto) { replace({ ...item, schedule, dueDate: schedule.due }); setScheduleErrors((current) => { const next = { ...current }; delete next[item.id]; return next; }); }

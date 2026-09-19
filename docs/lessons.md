@@ -3088,3 +3088,33 @@ cleanup's action is only safe for ONE of the two events that can trigger it (a r
 same-tick synthetic replay), defer the action past the point where a same-tick replay would have
 already announced itself, rather than trying to tell the two events apart from inside the cleanup
 itself (they look identical at that point).
+
+## A mocked-fetch DOM suite hid a client/route id mismatch in both directions (#226)
+
+The Calendar's checklist event/unscheduled-entry `id` is a `checklist:`-prefixed ENTITY id —
+FullCalendar/DOM ids, focus descriptors, `data-event-id`/`data-unscheduled-id`, optimistic
+overlays, and the unscheduled-panel drag dataset all depend on that prefix staying on the wire.
+`PATCH /api/projects/:projectId/subtasks/:subtaskId` needs the bare uuid. Two bugs lived either
+side of that boundary at once, and neither showed up in the DOM suite:
+
+- The client sent the prefixed entity id straight into the PATCH URL (`ProductionCalendar.tsx`'s
+  `runChecklistMutation`) → the route's `idParam.uuid()` guard rejected it with 400 on every drag,
+  resize, unscheduled drop, schedule-editor save, and phone reschedule.
+- The PATCH response carries the BARE subtask uuid (the route's real contract), but
+  `adoptChecklistResult` compared it against — and wrote it back as — the prefixed entity id: the
+  dedup filter removed nothing and the client kept a duplicate, un-prefixed row until the next
+  authoritative refetch quietly overwrote it.
+
+Both were invisible to `ProductionCalendar-checklist.dom.test.tsx` because its mocked-fetch PATCH
+stub (a) discarded the request URL entirely, so a wrong URL was unobservable, and (b) returned the
+prefixed entity id as the response `id`, which is not what the worker actually sends — the fixture
+was answering the question "does the reducer round-trip an id" rather than "does the reducer
+handle the id shape the server really returns."
+
+**Rule:** a mocked-fetch DOM suite that stands in for a cross-layer contract (client shape ↔ route
+shape) has to assert on the request URL/method it captures, not just the request body, and its
+response fixtures have to mirror what the real endpoint actually returns — not what is convenient
+to round-trip. Pin the contract itself with one worker integration test that takes a real response
+id from one route and feeds it into the route that consumes it (here: GET the Calendar range,
+PATCH the subtasks route with the id verbatim, expect 400 for the raw id and 200 for the unwrapped
+one) — a unit test on either side alone can drift with the other without failing.

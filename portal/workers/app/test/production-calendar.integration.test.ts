@@ -8,6 +8,7 @@ import {
   editorProductionCalendarRangeResponseSchema,
   externalCalendarRangeSchema,
   resolveSydneyCivilMinute,
+  subtaskIdFromCalendarEntityId,
 } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { AppEnv, Env } from "../src/env";
@@ -36,6 +37,7 @@ const externalRemovedProjectId = "80fffff6-ffff-4fff-8fff-fffffffffff6";
 const externalArchivedProjectId = "80fffff7-ffff-4fff-8fff-fffffffffff7";
 const externalUnassignedProjectId = "80fffff8-ffff-4fff-8fff-fffffffffff8";
 const foreignProjectId = "80fffff9-ffff-4fff-8fff-fffffffffff9";
+const idContractProjectId = "80fffffa-ffff-4fff-8fff-fffffffffffa";
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string): Promise<void> {
@@ -55,6 +57,14 @@ async function cookie(token: string): Promise<string> {
 
 async function request(path: string, token: string): Promise<Response> {
   return SELF.fetch(`https://portal.test${path}`, { headers: { cookie: await cookie(token) } });
+}
+
+async function patchRequest(path: string, token: string, body: unknown): Promise<Response> {
+  return SELF.fetch(`https://portal.test${path}`, {
+    method: "PATCH",
+    headers: { cookie: await cookie(token), "content-type": "application/json", origin: baseEnv.APP_ORIGIN },
+    body: JSON.stringify(body),
+  });
 }
 
 async function adminCalendar(path: string) {
@@ -209,6 +219,10 @@ beforeAll(async () => {
   await insertUser("80666666-6666-4666-8666-666666666666", "editor", "tb5c-calendar-foreign");
   await insertMember(foreignProjectId, "80666666-6666-4666-8666-666666666666", "editor");
   await insertSubtask(foreignProjectId, "Foreign checklist", "80666666-6666-4666-8666-666666666666", { end: "2026-08-27T12:00", endKind: "timed", version: 1 });
+
+  await insertProject(idContractProjectId, "16 Id Contract Street", "editing_autohdr");
+  await insertSubtask(idContractProjectId, "Id contract scheduled checklist", null, { dueDate: "2026-08-27", end: "2026-08-27", endKind: "date", version: 1 });
+  await insertSubtask(idContractProjectId, "Id contract unscheduled checklist", null);
 
   for (let i = 0; i < 51; i += 1) {
     await insertProject(crypto.randomUUID(), `Truncation Project ${String(i).padStart(2, "0")}`, "editing_autohdr");
@@ -560,6 +574,49 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({ code: "calendar_range_too_dense", count: 10_001, max: 10_000 });
     expect(allCalls).toBe(1);
+  });
+
+  it("mints checklist event/unscheduled ids that PATCH /subtasks rejects verbatim but accepts once unwrapped (#226)", async () => {
+    const body = await adminCalendar(`/api/production-calendar?${range}&q=Id%20Contract`);
+    const scheduledEvent = body.events.find((event) => event.kind === "checklist" && event.title === "Id contract scheduled checklist");
+    expect(scheduledEvent).toBeDefined();
+    const unscheduledEntry = body.unscheduled.find((entry) => entry.kind === "checklist" && entry.title === "Id contract unscheduled checklist");
+    expect(unscheduledEntry).toBeDefined();
+    if (!scheduledEvent || !unscheduledEntry) return;
+
+    // The Calendar's entity id is `checklist:<subtaskId>` — every DOM id, focus
+    // descriptor, and optimistic overlay on the client depends on that prefix
+    // staying on the wire. It must never be sent verbatim to the subtasks route.
+    expect(scheduledEvent.id.startsWith("checklist:")).toBe(true);
+    expect(unscheduledEntry.id.startsWith("checklist:")).toBe(true);
+
+    const rawPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${scheduledEvent.id}`, tokens.admin, {
+      schedule: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } },
+    });
+    expect(rawPatch.status).toBe(400);
+    await expect(rawPatch.json()).resolves.toMatchObject({ error: "Invalid project or subtask id" });
+
+    const unwrappedId = subtaskIdFromCalendarEntityId(scheduledEvent.id);
+    expect(unwrappedId).not.toBeNull();
+    const unwrappedPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unwrappedId}`, tokens.admin, {
+      schedule: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } },
+    });
+    expect(unwrappedPatch.status).toBe(200);
+    await expect(unwrappedPatch.json()).resolves.toMatchObject({ schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } });
+
+    const rawUnscheduledPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unscheduledEntry.id}`, tokens.admin, {
+      schedule: { expectedVersion: 0, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } } },
+    });
+    expect(rawUnscheduledPatch.status).toBe(400);
+    await expect(rawUnscheduledPatch.json()).resolves.toMatchObject({ error: "Invalid project or subtask id" });
+
+    const unwrappedUnscheduledId = subtaskIdFromCalendarEntityId(unscheduledEntry.id);
+    expect(unwrappedUnscheduledId).not.toBeNull();
+    const unwrappedUnscheduledPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unwrappedUnscheduledId}`, tokens.admin, {
+      schedule: { expectedVersion: 0, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } } },
+    });
+    expect(unwrappedUnscheduledPatch.status).toBe(200);
+    await expect(unwrappedUnscheduledPatch.json()).resolves.toMatchObject({ schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } } });
   });
 });
 

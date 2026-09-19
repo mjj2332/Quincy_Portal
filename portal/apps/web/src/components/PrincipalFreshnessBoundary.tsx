@@ -7,6 +7,7 @@ import { decodeExternalResponse } from "../lib/external-api-response";
 import { clearPrincipalProjectData, removeProjectData } from "../lib/project-data";
 import { removeProjectFromDashboardQueries } from "../lib/dashboard-projects";
 import { removeProductionCalendarQueries } from "../lib/production-calendar-query";
+import { removeProductionGanttQueries } from "../lib/production-gantt-query";
 import { locationStore } from "../lib/router";
 import { dropDashboardSearchOwnership, resetDashboardSearchForPrincipal } from "../lib/dashboard-search-store";
 
@@ -92,7 +93,7 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
       const old = before.get(projectId)!;
       return !current || current.join(",") !== old.join(",");
     });
-    if (lost.length > 0) removeProductionCalendarQueries(queryClient, principalId);
+    if (lost.length > 0) { removeProductionCalendarQueries(queryClient, principalId); removeProductionGanttQueries(queryClient, principalId); }
     for (const projectId of lost) {
       // Filter the principal dashboard cache before the asynchronous tombstone work.
       removeProjectFromDashboardQueries(queryClient, principalId, projectId);
@@ -104,6 +105,7 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
   useEffect(() => {
     if (!query.error || !(query.error instanceof Error) || query.error.message !== "Authorization scope changed while refreshing.") return;
     removeProductionCalendarQueries(queryClient, principalId);
+    removeProductionGanttQueries(queryClient, principalId);
     void clearPrincipalProjectData(queryClient);
   }, [principalId, query.error, queryClient]);
 
