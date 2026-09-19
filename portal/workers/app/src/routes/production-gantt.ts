@@ -441,9 +441,15 @@ type GanttChildBaseRow = {
  * `rnk` is that project's own 1-based rank used to cap the embedded page at `CHILD_PAGE_LIMIT`. */
 type GanttChildSqlRow = GanttChildBaseRow & { rnk: number };
 
-/** The dedicated child-page endpoint's row (§5/§7): `total` is the project's full visible count,
- * independent of the cursor; there is no per-row rank since the cursor itself defines the page. */
+/** The dedicated child-page endpoint's row (§5/§7): there is no per-row rank since the cursor
+ * itself defines the page. `total` is NOT read off this row — see `GanttChildPageTotalSqlRow`
+ * and the fix-218-r4 #2 docblock below on why. */
 type GanttChildPageSqlRow = GanttChildBaseRow;
+
+/** The dedicated child-page endpoint's total-count row (fix-218-r4 #2): one guaranteed row,
+ * computed independently of `page`'s cursor filter, so an empty continuation page still reports
+ * the project's true visible-row total instead of falling back to `0`. */
+type GanttChildPageTotalSqlRow = { total: number };
 
 /**
  * Statement 2: children for the page's project ids (bound as a `json_each(?2)` list, `?2 <=
@@ -487,12 +493,11 @@ function ganttChildrenForPageBindValues(userId: string, projectIds: string[], in
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Child-page mode (§5): `?childrenOf=<uuid>&childCursor=<c>` runs only this query for that one
-// project, under the same `authorized_projects_base` scope. `total` is computed over every
-// visible row before the cursor is applied, so it always reports the project's true total —
-// unaffected by which page is being fetched. A `childrenOf` naming a project outside the caller's
-// authorized scope makes `scoped_project` empty, so `visible_subtasks`/`page` are both empty too:
-// `{ total: 0, rows: [], nextCursor: null }`, identical to a real project with no children.
+// Child-page mode (§5): `?childrenOf=<uuid>&childCursor=<c>` runs only these two queries (batched
+// together, §7 below) for that one project, under the same `authorized_projects_base` scope. A
+// `childrenOf` naming a project outside the caller's authorized scope makes `scoped_project`
+// empty, so both queries report `{ total: 0, rows: [], nextCursor: null }`, identical to a real
+// project with no children.
 // ---------------------------------------------------------------------------
 
 /**
@@ -529,6 +534,35 @@ page AS (
   LIMIT ${PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 1}
 )
 SELECT * FROM page`;
+}
+
+/**
+ * fix-218-r4 #2: the sibling of `productionGanttChildPageSql`, batched alongside it (§7) so
+ * `total` always reflects the project's full visible-row count — including on an empty
+ * continuation page (e.g. every remaining row omitted by backward sort-key movement, fix-218-r3
+ * #3), where `page` above returns zero rows and there is no row left to read a `COUNT(*) OVER()`
+ * off. A plain `COUNT(*)` with no `GROUP BY` always returns exactly one row (`0` for no matches),
+ * so — unlike reading `total` off the first (possibly absent) row of `page` — this query can never
+ * itself be empty. Binds: `?1` me, `?2` childrenOf project id, `?3` include_completed — the same
+ * first three binds as the page query above, not the cursor ones.
+ */
+export function productionGanttChildPageTotalSql(role: GanttRole): string {
+  const branch = productionRoleSql(role);
+  return `WITH
+scoped_project AS (
+  SELECT p.id AS project_id, ${branch.collaboration} AS can_collaborate
+  FROM projects p
+  ${branch.from}
+  WHERE p.archived_at IS NULL AND p.id = ?2
+)
+SELECT COUNT(*) AS total
+FROM project_subtasks s
+INNER JOIN scoped_project sp ON sp.project_id = s.project_id
+WHERE (?3 = 1 OR s.done = 0)`;
+}
+
+function ganttChildPageTotalBindValues(userId: string, projectId: string, includeCompleted: boolean): unknown[] {
+  return [userId, projectId, includeCompleted ? 1 : 0];
 }
 
 function ganttChildPageBindValues(userId: string, projectId: string, includeCompleted: boolean, cursor: GanttChildCursor | null): unknown[] {
@@ -629,6 +663,15 @@ function serializeGanttProjectRow(
   const delivered = Boolean(row.delivered);
   const canCollaborate = row.can_collaborate === 1;
   const children = childrenByProject.get(row.project_id) ?? [];
+  // fix-218-r4 #2: reads the same shape as the dedicated child-page endpoint's former bug (total
+  // off the first row, defaulting to 0 when the array is empty) — checked and confirmed NOT the
+  // same bug here. `productionGanttChildrenForPageSql` has no cursor: it always fetches each
+  // page's projects' first `CHILD_PAGE_LIMIT` visible rows fresh, via `INNER JOIN
+  // project_subtasks`. A project with zero visible rows has zero window-function rows too (no
+  // partition to compute `total` over), so `children.length === 0` here can ONLY mean the
+  // project's true total is 0 — there is no cursor position for a row to have moved behind. If
+  // this function ever grows a cursor/continuation mode, re-derive `total` independently first
+  // (as `productionGanttChildPageTotalSql` does for the dedicated endpoint).
   const total = children.length > 0 ? children[0]!.total : 0;
   const returned = children.length;
   return {
@@ -678,9 +721,16 @@ async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery)
   const user = c.get("user");
   const role = user.role;
   const params = ganttChildPageBindValues(user.id, parsed.childrenOf, parsed.completed, parsed.childCursor);
-  const result = await c.env.DB.prepare(productionGanttChildPageSql(role)).bind(...params).all<GanttChildPageSqlRow>();
-  const rows = result.results ?? [];
-  const total = rows.length > 0 ? rows[0]!.total : 0;
+  const totalParams = ganttChildPageTotalBindValues(user.id, parsed.childrenOf, parsed.completed);
+  // fix-218-r4 #2: batched (not sequential) so both queries read the same D1 snapshot, and the
+  // total is sourced from its own always-one-row query — never from `page`'s first row, which is
+  // absent on an empty continuation page.
+  const batchResults = await c.env.DB.batch([
+    c.env.DB.prepare(productionGanttChildPageSql(role)).bind(...params),
+    c.env.DB.prepare(productionGanttChildPageTotalSql(role)).bind(...totalParams),
+  ]);
+  const rows = (batchResults[0]?.results ?? []) as GanttChildPageSqlRow[];
+  const total = Number((batchResults[1]?.results as GanttChildPageTotalSqlRow[] | undefined)?.[0]?.total ?? 0);
   const truncated = rows.length > PRODUCTION_GANTT_CHILD_PAGE_LIMIT;
   const pageRows = truncated ? rows.slice(0, PRODUCTION_GANTT_CHILD_PAGE_LIMIT) : rows;
   const lastRow = pageRows.at(-1);

@@ -322,24 +322,35 @@ describe("production-gantt adversarial probes", () => {
   it("backward child position movement: a row that sorts before the childCursor is omitted from the rest of that walk, but a fresh walk converges on it", async () => {
     const first = productionGanttChildPageSchema.parse(await (await request(`/api/production-gantt?scope=active&childrenOf=${childBackwardProjectId}`, tokens.admin)).json());
     expect(first.children.rows).toHaveLength(PRODUCTION_GANTT_CHILD_PAGE_LIMIT);
+    expect(first.children.total).toBe(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 1);
     expect(first.children.nextCursor).not.toBeNull();
     const cursor = first.children.nextCursor!;
     const notYetSeenId = `82aaaaaa-aaaa-4aaa-8aaa-${String(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 1).padStart(12, "0")}`;
     expect(first.children.rows.map((row) => row.id)).not.toContain(notYetSeenId);
 
     // The not-yet-seen row (position PRODUCTION_GANTT_CHILD_PAGE_LIMIT, still ahead of the
-    // cursor) moves its sort key BACKWARD past the cursor that was just minted.
+    // cursor) moves its sort key BACKWARD past the cursor that was just minted. It is the only
+    // remaining row, so the continuation page below is genuinely EMPTY.
     await database.DB.prepare("UPDATE project_subtasks SET position = -1 WHERE id = ?").bind(notYetSeenId).run();
     try {
       const continued = productionGanttChildPageSchema.parse(await (await request(`/api/production-gantt?scope=active&childrenOf=${childBackwardProjectId}&childCursor=${encodeURIComponent(cursor)}`, tokens.admin)).json());
       // Omitted from the rest of THIS walk: it now sorts before the cursor, so the keyset
       // predicate excludes it, and there is no other row left to page to.
+      expect(continued.children.rows).toHaveLength(0);
+      expect(continued.children.returned).toBe(0);
       expect(continued.children.rows.map((row) => row.id)).not.toContain(notYetSeenId);
       expect(continued.children.nextCursor).toBeNull();
+      // fix-218-r4 #2: an empty continuation page still reports the project's TRUE visible total
+      // (still 101 — the omitted row still exists and is still visible, it just sorts before the
+      // cursor), not `0`. Before the fix, `total` was read off `page`'s first row, which is
+      // absent here, and silently fell back to `0` — contradicting the "ALL visible checklist
+      // rows" contract for a project that plainly still has visible rows.
+      expect(continued.children.total).toBe(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 1);
 
       // A fresh walk (no cursor, starting from page one) converges: the row now sorts first.
       const fresh = productionGanttChildPageSchema.parse(await (await request(`/api/production-gantt?scope=active&childrenOf=${childBackwardProjectId}`, tokens.admin)).json());
       expect(fresh.children.rows[0]!.id).toBe(notYetSeenId);
+      expect(fresh.children.total).toBe(PRODUCTION_GANTT_CHILD_PAGE_LIMIT + 1);
     } finally {
       await database.DB.prepare("UPDATE project_subtasks SET position = ? WHERE id = ?").bind(PRODUCTION_GANTT_CHILD_PAGE_LIMIT, notYetSeenId).run();
     }
