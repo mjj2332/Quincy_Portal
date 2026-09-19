@@ -1169,25 +1169,37 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {/* #217: the rail's `ShellSearch` is the one search input now -- this chip is the
             Dashboard's only trace of an active query, not a second field. */}
         {searchActive && (
-          <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)]">
+          <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)] mr-[var(--space-3)]">
             {searchCountsQuery.data && (
               <>
                 {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
                 {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
               </>
             )}
-            <span className="normal-case" data-testid="dashboard-search-chip-query">
+            {/* #217 design review (browser pass 3). The query is capped at 200 code points, not
+                200 pixels, and `Badge` is `whitespace-nowrap`: unbounded, a deep-linked long query
+                is a ~1000px pill and even a 12-character one wrapped the toolbar at 1440. Bounded
+                and truncating here, full text in `title`. `tracking-normal` finishes what
+                `normal-case` started -- the user's own text is shown as typed, not with the
+                Badge's eyebrow letter-spacing. `mr` on the Badge keeps the chip from reading as
+                part of the `Projects` eyebrow beside it. */}
+            <span
+              className="inline-block max-w-[28ch] truncate align-bottom normal-case tracking-normal"
+              data-testid="dashboard-search-chip-query"
+              title={committedQuery}
+            >
               '{committedQuery}'
             </span>
             {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
                 rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
                 `after:absolute after:-inset-2`) pads the actual hit target to >=24px without
-                growing the chip's own visible box. */}
+                growing the chip's own visible box. At phone width the rail's own 44px touch
+                convention applies (`ShellSearch.tsx`'s Sheet trigger): 12 + 2 x 16 = 44px. */}
             <button
               type="button"
               aria-label="Clear search"
               onClick={() => clearDashboardSearch(currentUserId)}
-              className="relative inline-flex items-center after:absolute after:-inset-2"
+              className="relative inline-flex items-center after:absolute after:-inset-2 max-[721px]:after:-inset-4"
             >
               <XIcon aria-hidden="true" className="size-3" />
             </button>

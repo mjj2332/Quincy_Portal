@@ -316,6 +316,25 @@ describe("Dashboard's committed query is derived from the route, not adopted int
   // deferred until it did. Both now also assert the REAL `ShellSearch` input `ShellRouteHarness`
   // mounts, and (f2) dispatches a real `keydown` Escape on it instead of calling
   // `clearDashboardSearch` directly.
+  // #217 design review (browser pass 3). The committed query is capped at 200 code points, not
+  // 200 pixels, and the Badge is `whitespace-nowrap`: an unbounded echo turns a deep link into a
+  // ~1000px pill that reflows the whole toolbar. jsdom cannot lay out, so this pins the contract
+  // the layout depends on: the echo is width-bounded + truncating, and the full text stays
+  // reachable through `title`.
+  it("(g) a 200-character committed query is echoed width-bounded and truncating, with the full text in its title", async () => {
+    const long = "a".repeat(200);
+    window.history.replaceState(null, "", `/?q=${long}`);
+    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await settle();
+    const echo = host.querySelector<HTMLElement>('[data-testid="dashboard-search-chip-query"]');
+    expect(echo).not.toBeNull();
+    expect(echo!.title).toBe(long);
+    expect(echo!.textContent).toContain(long);
+    const classes = echo!.className.split(/\s+/);
+    expect(classes).toContain("truncate");
+    expect(classes.some((token) => token.startsWith("max-w-["))).toBe(true);
+  });
+
   it("(f1) the chip's x clears the URL, the chip, the input and the list in one step", async () => {
     window.history.replaceState(null, "", "/?view=list&q=smith");
     await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
