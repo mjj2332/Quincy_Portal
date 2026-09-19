@@ -147,6 +147,22 @@ export function setDashboardSearchDraft(value: string, viewerId: string): void {
   }, DASHBOARD_SEARCH_DEBOUNCE_MS);
 }
 
+/**
+ * The IME composition path (#217 design-fix round 3, item 3). Updates the draft exactly the same
+ * way `setDashboardSearchDraft` does -- same ownership check, same sanitize, same notify -- but
+ * arms NO commit timer. Without this, every INTERMEDIATE composition update re-armed the 300ms
+ * debounce, so a long composition could commit and rewrite the URL with a half-formed composed
+ * character mid-composition. The caller (`ShellSearch.tsx`) is responsible for cancelling any
+ * timer already armed BEFORE the composition began (`cancelPendingDashboardSearchWrite` on
+ * `compositionstart`) and for scheduling the eventual commit exactly once, through the normal
+ * `setDashboardSearchDraft` path, on `compositionend`.
+ */
+export function setDashboardSearchDraftDuringComposition(value: string, viewerId: string): void {
+  ensureOwner(viewerId);
+  draft = sanitizeDashboardCalendarSearch(value);
+  notify();
+}
+
 /** Enter: cancel the timer, commit now. `viewerId` required -- see `setDashboardSearchDraft`. */
 export function commitDashboardSearchNow(viewerId: string): void {
   ensureOwner(viewerId);

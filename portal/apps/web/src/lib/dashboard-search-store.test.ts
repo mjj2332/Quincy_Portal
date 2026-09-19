@@ -18,6 +18,7 @@ import {
   DASHBOARD_SEARCH_DEBOUNCE_MS,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
+  setDashboardSearchDraftDuringComposition,
   setDashboardSearchUrlWriter,
   subscribeDashboardSearch,
 } from "./dashboard-search-store";
@@ -217,5 +218,49 @@ describe("dashboard-search-store", () => {
     resetDashboardSearchForPrincipal("someone");
     expect(listener).toHaveBeenCalled();
     unsubscribe();
+  });
+
+  // #217 design-fix round 3, item 3: an IME composition still armed the 300ms commit timer on
+  // every intermediate update, so a long composition could commit and rewrite the URL mid-
+  // composition. `setDashboardSearchDraftDuringComposition` updates the draft the SAME way
+  // `setDashboardSearchDraft` does but arms no timer at all.
+  describe("setDashboardSearchDraftDuringComposition — the IME no-schedule path", () => {
+    it("updates the draft live, but arms no commit timer", () => {
+      setDashboardSearchDraftDuringComposition("s", USER);
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("s");
+      expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+
+      const writer = vi.fn();
+      const unregister = setDashboardSearchUrlWriter(writer);
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
+      expect(writer).not.toHaveBeenCalled();
+      unregister();
+    });
+
+    it("a whole burst of composition updates never commits or writes, even well past one debounce window", () => {
+      const writer = vi.fn();
+      const unregister = setDashboardSearchUrlWriter(writer);
+      setDashboardSearchDraftDuringComposition("s", USER);
+      vi.advanceTimersByTime(100);
+      setDashboardSearchDraftDuringComposition("sm", USER);
+      vi.advanceTimersByTime(100);
+      setDashboardSearchDraftDuringComposition("smi", USER);
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
+
+      expect(writer).not.toHaveBeenCalled();
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "smi", query: "" });
+      unregister();
+    });
+
+    it("still respects ownership -- a different viewer clears the previous owner's state first", () => {
+      setDashboardSearchDraft("smith", USER);
+      setDashboardSearchDraftDuringComposition("other", "user-2");
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "other", principalId: "user-2" });
+    });
+
+    it("still sanitizes the value (strips unsafe characters) the same way the scheduled path does", () => {
+      setDashboardSearchDraftDuringComposition("\\smith", USER);
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    });
   });
 });

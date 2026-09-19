@@ -24,11 +24,13 @@ import { Kbd } from "@/components/reui/kbd";
 import { cn } from "../../lib/utils";
 import { locationStore, staffPathFor } from "../../lib/router";
 import {
+  cancelPendingDashboardSearchWrite,
   clearDashboardSearch,
   commitDashboardSearchNow,
   getDashboardSearchSnapshotForPrincipal,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
+  setDashboardSearchDraftDuringComposition,
   subscribeDashboardSearch,
 } from "../../lib/dashboard-search-store";
 import type { RailMode } from "../../lib/shell-rail";
@@ -158,18 +160,36 @@ export const ShellSearch = forwardRef<ShellSearchHandle, ShellSearchProps>(funct
     // code POINTS -- 200 astral emoji (each a surrogate PAIR, two code units) are legal in the
     // URL, but a native `maxLength={200}` cut the field off at ~100 of them. Capped here instead,
     // through the SAME helper the URL serializer and the store's own commit path already share
-    // (never re-implemented), and skipped entirely while a composition is open -- see
-    // `isComposingRef`'s own comment above and `handleCompositionEnd` below, which applies the cap
-    // once the composition's own final value is known.
-    setDashboardSearchDraft(isComposingRef.current ? event.target.value : capSearchInput(event.target.value), principalId);
+    // (never re-implemented).
+    //
+    // #217 design-fix round 3, item 3: while composing, the cap is skipped (a half-formed
+    // composed character must survive untouched until `handleCompositionEnd` below knows the
+    // composition's own final value) AND the write goes through the NO-SCHEDULE store path
+    // (`setDashboardSearchDraftDuringComposition`) instead of `setDashboardSearchDraft` -- the
+    // scheduled path arms a 300ms commit timer on every call, so every intermediate composition
+    // update used to re-arm it, and a long composition could commit and rewrite the URL with a
+    // half-formed value mid-composition.
+    if (isComposingRef.current) {
+      setDashboardSearchDraftDuringComposition(event.target.value, principalId);
+      return;
+    }
+    setDashboardSearchDraft(capSearchInput(event.target.value), principalId);
   }
 
   function handleCompositionStart() {
     isComposingRef.current = true;
+    // #217 design-fix round 3, item 3: cancels a timer armed by a keystroke just BEFORE this
+    // composition began -- without this, that earlier commit could still fire mid-composition
+    // (`setDashboardSearchDraftDuringComposition` above arms nothing new, but does not retroactively
+    // cancel a timer this composition did not itself arm) and rewrite the URL with a stale value
+    // while the user is still composing.
+    cancelPendingDashboardSearchWrite();
   }
 
   function handleCompositionEnd(event: ReactCompositionEvent<HTMLInputElement>) {
     isComposingRef.current = false;
+    // Schedules the eventual commit EXACTLY once, through the normal debounced path -- not one
+    // arm per intermediate composition update, which never touched the timer at all (above).
     setDashboardSearchDraft(capSearchInput(event.currentTarget.value), principalId);
   }
 

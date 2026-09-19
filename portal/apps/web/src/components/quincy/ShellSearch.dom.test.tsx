@@ -6,7 +6,12 @@ import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
 import { DASHBOARD_SEARCH_MAX_CHARS } from "@quincy/shared";
 import { ShellSearch, type ShellSearchHandle, type ShellSearchProps } from "./ShellSearch";
-import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "../../lib/dashboard-search-store";
+import {
+  __resetDashboardSearchStoreForTest,
+  __getDashboardSearchSnapshotForTest,
+  DASHBOARD_SEARCH_DEBOUNCE_MS,
+  setDashboardSearchUrlWriter,
+} from "../../lib/dashboard-search-store";
 
 /**
  * The rail's project-search control — #217 rewrite. A real input now, backed by
@@ -271,6 +276,71 @@ describe("ShellSearch — strips unsafe characters BEFORE capping, not after (#2
     await compositionStart(input);
     await compositionEnd(input, "\\" + "a".repeat(200));
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("a".repeat(200));
+  });
+});
+
+describe("ShellSearch — an IME composition never arms or fires a stray commit (#217 design-fix round 3, item 3)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("1s of composition: no commit, no URL write", async () => {
+    const writes: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => writes.push(q));
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+
+    await compositionStart(input);
+    await typeWithoutInputEvent(input, "s");
+    await act(async () => {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(writes).toEqual([]);
+    expect(__getDashboardSearchSnapshotForTest().query).toBe("");
+    unregister();
+  });
+
+  it("compositionend schedules exactly one commit, which fires after the debounce elapses", async () => {
+    const writes: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => writes.push(q));
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+
+    await compositionStart(input);
+    await compositionEnd(input, "smith");
+    // Not yet -- the commit is scheduled (debounced), not immediate.
+    expect(writes).toEqual([]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
+    });
+    expect(writes).toEqual(["smith"]);
+    unregister();
+  });
+
+  it("cancels a timer armed by a real keystroke just before the composition begins", async () => {
+    const writes: string[] = [];
+    const unregister = setDashboardSearchUrlWriter((q) => writes.push(q));
+    await renderInProvider({ variant: "expanded" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+
+    await type(input, "smith"); // a normal keystroke -- arms the 300ms debounce
+    await compositionStart(input); // must cancel that pending commit, not leave it to fire mid-composition
+    await act(async () => {
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
+    });
+
+    expect(writes).toEqual([]);
+    unregister();
   });
 });
 
