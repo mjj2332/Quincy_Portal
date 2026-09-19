@@ -21,6 +21,8 @@ import {
   setDashboardSearchDraftDuringComposition,
   setDashboardSearchUrlWriter,
   subscribeDashboardSearch,
+  syncDashboardSearchDraftFromLocation,
+  takeDashboardSearchForNavigation,
 } from "./dashboard-search-store";
 
 const USER = "user-1";
@@ -261,6 +263,79 @@ describe("dashboard-search-store", () => {
     it("still sanitizes the value (strips unsafe characters) the same way the scheduled path does", () => {
       setDashboardSearchDraftDuringComposition("\\smith", USER);
       expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    });
+  });
+
+  // #217 build, step 3: the stateless draft-from-URL sync -- the ONE thing `ShellRoute`'s own
+  // layout effect calls, in place of every render-side adoption path step 4 goes on to delete.
+  describe("syncDashboardSearchDraftFromLocation", () => {
+    it("the store's OWN debounced write landing back as a location does not disturb a draft with trailing whitespace", () => {
+      const writer = vi.fn();
+      const unregister = setDashboardSearchUrlWriter(writer);
+      setDashboardSearchDraft("smith ", USER);
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS);
+      expect(writer).toHaveBeenCalledExactlyOnceWith("smith");
+
+      // The write above is what produced this "location" -- `routeQuery` is exactly what the
+      // writer just wrote, normalised, the same way `dashboardSearchOf(route)` would read it back.
+      syncDashboardSearchDraftFromLocation("smith", USER);
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith ");
+      unregister();
+    });
+
+    it("a genuinely different committed search (Back/Forward, a rail click) replaces the draft and cancels any pending write", () => {
+      const writer = vi.fn();
+      const unregister = setDashboardSearchUrlWriter(writer);
+      setDashboardSearchDraft("abc", USER);
+
+      syncDashboardSearchDraftFromLocation("xyz", USER);
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("xyz");
+
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
+      expect(writer).not.toHaveBeenCalled();
+      unregister();
+    });
+
+    it("a Dashboard route carrying no q resets the draft to empty", () => {
+      setDashboardSearchDraft("smith", USER);
+      syncDashboardSearchDraftFromLocation(undefined, USER);
+      expect(__getDashboardSearchSnapshotForTest().draft).toBe("");
+    });
+
+    it("respects ownership -- a different viewer's sync clears the previous owner's state first", () => {
+      setDashboardSearchDraft("smith", "user-a");
+      syncDashboardSearchDraftFromLocation("jones", "user-b");
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "jones", principalId: "user-b" });
+    });
+
+    it("is a stable no-op (no notify) when the draft already matches the route's own q", () => {
+      setDashboardSearchDraft("smith", USER);
+      const listener = vi.fn();
+      const unsubscribe = subscribeDashboardSearch(listener);
+      syncDashboardSearchDraftFromLocation("smith", USER);
+      expect(listener).not.toHaveBeenCalled();
+      unsubscribe();
+    });
+  });
+
+  // #217 build, step 3.
+  describe("takeDashboardSearchForNavigation", () => {
+    it("cancels a pending write and returns the normalised draft", () => {
+      const writer = vi.fn();
+      const unregister = setDashboardSearchUrlWriter(writer);
+      setDashboardSearchDraft("  smith   street  ", USER);
+
+      expect(takeDashboardSearchForNavigation(USER)).toBe("smith street");
+
+      vi.advanceTimersByTime(DASHBOARD_SEARCH_DEBOUNCE_MS + 100);
+      expect(writer).not.toHaveBeenCalled();
+      unregister();
+    });
+
+    it("respects ownership -- a different viewer clears the previous owner's state first", () => {
+      setDashboardSearchDraft("smith", "user-a");
+      expect(takeDashboardSearchForNavigation("user-b")).toBe("");
+      expect(__getDashboardSearchSnapshotForTest()).toMatchObject({ draft: "", principalId: "user-b" });
     });
   });
 });

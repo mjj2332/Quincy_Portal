@@ -199,6 +199,55 @@ export function adoptDashboardSearchFromUrl(value: string, viewerId: string): vo
   notify();
 }
 
+/**
+ * The stateless draft-from-URL sync (#217 build, step 3) — one call, in `ShellRoute`'s own
+ * `useLayoutEffect` keyed on location + principal, replacing every OTHER adoption path this store
+ * used to need (`adoptDashboardSearchFromUrl` stays for now, unused by the caller this replaces,
+ * until step 4 deletes the render-side machinery that called it). `routeQuery` is the CALLER's own
+ * `dashboardSearchOf(route)` for the CURRENTLY governing route -- this function does not parse a
+ * route itself, and does not special-case a non-Dashboard route: the caller is responsible for not
+ * calling this at all when `route.kind !== "dashboard"` (its lack of a `q` is not authoritative
+ * off-Dashboard -- an Enter on the rail must still navigate with whatever the Staff member typed).
+ *
+ * Ownership first (`ensureOwner`), then the timer is cancelled UNCONDITIONALLY -- this is itself
+ * the Back/Forward race fix `adoptDashboardSearchFromUrl`'s own docblock describes, generalised:
+ * a location change (typed navigation, rail click, Back/Forward, or this component's OWN debounced
+ * write landing) must never let an in-flight debounce fire after the fact and overwrite whatever
+ * the URL now says.
+ *
+ * The draft itself is compared NORMALISED against `routeQuery ?? ""` before it is ever overwritten
+ * -- this is what keeps the store's own debounced write from fighting the very typing that produced
+ * it: that write emits exactly `normalizeDashboardSearchText(draft)` (`commit()` below), so once the
+ * resulting URL lands back here, `normalize(draft) === (routeQuery ?? "")` and the raw draft (a
+ * trailing space, mid-collapse whitespace) is left alone. Only a location that carries a GENUINELY
+ * different committed search (a rail click to a different q, Back/Forward, a pasted deep link)
+ * ever overwrites the draft.
+ */
+export function syncDashboardSearchDraftFromLocation(routeQuery: string | undefined, viewerId: string): void {
+  ensureOwner(viewerId);
+  clearTimer();
+  const nextDraft = routeQuery ?? "";
+  if (normalizeDashboardSearchText(draft) !== nextDraft) {
+    draft = nextDraft;
+    notify();
+  }
+}
+
+/**
+ * Off-Dashboard Enter, and every navigation site that used to flush-then-read `commitDashboardSearchNow`
+ * + `getDashboardSearchSnapshotForPrincipal(...).query` as a pair (#217 build, step 3 adds this;
+ * step 4 is what actually replaces those call sites). Cancels the pending timer -- the write this
+ * function's caller is about to make (a `history.push`/`replace`) IS the commit, so there is nothing
+ * left for a debounce to redundantly re-fire -- and returns the draft normalised exactly the way the
+ * store's own `commit()` would, so a caller building a URL from this return value can never disagree
+ * with what the store itself would have written.
+ */
+export function takeDashboardSearchForNavigation(viewerId: string): string {
+  ensureOwner(viewerId);
+  clearTimer();
+  return normalizeDashboardSearchText(draft);
+}
+
 export function resetDashboardSearchForPrincipal(id: string): void {
   if (id === principalId) return;
   clearTimer();

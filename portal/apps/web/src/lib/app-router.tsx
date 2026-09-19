@@ -35,16 +35,16 @@
  * components keep navigating through `locationStore()`. The adapter subscription in
  * `staff-history.ts` is how the router hears about the writes they make.
  */
-import { createContext, use, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, use, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
-import { roleHasCapability, type DashboardCalendarState, type Role } from "@quincy/shared";
+import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role } from "@quincy/shared";
 import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from "./router";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
-import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch } from "./dashboard-search-store";
+import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch, syncDashboardSearchDraftFromLocation } from "./dashboard-search-store";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
@@ -226,6 +226,24 @@ function ShellRoute() {
   useEffect(() => {
     if (blocked) history.replace("/");
   }, [blocked, history]);
+
+  // #217 build, step 3: the ONE draft-from-URL sync call, replacing every render-side adoption
+  // path `Dashboard.tsx` used to own (step 4 deletes that machinery). `useLayoutEffect`, not
+  // `useEffect` -- same reasoning `ShellSearch.tsx`'s own ownership-claim effect already documents:
+  // React flushes every layout effect in a commit, tree-wide, before any passive effect in that
+  // same commit, so the draft is never one paint behind the URL that governs it. Keyed on
+  // `completeLocation` (not just `route`, though the two always change together here) and
+  // `user.id` -- the exact two inputs `syncDashboardSearchDraftFromLocation` itself takes -- so a
+  // location OR a principal change (impersonation start/stop; `App.tsx` remounts this component's
+  // whole subtree for a principal change via its own `key`, but the layout effect ordering
+  // guarantee is what matters for a location change alone) both run it. A non-Dashboard route's
+  // lack of `q` is not authoritative (an Enter on the rail must still navigate with whatever text
+  // is showing, `ShellSearch.tsx`'s own off-Dashboard Enter path) -- this only calls the store when
+  // `route.kind === "dashboard"`, never unconditionally.
+  useLayoutEffect(() => {
+    if (route.kind !== "dashboard") return;
+    syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), user.id);
+  }, [completeLocation, route, user.id]);
 
   // #217 fix round 5, item 5 (Sol re-review, SHOULD-FIX). Calendar itself stays inaccessible
   // either way, but the redirect used to drop straight to "/", discarding whatever `q` the blocked

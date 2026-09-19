@@ -56,7 +56,7 @@ import App from "./App";
 import { apiGet } from "./lib/api";
 import { signOut } from "./lib/auth";
 import { RAIL_PREFERENCE_KEY } from "./lib/shell-rail";
-import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "./lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchUrlWriter } from "./lib/dashboard-search-store";
 
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -903,5 +903,75 @@ describe("rail Dashboard child links carry the live search (#217 fix round 3, it
     expect(childLink(host, "List")!.getAttribute("href")).toBe("/?view=list&q=smith+street");
     expect(childLink(host, "Kanban")!.getAttribute("href")).toBe("/?view=kanban&q=smith+street");
     expect(childLink(host, "Calendar")!.getAttribute("href")).toBe("/?view=calendar&q=smith+street");
+  });
+});
+
+/**
+ * #217 build, step 3: `ShellRoute`'s own `useLayoutEffect` calling `syncDashboardSearchDraftFromLocation`
+ * -- exercised through the real shell exactly the way the rail-href suite above does, `Dashboard`
+ * itself still mocked away.
+ */
+describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
+  it("a non-Dashboard location leaves an in-progress draft alone -- its lack of q is not authoritative", async () => {
+    const host = await renderAt("/admin");
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "smith");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+
+    // A location change that stays off-Dashboard (still `/admin`, nothing else changed) must not
+    // touch the draft -- the sync effect never even calls the store for a non-Dashboard route.
+    await act(async () => {
+      window.history.replaceState(null, "", "/admin");
+      await Promise.resolve();
+    });
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+  });
+
+  it("landing on the Dashboard with a different q (Back/Forward) replaces the draft and cancels a pending debounce", async () => {
+    const host = await renderAt("/?q=abc");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("abc");
+
+    // `Dashboard` is mocked away in this file, so nothing else registers a writer -- register one
+    // directly to prove the pending debounce armed below never fires through it.
+    const writer = vi.fn();
+    const unregister = setDashboardSearchUrlWriter(writer);
+    // A keystroke arms the 300ms debounce -- Back must win the race, not this pending commit.
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "abc-typed");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      window.history.pushState(null, "", "/?q=xyz");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("xyz");
+    // Real-timer wait past the 300ms debounce -- proves the pending commit armed by the keystroke
+    // above was actually CANCELLED by the popstate's sync, not merely not-yet-fired.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    expect(writer).not.toHaveBeenCalled();
+    unregister();
+  });
+
+  it("a Dashboard route with no q resets a leftover draft to empty on arrival", async () => {
+    const host = await renderAt("/?view=list&q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+
+    await act(async () => {
+      window.history.pushState(null, "", "/?view=list");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("");
   });
 });
