@@ -205,7 +205,9 @@ function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stage
  * #217 -- the Dashboard's `q`. Unsafe characters (backslash, the C0 controls, DEL -- the same
  * class `sanitizeDashboardCalendarSearch` strips client-side) come out first, then
  * `normalizeProjectSearch` (the #218 shared helper) collapses whitespace and trims, then the
- * result is capped to `PROJECT_SEARCH_MAX_LENGTH` code points. Not lowercased here: the match
+ * result is capped to `PROJECT_SEARCH_MAX_LENGTH` code points -- the ACTIVE cap here is the
+ * shared Dashboard cap (`@quincy/shared`'s `DASHBOARD_SEARCH_MAX_CHARS`, below), not a
+ * locally-invented number that merely happens to agree with it. Not lowercased here: the match
  * itself is case-insensitive via SQL `lower(...)` on both sides (`projectSearchSql`), so the
  * ORIGINAL casing survives into the `search.query` echoed back in the response.
  *
@@ -214,7 +216,7 @@ function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stage
  * copy of each -- one definition shared with `staff-routes.ts`'s own serializer and the web
  * store's commit path, so the 200-char cap in particular can never drift between them.
  * `PROJECT_SEARCH_MAX_LENGTH` itself stays defined in `../lib/project-search.ts`, an unmodified
- * #218 cherry-pick this file must not edit -- `projects-search.test.ts` asserts it stays
+ * #218 cherry-pick this file must not edit -- `project-search.test.ts` asserts it stays
  * numerically equal to the shared `DASHBOARD_SEARCH_MAX_CHARS` cap instead.
  */
 function normalizeProjectListSearch(raw: string): string {

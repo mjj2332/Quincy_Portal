@@ -3026,3 +3026,65 @@ that changed on every view/facet switch — which turns "was this an unregister-
 a real unmount?" from something the store had to guess (and had guessed wrong twice already,
 across two earlier rounds) into something structurally impossible to conflate: unmount becomes the
 ONLY unregister the component ever triggers.
+
+## An effect-only fix to a module singleton's identity scoping still has a gap: the render that shows the stale value happens before the effect that would clear it (#217 fix round 4, item 3)
+
+Round 3's fix above (`PrincipalFreshnessBoundary` resetting `dashboard-search-store.ts` on every
+principal change) closed the "no Dashboard mounted to run the reset" gap, but it is still a
+PASSIVE effect — scheduled after commit, after paint in production. Three narrower gaps survived
+it: (1) the NEW principal's very first render, before that effect has had any chance to run,
+still shows the PREVIOUS principal's draft — a real, if brief, cross-principal flash, not merely a
+timing curiosity; (2) a debounce timer armed by the old principal a few milliseconds before it
+fires has a genuine (if narrow) chance to win a race against the effect that would have cancelled
+it; (3) sign-out unmounts the boundary with no NEXT principal to reset FOR, so the mount-time
+reset's own `id === principalId` guard — correct for suppressing a no-op on every ordinary
+re-render — makes signing back in as the SAME person a no-op too, and their old search reappears.
+
+The fix generalizes past this one store: a component that reads external, principal-scoped state
+should compare the CURRENT, render-time-known principal against the state's own recorded owner
+DURING RENDER (`getDashboardSearchSnapshotForPrincipal`), not lean on an effect to have already
+reconciled them by the time the render happens — a render-time comparison cannot be "too late" the
+way an effect can. `ShellSearch.tsx` itself gained a second, EARLIER write-side guard for the same
+reason: a `useLayoutEffect` claiming ownership on its own `principalId` prop change, deliberately
+duplicating `PrincipalFreshnessBoundary`'s passive-effect reset rather than replacing it — React
+flushes every layout effect in a commit, tree-wide, before it flushes any passive effect in that
+same commit, which is a scheduling GUARANTEE, not a timing coincidence, and is what actually closes
+gap (2) rather than merely making it rarer. Gap (3) needed a third, different shape: not a
+render-time read (nothing renders during sign-out) and not a faster effect (there is no next
+principal to reset FOR), but an UNCONDITIONAL drop of the recorded owner on the boundary's own
+unmount (`dropDashboardSearchOwnership`, deliberately a new function rather than removing the
+existing guard on `resetDashboardSearchForPrincipal` — that guard is load-bearing for
+`Dashboard.tsx`'s own COLD-mount ordering the previous lesson entry describes, and an unconditional
+reset there would have reintroduced exactly the clobber-the-URL's-adopted-search race that entry
+already fixed once).
+
+A testing note worth keeping: proving "before any effect has run" in a DOM test cannot rely on a
+raw, un-`act`-wrapped `render()` call — React 18+ concurrent roots do not commit synchronously
+outside `act`, so reading the DOM right after one reads the PREVIOUS commit, not the new one, and
+can pass or fail for the wrong reason regardless of what the component under test does.
+`useLayoutEffect` in a sibling "Probe" component is the reliable technique: React guarantees every
+layout effect in a commit runs before any passive effect in that same commit, so capturing inside
+one genuinely observes the render-committed DOM before ANY passive effect (including the one under
+test) has had a chance to run — inside one ordinary `act(() => {...})` call, no unwrapped `render()`
+needed.
+
+## `<StrictMode>`'s mount-cleanup-mount replay can cancel state that predates the component it replays (#217 fix round 4, item 4)
+
+`Dashboard.tsx`'s writer-registration effect (previous section) registers once per mount and
+cancels the shared store's pending debounce on its own cleanup — correct for a genuine unmount.
+`main.tsx` mounts the whole app under `<StrictMode>`, which double-invokes an INITIAL mount's
+effects (mount, cleanup, mount again) synchronously, in the same commit, specifically to surface
+effects that are not safely re-runnable. That synthetic cleanup ran the same unconditional
+cancellation a real unmount does, which cancelled a debounce armed OFF-Dashboard (the rail's
+`ShellSearch`, mounted everywhere, typed on `/admin`) an instant before Dashboard's own first
+mount — even though, once the double-invoke dance settled, Dashboard was still mounted with a
+perfectly good writer to receive that debounce's eventual commit. The fix is a generation counter
+bumped at the top of the effect body, read by its own cleanup through `queueMicrotask`: StrictMode's
+replay is entirely synchronous (mount → cleanup → mount, no microtask boundary between them), so by
+the time the deferred cancellation check runs, a same-tick re-registration has already bumped the
+counter and the check backs off; a REAL unmount has no such follow-up invocation, so the counter is
+unchanged when the microtask fires and it cancels exactly as before. The general shape: when a
+cleanup's action is only safe for ONE of the two events that can trigger it (a real unmount, not a
+same-tick synthetic replay), defer the action past the point where a same-tick replay would have
+already announced itself, rather than trying to tell the two events apart from inside the cleanup
+itself (they look identical at that point).

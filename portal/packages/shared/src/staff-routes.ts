@@ -109,7 +109,8 @@ const calendarParameterNames = new Set([
 const dashboardListKanbanParameterNames = new Set(["view", "q"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
-/** Shared with the Calendar facet's own `q` (line ~239) so both enforce the same cap. */
+/** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
+ * call, `~432`) so both enforce the same cap. */
 export const DASHBOARD_SEARCH_MAX_CHARS = 200;
 
 function unsafeText(value: string): boolean {
