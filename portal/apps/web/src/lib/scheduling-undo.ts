@@ -1,4 +1,4 @@
-import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type SaveChecklistScheduleRequest, type SaveProjectDeadlineRequest } from "@quincy/shared";
+import { resolveSydneyCivilMinute, subtaskIdFromCalendarEntityId, type ProjectDeadlineCalendarEventDto, type SaveChecklistScheduleRequest, type SaveProjectDeadlineRequest } from "@quincy/shared";
 import { ApiError, apiPatch, apiPut } from "./api";
 import type { ChecklistMutationResult } from "./scheduling-types";
 import { checklistInputFromSchedule, PROJECT_DEADLINE_PLACEHOLDER_INSTANT, type ChecklistSource } from "./scheduling-policy";
@@ -18,14 +18,24 @@ export type UndoOutcome = { ok: true } | { ok: false; reason: "conflict" | "fail
  * `null` when the forward edit produced no version change — nothing to undo. Otherwise the
  * ticket's `expectedVersion` is the version the server returned from the forward edit, and the
  * payload restores `before.schedule` (via `checklistInputFromSchedule`).
+ *
+ * `before.id` is the Calendar ENTITY id (`checklist:<uuid>`), never the bare subtask uuid the
+ * subtasks route requires (#227's `CALENDAR_CHECKLIST_ID_PREFIX` boundary) — parse it through
+ * `subtaskIdFromCalendarEntityId` before it becomes `ticket.subtaskId`, the same rule
+ * `runChecklistMutation` (`use-scheduling-commands.tsx`) already applies at its own PATCH call. A
+ * `null` parse is a mapping defect, not a ticket worth building: there is no separate failure arm
+ * on this type (`UndoTicket | null`), so — matching the "nothing to undo" case just above — this
+ * returns `null` rather than ever letting a `checklist:`-prefixed id reach the PATCH URL.
  */
 export function buildChecklistUndoTicket(before: ChecklistSource, result: ChecklistMutationResult): UndoTicket | null {
   if (result.scheduleVersion === before.schedule.version) return null;
+  const subtaskId = subtaskIdFromCalendarEntityId(before.id);
+  if (subtaskId === null) return null;
   const schedule = checklistInputFromSchedule(before.schedule);
   return {
     kind: "checklist",
     projectId: before.project.id,
-    subtaskId: before.id,
+    subtaskId,
     expectedVersion: result.scheduleVersion,
     request: { expectedVersion: result.scheduleVersion, schedule },
   };

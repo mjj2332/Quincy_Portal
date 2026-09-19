@@ -43,13 +43,13 @@ function deadlineEvent(version: number, deadlineLocalCivil: string, reminderOffs
 }
 
 describe("buildChecklistUndoTicket", () => {
-  it("builds a checklist ticket at the returned version restoring the prior schedule", () => {
+  it("builds a checklist ticket at the returned version restoring the prior schedule, with the BARE subtask uuid (not the checklist: entity id)", () => {
     const before = checklistEvent(4, "2026-08-27", "2026-08-27");
     const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, position: 0, schedule: { ...before.schedule, version: 5, start: dateEndpoint("2026-08-29"), end: dateEndpoint("2026-08-29"), due: "2026-08-29" }, scheduleVersion: 5 });
     expect(ticket).toEqual({
       kind: "checklist",
       projectId: PROJECT_ID,
-      subtaskId: before.id,
+      subtaskId: PERSON_ID,
       expectedVersion: 5,
       request: { expectedVersion: 5, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-27" } } },
     });
@@ -58,6 +58,15 @@ describe("buildChecklistUndoTicket", () => {
   it("returns null when the forward edit changed nothing", () => {
     const before = checklistEvent(4, "2026-08-27", "2026-08-27");
     const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, position: 0, schedule: before.schedule, scheduleVersion: 4 });
+    expect(ticket).toBeNull();
+  });
+
+  // #227: the Calendar entity id (`checklist:<uuid>`) must never reach the subtasks route as-is.
+  // A `before.id` that fails to parse (missing/malformed prefix) is a mapping defect, not a ticket
+  // worth building — no PATCH should ever be attempted with a garbage subtask id.
+  it("returns null when before.id is not a checklist: entity id (cannot build a ticket)", () => {
+    const before = { ...checklistEvent(4, "2026-08-27", "2026-08-27"), id: PERSON_ID };
+    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, position: 0, schedule: { ...before.schedule, version: 5 }, scheduleVersion: 5 });
     expect(ticket).toBeNull();
   });
 });
@@ -102,7 +111,9 @@ describe("buildDeadlineUndoTicket", () => {
 });
 
 describe("applyUndo", () => {
-  const checklistTicket = { kind: "checklist" as const, projectId: PROJECT_ID, subtaskId: `checklist:${PERSON_ID}`, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range" as const, start: { kind: "date" as const, localCivil: "2026-08-27" }, end: { kind: "date" as const, localCivil: "2026-08-27" } } } };
+  // The BARE subtask uuid — the subtasks route's PATCH URL/response never carry the Calendar
+  // entity id's `checklist:` prefix (#227).
+  const checklistTicket = { kind: "checklist" as const, projectId: PROJECT_ID, subtaskId: PERSON_ID, expectedVersion: 5, request: { expectedVersion: 5, schedule: { state: "range" as const, start: { kind: "date" as const, localCivil: "2026-08-27" }, end: { kind: "date" as const, localCivil: "2026-08-27" } } } };
   const deadlineTicket = { kind: "deadline" as const, projectId: PROJECT_ID, expectedVersion: 9, request: { expectedVersion: 9, deadline: { localCivil: "2026-08-27T09:00" }, reminderOffsetsMinutes: [1440, 60] } };
 
   it("sends the exact PATCH body (incl. expectedVersion) to the same subtask endpoint the forward edit used, and only reports conflict when that exact body was sent", async () => {
