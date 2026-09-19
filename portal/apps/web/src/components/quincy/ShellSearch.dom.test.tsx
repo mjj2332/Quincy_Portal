@@ -110,14 +110,49 @@ describe("ShellSearch — expanded", () => {
   });
 });
 
-describe("ShellSearch — one focus indicator, not two (#217 design-review, item 4)", () => {
-  it("suppresses the input's own :focus-visible outline, leaving the group's focus-within outline as the single indicator", async () => {
+describe("ShellSearch — one focus indicator, not two (#217 design-review, item 4; scoped to the input #217 design-fix round 2, item 2)", () => {
+  it("suppresses the input's own :focus-visible outline in the expanded rail, leaving the group's own scoped outline as the single indicator", async () => {
     await renderInProvider({ variant: "expanded" });
     const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
     expect(input.className).toContain("focus-visible:!outline-none");
     const group = input.closest('[data-testid="shell-search-field"]')!;
-    expect(group.className).toContain("focus-within:outline-solid");
-    expect(group.className).toContain("focus-within:outline-ring");
+    // `has-[input:focus-visible]:`, not `focus-within:` (round 2, item 2) -- the wrapper's own
+    // outline now activates only for the INPUT, not for a focused button elsewhere in the group,
+    // so a Combobox trigger/clear inside the same primitive shows only its own indicator.
+    expect(group.className).toContain("has-[input:focus-visible]:outline-solid");
+    expect(group.className).toContain("has-[input:focus-visible]:outline-ring");
+    expect(group.className).not.toContain("focus-within:outline");
+    // Unaffected by round 2, item 2 -- the ⌘K hint has nothing to do with the focus-ring scoping.
+    expect(host.querySelector('[data-testid="shell-search-shortcut"]')?.textContent).toBe("⌘K");
+  });
+
+  it("carries the same scoped outline in the collapsed popover's field, once opened", async () => {
+    await renderInProvider({ variant: "collapsed" });
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="shell-search-trigger"]')!;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="shell-search"]');
+      expect(input).not.toBeNull();
+      expect(input!.className).toContain("focus-visible:!outline-none");
+      const group = input!.closest('[data-testid="shell-search-field"]')!;
+      expect(group.className).toContain("has-[input:focus-visible]:outline-ring");
+    });
+    // The collapsed popover drops the ⌘K hint entirely (nothing persistent for it to point at) --
+    // confirming its absence here, not just its presence in `expanded`, is the OTHER half of
+    // "unaffected".
+    expect(document.querySelector('[data-testid="shell-search-shortcut"]')).toBeNull();
+  });
+
+  it("carries the same scoped outline in the Sheet's inline field", async () => {
+    await renderInProvider({ variant: "sheet" });
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    expect(input.className).toContain("focus-visible:!outline-none");
+    const group = input.closest('[data-testid="shell-search-field"]')!;
+    expect(group.className).toContain("has-[input:focus-visible]:outline-ring");
+    expect(host.querySelector('[data-testid="shell-search-shortcut"]')).toBeNull();
   });
 });
 
