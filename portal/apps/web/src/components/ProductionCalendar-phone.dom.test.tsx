@@ -5,7 +5,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState } from "@quincy/shared";
+import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, subtaskIdFromCalendarEntityId, type DashboardCalendarState } from "@quincy/shared";
 import { ProductionCalendar } from "./ProductionCalendar";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -46,10 +46,12 @@ function response() {
   });
 }
 
+// Honest fixture (#226): the real worker's PATCH response carries the BARE subtask uuid in
+// `id`, never the `checklist:`-prefixed Calendar entity id (workers/app/src/lib/project-subtasks.ts).
 function checklistMutationResponse() {
   const event = response().events.find((candidate) => candidate.kind === "checklist");
   if (!event || event.kind !== "checklist") throw new Error("checklist fixture is missing");
-  return { id: checklistMutationId, title: "Select hero images", done: false, assignee: { id: assigneeId, name: "Maya Editor" }, position: 1, schedule: event.schedule };
+  return { id: subtaskIdFromCalendarEntityId(checklistMutationId) ?? checklistMutationId, title: "Select hero images", done: false, assignee: { id: assigneeId, name: "Maya Editor" }, position: 1, schedule: event.schedule };
 }
 
 describe("ProductionCalendar phone Week action-only mode", () => {

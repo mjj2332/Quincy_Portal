@@ -915,3 +915,26 @@ export function previewProjectDeadlineReminderConsequences(input: ProjectDeadlin
     return { offsetMinutes, label, oldFireAt, newFireAt, oldLocalCivil, newLocalCivil };
   });
 }
+
+/**
+ * The Calendar's checklist-event/unscheduled-entry `id` is an ENTITY id, not a
+ * bare subtask id: FullCalendar/DOM ids, focus descriptors, `data-event-id` /
+ * `data-unscheduled-id`, optimistic overlays, `checklistSourceFromResponse`, and
+ * the unscheduled-panel drag dataset all depend on the `checklist:` prefix
+ * staying on the wire exactly as-is. It must never be sent as-is to
+ * `PATCH /api/projects/:projectId/subtasks/:subtaskId`, which requires the bare
+ * uuid — mint/parse through these two functions at that boundary instead of
+ * string-slicing ad hoc. (The Gantt DTOs from #218 use BARE uuids; this prefix
+ * is Calendar-only.)
+ */
+export const CALENDAR_CHECKLIST_ID_PREFIX = "checklist:";
+
+export function calendarChecklistEntityId(subtaskId: string): string {
+  return `${CALENDAR_CHECKLIST_ID_PREFIX}${subtaskId}`;
+}
+
+export function subtaskIdFromCalendarEntityId(id: string): string | null {
+  if (!id.startsWith(CALENDAR_CHECKLIST_ID_PREFIX)) return null;
+  const remainder = id.slice(CALENDAR_CHECKLIST_ID_PREFIX.length);
+  return remainder.length > 0 ? remainder : null;
+}

@@ -2,8 +2,10 @@ import { z } from "zod";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   adminProductionCalendarRangeResponseSchema,
+  calendarChecklistEntityId,
   calendarEventSchemaFor,
   calendarUnscheduledEntrySchemaFor,
+  CALENDAR_CHECKLIST_ID_PREFIX,
   deriveProductionCalendarWindow,
   editorProductionCalendarRangeResponseSchema,
   externalCalendarRangeSchema,
@@ -19,6 +21,7 @@ import {
   PRODUCTION_CALENDAR_ZONE,
   shiftSydneyCalendarDate,
   shiftSydneyCivilPreservingWallTime,
+  subtaskIdFromCalendarEntityId,
   type CalendarEventDto,
   type CalendarUnscheduledEntryDto,
   type ChecklistCalendarEventDto,
@@ -264,5 +267,25 @@ describe("TB5C reminder preview", () => {
     const newDeadline = { localCivil: "2026-09-03T16:00", instant: "2026-09-03T06:00:00.000Z" };
     const preview = previewProjectDeadlineReminderConsequences({ oldDeadline, newDeadline, reminderOffsetsMinutes: [1440, 120], now: Date.parse("2026-09-01T00:00:00.000Z") });
     expect(preview.map((item) => item.label)).toEqual(["future", "future"]);
+  });
+});
+
+describe("Calendar checklist entity id vs bare subtask id (#226)", () => {
+  it("round-trips a subtask id through the entity id mint/parse pair", () => {
+    const subtaskId = "b1f2c3d4-0000-4000-8000-000000000001";
+    expect(calendarChecklistEntityId(subtaskId)).toBe(`${CALENDAR_CHECKLIST_ID_PREFIX}${subtaskId}`);
+    expect(subtaskIdFromCalendarEntityId(calendarChecklistEntityId(subtaskId))).toBe(subtaskId);
+  });
+
+  it("returns null for a bare uuid (not prefixed)", () => {
+    expect(subtaskIdFromCalendarEntityId("b1f2c3d4-0000-4000-8000-000000000001")).toBeNull();
+  });
+
+  it("returns null for a project-deadline entity id", () => {
+    expect(subtaskIdFromCalendarEntityId("project-deadline:b1f2c3d4-0000-4000-8000-000000000001")).toBeNull();
+  });
+
+  it("returns null for the bare prefix with no remainder", () => {
+    expect(subtaskIdFromCalendarEntityId("checklist:")).toBeNull();
   });
 });

@@ -11,6 +11,8 @@ import {
   previewProjectDeadlineReminderConsequences,
   resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
+  calendarChecklistEntityId,
+  subtaskIdFromCalendarEntityId,
   checklistScheduleToDto,
   STAGE_PRESENTATION_KEYS,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
@@ -421,15 +423,22 @@ function optimisticChecklistEvent(source: ChecklistSource, schedule: ChecklistSc
 }
 
 function adoptChecklistResult(response: ProductionCalendarRangeResponse, source: ChecklistSource, result: ChecklistMutationResult): ProductionCalendarRangeResponse {
-  const nextEvent = canonicalChecklistEvent(source, result);
+  // The subtasks route's PATCH response carries the BARE subtask uuid in `result.id`
+  // (workers/app/src/lib/project-subtasks.ts), never the `checklist:`-prefixed Calendar
+  // entity id. Re-mint it here before it becomes an entity id anywhere below — comparing
+  // it against `event.id`/`entry.id` (which are entity ids) or writing it straight into a
+  // new event/entry would otherwise leave a duplicate, un-prefixed row until the next
+  // authoritative refetch overwrote it (#226).
+  const entityId = calendarChecklistEntityId(result.id);
+  const nextEvent = canonicalChecklistEvent(source, { ...result, id: entityId });
   const schedule = result.schedule;
   const sourceWasEvent = "timing" in source;
-  const events = response.events.filter((event) => event.id !== result.id);
+  const events = response.events.filter((event) => event.id !== entityId);
   if (nextEvent) events.push(nextEvent);
-  const unscheduled = response.unscheduled.filter((entry) => entry.id !== result.id);
+  const unscheduled = response.unscheduled.filter((entry) => entry.id !== entityId);
   if (!nextEvent && schedule.state === "unscheduled") {
     const entry: ChecklistCalendarUnscheduledEntryDto = {
-      id: result.id,
+      id: entityId,
       kind: "checklist",
       reason: "unscheduled",
       title: result.title,
@@ -1180,6 +1189,16 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const runChecklistMutation = useCallback(async (proposal: ChecklistProposal) => {
     const token = operationTokenRef.current;
     if (accessLostRef.current || token !== operationTokenRef.current) return;
+    // The Calendar entity id is `checklist:<subtaskId>` — DOM ids, focus descriptors,
+    // and optimistic overlays all depend on that prefix staying on the wire. The
+    // subtasks route needs the bare uuid; a malformed/unprefixed id here is a mapping
+    // defect, not a request worth sending, so bail out through the same revert +
+    // "invalid" announcement path a bad target civil time already uses.
+    const subtaskId = subtaskIdFromCalendarEntityId(proposal.source.id);
+    if (subtaskId === null) {
+      finishChecklistInteraction(proposal.operation, proposal.source, { kind: "invalid" });
+      return;
+    }
     const normalizedSchedule = normalizeChecklistSchedule(proposal.schedule, proposal.source.schedule.version);
     const optimisticEvent = !(("timing" in proposal.source)) && normalizedSchedule.ok
       ? optimisticChecklistEvent(proposal.source, checklistScheduleToDto(normalizedSchedule.value))
@@ -1194,7 +1213,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       // The captured role chooses the response arm before this request. The
       // internal Worker DTO is intentionally not treated as the External DTO.
       const response = await apiPatch<unknown, { schedule: SaveChecklistScheduleRequest }>(
-        `/api/projects/${encodeURIComponent(proposal.source.project.id)}/subtasks/${encodeURIComponent(proposal.source.id)}`,
+        `/api/projects/${encodeURIComponent(proposal.source.project.id)}/subtasks/${encodeURIComponent(subtaskId)}`,
         { schedule: proposal.request },
       );
       if (accessLostRef.current || token !== operationTokenRef.current) return;
@@ -1302,7 +1321,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setAnnouncement(action.announce);
       if (!action.refetch) flushQueuedRefetch();
     }
-  }, [acceptRange, announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
+  }, [acceptRange, announceChecklistLifecycle, finishChecklistInteraction, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
   const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => {
     const mapped = edge

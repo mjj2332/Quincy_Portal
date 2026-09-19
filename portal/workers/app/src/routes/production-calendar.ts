@@ -10,6 +10,7 @@ import {
   PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND,
   ROLE_LABELS,
   STAGE_PRESENTATION_KEYS,
+  calendarChecklistEntityId,
   editorProductionCalendarRangeResponseSchema,
   adminProductionCalendarRangeResponseSchema,
   externalProductionCalendarRangeQuerySchema,
@@ -653,7 +654,7 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
   const canOpen = collaboration;
   const canRange = canOpen && CHECKLIST_SCHEDULE_RANGES_ENABLED;
   return {
-    id: `checklist:${row.subtask_id}`,
+    id: calendarChecklistEntityId(row.subtask_id),
     kind: "checklist",
     title: row.subtask_title,
     project,
@@ -687,7 +688,7 @@ function unscheduledChecklist(row: CalendarSqlRow, role: CalendarRole): Calendar
   const schedule = serializeChecklistSchedule(scheduleStorage(row));
   const collaboration = row.can_collaborate === 1;
   const canRange = collaboration && CHECKLIST_SCHEDULE_RANGES_ENABLED;
-  const base = { id: `checklist:${row.subtask_id}`, kind: "checklist" as const, title: row.subtask_title, project, assignee: person(row) };
+  const base = { id: calendarChecklistEntityId(row.subtask_id), kind: "checklist" as const, title: row.subtask_title, project, assignee: person(row) };
   if (schedule.state === "unscheduled") return { ...base, reason: "unscheduled", schedule: schedule as UnscheduledChecklistScheduleDto, permissions: { canDrag: canRange, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };
   if (schedule.state === "legacy_unresolved") return { ...base, reason: "schedule_needs_attention", attentionReason: "legacy_unresolved", schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };
   if (schedule.state === "invalid") return { ...base, reason: "schedule_needs_attention", attentionReason: "invalid", schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false } };
