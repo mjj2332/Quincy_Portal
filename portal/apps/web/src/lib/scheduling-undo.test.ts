@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
+import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ProjectCalendarUnscheduledEntryDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { applyUndo, buildChecklistUndoTicket, buildDeadlineUndoTicket } from "./scheduling-undo";
+import { projectDeadlinePlaceholder } from "./scheduling-policy";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -155,6 +156,31 @@ describe("applyUndo", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const outcome = await applyUndo(deadlineTicket);
+    expect(outcome).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // §216 fix round 5 item 5: undoing a project-deadline PLACEMENT from unscheduled — `before` is
+  // `projectDeadlinePlaceholder(entry)`, not a real deadline event — must send the versioned CLEAR
+  // request (`deadline: null`, no `reminderOffsetsMinutes`), never `deadline: { localCivil: "Not
+  // scheduled" }`.
+  it("sends the exact clear PUT body (deadline: null, no reminderOffsetsMinutes) when undoing a placement from unscheduled", async () => {
+    const entry: ProjectCalendarUnscheduledEntryDto = {
+      id: `project-deadline:${PROJECT_ID}`, kind: "project_deadline", reason: "unscheduled", title: "Deadline",
+      project: project(), permissions: { canDrag: true, canResize: false }, deadlineVersion: 8, reminderOffsetsMinutes: [],
+    };
+    const before = projectDeadlinePlaceholder(entry);
+    const ticket = buildDeadlineUndoTicket(before, { version: 9, deadline: { localCivil: "2026-08-27T09:00", instant: "2026-08-26T23:00:00.000Z" }, reminderOffsetsMinutes: [] });
+    expect(ticket).toEqual({ kind: "deadline", projectId: PROJECT_ID, expectedVersion: 9, request: { expectedVersion: 9, deadline: null } });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${PROJECT_ID}/deadline`);
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).toEqual({ expectedVersion: 9, deadline: null });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const outcome = await applyUndo(ticket!);
     expect(outcome).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

@@ -1,7 +1,7 @@
 import { resolveSydneyCivilMinute, type ProjectDeadlineCalendarEventDto, type SaveChecklistScheduleRequest, type SaveProjectDeadlineRequest } from "@quincy/shared";
 import { ApiError, apiPatch, apiPut } from "./api";
 import type { ChecklistMutationResult } from "./scheduling-types";
-import { checklistInputFromSchedule, type ChecklistSource } from "./scheduling-policy";
+import { checklistInputFromSchedule, PROJECT_DEADLINE_PLACEHOLDER_INSTANT, type ChecklistSource } from "./scheduling-policy";
 
 /**
  * §216 step 6: the undo module. A compensating **versioned** mutation only — never a cache
@@ -61,9 +61,28 @@ function deadlineDisambiguationFor(before: ProjectDeadlineCalendarEventDto): "ea
  * ticket's `expectedVersion` is the version the server returned from the forward edit, and the
  * payload restores `before.deadlineLocalCivil` + `before.reminderOffsetsMinutes`, with a
  * `disambiguation` only when `before.deadlineLocalCivil` is itself an ambiguous (fold) civil time.
+ *
+ * §216 fix round 5 item 5: `before` can be `projectDeadlinePlaceholder(entry)` — the "before" state
+ * for undoing a project-deadline PLACEMENT from unscheduled. That placeholder's
+ * `deadlineLocalCivil` is the display string `"Not scheduled"`, not a real civil time, so restoring
+ * it verbatim would send `deadline: { localCivil: "Not scheduled" }` — a value the server's
+ * `resolveSydneyCivilMinute` would reject as garbage. The correct compensating action for undoing a
+ * placement is the versioned CLEAR (`deadline: null`, no `reminderOffsetsMinutes`) — the exact
+ * shape `workers/app/src/lib/project-deadline.ts`'s `parseRequest` reads as `operation: "clear"`,
+ * and the same body `ProjectDeadlineControl.tsx`'s own `clear()` sends. Detected structurally, via
+ * the sentinel `projectDeadlinePlaceholder` stamps on `timing.start` — never by comparing
+ * `deadlineLocalCivil` against the "Not scheduled" display string, which is UI text, not data.
  */
 export function buildDeadlineUndoTicket(before: ProjectDeadlineCalendarEventDto, current: { version: number; deadline: null | { localCivil: string; instant: string }; reminderOffsetsMinutes: number[] }): UndoTicket | null {
   if (current.version === before.deadlineVersion) return null;
+  if (before.timing.start === PROJECT_DEADLINE_PLACEHOLDER_INSTANT) {
+    return {
+      kind: "deadline",
+      projectId: before.project.id,
+      expectedVersion: current.version,
+      request: { expectedVersion: current.version, deadline: null },
+    };
+  }
   const disambiguation = deadlineDisambiguationFor(before);
   return {
     kind: "deadline",

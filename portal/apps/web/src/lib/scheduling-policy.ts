@@ -68,13 +68,22 @@ export function responseEvent(response: ProductionCalendarRangeResponse | null, 
   return event?.kind === "project_deadline" ? event : undefined;
 }
 
+/**
+ * The sentinel `projectDeadlinePlaceholder` stamps onto `timing.start` for an unscheduled project
+ * deadline's placeholder DTO — inert to schedule math (year 1970), and exported so
+ * `scheduling-undo.ts` can detect "this DTO represents 'no deadline was set', not a real one"
+ * structurally, rather than by comparing `deadlineLocalCivil` against the display string
+ * "Not scheduled" (#216 fix round 5 item 5).
+ */
+export const PROJECT_DEADLINE_PLACEHOLDER_INSTANT = "1970-01-01T00:00:00.000Z";
+
 export function projectDeadlinePlaceholder(entry: ProjectCalendarUnscheduledEntryDto): ProjectDeadlineCalendarEventDto {
   return {
     id: entry.id,
     kind: "project_deadline",
     title: entry.title,
     project: cloneSource(entry).project,
-    timing: { allDay: false, start: "1970-01-01T00:00:00.000Z", end: null },
+    timing: { allDay: false, start: PROJECT_DEADLINE_PLACEHOLDER_INSTANT, end: null },
     status: { overdue: false, delivered: entry.project.delivered, completed: false, sameAssigneeOverlap: false },
     permissions: { canDrag: entry.permissions.canDrag, canResize: false },
     deadlineLocalCivil: "Not scheduled",
