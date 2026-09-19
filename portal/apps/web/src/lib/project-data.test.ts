@@ -227,6 +227,7 @@ describe("project data key and request seam", () => {
       resources: [{ kind: "subtasks" }, { kind: "activity" }],
       dashboard: true,
       calendar: false,
+      gantt: false,
       dashboardSearchOnly: true,
     });
 
