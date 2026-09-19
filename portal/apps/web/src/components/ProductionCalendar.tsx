@@ -1196,14 +1196,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
     // "invalid" announcement path a bad target civil time already uses.
     const subtaskId = subtaskIdFromCalendarEntityId(proposal.source.id);
     if (subtaskId === null) {
-      proposal.operation.drop?.revert();
-      proposal.operation.resize?.revert();
-      commandLockRef.current.active = false;
-      snapshotRef.current = null;
-      setAcceptGate(false);
-      setOverlay(null);
-      announceChecklistLifecycle("invalid", {});
-      focusDescriptor({ eventId: proposal.source.id, control: "event" });
+      finishChecklistInteraction(proposal.operation, proposal.source, { kind: "invalid" });
       return;
     }
     const normalizedSchedule = normalizeChecklistSchedule(proposal.schedule, proposal.source.schedule.version);
@@ -1328,7 +1321,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
       setAnnouncement(action.announce);
       if (!action.refetch) flushQueuedRefetch();
     }
-  }, [acceptRange, announceChecklistLifecycle, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
+  }, [acceptRange, announceChecklistLifecycle, finishChecklistInteraction, flushQueuedRefetch, focusDescriptor, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
   const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "end") => {
     const mapped = edge

@@ -205,6 +205,44 @@ describe("ProductionCalendar checklist manipulation", () => {
     expect(host.textContent).toContain("That schedule change isn't valid.");
   });
 
+  it("routes the null-id path through finishChecklistInteraction: flushes a refetch queued while the accept gate was held, and closes the editor/fold state (#226 round 1)", async () => {
+    const event = dueEvent("checklist:", "2026-08-12");
+    let getCount = 0;
+    const range = response([event], "month");
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") { patchBodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify(patchPayload ?? mutationBody(event)), { status: 200, headers: { "content-type": "application/json" } }); }
+      getCount += 1;
+      return new Response(JSON.stringify(range), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    await act(async () => { root.render(<QueryClientProvider client={client}><ProductionCalendar identity={{ principalId: projectId, role: "admin", authorizationEpoch: 0 }} calendar={calendar("month")} onNavigate={() => undefined} /></QueryClientProvider>); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(getCount).toBe(1);
+
+    // Open the schedule editor: this holds the accept gate (acceptForInteraction) the same
+    // way a drag/resize does, so a query update that lands before submit gets queued rather
+    // than applied immediately.
+    await clickFocus(`calendar-move:${event.id}`);
+    expect(document.querySelector('[aria-label="Checklist schedule state"]')).not.toBeNull();
+
+    const query = client.getQueryCache().findAll({ queryKey: ["production-calendar", projectId] })[0];
+    if (!query) throw new Error("Calendar query was not created");
+    client.setQueryData(query.queryKey, response([{ ...event, title: "Queued update" }], "month"));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); await Promise.resolve(); });
+
+    await click("calendar-schedule-submit");
+    expect(patchBodies).toHaveLength(0);
+    expect(host.textContent).toContain("That schedule change isn't valid.");
+    // Modal retains its content across the close transition (see the retention doc in
+    // ProductionCalendar.tsx), so assert the editor's `open` prop closed rather than its
+    // removal from the DOM.
+    expect(document.querySelector('[data-testid="calendar-schedule-editor"]')?.getAttribute("data-open")).toBeFalsy();
+    expect(document.querySelector('[data-testid="calendar-fold-submit"]')).toBeNull();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    // The queued refetch must be flushed once the null-id path unwinds the accept gate,
+    // or the Calendar is stale until the next poll/focus (#226 round 1 item 1).
+    expect(getCount).toBe(2);
+  });
+
   it("adopts a scheduled PATCH result (bare id in the response) as exactly one row keyed by the prefixed entity id (#226)", async () => {
     const event = dueEvent("checklist:adopt-scheduled", "2026-08-12");
     patchPayload = mutationBody(event, { ...event.schedule, version: 5, due: "2026-08-15", end: dateEndpoint("2026-08-15") });
