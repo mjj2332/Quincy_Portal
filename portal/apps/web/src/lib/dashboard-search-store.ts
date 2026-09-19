@@ -222,6 +222,24 @@ export function adoptDashboardSearchFromUrl(value: string, viewerId: string): vo
  * trailing space, mid-collapse whitespace) is left alone. Only a location that carries a GENUINELY
  * different committed search (a rail click to a different q, Back/Forward, a pasted deep link)
  * ever overwrites the draft.
+ *
+ * #217 build, step 4 (found while wiring `Dashboard.tsx`'s render-time `committedQuery`, not a
+ * design change of its own): `query`/`lastWritten` are ALSO brought into step with `routeQuery`
+ * here, in the SAME branch that already updates `draft` (not on every call). Once step 4 deletes
+ * every render-side path that used to keep `query` current (`adoptDashboardSearchFromUrl`'s own
+ * callers), this function -- called on every location change `Dashboard` is mounted under -- is the
+ * only thing left that ever touches it, and `commit()`'s own no-op guard below still compares
+ * against both fields. Leaving them at their cold-module `""` default after landing on a URL that
+ * already carries a `q` made `commit()` silently no-op the FIRST clear (an empty draft normalises
+ * to `""`, coincidentally matching that stale default) -- the chip's × visibly did nothing. Scoped
+ * to the draft-changed branch, not unconditionally: `query`/`lastWritten` go stale only when
+ * `draft` itself is being seeded from `""` on a fresh/reset principal -- the one case a real
+ * `commit()` never had a chance to keep them current for. When `draft` already matches (this
+ * function's own "stable no-op" case, `dashboard-search-store.test.ts`), `query`/`lastWritten` were
+ * already kept correct by whatever `commit()` call put `draft` there in the first place, and this
+ * stays a true no-op, exactly as before. `query`/`lastWritten` themselves are already slated for
+ * deletion in step 5, alongside a `commit()` rewritten not to need them; this keeps them correct in
+ * the meantime rather than shipping that regression for one commit.
  */
 export function syncDashboardSearchDraftFromLocation(routeQuery: string | undefined, viewerId: string): void {
   ensureOwner(viewerId);
@@ -229,6 +247,8 @@ export function syncDashboardSearchDraftFromLocation(routeQuery: string | undefi
   const nextDraft = routeQuery ?? "";
   if (normalizeDashboardSearchText(draft) !== nextDraft) {
     draft = nextDraft;
+    query = nextDraft;
+    lastWritten = nextDraft;
     notify();
   }
 }

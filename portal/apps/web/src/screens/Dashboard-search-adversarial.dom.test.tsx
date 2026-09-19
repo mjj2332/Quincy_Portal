@@ -1,8 +1,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { dashboardSearchOf } from "@quincy/shared";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
-import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
+import { parseStaffLocation } from "../lib/router";
+import { __resetDashboardSearchStoreForTest, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,6 +73,12 @@ async function settle() {
 
 async function renderAt(location: string, response: Record<string, unknown>) {
   window.history.replaceState(null, "", location);
+  // #217 build, step 4: `Dashboard.tsx` no longer adopts a route's own `q` into the shared store
+  // -- that is `ShellRoute`'s job now, a `useLayoutEffect` keyed on location + principal
+  // (`lib/app-router.tsx`). Mirrored here directly, matching a real arrival (`ShellRoute` always
+  // runs ahead of `Dashboard` in production).
+  const route = parseStaffLocation(location);
+  if (route.kind === "dashboard") syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "principal-a");
   apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("q=smith") ? response : { projects: full, board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } } }));
   await act(async () => {
     root.render(<Dashboard currentUserId="principal-a" role={authState.role} />);

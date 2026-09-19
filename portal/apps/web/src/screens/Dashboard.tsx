@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -55,15 +55,14 @@ import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
-  adoptDashboardSearchFromUrl,
   cancelPendingDashboardSearchWrite,
   clearDashboardSearch,
-  commitDashboardSearchNow,
   getDashboardSearchSnapshotForPrincipal,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
   setDashboardSearchUrlWriter,
   subscribeDashboardSearch,
+  takeDashboardSearchForNavigation,
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 
@@ -203,38 +202,22 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     () => getDashboardSearchSnapshotForPrincipal(currentUserId),
     () => getDashboardSearchSnapshotForPrincipal(currentUserId),
   );
-  // #217 design-fix round 3, item 1. Tracks whether the store has had a chance to adopt the
-  // CURRENT `currentLocation` yet -- a render-time ref, not store state (a "have I adopted this
-  // location" flag is a Dashboard-local render concern; the store's other consumer, `ShellSearch`,
-  // mounted on every route, has no use for it). Starts `null`, which can never equal a real
-  // location string, so a cold mount's very FIRST render always reads as "not yet adopted". The
-  // effect that advances it is declared after the reconciliation effect further down (`~325`),
-  // so it always observes that effect having already had its turn in the SAME commit -- effects
-  // within one component run in declaration order, and the reconciliation effect's own store
-  // writes are synchronous, so by the time this ref advances, `search.query` already reflects
-  // whatever THAT effect just adopted (or deliberately left alone).
-  const adoptedLocationRef = useRef<string | null>(null);
-  // The currently governing parsed route's OWN `q`, already normalised by `parseStaffLocation`
+  // #217 build, step 4: the URL is the ONLY committed Dashboard search. `dashboardSearchOf` is the
+  // one accessor (`@quincy/shared`, #217 build step 2) for "what committed search does the
+  // currently governing parsed route carry" -- already normalised by `parseStaffLocation`
   // (`staff-routes.ts`'s `parseDashboardSearch`/calendar `rawSearch` both run every accepted `q`
-  // through `normalizeDashboardSearchText` before returning it) -- never re-normalised here.
-  const routeQuery = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute)
-    ? effectiveRouteCalendar?.search
-    : routeDashboardSearch;
-  // The ONE value every render-time consumer below reads instead of `search.query` directly:
-  // the projects query, the search-counts query, `searchActive` (and everything gated on it --
-  // the chip, the stats strip, the Kanban movement gates), and the chip's own text. A cold deep
-  // link's FIRST render used to query `search.query` -- always `""` before the reconciliation
-  // effect has run even once -- so `/?q=Probe` fired one genuinely UNFILTERED `/api/projects`
-  // before a second commit corrected it. Falls back to `search.query` once the store has adopted
-  // THIS location (`adoptedLocationRef` below) or when the route carries no `q` of its own at all
-  // (`routeQuery === undefined`) -- so a stale route `q` can never resurrect a query the user has
-  // since cleared: clearing writes the store synchronously, and the URL for the SAME
-  // `currentLocation` string is still "adopted" (the ref already matches it from the render
-  // before the clear), so this falls through to the store's own, now-empty, query immediately,
-  // not the stale route text that clear + rewrite have not yet caught up to serialising away.
-  const effectiveQuery = adoptedLocationRef.current === currentLocation || routeQuery === undefined
-    ? search.query
-    : routeQuery;
+  // through `normalizeDashboardSearchText` before returning it), so this never re-normalises and
+  // never reads the store. Derived at RENDER, from the route alone -- there is no adoption effect
+  // left to lag a commit behind, and no store copy left to disagree with the URL for even one
+  // render: a role without Calendar capability, a Back/Forward to a q-less URL, and a cold deep
+  // link all resolve correctly on their very first commit. Every render-time consumer below reads
+  // this ONE value instead of the store: the projects query, the search-counts query,
+  // `searchActive` (and everything gated on it -- the chip, the stats strip, the Kanban movement
+  // gates), the chip's own text, and the Calendar (`calendar={calendarState && { ...calendarState,
+  // search: committedQuery }}` further down -- `calendarState.search` itself stays for
+  // URL-serialisation bookkeeping, e.g. `JSON.stringify` equality checks and
+  // `takeDashboardSearchForNavigation`-sourced URL builds, but is never read for what to DISPLAY).
+  const committedQuery = dashboardSearchOf(parsedRoute) ?? "";
   const [view, setView] = useState<DashboardView>(() => {
     // A route's own explicit "calendar" gets the same capability check the stored preference
     // already gets below — otherwise a role without it landed here with `view` already "calendar"
@@ -305,8 +288,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [canViewProductionCalendar]);
   const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
-  const projectsQuery = useDashboardProjects(viewingArchived, identity, effectiveQuery);
-  const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, effectiveQuery);
+  const projectsQuery = useDashboardProjects(viewingArchived, identity, committedQuery);
+  const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, committedQuery);
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
   const dashboardKeyString = JSON.stringify(dashboardKey);
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
@@ -345,10 +328,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // against a filtered column are wrong) -- that gating is explicit now, at `canMoveStages` /
   // `sameStageReorderEnabled` / `movementDisabled` / `runBoardMovement`'s own guard, not smuggled
   // in through this flag.
-  // #217 design-fix round 3, item 1: `effectiveQuery`, not the raw store `search.query` -- see
-  // that constant's own comment above. Everything gated on `searchActive` (the chip, the stats
-  // strip, the Kanban movement gates below) inherits the fix through this one flag.
-  const searchActive = effectiveQuery !== "";
+  // #217 build, step 4: `committedQuery`, the render-derived route accessor -- see that
+  // constant's own comment above. Everything gated on `searchActive` (the chip, the stats strip,
+  // the Kanban movement gates below) inherits the fix through this one flag.
+  const searchActive = committedQuery !== "";
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
@@ -469,21 +452,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // explicit URL must not immediately bounce the Staff member back out of archived.
     const arrivedAtNewLocation = currentLocation !== lastReconciledLocationRef.current;
     lastReconciledLocationRef.current = currentLocation;
-    // Adopts a bare/List/Kanban route's own `q` into the shared search store (#217), symmetric
-    // with the Calendar facet's own adoption further down. Guarded against `search.query` so this
-    // component's own writes -- the store's URL writer (List/Kanban/bare) or `history.replace`
-    // (Calendar) -- never re-adopt their own write back into the store. Scoped to the two branches
-    // below that actually reach it (List/Kanban and the genuinely-bare fallthrough), NOT called
-    // unconditionally up here: `currentDashboardRoute` is URL-derived and can disagree with
-    // `effectiveRouteCalendar` (which falls back to the `calendar` PROP), so adopting from the
-    // route on every pass — including while the Calendar-prop branch below is the one that
-    // actually governs — fought that branch's own adoption of the SAME `search.query` on every
-    // render and looped.
-    const adoptRouteSearch = () => {
-      if (!currentDashboardRoute || isDashboardCalendarRoute(currentDashboardRoute)) return;
-      const routeSearch = currentDashboardRoute.search ?? "";
-      if (routeSearch !== search.query) adoptDashboardSearchFromUrl(routeSearch, currentUserId);
-    };
     // `locationHasCalendar`, not `effectiveRouteCalendar !== null` — the latter falls back to the
     // `calendar` PROP whenever the URL itself carries no facet, and that prop can outlive the URL
     // that produced it (a direct-mount caller that never re-renders it away, `Dashboard-calendar.
@@ -519,16 +487,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         if (view !== "calendar") setView("calendar");
         return;
       }
-      adoptRouteSearch();
       if (view !== routeDashboardView) setView(routeDashboardView);
       return;
     }
     if (effectiveRouteCalendar) {
       calendarFallbackLocationRef.current = false;
       setCalendarState(effectiveRouteCalendar);
-      // Guarded the same way as the generic adoption above, against a redundant re-adopt of this
-      // component's own debounced search replacement.
-      if (search.query !== effectiveRouteCalendar.search) adoptDashboardSearchFromUrl(effectiveRouteCalendar.search, currentUserId);
       setView("calendar");
       return;
     }
@@ -547,37 +511,27 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // rather than leaving `view` at whatever an earlier explicit push left it — this is what
     // makes Back actually undo an explicit List/Kanban switch (D2 gave each one its own history
     // entry), not just the pre-existing "leaving Calendar via a stale bare arrival" case.
-    adoptRouteSearch();
     if (view !== bareRouteFallbackViewRef.current) setView(bareRouteFallbackViewRef.current);
-    // `search.draft` joins the list alongside `search.query` (#217 fix round 3, item 1): the two
-    // Calendar canonicalisers above now read it. Every OTHER branch this effect can take is a
-    // cheap no-op on a keystroke-driven rerun (the two canonicalisers themselves only ever fire
-    // while genuinely arriving at their respective locations, not on every draft change), so this
-    // does not turn typing into a per-keystroke URL-rewrite storm.
-  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, search.query, view, viewingArchived]);
-
-  // #217 design-fix round 3, item 1. Declared AFTER the reconciliation effect above on purpose:
-  // React runs one component's passive effects in declaration order, so this always observes
-  // that effect having already had its turn (whichever branch it took, including the early-return
-  // ones that adopt nothing) in the SAME commit before advancing `adoptedLocationRef` to match
-  // `currentLocation` -- which is what `effectiveQuery` above reads to decide the store is
-  // trustworthy for this location. Does not read or write anything the store itself owns; the
-  // reconciliation effect above is untouched.
-  useEffect(() => {
-    adoptedLocationRef.current = currentLocation;
-  }, [currentLocation]);
+    // `search.draft` (#217 fix round 3, item 1): the two Calendar canonicalisers above read it.
+    // Every OTHER branch this effect can take is a cheap no-op on a keystroke-driven rerun (the
+    // two canonicalisers themselves only ever fire while genuinely arriving at their respective
+    // locations, not on every draft change), so this does not turn typing into a per-keystroke
+    // URL-rewrite storm.
+  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
-    // #217 fix round 1, item 3: flush and override `next.search` with the just-flushed value --
-    // every direct Calendar-facet change (Unassigned, a date/subview change, ...) goes through
-    // `ProductionCalendarFilters`'s own `onChange` -> `onNavigate` -> here, building `next` from
-    // its OWN `calendar` prop snapshot, which is the last COMMITTED search, not necessarily
-    // whatever is still mid-debounce right as the facet changes. One override point here covers
-    // every caller (this one, `selectView`'s calendar branch, and the store's own writer) instead
-    // of each having to remember to flush for itself.
-    commitDashboardSearchNow(currentUserId);
-    const withCurrentSearch: DashboardCalendarState = { ...next, search: getDashboardSearchSnapshotForPrincipal(currentUserId).query };
+    // #217 fix round 1, item 3 / #217 build step 4: flush and override `next.search` with the
+    // just-flushed value -- every direct Calendar-facet change (Unassigned, a date/subview
+    // change, ...) goes through `ProductionCalendarFilters`'s own `onChange` -> `onNavigate` ->
+    // here, building `next` from its OWN `calendar` prop snapshot, which is the last COMMITTED
+    // search, not necessarily whatever is still mid-debounce right as the facet changes. One
+    // override point here covers every caller (this one, `selectView`'s calendar branch, and the
+    // store's own writer) instead of each having to remember to flush for itself.
+    // `takeDashboardSearchForNavigation` cancels the pending debounce and returns the normalised
+    // draft in one call -- this history write IS the commit, so there is nothing left for the
+    // debounce to redundantly re-fire (#217 build, step 4).
+    const withCurrentSearch: DashboardCalendarState = { ...next, search: takeDashboardSearchForNavigation(currentUserId) };
     const built = staffPathFor({ kind: "dashboard", calendar: withCurrentSearch });
     setCalendarState(withCurrentSearch);
     try {
@@ -650,11 +604,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   const reconcileAppliedCalendarFilters = useCallback((filters: ProductionCalendarFilters) => {
     if (!calendarState || !canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
-    // #217 fix round 1, item 3: flush BEFORE reading the search to carry, same reasoning as
-    // `selectView` -- `calendarState.search` alone can be the last COMMITTED value, stale against
-    // whatever is still mid-debounce right as this facet change fires.
-    commitDashboardSearchNow(currentUserId);
-    const currentSearch = getDashboardSearchSnapshotForPrincipal(currentUserId).query;
+    // #217 fix round 1, item 3 / #217 build step 4: flush BEFORE reading the search to carry, same
+    // reasoning as `selectView` -- `calendarState.search` alone can be the last COMMITTED value,
+    // stale against whatever is still mid-debounce right as this facet change fires.
+    const currentSearch = takeDashboardSearchForNavigation(currentUserId);
     const next: DashboardCalendarState = { ...calendarState, ...filters, search: currentSearch, view: "calendar" };
     if (JSON.stringify(next) === JSON.stringify(calendarState)) return;
     const built = staffPathFor({ kind: "dashboard", calendar: next });
@@ -864,16 +817,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
       calendarFallbackLocationRef.current = false;
-      // #217 fix round 1, item 3: flush BEFORE building this push. The writer-registration
-      // effect's own cleanup does NOT flush a pending debounce (#217 fix round 3, item 2 --
-      // `dashboard-search-store.ts`'s unregister callback only ever nulls the `writer` reference
-      // on a re-registration, and only an actual Dashboard UNMOUNT cancels the timer outright,
-      // never commits it), and it would run too late for this push either way -- AFTER this
-      // synchronous handler returns and React re-renders. Reading the just-flushed value directly,
-      // here, is what carries a committed OR still-debouncing search across a view switch instead
-      // of silently dropping it.
-      commitDashboardSearchNow(currentUserId);
-      const currentSearch = getDashboardSearchSnapshotForPrincipal(currentUserId).query;
+      // #217 fix round 1, item 3 / #217 build step 4: flush BEFORE building this push. The
+      // writer-registration effect's own cleanup does NOT flush a pending debounce (#217 fix
+      // round 3, item 2 -- `dashboard-search-store.ts`'s unregister callback only ever nulls the
+      // `writer` reference on a re-registration, and only an actual Dashboard UNMOUNT cancels the
+      // timer outright, never commits it), and it would run too late for this push either way --
+      // AFTER this synchronous handler returns and React re-renders. Reading the just-flushed
+      // value directly, here, is what carries a committed OR still-debouncing search across a
+      // view switch instead of silently dropping it.
+      const currentSearch = takeDashboardSearchForNavigation(currentUserId);
       history.push(staffPathFor({ kind: "dashboard", dashboardView: next, ...(currentSearch ? { search: currentSearch } : {}) }));
     }
   }
@@ -890,8 +842,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       calendarFallbackLocationRef.current = false;
       if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") {
         // Same flush-then-read as `selectView` above.
-        commitDashboardSearchNow(currentUserId);
-        const currentSearch = getDashboardSearchSnapshotForPrincipal(currentUserId).query;
+        const currentSearch = takeDashboardSearchForNavigation(currentUserId);
         history.push(staffPathFor({ kind: "dashboard", dashboardView: "list", ...(currentSearch ? { search: currentSearch } : {}) }));
       }
     }
@@ -1229,7 +1180,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               </>
             )}
             <span className="normal-case" data-testid="dashboard-search-chip-query">
-              '{effectiveQuery}'
+              '{committedQuery}'
             </span>
             {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
                 rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
@@ -1288,7 +1239,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
           <ProductionCalendar
             identity={identity}
-            calendar={calendarState}
+            calendar={calendarState && { ...calendarState, search: committedQuery }}
             onNavigate={(next) => navigateCalendar(next)}
             onAppliedFilters={reconcileAppliedCalendarFilters}
             onAcceptGateChange={setCalendarInteractionBlocked}

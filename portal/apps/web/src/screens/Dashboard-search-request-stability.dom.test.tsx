@@ -225,4 +225,12 @@ describe("Dashboard search + Calendar request stability (#217 design-review, ite
   it("(c) the plain list facet + q", async () => {
     await assertIdleAfterSettling("/?view=list&q=Probe", 0, 2);
   });
+
+  // #217 build, step 4, new test (d): the explicit Kanban facet + q, the one cold deep-link shape
+  // the three scenarios above did not already cover -- `committedQuery` is derived the identical
+  // way regardless of which view governs, so this is here mostly to prove that explicitly, not
+  // because Kanban's own request path differs from List's.
+  it("(d) the explicit Kanban facet + q", async () => {
+    await assertIdleAfterSettling("/?view=kanban&q=Probe", 0, 2);
+  });
 });

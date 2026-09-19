@@ -6,7 +6,9 @@ import { act, createElement, StrictMode, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { dashboardSearchOf } from "@quincy/shared";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
+import { parseStaffLocation } from "../lib/router";
 import {
   __resetDashboardSearchStoreForTest,
   clearDashboardSearch,
@@ -14,6 +16,7 @@ import {
   __getDashboardSearchSnapshotForTest,
   resetDashboardSearchForPrincipal,
   setDashboardSearchDraft,
+  syncDashboardSearchDraftFromLocation,
 } from "../lib/dashboard-search-store";
 
 function ClientCapture({ onClient }: { onClient: (client: QueryClient) => void }) {
@@ -193,6 +196,11 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
 
   it("item 2: pointer/keyboard drag issues no mutation while searching (last-line-of-defence guard)", async () => {
     window.history.replaceState(null, "", "/?view=kanban&q=smith");
+    // #217 build, step 4: `Dashboard.tsx` no longer adopts a route's own `q` into the shared store
+    // -- that is `ShellRoute`'s job now (`syncDashboardSearchDraftFromLocation`, `lib/app-router.tsx`).
+    // Mirrored here directly, matching a real arrival.
+    const route = parseStaffLocation("/?view=kanban&q=smith");
+    if (route.kind === "dashboard") syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "admin-1");
     apiGetMock.mockImplementation((path) => {
       if (!path.startsWith("/api/projects")) return Promise.resolve({});
       // Full board still "matches" here -- the point of this test is movement gating, not result
@@ -315,20 +323,26 @@ describe("Dashboard search writer registration under StrictMode (#217 fix round 
 });
 
 /**
- * #217 fix round 5, item 1 (Sol re-review, BLOCKER). `Dashboard.tsx`'s own render used to read the
- * UNSCOPED store snapshot (`getDashboardSearchSnapshot`) — on a principal switch while a Dashboard
- * for the OLD principal is still mounted, the NEW principal's render could still consume the old
- * one's committed `query` (`searchActive`, and the chip it gates, are computed straight from that
- * render-time read, with no effect involved).
+ * #217 fix round 5, item 1 (Sol re-review, BLOCKER) -- UPDATED by #217 build, step 4. The original
+ * claim here was that a principal switch, mid-Dashboard-mount, must never let the NEW principal's
+ * render show the OLD principal's committed search chip: the chip used to be sourced from the
+ * store's OWN `query`, which was principal-scoped, so "whose search is this" was a real question a
+ * render had to answer correctly.
  *
- * `Dashboard` is rendered STANDALONE here — no `ShellSearch`, no `PrincipalFreshnessBoundary` — so
- * the only thing that could correct the store before an observer sees it is `Dashboard`'s OWN local
- * reset effect (`resetDashboardSearchForPrincipal`, keyed off `currentUserId`), a PASSIVE effect.
- * `Probe`'s `useLayoutEffect` observes strictly before it: React flushes every layout effect in a
- * commit, tree-wide, before it flushes any passive effect in that same commit — a scheduling
- * guarantee, not a timing coincidence.
+ * Step 4 changes what the chip even IS: `committedQuery` is derived from the URL alone
+ * (`dashboardSearchOf(parsedRoute)`), never the store -- so it is no longer principal-scoped BY
+ * DESIGN. A's `commitDashboardSearchNow` below writes `smith` into the URL itself (`?q=smith`),
+ * which is public, shared page state, not A's private draft -- B looking at that SAME URL is
+ * correctly shown the SAME chip; that is not a leak, it is the whole point of "the URL is the only
+ * committed search". `Dashboard-committed-query.dom.test.tsx`'s own scenario (e) is the test that
+ * replaces this one's ORIGINAL intent, at the render-timing level that matters now (B's chip must
+ * already agree with the URL on B's very first commit, not lag a principal-reset effect) -- this
+ * test is kept, rewritten to assert exactly the new invariant, rather than deleted outright, since
+ * the underlying scenario (a live principal swap while a Dashboard instance stays mounted) is still
+ * worth covering at this file's own level of detail (a real DnD-capable Dashboard, not a probe-only
+ * harness).
  */
-describe("Dashboard's own render is principal-scoped, independent of its own reset effect (#217 fix round 5, item 1)", () => {
+describe("Dashboard's own render is principal-scoped for the DRAFT, but the committed chip is URL-derived and principal-agnostic by design (#217 fix round 5, item 1; updated #217 build, step 4)", () => {
   function Probe({ onLayout }: { onLayout: () => void }) {
     useLayoutEffect(() => { onLayout(); });
     return null;
@@ -350,11 +364,12 @@ describe("Dashboard's own render is principal-scoped, independent of its own res
     __resetDashboardSearchStoreForTest();
   });
 
-  it("B's render, captured before Dashboard's own reset effect runs, shows no search chip", async () => {
+  it("B's render, captured on the FIRST commit after the swap, already agrees with the URL A's own commit just wrote -- no lag on either a reset effect or a draft-sync effect", async () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
     await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
     await flush();
     expect(host.querySelector('[data-testid="dashboard-search-chip"]')).not.toBeNull();
+    expect(window.location.search).toContain("q=smith");
 
     let probed = false;
     let capturedChip: Element | null | undefined;
@@ -366,6 +381,7 @@ describe("Dashboard's own render is principal-scoped, independent of its own res
     });
 
     expect(probed).toBe(true);
-    expect(capturedChip).toBeNull();
+    expect(capturedChip).not.toBeNull();
+    expect(capturedChip?.querySelector('[data-testid="dashboard-search-chip-query"]')?.textContent).toContain("smith");
   });
 });

@@ -1,12 +1,12 @@
-import { act, createElement, useSyncExternalStore } from "react";
+import { act, createElement, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
+import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
-import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,10 +47,20 @@ function projectResponse() {
   };
 }
 
+// #217 build, step 4: `Dashboard.tsx` no longer adopts a route's own `q` into the shared store --
+// that is `ShellRoute`'s job now (`syncDashboardSearchDraftFromLocation`, wired in a
+// `useLayoutEffect` keyed on location + principal). This harness mirrors exactly that wiring, the
+// same way `lib/app-router.tsx`'s real `ShellRoute` derives the `calendar` prop from the parsed
+// route -- without it, a test that arrives directly at a URL carrying `q` (rather than typing it
+// through `setDashboardSearchDraft`) would see a draft that never catches up to the URL.
 function DashboardRouteHarness() {
   const history = locationStore();
   const location = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const route = parseStaffLocation(location);
+  useLayoutEffect(() => {
+    if (route.kind !== "dashboard") return;
+    syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "user-1");
+  }, [location, route]);
   return <Dashboard currentUserId="user-1" role={authRole.value} authorizationEpoch={0} calendar={route.kind === "dashboard" && "calendar" in route ? route.calendar : null} />;
 }
 
@@ -264,8 +274,17 @@ describe("Dashboard Calendar routing", () => {
   // `dashboard-search-store.test.ts` (the store) and `ShellSearch.dom.test.tsx` (the rail's ⌘K
   // ref-focus, including the collapsed popover-then-focus case).
 
+  // #217 build, step 4: a `calendar` PROP with no URL backing it no longer seeds the shared
+  // store's draft -- `Dashboard.tsx` reads no search from anywhere but the route (`committedQuery`)
+  // and its own draft-sync is `ShellRoute`'s job now, not this component's. In production the
+  // `calendar` prop is ALWAYS derived from the same parsed route (`lib/app-router.tsx`'s
+  // `dashboardRoute`), so this test now puts the search on the actual URL too, through
+  // `DashboardRouteHarness` (mirrors `ShellRoute`'s own draft-sync wiring), rather than a prop that
+  // could never arise this way for real.
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {
-    await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith street" } });
+    window.history.replaceState(null, "", `/?view=calendar&date=${routeCalendar.date}&sub=month&layers=project%2Cchecklist&q=smith+street`);
+    await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
     const lengthBefore = window.history.length;
     await typeSearch("a b ");

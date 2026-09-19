@@ -1,11 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type ProductionCalendarFilters } from "@quincy/shared";
+import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTION_CALENDAR_ZONE, type ProductionCalendarFilters } from "@quincy/shared";
 import { Dashboard } from "./Dashboard";
 import { confirmStore } from "../lib/confirm";
+import { parseStaffLocation } from "../lib/router";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
-import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -78,6 +79,12 @@ describe("the bare Calendar intent, on arrival", () => {
   async function renderAt(location: string, role: typeof authRole.value = "admin") {
     authRole.value = role;
     window.history.replaceState(null, "", location);
+    // #217 build, step 4: `Dashboard.tsx` no longer adopts a route's own `q` into the shared
+    // store -- that is `ShellRoute`'s job now, a `useLayoutEffect` keyed on location + principal
+    // (`lib/app-router.tsx`). This mirrors that ONE call directly, matching a real arrival exactly
+    // (`ShellRoute` always runs ahead of `Dashboard` in production).
+    const route = parseStaffLocation(location);
+    if (route.kind === "dashboard") syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "user-1");
     await act(async () => { root.render(<Dashboard currentUserId="user-1" role={role} authorizationEpoch={0} calendar={null} />); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
