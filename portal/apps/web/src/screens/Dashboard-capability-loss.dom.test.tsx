@@ -164,4 +164,24 @@ describe("Dashboard's Calendar access-loss fallback preserves a committed q (#21
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
     expect(`${window.location.pathname}${window.location.search}`).toBe("/?q=smith");
   });
+
+  // #217 fix round 9, Sol review, item 4. The test above's own title already claimed "401/403",
+  // but only ever exercised 403 -- `useSchedulingCommands.tsx`'s own `handleAccessLoss` trigger
+  // checks `err.status === 401 || err.status === 403` identically at every call site (the initial
+  // query, `acceptRange`, and every command's own catch), so a 401 must reach the SAME
+  // `handleCalendarAccessLoss` fallback on `Dashboard.tsx`, preserving the SAME committed `q`. The
+  // 403 case above is left byte-for-byte unchanged.
+  it("a Calendar mutation answering 401 at a facet URL with q=smith lands on a Dashboard URL that still carries q=smith", async () => {
+    window.history.replaceState(null, "", `/?view=calendar&date=${routeCalendar.date}&sub=month&layers=project%2Cchecklist&q=smith`);
+    setDashboardSearchDraft("smith", "user-1");
+    apiGetMock.mockImplementation((path) => path.startsWith("/api/production-calendar")
+      ? Promise.reject(new ApiError("Calendar access lost", 401, {}))
+      : Promise.resolve(projectResponse()));
+
+    await act(async () => { root.render(<DashboardHarness role="admin" />); await Promise.resolve(); await Promise.resolve(); });
+    await settle();
+
+    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/?q=smith");
+  });
 });
