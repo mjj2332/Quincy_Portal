@@ -1157,10 +1157,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           {/* #217: the rail's `ShellSearch` is the one search input now -- this chip is the
               Dashboard's only trace of an active query, not a second field. */}
           {searchActive && (
-            <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" radius="full" className="gap-[var(--space-2)]">
-              {searchCountsQuery.data
-                ? `${searchCountsQuery.data.matching} of ${searchCountsQuery.data.total} projects — '${search.query}'`
-                : `'${search.query}'`}
+            <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)]">
+              {searchCountsQuery.data && (
+                <>
+                  {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
+                  {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
+                </>
+              )}
+              <span className="normal-case" data-testid="dashboard-search-chip-query">
+                '{search.query}'
+              </span>
               <button type="button" aria-label="Clear search" onClick={() => clearDashboardSearch(currentUserId)} className="inline-flex items-center">
                 <XIcon aria-hidden="true" className="size-3" />
               </button>

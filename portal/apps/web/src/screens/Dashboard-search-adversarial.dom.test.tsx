@@ -106,7 +106,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     });
 
     expect(host.querySelector('[aria-label="Project summary"]')).toBeNull();
-    expect(host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent).toContain("1 of 3 projects — 'smith'");
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent).toContain("1 of 3 projects · 'smith'");
   });
 
   it("shows a search-only chip when an older response has no counts", async () => {
@@ -118,6 +118,28 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     const chip = host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent ?? "";
     expect(chip).toBe("'smith'");
     expect(chip).not.toContain(" of ");
+  });
+
+  it("pluralises to the singular when the total is exactly one match", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 1 },
+    });
+
+    expect(host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent).toContain("1 of 1 project · 'smith'");
+  });
+
+  it("renders the user's query exactly as typed, not uppercased by the Badge's own caps styling", async () => {
+    await renderAt("/?view=list&q=Probe", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "Probe", matching: 1, total: 3 },
+    });
+
+    const queryNode = host.querySelector('[data-testid="dashboard-search-chip-query"]');
+    expect(queryNode?.textContent).toBe("'Probe'");
+    expect(queryNode?.className).toContain("normal-case");
   });
 
   it("preserves q when switching views from a searched Dashboard", async () => {
