@@ -82,18 +82,22 @@ export type ProductionGanttInfiniteData = InfiniteData<ProductionGanttResponse, 
  */
 
 /**
- * Single-slot memo for `flattenGanttProjectPages` (fix-218-r3 #2): `useInfiniteQuery` grows
- * `pages` by appending one new page per fetch, keeping every earlier page's object reference
- * unchanged. When the incoming `pages` array is an extension of the last array we fully walked
- * (same references at every prior index), we only need to walk the NEW page(s) into the
- * already-built `byId` map, instead of re-walking every accumulated row on every call — that
- * re-walk was the O(n^2 / pageSize) cost this memo removes. Any other shape (a refetch that
- * replaces one or more earlier pages with new objects, a shorter array, an unrelated query's
- * pages) fails the reference check and falls back to a full rebuild, so this is a pure
- * optimization: `flattenGanttProjectPages` always returns the same content for the same input,
- * it just avoids redoing work it already did.
+ * Per-chain memo for `flattenGanttProjectPages` (fix-218-r3 #2, per-chain keying fix-218-r4 #1):
+ * `useInfiniteQuery` grows `pages` by immutable append — a new array object per fetch, but every
+ * earlier page keeps its own object reference. A `WeakMap` keyed on the `pages` array itself is
+ * therefore useless (it's a fresh key every call); instead this keys on `pages[0]`, the first
+ * PAGE object, which stays reference-stable across every append within one walk and only changes
+ * when a refetch mints a brand-new page one (correctly starting a fresh chain/cache entry). Two
+ * or more chains (different filters, different principals, several projects' children) each get
+ * their own `WeakMap` entry keyed on their own first page/array, so alternating between them never
+ * evicts one chain's accumulator to serve another's — the single-slot version this replaced did.
+ * `processedPages` records exactly which pages that entry's `byId` map has walked, validated by
+ * reference before extending; any mismatch (an earlier page replaced, a shorter array, a
+ * completely different chain that happens to collide — it won't, `WeakMap` keys are exact object
+ * identity) falls back to a full, correct rebuild. Pure function of `pages`: same content in,
+ * same content out, this just avoids redoing work it already did.
  */
-let projectFlattenCache: { pages: readonly ProductionGanttResponse[]; byId: Map<string, GanttProjectRowDto> } | null = null;
+const projectFlattenCache = new WeakMap<ProductionGanttResponse, { processedPages: readonly ProductionGanttResponse[]; byId: Map<string, GanttProjectRowDto> }>();
 
 function pagesShareIndexablePrefix<T>(prev: readonly T[], next: readonly T[]): boolean {
   if (prev.length > next.length) return false;
@@ -109,9 +113,12 @@ function pagesShareIndexablePrefix<T>(prev: readonly T[], next: readonly T[]): b
  * walk stays linear without depending on wall-clock timing.
  */
 export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse[], onRowVisit?: (row: GanttProjectRowDto) => void): GanttProjectRowDto[] {
-  const canReuse = projectFlattenCache !== null && pagesShareIndexablePrefix(projectFlattenCache.pages, pages);
-  const byId = canReuse ? projectFlattenCache!.byId : new Map<string, GanttProjectRowDto>();
-  const startIndex = canReuse ? projectFlattenCache!.pages.length : 0;
+  if (pages.length === 0) return [];
+  const firstPage = pages[0]!;
+  const cached = projectFlattenCache.get(firstPage);
+  const canReuse = cached !== undefined && pagesShareIndexablePrefix(cached.processedPages, pages);
+  const byId = canReuse ? cached!.byId : new Map<string, GanttProjectRowDto>();
+  const startIndex = canReuse ? cached!.processedPages.length : 0;
   for (const newPage of pages.slice(startIndex)) {
     for (const project of newPage.projects) {
       // Re-inserting an existing key moves it to the end of Map iteration order, so a duplicated
@@ -121,28 +128,29 @@ export function flattenGanttProjectPages(pages: readonly ProductionGanttResponse
       onRowVisit?.(project);
     }
   }
-  projectFlattenCache = { pages, byId };
+  projectFlattenCache.set(firstPage, { processedPages: pages, byId });
   return [...byId.values()];
 }
 
 /**
- * Single-slot memo for `mergeGanttChildPage`, same rationale as `projectFlattenCache` above: a
- * caller re-invokes this with `existingRows` set to ITS OWN previous return value plus one new
- * page, so when `existingRows` is reference-identical to the last array this function produced,
- * we reuse the accumulator instead of rebuilding it from every already-merged row. A caller that
- * passes a fresh `existingRows` (e.g. resetting state on a refetch) misses the cache and gets a
- * correct full rebuild — never stale data.
+ * Per-chain memo for `mergeGanttChildPage` (fix-218-r4 #1): keyed on the prior returned
+ * `existingRows` array — each expanded project's own child-accumulation chain produces its own
+ * distinct array objects, so a `WeakMap` here naturally isolates concurrently-expanded projects'
+ * walks from each other (no shared slot to thrash) and lets an abandoned chain's entry be
+ * collected once nothing still references its `existingRows`. A caller that passes a fresh
+ * `existingRows` (e.g. resetting state on a refetch) misses the cache and gets a correct full
+ * rebuild — never stale data.
  */
-let childMergeCache: { existingRows: readonly GanttChecklistRowDto[]; byId: Map<string, GanttChecklistRowDto> } | null = null;
+const childMergeCache = new WeakMap<readonly GanttChecklistRowDto[], Map<string, GanttChecklistRowDto>>();
 
 /** Same latest-page-wins dedupe rule as `flattenGanttProjectPages`, for a project's children
  * accumulated one child page at a time (`fetchGanttChildPage`). `existingRows` is the
  * already-accumulated list; `page` is the newly fetched page to merge in. `onRowVisit` is the
  * same test-only walk counter as `flattenGanttProjectPages`. */
 export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[], page: ProductionGanttChildPageResponse, onRowVisit?: (row: GanttChecklistRowDto) => void): GanttChecklistRowDto[] {
-  const canReuse = childMergeCache !== null && childMergeCache.existingRows === existingRows;
-  const byId = canReuse ? childMergeCache!.byId : new Map<string, GanttChecklistRowDto>();
-  if (!canReuse) {
+  const cached = childMergeCache.get(existingRows);
+  const byId = cached ?? new Map<string, GanttChecklistRowDto>();
+  if (!cached) {
     for (const row of existingRows) {
       byId.set(row.id, row);
       onRowVisit?.(row);
@@ -154,7 +162,7 @@ export function mergeGanttChildPage(existingRows: readonly GanttChecklistRowDto[
     onRowVisit?.(row);
   }
   const result = [...byId.values()];
-  childMergeCache = { existingRows: result, byId };
+  childMergeCache.set(result, byId);
   return result;
 }
 

@@ -265,6 +265,34 @@ describe("flattenGanttProjectPages incremental memo (fix-218-r3 #2: O(n), not O(
     // not the O(n^2 / pageSize) re-walk-every-accumulated-row behaviour this memo replaces.
     expect(visits).toBe(20_000);
   });
+
+  it("stays O(n) per chain when two chains interleave page-by-page (fix-218-r4 #1: no single-slot thrashing)", () => {
+    let visitsA = 0;
+    let visitsB = 0;
+    let pagesA: ProductionGanttResponse[] = [];
+    let pagesB: ProductionGanttResponse[] = [];
+    let resultA: GanttProjectRowDto[] = [];
+    let resultB: GanttProjectRowDto[] = [];
+    for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+      const rowsA = Array.from({ length: 100 }, (_, rowIndex) => project(`a${pageIndex}-${rowIndex}`));
+      const rowsB = Array.from({ length: 100 }, (_, rowIndex) => project(`b${pageIndex}-${rowIndex}`));
+      pagesA = [...pagesA, page(rowsA)];
+      resultA = flattenGanttProjectPages(pagesA, () => {
+        visitsA += 1;
+      });
+      // Interleaved: chain B's page arrives between chain A's, alternating which chain's cache
+      // entry is touched last. A single shared slot would evict A's accumulator here and force a
+      // full re-walk on A's next call.
+      pagesB = [...pagesB, page(rowsB)];
+      resultB = flattenGanttProjectPages(pagesB, () => {
+        visitsB += 1;
+      });
+    }
+    expect(resultA).toHaveLength(20_000);
+    expect(resultB).toHaveLength(20_000);
+    expect(visitsA).toBe(20_000);
+    expect(visitsB).toBe(20_000);
+  });
 });
 
 describe("mergeGanttChildPage (fix-218-r2 #1: same contract for a project's children)", () => {
@@ -313,5 +341,37 @@ describe("mergeGanttChildPage incremental memo (fix-218-r3 #2: O(n), not O(n^2 /
     }
     expect(existingRows).toHaveLength(20_000);
     expect(visits).toBe(20_000);
+  });
+
+  it("stays O(n) per chain when two child walks interleave page-by-page (fix-218-r4 #1: no single-slot thrashing)", () => {
+    let visitsA = 0;
+    let visitsB = 0;
+    let rowsA: GanttChecklistRowDto[] = [];
+    let rowsB: GanttChecklistRowDto[] = [];
+    for (let pageIndex = 0; pageIndex < 200; pageIndex++) {
+      const isLast = pageIndex === 199;
+      const pageA = Array.from({ length: 100 }, (_, rowIndex) => checklistRow(`ca${pageIndex}-${rowIndex}`, { position: pageIndex * 100 + rowIndex }));
+      rowsA = mergeGanttChildPage(
+        rowsA,
+        { projectId: "pa", children: { rows: pageA, total: 20_000, returned: 100, truncated: !isLast, nextCursor: isLast ? null : "x" } },
+        () => {
+          visitsA += 1;
+        },
+      );
+      // Interleaved with a SECOND project's own child walk — two expanded rows on the same
+      // screen, both loading "more children" around the same time.
+      const pageB = Array.from({ length: 100 }, (_, rowIndex) => checklistRow(`cb${pageIndex}-${rowIndex}`, { position: pageIndex * 100 + rowIndex }));
+      rowsB = mergeGanttChildPage(
+        rowsB,
+        { projectId: "pb", children: { rows: pageB, total: 20_000, returned: 100, truncated: !isLast, nextCursor: isLast ? null : "x" } },
+        () => {
+          visitsB += 1;
+        },
+      );
+    }
+    expect(rowsA).toHaveLength(20_000);
+    expect(rowsB).toHaveLength(20_000);
+    expect(visitsA).toBe(20_000);
+    expect(visitsB).toBe(20_000);
   });
 });
