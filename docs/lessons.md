@@ -3201,11 +3201,16 @@ from `currentUserId`/`role`/`authorizationEpoch`/`viewingArchived` only — no `
 `useDashboardProjects` query it was meant to coordinate with (~:289) is keyed WITH the committed
 search (`committedQuery`, the fifth argument `dashboardProjectsKey` has carried since #217). At
 `/?q=smith`, `setProjectPriority`'s optimistic write, its confirmed write, and its failure rollback
-all landed in the q-LESS cache entry — the one entry `useDashboardProjects` was NOT reading — so the
-optimistic star never showed, the confirmed value waited for an unrelated refetch to arrive by
-coincidence, and a failed save rolled back an entry nobody was looking at. The fix is one line: pass
-`committedQuery` as `dashboardKey`'s own fifth argument, so it is the SAME key the read side already
-uses — not a second, parallel "scope identity" computed differently for reads and writes.
+all landed in the q-LESS cache entry — a CACHE MISS: the write patched an entry nothing was reading,
+not merely an entry the rendered control happened not to reflect (the accepted-snapshot barrier is a
+separate, later reason the rendered control wouldn't have shown it either regardless, #232). The
+searched entry the Staff member was actually looking at kept whatever it already held until
+`queueDashboardRefresh()`'s own refetch of the ACTIVE (searched) key — deliberate, not a
+coincidental unrelated refetch — pulled the real confirmed value back in from the server on its next
+successful fetch; a failed save, meanwhile, rolled back an entry nobody was reading at all. The fix
+is one line: pass `committedQuery` as `dashboardKey`'s own fifth argument, so it is the SAME key the
+read side already uses — not a second, parallel "scope identity" computed differently for reads and
+writes.
 
 **The rule for sibling entries a mutation's write has to reach, once the exact key is fixed.** A
 resource can have more than one cache entry alive at once for genuinely different reasons (here: the
@@ -3226,6 +3231,20 @@ mutation against ONE entry has to decide, explicitly, what happens to the others
   updates queries already present in the cache by construction (it iterates `findAll`'s matches, not
   every key that could theoretically match) — a Staff member who deep-links straight into a search
   and never had an unfiltered load must not get a phantom q-less entry manufactured for them.
+- **The fan-out itself still needs freshness protection, once it exists at all** (Sol review round
+  1): cancel every sibling's own in-flight fetch FIRST, or its late result can resolve after the
+  fan-out and put the stale value back; never patch an item whose cached `boardRevision` is already
+  newer than the confirmed response's, or a slow write can regress a sibling a later change already
+  moved past; then mark the patched siblings stale WITHOUT refetching them now (`refetchType:
+  "none"`) so a same-revision race self-heals the next time that entry is actually observed again,
+  rather than firing a request for a scope nobody is looking at right now.
+- **Placeholder data must never be stamped as accepted under a new key.** `keepPreviousData`
+  (`placeholderData`) serves the PREVIOUS query's rows while a new committed-query's fetch is still
+  in flight — accepting that placeholder as though it were the NEW key's own confirmed result means
+  a subsequent failure on that fetch gets silently absorbed, and the wrong query's rows stay on
+  screen presented as correct. Gate acceptance on `isPlaceholderData`; let the existing key-mismatch
+  fallback keep rendering the placeholder in the meantime, so refusing to accept it costs no
+  loading/empty flash.
 
 **A DOM test cannot observe an optimistic cache write while a mutation is pending, in this
 component, and that is not this bug.** `Dashboard.tsx` renders the `acceptedProjects` SNAPSHOT
