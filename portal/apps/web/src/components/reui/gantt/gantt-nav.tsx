@@ -17,16 +17,22 @@
  *    primitives this registry item depends on (`button`, `calendar`, `checkbox`, `context-menu`,
  *    `dropdown-menu`, `popover`, `scroll-area`, `tooltip` — all already vendored in this
  *    directory, the last six as of #219 stage 1).
- * 4. Landed inside a `gantt/` subdirectory of `components/reui/`, not flat alongside the other
- *    38 pre-existing vendored files — `docs/reui-reuse.md` now permits a subdirectory for a
- *    multi-file registry item like this one (#219 PR A standards review item 7). The nesting is
- *    what lets `gantt-skin.guard.test.ts` scope itself to exactly this directory (its own explicit
- *    nine-file list, `VENDORED_FILES`, is read relative to this folder) instead of having to scan
- *    every file under `components/reui/` and separate Gantt classes from every other vendored
- *    primitive's by filename pattern alone.
  *
- * NOTHING ELSE changed. Diffed against the sandbox's own `src/components/vendor-219/<name>.tsx`
- * output, every line differs only in one of the three ways above.
+ * Separately from the three mechanical, per-line edits above: this registry item landed inside a
+ * `gantt/` subdirectory of `components/reui/`, not flat alongside the other 38 pre-existing
+ * vendored files — `docs/reui-reuse.md` now permits a subdirectory for a multi-file registry item
+ * like this one (#219 PR A standards review item 7). The nesting is what lets
+ * `gantt-skin.guard.test.ts` scope itself to exactly this directory (its own explicit nine-file
+ * list, `VENDORED_FILES`, is read relative to this folder) instead of having to scan every file
+ * under `components/reui/` and separate Gantt classes from every other vendored primitive's by
+ * filename pattern alone.
+ *
+ * Vendored verbatim at commit `4bb46296`: diffed against the sandbox's own
+ * `src/components/vendor-219/<name>.tsx` output, every line differed only in one of the three
+ * ways above, nothing else — TRUE of this file's state AT THAT COMMIT. #219 PR A standards
+ * review item 10: it is not true of this file's state now. Everything logged below is a real,
+ * dated Quincy edit made SINCE that commit; `git diff --stat 4bb46296 HEAD -- gantt-nav.tsx`
+ * currently reads +8/−2.
  *
  * No production code imports this tree yet — `src/harness/harness-reachability.guard.test.ts`
  * makes that a build failure rather than a bug report, and the dev-only harness at

@@ -17,13 +17,15 @@
  *    primitives this registry item depends on (`button`, `calendar`, `checkbox`, `context-menu`,
  *    `dropdown-menu`, `popover`, `scroll-area`, `tooltip` — all already vendored in this
  *    directory, the last six as of #219 stage 1).
- * 4. Landed inside a `gantt/` subdirectory of `components/reui/`, not flat alongside the other
- *    38 pre-existing vendored files — `docs/reui-reuse.md` now permits a subdirectory for a
- *    multi-file registry item like this one (#219 PR A standards review item 7). The nesting is
- *    what lets `gantt-skin.guard.test.ts` scope itself to exactly this directory (its own explicit
- *    nine-file list, `VENDORED_FILES`, is read relative to this folder) instead of having to scan
- *    every file under `components/reui/` and separate Gantt classes from every other vendored
- *    primitive's by filename pattern alone.
+ *
+ * Separately from the three mechanical, per-line edits above: this registry item landed inside a
+ * `gantt/` subdirectory of `components/reui/`, not flat alongside the other 38 pre-existing
+ * vendored files — `docs/reui-reuse.md` now permits a subdirectory for a multi-file registry item
+ * like this one (#219 PR A standards review item 7). The nesting is what lets
+ * `gantt-skin.guard.test.ts` scope itself to exactly this directory (its own explicit nine-file
+ * list, `VENDORED_FILES`, is read relative to this folder) instead of having to scan every file
+ * under `components/reui/` and separate Gantt classes from every other vendored primitive's by
+ * filename pattern alone.
  *
  * Diffed against the sandbox's own `src/components/vendor-219/<name>.tsx` output, every line
  * differs only in one of the three ways above — WITH ONE EXCEPTION, forced by typecheck rather
@@ -33,6 +35,12 @@
  * edit, a non-null assertion, marked inline at the one site: `laneIntervals[lane]!.push(interval)`
  * — the preceding `while (laneIntervals.length <= lane) laneIntervals.push([])` guarantees the
  * index is populated.
+ *
+ * #219 PR A standards review item 10: the "every line differs only in one of the three ways
+ * above" claim (with the one exception just above) describes this file's state AT commit
+ * `4bb46296`, not its state now. Everything logged below is a real, dated Quincy edit made SINCE
+ * that commit — every added line is a pure addition beside the vendor's own exports, zero
+ * deletions; `git diff --stat 4bb46296 HEAD -- gantt-lib.tsx` currently reads +447/−0.
  *
  * No production code imports this tree yet — `src/harness/harness-reachability.guard.test.ts`
  * makes that a build failure rather than a bug report, and the dev-only harness at
