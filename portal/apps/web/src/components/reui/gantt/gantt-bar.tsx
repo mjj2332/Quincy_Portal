@@ -185,6 +185,20 @@
  * `ps-3`/`pe-3` (12px) instead of the base `px-1.5` (6px), gated on `canResizeStart`/
  * `canResizeEnd` (the same flags that gate the grips themselves — a bar with no live grip on a
  * side keeps the tighter `px-1.5` there) — see the label wrapper's own class comment.
+ *
+ * #219 PR A fix (dr-219a r6 HIGH #1): a completed bar that was ALSO selected re-painted in its
+ * own stage hue - `data-completed:bg-border/15` and `data-selected:bg-(--gantt-event-color)/30`
+ * were both single-attribute-selector rules (equal CSS specificity), so which one painted
+ * depended on Tailwind's own emission order, not on the bar's state, and `data-selected` happened
+ * to win - undoing the MEDIUM #5 fix above through an ordinary click. Fixed with a
+ * `data-completed:data-selected:bg-border/15` rule: a two-attribute selector, strictly higher
+ * specificity than either single-attribute rule, so the neutral background wins independent of
+ * source order — reordering the two single-attribute classes can no longer flip the outcome.
+ * Selection on a completed bar is now shown via a `ring-ring/50 ring-2` (the same shape/token the
+ * milestone diamond's own `isSelected` treatment already uses below), gated on the SAME
+ * `data-completed:data-selected:` combination, not on `:focus-visible` — it does not compete with
+ * the global focus outline HIGH #2 above already established as this bar's only focus indication.
+ * See the shell's own class comment for the full reasoning.
  */
 
 import {
@@ -880,6 +894,34 @@ function GanttBar<TData = unknown>({
       // placeholder behind the dashed preview - no dramatic restyle
       "data-[drag-kind=resize-start]:opacity-40 data-[drag-kind=resize-end]:opacity-40",
       "data-selected:bg-(--gantt-event-color)/30",
+      // #219 PR A fix (dr-219a r6 HIGH #1): the rule above and `data-completed:bg-border/15`
+      // (the "done" comment block above) used to be the WHOLE story, and both are exactly one
+      // attribute selector each - equal CSS specificity, so which one painted a completed bar
+      // that was ALSO selected depended on which Tailwind happened to emit LATER in the generated
+      // stylesheet, not on anything about the bar's own state. `data-selected` lost that draw, so
+      // selecting a done bar brought its stage hue straight back - the exact hue-dependence the
+      // "done" fix above exists to remove, reachable through an ordinary click. Reordering the two
+      // single-attribute classes would only flip which one wins BY EMISSION ORDER again, which a
+      // later refactor could just as easily flip back - the fix instead gives the COMBINATION its
+      // own rule, which Tailwind compiles to a selector with two attribute conditions
+      // (specificity 0,0,2,0) - strictly higher than either single-attribute rule above (0,0,1,0)
+      // - so the neutral completed background wins by CSS SPECIFICITY, independent of source
+      // order, and cannot be flipped back by reordering. Selection stays visible on a completed
+      // bar through the ring below instead of the background.
+      "data-completed:data-selected:bg-border/15",
+      // Hue-independent selection indicator for a completed+selected bar (the background above is
+      // now pinned to the neutral completed treatment either way, so selection needs some OTHER
+      // signal): the same `ring-ring/50 ring-2` shape/token this file already uses for the
+      // milestone diamond's own `isSelected` treatment (below), kept off `--gantt-event-color` on
+      // purpose. This is a NEW rule keyed on `data-selected` (an explicit selection state, set by
+      // `instance.api.selectEvent` on click/Enter) - not on `:focus-visible` - so it does not
+      // reintroduce the "second focus indicator" this file's own HIGH #2 note above describes: a
+      // bar that is merely keyboard-focused but not selected shows only the global
+      // `:focus-visible` outline, exactly as HIGH #2 intended. It fires only for the
+      // completed+selected combination, not for every selected bar - a non-completed selected bar
+      // already reads clearly via its own tinted `data-selected:bg-(--gantt-event-color)/30`
+      // background above, which this fix leaves untouched.
+      "data-completed:data-selected:ring-2 data-completed:data-selected:ring-ring/50",
       // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
       // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
       // the bar's own focus ring at the time even while the bar was visible, and once a step

@@ -155,3 +155,91 @@ describe("a completed bar's fill is hue-independent, not a per-hue alpha step (#
     expect(fill.className).toContain("bg-(--gantt-event-color)/40");
   });
 });
+
+/**
+ * #219 PR A fix (dr-219a r6 HIGH #1) — a completed bar SELECTED brought the stage hue back.
+ *
+ * Before this fix, the shell carried `data-completed:bg-border/15` and, a few classes later,
+ * `data-selected:bg-(--gantt-event-color)/30` — two rules with EQUAL specificity (one
+ * single-attribute selector each), so which one painted depended entirely on which Tailwind
+ * emitted later in the generated stylesheet. `data-selected` happened to come after
+ * `data-completed` in source order, so selecting an already-done bar re-painted it in its own
+ * stage colour — the exact hue-dependence the sibling describe block above exists to rule out,
+ * just reachable through an ordinary click instead of through two different event.color values.
+ *
+ * The fix gives the completed+selected COMBINATION its own two-attribute-selector rule
+ * (`data-completed:data-selected:bg-border/15`), which Tailwind compiles to a selector of
+ * strictly HIGHER specificity (0,0,2,0) than either single-attribute rule (0,0,1,0) — the neutral
+ * wash wins by CSS SPECIFICITY, not by which class happens to sit later in the array, so swapping
+ * the two single-attribute classes' order can never flip the outcome back. This test's job is
+ * narrower than a real browser paint: given the actual className string that ships, prove (a) the
+ * higher-specificity override rule is present and pins the SAME neutral value the plain
+ * `data-completed` rule uses, so a completed+selected bar cannot resolve to anything else, and (b)
+ * a distinct, hue-independent selection indicator exists that ONLY activates when BOTH
+ * `data-completed` and `data-selected` are true (so an unselected completed bar — same background
+ * rule present in its className either way, since Tailwind ships the whole utility set regardless
+ * of which data-* attributes happen to be set on THIS element — never matches the compound
+ * selector and stays undecorated).
+ */
+describe("a completed bar that is ALSO selected keeps the neutral completed background, distinguished by something other than hue (#219 PR A, dr-219a r6 HIGH #1)", () => {
+  it("selecting a completed bar does not bring its stage hue back, and the selection stays visible some other way", async () => {
+    const event: GanttEvent = {
+      id: "done-and-selected",
+      title: "Done And Selected",
+      start: START,
+      end: END,
+      resourceId: "r1",
+      color: "var(--signal-positive)",
+      progress: 100,
+    };
+    await render(
+      <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const bar = findBar("Done And Selected");
+    expect(bar.getAttribute("data-completed")).toBe("true");
+    expect(bar.hasAttribute("data-selected")).toBe(false);
+
+    // A completed-but-NOT-selected bar already carries whatever selection-indicator utility the
+    // fix adds — Tailwind's variant classes are static, present regardless of which data-*
+    // attributes are actually set on this particular element — so the class TEXT alone can't
+    // distinguish "selected" from "not". What CAN is the compound selector requiring BOTH
+    // attributes: this bar has only one of them, so it can never match a
+    // `data-completed:data-selected:…` rule.
+    const unselectedClassName = bar.className;
+    expect(unselectedClassName).toMatch(/data-completed:data-selected:bg-border\/15/);
+
+    await act(async () => {
+      bar.click();
+      await Promise.resolve();
+    });
+
+    expect(bar.getAttribute("data-completed")).toBe("true");
+    expect(bar.getAttribute("data-selected")).toBe("true");
+
+    // The className itself is unchanged by selection (it's the same static Tailwind variant
+    // list either way) — what matters is that the OVERRIDE rule pins the identical neutral value
+    // the plain `data-completed` rule already uses, at a selector Tailwind compiles with strictly
+    // higher specificity (two attribute selectors) than the single-attribute `data-selected`
+    // background rule below it, so it wins regardless of which of the two was emitted last.
+    expect(bar.className).toContain("data-completed:bg-border/15");
+    expect(bar.className).toMatch(/data-completed:data-selected:bg-border\/15/);
+    expect(bar.className).toContain("data-selected:bg-(--gantt-event-color)/30");
+
+    // Selection must still be visible on a completed bar, by some means OTHER than the
+    // background (which the fix pins to the neutral completed treatment either way) — and that
+    // means must be gated on the SAME two-attribute compound, not on `data-selected` alone,
+    // otherwise it would just be the plain (already-correct) non-completed selected treatment
+    // and prove nothing about THIS bug.
+    const selectionIndicator = /data-completed:data-selected:(?:ring-|border-|font-)\S+/;
+    expect(bar.className).toMatch(selectionIndicator);
+
+    // Hue-independence still holds for whatever that indicator is: it must not reference the
+    // event's own colour custom property.
+    const [indicatorClass] = bar.className.match(selectionIndicator) ?? [];
+    expect(indicatorClass).toBeDefined();
+    expect(indicatorClass).not.toContain("--gantt-event-color");
+  });
+});
