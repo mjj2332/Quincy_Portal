@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, focusTargetAfterClearingSearch, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
@@ -1155,7 +1155,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       </section>}
 
-      <div data-testid="dashboard-toolbar" className={cn(
+      <div data-testid="dashboard-toolbar" tabIndex={-1} className={cn(
         "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
@@ -1236,10 +1236,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               aria-label="Clear search"
               onClick={() => {
                 clearDashboardSearch(currentUserId);
-                // Clearing unmounts this very button. Hand focus to a deliberate surviving control
-                // (the active view button -- the same target `selectProjectScope` uses) so it never
-                // falls back to `document.body`, from where the next Tab restarts in page chrome.
-                window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key^="dashboard-view-"][data-active="true"]')?.focus(), 0);
+                // Clearing unmounts this very button. Hand focus to a control that survives it (see
+                // `focusTargetAfterClearingSearch`) so it never falls back to `document.body`, from
+                // where the next Tab restarts in the page chrome.
+                window.setTimeout(() => focusTargetAfterClearingSearch(document.querySelector<HTMLElement>('[data-testid="dashboard-toolbar"]'))?.focus({ preventScroll: true }), 0);
               }}
               className="relative inline-flex items-center shrink-0 after:absolute after:-inset-2 max-[721px]:after:-inset-4"
             >
