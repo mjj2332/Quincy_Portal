@@ -3344,8 +3344,23 @@ reached, both the corruption and its self-heal have already happened. Test (l) o
 search A in a separate `act()` call after resolving the stale refetch, on the theory that staying
 "microtask-only" (no `flush()`) would keep it ahead of the self-heal; empirically it did not, and the
 test passed even with its own guard deleted. The fix: return to A from INSIDE the SAME, still-open
-`act()` call that resolves the stale refetch, timed (a calibrated microtask-hop count, with margin
-measured on both sides) to land after the corrupted accept but before the sibling's self-heal — and
-assert the transient probe both DID see the corrupted value and DID see the eventual correct one,
-not just that it never saw the corrupted value, so a future change to how React writes controlled
-`<select>` selections can't make the assertion pass vacuously by observing nothing at all.
+`act()` call that resolves the stale refetch — and assert the transient probe both DID see the
+corrupted value and DID see the eventual correct one, not just that it never saw the corrupted value,
+so a future change to how React writes controlled `<select>` selections can't make the assertion pass
+vacuously by observing nothing at all.
+
+A single fixed hop count is itself a second, narrower version of the same brittleness this correction
+exists to fix: a React or react-query upgrade that shifts exactly where the corrupted-accept/self-heal
+window falls would make a hard-coded hop count pass vacuously (landing outside the window on both
+sides) without the guard doing any work. Test (l) does not pick one — it sweeps EVERY hop count from 0
+to 16 inclusive (`it.each`, fresh render/`QueryClient` per iteration), a range chosen to generously
+bracket the measured window on both sides regardless of where a future build moves it. With the guard
+in place, every swept hop count passes. Disabling the guard (`Dashboard.tsx`'s
+`if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData) return;`) and
+re-running makes hop counts 5 through 16 fail — 5-9/11/13-15 because the probe never observed the
+sibling's self-heal back to "2" inside that return-to-A window (only the corrupted "3"), and 10/16
+because it observed both "3" and "2", i.e. the corrupted value was genuinely selected before the
+self-heal corrected it — both failures are the guard doing its job, for the right reason, not test
+noise. Hop counts 0-4 land before the corrupted accept happens at all, so they pass with or without
+the guard; that's expected and does not weaken the sweep, since the failing majority of the range is
+what proves the guard matters.

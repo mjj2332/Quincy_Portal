@@ -557,7 +557,14 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     return null;
   }
 
-  it("(l) a queued refresh (issued for A, after a confirmed priority save) that settles AFTER the committed search has moved on to B, with B's own real data already in, must not stamp B's rows as accepted under A's key", async () => {
+  // Helper parameterised by hop count -- see the sweep rationale in its own block comment below.
+  // Runs the full (l) scenario (mount, commit search A, click priority, commit search B, resolve B,
+  // then resolve the stale alpha refetch and return to search A after exactly `hopCount` microtask
+  // hops) and returns what the `<option>` `selected` probe observed, plus the settled Alpha select
+  // value after a final full flush. Each call is a fresh render against a fresh
+  // `host`/`queryClient`/`runtime` -- the file's own top-level `beforeEach` recreates all three before
+  // every `it`, including every `it.each` iteration below -- so no state carries between hop counts.
+  async function runQueuedRefreshRaceScenario(hopCount: number) {
     let alphaCalls = 0;
     let resolveStaleAlphaRefetch!: (value: unknown) => void;
     let resolveBeta!: (value: unknown) => void;
@@ -656,19 +663,27 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     // FRESH cache snapshot on every render, for ANY reason, not only when its own subscribe callback
     // fires -- so the very re-render the corrupted accept's own `setAcceptedProjects` triggers already
     // observes B's real (already-cached, un-notified) data, and B's primary accept effect self-heals
-    // `acceptedProjects` back to key B as a passive effect off THAT SAME render. Measured empirically
-    // (hop-by-hop instrumentation, #230 round 3): the corrupted accept itself lands within ~4
-    // microtask hops of resolving this promise; B's self-heal follows within ~9-10. Both happen
-    // inside ONE continuous flush -- `act()` fully drains all pending work, including every
-    // subsequent effect, before its own call resolves, so there is no external "pause partway
-    // through" available from a SEPARATE, later `act()`/`microflush()` call: by the time any later
-    // call is reached, both the corruption and its self-heal have already happened, and this test
-    // would pass even with the guard above removed (this is exactly what round 3 review caught).
+    // `acceptedProjects` back to key B as a passive effect off THAT SAME render. Both happen inside
+    // ONE continuous flush -- `act()` fully drains all pending work, including every subsequent
+    // effect, before its own call resolves, so there is no external "pause partway through" available
+    // from a SEPARATE, later `act()`/`microflush()` call: by the time any later call is reached, both
+    // the corruption and its self-heal have already happened for whichever hop count landed inside
+    // that window.
     //
-    // The only way to observe the transient corrupted `{key:A, rows:B}` snapshot is to return to
-    // search A from INSIDE this same, still-open `act()` call, timed to land after the corrupted
-    // accept but before B's self-heal -- both the probe installation and the return to A happen here,
-    // not in a later block.
+    // NOT calibrated to a single hop count (round 3 review's own objection to an earlier version of
+    // this test): the scenario is swept across EVERY hop count in a range (0..16, see the `it.each`
+    // below) that generously brackets the corrupted-accept/self-heal window on both sides, whichever
+    // build of React/react-query actually produces it. Wherever inside that range the window happens
+    // to fall, at least one swept hop count lands inside it and is a genuine discriminator -- proven by
+    // temporarily disabling the guard and re-running (see docs/lessons.md for which hop counts failed
+    // and why). The other hop counts in the sweep exercise the corrupted path never triggering, or
+    // triggering and fully self-healing before this scenario's own read, both of which the guard must
+    // also hold up under. No individual hop count is "the" test; the sweep as a whole is.
+    //
+    // The only way to observe the transient corrupted `{key:A, rows:B}` snapshot (on whichever swept
+    // hop counts land inside the window) is to return to search A from INSIDE this same, still-open
+    // `act()` call, timed by `hopCount` -- both the probe installation and the return to A happen
+    // here, not in a later block.
     //
     // React-DOM's controlled `<select>` never writes `select.value` directly, on mount OR update --
     // both paths (`ReactDOMSelect`'s wrapper) set each `<option>`'s own `.selected` PROPERTY to match
@@ -689,10 +704,10 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     try {
       await act(async () => {
         resolveStaleAlphaRefetch({ projects: [confirmedAlphaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [confirmedAlphaProject.id] } } });
-        // 6 hops: comfortably inside the measured window (corrupted accept by ~4, B's self-heal not
-        // until ~9-10) -- see the comment above for how this was calibrated and why a fixed hop count,
-        // rather than a `flush()`/`microflush()` call boundary, is the only way to land inside it.
-        for (let hop = 0; hop < 6; hop += 1) await Promise.resolve();
+        // Hop count under test -- swept by the `it.each` below, not a single calibrated value. See
+        // the block comment above for why a fixed hop count would be brittle here, and why the sweep
+        // is the actual discriminator instead.
+        for (let hop = 0; hop < hopCount; hop += 1) await Promise.resolve();
         locationStore().replace("/?q=alpha");
         syncDashboardSearchDraftFromLocation("alpha", "admin-1");
       });
@@ -700,23 +715,39 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
       Object.defineProperty(HTMLOptionElement.prototype, "selected", originalSelectedDescriptor);
     }
 
-    // Beta's priority (3) must never have been selected while displaying the alpha search, even
-    // fleetingly, on any commit before the self-heal lands. A positive check too, not only a
-    // negative one: the probe must have observed the legitimate "2" selection somewhere in this same
-    // window -- otherwise a future change to how React writes controlled <select> selections could
-    // make the "never '3'" assertion pass vacuously, by the probe observing nothing at all.
-    expect(observedSelections).toContain("2");
-    expect(observedSelections).not.toContain("3");
-
     // Let anything still outstanding (a macrotask-scheduled react-query notification, if any) settle
     // before the final read.
     await flush();
 
     // The mocked Board only ever renders `projects[0]`'s priority; Beta's is 3, Alpha's own
-    // (confirmed) priority is 2 -- the settled state, after any self-heal, must land on Alpha's own.
+    // (confirmed) priority is 2 -- the settled state, after any self-heal, must land on Alpha's own,
+    // regardless of which hop count this iteration used (the final `flush()` above drains any
+    // outstanding self-heal before this read, for every hop count in the sweep).
     const alphaSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]');
-    expect(alphaSelect?.value).toBe("2");
-  });
+    return { observedSelections, alphaSelectValue: alphaSelect?.value };
+  }
+
+  // Swept, not calibrated: EVERY hop count from 0 to 16 inclusive, generously bracketing the
+  // corrupted-accept (~4 hops)/self-heal (~9-10 hops) window measured for #230 round 3, on either
+  // side, so the sweep keeps discriminating even if a future React or react-query upgrade shifts
+  // exactly where that window falls. See `runQueuedRefreshRaceScenario`'s own block comment for why a
+  // single fixed hop count is brittle instead.
+  const hopCountsBracketingTheWindow = Array.from({ length: 17 }, (_, index) => index);
+
+  it.each(hopCountsBracketingTheWindow)(
+    "(l) hop=%i: a queued refresh (issued for A, after a confirmed priority save) that settles AFTER the committed search has moved on to B, with B's own real data already in, must not stamp B's rows as accepted under A's key",
+    async (hopCount) => {
+      const { observedSelections, alphaSelectValue } = await runQueuedRefreshRaceScenario(hopCount);
+      // Beta's priority (3) must never have been selected while displaying the alpha search, even
+      // fleetingly, on any commit before the self-heal lands. A positive check too, not only a
+      // negative one: the probe must have observed the legitimate "2" selection somewhere in this
+      // same window -- otherwise a future change to how React writes controlled <select> selections
+      // could make the "never '3'" assertion pass vacuously, by the probe observing nothing at all.
+      expect(observedSelections).toContain("2");
+      expect(observedSelections).not.toContain("3");
+      expect(alphaSelectValue).toBe("2");
+    },
+  );
 });
 
 // #230 Sol review round 2, item 3 (MEDIUM). `acceptedQueryUpdatedAtRef` (Dashboard.tsx ~:382)
