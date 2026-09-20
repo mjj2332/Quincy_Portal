@@ -41,7 +41,17 @@ function sydneyTime(year: number, month: number, day: number, hour: number, minu
   return new TZDate(year, month - 1, day, hour, minute, 0, 0, SYDNEY_TZ);
 }
 
-/** Existing app-wide stage/semantic tokens (`components/atoms.tsx`'s `stageColors`) — never invented ones. */
+/**
+ * The same semantic tokens `components/atoms.tsx`'s `stageColors` maps each stage to — never
+ * invented ones — but HAND-COPIED, not imported: `stageColors` there is not exported, and
+ * `atoms.tsx` pulls in `lib/stages.tsx` (React hooks, an API client, `useCapabilities`) that this
+ * file's own header rules out ("Pure data + pure builder functions, no React"). #219 PR A
+ * standards review item 11: exporting `stageColors` and importing it here was considered and
+ * rejected on exactly that ground — not a clean one-line change, since it would drag that whole
+ * dependency chain into a module `fixtures.test.ts` runs with no DOM. These four literals can
+ * drift from `atoms.tsx`'s six-entry map silently; if that happens, this is the place to notice it
+ * and re-copy, not a signal that either side is wrong.
+ */
 const STAGE_COLORS = {
   awaitingRaw: "var(--greige-400)",
   rawReview: "var(--signal-caution)",
