@@ -61,13 +61,18 @@
  * each site's own inline comment.
  *
  * #219 PR A fix (dr-219a HIGH #4, part 2): the Adjust-mode ghost's `ring-ring ring-1` is gone —
- * same reasoning as HIGH #2 above (the unlayered `:focus-visible` ring already wins the contest,
- * so a SECOND ring competing for the same visual role only muddies it). A move-kind ghost that is
- * keyboard-owned (`data-drag-source=keyboard`, via `gantt-bar.tsx`'s new selector) now also
- * renders the event's own title inside itself, since `gantt-bar.tsx`'s companion fix keeps the
- * origin bar visible (faded, not hidden) for a keyboard move — without a title, the ghost was a
- * bare rectangle no sighted or assistive-tech user could identify. A pointer-owned ghost (the
- * cursor clone stands in for the hidden origin bar already) keeps no title, unchanged.
+ * NOT the same reasoning as HIGH #2 above (this ghost is a `pointer-events-none` `<div>` with no
+ * `tabindex`, so `:focus-visible` never applies to it either way — the ring's removal has nothing
+ * to do with the global focus outline). b45d6d8 dropped it because a solid full-ink ring buried
+ * the dashed preview border underneath it instead of merely accenting it — the dashed border
+ * alone now carries the "this is a preview" cue for both sources. A move-kind ghost whose
+ * `ghost.source === "keyboard"` (below — this file's own `useGanttSelector` read of `state.drag
+ * .source`, not `gantt-bar.tsx`'s `data-drag-source`, which is a DOM attribute on the ORIGIN bar,
+ * a different element) now also renders the event's own title inside itself, since
+ * `gantt-bar.tsx`'s companion fix keeps the origin bar visible (faded, not hidden) for a keyboard
+ * move — without a title, the ghost was a bare rectangle no sighted or assistive-tech user could
+ * identify. A pointer-owned ghost (the cursor clone stands in for the hidden origin bar already)
+ * keeps no title, unchanged.
  *
  * #219 PR A fix (dr-219a MEDIUM #6): `GanttNowLine` and `GanttNowDot` both used `destructive`
  * (oxblood `--signal-critical`) — a color this palette already spends on overdue/critical, which

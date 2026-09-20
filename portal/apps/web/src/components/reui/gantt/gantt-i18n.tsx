@@ -39,9 +39,11 @@
  * the entry announcement), `adjustTargetLabels` (names the three targets), and five composers
  * (`adjustEntered`/`adjustRetargeted`/`adjustStepped`/`adjustCommitted`) plus two plain strings
  * (`adjustNoChange`, `adjustCancelled`, `adjustTargetLocked`). A refused STEP (not a refused
- * retarget) reuses the existing `keyboardNudgeLocked`/`keyboardNudgeInvalid`/
- * `keyboardNudgeRejected` above unchanged — the same three reasons `nudgeEvent`'s single commit
- * already announces, on the SAME gate (`proposeNudge`, shared by both).
+ * retarget) reuses the existing `changeBlockedLocked`/`changeBlockedInvalid`/
+ * `changeBlockedRejected` below (named `keyboardNudgeLocked`/`Invalid`/`Rejected` at the time this
+ * paragraph was first written — renamed by the dr-219a HIGH #1 fix just below) unchanged — the
+ * same three reasons `nudgeEvent`'s single commit already announces, on the SAME gate
+ * (`proposeNudge`, shared by both).
  *
  * #219 PR A fix (dr-219a HIGH #1 / luna-219a #9), rename only — string VALUES unchanged:
  * `keyboardNudgeLocked`/`Invalid`/`Rejected` are renamed to `changeBlockedLocked`/`Invalid`/
