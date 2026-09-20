@@ -6,6 +6,7 @@ import { Dashboard } from "./Dashboard";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import { __resetDashboardSearchStoreForTest, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
+import { locationStore } from "../lib/router";
 
 const apiGetMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
@@ -83,6 +84,7 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
   const searchedProject = { id: "project-priority", street: "1 Priority Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const otherProject = { id: "project-other", street: "2 Off List Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null, boardPosition: 1, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const searchedKey = dashboardProjectsKey("admin-1", "admin", 0, false, "priority");
+  const qLessKey = dashboardProjectsKey("admin-1", "admin", 0, false);
 
   beforeEach(() => {
     window.history.replaceState(null, "", "/?q=priority");
@@ -108,6 +110,32 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     return select;
   }
 
+  // (a)/(c) need the q-LESS entry to genuinely exist (not merely be absent, which would make an
+  // assertion that it's untouched vacuous) -- mounts at a bare "/" first (populating the q-less
+  // cache entry from a real fetch), THEN commits the search through `locationStore().replace`, the
+  // same URL-write path `ShellSearch`'s own commit uses, mirrored with
+  // `syncDashboardSearchDraftFromLocation` the way `lib/app-router.tsx`'s `ShellRoute` calls it on
+  // every location change. Waits on `getQueryData`, not the rendered `<select>`: the render reads
+  // the `acceptedProjects` SNAPSHOT (Dashboard.tsx ~:370), gated behind `interactionBlocked`
+  // (~:354, includes `pendingOrdering.size > 0`) -- a snapshot the accept effect will not update
+  // while a mutation is in flight, on main today, searched or not (a separate, pre-existing
+  // behaviour, not this cache-key bug -- see this file's own (a)/(c) history and the step-6 lessons
+  // entry). `getQueryData` reads the react-query cache directly and is unaffected by that gate.
+  async function renderUnfilteredThenSearch() {
+    window.history.replaceState(null, "", "/");
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await vi.waitFor(() => expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull());
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(qLessKey)).toBeDefined());
+    act(() => {
+      locationStore().replace("/?q=priority");
+      syncDashboardSearchDraftFromLocation("priority", "admin-1");
+    });
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(searchedKey)).toBeDefined());
+    return host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+  }
+
   // The POST is held open (a manually-settled promise, not `mockResolvedValue`'s already-settled
   // one) so the assertion lands deterministically between the SYNCHRONOUS optimistic write and
   // whatever the eventual response does -- `notifyManager`'s default scheduler is a real
@@ -122,17 +150,24 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     return { settle: (value: { priority: number; boardRevision: number }) => settle(value), fail: (reason: unknown) => fail(reason) };
   }
 
-  it("(a) an optimistic priority change under a search is visible immediately, with no new /api/projects call needed to get there", async () => {
+  // Rescoped by the coordinator: the original (a) asserted on the rendered `<select>` "immediately"
+  // showing the optimistic value, which cannot happen on main regardless of this bug (see this
+  // block's shared `renderUnfilteredThenSearch` docblock) -- filed as its own, separate issue. This
+  // now asserts the EXACT-KEY write contract instead: the q-aware entry gets the optimistic value,
+  // and the q-less entry (loaded first, real data, not absent) is untouched while the POST is
+  // pending.
+  it("(a) an optimistic priority change at /?q=... writes the q-aware cache entry only -- the q-less entry (loaded first) is untouched while the POST is pending", async () => {
     deferredPost();
-    const select = await renderSearchedDashboard();
-    const getsBeforeMutation = apiGetMock.mock.calls.length;
+    const select = await renderUnfilteredThenSearch();
     await act(async () => {
       select.value = "2";
       select.dispatchEvent(new Event("change", { bubbles: true }));
       await flush();
     });
-    expect(select.value).toBe("2");
-    expect(apiGetMock.mock.calls.length).toBe(getsBeforeMutation);
+    const searched = queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(searchedKey);
+    const qLess = queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(qLessKey);
+    expect(searched?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(2);
+    expect(qLess?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(1);
   });
 
   it("(b) the optimistic write lands in the cache entry keyed with the committed search", async () => {
@@ -147,19 +182,25 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     expect(cached?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(2);
   });
 
-  it("(c) a rejected priority POST under a search shows the new value, then rolls back to the old one", async () => {
+  // Rescoped by the coordinator the same way (a) was -- the rendered `<select>` cannot observe this
+  // either, for the same `acceptedProjects`-snapshot reason. Asserts the cache directly: the q-aware
+  // entry holds the new value while pending and rolls back to the old one on rejection; the q-less
+  // entry (loaded first) never changes at any point.
+  it("(c) a rejected priority POST at /?q=... rolls back the q-aware entry only -- the q-less entry (loaded first) never changes", async () => {
     const post = deferredPost();
-    const select = await renderSearchedDashboard();
+    const select = await renderUnfilteredThenSearch();
     await act(async () => {
       select.value = "2";
       select.dispatchEvent(new Event("change", { bubbles: true }));
       await flush();
     });
-    expect(select.value).toBe("2");
+    expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(searchedKey)?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(2);
+    expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(qLessKey)?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(1);
     await act(async () => {
       post.fail(new Error("Offline"));
       await flush();
     });
-    expect(select.value).toBe("1");
+    expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(searchedKey)?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(1);
+    expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(qLessKey)?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(1);
   });
 });
