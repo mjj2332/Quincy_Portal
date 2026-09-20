@@ -34,9 +34,12 @@
  * dated Quincy edit made SINCE that commit; `git diff --stat 4bb46296 HEAD -- gantt-bar.tsx`
  * currently reads +679/−10.
  *
- * No production code imports this tree yet — `src/harness/harness-reachability.guard.test.ts`
- * makes that a build failure rather than a bug report, and the dev-only harness at
- * `src/harness/reui-scheduling/` is the only thing that renders it, with local fixture data.
+ * #220 gave this tree its first real production consumer: `components/ProductionGantt.tsx`,
+ * which `screens/Dashboard.tsx` reaches through a literal `lazy(() => import(...))`.
+ * `src/harness/harness-reachability.guard.test.ts`'s `ALLOWED_VENDOR_SCHEDULING_CONSUMERS` is what
+ * polices that — an EXACT file-path entry, not a widened prefix match, so nothing else in the app
+ * may import this tree directly. The dev-only harness at `src/harness/reui-scheduling/` still
+ * exercises it too, against local fixture data, independent of the production consumer.
  *
  * This file: the interactive bar — selection, the resize grips, the recurrence/completion
  * indicators, and the context menu. Two `IconPlaceholder`s resolved by `add`, matching each

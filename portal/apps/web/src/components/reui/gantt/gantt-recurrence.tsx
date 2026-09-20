@@ -41,9 +41,12 @@
  * reads no output at all. The claim above is true of this file's state TODAY, not only at commit
  * `4bb46296`.
  *
- * No production code imports this tree yet — `src/harness/harness-reachability.guard.test.ts`
- * makes that a build failure rather than a bug report, and the dev-only harness at
- * `src/harness/reui-scheduling/` is the only thing that renders it, with local fixture data.
+ * #220 gave this tree its first real production consumer: `components/ProductionGantt.tsx`,
+ * which `screens/Dashboard.tsx` reaches through a literal `lazy(() => import(...))`.
+ * `src/harness/harness-reachability.guard.test.ts`'s `ALLOWED_VENDOR_SCHEDULING_CONSUMERS` is what
+ * polices that — an EXACT file-path entry, not a widened prefix match, so nothing else in the app
+ * may import this tree directly. The dev-only harness at `src/harness/reui-scheduling/` still
+ * exercises it too, against local fixture data, independent of the production consumer.
  *
  * This file: recurrence-rule expansion (daily/weekly/monthly/yearly) for repeating Gantt events.
  * No icons used.

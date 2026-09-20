@@ -3626,3 +3626,40 @@ cheaper check passes.
 `event-calendar-done-dim.dom.test.tsx` is that test, and its failure message names
 `VIEW_CONFIG_KEYS` directly so the next person does not have to rediscover the mechanism. Deleting
 the key from the list turns three of its five cases red.
+
+## A consumer allow-list keyed only on path, over a restricted set with more than one member, grants ALL of them (#220, 2026-09-21)
+
+`harness-reachability.guard.test.ts`'s detector (ii) polices two vendored trees at once
+(`components/reui/gantt/`, `components/reui/event-calendar/`) through one list,
+`ALLOWED_VENDOR_SCHEDULING_CONSUMERS`: any file whose path started with an entry on the list was
+exempt from detector (ii) entirely, for BOTH trees. That was fine while every entry on the list was
+either the harness (legitimately allowed to import both, as the shared sandbox for exercising
+every vendored primitive) or a vendored tree's own self-reference (a gantt file importing a
+sibling gantt file has to be exempt from a detector that is, definitionally, about imports FROM
+OUTSIDE the tree).
+
+#220 gave the Gantt tree its first real, narrowly-scoped production consumer —
+`components/ProductionGantt.tsx`, which needs `components/reui/gantt/` and has no legitimate
+reason to import `components/reui/event-calendar/` at all. Adding its path to the existing
+bare-path list would have compiled, typechecked, and passed the existing self-tests — none of them
+happened to plant an import of the OTHER restricted tree from a real, narrowly-scoped consumer,
+only from the harness (which is supposed to reach both) or from within a tree itself (same). The
+gap was only found by writing the build spec's own required proof directly — plant `import
+"@/components/reui/event-calendar/…"` inside the new consumer and confirm the guard still goes
+red — rather than trusting that "the file is on the allow-list" was itself sufficient.
+
+The fix: the allow-list became a map from consumer path to WHICH of the restricted set that
+specific consumer may reach (`{ consumerPrefix, allowedVendorPrefixes }`), with the harness and
+each tree's self-reference kept at "all", and the new narrow consumer scoped to exactly the one
+prefix it needs.
+
+The generalisation: **a permission list checked only by "is this actor on the list", against a
+restricted SET with more than one member, is a promise that the actor may touch NOTHING in the
+restricted set — never mind which member it was actually granted for.** The moment a real,
+narrowly-scoped consumer joins a list whose older members were all broad ones (a sandbox, a
+tree's own self-reference), re-derive what "allowed" should mean per entry, don't just append a
+path. And when a build spec asks for a specific negative proof ("plant X, show it red, remove it"),
+do exactly that by hand before trusting a refactored detector — a self-test with fixture data can
+still share the SAME wrong assumption as the code it exercises if both were written by the same
+reasoning at the same time.
+

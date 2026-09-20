@@ -56,17 +56,20 @@ import type { Plugin } from "vite";
  * - `src/harness/` — the dev-only Vite HTML entry for exercising vendored primitives against local
  *   fixtures before anything in the production app imports them. Stays forever: it is not meant to
  *   ever ship, regardless of what else lands in `src/components/reui/`.
- * - `src/components/reui/gantt/` — vendored, unwired ReUI Gantt primitives (#219 stage 1). Removed
- *   from this list by the slice that adopts the Gantt into the Dashboard (#220), which is exactly
- *   the point at which a real production consumer starts importing it on purpose.
  * - `src/components/reui/event-calendar/` — vendored, unwired ReUI event-calendar primitives
  *   (#219 PR B). Same deal, same removal condition: it comes off this list in the slice that gives
  *   the calendar a real production consumer, NOT when the tree merely looks finished. Note that
  *   FullCalendar remains the production calendar until then, so nothing is waiting on this entry.
+ *
+ * `src/components/reui/gantt/` — vendored ReUI Gantt primitives (#219 stage 1) — came OFF this list
+ * in #220, the slice that adopted the Gantt into the Dashboard (`components/ProductionGantt.tsx`,
+ * reached from `screens/Dashboard.tsx` through a lazy import). That is exactly the point at which a
+ * real production consumer starts importing it on purpose, so a production bundle reaching it is no
+ * longer a bug this plugin should fail the build over — `harness-reachability.guard.test.ts`'s
+ * `ALLOWED_VENDOR_SCHEDULING_CONSUMERS` is what now polices WHICH file is allowed to import it.
  */
 export const RESTRICTED_MODULE_PREFIXES = [
   "src/harness/",
-  "src/components/reui/gantt/",
   "src/components/reui/event-calendar/",
 ] as const;
 

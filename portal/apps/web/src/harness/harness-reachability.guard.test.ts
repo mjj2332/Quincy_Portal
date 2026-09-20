@@ -15,12 +15,16 @@
  *
  * (i)   No non-test source file outside `src/harness/` imports anything under `src/harness/`,
  *       including via an `import.meta.glob` whose pattern could reach that tree.
- * (ii)  No non-test source file outside `src/harness/` and outside `components/reui/gantt/` /
- *       `components/reui/event-calendar/` imports from either of those two vendored trees, same
- *       glob-reach rule. This is what "no production consumer" means for #219 stage 1 — the
- *       vendored Gantt files land in this stage with nothing wired to them. #220 and #222 relax
- *       this deliberately, one path at a time, with a comment recording why (see the ALLOWED list
- *       below).
+ * (ii)  No non-test source file outside `src/harness/`, outside `components/reui/gantt/` /
+ *       `components/reui/event-calendar/`, and outside `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`
+ *       imports from either of those two vendored trees, same glob-reach rule. #219 stage 1 landed
+ *       both vendored trees with nothing wired to them at all. #220 relaxed this deliberately for
+ *       Gantt — `components/ProductionGantt.tsx` is now that tree's real production consumer, an
+ *       exact-file-path entry on the allow list below, reached from `screens/Dashboard.tsx` only
+ *       through a literal `lazy(() => import(...))` that never itself imports the vendored tree.
+ *       #222 has not yet done the same for `event-calendar/`; when it does, it adds its own
+ *       consumer to the same list with its own comment, the same way, rather than widening the
+ *       prefix match.
  * (iii) No non-test production source file hides a NEW non-literal `import()` call that could,
  *       at runtime, resolve to the harness or the vendored trees. A fixed, exact baseline
  *       (file + count) whitelists what is already on `main`; anything beyond that baseline fails.
@@ -237,6 +241,22 @@ function isImportMetaUrl(node: AstNode | undefined): boolean {
   return property.name === "url";
 }
 
+/**
+ * #220 S8 decision record: this walk (and `extractSpecifiers` below) never reads Babel's
+ * `importKind` — a whole-declaration `import type { X } from "..."`, or a per-specifier
+ * `import { type X } from "..."`, is captured as a `literalSpecifiers` entry exactly like a value
+ * import. That is a deliberate, tested choice, not an oversight: see the "whole-scanner fixtures"
+ * describe block below (`import type { X } from vendored gantt is STILL caught...`) for the
+ * self-tests that lock it in, and their own comment for the full reasoning (short version: a
+ * type-only import is elided under this project's `isolatedModules: true` and so can never reach
+ * `forbid-dev-only-modules.ts`'s real, build-time module-graph backstop regardless of what this
+ * static guard does; importKind-aware parsing has a real correctness cost — whole-declaration,
+ * per-specifier, and `export type` forms each need distinct handling and their own tests — for a
+ * benefit that is purely cosmetic). `lib/production-gantt-adapter.ts`'s own header records the
+ * same finding from the consuming side, and keeps its `ProductionGanttResource`/
+ * `ProductionGanttEvent<TData>` as local structural types rather than `import type`-ing the real
+ * vendored ones, for exactly this reason.
+ */
 interface ExtractionResult {
   /** Literal specifiers from static import / export-from / literal or template import() / literal require(). */
   literalSpecifiers: string[];
@@ -496,18 +516,49 @@ describe("guard: nothing outside src/harness/ imports src/harness/", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Paths allowed to import the vendored scheduling trees. #220 (Gantt consumer) and #222
- * (event-calendar consumer) each relax this deliberately, one prefix at a time — when that
- * happens, add the new consumer's path here with a comment naming the issue, do not widen the
- * prefix match below it.
+ * Vendor scheduling tree prefixes, and — per consumer prefix — WHICH of those vendor prefixes that
+ * consumer may import. `harness/` and each vendored tree's own self-reference are allowed BOTH
+ * (the harness is the sandbox for exercising every vendored primitive; a file inside one vendored
+ * tree importing a sibling inside the SAME tree is how that tree is built at all). A real
+ * production consumer like `components/ProductionGantt.tsx` (#220) is scoped to ONLY the one tree
+ * it was actually given — plain string-prefix matching on `file.path` (as a bare allow-list, with
+ * no per-vendor scoping) would have licensed it to import `event-calendar/` too, simply by being on
+ * the list at all; the mapping below is what stops that. #220 (Gantt consumer) and #222
+ * (event-calendar consumer) each relax this deliberately, one prefix at a time — when that happens,
+ * add the new consumer's path here, scoped to the ONE vendor prefix it actually needs, with a
+ * comment naming the issue. Never widen `VENDOR_SCHEDULING_PREFIXES` itself, and never grant a real
+ * consumer `ALL_VENDOR_SCHEDULING_PREFIXES` unless it genuinely imports from both trees.
  */
 const VENDOR_SCHEDULING_PREFIXES = ["components/reui/gantt/", "components/reui/event-calendar/"];
-const ALLOWED_VENDOR_SCHEDULING_CONSUMERS = ["harness/", ...VENDOR_SCHEDULING_PREFIXES];
+const ALL_VENDOR_SCHEDULING_PREFIXES: readonly string[] = VENDOR_SCHEDULING_PREFIXES;
+
+type AllowedVendorSchedulingConsumer = { consumerPrefix: string; allowedVendorPrefixes: readonly string[] };
+
+const ALLOWED_VENDOR_SCHEDULING_CONSUMERS: readonly AllowedVendorSchedulingConsumer[] = [
+  { consumerPrefix: "harness/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
+  { consumerPrefix: "components/reui/gantt/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
+  { consumerPrefix: "components/reui/event-calendar/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
+  // #220 — the production Gantt surface. An EXACT file path, not a directory prefix: this list is
+  // matched with `file.path.startsWith(consumerPrefix)` and gates BOTH vendored trees (see
+  // `VENDOR_SCHEDULING_PREFIXES` above), so a directory entry here would silently license every
+  // future file under it to import `event-calendar/` too, not just this one Gantt consumer. Scoped
+  // to `["components/reui/gantt/"]` alone, not `ALL_VENDOR_SCHEDULING_PREFIXES` — this file has no
+  // legitimate reason to import `event-calendar/`, and a bare (unscoped) allow-list entry would
+  // have missed exactly that: this guard's own "Done when" proof plants
+  // `import "@/components/reui/event-calendar/…"` inside this file and requires it STILL fails.
+  // `screens/Dashboard.tsx` itself is NOT on this list — it reaches this file only through a
+  // literal `lazy(() => import("../components/ProductionGantt"))`, never a direct import of
+  // `components/reui/gantt/`, so it stays outside detector (ii) entirely, same as it always has.
+  { consumerPrefix: "components/ProductionGantt.tsx", allowedVendorPrefixes: ["components/reui/gantt/"] },
+];
 
 function findVendorSchedulingImportersOutsideAllowed(files: FileNode[]): string[] {
   return files
-    .filter((file) => !file.isTest && !ALLOWED_VENDOR_SCHEDULING_CONSUMERS.some((prefix) => file.path.startsWith(prefix)))
-    .filter((file) => file.importTargets.some((target) => VENDOR_SCHEDULING_PREFIXES.some((prefix) => target.startsWith(prefix))))
+    .filter((file) => !file.isTest)
+    .filter((file) => {
+      const allowedVendorPrefixes = ALLOWED_VENDOR_SCHEDULING_CONSUMERS.find((consumer) => file.path.startsWith(consumer.consumerPrefix))?.allowedVendorPrefixes ?? [];
+      return file.importTargets.some((target) => VENDOR_SCHEDULING_PREFIXES.some((vendorPrefix) => target.startsWith(vendorPrefix) && !allowedVendorPrefixes.includes(vendorPrefix)));
+    })
     .map((file) => file.path)
     .sort();
 }
@@ -533,14 +584,39 @@ describe("guard: no production consumer of components/reui/gantt or components/r
     expect(findVendorSchedulingImportersOutsideAllowed(planted)).toEqual(["screens/Dashboard.tsx"]);
   });
 
-  it("finds no real production consumer today", () => {
+  it("allows components/ProductionGantt.tsx to import components/reui/gantt/, but STILL fires if it imports components/reui/event-calendar/ too (per-vendor-prefix scoping, not a bare path allow-list)", () => {
+    const gantOnly: FileNode[] = [
+      { path: "components/ProductionGantt.tsx", isTest: false, importTargets: ["components/reui/gantt/gantt.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(gantOnly)).toEqual([]);
+
+    // The build spec's own "Done when" proof, exercised directly rather than only by hand-editing
+    // the real file: a same file that ALSO reaches into the other vendored tree is still an
+    // offender, even though its path is on ALLOWED_VENDOR_SCHEDULING_CONSUMERS — being allowed to
+    // import ONE vendored tree must never silently license the other.
+    const gantAndEventCalendar: FileNode[] = [
+      { path: "components/ProductionGantt.tsx", isTest: false, importTargets: ["components/reui/gantt/gantt.tsx", "components/reui/event-calendar/event-calendar.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(gantAndEventCalendar)).toEqual(["components/ProductionGantt.tsx"]);
+  });
+
+  // #220: renamed from "finds no real production consumer today" — that was #219 stage 1's own
+  // description, and it is no longer true: components/ProductionGantt.tsx is a REAL production
+  // consumer of components/reui/gantt/ now, on the ALLOW-list rather than absent. What this test
+  // actually proves has not changed — every importer of either vendored tree, outside the trees
+  // themselves and outside src/harness/, is named on ALLOWED_VENDOR_SCHEDULING_CONSUMERS — but the
+  // old wording claimed a fact (no consumer exists) this pass makes false, and a guard that keeps
+  // asserting a stale fact is how a guard starts lying.
+  it("every real importer of the vendored scheduling trees is on the allow-list, none outside it", () => {
     const offenders = findVendorSchedulingImportersOutsideAllowed(scanAllSourceFiles());
     expect(offenders, [
-      "A non-test source file outside src/harness/ (and outside the vendored tree itself) imports",
-      "from components/reui/gantt or components/reui/event-calendar. #219 stage 1 lands these",
-      "vendored files with NO production consumer — #220/#222 relax this deliberately, one path at",
-      "a time, with a comment recording why. Add the new consumer to",
-      "ALLOWED_VENDOR_SCHEDULING_CONSUMERS instead of widening the prefix match.",
+      "A non-test source file outside src/harness/, outside the vendored tree itself, and outside",
+      "ALLOWED_VENDOR_SCHEDULING_CONSUMERS imports from components/reui/gantt or",
+      "components/reui/event-calendar. #220 gave the Gantt tree its first real production consumer",
+      "(components/ProductionGantt.tsx, added to the allow-list with its own comment); #222 has not",
+      "yet done the same for event-calendar. Add any new consumer to",
+      "ALLOWED_VENDOR_SCHEDULING_CONSUMERS with an exact file path and a comment naming the issue —",
+      "never widen the prefix match.",
       ...offenders.map((path) => `  ${path}`),
     ].join("\n")).toEqual([]);
   });
@@ -1006,6 +1082,47 @@ describe("whole-scanner fixtures: every extraction form is caught end to end", (
     ]);
   });
 
+  // #220 S8 decision record: `extractSpecifiers` deliberately does NOT read Babel's `importKind`
+  // (whole-declaration `import type { X } from "..."`, or a per-specifier `import { type X } from
+  // "..."`) — a type-only import is caught exactly the same as a value import, both here and for
+  // `src/harness/` itself below. This is a documented choice, not an oversight left over from pass
+  // A (`lib/production-gantt-adapter.ts`'s own header records the same finding from the OTHER
+  // side): the guard stays intentionally conservative rather than growing importKind-aware parsing,
+  // because (1) a type-only import carries no production-bundle weight at all — under this
+  // project's `isolatedModules: true` (`tsconfig.base.json`), an `import type` is always elided by
+  // the transpiler, so it can never become a module-graph edge for `forbid-dev-only-modules.ts`'s
+  // REAL, build-time backstop to catch even if this static guard somehow missed it; (2) the cost of
+  // getting importKind-aware parsing genuinely right is real — whole-declaration `import type`,
+  // per-specifier `import { type X, Y }` (where `Y` is still a value import and must still be
+  // caught), and `export type { X } from "..."` all need distinct handling and their own self-tests
+  // (`docs/lessons.md`'s "a grep gate that cannot fail is not a gate") — for a benefit that is
+  // purely cosmetic: letting a file import the vendored trees' TYPES without becoming a "vendor
+  // consumer" on `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`. Given that, over-inclusive (flagging a
+  // type-only import as if it were a value one) is the safe failure direction, and this test locks
+  // that behaviour in on purpose so a future Babel/parser change cannot silently narrow it.
+  //
+  // Consequence for `lib/production-gantt-adapter.ts`: its `ProductionGanttResource`/
+  // `ProductionGanttEvent<TData>` stay LOCAL structural types, not replaced by
+  // `import type { GanttResource, GanttEvent } from "@/components/reui/gantt/gantt-types"`, even
+  // though that file is now on `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`'s adjacent
+  // `components/ProductionGantt.tsx` entry for VALUE imports. `production-gantt-adapter.ts` is not
+  // itself on that list, and this test proves a type-only import from it would still be caught
+  // exactly like a value one, so adding it there would need its own `#220` comment and its own
+  // justification — deliberately left undone this pass, since the local types already work, are
+  // unit-tested, and their own header records precisely where a future vendor-type change would
+  // surface as a type error.
+  it("import type { X } from vendored gantt is STILL caught, identically to a value import (S8 decision: importKind stays unread, on purpose)", () => {
+    expect(catchesVendorGantt(`import type { GanttResource } from "@/components/reui/gantt/gantt-types";`)).toEqual([
+      "screens/__planted_reachability_fixture__.tsx",
+    ]);
+  });
+
+  it("a per-specifier `import { type X, Y }` from vendored gantt is STILL caught (same S8 decision — the mixed form is not special-cased either)", () => {
+    expect(catchesVendorGantt(`import { type GanttResource, Gantt } from "@/components/reui/gantt/gantt-types";`)).toEqual([
+      "screens/__planted_reachability_fixture__.tsx",
+    ]);
+  });
+
   it("dynamic import() with a string literal", () => {
     expect(catchesVendorGantt(`const load = () => import("@/components/reui/gantt/gantt");`)).toEqual([
       "screens/__planted_reachability_fixture__.tsx",
@@ -1132,6 +1249,14 @@ const HARNESS_ENTRY_DIR = join(webDir, "harness", "reui-scheduling");
 
 const RESTRICTED_ASSET_SCAN_DIRS = [
   { label: "src/harness/", abs: join(srcDir, "harness") },
+  // #220: kept here even though the ORIGINAL asset-hole rationale above (an emitted asset with no
+  // module-id shape `forbid-dev-only-modules.ts` is guaranteed to see) has partly lapsed for this
+  // one tree — `components/reui/gantt/` now has a real production consumer
+  // (`components/ProductionGantt.tsx`), so a stray `.css`/`.svg`/etc. dropped in here could now
+  // actually reach a production bundle through it, which is a STRONGER reason to keep scanning,
+  // not a weaker one. This entry's job was never only "this tree is unreachable so an asset in it
+  // is inert" — it is also "this tree stays pure vendored source, nothing else", a purity
+  // `gantt-skin.guard.test.ts`'s own nine-file scan assumes without re-checking it itself.
   { label: "src/components/reui/gantt/", abs: join(srcDir, "components", "reui", "gantt") },
   // #219 PR B: the vendored event-calendar tree, on the same terms as the Gantt above. PR A
   // pre-wired this path into RESTRICTED_GLOB_DIRS and VENDOR_SCHEDULING_PREFIXES but not here,

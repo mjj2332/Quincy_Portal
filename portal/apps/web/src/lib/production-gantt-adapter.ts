@@ -23,6 +23,17 @@
  * — TypeScript's structural typing accepts it with no cast. If a future pass widens
  * `GanttResource`/`GanttEvent` with a new REQUIRED field, that assignment (not this file) is where
  * it will surface as a type error.
+ *
+ * **Pass B (#220 S8) confirmed rather than fixed this:** the guard now has a real value-import
+ * consumer (`components/ProductionGantt.tsx`, added to `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`), but
+ * this file is not that consumer and was deliberately left off that list too — pass B chose NOT to
+ * make `extractSpecifiers` importKind-aware (see `harness-reachability.guard.test.ts`'s own S8
+ * decision record, and its "import type { X } from vendored gantt is STILL caught..." self-tests),
+ * so `import type { GanttResource, GanttEvent } from "@/components/reui/gantt/gantt-types"` here
+ * would still trip the guard exactly like a value import would. The local types below stay as they
+ * are: they work, they are unit-tested for the exact field subset that makes the structural
+ * assignment in `ProductionGantt.tsx` succeed, and replacing them would be a cosmetic single-
+ * source-of-truth cleanup, not a correctness fix for anything broken today.
  */
 
 import {
