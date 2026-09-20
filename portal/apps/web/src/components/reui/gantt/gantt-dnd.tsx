@@ -70,11 +70,15 @@ import {
   type GanttInstance,
 } from "@/components/reui/gantt/gantt"
 import {
+  clampToNeighbours,
   findResource,
   isResizableEdge,
+  overlapsAnyNeighbour,
+  resolveOverlapPolicy,
   snapMinutes,
   toZoned,
   zonedStartOfDay,
+  type GanttOverlapNeighbour,
 } from "@/components/reui/gantt/gantt-lib"
 import type {
   GanttProposedUpdate,
@@ -263,82 +267,67 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // A node in "single" mode rejects any concurrency regardless of the
   // overlap option; otherwise the option decides. "allow" short-circuits
   // everything below, so the default gesture path is untouched.
+  //
+  // Quincy fix (#219 PR A, Sol review, sol1 item 3): `overlapsNeighbour` and `clampToNeighbours`
+  // below now call the SAME shared, pure `gantt-lib.tsx` helpers `gantt.tsx`'s keyboard
+  // `nudgeEvent` uses, so `scheduleMode="single"` and `overlap="clamp"` behave IDENTICALLY on
+  // both input paths - before this fix, keyboard ignored "clamp" outright and only honoured a
+  // node's OWN scheduleMode override, never the view-level default. The neighbour fetch itself
+  // also changed: it used to run ONCE per gesture (cached) against the unranged
+  // `api.getOccurrences()` - scoped to whatever `visibleRange` happens to be - so a same-resource
+  // neighbour just outside the current viewport was invisible to it. It now queries fresh, per
+  // evaluated range, over the UNION of the occurrence's own anchor span and the range being
+  // checked - wide enough that a neighbour the gesture is actually about to touch is always seen,
+  // without paying for a full unranged scan every pointer-move frame.
   const nodeId = occurrence?.event.resourceId
   const nodeMode = resolveScheduleMode(
     nodeId === undefined ? null : findResource(settings.resources, nodeId),
     config.scheduleMode
   )
-  const overlapPolicy =
-    nodeMode === "single" ? ("reject" as const) : settings.overlap
-  // Read once per gesture: the gantt never mutates events mid-drag, so the
-  // neighbours cannot move under us.
-  let neighbourCache: Array<{ start: number; end: number }> | null = null
-  const getNeighbours = () => {
-    if (neighbourCache) return neighbourCache
-    neighbourCache =
-      !occurrence || nodeId === undefined || overlapPolicy === "allow"
-        ? []
-        : api
-            .getOccurrences()
-            .filter(
-              (other) =>
-                other.event.resourceId === nodeId &&
-                other.key !== occurrence.key
-            )
-            .map((other) => ({
-              start: other.start.getTime(),
-              end: other.end.getTime(),
-            }))
-    return neighbourCache
+  const overlapPolicy = resolveOverlapPolicy(nodeMode, settings.overlap)
+  const neighboursFor = (
+    rangeStart: Date,
+    rangeEnd: Date
+  ): GanttOverlapNeighbour[] => {
+    if (!occurrence || nodeId === undefined || overlapPolicy === "allow") {
+      return []
+    }
+    const from = new Date(
+      Math.min(rangeStart.getTime(), occurrence.start.getTime())
+    )
+    const to = new Date(
+      Math.max(rangeEnd.getTime(), occurrence.end.getTime())
+    )
+    return api
+      .getOccurrences({ start: from, end: to })
+      .filter(
+        (other) =>
+          other.event.resourceId === nodeId && other.key !== occurrence.key
+      )
+      .map((other) => ({
+        start: other.start.getTime(),
+        end: other.end.getTime(),
+      }))
   }
   const overlapsNeighbour = (start: Date, end: Date) =>
-    getNeighbours().some(
-      (other) => other.start < end.getTime() && other.end > start.getTime()
-    )
+    overlapsAnyNeighbour(neighboursFor(start, end), { start, end })
   /**
    * Stop the gesture at the neighbour's edge. Runs AFTER snapping so the
    * clamp always wins, and only against neighbours that sit clear of the
    * bar's CURRENT span - a pre-existing overlap has no edge to stop at.
    */
-  const clampToNeighbours = (
+  const clampProposal = (
     start: Date,
     end: Date
   ): { start: Date; end: Date } => {
-    if (overlapPolicy !== "clamp" || !occurrence) return { start, end }
-    const anchorStart = occurrence.start.getTime()
-    const anchorEnd = occurrence.end.getTime()
-    let floor = -Infinity
-    let ceiling = Infinity
-    for (const other of getNeighbours()) {
-      if (other.end <= anchorStart) floor = Math.max(floor, other.end)
-      else if (other.start >= anchorEnd)
-        ceiling = Math.min(ceiling, other.start)
-    }
-    if (floor === -Infinity && ceiling === Infinity) return { start, end }
-    let from = start.getTime()
-    let to = end.getTime()
-    if (kind === "resize-start") {
-      from = Math.min(Math.max(from, floor), to)
-    } else if (kind === "resize-end") {
-      to = Math.max(Math.min(to, ceiling), from)
-    } else {
-      // a move keeps its duration and parks against whichever edge it meets
-      const duration = to - from
-      if (from < floor) {
-        from = floor
-        to = from + duration
-      }
-      if (to > ceiling) {
-        to = ceiling
-        from = to - duration
-      }
-      // window narrower than the bar itself: park at the earlier edge
-      if (from < floor) {
-        from = floor
-        to = from + duration
-      }
-    }
-    return { start: new Date(from), end: new Date(to) }
+    if (!occurrence) return { start, end }
+    return clampToNeighbours(
+      kind === "resize-start" || kind === "resize-end" ? kind : "move",
+      occurrence,
+      { start, end },
+      neighboursFor(start, end),
+      overlapPolicy
+    )
   }
   // Set by applyProposal when a "reject" policy refuses the current proposal;
   // read on pointerup so the commit is actually blocked, not merely styled.
@@ -649,7 +638,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
             (occurrence.end.getTime() - occurrence.start.getTime())
         )
       }
-      const bounded = clampToNeighbours(start, end)
+      const bounded = clampProposal(start, end)
       return {
         start: bounded.start,
         end: bounded.end,
@@ -675,7 +664,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
             60000
           : endMin - tl.snapMin
       const clamped = Math.min(Math.max(min, 0), maxStartMin)
-      const bounded = clampToNeighbours(at(clamped), occurrence.end)
+      const bounded = clampProposal(at(clamped), occurrence.end)
       return {
         start: bounded.start,
         end: bounded.end,
@@ -696,7 +685,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
           60000
         : startMin + tl.snapMin
     const clamped = Math.max(Math.min(min, rangeMinutes), minEndMin)
-    const bounded = clampToNeighbours(occurrence.start, at(clamped))
+    const bounded = clampProposal(occurrence.start, at(clamped))
     return {
       start: bounded.start,
       end: bounded.end,

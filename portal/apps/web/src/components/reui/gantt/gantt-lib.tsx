@@ -64,9 +64,11 @@ import type {
   GanttEvent,
   GanttOccurrence,
   GanttOffDaysConfig,
+  GanttOverlapPolicy,
   GanttRecurrenceRule,
   GanttResource,
   GanttScale,
+  GanttScheduleMode,
   GanttSegment,
 } from "@/components/reui/gantt/gantt-types"
 import { TZDate } from "@date-fns/tz"
@@ -881,9 +883,101 @@ function computeGanttKeyboardProposal(
   }
 }
 
+/**
+ * Same-node neighbour span, in ms - the minimal shape `overlapsAnyNeighbour`/`clampToNeighbours`
+ * need, independent of `GanttOccurrence`'s full shape so a call site can build it from any source.
+ */
+interface GanttOverlapNeighbour {
+  start: number
+  end: number
+}
+
+/**
+ * A node's cardinality overrides the view/settings overlap option: "single" always rejects
+ * concurrency, regardless of what the option says. Shared by the pointer gesture engine
+ * (`gantt-dnd.tsx`) and the keyboard nudge (`gantt.tsx`'s `nudgeEvent`) so both resolve the SAME
+ * effective policy from the SAME two inputs - #219 PR A fix (Sol review, sol1 item 3): before this,
+ * `nudgeEvent` had no VIEW-level `scheduleMode` default to fall back to (a store-level API method
+ * has no component in its call stack to read `useGanttViewConfig` from), so a node relying on the
+ * view default for "single" mode could be nudged past a neighbour that pointer drag would refuse.
+ * Callers now pass the effective `viewConfig.scheduleMode` in explicitly.
+ */
+function resolveOverlapPolicy(
+  scheduleMode: GanttScheduleMode,
+  overlap: GanttOverlapPolicy
+): GanttOverlapPolicy {
+  return scheduleMode === "single" ? "reject" : overlap
+}
+
+/** True when `proposal` overlaps any same-node neighbour - the "reject" policy's veto. */
+function overlapsAnyNeighbour(
+  neighbours: GanttOverlapNeighbour[],
+  proposal: { start: Date; end: Date }
+): boolean {
+  const proposalStart = proposal.start.getTime()
+  const proposalEnd = proposal.end.getTime()
+  return neighbours.some(
+    (other) => other.start < proposalEnd && other.end > proposalStart
+  )
+}
+
+/**
+ * Stops a move/resize proposal at the nearest same-node neighbour's edge instead of letting it
+ * overlap - the "clamp" policy. Extracted from `gantt-dnd.tsx`'s pointer-only `clampToNeighbours`
+ * closure (#219 PR A fix, Sol review, sol1 item 3) so `gantt.tsx`'s keyboard `nudgeEvent` clamps
+ * IDENTICALLY instead of ignoring the policy outright, which is what it did before this fix.
+ *
+ * `anchor` is the occurrence's CURRENT (pre-gesture) span: only a neighbour clear of it can clamp -
+ * a pre-existing overlap has no edge to stop at. Runs AFTER the caller's own unit snapping, so the
+ * clamp always wins when both apply.
+ */
+function clampToNeighbours(
+  kind: "move" | "resize-start" | "resize-end",
+  anchor: { start: Date; end: Date },
+  proposal: { start: Date; end: Date },
+  neighbours: GanttOverlapNeighbour[],
+  overlapPolicy: GanttOverlapPolicy
+): { start: Date; end: Date } {
+  if (overlapPolicy !== "clamp") return proposal
+  const anchorStart = anchor.start.getTime()
+  const anchorEnd = anchor.end.getTime()
+  let floor = -Infinity
+  let ceiling = Infinity
+  for (const other of neighbours) {
+    if (other.end <= anchorStart) floor = Math.max(floor, other.end)
+    else if (other.start >= anchorEnd) ceiling = Math.min(ceiling, other.start)
+  }
+  if (floor === -Infinity && ceiling === Infinity) return proposal
+  let from = proposal.start.getTime()
+  let to = proposal.end.getTime()
+  if (kind === "resize-start") {
+    from = Math.min(Math.max(from, floor), to)
+  } else if (kind === "resize-end") {
+    to = Math.max(Math.min(to, ceiling), from)
+  } else {
+    // a move keeps its duration and parks against whichever edge it meets
+    const duration = to - from
+    if (from < floor) {
+      from = floor
+      to = from + duration
+    }
+    if (to > ceiling) {
+      to = ceiling
+      from = to - duration
+    }
+    // window narrower than the bar itself: park at the earlier edge
+    if (from < floor) {
+      from = floor
+      to = from + duration
+    }
+  }
+  return { start: new Date(from), end: new Date(to) }
+}
+
 export {
   buildDependencyPath,
   buildEventIndex,
+  clampToNeighbours,
   computeGanttKeyboardProposal,
   defaultEventOrder,
   eventsOverlap,
@@ -898,11 +992,13 @@ export {
   isResizableEdge,
   MIN_PACK_SLOT,
   occurrenceIntersects,
+  overlapsAnyNeighbour,
   packTimedSegments,
   rangesIntersect,
   reorderResources,
   resolveEventBaseline,
   resolveOffDay,
+  resolveOverlapPolicy,
   snapMinutes,
   spansMultipleDays,
   stepGanttDate,
@@ -915,6 +1011,7 @@ export type {
   GanttIndex,
   GanttKeyboardProposal,
   GanttLaneMemo,
+  GanttOverlapNeighbour,
   PackOptions,
   ViewDateRanges,
   ViewRangeOptions,

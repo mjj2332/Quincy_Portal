@@ -38,14 +38,26 @@
  * `gantt-bar.tsx`'s keyboard move/resize (upstream has no keyboard path for either gesture). Built
  * on `gantt-lib.tsx`'s `computeGanttKeyboardProposal`/`isResizableEdge` rather than importing
  * anything from `gantt-dnd.tsx` — that file already depends on this one for `useGantt`/
- * `useGanttViewConfig`/`GanttInstance`, so the reverse import would be a cycle. One known gap from
- * that: the overlap-policy resolution below has no VIEW-level `scheduleMode` default to fall back
- * to (that config lives in a React context a store-level API method has no component in its call
- * stack to read), so it only honours a node's OWN `scheduleMode` override — see the comment at the
- * call site. Separately (not a gap, just worth naming): the overlap-reject neighbour check reads
- * `api.getOccurrences()` with no range, exactly like `gantt-dnd.tsx`'s own `getNeighbours()` inside
- * `beginGesture` — both are scoped to whatever the store's CURRENT `visibleRange` is, so a nudge
- * cannot see a same-resource neighbour that is off-screen.
+ * `useGanttViewConfig`/`GanttInstance`, so the reverse import would be a cycle.
+ *
+ * #219 PR A fix (Sol review, sol1 items 2 and 3) — three corrections to `nudgeEvent`, all in this
+ * method:
+ * 1. It refuses (`{ applied: false, reason: "locked" }`) whenever the resolved event carries a
+ *    `recurrence` rule — see the comment at that check for why (no occurrence-aware exceptions
+ *    exist yet, and this method always targets the series MASTER).
+ * 2. `nudgeEvent` used to have no VIEW-level `scheduleMode` default to fall back to (that config
+ *    lives in a React context a store-level API method has no component in its call stack to
+ *    read), so it only honoured a node's OWN `scheduleMode` override. That is now a documented
+ *    CALLER contract instead of a silent limitation: `nudgeEvent` takes an optional
+ *    `viewScheduleMode` parameter (see its own doc comment) that `gantt-bar.tsx` passes as
+ *    `useGanttViewConfig().scheduleMode`. And the overlap policy itself now runs through the SAME
+ *    shared `gantt-lib.tsx` helpers (`resolveOverlapPolicy`/`overlapsAnyNeighbour`/
+ *    `clampToNeighbours`) `gantt-dnd.tsx`'s `beginGesture` uses, so "clamp" — previously ignored
+ *    outright here — now clamps identically to a pointer gesture.
+ * 3. The overlap/clamp neighbour lookup no longer reads unranged `api.getOccurrences()` (scoped to
+ *    whatever the store's CURRENT `visibleRange` happens to be, so an off-screen same-resource
+ *    neighbour was invisible to it). It now queries the UNION of the event's own current span and
+ *    the proposed range — `gantt-dnd.tsx`'s pointer gesture engine received the identical fix.
  */
 
 import {
@@ -67,6 +79,7 @@ import {
 } from "@/components/reui/gantt/gantt-i18n"
 import {
   buildEventIndex,
+  clampToNeighbours,
   computeGanttKeyboardProposal,
   defaultEventOrder,
   eventsOverlap,
@@ -74,9 +87,12 @@ import {
   getGanttDateRange,
   getRangeKey,
   isResizableEdge,
+  overlapsAnyNeighbour,
+  resolveOverlapPolicy,
   stepGanttDate,
   toZoned,
   type GanttIndex,
+  type GanttOverlapNeighbour,
   type WeekStartsOn,
 } from "@/components/reui/gantt/gantt-lib"
 import type {
@@ -287,11 +303,19 @@ interface GanttApi<TData = unknown> {
    * itself uses (dragging the pointer right always increases minutes, regardless of which edge is
    * grabbed). Commits through the same `onEventUpdate`/`onEventsChange` funnel as a pointer drag,
    * with `source: "keyboard"`; never through `updateEvent` above, which skips the drop checks.
+   *
+   * `viewScheduleMode` is `useGanttViewConfig().scheduleMode` — Quincy fix (#219 PR A, Sol review,
+   * sol1 item 3): this is a store-level method with no component in its call stack to read that
+   * context from itself, so a caller with view access (`gantt-bar.tsx`'s keyboard handler) passes
+   * the effective value in explicitly. Omitting it falls back to a node's OWN `scheduleMode`
+   * override only, same as calling `nudgeEvent` from outside a view (e.g. a test, or a fully
+   * custom UI with no `<Gantt>` view-config context to read).
    */
   nudgeEvent(
     id: GanttBarId,
     action: GanttNudgeAction,
-    direction: -1 | 1
+    direction: -1 | 1,
+    viewScheduleMode?: GanttScheduleMode
   ): GanttNudgeResult
   removeEvent(id: GanttBarId): void
   getOccurrences(range?: GanttDateRange): GanttOccurrence<TData>[]
@@ -690,7 +714,7 @@ function createGanttStore<TData>(
         getState().events.map((e) => (e.id === id ? merged : e))
       )
     },
-    nudgeEvent(id, action, direction) {
+    nudgeEvent(id, action, direction, viewScheduleMode) {
       const event = api.getEvent(id)
       if (!event) return { applied: false, reason: "not-found" }
       if (event.readOnly) return { applied: false, reason: "locked" }
@@ -727,40 +751,62 @@ function createGanttStore<TData>(
       if (!proposal) return { applied: false, reason: "invalid" }
 
       // Overlap policy: a "single" schedule-mode node always rejects
-      // concurrency; otherwise settings.overlap decides - mirrors
-      // beginGesture's own resolution in gantt-dnd.tsx, minus the
-      // VIEW-level scheduleMode default (that config lives in a React
-      // context `useGanttViewConfig` provides, out of reach for a
-      // store-level API method with no component in its call stack) - only
-      // a node's OWN scheduleMode override is honoured here, same as
-      // beginGesture falls back to when no view default is in scope either.
+      // concurrency; otherwise settings.overlap decides - now via the SAME
+      // shared `gantt-lib.tsx` helpers `beginGesture` uses in gantt-dnd.tsx
+      // (Quincy fix, #219 PR A, Sol review, sol1 item 3), so "clamp" is
+      // honoured here too (it used to be silently ignored - only "reject"
+      // was ever checked) and the effective scheduleMode comes from the
+      // CALLER's view context when passed, not just a node's own override.
       const node = event.resourceId
         ? findResource(settings.resources, event.resourceId)
         : null
-      const nodeMode = resolveScheduleMode(node, undefined)
-      const overlapPolicy = nodeMode === "single" ? "reject" : settings.overlap
-      if (overlapPolicy === "reject" && event.resourceId !== undefined) {
-        const overlapsNeighbour = api
-          .getOccurrences()
+      const nodeMode = resolveScheduleMode(node, viewScheduleMode)
+      const overlapPolicy = resolveOverlapPolicy(nodeMode, settings.overlap)
+
+      let finalProposal = proposal
+      if (overlapPolicy !== "allow" && event.resourceId !== undefined) {
+        // Range-aware, not `visibleRange`-limited (Sol MEDIUM, same fix): the
+        // query spans the UNION of the event's own current span and the
+        // proposal, so a same-resource neighbour the nudge is actually about
+        // to touch is seen even when it sits outside the current viewport.
+        const neighbourFrom = new Date(
+          Math.min(proposal.start.getTime(), event.start.getTime())
+        )
+        const neighbourTo = new Date(
+          Math.max(proposal.end.getTime(), event.end.getTime())
+        )
+        const neighbours: GanttOverlapNeighbour[] = api
+          .getOccurrences({ start: neighbourFrom, end: neighbourTo })
           .filter(
             (other) =>
               other.event.resourceId === event.resourceId &&
               other.eventId !== id
           )
-          .some(
-            (other) =>
-              other.start.getTime() < proposal.end.getTime() &&
-              other.end.getTime() > proposal.start.getTime()
+          .map((other) => ({
+            start: other.start.getTime(),
+            end: other.end.getTime(),
+          }))
+
+        if (overlapPolicy === "clamp") {
+          const clamped = clampToNeighbours(
+            action,
+            { start: event.start, end: event.end },
+            proposal,
+            neighbours,
+            overlapPolicy
           )
-        if (overlapsNeighbour) return { applied: false, reason: "rejected" }
+          finalProposal = { ...proposal, start: clamped.start, end: clamped.end }
+        } else if (overlapsAnyNeighbour(neighbours, proposal)) {
+          return { applied: false, reason: "rejected" }
+        }
       }
 
       const update: GanttProposedUpdate<TData> = {
         event,
         occurrence: null,
-        start: proposal.start,
-        end: proposal.end,
-        allDay: proposal.allDay,
+        start: finalProposal.start,
+        end: finalProposal.end,
+        allDay: finalProposal.allDay,
         resourceId: event.resourceId,
         source: "keyboard",
       }

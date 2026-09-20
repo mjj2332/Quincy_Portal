@@ -504,7 +504,15 @@ function GanttBar<TData = unknown>({
         e.key as "ArrowLeft" | "ArrowRight",
         rtl
       )
-      const result = instance.api.nudgeEvent(event.id, chord, direction)
+      // Quincy fix (#219 PR A, Sol review, sol1 item 3): pass the effective view-level
+      // scheduleMode through explicitly - nudgeEvent is a store-level method with no component
+      // in its call stack to read useGanttViewConfig() from itself.
+      const result = instance.api.nudgeEvent(
+        event.id,
+        chord,
+        direction,
+        viewConfig.scheduleMode
+      )
       // A move or resize-start commit changes this occurrence's key (see
       // this file's header) - claim the hand-off BEFORE the remount so the
       // next bar mounted for this event id reclaims focus.

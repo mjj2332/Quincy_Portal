@@ -193,13 +193,73 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
     const a: GanttEvent = { id: "e-a", title: "A", start: START, end: END, resourceId: "r1" };
     // A moved forward one 15-minute step becomes 09:15-10:15; B (10:00-11:00) overlaps that.
     const b: GanttEvent = { id: "e-b", title: "B", start: END, end: new Date(END.getTime() + 60 * 60000), resourceId: "r1" };
-    // nudgeEvent's overlap check reads api.getOccurrences() with no range, exactly like
-    // beginGesture's own getNeighbours() in gantt-dnd.tsx - both are scoped to whatever the store's
-    // CURRENT visibleRange is, so the fixture's own day must be the visible one.
     await render(
       <Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} overlap="reject" date={START} timeZone="UTC" />,
     );
     const result = apiRef.current!.nudgeEvent("e-a", "move", 1);
+    expect(result).toEqual({ applied: false, reason: "rejected" });
+    expect(onEventsChange).not.toHaveBeenCalled();
+  });
+
+  // #219 PR A fix (Sol review, sol1 item 3) — nudgeEvent now shares gantt-dnd.tsx's overlap
+  // policy/clamp helpers, honours the caller's viewScheduleMode, and queries a range wide enough
+  // to see a same-resource neighbour outside the current viewport.
+  it("the overlap 'clamp' policy stops the nudge at the neighbour's edge instead of ignoring it (previously ignored entirely)", async () => {
+    const apiRef = apiRefOf();
+    const onEventsChange = vi.fn();
+    const a: GanttEvent = { id: "e-a", title: "A", start: START, end: END, resourceId: "r1" };
+    // Neighbour sits 5 minutes past A's end: a 15-minute move step would overlap it by 10 minutes.
+    const bStart = new Date(END.getTime() + 5 * 60000);
+    const b: GanttEvent = { id: "e-b", title: "B", start: bStart, end: new Date(bStart.getTime() + 60 * 60000), resourceId: "r1" };
+    await render(
+      <Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} overlap="clamp" date={START} timeZone="UTC" />,
+    );
+    const result = apiRef.current!.nudgeEvent("e-a", "move", 1);
+    expect(result).toEqual({ applied: true });
+    const [next] = onEventsChange.mock.calls[0]![0] as GanttEvent[];
+    // Parked against the neighbour's start, duration preserved (1h), NOT the raw 09:15-10:15 step.
+    expect(next!.end.getTime()).toBe(bStart.getTime());
+    expect(next!.start.getTime()).toBe(bStart.getTime() - (END.getTime() - START.getTime()));
+  });
+
+  it("without a passed-in viewScheduleMode, overlap 'allow' (the default) lets a same-resource nudge through", async () => {
+    const apiRef = apiRefOf();
+    const onEventsChange = vi.fn();
+    const a: GanttEvent = { id: "e-a", title: "A", start: START, end: END, resourceId: "r1" };
+    const b: GanttEvent = { id: "e-b", title: "B", start: END, end: new Date(END.getTime() + 60 * 60000), resourceId: "r1" };
+    await render(<Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} date={START} timeZone="UTC" />);
+    expect(apiRef.current!.nudgeEvent("e-a", "move", 1)).toEqual({ applied: true });
+    expect(onEventsChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("an explicit viewScheduleMode='single' rejects the SAME nudge that 'allow' (no scheduleMode passed) would accept", async () => {
+    const apiRef = apiRefOf();
+    const onEventsChange = vi.fn();
+    const a: GanttEvent = { id: "e-a", title: "A", start: START, end: END, resourceId: "r1" };
+    const b: GanttEvent = { id: "e-b", title: "B", start: END, end: new Date(END.getTime() + 60 * 60000), resourceId: "r1" };
+    // overlap defaults to "allow" - no scheduleMode override on the node either; only the CALLER
+    // passing the view's "single" default (what a bar inside <Gantt scheduleMode="single"> does)
+    // makes this reject - this is the view-level parity gap sol1 item 3 closes.
+    await render(<Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} date={START} timeZone="UTC" />);
+    const rejected = apiRef.current!.nudgeEvent("e-a", "move", 1, "single");
+    expect(rejected).toEqual({ applied: false, reason: "rejected" });
+    expect(onEventsChange).not.toHaveBeenCalled();
+  });
+
+  it("the overlap lookup sees a same-resource neighbour outside the current viewport (Sol MEDIUM, same fix)", async () => {
+    const apiRef = apiRefOf();
+    const onEventsChange = vi.fn();
+    // date scale defaults to "day": visibleRange is exactly [2026-03-02T00:00Z, 2026-03-03T00:00Z).
+    // A ends inside that day; the neighbour starts just after midnight on the NEXT day, entirely
+    // outside the visible day, but a resize-end step lands the proposal's end 5 minutes into it.
+    const aEnd = new Date("2026-03-02T23:50:00.000Z");
+    const a: GanttEvent = { id: "e-a", title: "A", start: START, end: aEnd, resourceId: "r1" };
+    const bStart = new Date("2026-03-03T00:00:00.000Z");
+    const b: GanttEvent = { id: "e-b", title: "B", start: bStart, end: new Date("2026-03-03T01:00:00.000Z"), resourceId: "r1" };
+    await render(
+      <Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} overlap="reject" date={START} timeZone="UTC" />,
+    );
+    const result = apiRef.current!.nudgeEvent("e-a", "resize-end", 1);
     expect(result).toEqual({ applied: false, reason: "rejected" });
     expect(onEventsChange).not.toHaveBeenCalled();
   });
