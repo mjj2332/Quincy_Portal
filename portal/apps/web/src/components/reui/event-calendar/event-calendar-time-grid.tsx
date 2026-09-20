@@ -59,7 +59,8 @@
  *    still computed: it is part of the public `renderDayColumnBackground` payload.
  *    Cover: `event-calendar-dst.test.ts`. Known consequence, deliberately not fixed here: the
  *    shared hour gutter now visibly disagrees with a transition day's column by one hour-height
- *    (it agreed before only because the extra hour was being discarded). See the follow-up issue.
+ *    (it agreed before only because the extra hour was being discarded). Tracked as #241, which
+ *    carries the measured numbers and the shared-vs-per-column decision that has to precede a fix.
  *
  * 3. 2026-09-21, #219 PR B, stage 4 — the now-indicator's three `destructive` fills became
  *    `border-strong` (`/50` on the faint cross-column hairline, solid on today's segment and

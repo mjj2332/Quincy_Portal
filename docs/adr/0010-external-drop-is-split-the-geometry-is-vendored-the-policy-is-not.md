@@ -103,5 +103,5 @@ at this ADR.
   ghost of the item being dragged. That was a deliberate choice to avoid duplicating the carry-clone
   DOM, and a real consumer may want more. Revisit with a consumer in front of you, not before.
 - **Keyboard-initiated drop.** There is no keyboard path into the calendar at all yet; see the
-  calendar keyboard operability issue. Whether it reuses
+  calendar keyboard operability issue, #240. Whether it reuses
   `EventCalendarExternalDropTarget` is that issue's call, not this one's.

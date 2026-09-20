@@ -3586,7 +3586,7 @@ Honest note: this fix trades a silent failure for a visible one. On transition d
 hour gutter now disagrees with the transition day's column by one hour-height, because the gutter
 renders a fixed 24 labels while stretching to the tallest column. Losing an hour of data is worse
 than losing alignment, so the trade is right, but it is a trade and the residual misalignment is
-tracked separately.
+tracked separately as #241.
 
 ## A typed config key can be silently dropped by a runtime allow-list (#219, 2026-09-21)
 
