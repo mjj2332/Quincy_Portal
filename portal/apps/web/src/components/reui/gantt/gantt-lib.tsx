@@ -64,6 +64,13 @@
  * `addDays(..., 1)` in the two resize branches) stay literal single-day regardless of `dayUnits` —
  * they express "at least one day long," not "one step," so a 7-day step resizing toward inversion
  * still refuses only once the range would drop under one full day, not under seven.
+ *
+ * #219 PR A (Adjust mode) addition — `matchGanttBarKey` (with its `ganttArrowDirection` helper,
+ * moved here from `gantt-bar.tsx`) replaces that file's old `matchGanttBarKeyChord`: a pure,
+ * table-testable matcher for the WHOLE new key scheme (Space to enter, Arrow/Shift+Arrow to step,
+ * M/S/E to retarget, Enter/Space to commit, Escape to cancel), RTL-aware and independent of any
+ * eligibility check (the caller in `gantt-bar.tsx` still gates Space/retarget on canMove/
+ * canResizeStart/canResizeEnd/isRecurring, same as it always gated the old chords).
  */
 
 import { expandRecurrence } from "@/components/reui/gantt/gantt-recurrence"
@@ -72,6 +79,7 @@ import type {
   GanttBaselineVariance,
   GanttDateRange,
   GanttEvent,
+  GanttNudgeAction,
   GanttOccurrence,
   GanttOffDaysConfig,
   GanttOverlapPolicy,
@@ -1006,6 +1014,84 @@ function clampToNeighbours(
   return { start: new Date(from), end: new Date(to) }
 }
 
+/**
+ * #219 PR A (Adjust mode) — the WHOLE new key scheme's request shape, from `matchGanttBarKey`.
+ * `retarget`'s `target` reuses `GanttNudgeAction` (`gantt.tsx`'s `retargetAdjust`/`beginAdjust`
+ * take the identical union); `step`'s `unit` names which of the two step sizes `stepAdjust` should
+ * use (`"snap"` = one base nudge step, `"large"` = `resolveAdjustLargerStepMinutes`'s step).
+ */
+type GanttBarKeyAction =
+  | { type: "enter" }
+  | { type: "step"; direction: -1 | 1; unit: "snap" | "large" }
+  | { type: "retarget"; target: GanttNudgeAction }
+  | { type: "commit" }
+  | { type: "cancel" }
+
+/**
+ * Logical time-axis direction (-1 earlier, +1 later) for an ArrowLeft/Right
+ * key, RTL-aware the same way the splitter's key handler in `gantt-view.tsx`
+ * (`~:2744`) is: physical ArrowLeft/Right, mirrored by `direction: rtl`.
+ */
+function ganttArrowDirection(
+  key: "ArrowLeft" | "ArrowRight",
+  rtl: boolean
+): -1 | 1 {
+  const physical = key === "ArrowLeft" ? -1 : 1
+  return (rtl ? -physical : physical) as -1 | 1
+}
+
+/**
+ * #219 PR A (Adjust mode) — pure, table-tested replacement for the old `matchGanttBarKeyChord`
+ * (Ctrl+Alt+Arrow / Shift+Alt+Arrow / Alt+Arrow; Opus and Sol both rejected those - Ctrl+Alt+Arrow
+ * is OS-intercepted on some desktops, Alt+Arrow is browser Back/Forward). `adjusting` selects which
+ * table applies: IDLE only recognizes bare Space ("enter" - eligibility, e.g. canMove/isRecurring,
+ * is the CALLER's job, same as the old chords); ADJUSTING recognizes bare Escape ("cancel"), bare
+ * Enter/Space ("commit"), bare M/S/E ("retarget" - move/resize-start/resize-end respectively), and
+ * ArrowLeft/ArrowRight with or without Shift ("step" - Shift is the ONLY modifier a step allows,
+ * selecting the larger unit; Alt or Ctrl held at the same time no longer matches ANYTHING, unlike
+ * the old chords they used to select). Every branch requires Alt/Ctrl/Meta to be absent - none of
+ * the new bindings is a chord, so a browser or OS shortcut sharing the bare key never collides.
+ */
+function matchGanttBarKey(
+  e: {
+    key: string
+    altKey: boolean
+    shiftKey: boolean
+    ctrlKey: boolean
+    metaKey: boolean
+  },
+  adjusting: boolean,
+  rtl: boolean
+): GanttBarKeyAction | null {
+  const noChordModifiers = !e.altKey && !e.ctrlKey && !e.metaKey
+  if (!noChordModifiers) return null
+
+  if (!adjusting) {
+    if (!e.shiftKey && (e.key === " " || e.key === "Spacebar")) {
+      return { type: "enter" }
+    }
+    return null
+  }
+
+  if (!e.shiftKey && e.key === "Escape") return { type: "cancel" }
+  if (!e.shiftKey && (e.key === "Enter" || e.key === " " || e.key === "Spacebar")) {
+    return { type: "commit" }
+  }
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    return {
+      type: "step",
+      direction: ganttArrowDirection(e.key, rtl),
+      unit: e.shiftKey ? "large" : "snap",
+    }
+  }
+  if (e.shiftKey) return null
+  const lower = e.key.toLowerCase()
+  if (lower === "m") return { type: "retarget", target: "move" }
+  if (lower === "s") return { type: "retarget", target: "resize-start" }
+  if (lower === "e") return { type: "retarget", target: "resize-end" }
+  return null
+}
+
 export {
   buildDependencyPath,
   buildEventIndex,
@@ -1015,6 +1101,7 @@ export {
   eventsOverlap,
   findResource,
   flattenResources,
+  ganttArrowDirection,
   getBaselineVariance,
   getDayKey,
   getDayTotalMinutes,
@@ -1022,6 +1109,7 @@ export {
   getLaneKey,
   getRangeKey,
   isResizableEdge,
+  matchGanttBarKey,
   MIN_PACK_SLOT,
   occurrenceIntersects,
   overlapsAnyNeighbour,
@@ -1040,6 +1128,7 @@ export {
 }
 export type {
   BuildIndexOptions,
+  GanttBarKeyAction,
   GanttDependencyGeometry,
   GanttIndex,
   GanttKeyboardProposal,
