@@ -26,9 +26,26 @@
  *       (file + count) whitelists what is already on `main`; anything beyond that baseline fails.
  * (iv)  `vite.config.ts`'s `build.rollupOptions.input` is absent or resolves — by AST, not
  *       substring match — only to `index.html`, so `vite build`'s only input stays `index.html`
- *       and no harness chunk or URL reaches production; and if `dist/` exists on disk, no file
- *       name or file content in it references the harness entry, its dev URL, or a gantt/harness
- *       module id.
+ *       and no harness chunk or URL reaches production; and `vite.config.ts` registers the
+ *       `forbid-dev-only-modules` build plugin (`src/build/forbid-dev-only-modules.ts`) as a
+ *       direct, unconditional element of `plugins`, so the module graph itself is the backstop
+ *       when this file's own import-form enumeration misses one (#219 PR A round 2 BLOCKER — see
+ *       below). That plugin's own tests live beside it, not here: this file only asserts it is
+ *       actually wired in.
+ *
+ * ## Round 2 fixes (#219 PR A, Sol's re-review)
+ * `scratchpad/sol-219a-r2-report.md`'s BLOCKER found this guard itself bypassable three ways:
+ * valid Vite `/src/...` absolute specifiers and `?raw`/`?worker`-suffixed specifiers were not
+ * resolved at all, `new Worker(new URL(..., import.meta.url))` (and bare `new URL(...)`) were not
+ * extracted, and `defineConfig({ ...cfg })`-style spreads on the config/`build`/`rollupOptions`
+ * objects were read as "no build option present" instead of failing closed. All four are fixed
+ * below (see `stripQueryAndHash`, `resolveSpecifier`'s `/`-prefix branch, `extractSpecifiers`' new
+ * `NewExpression` case, and `objectExpressionHasSpread`). The dist/-content detector this guard
+ * used to carry as a fourth backstop is gone — Sol's review called it "meaningless after
+ * minification, stale outside CI": Tailwind's content scanner and minification both erase the
+ * filename-shaped needles it relied on, and a stale `dist/` between builds silently skips it
+ * outside CI. The bundler's own module graph (the new `forbid-dev-only-modules` Vite plugin, (iv)
+ * above) replaces it as the authoritative backstop; this guard only proves that plugin is wired.
  *
  * ## Parser decision (#219 PR A round 2)
  * `typescript` (7.0.2, native) has no public `createSourceFile` in this toolchain, so this guard
@@ -65,7 +82,7 @@ import { parse } from "@babel/parser";
 import type { ParserPlugin } from "@babel/parser";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { dirname, extname, join, relative, sep } from "node:path";
 
 const harnessDir = dirname(fileURLToPath(import.meta.url)); // .../src/harness
 const srcDir = join(harnessDir, ".."); // .../src
@@ -91,18 +108,6 @@ function walkSourceFiles(dir: string): string[] {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...walkSourceFiles(full));
     else if (isViteSourceFile(entry.name)) out.push(full);
-  }
-  return out;
-}
-
-/** Every file of any kind (used for the dist/ walk, which is not JS/TS source). */
-function walkAllFiles(dir: string): string[] {
-  const out: string[] = [];
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walkAllFiles(full));
-    else out.push(full);
   }
   return out;
 }
@@ -202,6 +207,22 @@ function isImportMetaGlobCallee(callee: AstNode): boolean {
   return property.name === "glob" || property.name === "globEager";
 }
 
+/**
+ * `import.meta.url`, read as a MemberExpression on `import.meta` — the second argument Vite
+ * requires for its special-cased `new URL("...", import.meta.url)` asset/worker form (round 2 fix,
+ * Sol BLOCKER: this form, and `new Worker(new URL(...))` built from it, were not extracted at all).
+ */
+function isImportMetaUrl(node: AstNode | undefined): boolean {
+  if (!node || node.type !== "MemberExpression") return false;
+  const object = node.object as AstNode;
+  const property = node.property as AstNode & { name?: string };
+  if (object.type !== "MetaProperty") return false;
+  const meta = object.meta as AstNode & { name?: string };
+  const objProp = object.property as AstNode & { name?: string };
+  if (meta.name !== "import" || objProp.name !== "meta") return false;
+  return property.name === "url";
+}
+
 interface ExtractionResult {
   /** Literal specifiers from static import / export-from / literal or template import() / literal require(). */
   literalSpecifiers: string[];
@@ -251,6 +272,19 @@ function extractSpecifiers(text: string, ext: string): ExtractionResult | { pars
           if (value !== undefined) globPatterns.push(value);
         }
       }
+      return;
+    }
+    // `new URL("...", import.meta.url)` — Vite's special-cased asset/worker URL form. Catching it
+    // here (rather than only inside a `new Worker(...)` wrapper) is enough for both: the walk
+    // visits every node, so a bare `new URL(...)` and one nested inside `new Worker(new URL(...))`
+    // are both reached the same way.
+    if (node.type === "NewExpression") {
+      const callee = node.callee as AstNode & { name?: string };
+      const args = node.arguments as AstNode[];
+      if (callee.type === "Identifier" && callee.name === "URL" && isImportMetaUrl(args[1])) {
+        const value = literalStringValue(args[0]);
+        if (value !== undefined) literalSpecifiers.push(value);
+      }
     }
   });
 
@@ -266,13 +300,34 @@ function extractSpecifiers(text: string, ext: string): ExtractionResult | { pars
 const RESOLVE_EXTENSION_CANDIDATES = ["", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
 /**
- * Resolves a relative or `@/`-alias specifier to an absolute source file. Bare package specifiers
- * and anything that does not resolve to a Vite source file are skipped silently — they are not
- * part of this graph.
+ * Strips a trailing `?query` and/or `#hash` from a specifier before path resolution. Round 2 fix
+ * (Sol BLOCKER): Vite import forms like `?raw`, `?worker`, `?url`, and a fragment on a
+ * `new URL(...)` target are not part of the on-disk path and used to make `resolveSpecifier` fail
+ * to resolve an otherwise-valid Vite specifier.
  */
-function resolveSpecifier(fromFile: string, specifier: string): string | undefined {
-  if (!specifier.startsWith(".") && !specifier.startsWith("@/")) return undefined;
-  const base = specifier.startsWith("@/") ? join(srcDir, specifier.slice(2)) : join(dirname(fromFile), specifier);
+function stripQueryAndHash(specifier: string): string {
+  const hashIndex = specifier.indexOf("#");
+  const withoutHash = hashIndex === -1 ? specifier : specifier.slice(0, hashIndex);
+  const queryIndex = withoutHash.indexOf("?");
+  return queryIndex === -1 ? withoutHash : withoutHash.slice(0, queryIndex);
+}
+
+/**
+ * Resolves a relative, `@/`-alias, or project-root-absolute (`/src/...`) specifier to an absolute
+ * source file. Bare package specifiers and anything that does not resolve to a Vite source file are
+ * skipped silently — they are not part of this graph. Round 2 fix (Sol BLOCKER): the `/`-prefix
+ * branch (Vite resolves a leading `/` against the project root, the same rule
+ * `globBaseDir` below already applied to glob patterns) was previously entirely missing, so a valid
+ * `import(...)` of `/src/components/reui/gantt/gantt.tsx` resolved to nothing.
+ */
+function resolveSpecifier(fromFile: string, rawSpecifier: string): string | undefined {
+  const specifier = stripQueryAndHash(rawSpecifier);
+  if (!specifier.startsWith(".") && !specifier.startsWith("@/") && !specifier.startsWith("/")) return undefined;
+  const base = specifier.startsWith("@/")
+    ? join(srcDir, specifier.slice(2))
+    : specifier.startsWith("/")
+      ? join(webDir, specifier.slice(1))
+      : join(dirname(fromFile), specifier);
   const directCandidates = RESOLVE_EXTENSION_CANDIDATES.map((extension) => `${base}${extension}`);
   const indexCandidates = RESOLVE_EXTENSION_CANDIDATES.filter((extension) => extension !== "").map((extension) =>
     join(base, `index${extension}`),
@@ -575,6 +630,19 @@ function findExportedConfigObject(programBody: AstNode[]): AstNode | undefined {
   return declaration?.type === "ObjectExpression" ? declaration : undefined;
 }
 
+/**
+ * True if any of `node`'s own (non-nested) properties is a spread (`{ ...cfg }`) rather than a
+ * literal `key: value` pair. Round 2 fix (Sol BLOCKER): `getObjectProperty` above silently skips
+ * non-`ObjectProperty` entries, including spreads, when looking for a named key — so
+ * `defineConfig({ ...cfg })` used to read as "no build option present" even though `cfg` could
+ * carry one at runtime. Every object level `analyzeBuildInputSafety` inspects (the config object
+ * itself, `build`, `rollupOptions`) is checked with this before trusting an absent key.
+ */
+function objectExpressionHasSpread(node: AstNode): boolean {
+  if (node.type !== "ObjectExpression") return false;
+  return ((node.properties as AstNode[]) ?? []).some((prop) => prop.type !== "ObjectProperty");
+}
+
 interface BuildInputVerdict {
   safe: boolean;
   reason: string;
@@ -583,19 +651,31 @@ interface BuildInputVerdict {
 /**
  * Parses `viteConfigSource` and asserts `build.rollupOptions.input` is absent, or resolves (by
  * AST, not substring match) only to the literal string `"index.html"`. Any computed/non-literal
- * input, or an input that resolves to anything other than exactly `"index.html"`, is unsafe.
+ * input, or an input that resolves to anything other than exactly `"index.html"`, is unsafe. Fails
+ * closed (round 2 fix, Sol BLOCKER) if the config object, `build`, or `rollupOptions` object
+ * contains a non-literal spread that could carry a `build`/`rollupOptions`/`input` key this
+ * function cannot see statically.
  */
 function analyzeBuildInputSafety(viteConfigSource: string): BuildInputVerdict {
   const parsed = parseSource(viteConfigSource, ".ts");
   if (!parsed.ok) return { safe: false, reason: `vite.config.ts failed to parse: ${parsed.error}` };
   const configObject = findExportedConfigObject(parsed.ast.program.body as AstNode[]);
   if (!configObject) return { safe: false, reason: "could not statically find the exported Vite config object" };
+  if (objectExpressionHasSpread(configObject)) {
+    return { safe: false, reason: "the exported Vite config object contains a non-literal spread that could carry a build option" };
+  }
   const buildProp = getObjectProperty(configObject, "build");
   if (!buildProp) return { safe: true, reason: "no build option present" };
   if (buildProp.type !== "ObjectExpression") return { safe: false, reason: "build option is not a plain object literal" };
+  if (objectExpressionHasSpread(buildProp)) {
+    return { safe: false, reason: "the build option contains a non-literal spread that could carry rollupOptions" };
+  }
   const rollupOptions = getObjectProperty(buildProp, "rollupOptions");
   if (!rollupOptions) return { safe: true, reason: "no rollupOptions present" };
   if (rollupOptions.type !== "ObjectExpression") return { safe: false, reason: "rollupOptions is not a plain object literal" };
+  if (objectExpressionHasSpread(rollupOptions)) {
+    return { safe: false, reason: "rollupOptions contains a non-literal spread that could carry input" };
+  }
   const input = getObjectProperty(rollupOptions, "input");
   if (!input) return { safe: true, reason: "no input present" };
   const literals = literalInputStrings(input);
@@ -627,6 +707,23 @@ describe("guard: vite.config.ts's build input is absent or resolves only to inde
     expect(analyzeBuildInputSafety(plantedMulti).safe).toBe(false);
   });
 
+  it("self-test: fails closed on a spread at every object level that could carry a build option (round 2, Sol BLOCKER)", () => {
+    const spreadOnConfig = `
+      export default defineConfig({ ...sharedConfig, plugins: [] });
+    `;
+    expect(analyzeBuildInputSafety(spreadOnConfig)).toMatchObject({ safe: false });
+
+    const spreadOnBuild = `
+      export default defineConfig({ build: { ...sharedBuild } });
+    `;
+    expect(analyzeBuildInputSafety(spreadOnBuild)).toMatchObject({ safe: false });
+
+    const spreadOnRollupOptions = `
+      export default defineConfig({ build: { rollupOptions: { ...sharedRollupOptions } } });
+    `;
+    expect(analyzeBuildInputSafety(spreadOnRollupOptions)).toMatchObject({ safe: false });
+  });
+
   it("self-test: safe when build is absent, and when input is literally index.html only", () => {
     expect(analyzeBuildInputSafety(`export default defineConfig({ plugins: [] });`).safe).toBe(true);
     expect(
@@ -649,117 +746,82 @@ describe("guard: vite.config.ts's build input is absent or resolves only to inde
 });
 
 // ---------------------------------------------------------------------------
-// Detector (iv), part 2 — dist/ (if it exists) contains no harness/gantt reference
+// Detector (iv), part 2 — vite.config.ts registers the forbid-dev-only-modules build plugin
 // ---------------------------------------------------------------------------
-
-interface DistFileEntry {
-  relPath: string;
-  content: string | null; // null for extensions not worth text-scanning (images, fonts, etc.)
-}
-
-const DIST_TEXT_EXTENSIONS = /\.(js|mjs|cjs|css|html|map|json|txt)$/i;
-
-function collectDistFiles(distDir: string): DistFileEntry[] {
-  if (!existsSync(distDir)) return [];
-  return walkAllFiles(distDir).map((file) => {
-    const relPath = relative(distDir, file).split(sep).join("/");
-    let content: string | null = null;
-    if (DIST_TEXT_EXTENSIONS.test(file)) {
-      try {
-        content = readFileSync(file, "utf8");
-      } catch {
-        content = null;
-      }
-    }
-    return { relPath, content };
-  });
-}
+//
+// Round 2 replacement (Sol BLOCKER) for the old dist/-content detector: Sol's review found it
+// "meaningless after minification, stale outside CI" — minification strips the extension-bearing
+// module-id needles it looked for, and a `dist/` left over from an earlier build silently skips
+// the check outside CI, where a fresh build always precedes this test. The real backstop is now
+// `src/build/forbid-dev-only-modules.ts`, a Vite `apply: "build"` plugin that walks the ACTUAL
+// Rollup/Rolldown module graph at the end of a production build and fails it if anything under a
+// restricted prefix is reachable — see that file's own tests for its behaviour. This detector only
+// proves the plugin is actually wired into `vite.config.ts`, as a direct, unconditional element of
+// `plugins` (not behind a ternary, `&&`, `.filter(Boolean)`, or similar — that would leave a way to
+// build with the plugin silently absent).
 
 /**
- * Module-id-shaped needles derived from real (non-test) filenames under harness/ and the vendored
- * gantt tree, WITH extension. Extension-inclusive on purpose: a stripped basename like "gantt-bar"
- * collides with Tailwind's generated `.gantt-bar-group` utility class — Tailwind's content scanner
- * picks up class-name strings from every file under `src/`, including vendored-but-unreferenced
- * ones, so that CSS fragment leaks into `dist/` regardless of JS reachability and is not itself
- * evidence the harness is reachable. Likewise a bare "gantt" collides with the unrelated,
- * already-shipped Production Gantt API feature (`gantt: true` resource flags, `production-gantt.ts`
- * across `lib/`, `packages/shared/`, `workers/app/`) — #218, nothing to do with this guard.
- * `main.tsx`/`index.tsx` are excluded even with extension: too generic on their own.
+ * True if `pluginsArray` (an `ArrayExpression` AST node, or `undefined`) has `calleeName(...)` as
+ * one of its own direct elements — i.e. `plugins: [..., calleeName(), ...]`. A call wrapped in a
+ * condition (`cond && calleeName()`, a ternary, a spread of a conditionally-built array) is a
+ * different node type at that array position and is deliberately NOT matched — the guard should
+ * fail if the plugin's presence in the build depends on anything other than a literal array slot.
  */
-function distNeedles(): string[] {
-  const needles = new Set<string>(["reui-scheduling", "components/reui/gantt", "harness/reui-scheduling"]);
-  const dirs = [join(srcDir, "harness"), join(srcDir, "components", "reui", "gantt")];
-  const GENERIC_FILENAMES = new Set(["main.tsx", "index.tsx"]);
-  for (const dir of dirs) {
-    for (const file of walkSourceFiles(dir)) {
-      if (isTestFile(file)) continue;
-      const name = basename(file).toLowerCase();
-      if (GENERIC_FILENAMES.has(name)) continue;
-      needles.add(name);
-    }
-  }
-  return [...needles];
+function pluginsArrayHasDirectCall(pluginsArray: AstNode | undefined, calleeName: string): boolean {
+  if (!pluginsArray || pluginsArray.type !== "ArrayExpression") return false;
+  return ((pluginsArray.elements as (AstNode | null)[]) ?? []).some((element) => {
+    if (!element || element.type !== "CallExpression") return false;
+    const callee = element.callee as AstNode & { name?: string };
+    return callee.type === "Identifier" && callee.name === calleeName;
+  });
 }
 
-function findDistNeedleOffenders(entries: DistFileEntry[], needles: string[]): string[] {
-  const lowerNeedles = needles.map((needle) => needle.toLowerCase());
-  const offenders = new Set<string>();
-  for (const entry of entries) {
-    const lowerPath = entry.relPath.toLowerCase();
-    if (lowerNeedles.some((needle) => lowerPath.includes(needle))) {
-      offenders.add(entry.relPath);
-      continue;
-    }
-    if (entry.content === null) continue;
-    const lowerContent = entry.content.toLowerCase();
-    if (lowerNeedles.some((needle) => lowerContent.includes(needle))) offenders.add(entry.relPath);
-  }
-  return [...offenders].sort();
+/** Parses a fixture Vite config source and returns its `plugins` property AST node, if any. */
+function parseConfigPluginsArray(source: string): AstNode | undefined {
+  const parsed = parseSource(source, ".ts");
+  if (!parsed.ok) throw new Error(`fixture failed to parse: ${parsed.error}`);
+  const configObject = findExportedConfigObject(parsed.ast.program.body as AstNode[]);
+  return getObjectProperty(configObject, "plugins");
 }
 
-describe("guard: dist/ (if it exists) never references the harness entry or a gantt module id", () => {
-  it("self-test: fires on a planted offending filename and a planted offending content match, not on unrelated files", () => {
-    const planted: DistFileEntry[] = [
-      { relPath: "assets/harness-reui-scheduling-AbC123.js", content: "" },
-      { relPath: "assets/index-DeF456.js", content: 'import("/harness/reui-scheduling/main.tsx")' },
-      { relPath: "assets/index-GhI789.js", content: "export const ProductionCalendar = () => {};" },
-      { relPath: "index.html", content: "<div id=root></div>" },
-    ];
-    expect(findDistNeedleOffenders(planted, ["reui-scheduling"])).toEqual([
-      "assets/harness-reui-scheduling-AbC123.js",
-      "assets/index-DeF456.js",
-    ]);
+describe("guard: vite.config.ts registers the forbid-dev-only-modules build plugin", () => {
+  const FORBID_PLUGIN_CALLEE = "forbidDevOnlyModules";
+
+  it("self-test: fires when the plugin call is absent, wrapped in a condition, or plugins itself is missing/non-literal", () => {
+    const absent = `export default defineConfig({ plugins: [react()] });`;
+    expect(pluginsArrayHasDirectCall(parseConfigPluginsArray(absent), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    const behindLogicalAnd = `export default defineConfig({ plugins: [react(), isProd && forbidDevOnlyModules(root)] });`;
+    expect(pluginsArrayHasDirectCall(parseConfigPluginsArray(behindLogicalAnd), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    const noPluginsArray = `export default defineConfig({});`;
+    expect(pluginsArrayHasDirectCall(parseConfigPluginsArray(noPluginsArray), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    const pluginsIsNotAnArray = `export default defineConfig({ plugins: getPlugins() });`;
+    expect(pluginsArrayHasDirectCall(parseConfigPluginsArray(pluginsIsNotAnArray), FORBID_PLUGIN_CALLEE)).toBe(false);
   });
 
-  it("self-test needle list does not false-positive on generic chunk names, Tailwind-generated CSS class fragments from a vendored file's class strings, or the unrelated Production Gantt feature's bare word", () => {
-    const needles = distNeedles();
-    expect(needles).not.toContain("main");
-    expect(needles).not.toContain("main.tsx");
-    expect(needles).not.toContain("index");
-    expect(needles).not.toContain("index.tsx");
-    expect(needles).not.toContain("gantt");
-    expect(needles).not.toContain("gantt-bar");
-    expect(needles).toContain("gantt-bar.tsx");
-    expect(needles).toContain("gantt.tsx");
-
-    const tailwindGeneratedCss = ".group-hover\\/gantt-bar-group:opacity-100{opacity:.85}";
-    const productionGanttFeatureJs = 'invalidateProjectSurfaces(qc,{dashboard:!0,calendar:!0,gantt:!0,producer:"dashboard"})';
-    expect(
-      findDistNeedleOffenders([{ relPath: "assets/index-XYZ.css", content: tailwindGeneratedCss }], needles),
-    ).toEqual([]);
-    expect(
-      findDistNeedleOffenders([{ relPath: "assets/index-XYZ.js", content: productionGanttFeatureJs }], needles),
-    ).toEqual([]);
+  it("self-test: fires on a direct call to a different plugin, not the one being checked for", () => {
+    const source = `export default defineConfig({ plugins: [react(), tailwindcss()] });`;
+    expect(pluginsArrayHasDirectCall(parseConfigPluginsArray(source), FORBID_PLUGIN_CALLEE)).toBe(false);
   });
 
-  it.skipIf(!existsSync(join(webDir, "dist")))("has no offender in the real dist/, when it exists", () => {
-    const distDir = join(webDir, "dist");
-    const offenders = findDistNeedleOffenders(collectDistFiles(distDir), distNeedles());
-    expect(offenders, [
-      "dist/ contains a file name or file content referencing the harness entry, its dev URL, or a",
-      "gantt/harness module id. The production build must never reach the dev-only vendor harness.",
-      ...offenders.map((path) => `  dist/${path}`),
-    ].join("\n")).toEqual([]);
+  it("self-test: recognises a direct, unconditional call in the plugins array", () => {
+    const source = `export default defineConfig({ plugins: [react(), forbidDevOnlyModules(root)] });`;
+    expect(pluginsArrayHasDirectCall(parseConfigPluginsArray(source), FORBID_PLUGIN_CALLEE)).toBe(true);
+  });
+
+  it("is registered as a direct, unconditional element of plugins in the real vite.config.ts", () => {
+    const source = readFileSync(join(webDir, "vite.config.ts"), "utf8");
+    const parsed = parseSource(source, ".ts");
+    if (!parsed.ok) throw new Error(`vite.config.ts failed to parse: ${parsed.error}`);
+    const configObject = findExportedConfigObject(parsed.ast.program.body as AstNode[]);
+    expect(configObject, "could not statically find the exported Vite config object").toBeDefined();
+    const pluginsArray = getObjectProperty(configObject, "plugins");
+    expect(
+      pluginsArrayHasDirectCall(pluginsArray, FORBID_PLUGIN_CALLEE),
+      "vite.config.ts's plugins array does not register forbidDevOnlyModules(...) as a direct, unconditional element",
+    ).toBe(true);
   });
 });
 
@@ -858,6 +920,42 @@ describe("whole-scanner fixtures: every extraction form is caught end to end", (
     expect(catchesVendorGantt(`const Gantt = require("@/components/reui/gantt/gantt");`)).toEqual([
       "screens/__planted_reachability_fixture__.tsx",
     ]);
+  });
+
+  it("project-root-absolute /src/... specifier (round 2, Sol BLOCKER)", () => {
+    expect(catchesVendorGantt(`import { Gantt } from "/src/components/reui/gantt/gantt";`)).toEqual([
+      "screens/__planted_reachability_fixture__.tsx",
+    ]);
+  });
+
+  it("a ?raw-suffixed specifier still resolves after stripping the query (round 2, Sol BLOCKER)", () => {
+    expect(catchesVendorGantt(`import raw from "@/components/reui/gantt/gantt.tsx?raw";`)).toEqual([
+      "screens/__planted_reachability_fixture__.tsx",
+    ]);
+  });
+
+  it("a ?worker-suffixed specifier with no explicit extension still resolves (round 2, Sol BLOCKER)", () => {
+    expect(catchesVendorGantt(`import worker from "@/components/reui/gantt/gantt?worker";`)).toEqual([
+      "screens/__planted_reachability_fixture__.tsx",
+    ]);
+  });
+
+  it("new URL(\"...\", import.meta.url) reaching the harness (round 2, Sol BLOCKER)", () => {
+    expect(catchesHarness(`const url = new URL("../harness/reui-scheduling/fixtures.ts", import.meta.url);`)).toEqual([
+      "screens/__planted_reachability_fixture__.tsx",
+    ]);
+  });
+
+  it("new Worker(new URL(\"...\", import.meta.url)) reaching the vendored gantt tree (round 2, Sol BLOCKER)", () => {
+    expect(
+      catchesVendorGantt(`const w = new Worker(new URL("../components/reui/gantt/gantt.tsx", import.meta.url));`),
+    ).toEqual(["screens/__planted_reachability_fixture__.tsx"]);
+  });
+
+  it("new URL(...) with a non-import.meta.url second argument is NOT treated as a module specifier", () => {
+    expect(
+      catchesHarness(`const url = new URL("../harness/reui-scheduling/fixtures.ts", "https://example.com");`),
+    ).toEqual([]);
   });
 
   it("static import of the harness (detector i)", () => {
