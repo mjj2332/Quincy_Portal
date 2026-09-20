@@ -27,7 +27,7 @@ function calendar(search = ""): DashboardCalendarState {
   };
 }
 
-type View = "bare" | "list" | "kanban" | "calendar-intent" | "calendar-facet";
+type View = "bare" | "list" | "kanban" | "gantt" | "calendar-intent" | "calendar-facet";
 
 function routeFor(view: View, search?: string): StaffRoute {
   if (view === "calendar-facet") return { kind: "dashboard", calendar: calendar(search ?? "") };
@@ -62,7 +62,7 @@ describe("staff-route q grammar adversarial matrix (#217)", () => {
       "   ",
     ];
 
-    for (const view of ["bare", "list", "kanban", "calendar-intent", "calendar-facet"] as const) {
+    for (const view of ["bare", "list", "kanban", "gantt", "calendar-intent", "calendar-facet"] as const) {
       for (const value of values) {
         const input = routeFor(view, value);
         const location = staffPathFor(input as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
@@ -99,6 +99,21 @@ describe("staff-route q grammar adversarial matrix (#217)", () => {
     ];
 
     for (const location of locations) expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+  });
+
+  // #220: Gantt is a plain flat view exactly like List/Kanban — no facet params of its own. A
+  // `view=gantt` carrying one of Calendar's own facet keys must never be silently reinterpreted as
+  // (or folded into) a Calendar route; it is simply not a legal route at all.
+  it("rejects `view=gantt` plus a calendar-only param rather than silently producing a calendar route", () => {
+    for (const location of [
+      "/?view=gantt&date=2026-09-19",
+      "/?view=gantt&sub=month",
+      "/?view=gantt&layers=project",
+      "/?view=gantt&date=2026-09-19&sub=month&layers=project",
+      "/?view=gantt&q=smith&date=2026-09-19",
+    ]) {
+      expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+    }
   });
 
   it("normalizes whitespace-only q to the same route as an absent q", () => {

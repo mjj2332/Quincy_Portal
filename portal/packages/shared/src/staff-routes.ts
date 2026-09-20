@@ -46,10 +46,15 @@ export type DashboardCalendarState = {
  * on arrival, which is why this spelling should never be observed in the address bar for more than
  * a commit.
  */
-/** List/Kanban carry the Dashboard's own `q` (#217). */
+/**
+ * List/Kanban/Gantt carry the Dashboard's own `q` (#217; Gantt joined in #220). Gantt is a plain
+ * flat view exactly like List and Kanban — optional `q`, no facet params, no subview/date keys
+ * (unlike Calendar's own two-shape grammar below) — so it shares this one type and this one parser
+ * arm rather than growing a facet of its own.
+ */
 export type DashboardListKanbanRoute = {
   kind: "dashboard";
-  dashboardView: "list" | "kanban";
+  dashboardView: "list" | "kanban" | "gantt";
   search?: string;
 };
 
@@ -361,7 +366,7 @@ function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardLis
     if (!dashboardListKanbanParameterNames.has(name)) return null;
   }
   const dashboardView = params.get("view");
-  if (dashboardView !== "list" && dashboardView !== "kanban") return null;
+  if (dashboardView !== "list" && dashboardView !== "kanban" && dashboardView !== "gantt") return null;
   const search = parseDashboardSearch(params);
   if (search === null) return null;
 
@@ -395,7 +400,7 @@ export function parseStaffLocation(location: string): StaffRoute {
     // being entirely absent already did.
     return { kind: "dashboard", ...(search !== undefined ? { search } : {}) };
   }
-  if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
+  if (view === "list" || view === "kanban" || view === "gantt") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
     // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
     // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
