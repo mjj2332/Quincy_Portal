@@ -325,6 +325,60 @@ describe("Adjust session dies with its owner — store level (Sol re-review roun
     expect(state.drag).not.toBeNull();
   });
 
+  it("round 4, Sol HIGH: an in-place mutation of the SAME event object (not a new object reference) still cancels the session; an in-place title-only mutation does not", async () => {
+    // `owner = session.occurrence.event` (pre-fix) aliased the mutable event: `stillPresent` -
+    // found by id in `nextEvents` - is the LITERAL SAME object for an untouched entry (see the
+    // "UNRELATED event" test above), so comparing `stillPresent.start` against
+    // `session.occurrence.event.start` was comparing the SAME reference to itself, whatever
+    // `owned.start`/`owned.end` were reassigned to in the meantime. The fix snapshots immutable
+    // `startMs`/`endMs`/`allDay`/`resourceId`/`recurring` at `beginAdjust` instead - see
+    // `GanttAdjustState.ownerSnapshot`'s own doc comment.
+    const owned: GanttEvent = { id: "own-mutate", title: "Mutate Me", start: START, end: END };
+    const other: GanttEvent = { id: "other-mutate", title: "Other", start: START, end: END };
+    const internalsRef: { current: GanttInternals | null } = { current: null };
+    const getStateRef: {
+      current: (() => ReturnType<ReturnType<typeof useGantt>["getState"]>) | null;
+    } = { current: null };
+    const apiRef: { current: GanttApi | null } = { current: null };
+    await render(
+      <Gantt defaultEvents={[owned, other]} date={START} timeZone="UTC">
+        <InternalsProbe internalsRef={internalsRef} getStateRef={getStateRef} apiRef={apiRef} />
+      </Gantt>,
+    );
+    const internals = internalsRef.current!;
+    const getState = getStateRef.current!;
+    const api = apiRef.current!;
+    const occurrence = occurrenceOf(owned);
+    await act(async () => {
+      internals.beginAdjust(owned.id, occurrence, "move");
+      internals.stepAdjust(1, "snap");
+    });
+    expect(getState().adjust).not.toBeNull();
+    const versionBeforeTitleMutation = internals.getAdjustCancelledVersion();
+
+    // Title-only in-place mutation on the SAME object - no tracked field touched. The raw
+    // mutation itself calls nothing; an unrelated `api.updateEvent` is what actually invokes
+    // `killAdjustSessionIfOrphaned` (setField("events", ...) - see gantt.tsx).
+    owned.title = "Mutate Me (renamed)";
+    await act(async () => {
+      api.updateEvent(other.id, { title: "Other renamed" });
+    });
+    expect(getState().adjust).not.toBeNull();
+    expect(internals.getAdjustCancelledVersion()).toBe(versionBeforeTitleMutation);
+
+    // A SCHEDULE mutation, still on the SAME object reference (never replaced) - this is what the
+    // pre-fix identity-aliased comparison could never detect.
+    owned.start = new Date(owned.start.getTime() + 3600000);
+    owned.end = new Date(owned.end.getTime() + 3600000);
+    await act(async () => {
+      api.updateEvent(other.id, { title: "Other renamed again" });
+    });
+    const state = getState();
+    expect(state.adjust).toBeNull();
+    expect(state.drag).toBeNull();
+    expect(internals.getAdjustCancelledVersion()).toBe(versionBeforeTitleMutation + 1);
+  });
+
   it("commitAdjust's own write (the session's own event, cleared BEFORE the write per gantt.tsx) never self-triggers this teardown", async () => {
     // Regression guard: killAdjustSessionIfOrphaned fires from setField, which applyProposedUpdate
     // calls as part of a normal commit — if internal.adjust were still set at that point, a

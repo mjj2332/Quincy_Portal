@@ -51,6 +51,14 @@
  * OS-intercepted on some desktops, Alt+Arrow is browser Back/Forward). One `GanttAdjustState` lives
  * on `GanttState.adjust`, per instance, the same way `drag`/`slotDraft` do — see `gantt.tsx`'s
  * header for the begin/step/retarget/commit/cancel mechanics.
+ *
+ * #219 PR A fix (Sol round 4, HIGH), additive: `GanttAdjustState.ownerSnapshot` — immutable
+ * primitives (`startMs`/`endMs`/`allDay`/`resourceId`/`recurring`) snapshotted at `beginAdjust`,
+ * NOT a reference into `occurrence.event` itself. `gantt.tsx`'s `killAdjustSessionIfOrphaned` used
+ * to diff the current event straight against `session.occurrence.event` — but that field IS the
+ * live event object (never cloned), so an in-place mutation of it, or of one of its own `Date`
+ * fields, moved BOTH sides of the comparison at once and the drift went undetected. See
+ * `GanttAdjustState.ownerSnapshot`'s own doc comment.
  */
 
 type GanttBarId = string
@@ -268,6 +276,25 @@ interface GanttAdjustState<TData = unknown> {
   target: GanttNudgeAction
   entry: { start: Date; end: Date; allDay: boolean }
   preview: { start: Date; end: Date; allDay: boolean }
+  /**
+   * #219 PR A fix (Sol round 4, HIGH) — immutable primitives snapshotted from `occurrence.event`
+   * at `beginAdjust`, never updated by a retarget (same lifetime as `occurrence` itself). This is
+   * what `killAdjustSessionIfOrphaned` diffs the CURRENT event against, instead of
+   * `occurrence.event` directly: `occurrence.event` is the live event object, not a clone, so
+   * comparing `stillPresent.start.getTime()` against `occurrence.event.start.getTime()` was
+   * comparing a value against itself whenever the event (or one of its own `Date` fields) was
+   * mutated in place rather than replaced — the two sides always read identical, so the drift went
+   * undetected and a stale session survived. Primitives can't alias: `startMs`/`endMs` are numbers,
+   * not `Date` objects, so they freeze the value at snapshot time regardless of what happens to the
+   * live event afterward.
+   */
+  ownerSnapshot: {
+    startMs: number
+    endMs: number
+    allDay: boolean
+    resourceId?: string
+    recurring: boolean
+  }
   /**
    * #219 PR A fix (Sol re-review round 2, HIGH #2), additive: every `GanttNudgeAction` the session
    * has been under (M/S/E retargets append, deduped) - `commitAdjust`'s final re-validation checks

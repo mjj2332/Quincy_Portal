@@ -683,6 +683,16 @@ function createGanttStore<TData>(
    * dies only when the event is gone, one of those fields actually differs, or the date/scale
    * changed - a controlled clone or a metadata-only edit (title, colour, `draggable`, …) leaves it
    * alone.
+   *
+   * Quincy fix (#219 PR A round 4, Sol HIGH): the "CURRENT event" side of this diff used to read
+   * `session.occurrence.event` DIRECTLY - that field is the live event object, never cloned, so an
+   * in-place mutation of it (or of one of its own `start`/`end` `Date` objects) moved BOTH sides of
+   * every comparison below at once: `stillPresent` (found by id in `nextEvents`) IS
+   * `session.occurrence.event` whenever the event was mutated rather than replaced, so the
+   * comparison was really `x.getTime() !== x.getTime()` - always `false`, whatever changed. This
+   * now diffs against `session.ownerSnapshot` - immutable primitives captured at `beginAdjust`
+   * (see that field's own doc comment on `GanttAdjustState`) - which cannot alias the live event
+   * no matter what happens to it afterward.
    */
   const killAdjustSessionIfOrphaned = (
     nextEvents: GanttEvent<TData>[],
@@ -691,14 +701,14 @@ function createGanttStore<TData>(
     const session = internal.adjust
     if (!session) return false
     const stillPresent = nextEvents.find((event) => event.id === session.eventId)
-    const owner = session.occurrence.event
+    const owner = session.ownerSnapshot
     const scheduleDrifted =
       !stillPresent ||
-      stillPresent.start.getTime() !== owner.start.getTime() ||
-      stillPresent.end.getTime() !== owner.end.getTime() ||
-      (stillPresent.allDay ?? false) !== (owner.allDay ?? false) ||
+      stillPresent.start.getTime() !== owner.startMs ||
+      stillPresent.end.getTime() !== owner.endMs ||
+      (stillPresent.allDay ?? false) !== owner.allDay ||
       stillPresent.resourceId !== owner.resourceId ||
-      !!stillPresent.recurrence !== !!owner.recurrence
+      !!stillPresent.recurrence !== owner.recurring
     const orphaned = scheduleDrifted || dateOrScaleChanged
     if (!orphaned) return false
     internal.adjust = null
@@ -1478,6 +1488,16 @@ function createGanttStore<TData>(
         // been under - `commitAdjust`'s final re-validation checks ALL of them, not just whichever
         // one is current at commit time. See `validateAdjustCommit`'s own doc comment.
         touchedTargets: [initialTarget],
+        // Quincy fix (#219 PR A round 4, Sol HIGH): immutable primitives, NOT a reference into
+        // `occurrence.event` - see `GanttAdjustState.ownerSnapshot`'s own doc comment for why
+        // `killAdjustSessionIfOrphaned` needs this instead of diffing the live event directly.
+        ownerSnapshot: {
+          startMs: occurrence.event.start.getTime(),
+          endMs: occurrence.event.end.getTime(),
+          allDay: occurrence.event.allDay ?? false,
+          resourceId: occurrence.event.resourceId,
+          recurring: !!occurrence.event.recurrence,
+        },
       }
       invalidate()
       notify()
