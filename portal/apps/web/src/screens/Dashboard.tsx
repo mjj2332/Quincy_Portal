@@ -295,14 +295,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // instead of an unfiltered entry nobody is looking at. `acceptedProjects`/`boardOverlay`, both
   // keyed off `dashboardKeyString` too (see their own state below), inherit the fix the same way: a
   // committedQuery change now makes their stamped key stop matching, same as an archived-scope
-  // toggle already did, so `projects` (~:370) falls back to `queryProjects` for that key instead of
-  // painting the previous search's data (or a movement overlay computed against it) over the new
-  // one. That fallback is NOT necessarily fresh, though: `queryProjects` can itself be react-query's
-  // own PLACEHOLDER data for the new key (the previous committed query's rows, kept by
+  // toggle already did, so the `projects` constant below falls back to `queryProjects` for that key
+  // instead of painting the previous search's data (or a movement overlay computed against it) over
+  // the new one. That fallback is NOT necessarily fresh, though: `queryProjects` can itself be
+  // react-query's own PLACEHOLDER data for the new key (the previous committed query's rows, kept by
   // `keepPreviousData` in `useDashboardProjects`'s `placeholderData` while the new fetch is still in
-  // flight) -- Sol review round 1, item 2 is what keeps that placeholder from ever being STAMPED into
-  // `acceptedProjects` under the new key as though it were that key's own confirmed result (the
-  // accept effect, ~:672, gates on `projectsQuery.isPlaceholderData`); this fallback is simply what
+  // flight) -- the accept effect below (gated on `projectsQuery.isPlaceholderData`, see its own
+  // comment) is what keeps that placeholder from ever being STAMPED into `acceptedProjects` under
+  // the new key as though it were that key's own confirmed result; this fallback is simply what
   // renders it in the meantime.
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
@@ -692,15 +692,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus({ preventScroll: true });
   }, [acceptedProjects, announcement, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects, recoveryReason]);
 
-  // Sol review round 1, item 2: `projectsQuery.isPlaceholderData` -- react-query serves the
-  // PREVIOUS committed-query's dataset as `queryProjects` (`keepPreviousData`,
-  // `lib/dashboard-projects.ts`'s `placeholderData`) while a NEW committed-query's fetch is still in
-  // flight. Accepting that placeholder under the NEW `dashboardKeyString` would stamp it as though it
-  // were that key's own confirmed result; `hasAcceptedDashboard` would then suppress the error state
-  // if the fetch went on to fail, leaving the WRONG query's rows on screen as though they were
-  // correct. `projects` (~:370) already falls back to `queryProjects` directly whenever
-  // `acceptedProjects` doesn't match the current key, so refusing to accept here costs no loading/
-  // empty flash -- the placeholder rows still render, just never get stamped as this key's own.
+  // Gated on `projectsQuery.isPlaceholderData` -- react-query serves the PREVIOUS committed-query's
+  // dataset as `queryProjects` (`keepPreviousData`, `lib/dashboard-projects.ts`'s `placeholderData`)
+  // while a NEW committed-query's fetch is still in flight. Accepting that placeholder under the NEW
+  // `dashboardKeyString` would stamp it as though it were that key's own confirmed result;
+  // `hasAcceptedDashboard` would then suppress the error state if the fetch went on to fail, leaving
+  // the WRONG query's rows on screen as though they were correct. The `projects` constant above
+  // already falls back to `queryProjects` directly whenever `acceptedProjects` doesn't match the
+  // current key, so refusing to accept here costs no loading/empty flash -- the placeholder rows
+  // still render, just never get stamped as this key's own.
   useEffect(() => {
     if (!queryProjects || projectsQuery.isPlaceholderData || queryRuntime?.principalTerminal) return;
     if (interactionBlocked) {
@@ -720,8 +720,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useEffect(() => {
     if (interactionBlocked || !queuedRefreshRef.current) return;
     queuedRefreshRef.current = false;
-    // Sol review round 2, item 2: snapshot the key this refetch is FOR, same as item 1's
-    // `currentKeyAtConfirm` above -- `QueryObserver#fetch()`'s own `.then()` reads
+    // Snapshot the key this refetch is FOR, same reasoning as `setProjectPriority`'s own
+    // `currentKeyAtConfirm` below -- `QueryObserver#fetch()`'s own `.then()` reads
     // `this.#currentResult` AFTER the underlying fetch settles, which is the observer's CURRENT
     // result for whatever key is active THEN, not necessarily this one. This closure's own
     // `acceptDashboardProjects`/`replaceAcceptedProjects` are bound to dashboardKeyString as of
@@ -1212,14 +1212,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
-      // Sol review round 1, item 1: the fan-out below opens two races once it lands in a SIBLING
-      // entry no observer is currently reading -- (A) a sibling's own refetch that started BEFORE
-      // this POST resolving AFTER the fan-out write and putting the stale value back, (B) this
-      // response being older than a sibling that already holds a NEWER server `boardRevision` (a
-      // later stage move, say) and regressing it. `isSiblingDashboardQuery` structurally compares
-      // `queryKey` (JSON, not reference) against the key ACTIVE at confirmation -- the ACTIVE entry's
-      // own refresh is owned by `queueDashboardRefresh` below and must never be cancelled or
-      // invalidated here.
+      // The fan-out below opens two races once it lands in a SIBLING entry no observer is currently
+      // reading -- (A) a sibling's own refetch that started BEFORE this POST resolving AFTER the
+      // fan-out write and putting the stale value back, (B) this response being older than a
+      // sibling that already holds a NEWER server `boardRevision` (a later stage move, say) and
+      // regressing it. `isSiblingDashboardQuery` structurally compares `queryKey` (JSON, not
+      // reference) against the key ACTIVE at confirmation -- the ACTIVE entry's own refresh is owned
+      // by `queueDashboardRefresh` below and must never be cancelled or invalidated here.
       //
       // Snapshot `dashboardKeyRef.current` HERE, immediately after the POST resolves, not
       // `dashboardKeyString` from this closure's own render (the CLICK-time key). If the committed
