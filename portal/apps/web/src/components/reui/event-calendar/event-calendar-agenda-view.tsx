@@ -41,7 +41,13 @@
  *     geometry at all. A pointer release over the agenda must be an explicit, tested no-op rather
  *     than an accidental one.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 4 — the row hover went from `hover:bg-accent/40` to
+ *    `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the registry's value painted a 40%
+ *    near-black wash over a whole agenda row on hover — correct on a theme whose accent is a
+ *    light tint, very wrong here. `--muted` (`--bg-raised`) is the surface this repo uses for a
+ *    raised/hovered row.
  */
 import { useMemo } from "react"
 import {
@@ -269,7 +275,7 @@ function EventCalendarAgendaItem({
       segment={segment}
       className={cn(
         // read-only list: hover only, no selected/focused styling on click
-        "hover:bg-accent/40 gap-3 rounded-none border-b px-4 py-2.5 transition-colors",
+        "hover:bg-muted gap-3 rounded-none border-b px-4 py-2.5 transition-colors",
         viewConfig.classNames?.agendaItem
       )}
     />

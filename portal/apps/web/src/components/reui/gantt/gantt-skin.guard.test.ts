@@ -209,7 +209,17 @@ describe("guard: no `shadow-(xs|sm|md|lg|xl)` class outside the allowlist", () =
 // false-positive on a 3-hex-digit read of the issue number (comments are stripped before this
 // runs, but a code-level reference like a variable named after an issue could still collide with a
 // naive `#[0-9a-f]{3,8}` scan).
-const HEX_LITERAL = /\[(?:[a-zA-Z-]+:)?#[0-9a-fA-F]{3,8}\]|["'`]#[0-9a-fA-F]{3,8}["'`]/;
+//
+// #219 PR B back-port: the bracketed branch is WIDENED to match a hex ANYWHERE inside a `[...]`
+// pair, not only immediately after `[` or a single type-hint prefix. `event-calendar-skin.guard.
+// test.ts` (this file's sibling for the vendored event-calendar) found a real form the old,
+// narrower regex missed: `event-calendar-event.tsx`'s truncation mask, `@max-[10rem]:[mask-image:
+// linear-gradient(to_right,#000_calc(100%-0.75rem),transparent)]` — a hex buried arbitrarily deep
+// inside a much longer bracketed arbitrary value. Ported here so the two sibling guards do not
+// silently diverge; the Gantt tree itself has no `mask-image`/`#000`/`#fff`, so this widening
+// cannot turn this guard red (verified before making this change — see `readVendoredFiles()`'s
+// nine files for the search).
+const HEX_LITERAL = /\[[^\]\n]*#[0-9a-fA-F]{3,8}[^\]]*\]|["'`]#[0-9a-fA-F]{3,8}["'`]/;
 const RGB_LITERAL = /\brgba?\(/;
 
 function findColorLiterals(files: Map<string, string>): Record<string, string[]> {
@@ -244,6 +254,18 @@ describe("guard: no hex or rgb()/rgba() colour literal", () => {
       "fixture-hex-quoted.tsx": ["hex"],
       "fixture-rgb.tsx": ["rgb()"],
     });
+  });
+
+  // #219 PR B back-port: the widening's whole justification, proven directly against the OLD
+  // (pre-#219 PR B) regex — the OLD form misses a hex buried inside a longer bracketed value; the
+  // NEW (widened) `HEX_LITERAL` above catches it. See `event-calendar-skin.guard.test.ts`'s sibling
+  // copy of this test for the real vendored string this comes from.
+  it("Detector 3 widening: the OLD hex regex misses a hex buried inside a longer bracketed value; the NEW (widened) regex catches it", () => {
+    const OLD_HEX_LITERAL = /\[(?:[a-zA-Z-]+:)?#[0-9a-fA-F]{3,8}\]|["'`]#[0-9a-fA-F]{3,8}["'`]/;
+    const maskImageString =
+      "@max-[10rem]:[mask-image:linear-gradient(to_right,#000_calc(100%-0.75rem),transparent)]";
+    expect(OLD_HEX_LITERAL.test(maskImageString)).toBe(false);
+    expect(HEX_LITERAL.test(maskImageString)).toBe(true);
   });
 
   it("has no hex or rgb()/rgba() literal in the nine vendored files", () => {

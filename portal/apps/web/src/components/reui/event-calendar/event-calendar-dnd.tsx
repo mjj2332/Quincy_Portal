@@ -58,6 +58,19 @@
  *    broadcasts through `onDragBlocked` like any other. Cover:
  *    `event-calendar-resize-edges.dom.test.tsx`, which fails on 4 of its 8 cases if the per-edge
  *    check is removed.
+ *
+ * 2. 2026-09-21, #219 PR B, stage 3 — ADDED the external-drop adapter (its own banner comment
+ *    below the gesture engine). Pure addition; nothing inside `beginGesture` was touched.
+ *
+ * 3. 2026-09-21, #219 PR B, stage 4 — both cursor-following overlays lost their drop shadows.
+ *    The carry clone traded `shadow-md` for `border border-border` (it had NO border, so the
+ *    hairline had to be added, and it has to be `border-border` rather than a bare `border`);
+ *    the refusal hint dropped `shadow-sm` and kept the `border-destructive/40` it already had,
+ *    and its `rounded-md` came to `rounded-sm`. Quincy's elevation is a hairline, not a shadow.
+ *    Note these are string constants CONCATENATED with the consumer's `ui?.dragCarry` /
+ *    `dropHint` with no `cn()` / tailwind-merge in the path, so a consumer's `shadow-none` would
+ *    only win by CSS source order — which is not a guarantee. This one genuinely had to be fixed
+ *    in place; a wrapper could not have done it.
  */
 import { useCallback, useEffect, useMemo } from "react"
 import {
@@ -747,7 +760,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   let carryDX = 0
   let carryDY = 0
   const CARRY_CLASS =
-    "bg-background pointer-events-none fixed top-0 left-0 z-100 overflow-hidden rounded-sm opacity-90 shadow-md will-change-transform" +
+    "bg-background border-border pointer-events-none fixed top-0 left-0 z-100 overflow-hidden rounded-sm border opacity-90 will-change-transform" +
     (ui?.dragCarry ? " " + ui.dragCarry : "")
   const CARRY_INVALID_CLASS =
     `${CARRY_CLASS} ring-destructive/60 ring-1` +
@@ -804,7 +817,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       // coordinates, so a logical start-0 anchor would fling it off-screen
       // in RTL documents
       hintEl.className =
-        "bg-background text-destructive border-destructive/40 pointer-events-none fixed top-0 left-0 z-100 rounded-md border px-2 py-0.5 text-xs font-medium shadow-sm" +
+        "bg-background text-destructive border-destructive/40 pointer-events-none fixed top-0 left-0 z-100 rounded-sm border px-2 py-0.5 text-xs font-medium" +
         (ui?.dropHint ? " " + ui.dropHint : "")
       hintEl.textContent = settings.i18n.labels.dropNotAllowed
       document.body.appendChild(hintEl)

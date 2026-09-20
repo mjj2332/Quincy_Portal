@@ -60,6 +60,14 @@
  *    Cover: `event-calendar-dst.test.ts`. Known consequence, deliberately not fixed here: the
  *    shared hour gutter now visibly disagrees with a transition day's column by one hour-height
  *    (it agreed before only because the extra hour was being discarded). See the follow-up issue.
+ *
+ * 3. 2026-09-21, #219 PR B, stage 4 — the now-indicator's three `destructive` fills became
+ *    `border-strong` (`/50` on the faint cross-column hairline, solid on today's segment and
+ *    dot). Red means overdue or critical in this palette and a clock is neither. Alpha follows
+ *    PR A's measurement for the Gantt's now-line, where `/45` came out at ~2.90:1 against a
+ *    tinted today column — under WCAG 1.4.11's 3:1. Mechanised: the skin guard forbids
+ *    `destructive` inside `EventCalendarNowIndicator`'s body specifically, not file-wide, because
+ *    `destructive` is correct elsewhere in this file.
  */
 import {
   useEffect,
@@ -1403,7 +1411,12 @@ function EventCalendarNowIndicator({
       style={{ top: `calc(var(--ec-hour-height) * ${top})` }}
     >
       {/* hairline across the content columns only (clear of the time gutter) */}
-      <div className="bg-destructive/40 absolute start-(--ec-gutter-width,4.5rem) end-0 h-px" />
+      {/* QUINCY (#219 PR B stage 4): `border-strong`, not `destructive`. In this palette red means
+          overdue or critical, and the now-line has no causal link to an overdue event — a reader
+          scanning for trouble should not be drawn to a clock. Same token and same alpha PR A
+          settled on for the Gantt's now-line after measuring `/45` at ~2.90:1 against a tinted
+          today column, under WCAG 1.4.11's 3:1 floor. */}
+      <div className="bg-border-strong/50 absolute start-(--ec-gutter-width,4.5rem) end-0 h-px" />
       {/* stronger segment + dot over today's column */}
       <div
         className="absolute h-px"
@@ -1412,11 +1425,11 @@ function EventCalendarNowIndicator({
           width: `calc((100% - var(--ec-gutter-width, 4.5rem)) * ${columnWidthPct / 100})`,
         }}
       >
-        <div className="bg-destructive absolute inset-x-0 top-0 h-px" />
+        <div className="bg-border-strong absolute inset-x-0 top-0 h-px" />
         {/* dot leads the line at today's column-start border: pulled 1px left of
             center (-start-1 = -4px vs the 6px/size-1.5 circle) so it reads as a
             distinct bullet instead of merging into the line to its right */}
-        <div className="bg-destructive absolute -start-1 top-0 size-1.5 -translate-y-1/2 rounded-full" />
+        <div className="bg-border-strong absolute -start-1 top-0 size-1.5 -translate-y-1/2 rounded-full" />
       </div>
     </div>
   )

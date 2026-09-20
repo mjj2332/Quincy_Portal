@@ -37,7 +37,7 @@
  *
  * THIS FILE: the event chip family, plus the tree's shared class constants — the drag ghost, the drag-to-create slot draft, the colour presets and the fade truncation.
  *
- *   - `EVENT_CALENDAR_COLORS` is ten chromatic `var(--color-<hue>-500)` presets — the registry's
+ *   - `EVENT_CALENDAR_COLORS` WAS ten chromatic `var(--color-<hue>-500)` presets — the registry's
  *     default palette, and not Quincy's monochrome brand. Nothing in this tree consumes it.
  *     `event-calendar-skin.guard.test.ts` keeps it that way.
  *
@@ -94,19 +94,21 @@ import {
 } from "@/components/reui/tooltip"
 import { RepeatIcon } from "lucide-react"
 
-/** Event color presets; each stays legible on light and dark surfaces. */
-const EVENT_CALENDAR_COLORS: Array<{ name: string; value: string }> = [
-  { name: "Blue", value: "var(--color-blue-500)" },
-  { name: "Emerald", value: "var(--color-emerald-500)" },
-  { name: "Violet", value: "var(--color-violet-500)" },
-  { name: "Rose", value: "var(--color-rose-500)" },
-  { name: "Amber", value: "var(--color-amber-500)" },
-  { name: "Cyan", value: "var(--color-cyan-500)" },
-  { name: "Orange", value: "var(--color-orange-500)" },
-  { name: "Pink", value: "var(--color-pink-500)" },
-  { name: "Teal", value: "var(--color-teal-500)" },
-  { name: "Indigo", value: "var(--color-indigo-500)" },
-]
+/*
+ * QUINCY REMOVAL (#219 PR B stage 4): `EVENT_CALENDAR_COLORS` deleted. It was ten chromatic
+ * `var(--color-<hue>-500)` presets — blue, emerald, violet, rose, amber, cyan, orange, pink,
+ * teal, indigo — in a brand that is monochrome greige and ink. Nothing in the tree consumed it;
+ * it was exported, so "unused" was a promise about the rest of the repo rather than a structural
+ * fact, and a dead palette const is exactly the thing a future contributor wires up helpfully.
+ *
+ * It is also INVISIBLE to the non-token-palette detector, which matches Tailwind class names:
+ * these are CSS custom-property VALUES, so no `bg-amber-500` ever appears. Deleting it is what
+ * makes the absence structural; the skin guard's `EVENT_CALENDAR_COLORS` detector then keeps it
+ * from coming back from anywhere in `src/`.
+ *
+ * A re-vendor WILL bring it back. Delete it again — event colour in Quincy comes from a semantic
+ * token (see `harness/reui-scheduling/fixtures.ts`'s `STAGE_COLORS`), never from a hue wheel.
+ */
 
 /**
  * Drag-ghost surfaces, shared verbatim by every view. A move CARRIES the
@@ -547,20 +549,22 @@ function EventCalendarEvent<TData = unknown>({
     },
     className: cn(
       "group/ec-event text-foreground relative flex w-full min-w-0 cursor-pointer touch-none items-center overflow-hidden text-start select-none",
-      "focus-visible:ring-ring/50 outline-none focus-visible:ring-2",
       preview && "pointer-events-none",
       view === "agenda"
         ? // plain list row: color lives in the dot badge, not a tinted pill;
           // hover AND selection surfaces are owned by the agenda row wrapper
-          "gap-3 rounded-md text-sm"
+          // QUINCY: rounded-sm, matching the grid chips — one radius across the chip family.
+          "gap-3 rounded-sm text-sm"
         : cn(
             // @container removes intrinsic sizing; only grid chips are containers
             // py-1: room above/below inline badges (attendee pill etc.)
             "@container gap-1.5 rounded-sm px-1.5 py-1 leading-normal",
-            // soft tint + inset ring, not an accent border: legible on both themes
+            // soft tint + inset ring, not an accent border
+            // QUINCY: the `dark:` lift that sat here is gone. Quincy has no `dark:` variant —
+            // a dark surface is `[data-surface="inverse"]`, which re-scopes the tokens
+            // themselves, so a variant keyed on the `dark` class could only ever be dead code
+            // that silently comes alive if someone adds that class.
             "bg-(--ec-event-color)/15 hover:bg-(--ec-event-color)/25",
-            // a flat tint reads darker on a dark surface, so lift it there
-            "dark:bg-(--ec-event-color)/20 dark:hover:bg-(--ec-event-color)/30",
             "inset-ring inset-ring-(--ec-event-color)/15",
             "transition-[background-color,box-shadow] duration-150",
             "data-dragging:opacity-40",
@@ -609,7 +613,6 @@ function EventCalendarEvent<TData = unknown>({
 }
 
 export {
-  EVENT_CALENDAR_COLORS,
   EVENT_CALENDAR_FADE_TRUNCATE,
   EVENT_CALENDAR_GHOST,
   EVENT_CALENDAR_SLOT_DRAFT,

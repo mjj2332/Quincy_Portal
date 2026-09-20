@@ -45,7 +45,11 @@
  *     anyway, from inside this same tree — see this directory's external-drag modules and ADR
  *     0010.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 4 — `dayClassName`'s docstring no longer offers
+ *    `"bg-amber-500/10"` as the intended value. It is a consumer-supplied class, so it is the one
+ *    palette violation no detector in this repo can catch, and the docstring was teaching it.
  */
 import {
   createContext,
@@ -1498,9 +1502,14 @@ interface EventCalendarViewConfig<TData = unknown> {
   /** Stick the default nav to the top while the page scrolls. */
   stickyNav: boolean
   /**
-   * Custom per-day indication (light background classes work in both themes,
-   * e.g. "bg-amber-500/10"). Applied to month cells, time-grid day columns,
-   * and all-day cells; content stays readable on top of it.
+   * Custom per-day indication. Applied to month cells, time-grid day columns, and all-day cells;
+   * content stays readable on top of it.
+   *
+   * QUINCY: the registry's own example here was `"bg-amber-500/10"`. Do not. A raw Tailwind hue
+   * is not in this brand, and because this value is supplied by the CONSUMER it is the single
+   * most likely place for one to enter the app — the skin guard cannot see a class name that
+   * lives in a caller. Use a semantic surface token: `"bg-muted"`, or
+   * `"bg-(--signal-caution)/10"` for a real warning day.
    */
   dayClassName?: (day: Date) => string | undefined
   /**
