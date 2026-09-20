@@ -48,6 +48,17 @@
  * occurrences (two `PlusIcon`) resolved by `add`, matching each placeholder's own `lucide=` prop:
  * `PlusIcon` (add-row, add-event), `MinusIcon` (zoom out), `GripVerticalIcon` (row drag handle),
  * `ChevronRightIcon` (row-expand disclosure, and pan), `ChevronLeftIcon` (pan).
+ *
+ * #219 PR A fix (dr-219a HIGH #2 and HIGH #3): dropped `outline-none focus-visible:ring-2
+ * focus-visible:ring-ring/50` from the tree/timeline splitter (`styles/tokens/base.css:25`'s
+ * unlayered `:focus-visible` already beats it — see `gantt-skin.guard.test.ts`'s Detector 5).
+ * Added an explicit `border-border` to nine bare `border`/`border-b`/`border-t` classes (the tree
+ * header row, its bottom-rule row, the create-task button, the timeline header, its group-sector
+ * row, the create-task spacer, the per-row horizontal gridline (both the static and the
+ * `rowBorder`-conditional forms), the floating zoom control, the zoom-out button's top divider,
+ * and the offscreen edge chip) that used to paint Tailwind v4 preflight's default `currentColor`
+ * (near-black) instead of the greige hairline — see `gantt-skin.guard.test.ts`'s Detector 6, and
+ * each site's own inline comment.
  */
 
 import {
@@ -2290,7 +2301,11 @@ function GanttView({
         data-slot="gantt-tree-header"
         className="bg-background sticky top-0 z-30 box-content h-16 shrink-0 border-b border-b-transparent"
       >
-        <div className="flex h-8 border-b">
+        {/* #219 PR A fix (dr-219a HIGH #3): border-b was bare - Tailwind v4 preflight's
+            `border: 0 solid currentColor` reset paints it near-black with no
+            `border-color` utility naming a token. border-border matches the grid lines'
+            own `var(--color-border)`. */}
+        <div className="border-border flex h-8 border-b">
           <div className="flex h-full min-w-0 flex-1">
             <div
               className="flex h-full shrink-0 items-center"
@@ -2356,7 +2371,9 @@ function GanttView({
             // mirror the tree row's left structure so the + lands in the same
             // column as the row toggle chevrons, and the label lines up with
             // the task titles above
-            className="text-muted-foreground hover:text-foreground hover:bg-muted/40 flex h-10 w-full shrink-0 items-center border-b ps-3 pe-3"
+            // #219 PR A fix (dr-219a HIGH #3): border-b was bare - see the tree header's
+            // own comment above for why.
+            className="text-muted-foreground hover:text-foreground hover:bg-muted/40 border-border flex h-10 w-full shrink-0 items-center border-b ps-3 pe-3"
             onClick={() =>
               settings.onCreateTask?.({
                 parentId: null,
@@ -2395,12 +2412,14 @@ function GanttView({
       {/* Two-row grouped header; also the drag-to-pan surface */}
       <div
         data-slot="gantt-timeline-header"
-        className="bg-background sticky top-0 z-30 shrink-0 border-b"
+        // #219 PR A fix (dr-219a HIGH #3): border-b was bare - see the tree header's own
+        // comment above for why.
+        className="bg-background border-border sticky top-0 z-30 shrink-0 border-b"
         style={{ minWidth: trackWidth }}
         onPointerDown={beginHeaderPan}
       >
         {/* group sectors; boundaries painted like the body lines */}
-        <div className="relative h-8 border-b">
+        <div className="border-border relative h-8 border-b">
           <div className="flex h-full">
             {groups.map((group) => (
               <div
@@ -2620,7 +2639,9 @@ function GanttView({
           <div
             aria-hidden
             data-slot="gantt-create-task-spacer"
-            className="h-10 border-b"
+            // #219 PR A fix (dr-219a HIGH #3): border-b was bare - see the tree header's
+            // own comment above for why.
+            className="border-border h-10 border-b"
             style={{ minWidth: trackWidth }}
           />
         )}
@@ -2789,7 +2810,9 @@ function GanttView({
                  pass: the control glides inward while a chip occupies its
                  band, because the chips' position IS their meaning and this
                  corner spot is merely a habit */
-              className="bg-background absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-md border transition-[inset-inline-end] duration-200"
+              // #219 PR A fix (dr-219a HIGH #3, LOW #7): border was bare - see the tree
+              // header's own comment above for why.
+              className="bg-background border-border absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-md border transition-[inset-inline-end] duration-200"
             >
               {/* aria-disabled instead of disabled: the not-allowed cursor
                   must still show at the zoom limits */}
@@ -2830,7 +2853,9 @@ function GanttView({
                         size="icon-xs"
                         aria-label={settings.i18n.labels.zoomOut}
                         aria-disabled={!canZoomOut || undefined}
-                        className="text-muted-foreground hover:text-foreground size-5! rounded-t-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                        // #219 PR A fix (dr-219a HIGH #3): border-t was bare - see the tree
+                        // header's own comment above for why.
+                        className="text-muted-foreground hover:text-foreground border-border size-5! rounded-t-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                         onClick={() => {
                           if (!canZoomOut) return
                           if (viewConfig.zoom === undefined) anchorZoomCenter()
@@ -3193,7 +3218,9 @@ const GanttTreeRow = memo(function GanttTreeRow({
       data-gantt-row-id={row.resource.id}
       data-selected={selected || undefined}
       className={cn(
-        "group/gantt-row data-hover:bg-muted/40 data-selected:bg-primary/5 data-selected:data-hover:bg-primary/5 flex border-b",
+        // #219 PR A fix (dr-219a HIGH #3): border-b was bare - see the tree header's own
+        // comment above for why.
+        "group/gantt-row data-hover:bg-muted/40 data-selected:bg-primary/5 data-selected:data-hover:bg-primary/5 border-border flex border-b",
         dimmed && "opacity-50"
       )}
       style={{ height: `${heightRem}rem` }}
@@ -3630,7 +3657,9 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         // horizontal separators mirror the tree node borders across panes.
         // No special case for the last row: the columns run the full height of
         // the pane, so the grid closes on the container edge on its own.
-        rowBorder !== null && "border-b",
+        // #219 PR A fix (dr-219a HIGH #3): border-b was bare - see the tree header's own
+        // comment above for why.
+        rowBorder !== null && "border-b border-border",
         rowBorder === "dashed" && "border-dashed",
         dragTarget === "valid" && "bg-muted/40",
         dragTarget === "invalid" && "bg-destructive/10"
@@ -4470,7 +4499,9 @@ function GanttOffscreenChips({
                   data-slot="gantt-offscreen-chip"
                   data-side={chip.side}
                   aria-label={settings.i18n.labels.jumpToBar(chip.label)}
-                  className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto absolute flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border"
+                  // #219 PR A fix (dr-219a HIGH #3): border was bare - see the tree
+                  // header's own comment above for why.
+                  className="bg-background text-muted-foreground hover:text-foreground border-border pointer-events-auto absolute flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border"
                   style={{
                     top: chip.top,
                     ...(chip.side === "start"

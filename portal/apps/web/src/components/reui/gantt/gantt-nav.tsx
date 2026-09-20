@@ -29,6 +29,10 @@
  * Four `IconPlaceholder`s resolved by `add`, matching each placeholder's own `lucide=` prop:
  * `ChevronLeftIcon` / `ChevronRightIcon` (pan), `ChevronDownIcon` (scale-select disclosure),
  * `CalendarIcon` (date-picker trigger).
+ *
+ * #219 PR A fix (dr-219a HIGH #3): the toolbar's own `border-b` was bare — Tailwind v4 preflight's
+ * `border: 0 solid currentColor` reset paints it near-black with no `border-color` utility naming
+ * a token. Added `border-border`; see `gantt-skin.guard.test.ts`'s Detector 6.
  */
 
 import { useState, type ReactNode } from "react"
@@ -429,8 +433,10 @@ function GanttNav({ className, render, children, ...props }: GanttNavProps) {
     "data-slot": "gantt-nav",
     className: cn(
       // px so the toolbar controls do not hug the container edge; border-b
-      // separates the toolbar from the column header below it
-      "flex min-w-0 flex-wrap items-center gap-2 border-b px-3 py-2",
+      // separates the toolbar from the column header below it. #219 PR A fix (dr-219a
+      // HIGH #3): border-b was bare - Tailwind v4 preflight's `border: 0 solid
+      // currentColor` reset paints it near-black without an explicit border-<token>.
+      "flex min-w-0 flex-wrap items-center gap-2 border-border border-b px-3 py-2",
       viewConfig.stickyNav && "bg-background sticky top-0 z-30",
       viewConfig.classNames?.nav,
       className

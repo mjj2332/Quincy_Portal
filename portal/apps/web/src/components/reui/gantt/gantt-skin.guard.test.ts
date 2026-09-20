@@ -18,6 +18,12 @@
  * unlayered `:focus-visible { outline }` beats `@layer utilities`, so the pair ADDS a second focus
  * indicator instead of replacing the global one. See that detector's own doc comment, below.
  *
+ * #219 PR A fix (dr-219a HIGH #3), additive detector: a bare `border`/`border-b`/`border-t`/…
+ * class with no `border-<token>` colour anywhere on the SAME element — Tailwind v4 preflight
+ * resets every element to `border: 0 solid currentColor`, and this app ships no
+ * `* { border-color: var(--border) }` compat rule, so a bare structural border class paints near-
+ * black instead of the greige hairline. See that detector's own doc comment, below.
+ *
  * Each detector is a pure function over injected text, self-tested against a planted fixture that
  * PLANTS the violation it looks for — same convention as `harness-reachability.guard.test.ts` and
  * `styles/design-system-guards.test.ts` (`docs/lessons.md`: "a grep gate that cannot fail is not a
@@ -317,6 +323,133 @@ describe("guard: no `outline-none` paired with a `focus-visible:ring-*` class", 
       "already beats @layer utilities. Drop both classes and let the global outline stand, as",
       "components/reui/button.tsx does. Found in:",
       ...offenders.map((name) => `  ${name}`),
+    ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 6 — a bare `border`/`border-x`/`border-t`-style class with no
+// accompanying `border-<token>` class on the SAME element
+// ---------------------------------------------------------------------------
+// #219 PR A fix (dr-219a HIGH #3): Tailwind v4 preflight resets every element to `border: 0 solid`
+// (`currentColor`, never touched by `border-width`/`border-style` utilities alone) — this app ships
+// no `* { border-color: var(--border) }` compat rule, so a bare `border`/`border-b`/`border-t`/…
+// class paints near-black ink (measured greyscale 16-24) instead of the greige hairline the grid
+// lines around it draw from `var(--color-border)` (189-196). `grep -c border-border
+// gantt-view.tsx` returned 0 at review time.
+//
+// Scope is per ELEMENT, not per file or per string: a bare `border-b` in one `cn()` call is not
+// excused by an unrelated `border-primary` on a completely different element elsewhere in the
+// file (unlike Detector 5 above, which is deliberately file-level for a different reason — see
+// that detector's own header). "Element" here means one `cn(…)` call's full balanced-paren body
+// (so a colour on a LATER string argument to the same `cn()`, or on a later branch of an
+// exhaustive ternary/`&&` chain within it, still counts — `gantt-view.tsx`'s tree/timeline
+// scrollbar rail splits `border-t` and `border-t-border` across two string args to ONE `cn()`,
+// same as Detector 5's splitter case), or one bare `className="…"` string literal on its own.
+//
+// A bare `border-0` needs no colour (zero width paints nothing regardless of colour) and is
+// excluded. A colour is anything `border(-side)?-` followed by a real token/value: a 2+ letter
+// name (`primary`, `destructive`, `border`, `transparent`, …), a parenthesised CSS custom
+// property (`border-(--gantt-event-color)`), or a bracketed arbitrary value. Explicitly NOT a
+// colour: a single-letter SIDE code standing alone (`border-b` must not satisfy its own check —
+// "b" is not a colour), or a `border-style` keyword (`dashed`/`solid`/`dotted`/`double`/`hidden`/
+// `none` describe the LINE, not its paint).
+const BARE_BORDER = /(?<![\w.-])border(-[xytrbsle])?(-\d+)?\b(?!-)/g;
+const BORDER_STYLE_WORDS = "solid|dashed|dotted|double|hidden|none";
+const BORDER_COLOR = new RegExp(
+  `(?<![\\w.-])border(-[xytrbsle])?-(?:(?!(?:${BORDER_STYLE_WORDS})\\b)[a-z]{2,}|\\(--[\\w-]+\\)|\\[[^\\]]+\\])`
+);
+
+/** Extracts one "element's" worth of class text per unit: every `className="…"` literal's
+ * string content, and every `cn(…)` call's full balanced-paren body (handles nested parens from
+ * arbitrary values like `border-(--gantt-event-color)` inside the call — they net to zero, so a
+ * naive depth counter still lands on the real closing paren). */
+function extractClassChunks(text: string): string[] {
+  const chunks: string[] = [];
+  const literalRe = /className="([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = literalRe.exec(text))) chunks.push(m[1]);
+  const cnStart = /\bcn\(/g;
+  while ((m = cnStart.exec(text))) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    while (i < text.length && depth > 0) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")") depth--;
+      i++;
+    }
+    chunks.push(text.slice(start, i - 1));
+  }
+  return chunks;
+}
+
+function findBareBorderClasses(files: Map<string, string>): Record<string, string[]> {
+  const found: Record<string, string[]> = {};
+  for (const [name, text] of files) {
+    const offenders: string[] = [];
+    for (const chunk of extractClassChunks(text)) {
+      const bare = [...chunk.matchAll(BARE_BORDER)].map((mm) => mm[0]).filter((tok) => !/-0$/.test(tok));
+      if (bare.length > 0 && !BORDER_COLOR.test(chunk)) offenders.push(...bare);
+    }
+    if (offenders.length > 0) found[name] = offenders;
+  }
+  return found;
+}
+
+describe("guard: no bare `border`-style class without an accompanying `border-<token>` on the same element", () => {
+  it("self-test: the real detector fires on a bare border/border-b/border-t with no colour on the SAME element (same className, or a later cn() arg/branch), not when a colour, border-0, a style keyword, or an unrelated element's colour is present, and not on a comment naming the trap", () => {
+    const planted = new Map([
+      ["fixture-bare-literal.tsx", stripComments('className="flex h-8 border-b"')],
+      // NOT an offender: the colour lands on a LATER string argument to the SAME cn() call - the
+      // real `gantt-view.tsx` tree/timeline scrollbar rail does exactly this (border-t in one
+      // string, border-t-border in the next), same "same element, later arg" rule as Detector 5's
+      // splitter case.
+      [
+        "fixture-bare-paired-in-later-cn-arg.tsx",
+        stripComments('cn("h-4 border-t", condition && "bg-background border-t-border")'),
+      ],
+      [
+        "fixture-bare-exhaustive-branch.tsx",
+        stripComments('cn("border border-dashed", valid ? "border-(--gantt-event-color)/50" : "border-destructive")'),
+      ],
+      ["fixture-colored-literal.tsx", stripComments('className="border border-(--gantt-event-color)/60"')],
+      ["fixture-primary-paired.tsx", stripComments('className="border-primary border-2"')],
+      ["fixture-transparent-named.tsx", stripComments('className="border-b border-b-transparent"')],
+      ["fixture-zero-width.tsx", stripComments('className="rounded-none border-0 bg-transparent"')],
+      [
+        "fixture-style-keyword-not-a-colour.tsx",
+        stripComments('cn("border border-dashed")'),
+      ],
+      [
+        "fixture-unrelated-element-does-not-excuse-it.tsx",
+        stripComments(
+          'function A() { return <div className="border-b" /> }\nfunction B() { return <div className="border-primary" /> }'
+        ),
+      ],
+      [
+        "fixture-clean.tsx",
+        stripComments('// a bare border-b class mentioned only in this comment\nclassName="rounded-sm"'),
+      ],
+    ]);
+    expect(findBareBorderClasses(planted)).toEqual({
+      "fixture-bare-literal.tsx": ["border-b"],
+      "fixture-style-keyword-not-a-colour.tsx": ["border"],
+      "fixture-unrelated-element-does-not-excuse-it.tsx": ["border-b"],
+    });
+  });
+
+  it("has no bare border class without an accompanying colour token in the nine vendored files", () => {
+    const found = findBareBorderClasses(readVendoredFiles());
+    const offenders = Object.entries(found).map(
+      ([name, classes]) => `  ${name}: ${classes.join(", ")}`
+    );
+    expect(offenders, [
+      "A bare border/border-<side> class paints Tailwind v4 preflight's default `currentColor`",
+      "(near-black) instead of the greige hairline (styles/tokens/colors.css's --border, drawn at",
+      "189-196 greyscale by the grid lines around it). Give it an explicit border-<token>",
+      "(border-border, or a deliberately different token, named) on the SAME element. Found in:",
+      ...offenders,
     ].join("\n")).toEqual([]);
   });
 });
