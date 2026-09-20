@@ -199,6 +199,13 @@
  * `data-completed:data-selected:` combination, not on `:focus-visible` — it does not compete with
  * the global focus outline HIGH #2 above already established as this bar's only focus indication.
  * See the shell's own class comment for the full reasoning.
+ *
+ * #219 PR A fix (dr2-219a MEDIUM #3, second design re-review pass): a completed-but-unselected bar
+ * had no boundary at all — the MEDIUM #5 fill above measured 1.18:1 against the canvas, and the
+ * shell carried no border. Fixed additively: `data-completed:border data-completed:border-border`,
+ * the same token hairline treatment nine other bare-border sites in `gantt-view.tsx` already got
+ * (that file's own header, dr-219a HIGH #3). The fill's own alpha is untouched — MEDIUM #5's own
+ * calculation already proves it quieter than the active palette; raising it would undo that work.
  */
 
 import {
@@ -883,6 +890,12 @@ function GanttBar<TData = unknown>({
       // `harness/reui-scheduling/fixtures.ts`'s `STAGE_COLORS`, not just the quietest one. The
       // label stays `text-foreground` (see this file's header) either way - only the tint changed.
       "data-completed:bg-border/15 data-completed:hover:bg-border/20",
+      // #219 PR A fix (dr2-219a MEDIUM #3): the fill above measured 1.18:1 against the canvas -
+      // the r6 HIGH #1 fix above already gives the shell a border-WIDTH tool for completed+selected
+      // (the ring), but a merely-completed, unselected bar had no boundary of its own at all. An
+      // explicit token hairline, not a raised fill - the fill's own alpha is already proven quieter
+      // than the active palette by the MEDIUM #5 calculation above, and raising it would undo that.
+      "data-completed:border data-completed:border-border",
       // move: a POINTER move hides the original (the smooth cursor clone represents it instead).
       // #219 PR A fix (dr-219a HIGH #4, part 1): a KEYBOARD move has no cursor clone, and DOM
       // focus never leaves this exact bar, so it instead gets the SAME faded-placeholder

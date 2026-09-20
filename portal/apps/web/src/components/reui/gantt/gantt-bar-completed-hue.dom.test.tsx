@@ -28,6 +28,9 @@ if (!Element.prototype.getAnimations) {
 }
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Gantt } from "@/components/reui/gantt/gantt";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -77,6 +80,58 @@ function findProgressFill(bar: HTMLElement): HTMLElement {
   const el = bar.querySelector<HTMLElement>('[data-testid="gantt-bar-progress"]');
   if (!el) throw new Error("no progress-fill span found");
   return el;
+}
+
+/**
+ * #219 PR A fix (dr2-219a MEDIUM #3) — "a resolved border colour distinct from its fill" needs an
+ * actual RESOLVED value, not a class-string check (item HIGH #1's own lesson generalised: a class
+ * name proves what was WRITTEN, not what it PAINTS). This suite runs happy-dom with no CSS
+ * pipeline, so there is no `getComputedStyle` to ask - the only source of truth is the real design
+ * tokens the app itself ships (`styles/tokens/colors.css`/`tailwind.css`), read as text and
+ * resolved the same way a browser's `var()` chain would: `--color-border` -> `--border` ->
+ * `--border-hairline` -> `--greige-200` -> a literal hex. Every token in this file is a plain hex
+ * literal (`styles/tokens/colors.css`'s own header: "resolutely monochrome... black ink on warm
+ * paper"), so no oklch/color-space math is needed - alpha compositing over the canvas token is
+ * plain linear interpolation.
+ */
+function loadTokenSource(): string {
+  // node:path, not `new URL(relative, import.meta.url)` - happy-dom's global `URL` shim ignores a
+  // `file:` base and resolves relative refs against its own fake `http://localhost:3000/` document
+  // location instead, silently escaping this file entirely.
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const tokensDir = join(thisDir, "..", "..", "..", "styles", "tokens");
+  return (
+    readFileSync(join(tokensDir, "colors.css"), "utf8") +
+    readFileSync(join(tokensDir, "tailwind.css"), "utf8")
+  );
+}
+
+function resolveToken(source: string, name: string): string {
+  const declaration = new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(source);
+  if (!declaration) throw new Error(`no declaration for ${name}`);
+  const value = declaration[1]!.trim();
+  const varRef = /^var\((--[\w-]+)\)$/.exec(value);
+  if (varRef) return resolveToken(source, varRef[1]!);
+  if (!/^#[0-9a-fA-F]{6}$/.test(value)) {
+    throw new Error(`${name} resolved to a non-hex value: ${value}`);
+  }
+  return value;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+/** Alpha-composites `fgHex` at `alphaPercent`% over `bgHex` - plain source-over, sRGB channels. */
+function compositeOver(fgHex: string, bgHex: string, alphaPercent: number): [number, number, number] {
+  const a = alphaPercent / 100;
+  const fg = hexToRgb(fgHex);
+  const bg = hexToRgb(bgHex);
+  return [0, 1, 2].map((i) => Math.round(fg[i]! * a + bg[i]! * (1 - a))) as [number, number, number];
 }
 
 describe("a completed bar's fill is hue-independent, not a per-hue alpha step (#219 PR A, dr-219a MEDIUM #5)", () => {
@@ -241,5 +296,67 @@ describe("a completed bar that is ALSO selected keeps the neutral completed back
     const [indicatorClass] = bar.className.match(selectionIndicator) ?? [];
     expect(indicatorClass).toBeDefined();
     expect(indicatorClass).not.toContain("--gantt-event-color");
+  });
+});
+
+/**
+ * #219 PR A fix (dr2-219a MEDIUM #3) — a completed bar had no perceivable boundary. Its fill
+ * (`bg-border/15`) measured 1.18:1 against the canvas, and the shell carried no border at all -
+ * MEDIUM #5 above fixed the HUE dependence but left the object at the contrast floor. Fix: an
+ * explicit token hairline, `data-completed:border data-completed:border-border`, without raising
+ * the fill itself (that alpha is already proven quieter than the active palette by MEDIUM #5's own
+ * calculation - raising it would undo that work).
+ */
+describe("a completed bar gets an explicit border hairline, distinct from its own fill (#219 PR A, dr2-219a MEDIUM #3)", () => {
+  it("the shell carries data-completed:border data-completed:border-border", async () => {
+    const event: GanttEvent = {
+      id: "bordered-done",
+      title: "Bordered Done",
+      start: START,
+      end: END,
+      resourceId: "r1",
+      color: "var(--signal-positive)",
+      progress: 100,
+    };
+    await render(
+      <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const bar = findBar("Bordered Done");
+    expect(bar.getAttribute("data-completed")).toBe("true");
+    expect(bar.className).toContain("data-completed:border");
+    expect(bar.className).toContain("data-completed:border-border");
+    // MEDIUM #5's own hue-independent rule stays untouched - do not raise the fill.
+    expect(bar.className).toContain("data-completed:bg-border/15");
+  });
+
+  it("the border's RESOLVED paint colour is distinct from the completed shell's own fill - not just a different class name", () => {
+    // No CSS pipeline runs in this happy-dom suite, so there is nothing for getComputedStyle to
+    // read - resolve the real shipped tokens instead (see loadTokenSource's own header comment).
+    const tokens = loadTokenSource();
+    const borderHex = resolveToken(tokens, "--color-border");
+    const canvasHex = resolveToken(tokens, "--bg-canvas");
+
+    // `border-border`: the token painted at FULL strength (an ordinary CSS border has no alpha of
+    // its own here - Tailwind's `border-border` sets `border-color` directly, opaque).
+    const borderRgb = hexToRgb(borderHex);
+    // `bg-border/15`: the SAME token, but at 15% alpha composited over the canvas underneath -
+    // the shell's own fill, unchanged by this fix.
+    const fillRgb = compositeOver(borderHex, canvasHex, 15);
+
+    expect(fillRgb).not.toEqual(borderRgb);
+    // Not merely "different by the compositing algebra" - a real, perceivable object boundary,
+    // not a couple of shifted least-significant bits. The delta between the opaque border and its
+    // own 15%-alpha fill is exactly 85% of the delta between the border token and the canvas it is
+    // composited over (algebraically: border - (border*0.15 + canvas*0.85) = 0.85*(border -
+    // canvas)) - with this app's actual tokens (border `--greige-200` #cfc7b6 (207,199,182),
+    // canvas `--paper-050` #faf8f2 (250,248,242)) that puts the largest per-channel delta (blue)
+    // at 51 of 255. 40 is a conservative floor under that, not a coincidence tuned to pass.
+    const maxChannelDelta = Math.max(
+      ...[0, 1, 2].map((i) => Math.abs(borderRgb[i]! - fillRgb[i]!)),
+    );
+    expect(maxChannelDelta).toBeGreaterThan(40);
   });
 });
