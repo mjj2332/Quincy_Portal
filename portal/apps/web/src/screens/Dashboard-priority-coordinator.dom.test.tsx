@@ -408,3 +408,95 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     });
   });
 });
+
+// #230 Sol review round 2, item 1 (HIGH). `isSiblingDashboardQuery` (Dashboard.tsx ~:1153) used to
+// close over the CLICK-time `dashboardKeyString`. If the committed search changes while the POST is
+// still pending, the fan-out at confirmation reaches the WRONG key: the newly ACTIVE entry (which
+// nobody has patched) gets its own in-flight fetch cancelled and is marked stale with no refetch,
+// while the origin entry -- now inactive -- is spared the cancel/mark-stale treatment every other
+// inactive sibling gets.
+describe("the sibling predicate uses the key ACTIVE at confirmation, not the key at click time (#230 Sol review round 2, item 1)", () => {
+  const kProject = { id: "project-k", street: "1 K Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const qLessKey = dashboardProjectsKey("admin-1", "admin", 0, false);
+  const keyA = dashboardProjectsKey("admin-1", "admin", 0, false, "alpha");
+  const keyB = dashboardProjectsKey("admin-1", "admin", 0, false, "beta");
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+
+  it("(k) load unfiltered, commit search A, click priority with the POST deferred, then commit search B while the POST and B's own fetch are both pending -- B is never cancelled/invalidated, A (now inactive) is fanned out to and marked stale", async () => {
+    let resolveBeta!: (value: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.includes("q=beta")) return new Promise((resolve) => { resolveBeta = resolve; });
+      return Promise.resolve({ projects: [kProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [kProject.id] } } });
+    });
+
+    window.history.replaceState(null, "", "/");
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await vi.waitFor(() => expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull());
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(qLessKey)).toBeDefined());
+
+    // Commit search A.
+    act(() => {
+      locationStore().replace("/?q=alpha");
+      syncDashboardSearchDraftFromLocation("alpha", "admin-1");
+    });
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(keyA)).toBeDefined());
+
+    // Click priority while at A -- the POST is held open (a manually-settled promise, the same
+    // pattern as this file's own `deferredPost()`).
+    let settlePost!: (value: { priority: number; boardRevision: number }) => void;
+    apiPostMock.mockReset().mockImplementation(() => new Promise((resolve) => { settlePost = resolve; }));
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+    await act(async () => {
+      select.value = "2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    });
+
+    // Commit search B while the POST is still pending -- B's own `/api/projects` fetch starts and is
+    // held open too.
+    act(() => {
+      locationStore().replace("/?q=beta");
+      syncDashboardSearchDraftFromLocation("beta", "admin-1");
+    });
+    await flush();
+    expect(queryClient.getQueryState(keyB)?.fetchStatus).toBe("fetching");
+
+    // Resolve the POST -- the fan-out runs now, with B active and A no longer active. `finally`
+    // clears `pendingOrdering`, which flips `interactionBlocked` off and lets the queued-refresh
+    // effect (item 2, ~:696) call `projectsQuery.refetch()` on B, the still-active key, in the same
+    // settle window.
+    await act(async () => {
+      settlePost({ priority: 2, boardRevision: 2 });
+      await flush();
+    });
+
+    // B (the newly ACTIVE key) must never have been cancelled. `Query.fetch()` returns the SAME
+    // in-flight retryer promise (no new network call) when a query is refetched while it is already
+    // fetching -- only a query that was cancelled back to `fetchStatus: "idle"` fetches AGAIN when
+    // the queued-refresh effect's `refetch()` reaches it a tick later. So a genuinely uncancelled B
+    // still shows exactly the ONE request this test itself started; a cancelled-then-reactively-
+    // refetched B shows a second one.
+    const betaRequestsAfterConfirm = apiGetMock.mock.calls.filter(([path]) => (path as string).includes("q=beta")).length;
+    expect(betaRequestsAfterConfirm).toBe(1);
+    expect(queryClient.getQueryState(keyB)?.isInvalidated).toBe(false);
+
+    // A (the origin key, no longer active) holds the confirmed priority and is marked stale, like
+    // any other inactive sibling.
+    expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(keyA)?.find((entry) => entry.id === kProject.id)?.priority).toBe(2);
+    expect(queryClient.getQueryState(keyA)?.isInvalidated).toBe(true);
+
+    // B's own fetch, left uncancelled, completes normally with the server's real data.
+    await act(async () => {
+      resolveBeta({ projects: [kProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [kProject.id] } } });
+      await flush();
+    });
+    expect(queryClient.getQueryState(keyB)?.fetchStatus).toBe("idle");
+    expect(queryClient.getQueryData(keyB)).toBeDefined();
+  });
+});

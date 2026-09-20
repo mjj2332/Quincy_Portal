@@ -306,6 +306,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // renders it in the meantime.
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
+  // #230 Sol review round 2, item 1: `setProjectPriority`'s sibling predicate (below, ~:1153) needs
+  // the key ACTIVE at CONFIRMATION time, not the one its own closure captured at click time --
+  // `setProjectPriority` is a plain function recreated every render, so the instance a click actually
+  // reaches is whichever render was current when the click landed. Updated on every render; read
+  // only AFTER the POST resolves.
+  const dashboardKeyStringRef = useRef(dashboardKeyString);
+  dashboardKeyStringRef.current = dashboardKeyString;
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
   // no-op (the store's own `principalId === id` guard) on every render this effect reruns for.
   // Declared BEFORE the Calendar route-reconciliation effect below (React commits effects in
@@ -1147,14 +1154,25 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // this POST resolving AFTER the fan-out write and putting the stale value back, (B) this
       // response being older than a sibling that already holds a NEWER server `boardRevision` (a
       // later stage move, say) and regressing it. `isSiblingDashboardQuery` structurally compares
-      // `queryKey` (JSON, not reference) against `dashboardKeyString` -- the ACTIVE entry's own
-      // refresh is owned by `queueDashboardRefresh` below and must never be cancelled or invalidated
-      // here.
+      // `queryKey` (JSON, not reference) against the key ACTIVE at confirmation -- the ACTIVE entry's
+      // own refresh is owned by `queueDashboardRefresh` below and must never be cancelled or
+      // invalidated here.
+      //
+      // Sol review round 2, item 1: snapshot `dashboardKeyStringRef.current` HERE, immediately after
+      // the POST resolves, not `dashboardKeyString` from this closure's own render (the CLICK-time
+      // key). If the committed search (or archived scope) changed while the POST was in flight, the
+      // NEWLY active key must be excluded from cancel/invalidate below -- it's the entry
+      // `queueDashboardRefresh` is about to refresh, and cancelling its in-flight fetch or marking it
+      // stale with no refetch regresses whatever it's showing. The origin key, now inactive, is just
+      // another sibling once it's no longer the active one: it still gets the fan-out patch (via the
+      // prefix write below, unconditional on this predicate), has its own late fetch cancelled, and
+      // is marked stale, same as any other sibling.
+      const currentKeyAtConfirm = dashboardKeyStringRef.current;
       const isSiblingDashboardQuery = (query: Query) =>
         Array.isArray(query.queryKey) &&
         query.queryKey[0] === "dashboard-projects" &&
         query.queryKey[1] === currentUserId &&
-        JSON.stringify(query.queryKey) !== dashboardKeyString;
+        JSON.stringify(query.queryKey) !== currentKeyAtConfirm;
       // (A) cancel every sibling's in-flight fetch FIRST -- its late result, once cancelled, can no
       // longer overwrite the fan-out write that follows.
       if (queryClient) await queryClient.cancelQueries({ predicate: isSiblingDashboardQuery });
