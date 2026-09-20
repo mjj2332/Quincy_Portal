@@ -194,11 +194,8 @@
  * `data-completed:data-selected:bg-border/15` rule: a two-attribute selector, strictly higher
  * specificity than either single-attribute rule, so the neutral background wins independent of
  * source order — reordering the two single-attribute classes can no longer flip the outcome.
- * Selection on a completed bar is now shown via a `ring-ring/50 ring-2` (the same shape/token the
- * milestone diamond's own `isSelected` treatment already uses below), gated on the SAME
- * `data-completed:data-selected:` combination, not on `:focus-visible` — it does not compete with
- * the global focus outline HIGH #2 above already established as this bar's only focus indication.
- * See the shell's own class comment for the full reasoning.
+ * (Round-7 note: the ring this paragraph originally described replacing the background with is
+ * GONE — see the round-7 paragraph below for what selection on a completed bar shows today.)
  *
  * #219 PR A fix (dr2-219a MEDIUM #3, second design re-review pass): a completed-but-unselected bar
  * had no boundary at all — the MEDIUM #5 fill above measured 1.18:1 against the canvas, and the
@@ -207,15 +204,37 @@
  * (that file's own header, dr-219a HIGH #3). The fill's own alpha is untouched — MEDIUM #5's own
  * calculation already proves it quieter than the active palette; raising it would undo that work.
  *
- * #219 PR A fix (dr2-219a MEDIUM #4, second design re-review pass): the r6 HIGH #1 fix above
- * (`ring-ring/50 ring-2` for a completed+selected bar) did not, in fact, stay clear of the global
- * `:focus-visible` outline as claimed — both paint at once when a completed+selected bar is ALSO
- * the focused element (Tab to it, or the keyboard-adjust session's own focus hand-off), stacking
- * two competing indicators. Fixed by gating the ring on `not-focus-visible:` too —
- * `data-completed:data-selected:not-focus-visible:ring-2` — so the ring stands down for exactly as
- * long as the native focus outline is showing, and returns the instant focus moves elsewhere
- * (blur, or Escape closing the keyboard-adjust session) while the bar is still selected. Selection
- * on a completed bar is therefore shown by the ring OR the focus outline, never both.
+ * #219 PR A fix (dr2-219a MEDIUM #4, second design re-review pass, SUPERSEDED by round-7 below): a
+ * `ring-ring/50 ring-2` used to carry the completed+selected cue, gated `not-focus-visible:`
+ * because a ring sits 0-2px outside the border box, the same footprint the global
+ * `:focus-visible` outline (2-4px out, 2px offset) occupies — both painted at once on a
+ * completed+selected+focused bar otherwise. Suppressing the ring while focused fixed the double
+ * indicator, but see round-7 below for what that traded away.
+ *
+ * #219 PR A fix (Sol round-7 MEDIUM #2a): the MEDIUM #4 `not-focus-visible:` gate above left
+ * completed+selected+focused with NO selection cue at all — it then painted identically to
+ * completed+unselected+focused, both showing only the global outline. Replaced the ring entirely
+ * with a colour swap on this bar's OWN existing completed-state hairline (dr2-219a MEDIUM #3
+ * above): `border-border` (`--border`, greige) becomes `border-border-strong` (`--border-strong`,
+ * `--ink-900`) when the bar is ALSO selected. A 1px, INSET, flush-to-the-edge line is
+ * geometrically the opposite of the outline's 2px, OUTSET, 2px-offset ring, so the two can never
+ * be mistaken for one indicator doubling up, and — unlike the ring — this hairline needs no
+ * `not-focus-visible:` gate: it is visible unfocused, focused, and everywhere between. Neutral
+ * ink, not `--gantt-event-color` — the stage hue stays out of this exactly as dr-219a r6 HIGH #1
+ * and dr-219a MEDIUM #5 above already established for this bar's other completed-state
+ * treatments. Same two-attribute-selector pattern as the background rule above
+ * (`data-completed:data-selected:`), so it wins over the single-attribute
+ * `data-completed:border-border` rule by CSS specificity, independent of Tailwind's emission
+ * order — r6 HIGH #1's own reasoning, repeated here for the border colour instead of the
+ * background. Non-visually, `aria-pressed` on the bar's own element carries the same state to a
+ * screen reader, focused or not (see `defaultProps.aria-pressed` below) — `aria-selected`, not
+ * `aria-pressed`, is what this file's own header calls "or equivalent" in some ARIA vocabularies,
+ * but `aria-selected` is only a supported state on `option`/`row`/`tab`/`gridcell`/`treeitem`-
+ * shaped roles per the ARIA spec, not on `button` (this bar's own implicit role — see
+ * `defaultProps.type`/`role` below) — `aria-pressed` is the state ARIA actually defines for a
+ * toggleable button, and matches every other plain `type="button"` toggle in this app
+ * (`RichTextEditor.tsx`, `ProjectDeadlineControl.tsx`, `Lightbox.tsx`, …), none of which use
+ * `aria-selected` for the same reason.
  */
 
 import {
@@ -674,6 +693,15 @@ function GanttBar<TData = unknown>({
     "data-all-day": occurrence.allDay || undefined,
     "data-recurring": occurrence.isRecurring || undefined,
     "data-selected": isSelected || undefined,
+    // #219 PR A fix (Sol round-7 MEDIUM #2b): no ARIA exposed selection at all before this - a
+    // screen-reader user had no way to tell a selected bar from an unselected one, focused or
+    // not. `aria-selected` is not valid here: it is only a supported state on `option`/`row`/
+    // `tab`/`gridcell`/`treeitem`-shaped roles per the ARIA spec, and this bar's own role is
+    // `button` (implicit from `type: "button"` below, or explicit `"application"` while
+    // adjusting - neither supports `aria-selected` either). `aria-pressed` is the state ARIA
+    // defines for a toggleable button, and matches every other plain `type="button"` toggle in
+    // this app (`RichTextEditor.tsx`, `ProjectDeadlineControl.tsx`, `Lightbox.tsx`, …).
+    "aria-pressed": isSelected,
     "data-dragging": isDragging || undefined,
     "data-drag-kind": dragKind ?? undefined,
     // #219 PR A fix (dr-219a HIGH #4): drives the `data-[drag-kind=move]:data-[drag-source=…]`
@@ -930,28 +958,31 @@ function GanttBar<TData = unknown>({
       // (specificity 0,0,2,0) - strictly higher than either single-attribute rule above (0,0,1,0)
       // - so the neutral completed background wins by CSS SPECIFICITY, independent of source
       // order, and cannot be flipped back by reordering. Selection stays visible on a completed
-      // bar through the ring below instead of the background.
+      // bar through the border-colour swap below instead of the background.
       "data-completed:data-selected:bg-border/15",
-      // Hue-independent selection indicator for a completed+selected bar (the background above is
-      // now pinned to the neutral completed treatment either way, so selection needs some OTHER
-      // signal): the same `ring-ring/50 ring-2` shape/token this file already uses for the
-      // milestone diamond's own `isSelected` treatment (below), kept off `--gantt-event-color` on
-      // purpose. This is a NEW rule keyed on `data-selected` (an explicit selection state, set by
-      // `instance.api.selectEvent` on click/Enter) - not on `:focus-visible` - so it does not
-      // reintroduce the "second focus indicator" this file's own HIGH #2 note above describes: a
-      // bar that is merely keyboard-focused but not selected shows only the global
-      // `:focus-visible` outline, exactly as HIGH #2 intended. It fires only for the
-      // completed+selected combination, not for every selected bar - a non-completed selected bar
-      // already reads clearly via its own tinted `data-selected:bg-(--gantt-event-color)/30`
-      // background above, which this fix leaves untouched.
-      // #219 PR A fix (dr2-219a MEDIUM #4): `not-focus-visible:` added to both — the ring painted
-      // 0-2px outside the border box while the app's own unlayered `:focus-visible { outline }`
-      // (`styles/tokens/base.css:25`) painted 2-4px with a 2px offset, so a completed bar that was
-      // ALSO selected AND keyboard-focused showed both at once, the exact double-indicator HIGH #2
-      // above already removed for the ordinary case. The ring now never paints while this element
-      // is focus-visible — only the global outline does, keeping HIGH #2's "one indicator" promise
-      // for this narrower state too.
-      "data-completed:data-selected:not-focus-visible:ring-2 data-completed:data-selected:not-focus-visible:ring-ring/50",
+      // #219 PR A fix (Sol round-7 MEDIUM #2a): a `ring-ring/50 ring-2` used to carry this cue,
+      // gated `not-focus-visible:` (dr2-219a MEDIUM #4) because it shared the global focus
+      // outline's footprint and doubled up when a completed+selected bar was ALSO the focused
+      // element - suppressing it there fixed the double indicator, but left NO selection cue at
+      // all while focused: completed+selected+focused and completed+unselected+focused then
+      // painted identically, both showing just the outline. Replaced with a colour swap on this
+      // bar's OWN completed-state hairline (`data-completed:border-border`, dr2-219a MEDIUM #3
+      // above, `--border` greige) to `border-border-strong` (`--border-strong`, `--ink-900`) when
+      // ALSO selected. A 1px, INSET, flush-to-the-edge line is geometrically the opposite of the
+      // outline's 2px, OUTSET, 2px-offset ring, so the two can never read as one indicator
+      // doubling up - unlike the ring, this needs no `not-focus-visible:` gate, so it stays
+      // visible unfocused, focused, and everywhere between. Neutral ink, not
+      // `--gantt-event-color` - the stage hue stays out of this exactly as r6 HIGH #1 and MEDIUM
+      // #5 above already established for this bar's other completed-state treatments. Same
+      // two-attribute-selector pattern as the background rule immediately above
+      // (`data-completed:data-selected:`), so it wins over the single-attribute
+      // `data-completed:border-border` rule by CSS specificity, independent of Tailwind's
+      // emission order - r6 HIGH #1's own reasoning, repeated here for the border colour instead
+      // of the background. It fires only for the completed+selected combination, not for every
+      // selected bar - a non-completed selected bar already reads clearly via its own tinted
+      // `data-selected:bg-(--gantt-event-color)/30` background above, which this fix leaves
+      // untouched.
+      "data-completed:data-selected:border-border-strong",
       // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
       // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
       // the bar's own focus ring at the time even while the bar was visible, and once a step
