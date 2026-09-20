@@ -13,20 +13,24 @@
  * pattern `GanttPreview.tsx` already uses for `events`/`date`/`scale` — switching scenarios swaps
  * the whole board in one render rather than leaving stale state from the previous scenario visible.
  *
- * PR B vends the calendar and re-skins it; there is no drag-and-drop wiring yet (that is stage 3's
- * own later step, tracked against the `unscheduled` tray below) and no keyboard layer (PR A's
- * Gantt keyboard legend has no calendar counterpart in this PR), so neither appears here.
+ * The unscheduled tray is now LIVE: each row is an external-drag source
+ * (`useEventCalendarExternalDrop` from `event-calendar-dnd.tsx`), resolved through the calendar's
+ * own hit-testing and committed via `external-drop-policy.ts`'s `unscheduledItemToEvent`/
+ * `canDropUnscheduled`. There is still no keyboard layer (PR A's Gantt keyboard legend has no
+ * calendar counterpart in this PR).
  */
 import { useCallback, useState } from "react";
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
 import { EventCalendarNav, EventCalendarToolbar } from "@/components/reui/event-calendar/event-calendar-nav";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
+import { useEventCalendarExternalDrop } from "@/components/reui/event-calendar/event-calendar-dnd";
 import type {
   CalendarEvent,
   CalendarView,
   EventCalendarProposedUpdate,
 } from "@/components/reui/event-calendar/event-calendar-types";
-import { buildCalendarScenario, formatZonedInstant, SCENARIOS, type ScenarioId } from "./fixtures";
+import { buildCalendarScenario, formatZonedInstant, SCENARIOS, type ScenarioId, type UnscheduledItem } from "./fixtures";
+import { canDropUnscheduled, unscheduledItemToEvent } from "./external-drop-policy";
 
 const LOG_CAP = 20;
 
@@ -42,10 +46,60 @@ interface LogEntry {
 
 let nextLogId = 0;
 
+/**
+ * QUINCY (#219 PR B stage 3): the tray must render INSIDE `<EventCalendar>` because
+ * `useEventCalendarExternalDrop` calls `useEventCalendar()`, whose context has no default and is
+ * only provided by that component. Lifting the tray into this child (rendered as a sibling of
+ * `<EventCalendarContent>`, inside the same provider) is simpler than threading the calendar
+ * instance back out through a ref, and it keeps the provider boundary exactly where the vendor
+ * file's own contract says it is.
+ */
+function UnscheduledTray({
+  items,
+  preferAllDay,
+  onScheduled,
+}: {
+  items: UnscheduledItem[];
+  preferAllDay: boolean;
+  onScheduled: (item: UnscheduledItem, event: CalendarEvent) => void;
+}) {
+  const { begin } = useEventCalendarExternalDrop<unknown, UnscheduledItem>();
+
+  return (
+    <div data-testid="harness-cal-tray">
+      <h2 className="q-h3">Unscheduled</h2>
+      <ul>
+        {items.map((item) => (
+          <li
+            key={item.id}
+            data-testid={`harness-cal-tray-${item.id}`}
+            className="harness-cal-tray-item"
+            onPointerDown={(e) => {
+              begin(e, {
+                payload: item,
+                durationMinutes: item.durationMinutes,
+                preferAllDay,
+                canDrop: canDropUnscheduled,
+                onDrop: (target, payload) => {
+                  const event = unscheduledItemToEvent(target, payload);
+                  onScheduled(payload, event);
+                },
+              });
+            }}
+          >
+            {item.title} · {item.durationMinutes} min
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function CalendarPreview() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("today");
   const [view, setView] = useState<CalendarView>("week");
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [preferAllDay, setPreferAllDay] = useState(false);
 
   const fixture = buildCalendarScenario(scenarioId);
   // Local fixture state only (per the stage-1/PR-A precedent — no scheduling-commands hook, no API
@@ -53,6 +107,11 @@ export default function CalendarPreview() {
   // switch forces the anchor back to the fixture's own month even after the user has panned away.
   const [events, setEvents] = useState<CalendarEvent[]>(fixture.events);
   const [date, setDate] = useState<Date>(fixture.date);
+  // Ids of unscheduled items already dropped onto the calendar this scenario — removed from the
+  // tray so a scheduled item cannot be dropped a second time as a fresh row (re-dropping the SAME
+  // tray row is still possible via `unscheduledItemToEvent`'s deterministic id; this state is only
+  // about what the tray itself still offers).
+  const [scheduledIds, setScheduledIds] = useState<ReadonlySet<string>>(new Set());
   const [activeScenarioId, setActiveScenarioId] = useState<ScenarioId>(scenarioId);
   if (activeScenarioId !== scenarioId) {
     // Scenario switch: adopt the new fixture (React 19 render-phase state adjustment, not an
@@ -60,6 +119,7 @@ export default function CalendarPreview() {
     setActiveScenarioId(scenarioId);
     setEvents(fixture.events);
     setDate(fixture.date);
+    setScheduledIds(new Set());
   }
 
   const pushLog = useCallback((entry: Omit<LogEntry, "id">) => {
@@ -106,6 +166,22 @@ export default function CalendarPreview() {
     [pushLog],
   );
 
+  const handleScheduled = useCallback(
+    (item: UnscheduledItem, event: CalendarEvent) => {
+      setEvents((previous) => [...previous.filter((candidate) => candidate.id !== event.id), event]);
+      setScheduledIds((previous) => new Set(previous).add(item.id));
+      pushLog({
+        source: "externalDrop",
+        eventId: event.id,
+        startText: formatZonedInstant(event.start),
+        endText: formatZonedInstant(event.end),
+      });
+    },
+    [pushLog],
+  );
+
+  const trayItems = fixture.unscheduled.filter((item) => !scheduledIds.has(item.id));
+
   return (
     <div className="grid gap-4 p-4">
       <div role="group" aria-label="Scenario" className="flex flex-wrap items-center gap-2">
@@ -136,6 +212,15 @@ export default function CalendarPreview() {
         ))}
       </div>
 
+      <button
+        type="button"
+        data-testid="harness-cal-tray-allday"
+        aria-pressed={preferAllDay}
+        onClick={() => setPreferAllDay((previous) => !previous)}
+      >
+        Prefer all-day drop: {preferAllDay ? "on" : "off"}
+      </button>
+
       <EventCalendar
         events={events}
         onEventsChange={setEvents}
@@ -153,19 +238,8 @@ export default function CalendarPreview() {
         <EventCalendarNav />
         <EventCalendarToolbar />
         <EventCalendarContent />
+        <UnscheduledTray items={trayItems} preferAllDay={preferAllDay} onScheduled={handleScheduled} />
       </EventCalendar>
-
-      <div data-testid="harness-cal-tray">
-        <h2 className="q-h3">Unscheduled</h2>
-        {/* Plain, non-draggable list items — stage 3 wires the external-drag source onto these. */}
-        <ul>
-          {fixture.unscheduled.map((item) => (
-            <li key={item.id} data-testid={`harness-cal-tray-${item.id}`}>
-              {item.title} · {item.durationMinutes} min
-            </li>
-          ))}
-        </ul>
-      </div>
 
       <div data-testid="harness-cal-dst-notes">
         <h2 className="q-h3">DST notes — check in the browser</h2>
@@ -187,7 +261,7 @@ export default function CalendarPreview() {
       <div data-testid="harness-cal-log">
         <h2 className="q-h3">Event log (newest first, last {LOG_CAP})</h2>
         {log.length === 0 ? (
-          <p>No commits yet — drag, resize, select a slot, or attempt to drag a locked event.</p>
+          <p>No commits yet — drag, resize, select a slot, drop a tray item, or attempt to drag a locked event.</p>
         ) : (
           <ol>
             {log.map((entry) => (

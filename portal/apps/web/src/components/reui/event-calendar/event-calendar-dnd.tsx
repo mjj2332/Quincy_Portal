@@ -71,6 +71,7 @@ import {
   zonedStartOfDay,
 } from "@/components/reui/event-calendar/event-calendar-lib"
 import type {
+  CalendarView,
   EventCalendarProposedUpdate,
   EventCalendarSegment,
 } from "@/components/reui/event-calendar/event-calendar-types"
@@ -1002,6 +1003,315 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   }
 }
 
+/* =============================================================================
+ * QUINCY ADDITION (#219 PR B stage 3) — external drop.
+ *
+ * Dragging something that is NOT yet a calendar event (an unscheduled Quincy item) onto the grid,
+ * resolved through the calendar's own hit-testing rather than by scraping the DOM from outside.
+ *
+ * WHY THIS LIVES INSIDE THE VENDORED TREE (see docs/adr/0010):
+ *
+ * 1. The geometry it needs is private and stays private. `collectSurface` reads the vendor's own
+ *    `data-ec-day` / `data-ec-bounds-start` / `data-ec-bounds-end` / `data-ec-resource` attribute
+ *    contract, carries the auto-scroll compensation `scrollTop - viewportStartScrollTop`, and
+ *    deliberately captures `viewportRect` once for a measured ~200ms-reflow reason. A module
+ *    outside this tree would need all four helpers exported for one consumer, or would re-derive
+ *    them against a private contract — which is the DOM scraping this was meant to replace.
+ * 2. THE DECISIVE ONE: gesture lifecycle here is module-level singleton state.
+ *    `activeGestureCancels` is not exported, and it is how a calendar aborts in-flight gestures
+ *    when it unmounts. A gesture registered from outside this module would be invisible to
+ *    `cancelActiveEventCalendarGestures()` and could outlive its calendar, stranding window
+ *    listeners and a mutated `document.body`. That cannot be fixed from outside at all.
+ * 3. `markChipPress` suppresses the trailing native click that would otherwise open a create
+ *    dialog where the drop landed. It IS exported, so this one is convenience rather than
+ *    necessity — but it is free here.
+ *
+ * WHAT DELIBERATELY STAYS OUTSIDE: the policy. Turning a dropped payload into a `CalendarEvent` is
+ * Quincy's business, not the vendor's, and — unlike a move or resize — the commit path is not
+ * coupled to the vendor either. `applyProposedUpdate` maps over existing events matching an id, so
+ * it can only ever UPDATE; an external drop CREATES, through the public `api.addEvent`. This
+ * module therefore reports a resolved target and never writes an event.
+ *
+ * This is a pure addition: nothing inside `beginGesture` was touched, nothing was deleted, and no
+ * existing export changed. That is the cheapest possible story for a future re-vendor — replay
+ * this block, and nothing else in the file has to be reconciled.
+ * ========================================================================== */
+
+/** Where a pointer currently resolves to on the calendar surface. */
+interface EventCalendarExternalDropTarget {
+  start: Date
+  /** `start` + the dragged item's duration, or the next zoned midnight when `allDay`. */
+  end: Date
+  allDay: boolean
+  resourceId?: string
+  view: CalendarView
+  /**
+   * True when the target came from a day CELL (month grid, all-day row) rather than a
+   * minute-precise column, so the caller can tell "the 4th, some time" from "the 4th at 14:15".
+   */
+  dayGranular: boolean
+}
+
+interface EventCalendarExternalDropOptions<TPayload> {
+  /** Opaque to this module — mirrors the tree's own `TData` convention. */
+  payload: TPayload
+  /** Length of the thing being dropped. Ignored when the target resolves as all-day. */
+  durationMinutes: number
+  /** Resolve day-cell targets as all-day rather than as a timed block at the day's start. */
+  preferAllDay?: boolean
+  /** Refuse a target. A refused target previews nothing and commits nothing. */
+  canDrop?: (target: EventCalendarExternalDropTarget, payload: TPayload) => boolean
+  /** Commit. Called once, on release over an accepted target. */
+  onDrop: (target: EventCalendarExternalDropTarget, payload: TPayload) => void
+  /**
+   * An ACTIVATED drag that ended without a commit: Escape, window blur, a calendar unmount, or a
+   * release over nothing droppable. NOT called for a press that never passed the activation
+   * threshold — that is a click on the drag source, not a cancelled drag, and the consumer's own
+   * onClick handles it. `event-calendar-external-drop.dom.test.tsx` pins both halves.
+   */
+  onCancel?: () => void
+}
+
+/**
+ * Resolve a pointer position to a drop target, mirroring `computeProposal`'s own branching:
+ * minute columns when the view has them, day cells otherwise.
+ *
+ * Returns null when the surface offers neither. That is not a failure — the AGENDA view renders no
+ * `data-ec-day` nodes at all and consumes no slot draft, so a drop there has no geometry and must
+ * be an explicit, tested no-op rather than an accidental one.
+ */
+function resolveExternalDropTarget<TData>(
+  instance: EventCalendarInstance<TData>,
+  surface: Surface,
+  clientX: number,
+  clientY: number,
+  durationMinutes: number,
+  preferAllDay: boolean
+): EventCalendarExternalDropTarget | null {
+  // `settings` hangs off the instance (resolved options); `view` is reactive state.
+  const settings = instance.settings
+  const { view } = instance.getState()
+  const timeZone = settings.timeZone
+
+  // Day-granular first when the pointer is genuinely over a cell: the month grid and the all-day
+  // row both publish cells, and a time-grid surface publishes BOTH (its all-day row is cells, its
+  // columns are minutes), so cell containment is what disambiguates them — not view name.
+  const cell = findCell(surface, clientX, clientY)
+  if (cell) {
+    const start = zonedStartOfDay(cell.day, timeZone)
+    if (preferAllDay) {
+      return {
+        start,
+        end: zonedStartOfDay(addDays(toZoned(start, timeZone), 1), timeZone),
+        allDay: true,
+        view,
+        dayGranular: true,
+      }
+    }
+    return {
+      start,
+      end: addMinutes(start, durationMinutes),
+      allDay: false,
+      view,
+      dayGranular: true,
+    }
+  }
+
+  if (surface.columns.length === 0) return null
+
+  const col = findColumn(surface, clientX)
+  if (!col) return null
+
+  const raw = pointerMinutes(surface, col, clientY)
+  // Clamp so a drop cannot start past the end of the day, then snap — same order the move gesture
+  // uses. `boundsEndMin` is ELAPSED minutes and is 1380/1500 on a DST transition day, never a flat
+  // 1440; see `elapsedMinutesAtWallClockHour` in event-calendar-lib.tsx.
+  const clamped = Math.min(
+    Math.max(raw, col.boundsStartMin),
+    Math.max(col.boundsStartMin, col.boundsEndMin - durationMinutes)
+  )
+  const snapped = snapMinutes(clamped, settings.snapDuration)
+  const dayStart = zonedStartOfDay(col.day, timeZone)
+  const start = addMinutes(dayStart, snapped)
+
+  return {
+    start,
+    end: addMinutes(start, durationMinutes),
+    allDay: false,
+    resourceId: col.resourceId,
+    view,
+    dayGranular: false,
+  }
+}
+
+/**
+ * Begin an external drag from any element — a tray item, a list row, anything outside the grid.
+ *
+ * Lifecycle mirrors `beginGesture`: measure the surface once at activation, then live on window
+ * listeners; register the cancel in `activeGestureCancels` so the calendar can abort it; revert
+ * fully on cancel. It does NOT reuse `beginGesture` itself: that function carries ~35 closure
+ * variables and several `occurrence!` assertions predicated on a segment existing, and a
+ * payload-only gesture has no segment, so threading one through would mean auditing every one of
+ * them for no benefit.
+ *
+ * The in-grid preview is the vendor's own slot draft (`internals.setSlotDraft`), which is what the
+ * month view, time grid and resource view already render. It shows the vendor's dashed slot box
+ * rather than a likeness of the dragged item; a consumer wanting its own cursor-following preview
+ * renders one itself, which the harness tray does.
+ */
+function useEventCalendarExternalDrop<TData = unknown, TPayload = unknown>() {
+  const instance = useEventCalendar<TData>()
+
+  const begin = useCallback(
+    (
+      e: React.PointerEvent,
+      options: EventCalendarExternalDropOptions<TPayload>
+    ) => {
+      if (e.button !== 0) return
+      const {
+        payload,
+        durationMinutes,
+        preferAllDay = false,
+        canDrop,
+        onDrop,
+        onCancel,
+      } = options
+
+      const startX = e.clientX
+      const startY = e.clientY
+      const isTouch = e.pointerType === "touch"
+      const origin = e.currentTarget as HTMLElement
+
+      let surface: Surface | null = null
+      let active = false
+      let target: EventCalendarExternalDropTarget | null = null
+      let accepted = false
+      let touchTimer: ReturnType<typeof setTimeout> | null = null
+      let finished = false
+
+      const clearPreview = () => {
+        instance.internals.setSlotDraft(null)
+        document.body.removeAttribute("data-ec-external-drag")
+      }
+
+      const teardown = () => {
+        if (finished) return
+        finished = true
+        if (touchTimer !== null) clearTimeout(touchTimer)
+        window.removeEventListener("pointermove", onPointerMove)
+        window.removeEventListener("pointerup", onPointerUp)
+        window.removeEventListener("pointercancel", cancel)
+        window.removeEventListener("keydown", onKeyDown)
+        window.removeEventListener("blur", cancel)
+        activeGestureCancels.delete(cancel)
+        clearPreview()
+        // Only a gesture that ACTIVATED suppresses the trailing native click. A press that never
+        // passed the activation threshold is a plain click on the drag source, and swallowing it
+        // would break any onClick the consumer put on that tray row — and, because
+        // `lastGestureEndedAt` is module-wide, would also suppress chip clicks across the whole
+        // calendar for 250ms after someone merely tapped the tray.
+        if (active) {
+          markChipPress()
+          lastGestureEndedAt = performance.now()
+        }
+      }
+
+      function cancel() {
+        if (finished) return
+        teardown()
+        onCancel?.()
+      }
+
+      const activate = () => {
+        if (active) return
+        active = true
+        surface = collectSurface(origin, instance.internals.getRootEl())
+        document.body.setAttribute("data-ec-external-drag", "")
+      }
+
+      const refresh = (clientX: number, clientY: number) => {
+        if (!surface) return
+        surface.scrollTop = surface.viewport?.scrollTop ?? surface.scrollTop
+        target = resolveExternalDropTarget(
+          instance,
+          surface,
+          clientX,
+          clientY,
+          durationMinutes,
+          preferAllDay
+        )
+        accepted = target !== null && (canDrop?.(target, payload) ?? true)
+        instance.internals.setSlotDraft(
+          accepted && target
+            ? {
+                start: target.start,
+                end: target.end,
+                allDay: target.allDay,
+                view: target.view,
+                resourceId: target.resourceId,
+              }
+            : null
+        )
+        document.body.toggleAttribute("data-ec-external-drag-invalid", !accepted)
+      }
+
+      function onPointerMove(move: PointerEvent) {
+        if (!active) {
+          const dx = Math.abs(move.clientX - startX)
+          const dy = Math.abs(move.clientY - startY)
+          const threshold = isTouch
+            ? EVENT_CALENDAR_ACTIVATION.touchTolerancePx
+            : EVENT_CALENDAR_ACTIVATION.moveDistancePx
+          if (isTouch) {
+            // Movement past tolerance BEFORE the long-press delay means the user is scrolling,
+            // not dragging — same rule the chip gestures use, so a tray stays scrollable.
+            if (dx > threshold || dy > threshold) cancel()
+            return
+          }
+          if (dx < threshold && dy < threshold) return
+          activate()
+        }
+        refresh(move.clientX, move.clientY)
+      }
+
+      function onPointerUp(up: PointerEvent) {
+        if (!active) {
+          teardown()
+          return
+        }
+        refresh(up.clientX, up.clientY)
+        const committed = accepted && target
+        const resolved = target
+        teardown()
+        if (committed && resolved) onDrop(resolved, payload)
+        else onCancel?.()
+      }
+
+      function onKeyDown(key: KeyboardEvent) {
+        if (key.key === "Escape") cancel()
+      }
+
+      window.addEventListener("pointermove", onPointerMove)
+      window.addEventListener("pointerup", onPointerUp)
+      window.addEventListener("pointercancel", cancel)
+      window.addEventListener("keydown", onKeyDown)
+      window.addEventListener("blur", cancel)
+      activeGestureCancels.add(cancel)
+
+      if (isTouch) {
+        touchTimer = setTimeout(() => {
+          touchTimer = null
+          activate()
+          refresh(startX, startY)
+        }, EVENT_CALENDAR_ACTIVATION.touchDelayMs)
+      }
+    },
+    [instance]
+  )
+
+  return { begin }
+}
+
 /** Per-chip / per-surface pointer gesture wiring. */
 function useEventCalendarGestures<TData = unknown>() {
   const instance = useEventCalendar<TData>()
@@ -1130,10 +1440,15 @@ function useEventCalendarGestures<TData = unknown>() {
   return { beginMove, beginResize, beginCreate, canDrag, canResize, canResizeEdge }
 }
 
+export type {
+  EventCalendarExternalDropOptions,
+  EventCalendarExternalDropTarget,
+}
 export {
   EVENT_CALENDAR_ACTIVATION,
   cancelActiveEventCalendarGestures,
   markChipPress,
+  useEventCalendarExternalDrop,
   useEventCalendarGestures,
   wasRecentChipPress,
   wasRecentDrag,
