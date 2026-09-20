@@ -71,6 +71,11 @@
  *    `dropHint` with no `cn()` / tailwind-merge in the path, so a consumer's `shadow-none` would
  *    only win by CSS source order — which is not a guarantee. This one genuinely had to be fixed
  *    in place; a wrapper could not have done it.
+ * 4. 2026-09-21 (#219 PR B, code review): the external-drop adapter no longer leaves a
+ *    `data-ec-external-drag-invalid` attribute stranded on `document.body` (it was set on every
+ *    refused target and never cleared, and had no consumer), and a TOUCH scroll off a drag
+ *    source now tears down instead of cancelling — a gesture that never activated is a scroll,
+ *    not a cancelled drag, per this file's own documented `onCancel` contract.
  */
 import { useCallback, useEffect, useMemo } from "react"
 import {
@@ -1265,7 +1270,6 @@ function useEventCalendarExternalDrop<TData = unknown, TPayload = unknown>() {
               }
             : null
         )
-        document.body.toggleAttribute("data-ec-external-drag-invalid", !accepted)
       }
 
       function onPointerMove(move: PointerEvent) {
@@ -1278,7 +1282,10 @@ function useEventCalendarExternalDrop<TData = unknown, TPayload = unknown>() {
           if (isTouch) {
             // Movement past tolerance BEFORE the long-press delay means the user is scrolling,
             // not dragging — same rule the chip gestures use, so a tray stays scrollable.
-            if (dx > threshold || dy > threshold) cancel()
+            // `teardown()`, NOT `cancel()`: this gesture never activated, so by the documented
+            // `onCancel` contract it is a scroll, not a cancelled drag. Calling cancel() here
+            // would fire onCancel for every touch scroll that began on a drag source.
+            if (dx > threshold || dy > threshold) teardown()
             return
           }
           if (dx < threshold && dy < threshold) return

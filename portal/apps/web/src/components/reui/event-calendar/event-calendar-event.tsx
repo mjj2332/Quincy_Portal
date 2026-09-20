@@ -53,6 +53,8 @@
  *    tree to hang a hook on instead — so the testid goes here, exactly as PR A did in
  *    `gantt-bar.tsx`. Minimal and additive; it is not a `data-slot`, so Guard F does not govern
  *    it either way.
+ * 3. 2026-09-21 (#219 PR B): the chip applies `viewConfig.eventClassName?.(occurrence)`, before
+ *    `classNames.event` so a blanket override still wins.
  */
 import {
   createContext,
@@ -572,6 +574,9 @@ function EventCalendarEvent<TData = unknown>({
             segment.continuesBefore && "rounded-s-none",
             segment.continuesAfter && "rounded-e-none"
           ),
+      // QUINCY ADDITION (#219 PR B): per-chip consumer classes — "dimmed done tasks". Before
+      // `classNames.event` so a blanket override still wins; see the hook's doc on viewConfig.
+      viewConfig.eventClassName?.(occurrence),
       viewConfig.classNames?.event,
       className
     ),

@@ -497,3 +497,117 @@ describe("guard: caution text uses the caution TEXT token, never the brand value
     expect(findCautionTokenOffences('className="border-warning/15"').bgWarning).toBe(false);
   });
 });
+
+/**
+ * Guard 4 — the bare-`border` compat rule must exist, and must stay layered.
+ *
+ * Tailwind v4's preflight leaves a bare `border` / `border-b` / `border-e` at `currentColor`,
+ * which in this palette is near-black — a defect that shipped in #219 PR A (dr-219a HIGH #3) and
+ * would have shipped ~48 more times in PR B's vendored calendar tree, which contains zero
+ * `border-border` classes.
+ *
+ * #219 PR B fixed it at the cause with one rule in `tokens/base.css` and DELETED the call-site
+ * detector that had been policing it in `gantt-skin.guard.test.ts`. That deletion is only safe
+ * while the rule exists. Nothing asserted that it does: both skin guards described it in prose in
+ * their headers, and prose is exactly what this file exists to replace. Deleting one line of
+ * `base.css` would silently re-arm an app-wide defect with both guards still green.
+ *
+ * This guard is the replacement invariant, pinned. It checks four things, because three of them
+ * can each break the rule while leaving it present:
+ *
+ *   1. the declaration exists and reads `var(--border)` — not a literal, not `currentColor`;
+ *   2. it covers `*`, `*::before` AND `*::after` — preflight sets all three;
+ *   3. it is INSIDE `@layer base` — unlayered it would beat `@layer utilities` and break every
+ *      intentional border colour in the app (`border-primary/40`, `border-(--ec-event-color)/50`);
+ *   4. it is NOT inside `@layer utilities` or any other layer, for the same reason inverted.
+ *
+ * If you are deleting this guard, you are deleting the compat rule — which means reinstating a
+ * bare-`border` detector in BOTH `gantt-skin.guard.test.ts` and
+ * `event-calendar-skin.guard.test.ts`, and sweeping ~48 sites in the calendar tree by hand.
+ */
+describe("guard: the bare-border compat rule", () => {
+  const baseCss = readFileSync(join(stylesDir, "tokens", "base.css"), "utf-8");
+
+  /** Strip CSS comments so a rule quoted in prose cannot satisfy — or break — any assertion. */
+  const stripCssComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  /** The `@layer base { ... }` blocks, by brace matching (the file has several layers). */
+  function layerBodies(css: string, layer: string): string[] {
+    const bodies: string[] = [];
+    const opener = new RegExp(`@layer\\s+${layer}\\s*\\{`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = opener.exec(css))) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      const start = i;
+      while (i < css.length && depth > 0) {
+        if (css[i] === "{") depth++;
+        else if (css[i] === "}") depth--;
+        i++;
+      }
+      bodies.push(css.slice(start, i - 1));
+    }
+    return bodies;
+  }
+
+  const BORDER_COMPAT = /\*\s*,\s*\*::before\s*,\s*\*::after\s*\{[^}]*border-color:\s*var\(--border\)/;
+
+  it("exists in tokens/base.css, covering *, *::before and *::after, and reads var(--border)", () => {
+    expect(
+      BORDER_COMPAT.test(stripCssComments(baseCss)),
+      [
+        "tokens/base.css must carry the bare-border compat rule:",
+        "",
+        "  @layer base {",
+        "    *, *::before, *::after { border-color: var(--border); }",
+        "  }",
+        "",
+        "Without it, Tailwind v4 preflight leaves every bare `border*` class at currentColor —",
+        "near-black in this palette. The call-site detector that used to catch this was deleted",
+        "in #219 PR B precisely because this rule replaced it.",
+      ].join("\n")
+    ).toBe(true);
+  });
+
+  it("is inside @layer base, so colour utilities still win", () => {
+    const inBase = layerBodies(stripCssComments(baseCss), "base").some((b) => BORDER_COMPAT.test(b));
+    expect(
+      inBase,
+      [
+        "The compat rule must sit INSIDE `@layer base`. Unlayered — like the `:focus-visible`",
+        "rule above it, which is unlayered on purpose — it would beat `@layer utilities` and",
+        "override every intentional border colour in the app: border-border, border-primary/40,",
+        "border-(--ec-event-color)/50, border-destructive/40.",
+      ].join("\n")
+    ).toBe(true);
+  });
+
+  it("is not duplicated into another layer, where it would outrank utilities", () => {
+    const stripped = stripCssComments(baseCss);
+    const elsewhere = ["utilities", "components", "theme"].filter((layer) =>
+      layerBodies(stripped, layer).some((b) => BORDER_COMPAT.test(b))
+    );
+    expect(elsewhere, `The compat rule must not also appear in @layer ${elsewhere.join(", ")}.`).toEqual([]);
+  });
+
+  it("proves the matcher on planted fixtures", () => {
+    expect(BORDER_COMPAT.test("*, *::before, *::after { border-color: var(--border); }")).toBe(true);
+    // a literal instead of the role token: present, but no longer surface-aware
+    expect(BORDER_COMPAT.test("*, *::before, *::after { border-color: #cfc7b6; }")).toBe(false);
+    // currentColor is the defect itself
+    expect(BORDER_COMPAT.test("*, *::before, *::after { border-color: currentColor; }")).toBe(false);
+    // pseudo-elements dropped — preflight sets those too
+    expect(BORDER_COMPAT.test("* { border-color: var(--border); }")).toBe(false);
+    // the rule quoted inside a comment must not satisfy the guard
+    expect(
+      BORDER_COMPAT.test(
+        stripCssComments("/* *, *::before, *::after { border-color: var(--border); } */")
+      )
+    ).toBe(false);
+    // brace matching finds a rule in the SECOND @layer base block, not just the first
+    expect(
+      layerBodies("@layer base { html { color: red } }\n@layer base { *, *::before, *::after { border-color: var(--border); } }", "base")
+        .some((b) => BORDER_COMPAT.test(b))
+    ).toBe(true);
+  });
+});

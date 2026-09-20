@@ -30,6 +30,12 @@
  * not reinstate it without first deleting that compat rule. See `docs/lessons.md`, "Tailwind v4
  * preflight makes a bare `border`/`border-b` paint near-black".
  *
+ * Deleting a detector is only safe while its replacement is pinned, and prose in a header does not
+ * pin anything — so the compat rule's existence, its `var(--border)` value, its `*`/`::before`/
+ * `::after` coverage and its position INSIDE `@layer base` are all asserted by
+ * `styles/design-system-guards.test.ts` guard 4. Delete that rule and two tests go red there,
+ * naming this deletion as the reason they exist.
+ *
  * #219 PR A fix (dr-219a MEDIUM #6), additive detector, scoped to exactly two elements (not the
  * whole file): a `destructive` class on the now-line or its dot cap — red already means
  * overdue/critical elsewhere in this app, and the now-line has no causal link to an overdue bar.

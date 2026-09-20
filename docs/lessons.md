@@ -3587,3 +3587,28 @@ hour gutter now disagrees with the transition day's column by one hour-height, b
 renders a fixed 24 labels while stretching to the tallest column. Losing an hour of data is worse
 than losing alignment, so the trade is right, but it is a trade and the residual misalignment is
 tracked separately.
+
+## A typed config key can be silently dropped by a runtime allow-list (#219, 2026-09-21)
+
+`@reui/event-calendar` resolves its view configuration through `VIEW_CONFIG_KEYS`, an explicit
+array of key names, and copies only those keys into the context its views read. The TYPE
+(`EventCalendarViewConfig`) and the runtime list are maintained separately and nothing ties them
+together.
+
+Adding `eventClassName` to the interface and consuming it in the chip therefore typechecked
+cleanly at every call site — including the consumer passing the prop — and rendered nothing. The
+browser showed the vendor's own default styling with no error, no warning, and no failing test.
+`tsc` cannot see this: as far as the type system is concerned the prop was accepted.
+
+What caught it was rendering the component and asserting on the result. What would NOT have caught
+it: a unit test of the callback, a typecheck, a lint rule, or reading the diff.
+
+The generalisation, which is not specific to this block: **when a library resolves configuration
+through a hand-maintained list of key names, adding to its type is only half the change.** Look
+for the list — `*_KEYS`, a `pick(...)`, a destructure with explicit names, a reducer over a
+literal array — and add the key there too. Then pin it with a test that RENDERS, because every
+cheaper check passes.
+
+`event-calendar-done-dim.dom.test.tsx` is that test, and its failure message names
+`VIEW_CONFIG_KEYS` directly so the next person does not have to rediscover the mechanism. Deleting
+the key from the list turns three of its five cases red.

@@ -21,6 +21,7 @@
  */
 import { useCallback, useState } from "react";
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
+import type { EventCalendarOccurrence } from "@/components/reui/event-calendar/event-calendar-types";
 import { EventCalendarNav, EventCalendarToolbar } from "@/components/reui/event-calendar/event-calendar-nav";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
 import { useEventCalendarExternalDrop } from "@/components/reui/event-calendar/event-calendar-dnd";
@@ -94,6 +95,31 @@ function UnscheduledTray({
     </div>
   );
 }
+
+/**
+ * "Dimmed done tasks" (#219's re-skin line), supplied by the CONSUMER.
+ *
+ * The vendor deliberately has no concept of done — see the `eventClassName` doc on its
+ * viewConfig. Completion is read from Quincy's own `event.data.done`, never from the vendor's
+ * `data-past`, which is derived from the clock: a past meeting nobody actioned is not done, and
+ * this fixture set contains a task that is done while still in the FUTURE precisely so the two
+ * cannot be conflated.
+ *
+ * The dim is HUE-INDEPENDENT, and that is the whole point. #219 PR A shipped a per-hue alpha step
+ * for completed Gantt bars (`bg-(--gantt-event-color)/10`) and the design reviewer measured it as
+ * a failure (dr-219a MEDIUM #5): a 10% wash of a naturally dark, saturated stage colour can read
+ * LOUDER than a 20% wash of a naturally light one, so "reduced emphasis" did not guarantee
+ * "reduced loudness". PR A's fix was the fixed `--border` token every stage shares. This does the
+ * same thing rather than repeating the mistake in a second tree — and `future-and-done` uses
+ * `--signal-positive`, one of the most saturated stage colours, so it is the worst case.
+ *
+ * `cn()` is tailwind-merge, so `bg-border/…` replaces the chip's own `bg-(--ec-event-color)/15`
+ * rather than layering over it.
+ */
+const dimDoneChip = (occurrence: EventCalendarOccurrence<unknown>): string | undefined =>
+  (occurrence.event.data as { done?: boolean } | undefined)?.done
+    ? "bg-border/25 hover:bg-border/35 inset-ring-border/25 text-muted-foreground"
+    : undefined;
 
 export default function CalendarPreview() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("today");
@@ -233,6 +259,7 @@ export default function CalendarPreview() {
         onEventUpdate={handleEventUpdate}
         onSelectSlot={handleSelectSlot}
         onDragBlocked={handleDragBlocked}
+        eventClassName={dimDoneChip}
         className="h-[40rem]"
       >
         <EventCalendarNav />

@@ -50,6 +50,10 @@
  * 1. 2026-09-21, #219 PR B, stage 4 — `dayClassName`'s docstring no longer offers
  *    `"bg-amber-500/10"` as the intended value. It is a consumer-supplied class, so it is the one
  *    palette violation no detector in this repo can catch, and the docstring was teaching it.
+ * 2. 2026-09-21 (#219 PR B): additive `eventClassName` on the view config — per-chip consumer
+ *    classes, the seam '#219's "dimmed done tasks" needs. Also listed in VIEW_CONFIG_KEYS,
+ *    which is a RUNTIME allow-list: a key on the interface but missing there typechecks
+ *    everywhere and is then silently dropped. Pinned by event-calendar-done-dim.dom.test.tsx.
  */
 import {
   createContext,
@@ -1513,6 +1517,23 @@ interface EventCalendarViewConfig<TData = unknown> {
    */
   dayClassName?: (day: Date) => string | undefined
   /**
+   * QUINCY ADDITION (#219 PR B) — extra classes for ONE event chip, in every view.
+   *
+   * #219 asks the re-skin for "dimmed done tasks". The vendor has no concept of done, and it
+   * must not acquire one: completion is a Quincy domain fact, and the nearest thing the vendor
+   * offers — `data-past`, derived from `occurrence.end < Date.now()` — is a CLOCK fact. A past
+   * meeting nobody actioned is not done, and a task finished early is done while still in the
+   * future. Equating them would render the wrong thing on both.
+   *
+   * So the vendor stays ignorant and the consumer supplies the class, reading its own
+   * `event.data`. This mirrors `dayClassName` above rather than inventing a second idiom, and it
+   * is additive: omit it and nothing changes.
+   *
+   * Applied AFTER the built-in chip classes and BEFORE `classNames.event`, so a consumer can
+   * dim a single chip without having to out-specify the blanket override.
+   */
+  eventClassName?: (occurrence: EventCalendarOccurrence<TData>) => string | undefined
+  /**
    * Extra classes for the CURRENT day, appended after the built-in highlight
    * (primary-tinted background + accent top border) on month cells, time-grid
    * day columns, and day headers.
@@ -1727,6 +1748,11 @@ const VIEW_CONFIG_KEYS: Array<keyof EventCalendarViewConfig> = [
   "scrollMode",
   "stickyNav",
   "dayClassName",
+  // QUINCY ADDITION (#219 PR B). This list is an explicit RUNTIME allow-list: a key declared on
+  // EventCalendarViewConfig but missing here typechecks at every call site and is then silently
+  // dropped before it reaches a view. `eventClassName` was added to the interface and to the chip
+  // in the same change and still rendered nothing until it was listed here.
+  "eventClassName",
   "todayClassName",
   "showDayAddButton",
   "scrollbars",

@@ -319,6 +319,43 @@ describe("useEventCalendarExternalDrop — DOM (#219 PR B stage 3)", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  it("d3. a TOUCH scroll off a drag source is a scroll, not a cancelled drag", async () => {
+    // Regression, found in review. The touch branch treats movement past `touchTolerancePx`
+    // BEFORE activation as the user scrolling the tray rather than dragging out of it — correct,
+    // and the same rule the vendor's own chip gestures use. But it called `cancel()`, which fires
+    // `onCancel`, contradicting the contract documented three lines above the option: onCancel is
+    // for an ACTIVATED drag that ended without a commit, and explicitly NOT for "a press that
+    // never passed the activation threshold". A consumer that flashes "drag cancelled" or
+    // restores a tray item on cancel would have fired it on every flick-scroll of the tray.
+    //
+    // The mouse half of this contract is case (d); this is the touch half, which had no cover.
+    const { instanceRef, beginRef } = await setup(true);
+    const onDrop = vi.fn();
+    const onCancel = vi.fn();
+
+    await act(async () => {
+      beginRef.current!(
+        makePointerDownEvent({ clientX: 50, clientY: 500, pointerType: "touch" }),
+        { payload: PAYLOAD, durationMinutes: DURATION_MINUTES, onDrop, onCancel }
+      );
+    });
+
+    // Well past touchTolerancePx, but still before any long-press activation: a scroll.
+    await pointerEvent(window, "pointermove", { clientX: 50, clientY: 560, pointerType: "touch" });
+
+    expect(instanceRef.current!.getState().slotDraft).toBeNull();
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(
+      onCancel,
+      "a touch scroll never activated the gesture, so it is not a cancelled drag"
+    ).not.toHaveBeenCalled();
+
+    // And the gesture really is over — a later release must not resurrect it.
+    await pointerEvent(window, "pointerup", { clientX: 50, clientY: 560, pointerType: "touch" });
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
   it("d2. a non-activated press leaves the module-wide click suppression alone", async () => {
     // Regression. `teardown()` used to call `markChipPress()` and stamp `lastGestureEndedAt`
     // unconditionally, so merely CLICKING a tray row (never crossing the activation threshold)

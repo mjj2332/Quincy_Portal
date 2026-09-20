@@ -348,6 +348,19 @@ function buildCalendarFromAnchor(anchor: TZDate): Omit<CalendarFixture, "date"> 
       color: STAGE_COLORS.awaitingRaw,
       data: { done: false },
     },
+    {
+      // The other half of the pair: DONE, and deliberately in the FUTURE, so it cannot be
+      // confused with the vendor's clock-derived `data-past`. A task finished early is done
+      // while still ahead of the clock; this fixture is what proves the harness dims on
+      // `data.done` and not on time.
+      id: "future-and-done",
+      title: "Done ahead of schedule",
+      start: sydneyTime(day(2).getFullYear(), day(2).getMonth() + 1, day(2).getDate(), 14, 0),
+      end: sydneyTime(day(2).getFullYear(), day(2).getMonth() + 1, day(2).getDate(), 15, 30),
+      resourceId: "shoot-auckland",
+      color: STAGE_COLORS.delivered,
+      data: { done: true },
+    },
   ];
 
   return {

@@ -12,12 +12,18 @@
  * `event-calendar-dnd.tsx` is in scope — it is part of the file, not a separate module.
  *
  * Detector 6 (bare `border*`) from the Gantt guard is NOT ported here, and deliberately so — see
- * that guard's own header. `styles/tokens/base.css` now carries an unlayered `@layer base { *,
- * *::before, *::after { border-color: var(--border) } }` compat rule that removes the defect class
- * (Tailwind v4 preflight's `border: 0 solid currentColor` painting near-black) repo-wide, not only
- * in files a detector happens to scan. A guard whose premise has been removed must stay deleted;
- * reinstating a bare-border detector here would require deleting that compat rule FIRST, which
- * would reopen the defect everywhere else in the app it currently protects.
+ * that guard's own header. `styles/tokens/base.css` now carries a `@layer base { *, *::before,
+ * *::after { border-color: var(--border) } }` compat rule that removes the defect class (Tailwind
+ * v4 preflight's `border: 0 solid currentColor` painting near-black) repo-wide, not only in files
+ * a detector happens to scan. It is INSIDE `@layer base` on purpose, so `@layer utilities` still
+ * beats it and every intentional border colour survives — unlike the `:focus-visible` rule above
+ * it in the same file, which is deliberately unlayered so nothing can override the focus
+ * indicator. A guard whose premise has been removed must stay deleted; reinstating a bare-border
+ * detector here would require deleting that compat rule FIRST, which would reopen the defect
+ * everywhere else in the app it currently protects.
+ *
+ * That the rule exists, and stays layered, is itself pinned — `styles/design-system-guards.test.ts`
+ * guard 4. Prose in this header is not what keeps it there.
  *
  * Detector 3 (hex/rgb() literal) is WIDENED relative to the Gantt guard's own copy, and the same
  * widening is back-ported to `gantt-skin.guard.test.ts` in this change so the two sibling guards do
