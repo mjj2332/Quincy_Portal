@@ -544,6 +544,51 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     return host_.querySelector<HTMLElement>('[aria-live="polite"]')?.textContent ?? null;
   }
 
+  /** Walks the prototype chain for an own accessor descriptor — `textContent` lives on a DOM base class's prototype, not the element instance itself. */
+  function findAccessorDescriptor(obj: object, prop: string): PropertyDescriptor {
+    let cursor: object | null = obj;
+    while (cursor) {
+      const descriptor = Object.getOwnPropertyDescriptor(cursor, prop);
+      if (descriptor) return descriptor;
+      cursor = Object.getPrototypeOf(cursor);
+    }
+    throw new Error(`no "${prop}" descriptor found on the prototype chain`);
+  }
+
+  /**
+   * #219 PR A fix (Sol round 4, LOW) — the "exactly once" tests below used to check only the
+   * announcer's FINAL text, which a duplicate write of the IDENTICAL string (e.g. two teardowns
+   * that both happen to announce "Adjustment cancelled.") passes vacuously — the text before and
+   * after looks the same either way. This shadows `textContent` with an own accessor on the live
+   * region INSTANCE (JS property lookup finds it before the DOM base class's prototype one) that
+   * counts every ASSIGNMENT, delegating to the original getter/setter either way — a direct count
+   * of how many times something wrote to the live region, not an inference from DOM mutation
+   * records (which, e.g. in happy-dom, a single `textContent =` can fan out into more than one
+   * childList record when it both removes an old text node and adds a new one, making raw record
+   * counts an unreliable proxy for "how many writes happened").
+   */
+  function watchAnnouncerWrites(host_: HTMLElement): { count: () => number; restore: () => void } {
+    const announcer = host_.querySelector<HTMLElement>("[data-slot=gantt-announcer]")!;
+    const original = findAccessorDescriptor(announcer, "textContent");
+    let writes = 0;
+    Object.defineProperty(announcer, "textContent", {
+      configurable: true,
+      get() {
+        return original.get!.call(announcer);
+      },
+      set(value: string) {
+        writes++;
+        original.set!.call(announcer, value);
+      },
+    });
+    return {
+      count: () => writes,
+      restore: () => {
+        Object.defineProperty(announcer, "textContent", original);
+      },
+    };
+  }
+
   it("controlled: deleting the owning event mid-session unmounts the bar; the SAME occurrence key returning later does NOT resurrect role=application", async () => {
     function DeleteHost({ setEventsRef }: { setEventsRef: { current: ((v: GanttEvent[]) => void) | null } }) {
       const [events, setEvents] = useState<GanttEvent[]>([
@@ -617,21 +662,29 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(bar.getAttribute("data-adjusting")).not.toBeNull();
     expect(announcerText(host)).not.toBe("Adjustment cancelled.");
 
+    // Round 4, Sol LOW: watches from here so the entry announcement above isn't counted -
+    // `.count()` proves the WRITE COUNT, not just the final text (see this helper's own comment).
+    const watcher = watchAnnouncerWrites(host);
     await act(async () => {
       setEventsRef.current!([]);
       await Promise.resolve();
     });
     expect(findBar(host, "Delete Announce")).toBeUndefined();
     expect(announcerText(host)).toBe("Adjustment cancelled.");
+    expect(watcher.count()).toBe(1); // exactly one live-region write for the teardown
 
     // Exactly once: a further notify with no NEW teardown (the session is already gone, so
     // `killAdjustSessionIfOrphaned` returns false and never bumps the version again) must not
-    // re-announce. A naive "session is null -> always announce" implementation would fail this.
+    // re-announce. A naive "session is null -> always announce" implementation would fail this -
+    // and a naive "text unchanged so it must not have re-written" check would pass it vacuously,
+    // which is exactly why `.count()` (not `announcerText`) is the assertion that matters here.
     await act(async () => {
       setEventsRef.current!([]);
       await Promise.resolve();
     });
     expect(announcerText(host)).toBe("Adjustment cancelled.");
+    expect(watcher.count()).toBe(1); // still 1 total - no ADDITIONAL live-region write
+    watcher.restore();
   });
 
   it("controlled: replacing the owning event's resource mid-session (same occurrence key — the bar stays mounted) restores role/data-adjusting and announces cancellation exactly once", async () => {
@@ -657,6 +710,9 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(bar.getAttribute("role")).toBe("application");
     expect(bar.getAttribute("data-adjusting")).not.toBeNull();
 
+    // Round 4, Sol LOW: see `watchAnnouncerWrites`'s own comment — `.count()` proves the WRITE
+    // COUNT, not just the final text.
+    const watcher = watchAnnouncerWrites(host);
     await act(async () => {
       setEventsRef.current!([
         { id: "repl-1", title: "Replace Me", start: START, end: END, resourceId: "r2" },
@@ -672,6 +728,8 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(bar.getAttribute("role")).not.toBe("application");
     expect(bar.getAttribute("data-adjusting")).toBeNull();
     expect(announcerText(host)).toBe("Adjustment cancelled.");
+    expect(watcher.count()).toBe(1); // exactly one live-region write, not a duplicate
+    watcher.restore();
   });
 
   it("uncontrolled: changing the view scale mid-session (same occurrence key stays mounted) restores role/data-adjusting and announces cancellation exactly once", async () => {
@@ -693,6 +751,9 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     await keydown(bar, { key: "ArrowRight" });
     expect(bar.getAttribute("data-adjusting")).not.toBeNull();
 
+    // Round 4, Sol LOW: see `watchAnnouncerWrites`'s own comment — `.count()` proves the WRITE
+    // COUNT, not just the final text.
+    const watcher = watchAnnouncerWrites(host);
     await act(async () => {
       apiRef.current!.setScale("week");
       await Promise.resolve();
@@ -702,6 +763,8 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(bar.getAttribute("role")).not.toBe("application");
     expect(bar.getAttribute("data-adjusting")).toBeNull();
     expect(announcerText(host)).toBe("Adjustment cancelled.");
+    expect(watcher.count()).toBe(1); // exactly one live-region write, not a duplicate
+    watcher.restore();
   });
 
   it("a LOCAL commit is never double-announced by the root's owner-death announcer (round 3, Sol HIGH #5 — regression guard, moved from a `localTeardownRef` ref to the getAdjustCancelledVersion counter)", async () => {
