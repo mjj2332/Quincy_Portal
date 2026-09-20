@@ -133,6 +133,17 @@
  * that legible level for the rest of its height instead of continuing to fade. See that element's
  * own class comment for the numbers, and its `data-testid` comment for why this DOM test selects
  * on an additive `data-testid` rather than its `data-slot`.
+ *
+ * #219 PR A fix (dr2-219a LOW #6): the floating zoom control's `MinusIcon` reads fainter than its
+ * `PlusIcon` sibling — the design reviewer measured each 44px button's darkest glyph pixel at 166
+ * for `+` versus 191 for `-`. Traced to lucide's own icon geometry, not guessed: `Minus` is one
+ * horizontal stroke through the exact center of its viewBox; `Plus` is that SAME stroke plus a
+ * crossing vertical one, and at this icon's rendered size that center lands on a whole-pixel
+ * boundary, where the crossing point composites to a visibly darker pixel than either lone stroke
+ * — reinforcement `Minus` cannot structurally have, having nothing to cross. `MinusIcon` (below)
+ * gets an explicit `strokeWidth={2.5}` (`PlusIcon` stays at lucide's default `2`) to compensate
+ * directly, restoring the two glyphs' effective ink parity without changing either icon's
+ * footprint or the 44px tap target around it.
  */
 
 import {
@@ -2961,7 +2972,15 @@ function GanttView({
                       />
                     }
                   >
-                    <MinusIcon className="size-3" aria-hidden="true" />
+                    {/* #219 PR A fix (dr2-219a LOW #6): explicit strokeWidth={2.5}, up from
+                        lucide's default 2 - PlusIcon (above) is this SAME horizontal stroke plus
+                        a crossing vertical one, and that crossing point composites to a visibly
+                        darker pixel than either stroke alone (the design reviewer measured 166 vs
+                        191, darkest-pixel). MinusIcon has no second stroke to cross with, so it
+                        cannot gain that reinforcement structurally - this compensates for it
+                        directly instead. See this file's header (dr2-219a LOW #6) for the full
+                        trace through lucide's own icon-node source. */}
+                    <MinusIcon className="size-3" strokeWidth={2.5} aria-hidden="true" />
                   </TooltipTrigger>
                   <TooltipContent side="left">
                     {settings.i18n.labels.zoomOut}
