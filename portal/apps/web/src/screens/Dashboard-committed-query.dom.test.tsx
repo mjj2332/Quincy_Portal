@@ -430,6 +430,18 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     // settles to `status: "error"` deterministically within one `settle()`.
     await act(async () => { rejectSmith(new ApiError("Offline", 400)); await settle(); });
 
+    // `settle()`'s single `setTimeout(0)` hop can end before the 400 rejection's own re-render
+    // lands -- the same artefact commit 69d8ac4 documents on this file's sibling
+    // (`Dashboard-priority-coordinator.dom.test.tsx`'s test (m)): a rejection settling via
+    // `queryFn`'s own throw is one more microtask hop removed than a resolved value, occasionally
+    // enough to still be mid-flight (the PREVIOUS rows, no alert) when `settle()` returns. Confirmed
+    // under CPU load (4 parallel loops of this file): `host.querySelector('[role="alert"]')` reads
+    // null, not a wrong terminal state -- still the loading/previous-rows render from just above,
+    // one commit behind. Wait for the error alert to land before asserting on it.
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    });
+
     // Rejected: the error state shows -- the previous (Alpha/Beta) rows must NOT still be presented
     // as though they were smith's own result.
     expect(host.querySelector('[role="alert"]')).not.toBeNull();
@@ -497,6 +509,18 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     expect(smithCalls).toBe(2);
 
     await act(async () => { rejectSecondSmith(new ApiError("Offline", 400)); await settle(); });
+
+    // Same artefact as test (i)'s own fix above, and commit 69d8ac4's original on
+    // `Dashboard-priority-coordinator.dom.test.tsx`'s test (m): `settle()`'s single `setTimeout(0)`
+    // hop can end before this rejection's own re-render lands. Confirmed under CPU load (4 parallel
+    // loops of this file): the failure reads `rowsAfterEviction` as length 0, not a wrong row count
+    // or an unexpected alert -- the loading skeleton (no rows accepted-snapshot fallback painted
+    // yet, no alert either) one commit behind. Wait for either terminal state -- the error alert
+    // (buggy: B's accepted snapshot did not survive) or a row actually rendering (fixed) -- before
+    // asserting on which one it is.
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]') ?? host.querySelector('[data-testid="project-list-row"]')).not.toBeNull();
+    });
 
     expect(host.querySelector('[role="alert"]')).toBeNull();
     const rowsAfterEviction = [...host.querySelectorAll('[data-testid="project-list-row"]')];
