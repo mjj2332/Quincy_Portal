@@ -258,6 +258,14 @@ interface GanttAdjustState<TData = unknown> {
   target: GanttNudgeAction
   entry: { start: Date; end: Date; allDay: boolean }
   preview: { start: Date; end: Date; allDay: boolean }
+  /**
+   * #219 PR A fix (Sol re-review round 2, HIGH #2), additive: every `GanttNudgeAction` the session
+   * has been under (M/S/E retargets append, deduped) - `commitAdjust`'s final re-validation checks
+   * the lock state of ALL of them, not just `target` (the CURRENT one), because a move-then-retarget
+   * session's final preview can carry work from more than one target. Always non-empty: seeded with
+   * `beginAdjust`'s own `initialTarget`.
+   */
+  touchedTargets: GanttNudgeAction[]
 }
 
 /** `gantt.tsx`'s `GanttInternals.stepAdjust` verdict — one Arrow/Shift+Arrow step. */

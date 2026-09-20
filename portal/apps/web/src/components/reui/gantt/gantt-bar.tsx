@@ -720,7 +720,10 @@ function GanttBar<TData = unknown>({
       }
 
       // match.type === "commit"
-      const result = instance.internals.commitAdjust()
+      // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): the same view-scheduleMode
+      // pass-through `stepAdjust` above already needs - `commitAdjust` now re-validates the overlap
+      // policy against the CURRENT resource, which needs it too.
+      const result = instance.internals.commitAdjust(viewConfig.scheduleMode)
       if (result.committed) {
         // A committed START change (move, or a start-edge resize - whichever target actually moved
         // it, regardless of which target was LAST selected via M/S/E) changes this occurrence's key

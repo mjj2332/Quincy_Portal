@@ -445,8 +445,15 @@ interface GanttInternals<TData = unknown> {
    * `applyProposedUpdate` funnel a pointer release uses, exactly once, with `source: "keyboard"`;
    * no net change emits nothing. Always clears the session (and any driven `state.drag`), win or
    * lose.
+   *
+   * Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): immediately before that single write,
+   * re-validates the FINAL preview against the CURRENT event/settings (see `validateAdjustCommit`
+   * in `gantt.tsx`) - a refusal here (event now locked/recurring, a now-overlapping neighbour under
+   * "reject", or an enforced `canDropEvent` veto) commits nothing, same as `onEventUpdate` itself
+   * rejecting. `viewScheduleMode` is `useGanttViewConfig().scheduleMode`, the same store-has-no-
+   * component-context reason `stepAdjust` already takes it.
    */
-  commitAdjust(): GanttAdjustCommitResult
+  commitAdjust(viewScheduleMode?: GanttScheduleMode): GanttAdjustCommitResult
   /**
    * Escape, blur, or a pointer-down outside the bar - discards the preview, emits nothing, clears
    * the session (and any driven `state.drag`). A no-op when no session is active.
@@ -766,6 +773,25 @@ function createGanttStore<TData>(
   }
 
   /**
+   * Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): factored out of `proposeNudge` below so
+   * `commitAdjust`'s final re-validation (`validateAdjustCommit`) can check the SAME per-action lock
+   * rule against the CURRENT event/state without re-deriving a stepped proposal. `readOnly`/
+   * `recurrence` are event-wide, checked once by callers before iterating actions; this only covers
+   * the per-ACTION (move vs. a specific resize edge) half of the gate.
+   */
+  const isActionLocked = (
+    event: GanttEvent<TData>,
+    action: GanttNudgeAction,
+    state: GanttState<TData>
+  ): boolean => {
+    if (action === "move") {
+      return !state.interactions.drag || event.draggable === false
+    }
+    const edge = action === "resize-start" ? "start" : "end"
+    return !state.interactions.resize || !isResizableEdge(event, edge)
+  }
+
+  /**
    * The shared core of ONE keyboard move/resize proposal - locks, the day/minute step math
    * (`computeGanttKeyboardProposal`), the overlap/clamp policy, and the advisory/enforced
    * `canDropEvent` check. `nudgeEvent` (below) calls this once with `subject = {event.start,
@@ -789,15 +815,8 @@ function createGanttStore<TData>(
     // - see `nudgeEvent`'s own comment on the identical check, which this replaces.
     if (event.recurrence) return { ok: false, reason: "locked" }
     const state = getState()
-    if (action === "move") {
-      if (!state.interactions.drag || event.draggable === false) {
-        return { ok: false, reason: "locked" }
-      }
-    } else {
-      const edge = action === "resize-start" ? "start" : "end"
-      if (!state.interactions.resize || !isResizableEdge(event, edge)) {
-        return { ok: false, reason: "locked" }
-      }
+    if (isActionLocked(event, action, state)) {
+      return { ok: false, reason: "locked" }
     }
 
     const proposal = computeGanttKeyboardProposal(
@@ -879,6 +898,109 @@ function createGanttStore<TData>(
       start: finalProposal.start,
       end: finalProposal.end,
       allDay: finalProposal.allDay,
+    }
+  }
+
+  /**
+   * Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): re-validates an Adjust session's FINAL
+   * preview against the CURRENT event + settings, immediately before `commitAdjust`'s single
+   * `applyProposedUpdate` call. `stepAdjust`'s own gate (`proposeNudge`, above) only ever checked
+   * state AT THAT STEP; nothing re-checked it again right before the write, so a consumer that
+   * locked an edge, added an overlapping neighbour, or flipped `enforceCanDrop` between the last
+   * accepted step and Enter could still have the stale preview committed.
+   *
+   * Checks, in order: the event carries no `readOnly`/`recurrence` (re-checked - either can change
+   * out from under an in-progress session, same as `proposeNudge`'s own event-wide check); every
+   * target TOUCHED during the session (`session.touchedTargets` - not just the CURRENT one, because
+   * a move-then-retarget-to-resize session's final range can reflect BOTH) is still unlocked; the
+   * CURRENT overlap policy against CURRENT same-resource neighbours ("reject" refuses outright,
+   * "clamp" re-clamps the session's own before/after arc - anchor = `session.entry`, the pre-session
+   * span, proposal = `session.preview`, mirroring `clampToNeighbours`' own "a pre-existing overlap
+   * has no edge to stop at" rule, the same way each individual step already anchors against ITS OWN
+   * pre-step subject); and the enforced `canDropEvent` gate. Returns the (possibly re-clamped) final
+   * range on success - `commitAdjust` writes THAT, not the raw `session.preview`, so a neighbour that
+   * appeared mid-session under "clamp" still stops the write at its edge instead of silently
+   * overlapping it.
+   */
+  const validateAdjustCommit = (
+    event: GanttEvent<TData>,
+    session: GanttAdjustState<TData>,
+    viewScheduleMode: GanttScheduleMode | undefined
+  ):
+    | { ok: true; start: Date; end: Date; allDay: boolean }
+    | { ok: false; reason: "locked" | "rejected" } => {
+    if (event.readOnly) return { ok: false, reason: "locked" }
+    if (event.recurrence) return { ok: false, reason: "locked" }
+    const state = getState()
+    for (const target of session.touchedTargets) {
+      if (isActionLocked(event, target, state)) {
+        return { ok: false, reason: "locked" }
+      }
+    }
+
+    const node = event.resourceId
+      ? findResource(settings.resources, event.resourceId)
+      : null
+    const nodeMode = resolveScheduleMode(node, viewScheduleMode)
+    const overlapPolicy = resolveOverlapPolicy(nodeMode, settings.overlap)
+
+    let finalRange = {
+      start: session.preview.start,
+      end: session.preview.end,
+      allDay: session.preview.allDay,
+    }
+    if (overlapPolicy !== "allow" && event.resourceId !== undefined) {
+      const neighbourFrom = new Date(
+        Math.min(session.entry.start.getTime(), session.preview.start.getTime())
+      )
+      const neighbourTo = new Date(
+        Math.max(session.entry.end.getTime(), session.preview.end.getTime())
+      )
+      const neighbours: GanttOverlapNeighbour[] = api
+        .getOccurrences({ start: neighbourFrom, end: neighbourTo })
+        .filter(
+          (other) =>
+            other.event.resourceId === event.resourceId &&
+            other.eventId !== session.eventId
+        )
+        .map((other) => ({
+          start: other.start.getTime(),
+          end: other.end.getTime(),
+        }))
+
+      if (overlapPolicy === "clamp") {
+        const clamped = clampToNeighbours(
+          session.target,
+          { start: session.entry.start, end: session.entry.end },
+          finalRange,
+          neighbours,
+          overlapPolicy
+        )
+        finalRange = { ...finalRange, start: clamped.start, end: clamped.end }
+      } else if (overlapsAnyNeighbour(neighbours, finalRange)) {
+        return { ok: false, reason: "rejected" }
+      }
+    }
+
+    const update: GanttProposedUpdate<TData> = {
+      event,
+      occurrence: null,
+      start: finalRange.start,
+      end: finalRange.end,
+      allDay: finalRange.allDay,
+      resourceId: event.resourceId,
+      source: "keyboard",
+    }
+    const valid = settings.canDropEvent ? settings.canDropEvent(update) : true
+    if (settings.enforceCanDrop && !valid) {
+      return { ok: false, reason: "rejected" }
+    }
+
+    return {
+      ok: true,
+      start: finalRange.start,
+      end: finalRange.end,
+      allDay: finalRange.allDay,
     }
   }
 
@@ -1173,6 +1295,10 @@ function createGanttStore<TData>(
         // first accepted step (the bar renders it via `data-adjusting`, not a ghost - see
         // this interface's `stepAdjust` doc comment for when the ghost path starts).
         preview: entry,
+        // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): every target the session has ever
+        // been under - `commitAdjust`'s final re-validation checks ALL of them, not just whichever
+        // one is current at commit time. See `validateAdjustCommit`'s own doc comment.
+        touchedTargets: [initialTarget],
       }
       invalidate()
       notify()
@@ -1229,11 +1355,14 @@ function createGanttStore<TData>(
       // Preview carries over: switching M/S/E mid-session keeps whatever the prior target
       // already moved/resized to, so a move-then-resize sequence composes instead of the
       // second target discarding the first's work.
-      internal.adjust = { ...internal.adjust, target }
+      const touchedTargets = internal.adjust.touchedTargets.includes(target)
+        ? internal.adjust.touchedTargets
+        : [...internal.adjust.touchedTargets, target]
+      internal.adjust = { ...internal.adjust, target, touchedTargets }
       invalidate()
       notify()
     },
-    commitAdjust() {
+    commitAdjust(viewScheduleMode) {
       const session = internal.adjust
       if (!session) return { committed: false }
       const event = api.getEvent(session.eventId)
@@ -1257,12 +1386,21 @@ function createGanttStore<TData>(
         notify()
         return { committed: false, noChange: true }
       }
+      // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): re-validate the FINAL preview
+      // against the CURRENT event/settings immediately before the write - see
+      // `validateAdjustCommit`'s own doc comment for why a step-time-only gate is not enough.
+      const revalidation = validateAdjustCommit(event, session, viewScheduleMode)
+      if (!revalidation.ok) {
+        invalidate()
+        notify()
+        return { committed: false }
+      }
       const update: GanttProposedUpdate<TData> = {
         event,
         occurrence: null,
-        start: session.preview.start,
-        end: session.preview.end,
-        allDay: session.preview.allDay,
+        start: revalidation.start,
+        end: revalidation.end,
+        allDay: revalidation.allDay,
         resourceId: event.resourceId,
         source: "keyboard",
       }
