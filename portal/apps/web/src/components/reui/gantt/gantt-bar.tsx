@@ -152,6 +152,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -314,7 +315,12 @@ function GanttBar<TData = unknown>({
   // a different key) leaves a real pending claim untouched - `consumeKeyboardFocus` only clears on
   // an exact match.
   const barRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
+  // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #6): `useLayoutEffect`, not `useEffect` -
+  // the reclaim must land, and the token must be consumed (nulled), synchronously in the SAME
+  // commit that mounts this bar under its new key, before the browser paints and before any LATER
+  // notify() could observe an unconsumed token past its one intended render - see
+  // `gantt.tsx`'s `notify()` doc comment on the token's lifetime.
+  useLayoutEffect(() => {
     if (instance.internals.consumeKeyboardFocus(event.id, occurrence.key)) {
       barRef.current?.focus({ preventScroll: true })
     }

@@ -532,7 +532,7 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
     host2.remove();
   });
 
-  it("a stale claimed token (nothing ever mounts to consume it) does not steal focus from a LATER, unrelated mount of a bar for the same event id + key", async () => {
+  it("a stale claimed token (nothing ever mounts to consume it) does not steal focus from a LATER, unrelated mount of a bar for the same event id + key (#219 PR A, Sol re-review round 2, MEDIUM #6: expires after exactly ONE subsequent notify, not two)", async () => {
     const event: GanttEvent = { id: "stale-ev", title: "Stale", start: START, end: END };
     const internalsHolder: { current: GanttInternals | null } = { current: null };
     const setMountedHolder: { current: ((v: boolean) => void) | null } = { current: null };
@@ -565,11 +565,10 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
     await act(async () => {
       internals.claimKeyboardFocus({ eventId: "stale-ev", targetKey: key });
     });
+    // Exactly ONE subsequent, unrelated notify() is now enough to expire an unconsumed token -
+    // see `gantt.tsx`'s `notify()` doc comment.
     await act(async () => {
       internals.setViewportCenter(new Date(START.getTime() + 1000));
-    });
-    await act(async () => {
-      internals.setViewportCenter(null);
     });
 
     await act(async () => {

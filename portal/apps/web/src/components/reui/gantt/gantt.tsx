@@ -585,10 +585,21 @@ function createGanttStore<TData>(
   // Quincy addition (#219 PR A, Sol review, sol1 item 6): this instance's keyboard focus hand-off
   // token - see `GanttInternals.claimKeyboardFocus`'s doc comment. `notifyCount` gives it a bounded
   // lifetime with no timers: `claimKeyboardFocus` is always called AFTER the nudge's OWN commit has
-  // already gone through `notify()` once (the bar calls it once `nudgeEvent` has returned), so the
-  // token records the notifyCount AT claim time; if a genuinely LATER commit (one unrelated to this
-  // nudge) passes without anything consuming the token, it is dropped at the START of that notify -
-  // "clear it if the next committed render does not produce the target."
+  // already gone through `notify()` (once or twice - `applyProposedUpdate`'s own `setField` and the
+  // caller's trailing `invalidate()`/`notify()`, for an uncontrolled `events` prop), so the token
+  // records the notifyCount AT claim time, strictly AFTER those. The render that is meant to
+  // consume it (the new occurrence key's bar mounting, `gantt-bar.tsx`'s `useLayoutEffect`) rides
+  // that SAME already-notified batch - React flushes it before this synchronous call stack (still
+  // inside the keydown handler) returns to the event loop, so no notify() call can land in
+  // between. The FIRST notify() called after claim() is therefore necessarily a LATER, unrelated
+  // one; consumption has already had its one chance by then.
+  //
+  // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #6): was `+ 1` here, giving an unconsumed
+  // token a second extra render's worth of survival (Sol: "takes two renders to expire") - a
+  // window in which some LATER, unrelated bar mount matching the same eventId + targetKey (e.g. an
+  // undo that recreates the exact occurrence) could still steal focus. `consumeKeyboardFocus` nulls
+  // the token directly and synchronously in the happy path, before any further notify() can occur,
+  // so this arithmetic only ever governs the abandoned-token fallback below.
   let pendingKeyboardFocus: GanttPendingKeyboardFocus | null = null
   let pendingKeyboardFocusClaimedAtNotifyCount = 0
   let notifyCount = 0
@@ -601,7 +612,7 @@ function createGanttStore<TData>(
     notifyCount++
     if (
       pendingKeyboardFocus &&
-      notifyCount > pendingKeyboardFocusClaimedAtNotifyCount + 1
+      notifyCount > pendingKeyboardFocusClaimedAtNotifyCount
     ) {
       pendingKeyboardFocus = null
     }
