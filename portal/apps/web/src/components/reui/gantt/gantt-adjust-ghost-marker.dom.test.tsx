@@ -144,6 +144,71 @@ function ghostEl(): HTMLElement | null {
   return host.querySelector<HTMLElement>('[data-testid="gantt-drag-ghost"]');
 }
 
+/**
+ * #219 PR A fix (dr2-219a HIGH #1) — the class-string assertions below (`bar.className.toContain(…)`)
+ * prove what rule is WRITTEN on the origin bar, not what a sighted user actually sees. The bar
+ * renders inside `gantt-view.tsx`'s own per-segment wrapper `<div>`, a SEPARATE element in the same
+ * ancestor chain that carried its own unconditional `data-[drag-kind=move]:opacity-0` — so a keyboard
+ * move's bar-level `opacity-40` composited against a wrapper-level `opacity-0` painted at exactly
+ * ZERO (CSS opacity is not inherited — a descendant's own opacity multiplies against whatever its
+ * ancestors already composited, it never overrides it). A class-string assertion on the bar ALONE
+ * cannot see that; `dr2-219a-report.md` HIGH #1 measured the painted result pixel-identical to an
+ * empty grid cell. `effectiveOpacity` below answers the question a browser would instead: this suite
+ * runs happy-dom with no CSS pipeline (`vitest.dom.config.ts` loads no stylesheet), so
+ * `getComputedStyle` cannot see Tailwind's generated rules either — the only source of truth left is
+ * the same class-string + data-attribute pairing a real cascade would resolve, walked one ancestor at
+ * a time and multiplied. Deliberately narrow: it only models a bare `opacity-N` utility optionally
+ * gated behind one or more chained `data-[attr=value]:` variants (AND-ed together, highest
+ * attribute-count wins on a tie — the same "two-attribute selector beats one" specificity rule
+ * `gantt-bar.tsx`'s own header documents for `data-completed:data-selected:`), because that is
+ * EXACTLY the vocabulary every drag-state opacity rule in this ancestor chain uses; a general CSS
+ * cascade engine is out of scope for a fixture this narrow. A modifier this helper does not model
+ * (`hover:`, `group-data-…`, …) is conservatively treated as inactive, so it can never masquerade as
+ * a rule this test verified.
+ */
+function elementOwnOpacity(el: Element): number {
+  const ATTR_MODIFIER = /^data-\[([a-z-]+)=([a-z0-9-]+)\]$/;
+  let winner: { opacity: number; specificity: number } | null = null;
+  for (const token of el.className.split(/\s+/).filter(Boolean)) {
+    const parts = token.split(":");
+    const opacityMatch = /^opacity-(\d{1,3})$/.exec(parts[parts.length - 1]!);
+    if (!opacityMatch) continue;
+    const modifiers = parts.slice(0, -1);
+    let active = true;
+    for (const modifier of modifiers) {
+      const match = ATTR_MODIFIER.exec(modifier);
+      if (!match || el.getAttribute(`data-${match[1]}`) !== match[2]) {
+        active = false;
+        break;
+      }
+    }
+    if (!active) continue;
+    const specificity = modifiers.length;
+    if (!winner || specificity >= winner.specificity) {
+      winner = { opacity: Number(opacityMatch[1]) / 100, specificity };
+    }
+  }
+  return winner ? winner.opacity : 1;
+}
+
+/**
+ * Multiplies `elementOwnOpacity` from `start` up through every ancestor, `root` included — real CSS
+ * compositing, not a single element's own rule. `root` is `host` itself (the test's own render
+ * container), not a `[data-slot="gantt"]` lookup — Guard F forbids selecting on that vendor slot, and
+ * nothing between the real `<Gantt>` root and `host` carries an opacity rule of its own, so walking
+ * the extra step is inert.
+ */
+function effectiveOpacity(start: Element, root: Element): number {
+  let node: Element | null = start;
+  let product = 1;
+  while (node) {
+    product *= elementOwnOpacity(node);
+    if (node === root) break;
+    node = node.parentElement;
+  }
+  return product;
+}
+
 describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session, not a pointer drag, and (round 4) the origin bar stays visible-and-faded for a keyboard move while the ghost gets a title (#219 PR A, dr-219a HIGH #4)", () => {
   it("a real Adjust session (Space, then ArrowRight) renders a titled ghost with data-adjust-ghost, no ring, and keeps the origin bar visible at reduced opacity", async () => {
     const event: GanttEvent = { id: "kb-ghost", title: "Ghost Me", start: START, end: END, resourceId: "r1" };
@@ -184,6 +249,10 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     expect(bar.getAttribute("data-drag-source")).toBe("keyboard");
     expect(bar.className).toContain("data-[drag-kind=move]:data-[drag-source=keyboard]:opacity-40");
     expect(bar.className).not.toContain("data-[drag-kind=move]:opacity-0");
+    // dr2-219a HIGH #1: the class strings above are necessary but not sufficient - prove the
+    // COMPOSITED result through the wrapper ancestor is actually visible, not zeroed out by a
+    // sibling rule the bar's own class string says nothing about.
+    expect(effectiveOpacity(bar, host)).toBeGreaterThan(0);
 
     await keydown(bar, { key: "Escape" });
     expect(ghostEl()).toBeNull();
@@ -238,5 +307,8 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     expect(bar.getAttribute("data-drag-kind")).toBe("move");
     expect(bar.getAttribute("data-drag-source")).toBe("pointer");
     expect(bar.className).toContain("data-[drag-kind=move]:data-[drag-source=pointer]:opacity-0");
+    // dr2-219a HIGH #1: a pointer-owned move must still composite to fully invisible - the cursor
+    // clone carries the visual, so the origin bar staying hidden here is the correct outcome.
+    expect(effectiveOpacity(bar, host)).toBe(0);
   });
 });

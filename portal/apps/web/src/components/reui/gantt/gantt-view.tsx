@@ -93,6 +93,24 @@
  * `--radius-card: 0` exactly (`styles/tokens/spacing.css`: "cards are square by default") rather
  * than a smaller-but-still-rounded rung, since the grid this control floats over has no rounding
  * at all either — see each site's own inline comment.
+ *
+ * #219 PR A fix (dr2-219a HIGH #1, second design re-review pass): `gantt-bar.tsx`'s dr-219a HIGH #4
+ * fix (above) split the origin bar's own opacity by `data-drag-source` — keyboard move
+ * visible-and-faded, pointer move hidden — but the per-segment WRAPPER in this file (below, the
+ * `<div>` immediately around `<GanttBar>`) still hid unconditionally on ANY move via its own
+ * `data-[drag-kind=move]:opacity-0`, with no `data-drag-source` attribute of its own to gate on.
+ * Ancestor opacity 0 times the bar's own 0.4 composites to 0 — the design reviewer measured the
+ * "faded" keyboard-move source bar pixel-identical to an empty grid cell (b45d6d8 claimed this
+ * fixed; it did not). The wrapper now carries `data-drag-source` beside `data-drag-kind` and gates
+ * its hide the same way the bar already does — `data-[drag-kind=move]:data-[drag-source=pointer]:
+ * opacity-0` — so only a pointer move (whose cursor clone stands in) still hides it. Auditing the
+ * rest of this file's `data-drag-kind`/`group-data-[drag-kind…]` consumers for the same
+ * ancestor-vs-descendant split found exactly one more: the bar's own OUTSIDE label (below,
+ * `data-slot="gantt-bar-label"`) used to rely on the wrapper hiding it as a side effect of hiding
+ * everything for any move, and had no move-time rule of its own — now exposed by the wrapper's
+ * narrower hide, it gained the matching `group-data-[drag-kind=move]/gantt-seg:group-data-
+ * [drag-source=keyboard]/gantt-seg:opacity-0` so it does not show ALONGSIDE the drag ghost's own
+ * title during a keyboard move (see that class's own comment for the full reasoning).
  */
 
 import {
@@ -4020,24 +4038,45 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
             ghost && ghost.occurrenceKey === segment.occurrence.key
               ? ghost.kind
               : undefined
+          // #219 PR A fix (dr2-219a HIGH #1): mirrors `segDragKind` above, one render behind - the
+          // wrapper's own `data-[drag-kind=move]:opacity-0` used to hide unconditionally on ANY
+          // move, ignoring source entirely. `gantt-bar.tsx`'s bar element already split its own fade
+          // by `data-drag-source` (dr-219a HIGH #4: keyboard move = visible-and-faded, pointer move
+          // = hidden), but the WRAPPER sat ABOVE it in the same ancestor chain with no such nuance -
+          // its unconditional opacity-0 composited against the bar's opacity-40 multiplicatively (0
+          // x 0.4 = 0), zeroing out the keyboard fix before it could ever paint. The wrapper needs
+          // the same source signal the bar already has.
+          const segDragSource =
+            ghost && ghost.occurrenceKey === segment.occurrence.key
+              ? ghost.source
+              : undefined
           return (
             <div
               key={segment.occurrence.key}
               data-drag-kind={segDragKind}
+              data-drag-source={segDragSource}
               data-milestone={milestone || undefined}
               // lane position is headless state: a consumer can read it to
               // label the bar ("2 of 4") or drive its own manage UI
               data-lane={lane}
               data-lane-count={laneCount}
-              // during a MOVE the whole thing (bar + its outside label) hides so
-              // the smooth clone carries both; resize keeps the BAR as a faint
-              // placeholder but its label yields to the ghost's outside label.
+              // during a POINTER MOVE the whole thing (bar + its outside label)
+              // hides so the smooth clone carries both; resize keeps the BAR as
+              // a faint placeholder but its label yields to the ghost's outside
+              // label. #219 PR A fix (dr2-219a HIGH #1): a KEYBOARD move used to
+              // hit this SAME unconditional hide, zeroing out `gantt-bar.tsx`'s
+              // own `data-[drag-kind=move]:data-[drag-source=keyboard]:opacity-40`
+              // fix before it could ever composite (ancestor opacity 0 times a
+              // descendant's 0.4 is 0) - the wrapper now gates the hide on
+              // `data-drag-source=pointer` too, the same split the bar itself
+              // already made, so a keyboard move stays visible-and-faded and
+              // only a pointer move (whose cursor clone stands in) still hides.
               // pointer-events-auto: the parent mask layer is pointer-
               // transparent so empty-track presses reach the row.
               // px-px keeps back-to-back bars off each other; the vertical
               // breathing room is the lane gap itself, not padding here, so
               // the bar is exactly laneHeight tall
-              className="group/gantt-seg pointer-events-auto absolute px-px data-[drag-kind=move]:opacity-0"
+              className="group/gantt-seg pointer-events-auto absolute px-px data-[drag-kind=move]:data-[drag-source=pointer]:opacity-0"
               // insetInlineStart, not left: in RTL the axis mirrors and bars
               // must mirror with it (fractions measure from the range start)
               style={{
@@ -4074,6 +4113,19 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                     // one label at a time: the resize ghost carries it while
                     // this bar is the faded placeholder
                     "group-data-[drag-kind^=resize]/gantt-seg:opacity-0",
+                    // #219 PR A fix (dr2-219a HIGH #1 audit): this label used to rely on the WRAPPER
+                    // above hiding itself (and everything inside it, this label included) for ANY
+                    // move - it never needed its own move-time rule because the ancestor's own
+                    // opacity-0 already took care of it. Now that the wrapper's hide is gated to a
+                    // pointer-sourced move only (see that element's own comment), a keyboard move
+                    // leaves the wrapper - and this label - fully visible with no rule of its own to
+                    // say otherwise, while `gantt-view.tsx`'s drag ghost ALSO renders the event's own
+                    // title for a keyboard move (dr-219a HIGH #4 part 3): two copies of the same
+                    // title on screen at once, breaking the "one label at a time" invariant this
+                    // block's own comment states. Same split as the wrapper and the bar: only a
+                    // KEYBOARD move hides this label now (the ghost carries the title instead); a
+                    // pointer move already hid it via the wrapper's own opacity-0 above.
+                    "group-data-[drag-kind=move]/gantt-seg:group-data-[drag-source=keyboard]/gantt-seg:opacity-0",
                     /* a departing dependency arrow drops its corner just past
                        the bar's end, so exactly those labels reserve extra
                        room; everything else keeps the tight default */
