@@ -203,4 +203,54 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(searchedKey)?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(1);
     expect(queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(qLessKey)?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(1);
   });
+
+  // `queueDashboardRefresh` refetches only the ACTIVE observer's key, and
+  // `invalidateProjectSurfaces(..., producer: "dashboard")` deliberately skips the in-tab Dashboard
+  // scan -- so without more, the q-less entry (loaded first) keeps the OLD priority and would show
+  // it the moment the search is cleared. The confirmed response must additionally fan out to every
+  // EXISTING `["dashboard-projects", currentUserId, ...]` entry (precedent:
+  // `removeProjectFromDashboardQueries`, `lib/dashboard-projects.ts` ~:128-136).
+  it("(d) a confirmed priority change under a search also writes the q-less entry (loaded first) -- fan-out, before any q-less refetch", async () => {
+    const select = await renderUnfilteredThenSearch();
+    await act(async () => {
+      select.value = "2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    });
+    // Cache half: still searched at this point (committedQuery is still "priority", so nothing has
+    // triggered a q-less refetch) -- the q-less entry already holds the confirmed value purely from
+    // the fan-out write.
+    const qLessAfterConfirm = queryClient.getQueryData<Array<{ id: string; priority: number | null }>>(qLessKey);
+    expect(qLessAfterConfirm?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(2);
+
+    // Rendered half: clear the search. `pendingOrdering` has already cleared (the mutation settled
+    // above, unlike (a)/(c)'s still-pending POST), so this is NOT gated by the
+    // `acceptedProjects`-snapshot mechanism (a)/(c) hit -- a committedQuery change makes the
+    // stamped key stop matching, so the render falls back straight to the (already-2) fresh
+    // `queryProjects` for the q-less key. Asserted directly, not assumed: if this turns out to be
+    // gated after all, the intent is to drop this half and keep the cache half above, not to loosen
+    // the assertion.
+    const getsBeforeClear = apiGetMock.mock.calls.length;
+    act(() => {
+      locationStore().replace("/");
+      syncDashboardSearchDraftFromLocation("", "admin-1");
+    });
+    await flush();
+    const clearedSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+    expect(clearedSelect.value).toBe("2");
+    expect(apiGetMock.mock.calls.length).toBe(getsBeforeClear);
+  });
+
+  // `setQueriesData`'s own contract (pinned, not merely relied on): it only touches entries that
+  // ALREADY EXIST in the cache -- it must never manufacture an empty q-less entry for a Staff member
+  // who deep-linked straight to a search and never had an unfiltered load at all.
+  it("(e) the fan-out never creates a q-less entry that didn't already exist (deep link straight to /?q=...)", async () => {
+    const select = await renderSearchedDashboard();
+    await act(async () => {
+      select.value = "2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    });
+    expect(queryClient.getQueryData(qLessKey)).toBeUndefined();
+  });
 });
