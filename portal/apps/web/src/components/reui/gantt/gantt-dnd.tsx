@@ -988,7 +988,19 @@ function canResize<TData>(
   // isResizableEdge (gantt-lib.tsx) is the readOnly/resizable/resizableEdges
   // veto shared with gantt.tsx's nudgeEvent; only the milestone check and the
   // interactions.resize gate are specific to this (segment-based) call site.
-  if (!isResizableEdge(segment.occurrence.event, edge)) return false
+  //
+  // Quincy fix (#219 PR A, Sol review, sol1 item 8): the no-edge form's
+  // contract is "start OR end resizable" - calling `isResizableEdge` with no
+  // edge skips the per-edge `resizableEdges` check entirely, so a bar with
+  // BOTH edges individually locked used to still report resizable. Evaluate
+  // both edges explicitly and OR them when no specific edge is asked for; no
+  // current production caller uses the no-edge form, so this does not change
+  // any existing caller's behavior.
+  const resizable = edge
+    ? isResizableEdge(segment.occurrence.event, edge)
+    : isResizableEdge(segment.occurrence.event, "start") ||
+      isResizableEdge(segment.occurrence.event, "end")
+  if (!resizable) return false
   // a milestone is an instant: it has no edges to resize
   return segment.occurrence.end.getTime() > segment.occurrence.start.getTime()
 }

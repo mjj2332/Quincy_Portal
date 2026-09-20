@@ -51,7 +51,11 @@ describe("canResize (#219 stage 2) — per-edge truth table", () => {
     ["resizableEdges omitted", { resizableEdges: {} }, true, true, true],
     ["start locked", { resizableEdges: { start: false } }, true, false, true],
     ["end locked", { resizableEdges: { end: false } }, true, true, false],
-    ["both locked", { resizableEdges: { start: false, end: false } }, true, false, false],
+    // #219 PR A fix (Sol review, sol1 item 8): this row previously pinned `anyEdge: true` for a
+    // bar with BOTH edges individually locked — a wrong expectation, not intended behavior. The
+    // no-edge form's contract is "start OR end resizable"; with both edges locked, neither is, so
+    // the correct answer is `false`.
+    ["both locked", { resizableEdges: { start: false, end: false } }, false, false, false],
     ["readOnly", { readOnly: true }, false, false, false],
   ])("%s", (_label, overrides, anyEdge, startEdge, endEdge) => {
     const segment = makeSegment(overrides);
