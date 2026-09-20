@@ -20,7 +20,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gantt, useGantt, useGanttSelector } from "@/components/reui/gantt/gantt";
 import { GanttBar } from "@/components/reui/gantt/gantt-bar";
-import type { GanttEvent, GanttSegment } from "@/components/reui/gantt/gantt-types";
+import type { GanttEvent, GanttOccurrence, GanttSegment } from "@/components/reui/gantt/gantt-types";
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -237,11 +237,57 @@ describe("GanttBar keyboard move/resize (#219 stage 2)", () => {
     expect(shortcuts).not.toContain("Control+Alt+");
 
     await focusBar(bar);
-    await keydown(bar, { key: "ArrowLeft", altKey: true, ctrlKey: true });
+    // #219 PR A fix (Sol review, sol1 item 5): a chord not advertised in aria-keyshortcuts is now
+    // gated at the SAME canResizeStart check, before preventDefault/nudgeEvent - it used to still
+    // reach nudgeEvent (whose OWN "locked" check produced the same visible no-op), which is exactly
+    // the "advertised != executed" gap item 5 closes: a chord nudgeEvent can't see is locked for
+    // (e.g. a clipped segment edge) used to execute anyway. So this is now indistinguishable from
+    // any other chord that was never ours: left alone entirely, no announcement, not prevented.
+    const nativeEvent = await keydown(bar, { key: "ArrowLeft", altKey: true, ctrlKey: true });
     expect(onEventsChange).not.toHaveBeenCalled();
-    expect(announcerText()).toBe("That can't be changed.");
-    // the chord was still ours - preventDefault fired, focus never left the bar
+    expect(announcerText()).toBe("");
+    expect(nativeEvent.defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(bar);
+  });
+
+  it("a clipped start edge (segment.isStart false) neither advertises nor executes the start-resize chord, even though the EVENT itself allows it (sol1 item 5)", async () => {
+    // A multi-day bar clipped at the viewport's left edge: the EVENT has no resizableEdges
+    // restriction (nudgeEvent's own event-level lock check would happily accept a resize-start),
+    // but THIS SEGMENT does not own the start edge - segment.isStart is false. aria-keyshortcuts
+    // already omits the chord for exactly this reason (canResizeStart = segment.isStart &&
+    // gestures.canResize(...)); the keydown handler must be gated the same way, BEFORE
+    // preventDefault/nudgeEvent, or a chord not advertised can still fire.
+    const onEventsChange = vi.fn();
+    const event: GanttEvent = { id: "kb-clipped", title: "Clipped", start: START, end: END };
+    const occurrence: GanttOccurrence = {
+      key: `${event.id}::${event.start.toISOString()}`,
+      eventId: event.id,
+      event,
+      start: event.start,
+      end: event.end,
+      allDay: false,
+      isRecurring: false,
+    };
+    const segment: GanttSegment = {
+      occurrence,
+      day: event.start,
+      isStart: false,
+      isEnd: true,
+      continuesBefore: true,
+      continuesAfter: false,
+    };
+    await render(
+      <Gantt events={[event]} onEventsChange={onEventsChange} date={START} timeZone="UTC">
+        <GanttBar segment={segment} />
+      </Gantt>,
+    );
+    const bar = findBarByTitle("Clipped");
+    expect(bar.getAttribute("aria-keyshortcuts")).not.toContain("Control+Alt+");
+
+    await focusBar(bar);
+    const nativeEvent = await keydown(bar, { key: "ArrowLeft", altKey: true, ctrlKey: true });
+    expect(onEventsChange).not.toHaveBeenCalled();
+    expect(nativeEvent.defaultPrevented).toBe(false);
   });
 
   it("a non-draggable event omits the move chord from aria-keyshortcuts", async () => {

@@ -62,6 +62,11 @@
  *    bar in a `useEffect` on its NEXT mount is the smallest fix that stays inside this file, in the
  *    same spirit as `gantt-dnd.tsx`'s own module-level `lastGestureEndedAt` flag.
  *
+ * #219 PR A fix (Sol review, sol1 item 5): a matched chord is now gated on the SAME
+ * `canMove`/`canResizeStart`/`canResizeEnd` flags `aria-keyshortcuts` is built from, BEFORE
+ * `preventDefault`/`nudgeEvent` — see the `onKeyDown` handler's own comment at that gate for why
+ * `nudgeEvent` alone cannot substitute for it (it has no notion of which edge THIS segment owns).
+ *
  * #219 PR A fix (Sol review, sol1 item 7): the success announcement above reads
  * `result.start`/`result.end`/`result.allDay` — the range `nudgeEvent` itself just accepted —
  * instead of a follow-up `instance.api.getEvent(event.id)` call. That re-fetch read STALE data
@@ -505,6 +510,15 @@ function GanttBar<TData = unknown>({
       // a recurring occurrence advertises none (aria-keyshortcuts and the matcher are independent)
       // - this bar must not act on it either, for the same reason it does not advertise it.
       if (occurrence.isRecurring) return
+      // Quincy fix (#219 PR A, Sol review, sol1 item 5): gate on the SAME canMove/canResizeStart/
+      // canResizeEnd flags aria-keyshortcuts advertises, BEFORE preventDefault/nudgeEvent - a
+      // clipped edge (segment.isStart/isEnd false, a multi-day bar cut off at the viewport edge)
+      // omits a chord from aria-keyshortcuts for a reason nudgeEvent cannot see: it operates on
+      // the EVENT's own resizableEdges, not on which edge THIS rendered segment owns. Without this
+      // gate, a chord not advertised here could still fire and resize the wrong edge of the event.
+      if (chord === "move" && !canMove) return
+      if (chord === "resize-start" && !canResizeStart) return
+      if (chord === "resize-end" && !canResizeEnd) return
       // preventDefault only for a chord that is actually ours - Alt+Arrow
       // etc. otherwise falls through to whatever else is listening
       e.preventDefault()
