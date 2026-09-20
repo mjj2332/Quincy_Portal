@@ -5,10 +5,12 @@
 // capability) before this refactor, and to pass after it.
 import { act, createElement, useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
 import { ApiError } from "../lib/api";
 import { locationStore, parseStaffLocation } from "../lib/router";
+import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import { dashboardSearchOf } from "@quincy/shared";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
@@ -435,14 +437,32 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
   });
 
   it("(j) a committed search whose fetch is DEFERRED then RESOLVED replaces the previous rows with the new ones and accepts them", async () => {
+    // #230 Sol review round 2, item 4: a `QueryClientProvider` this test itself owns, rather than
+    // `Dashboard`'s own internal `StandaloneDashboard` fallback (`Dashboard.tsx`'s exported
+    // `Dashboard` uses whatever `QueryClientContext` it finds, falling back to a private one only
+    // when there is none) -- needed below to reach into the cache directly and prove ACCEPTANCE,
+    // not just that the new rows rendered (they could be rendering through the direct-query
+    // fallback, indistinguishable from acceptance by content alone -- see that item's own Dashboard.
+    // tsx fix and its test (m) for the full mechanism this reuses).
+    const testQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     window.history.replaceState(null, "", "/?view=list");
-    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await act(async () => {
+      root.render(<QueryClientProvider client={testQueryClient}><ShellRouteHarness userId="user-1" role="admin" /></QueryClientProvider>);
+      await Promise.resolve();
+    });
     await settle();
     expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
 
     let resolveSmith!: (value: unknown) => void;
+    let smithCalls = 0;
+    let rejectSecondSmith!: (reason: unknown) => void;
     apiGetMock.mockReset().mockImplementation((path: string) => {
-      if (path.startsWith("/api/projects") && path.includes("q=smith")) return new Promise((resolve) => { resolveSmith = resolve; });
+      if (path.startsWith("/api/projects") && path.includes("q=smith")) {
+        smithCalls += 1;
+        if (smithCalls === 1) return new Promise((resolve) => { resolveSmith = resolve; });
+        // The forced re-fetch below, after smith's own cache entry is evicted.
+        return new Promise((_resolve, reject) => { rejectSecondSmith = reject; });
+      }
       return Promise.resolve(path.startsWith("/api/projects") ? projectResponseFor(path) : {});
     });
 
@@ -459,5 +479,28 @@ describe("Dashboard never accepts placeholder rows as the new committed query's 
     const rows = [...host.querySelectorAll('[data-testid="project-list-row"]')];
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("Beta Street");
+
+    // Strengthened (#230 Sol review round 2, item 4): prove smith's row above was truly ACCEPTED,
+    // not merely rendered through the direct-query fallback that happens to carry the same content.
+    // Evict smith's own cache entry entirely (a legitimate, public `queryClient` operation -- the
+    // same thing a `gcTime` expiry does in production) and force a fresh fetch that FAILS. An
+    // accepted key's rows survive this (#232: Dashboard renders an accepted snapshot, not the
+    // cache) -- an UN-accepted key, with no cached data of its own left either, shows the error
+    // state instead, exactly as test (i) shows for a key that was never accepted at all.
+    const smithKey = dashboardProjectsKey("user-1", "admin", 0, false, "smith");
+    await act(async () => {
+      // Not awaited -- `resetQueries()`'s own promise resolves only once the refetch it triggers
+      // settles, and this test holds that refetch open deliberately (below).
+      void testQueryClient.resetQueries({ queryKey: smithKey, exact: true });
+      await settle();
+    });
+    expect(smithCalls).toBe(2);
+
+    await act(async () => { rejectSecondSmith(new ApiError("Offline", 400)); await settle(); });
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const rowsAfterEviction = [...host.querySelectorAll('[data-testid="project-list-row"]')];
+    expect(rowsAfterEviction).toHaveLength(1);
+    expect(rowsAfterEviction[0]?.textContent).toContain("Beta Street");
   });
 });

@@ -3258,3 +3258,68 @@ the rendered control — proven empirically here (a temporary render/tick trace 
 stuck at the old value through every tick of even a FAST-resolving POST, with a refetch already
 fired by the first tick) before trusting it, rather than assumed from reading the effect once. Filed
 separately as its own issue; not touched by this fix.
+
+## A captured key or a captured timestamp is only as fresh as the render that captured it (#230, Sol review round 2)
+
+Three more bugs in this same fan-out/accept machinery, all one shape: something captured a value from
+"the current key" at one point in time and kept trusting it after the world moved on.
+
+- **The sibling fan-out's own predicate used the CLICK-time key, not the CONFIRMATION-time key.**
+  `setProjectPriority` computed `dashboardKey` once, at the top of the handler, from whatever search
+  was committed when the Staff member clicked — then used that same captured value inside
+  `queryClient.setQueriesData`'s predicate to decide which OTHER entry stays exempt from the
+  confirmed-value fan-out (~:222 rule above: the fan-out patches every sibling except the one the
+  optimistic/confirmed write already targeted directly). If the committed search changes while the
+  POST is still in flight, the predicate is now comparing against a key nobody is looking at anymore —
+  the ACTUALLY-active entry at confirmation time gets patched twice (once directly, once again by the
+  fan-out it should have been exempt from), while whatever WAS active at click time keeps a narrower
+  exemption than it should. Fix: read the key fresh at the point the confirmed response lands, not at
+  the point the click happened — the two are the same render only if nothing changed in between, and
+  the whole point of this bug class is that something did.
+- **The queued-refresh effect's own `.then()` is a stale closure, exactly like the fan-out predicate
+  above.** `queueDashboardRefresh()` (fired after a confirmed mutation settles while `interactionBlocked`
+  was true) issues its OWN `projectsQuery.refetch()` from inside a `useEffect` closure bound to whatever
+  key was active when that effect ran. `QueryObserver#fetch()`'s promise resolves with
+  `this.#currentResult` READ AT SETTLE TIME, not at issue time — if the committed query changed again
+  while that refetch was in flight, the promise resolves with the OBSERVER'S NEWER result (a different
+  key's rows, possibly still placeholder), and the stale `.then()` was accepting it unconditionally,
+  stamping it under the STALE key it was issued for. Same fix shape as the primary accept effect's own
+  key-mismatch guard (round 1, `## Placeholder data must never be stamped as accepted under a new key`
+  above): re-read the CURRENT key via a ref at settle time, compare it against the key the refetch was
+  issued for, and refuse (along with `result.isPlaceholderData`) rather than accept.
+- **`acceptedQueryUpdatedAtRef`'s dedupe compared `dataUpdatedAt` ALONE, with no key attached.** The
+  accept effect's own re-entrancy guard was "skip if this exact timestamp was already accepted" — but
+  the ref held a bare number, not a `{key, updatedAt}` pair. Two DIFFERENT committed searches' results
+  can legitimately carry the same `dataUpdatedAt` (react-query stamps it with `Date.now()`, 1ms
+  resolution; two fetches issued close together, or literally in the same test tick, collide easily) —
+  when they do, the guard treats the SECOND key's first-ever acceptance as though it were a duplicate
+  of the FIRST key's already-accepted result, and silently drops it forever (there is no future retry
+  trigger once the query itself stops fetching). The dropped key then relies entirely on the
+  key-mismatch fallback to `queryProjects` to look correct — which works right up until that key's own
+  cache entry is evicted or a later fetch for it fails, at which point the Dashboard shows the "Projects
+  are unavailable" error instead of the accepted-snapshot resilience the round-1 fix was for. Fix: key
+  the dedupe ref on `{key: dashboardKeyString, updatedAt: dataUpdatedAt}` and require BOTH to match
+  before skipping.
+
+**Two testing techniques worth keeping, both surfaced the hard way while proving these three failing
+first:**
+- **React's controlled `<select>` never assigns `.value`.** It sets `.selected` on each `<option>` to
+  match the desired value (`ReactDOMSelect`'s update path), on both mount and update. A DOM test that
+  patches `HTMLSelectElement.prototype.value`'s setter to catch a transient wrong render will silently
+  record nothing and look like the bug never fires. Patch `HTMLOptionElement.prototype.selected`
+  instead if you need to catch a value that gets corrected within the same commit.
+- **A wrongly-stamped `acceptedProjects` snapshot is not durably observable through rendered content by
+  itself**, because the key-mismatch fallback (`acceptedProjects?.key === dashboardKeyString ?
+  accepted : queryProjects`) shows the CORRECT cache content anyway whenever the stamped key doesn't
+  match the currently-viewed key — and the primary accept effect self-heals a wrong stamp the moment
+  its OWN key's data next changes with a genuinely different timestamp, which happens well within a
+  single `act()` flush. Proving the queued-refresh key-mismatch bug (item above) required both (a)
+  draining only MICROTASKS between two competing async resolutions — react-query's own cache write
+  (`Query.setData`) is visible to `queryClient.getQueryData` after a handful of microtask hops, but the
+  React re-render that would let the primary effect self-heal only happens after react-query's
+  subscriber-notify scheduler runs, which defers to a real `setTimeout(0)` macrotask — so resolving two
+  competing fetches with only microtask ticks in between lets you land the buggy accept BEFORE the
+  correct one has a chance to claim the dedupe slot, and (b) a scenario where the corruption's
+  consequence PERSISTS (the dedupe-poisoning chain above) rather than one where the very next normal
+  render quietly fixes it, since a persisted consequence is asserted with an ordinary settled-DOM check
+  while a merely-transient one is not.
