@@ -33,6 +33,14 @@
  *
  * This file: pure scheduling math — lane packing, baseline variance, timezone conversion via
  * `@date-fns/tz`. No icons used.
+ *
+ * #219 stage 2 (PR A) edit, additive: added `isResizableEdge` and `computeGanttKeyboardProposal`
+ * for the Portal's keyboard move/resize equivalent of the pointer drag/resize gestures. Both live
+ * here rather than in `gantt-dnd.tsx` (the pointer gesture machinery) or `gantt.tsx` (the
+ * `nudgeEvent` API method that calls them) because `gantt-dnd.tsx` already depends on `gantt.tsx`
+ * for `useGantt`/`useGanttViewConfig`/`GanttInstance` — `gantt.tsx` importing anything back from
+ * `gantt-dnd.tsx` would be a cycle. This file has no dependents that could cycle back, so both
+ * `gantt-dnd.tsx`'s `canResize` and `gantt.tsx`'s `nudgeEvent` import from here instead.
  */
 
 import { expandRecurrence } from "@/components/reui/gantt/gantt-recurrence"
@@ -54,6 +62,7 @@ import {
   addMonths,
   addWeeks,
   addYears,
+  differenceInCalendarDays,
   differenceInMinutes,
   format,
   startOfDay,
@@ -697,9 +706,178 @@ function resolveOffDay(
   return resolved.isOffDay?.(day) ?? false
 }
 
+/**
+ * Edge-level resizability veto shared by `gantt-dnd.tsx`'s pointer `canResize` (segment-based) and
+ * `gantt.tsx`'s `nudgeEvent` (event-based, no segment) — see this file's header for why it lives
+ * here rather than in either of those. Does NOT check milestone-ness or `interactions.resize` -
+ * both are call-site-specific (a segment already knows its own occurrence range; `nudgeEvent` reads
+ * live interactions state).
+ */
+function isResizableEdge(
+  event: Pick<GanttEvent, "readOnly" | "resizable" | "resizableEdges">,
+  edge?: "start" | "end"
+): boolean {
+  if (event.readOnly) return false
+  if (event.resizable === false) return false
+  if (edge && event.resizableEdges?.[edge] === false) return false
+  return true
+}
+
+interface GanttKeyboardProposal {
+  start: Date
+  end: Date
+  allDay: boolean
+}
+
+/** True when `d` sits exactly on a zoned midnight in `timeZone`. */
+function isZonedMidnight(d: Date, timeZone: string): boolean {
+  return zonedStartOfDay(d, timeZone).getTime() === d.getTime()
+}
+
+/**
+ * Pure proposal for one keyboard move/resize nudge - the keyboard equivalent of one pointer-drag
+ * snap step (owner decision on #215/#219: every pointer scheduling gesture needs a keyboard
+ * equivalent). Returns null when the step would invert or zero the range (minimum duration = one
+ * step); a milestone (zero-duration subject) moves but never resizes.
+ *
+ * `step` is in minutes and is the SAME unit a pointer drag snaps to (`gantt-view.tsx`'s own
+ * `snapMin = scale === "day" ? settings.snapDuration : 24 * 60`): `settings.snapDuration` at the
+ * day scale, one civil day at week/month/quarter/year. At `step >= 24 * 60` the moving edge steps
+ * by a CIVIL day in `timeZone` - zoned midnight to zoned midnight, via `@date-fns/tz`'s `TZDate`
+ * arithmetic, never a raw `+= 1440 * 60000` ms, which drifts by an hour across a DST boundary -
+ * mirroring the day-snapped branch of the pointer drag's own proposal math in `gantt-dnd.tsx`'s
+ * `beginGesture`. Below that threshold the edge steps by raw minutes, matching the pointer's own
+ * sub-day snap.
+ */
+function computeGanttKeyboardProposal(
+  subject: { start: Date; end: Date; allDay: boolean },
+  action: "move" | "resize-start" | "resize-end",
+  direction: -1 | 1,
+  step: number,
+  timeZone: string
+): GanttKeyboardProposal | null {
+  const milestone = subject.end.getTime() === subject.start.getTime()
+  const dayMode = step >= 24 * 60
+
+  if (action !== "move") {
+    // a milestone is an instant: it has no edges to resize
+    if (milestone) return null
+    if (action === "resize-start") {
+      const newStartMs = dayMode
+        ? zonedStartOfDay(
+            addDays(toZoned(subject.start, timeZone), direction),
+            timeZone
+          ).getTime()
+        : subject.start.getTime() + direction * step * 60000
+      // Minimum length = one step; on day grids that is the LAST zoned
+      // midnight before the end (raw 1440-minute arithmetic lands off the
+      // midnight grid across DST) - mirrors gantt-dnd.tsx's maxStartMin.
+      const maxStartMs = dayMode
+        ? zonedStartOfDay(
+            isZonedMidnight(subject.end, timeZone)
+              ? addDays(toZoned(subject.end, timeZone), -1)
+              : subject.end,
+            timeZone
+          ).getTime()
+        : subject.end.getTime() - step * 60000
+      if (newStartMs > maxStartMs) return null
+      return {
+        start: new Date(newStartMs),
+        end: subject.end,
+        allDay: subject.allDay,
+      }
+    }
+    // resize-end
+    const newEndMs = dayMode
+      ? zonedStartOfDay(
+          addDays(toZoned(subject.end, timeZone), direction),
+          timeZone
+        ).getTime()
+      : subject.end.getTime() + direction * step * 60000
+    // Mirror of the resize-start bound: the FIRST zoned midnight after the
+    // start on day grids, plain snap arithmetic otherwise.
+    const minEndMs = dayMode
+      ? zonedStartOfDay(
+          addDays(toZoned(subject.start, timeZone), 1),
+          timeZone
+        ).getTime()
+      : subject.start.getTime() + step * 60000
+    if (newEndMs < minEndMs) return null
+    return {
+      start: subject.start,
+      end: new Date(newEndMs),
+      allDay: subject.allDay,
+    }
+  }
+
+  // move
+  if (milestone) {
+    const newMs = dayMode
+      ? addDays(toZoned(subject.start, timeZone), direction).getTime()
+      : subject.start.getTime() + direction * step * 60000
+    return {
+      start: new Date(newMs),
+      end: new Date(newMs),
+      allDay: subject.allDay,
+    }
+  }
+  if (dayMode) {
+    if (
+      subject.allDay ||
+      (isZonedMidnight(subject.start, timeZone) &&
+        isZonedMidnight(subject.end, timeZone))
+    ) {
+      // Day-snapped scales preserve the CALENDAR span for a day-aligned
+      // subject, never drifting the end to e.g. 23:00 across a DST change -
+      // mirrors gantt-dnd.tsx's own move branch exactly.
+      const daySpan = Math.max(
+        differenceInCalendarDays(
+          toZoned(subject.end, timeZone),
+          toZoned(subject.start, timeZone)
+        ),
+        1
+      )
+      const newStartZoned = zonedStartOfDay(
+        addDays(toZoned(subject.start, timeZone), direction),
+        timeZone
+      )
+      const newStart = new Date(newStartZoned.getTime())
+      const newEnd = zonedStartOfDay(
+        addDays(toZoned(newStart, timeZone), daySpan),
+        timeZone
+      )
+      return {
+        start: newStart,
+        end: new Date(newEnd.getTime()),
+        allDay: subject.allDay,
+      }
+    }
+    // A timed (non-midnight-aligned) subject at a day-or-more scale keeps
+    // its wall-clock time of day across the move, and its exact ms
+    // duration - the same two invariants the pointer drag's own move
+    // branch keeps for a sub-day span.
+    const newStart = addDays(toZoned(subject.start, timeZone), direction)
+    const durationMs = subject.end.getTime() - subject.start.getTime()
+    return {
+      start: new Date(newStart.getTime()),
+      end: new Date(newStart.getTime() + durationMs),
+      allDay: subject.allDay,
+    }
+  }
+  // minute-mode: raw ms arithmetic, exact duration preserved
+  const newStartMs = subject.start.getTime() + direction * step * 60000
+  const durationMs = subject.end.getTime() - subject.start.getTime()
+  return {
+    start: new Date(newStartMs),
+    end: new Date(newStartMs + durationMs),
+    allDay: subject.allDay,
+  }
+}
+
 export {
   buildDependencyPath,
   buildEventIndex,
+  computeGanttKeyboardProposal,
   defaultEventOrder,
   eventsOverlap,
   findResource,
@@ -710,6 +888,7 @@ export {
   getGanttDateRange,
   getLaneKey,
   getRangeKey,
+  isResizableEdge,
   MIN_PACK_SLOT,
   occurrenceIntersects,
   packTimedSegments,
@@ -727,6 +906,7 @@ export type {
   BuildIndexOptions,
   GanttDependencyGeometry,
   GanttIndex,
+  GanttKeyboardProposal,
   GanttLaneMemo,
   PackOptions,
   ViewDateRanges,

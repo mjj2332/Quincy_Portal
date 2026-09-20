@@ -33,6 +33,19 @@
  * This file: the root — `useGantt`/`useGanttSelector`/`useGanttViewConfig` hooks, the
  * subscribable store, and the external CRUD contract (`onEventCreate`/`onEventUpdate`/
  * `onEventDelete`/…) that a consumer wires up. No icons used.
+ *
+ * #219 stage 2 (PR A) edit, additive: added `GanttApi.nudgeEvent`, the instance API method behind
+ * `gantt-bar.tsx`'s keyboard move/resize (upstream has no keyboard path for either gesture). Built
+ * on `gantt-lib.tsx`'s `computeGanttKeyboardProposal`/`isResizableEdge` rather than importing
+ * anything from `gantt-dnd.tsx` — that file already depends on this one for `useGantt`/
+ * `useGanttViewConfig`/`GanttInstance`, so the reverse import would be a cycle. One known gap from
+ * that: the overlap-policy resolution below has no VIEW-level `scheduleMode` default to fall back
+ * to (that config lives in a React context a store-level API method has no component in its call
+ * stack to read), so it only honours a node's OWN `scheduleMode` override — see the comment at the
+ * call site. Separately (not a gap, just worth naming): the overlap-reject neighbour check reads
+ * `api.getOccurrences()` with no range, exactly like `gantt-dnd.tsx`'s own `getNeighbours()` inside
+ * `beginGesture` — both are scoped to whatever the store's CURRENT `visibleRange` is, so a nudge
+ * cannot see a same-resource neighbour that is off-screen.
  */
 
 import {
@@ -54,11 +67,13 @@ import {
 } from "@/components/reui/gantt/gantt-i18n"
 import {
   buildEventIndex,
+  computeGanttKeyboardProposal,
   defaultEventOrder,
   eventsOverlap,
   findResource,
   getGanttDateRange,
   getRangeKey,
+  isResizableEdge,
   stepGanttDate,
   toZoned,
   type GanttIndex,
@@ -72,6 +87,8 @@ import type {
   GanttDragState,
   GanttEvent,
   GanttInteractions,
+  GanttNudgeAction,
+  GanttNudgeResult,
   GanttOccurrence,
   GanttOffDaysConfig,
   GanttOverlapPolicy,
@@ -263,6 +280,19 @@ interface GanttApi<TData = unknown> {
   setEvents(events: GanttEvent<TData>[]): void
   addEvent(event: GanttEvent<TData>): void
   updateEvent(id: GanttBarId, patch: Partial<GanttEvent<TData>>): void
+  /**
+   * The keyboard equivalent of one pointer move/resize step (#219 — upstream has no keyboard path
+   * for either gesture). `direction` is a TIME-AXIS direction (-1 earlier, +1 later), the same
+   * sense `next()`/`prev()` use, not a "grow/shrink" one — same convention the pointer gesture
+   * itself uses (dragging the pointer right always increases minutes, regardless of which edge is
+   * grabbed). Commits through the same `onEventUpdate`/`onEventsChange` funnel as a pointer drag,
+   * with `source: "keyboard"`; never through `updateEvent` above, which skips the drop checks.
+   */
+  nudgeEvent(
+    id: GanttBarId,
+    action: GanttNudgeAction,
+    direction: -1 | 1
+  ): GanttNudgeResult
   removeEvent(id: GanttBarId): void
   getOccurrences(range?: GanttDateRange): GanttOccurrence<TData>[]
   findOverlapping(candidate: {
@@ -659,6 +689,85 @@ function createGanttStore<TData>(
         "events",
         getState().events.map((e) => (e.id === id ? merged : e))
       )
+    },
+    nudgeEvent(id, action, direction) {
+      const event = api.getEvent(id)
+      if (!event) return { applied: false, reason: "not-found" }
+      if (event.readOnly) return { applied: false, reason: "locked" }
+      const state = getState()
+      if (action === "move") {
+        if (!state.interactions.drag || event.draggable === false) {
+          return { applied: false, reason: "locked" }
+        }
+      } else {
+        const edge = action === "resize-start" ? "start" : "end"
+        if (!state.interactions.resize || !isResizableEdge(event, edge)) {
+          return { applied: false, reason: "locked" }
+        }
+      }
+
+      // Mirrors gantt-view.tsx's own `snapMin` - the pointer drag's snap
+      // unit: settings.snapDuration at the day scale, one civil day
+      // otherwise (week/month/quarter/year all snap to whole days).
+      const step = state.scale === "day" ? settings.snapDuration : 24 * 60
+      const proposal = computeGanttKeyboardProposal(
+        { start: event.start, end: event.end, allDay: event.allDay ?? false },
+        action,
+        direction,
+        step,
+        settings.timeZone
+      )
+      if (!proposal) return { applied: false, reason: "invalid" }
+
+      // Overlap policy: a "single" schedule-mode node always rejects
+      // concurrency; otherwise settings.overlap decides - mirrors
+      // beginGesture's own resolution in gantt-dnd.tsx, minus the
+      // VIEW-level scheduleMode default (that config lives in a React
+      // context `useGanttViewConfig` provides, out of reach for a
+      // store-level API method with no component in its call stack) - only
+      // a node's OWN scheduleMode override is honoured here, same as
+      // beginGesture falls back to when no view default is in scope either.
+      const node = event.resourceId
+        ? findResource(settings.resources, event.resourceId)
+        : null
+      const nodeMode = resolveScheduleMode(node, undefined)
+      const overlapPolicy = nodeMode === "single" ? "reject" : settings.overlap
+      if (overlapPolicy === "reject" && event.resourceId !== undefined) {
+        const overlapsNeighbour = api
+          .getOccurrences()
+          .filter(
+            (other) =>
+              other.event.resourceId === event.resourceId &&
+              other.eventId !== id
+          )
+          .some(
+            (other) =>
+              other.start.getTime() < proposal.end.getTime() &&
+              other.end.getTime() > proposal.start.getTime()
+          )
+        if (overlapsNeighbour) return { applied: false, reason: "rejected" }
+      }
+
+      const update: GanttProposedUpdate<TData> = {
+        event,
+        occurrence: null,
+        start: proposal.start,
+        end: proposal.end,
+        allDay: proposal.allDay,
+        resourceId: event.resourceId,
+        source: "keyboard",
+      }
+      // canDropEvent stays advisory unless enforceCanDrop, mirroring the
+      // pointer release check in gantt-dnd.tsx's onPointerUp exactly.
+      const valid = settings.canDropEvent ? settings.canDropEvent(update) : true
+      if (settings.enforceCanDrop && !valid) {
+        return { applied: false, reason: "rejected" }
+      }
+
+      // Commit through the one validation funnel; onEventUpdate can still
+      // veto (-> "rejected"), same as a pointer drag's own commit.
+      const accepted = applyProposedUpdate(update)
+      return accepted ? { applied: true } : { applied: false, reason: "rejected" }
     },
     removeEvent(id) {
       setField(

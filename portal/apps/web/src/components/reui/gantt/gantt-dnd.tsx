@@ -29,13 +29,21 @@
  * this registry item hand-rolls its own gesture tracking, unlike `reui/kanban.tsx`). No icons
  * used.
  *
- * #219 stage 2 (PR A) edit, additive: `useGanttGestures`'s inline `canResize` callback was
- * extracted to a top-level, React-free `canResize(segment, edge?, interactionsResizeEnabled?)` so
- * the per-edge veto (owner decision on #215 — a project bar's shoot/start edge is fixed, only the
- * deadline/end edge drags) is unit-testable without a hook. `beginResize` now passes its `edge`
- * through to the extraction, so a locked edge is refused even if `beginResize` is called directly,
- * not only when the (now edge-aware) grip fails to render — see `gantt-bar.tsx`'s per-edge grip
- * split.
+ * #219 stage 2 (PR A) edits, both additive:
+ * 1. `useGanttGestures`'s inline `canResize` callback was extracted to a top-level, React-free
+ *    `canResize(segment, edge?, interactionsResizeEnabled?)` so the per-edge veto (owner decision
+ *    on #215 — a project bar's shoot/start edge is fixed, only the deadline/end edge drags) is
+ *    unit-testable without a hook. Its readOnly/resizable/resizableEdges check now delegates to
+ *    `gantt-lib.tsx`'s `isResizableEdge`, shared with `gantt.tsx`'s `nudgeEvent` (below) — see that
+ *    file's header for why the shared piece lives there rather than in this file or that one.
+ *    `beginResize` now passes its `edge` through to the extraction, so a locked edge is refused
+ *    even if `beginResize` is called directly, not only when the (now edge-aware) grip fails to
+ *    render — see `gantt-bar.tsx`'s per-edge grip split.
+ * 2. No new code in THIS file for the keyboard equivalent of these gestures — the pure proposal
+ *    math (`computeGanttKeyboardProposal`) and the instance API method that uses it (`nudgeEvent`)
+ *    both live in `gantt-lib.tsx` / `gantt.tsx` for the same cycle-avoidance reason as (1); noted
+ *    here because a reader following "where is the keyboard equivalent of `beginGesture`" would
+ *    otherwise expect it in this file and not find it.
  */
 
 import { useCallback, useEffect } from "react"
@@ -47,6 +55,7 @@ import {
 } from "@/components/reui/gantt/gantt"
 import {
   findResource,
+  isResizableEdge,
   snapMinutes,
   toZoned,
   zonedStartOfDay,
@@ -960,10 +969,10 @@ function canResize<TData>(
   interactionsResizeEnabled = true
 ): boolean {
   if (!interactionsResizeEnabled) return false
-  const event = segment.occurrence.event
-  if (event.readOnly) return false
-  if (event.resizable === false) return false
-  if (edge && event.resizableEdges?.[edge] === false) return false
+  // isResizableEdge (gantt-lib.tsx) is the readOnly/resizable/resizableEdges
+  // veto shared with gantt.tsx's nudgeEvent; only the milestone check and the
+  // interactions.resize gate are specific to this (segment-based) call site.
+  if (!isResizableEdge(segment.occurrence.event, edge)) return false
   // a milestone is an instant: it has no edges to resize
   return segment.occurrence.end.getTime() > segment.occurrence.start.getTime()
 }

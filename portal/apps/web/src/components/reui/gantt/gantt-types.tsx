@@ -30,13 +30,16 @@
  * exists so every one of the 9 files documents its own provenance rather than leaving one silently
  * unexplained.
  *
- * #219 stage 2 (PR A) edit: added `GanttEvent.resizableEdges?: { start?: boolean; end?: boolean }`,
- * additive beside the existing `resizable` flag (owner decision on #215 — a project bar's shoot/
- * start edge is fixed, only the deadline/end edge drags). An omitted edge stays resizable;
- * `resizable: false` still disables both regardless of `resizableEdges`. See `gantt-dnd.tsx`'s
- * `canResize` and `gantt-bar.tsx`'s per-edge grip rendering, both edited in the same stage.
- * `GanttProposedUpdate.source` below already admitted `"keyboard"` before this stage — unused until
- * `gantt-dnd.tsx`'s `nudgeEvent` (also #219 stage 2) emits it.
+ * #219 stage 2 (PR A) edits, both additive:
+ * 1. `GanttEvent.resizableEdges?: { start?: boolean; end?: boolean }`, beside the existing
+ *    `resizable` flag (owner decision on #215 — a project bar's shoot/start edge is fixed, only
+ *    the deadline/end edge drags). An omitted edge stays resizable; `resizable: false` still
+ *    disables both regardless of `resizableEdges`. See `gantt-dnd.tsx`'s `canResize` and
+ *    `gantt-bar.tsx`'s per-edge grip rendering.
+ * 2. `GanttNudgeAction` and `GanttNudgeResult`, the request/response shape of `gantt.tsx`'s new
+ *    `nudgeEvent` instance API method — the keyboard equivalent of the pointer move/resize
+ *    gestures, since upstream had no keyboard path for either. `GanttProposedUpdate.source` below
+ *    already admitted `"keyboard"` before this stage; `nudgeEvent` is what finally emits it.
  */
 
 type GanttBarId = string
@@ -270,6 +273,21 @@ type GanttUpdateResult =
   | void
   | { start?: Date; end?: Date; allDay?: boolean }
 
+/** The action a keyboard nudge requests; mirrors the pointer gesture kinds minus `"move"`'s pointer specifics. */
+type GanttNudgeAction = "move" | "resize-start" | "resize-end"
+
+/**
+ * `gantt.tsx`'s `nudgeEvent` verdict. `reason` is set only when `applied` is false:
+ * `"not-found"` (no such event id), `"locked"` (readOnly / draggable / the targeted
+ * resizableEdges edge), `"invalid"` (the proposed range would invert or zero out - see
+ * `gantt-lib.tsx`'s `computeGanttKeyboardProposal`), or `"rejected"` (the overlap "reject" policy,
+ * `canDropEvent` with `enforceCanDrop`, or `onEventUpdate` returning `false`).
+ */
+interface GanttNudgeResult {
+  applied: boolean
+  reason?: "locked" | "invalid" | "rejected" | "not-found"
+}
+
 /** A click is a point, not a range; `end` is reserved for future gestures. */
 interface GanttSlotInfo {
   date: Date
@@ -308,6 +326,8 @@ export type {
   GanttBarId,
   GanttInteractions,
   GanttNode,
+  GanttNudgeAction,
+  GanttNudgeResult,
   GanttOccurrence,
   GanttOffDaysConfig,
   GanttOverlapPolicy,

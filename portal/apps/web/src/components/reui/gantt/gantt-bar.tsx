@@ -30,23 +30,45 @@
  * placeholder's own `lucide=` prop (verified against the unprocessed registry JSON): `RepeatIcon`
  * (recurrence indicator) and `CheckIcon` (completion indicator).
  *
- * #219 stage 2 (PR A) edit: the single `showResize`-gated grip pair became two independently-gated
- * grips, each checked against `gantt-dnd.tsx`'s edge-aware `canResize(segment, edge)` (owner
- * decision on #215 — a project bar's shoot/start edge is fixed, only the deadline/end edge drags).
- * Also added a `data-testid` on each grip (`gantt-resize-handle-start` / `-end`), additive: nothing
- * Quincy-owned composes this deep inside the vendor's own render tree for a DOM test to hook a
- * `data-testid` onto from the outside (unlike `<GanttBar>` itself, whose consumer props already
- * reach the outer `<button>`), so `test-seam.guard.test.ts` Guard F's own suggested fix — "add a
- * data-testid to the Quincy component that composes the vendor primitive" — has no Quincy
- * component to add it to at this granularity. A minimal additive `data-testid` here is the honest
- * hook; it is not `data-slot`, so Guard F (which governs `[data-slot=…]` selectors specifically)
- * does not apply to it either way.
+ * #219 stage 2 (PR A) edits, both additive:
+ * 1. The single `showResize`-gated grip pair became two independently-gated grips, each checked
+ *    against `gantt-dnd.tsx`'s edge-aware `canResize(segment, edge)` (owner decision on #215 — a
+ *    project bar's shoot/start edge is fixed, only the deadline/end edge drags). Also added a
+ *    `data-testid` on each grip (`gantt-resize-handle-start` / `-end`), additive: nothing
+ *    Quincy-owned composes this deep inside the vendor's own render tree for a DOM test to hook a
+ *    `data-testid` onto from the outside (unlike `<GanttBar>` itself, whose consumer props already
+ *    reach the outer `<button>`), so `test-seam.guard.test.ts` Guard F's own suggested fix — "add a
+ *    data-testid to the Quincy component that composes the vendor primitive" — has no Quincy
+ *    component to add it to at this granularity. A minimal additive `data-testid` here is the
+ *    honest hook; it is not `data-slot`, so Guard F (which governs `[data-slot=…]` selectors
+ *    specifically) does not apply to it either way.
+ * 2. Added keyboard move/resize (upstream has no keyboard path for either pointer gesture):
+ *    `onKeyDown` (composed with any consumer handler via `mergeProps`, never replacing it) reads
+ *    `Alt+ArrowLeft/Right` (move), `Shift+Alt+ArrowLeft/Right` (resize the end edge) and
+ *    `Ctrl+Alt+ArrowLeft/Right` (resize the start edge), RTL-aware the same way the splitter's key
+ *    handler in `gantt-view.tsx` does, and calls `gantt.tsx`'s new `nudgeEvent`. `aria-keyshortcuts`
+ *    advertises only the chords permitted for THAT bar. The outcome announces through the gantt
+ *    root's existing `[data-slot=gantt-announcer]` live region (found by DOM query from the bar,
+ *    the same way `gantt-dnd.tsx`'s `beginGesture` already finds it for a pointer drag) — one
+ *    region, reused, not one per bar.
+ *
+ *    `pendingKeyboardFocusEventId` below is the one non-obvious piece: `gantt-view.tsx` keys each
+ *    bar's wrapping element on `segment.occurrence.key`, which embeds the occurrence's OWN start
+ *    time (`gantt-lib.tsx`'s `buildEventIndex`). A move or a resize-start nudge changes `start`,
+ *    which changes that key, which makes REACT UNMOUNT AND REMOUNT THE BAR — a real DOM node swap
+ *    that drops browser focus with no help from React. (A resize-end nudge does not change `start`,
+ *    so its key is stable and focus survives on its own — this module-level hand-off exists only
+ *    for the other two actions.) Recording the nudged event's id here and refocusing the matching
+ *    bar in a `useEffect` on its NEXT mount is the smallest fix that stays inside this file, in the
+ *    same spirit as `gantt-dnd.tsx`'s own module-level `lastGestureEndedAt` flag.
  */
 
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -86,6 +108,63 @@ import {
   TooltipTrigger,
 } from "@/components/reui/tooltip"
 import { RepeatIcon, CheckIcon } from "lucide-react"
+
+/** Which of the three keyboard chords (if any) a keydown matches. */
+type GanttBarKeyChord = "move" | "resize-start" | "resize-end"
+
+/**
+ * Alt+ArrowLeft/Right = move, Shift+Alt+ArrowLeft/Right = resize the END edge,
+ * Ctrl+Alt+ArrowLeft/Right = resize the START edge. Meta+Alt+Arrow (Cmd on
+ * macOS) never matches - that chord space belongs to the OS. Shift+Ctrl
+ * together matches neither (ambiguous, and none of the three chords needs
+ * both modifiers at once).
+ */
+function matchGanttBarKeyChord(e: {
+  key: string
+  altKey: boolean
+  shiftKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+}): GanttBarKeyChord | null {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return null
+  if (!e.altKey || e.metaKey) return null
+  if (e.shiftKey && e.ctrlKey) return null
+  if (e.shiftKey) return "resize-end"
+  if (e.ctrlKey) return "resize-start"
+  return "move"
+}
+
+/**
+ * Logical time-axis direction (-1 earlier, +1 later) for an ArrowLeft/Right
+ * key, RTL-aware the same way the splitter's key handler in `gantt-view.tsx`
+ * (`~:2744`) is: physical ArrowLeft/Right, mirrored by `direction: rtl`.
+ */
+function ganttArrowDirection(key: "ArrowLeft" | "ArrowRight", rtl: boolean): -1 | 1 {
+  const physical = key === "ArrowLeft" ? -1 : 1
+  return (rtl ? -physical : physical) as -1 | 1
+}
+
+/** `aria-keyshortcuts` value: only the chords permitted for THIS bar, or `undefined` for none. */
+function buildGanttBarKeyShortcuts(
+  canMove: boolean,
+  canResizeStart: boolean,
+  canResizeEnd: boolean
+): string | undefined {
+  const chords: string[] = []
+  if (canMove) chords.push("Alt+ArrowLeft", "Alt+ArrowRight")
+  if (canResizeStart) chords.push("Control+Alt+ArrowLeft", "Control+Alt+ArrowRight")
+  if (canResizeEnd) chords.push("Shift+Alt+ArrowLeft", "Shift+Alt+ArrowRight")
+  return chords.length > 0 ? chords.join(" ") : undefined
+}
+
+/**
+ * The event id whose bar should reclaim focus on its NEXT mount - see this file's header for why
+ * a move / resize-start nudge needs this (the occurrence key it commits under changes, so React
+ * remounts the bar and drops focus with no help from React). A single module-level slot is enough:
+ * only one bar can be focused, and the flag is consumed (set back to `null`) the instant a mount
+ * claims it.
+ */
+let pendingKeyboardFocusEventId: string | null = null
 
 /**
  * Effective Tailwind palette presets for bar colors; every entry works on
@@ -163,6 +242,18 @@ function GanttBar<TData = unknown>({
   const { settings } = instance
   const occurrence = segment.occurrence
   const event = occurrence.event
+
+  // Reclaims focus after a move / resize-start nudge remounts this bar under
+  // a new occurrence key - see this file's header for why. A resize-end
+  // nudge never sets `pendingKeyboardFocusEventId` (its key is stable, so
+  // this effect has nothing to do), and any OTHER bar's mount ignores an id
+  // that is not its own.
+  const barRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (pendingKeyboardFocusEventId !== event.id) return
+    pendingKeyboardFocusEventId = null
+    barRef.current?.focus({ preventScroll: true })
+  }, [event.id])
 
   const isSelected = useGanttSelector<TData, boolean>(
     (state) => state.selection.eventKeys.includes(occurrence.key),
@@ -284,9 +375,12 @@ function GanttBar<TData = unknown>({
 
   // Each grip is gated on ITS OWN edge, not "does this bar resize at all":
   // a start-locked bar (owner decision on #215 — a project bar's shoot/start
-  // edge is fixed) draws no start grip while its end grip still works.
+  // edge is fixed) draws no start grip while its end grip still works. The
+  // same three flags gate the keyboard chords below and aria-keyshortcuts.
+  const canMove = gestures.canDrag(segment)
   const canResizeStart = segment.isStart && gestures.canResize(segment, "start")
   const canResizeEnd = segment.isEnd && gestures.canResize(segment, "end")
+  const keyShortcuts = buildGanttBarKeyShortcuts(canMove, canResizeStart, canResizeEnd)
   const resizeHandles = (canResizeStart || canResizeEnd) && (
     <>
       {canResizeStart && (
@@ -328,6 +422,7 @@ function GanttBar<TData = unknown>({
 
   const defaultProps = {
     type: "button" as const,
+    ref: barRef,
     "data-slot": "gantt-bar",
     "data-milestone": milestone || undefined,
     "data-all-day": occurrence.allDay || undefined,
@@ -341,6 +436,7 @@ function GanttBar<TData = unknown>({
     "data-completed": progress === 100 || undefined,
     "data-baseline": !!baseline || undefined,
     "data-baseline-variance": baselineVariance ?? undefined,
+    "aria-keyshortcuts": keyShortcuts,
     "aria-label": settings.i18n.functions.formatEventAriaLabel({
       title: event.title,
       timeLabel,
@@ -367,6 +463,52 @@ function GanttBar<TData = unknown>({
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation()
       settings.onEventDoubleClick?.(occurrence, e)
+    },
+    onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
+      const chord = matchGanttBarKeyChord(e)
+      if (!chord) return
+      // preventDefault only for a chord that is actually ours - Alt+Arrow
+      // etc. otherwise falls through to whatever else is listening
+      e.preventDefault()
+      const rtl = getComputedStyle(e.currentTarget).direction === "rtl"
+      const direction = ganttArrowDirection(
+        e.key as "ArrowLeft" | "ArrowRight",
+        rtl
+      )
+      const result = instance.api.nudgeEvent(event.id, chord, direction)
+      // A move or resize-start commit changes this occurrence's key (see
+      // this file's header) - claim the hand-off BEFORE the remount so the
+      // next bar mounted for this event id reclaims focus.
+      if (result.applied && chord !== "resize-end") {
+        pendingKeyboardFocusEventId = event.id
+      }
+      const ganttRoot = e.currentTarget.closest<HTMLElement>(
+        "[data-slot=gantt]"
+      )
+      const announcer = ganttRoot?.querySelector<HTMLElement>(
+        "[data-slot=gantt-announcer]"
+      )
+      if (!announcer) return
+      if (result.applied) {
+        const fresh = instance.api.getEvent(event.id)
+        if (fresh) {
+          announcer.textContent = `${fresh.title}, ${settings.i18n.functions.formatEventTime(
+            toZoned(fresh.start, settings.timeZone),
+            toZoned(fresh.end, settings.timeZone),
+            fresh.allDay ?? false,
+            settings.locale
+          )}`
+        }
+        return
+      }
+      if (result.reason === "locked") {
+        announcer.textContent = settings.i18n.labels.keyboardNudgeLocked
+      } else if (result.reason === "invalid") {
+        announcer.textContent = settings.i18n.labels.keyboardNudgeInvalid
+      } else if (result.reason === "rejected") {
+        announcer.textContent = settings.i18n.labels.keyboardNudgeRejected
+      }
+      // "not-found" is defensive only - a bar always names a real event id.
     },
     className: cn(
       "group/gantt-bar-group text-foreground @container relative flex w-full min-w-0 cursor-pointer touch-none items-center gap-1.5 overflow-hidden rounded-sm px-1.5 py-0.5 text-start leading-normal select-none",

@@ -27,6 +27,11 @@
  *
  * This file: locale strings and `date-fns` `Locale` plumbing for the Gantt's date formatting. No
  * icons used.
+ *
+ * #219 stage 2 (PR A) edit, additive: added three `labels` — `keyboardNudgeLocked`,
+ * `keyboardNudgeInvalid`, `keyboardNudgeRejected` — the short reasons `gantt-bar.tsx`'s keyboard
+ * move/resize announces through the gantt root's live region on a failed nudge (the success case
+ * reuses the existing `functions.formatEventTime`, unchanged).
  */
 
 import type {
@@ -79,6 +84,12 @@ interface GanttI18nConfig {
     planned: (rangeLabel: string) => string
     /** Read to screen readers on a zero-duration (milestone) bar. */
     milestone: string
+    /** Live-region reason on a keyboard nudge blocked by readOnly / draggable / a locked resize edge. */
+    keyboardNudgeLocked: string
+    /** Live-region reason on a keyboard nudge that would invert or zero out the range. */
+    keyboardNudgeInvalid: string
+    /** Live-region reason on a keyboard nudge blocked by the overlap policy, canDropEvent, or onEventUpdate. */
+    keyboardNudgeRejected: string
     scales: {
       day: string
       week: string
@@ -152,6 +163,9 @@ const DEFAULT_LABELS: GanttI18nConfig["labels"] = {
   continues: "continues",
   planned: (rangeLabel) => `Planned ${rangeLabel}`,
   milestone: "milestone",
+  keyboardNudgeLocked: "That can't be changed.",
+  keyboardNudgeInvalid: "That change isn't possible.",
+  keyboardNudgeRejected: "That change was rejected.",
   scales: {
     day: "Day",
     week: "Week",
