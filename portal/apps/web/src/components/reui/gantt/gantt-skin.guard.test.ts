@@ -441,17 +441,27 @@ function argSegments(arg: string): ClassSegment[] {
   return [{ text: arg, guaranteed: true }];
 }
 
+/** One "element" this detector reasons about: `raw` is the exact source text the unit came from
+ * (a `className="…"` literal's own quoted content, or a `cn(…)` call's full argument-list body,
+ * BEFORE any parsing) — kept so a caller can match against real source text (see
+ * `BARE_BORDER_ALLOWLIST` below) without reconstructing it from parsed segments. `segments` is the
+ * parsed, guarantee-tagged breakdown `argSegments` produces. */
+type ClassUnit = { raw: string; segments: ClassSegment[] };
+
 /** Extracts one "element's" worth of class SEGMENTS per unit: every `className="…"` literal's
  * string content (a single guaranteed segment - a plain string has no conditional branches), and
  * every `cn(…)` call's arguments, each split into its own guarantee-tagged segment(s) — see
  * `argSegments`. Handles nested parens from arbitrary values like `border-(--gantt-event-color)`
  * inside the call (they net to zero, so a naive depth counter still lands on the real closing
  * paren). */
-function extractClassUnits(text: string): ClassSegment[][] {
-  const units: ClassSegment[][] = [];
+function extractClassUnits(text: string): ClassUnit[] {
+  const units: ClassUnit[] = [];
   const literalRe = /className="([^"]*)"/g;
   let m: RegExpExecArray | null;
-  while ((m = literalRe.exec(text))) units.push([{ text: m[1] ?? "", guaranteed: true }]);
+  while ((m = literalRe.exec(text))) {
+    const raw = m[1] ?? "";
+    units.push({ raw, segments: [{ text: raw, guaranteed: true }] });
+  }
   const cnStart = /\bcn\(/g;
   while ((m = cnStart.exec(text))) {
     let depth = 1;
@@ -462,42 +472,84 @@ function extractClassUnits(text: string): ClassSegment[][] {
       else if (text[i] === ")") depth--;
       i++;
     }
-    units.push(splitTopLevelArgs(text.slice(start, i - 1)).flatMap(argSegments));
+    const raw = text.slice(start, i - 1);
+    units.push({ raw, segments: splitTopLevelArgs(raw).flatMap(argSegments) });
   }
   return units;
 }
 
 /**
  * Is a border colour GUARANTEED to render somewhere on this element, whichever runtime path is
- * taken? Two ways to earn that:
+ * taken? Exactly one way to earn that: any GUARANTEED segment (an unconditional string/template
+ * literal, or a ternary whose two branches both independently carry a colour) already carries one.
  *
- *  1. Any GUARANTEED segment (an unconditional string/template literal, or a ternary whose two
- *     branches both independently carry a colour) already carries one.
- *  2. Two or more DIFFERENT `EXPR && "…"` conditional segments each independently carry a colour.
- *     A single lone `&&` conditional cannot be assumed exhaustive - the real bug this fix closes
- *     (dr-219a r6 MEDIUM #3b) is exactly that: ONE `condition && "border-t-border"` is not a
- *     guarantee, because `condition` can be false with nothing to fall back to. But `gantt-
- *     view.tsx`'s real drag-ghost DOES this safely with three: `!ghost.valid && "border-
- *     destructive …"`, `ghost.valid && ghost.kind === "move" && "border-(--gantt-event-color)…"`,
- *     `ghost.valid && ghost.kind !== "move" && "…border-(--gantt-event-color)…"` - `ghost.valid`
- *     and `ghost.kind === "move"` between them cover every reachable state, so exactly one of the
- *     three always fires. This guard cannot prove that exhaustiveness from syntax alone (it is not
- *     a control-flow analyser), so it uses the same signal the file's own header already named
- *     before this fix - "a later branch of an exhaustive … `&&` chain" - as a count-based proxy:
- *     MULTIPLE independent conditional colours reads as a deliberate multi-branch dispatch, one
- *     lone conditional colour does not.
+ * #219 PR A fix (Sol round-7 HIGH #1): this used to ALSO trust two or more DIFFERENT
+ * `EXPR && "…"` conditional segments that each independently carried a colour, on the theory that
+ * multiple independent conditional colours read as a deliberate multi-branch dispatch. That is not
+ * a guarantee - two ordinary, UNRELATED conditionals (an error state and a selection state, say)
+ * can both be false at once with nothing left to render, which is exactly the defect this detector
+ * exists to catch:
+ *
+ *   cn("border", isError && "border-destructive", isSelected && "border-primary")
+ *
+ * Both conditions can be false, leaving the bare `border` alone. A count of independent
+ * conditionals proves nothing about exhaustiveness; only a real proof does (an unconditional
+ * literal, or a ternary's two structurally-exhaustive branches). `gantt-view.tsx`'s drag-ghost
+ * DOES have a real exhaustiveness proof for its three `&&`-gated colours (`!ghost.valid`,
+ * `ghost.valid && ghost.kind === "move"`, `ghost.valid && ghost.kind !== "move"` cover every
+ * reachable state) - but this guard is not a control-flow analyser and cannot verify that from
+ * syntax alone, so that one call site is named explicitly in `BARE_BORDER_ALLOWLIST` below instead
+ * of being waved through by a heuristic that also passes the unsound example above.
  */
 function guaranteedColorPresent(segments: ClassSegment[]): boolean {
-  if (segments.some((s) => s.guaranteed && BORDER_COLOR.test(s.text))) return true;
-  const conditionalColored = segments.filter((s) => !s.guaranteed && BORDER_COLOR.test(s.text));
-  return conditionalColored.length >= 2;
+  return segments.some((s) => s.guaranteed && BORDER_COLOR.test(s.text));
 }
+
+/** Collapses runs of whitespace to a single space, so the allowlist match survives reformatting
+ * (a wrapped line, re-indentation) without also matching a DIFFERENT call site that merely shares
+ * some of the same class text. */
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Last-resort, per-call-site allowlist for Detector 6. A bare border whose colour is guaranteed
+ * only by a control-flow exhaustiveness proof this syntactic guard cannot perform (see
+ * `guaranteedColorPresent`'s doc comment) goes here, ONE exact entry at a time - never a pattern,
+ * and never a second count-based heuristic. Keyed by vendored file name; the value is the EXACT
+ * (whitespace-normalised) raw text of the specific `cn(…)` call's argument list being exempted —
+ * matched against `ClassUnit.raw`, i.e. real source text, not a reconstruction — so a change to
+ * that call site (a reworded class, an added branch, a copy-paste to a different element) stops
+ * matching and the guard goes back to flagging it. Every entry needs a comment proving the
+ * exhaustiveness by hand.
+ */
+const BARE_BORDER_ALLOWLIST: Record<string, string> = {
+  // gantt-view.tsx's drag-ghost `cn()` call (the `data-slot="gantt-drag-ghost"` element): its bare
+  // `border border-dashed` base is followed by three mutually exclusive `&&`-gated colours -
+  // `!ghost.valid`, `ghost.valid && ghost.kind === "move"`, and `ghost.valid && ghost.kind !==
+  // "move"`. `ghost.valid` and `ghost.kind === "move"` between them are a two-way boolean split
+  // with no remaining state, so exactly one of the three always fires and a colour always lands.
+  "gantt-view.tsx": normalizeWhitespace(`
+    "pointer-events-none absolute z-40 h-(--gantt-ghost-height) rounded-sm border border-dashed font-medium",
+    !ghost.valid &&
+      "border-destructive bg-destructive/10 text-destructive",
+    ghost.valid &&
+      ghost.kind === "move" &&
+      "border-(--gantt-event-color)/50 bg-(--gantt-event-color)/8",
+    ghost.valid &&
+      ghost.kind !== "move" &&
+      "text-foreground border-(--gantt-event-color)/70 bg-(--gantt-event-color)/22",
+  `),
+};
 
 function findBareBorderClasses(files: Map<string, string>): Record<string, string[]> {
   const found: Record<string, string[]> = {};
   for (const [name, text] of files) {
     const offenders: string[] = [];
-    for (const segments of extractClassUnits(text)) {
+    const allowlisted = BARE_BORDER_ALLOWLIST[name] ?? null;
+    for (const unit of extractClassUnits(text)) {
+      if (allowlisted && normalizeWhitespace(unit.raw).includes(allowlisted)) continue;
+      const segments = unit.segments;
       const colorGuaranteed = guaranteedColorPresent(segments);
       for (const segment of segments) {
         const bare = [...segment.text.matchAll(BARE_BORDER)].map((mm) => mm[0]).filter((tok) => !/-0$/.test(tok));
@@ -570,6 +622,17 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
           'function A() { return <div className="border-b" /> }\nfunction B() { return <div className="border-primary" /> }'
         ),
       ],
+      // OFFENDER (Sol round-7 HIGH #1): TWO independent `&&`-gated colours used to be trusted as
+      // "probably exhaustive" (`conditionalColored.length >= 2`) - but two ordinary, unrelated
+      // conditionals (an error state and a selection state, here) can BOTH be false at once, with
+      // nothing forcing either colour to render. That leaves the unconditional bare "border" alone
+      // on the element - exactly the defect this detector exists to catch. Count-based "probably
+      // exhaustive" is not the same guarantee as a ternary's two branches (which structurally
+      // cannot both be skipped) or an unconditional literal (which always renders).
+      [
+        "fixture-two-independent-conditionals-is-not-exhaustive.tsx",
+        stripComments('cn("border", isError && "border-destructive", isSelected && "border-primary")'),
+      ],
       [
         "fixture-clean.tsx",
         stripComments('// a bare border-b class mentioned only in this comment\nclassName="rounded-sm"'),
@@ -582,6 +645,7 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
       "fixture-style-keyword-not-a-colour.tsx": ["border"],
       "fixture-table-layout-utility-is-not-a-colour.tsx": ["border"],
       "fixture-unrelated-element-does-not-excuse-it.tsx": ["border-b"],
+      "fixture-two-independent-conditionals-is-not-exhaustive.tsx": ["border"],
     });
   });
 
