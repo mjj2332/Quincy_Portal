@@ -2581,19 +2581,25 @@ function GanttView({
                 data-today={unit.isToday || undefined}
                 data-off={unit.isOff || undefined}
                 className={cn(
-                  "flex min-w-0 items-center justify-center truncate px-1.5 text-center",
+                  "flex min-w-0 items-center justify-center px-1.5 text-center",
                   "text-muted-foreground",
                   unit.isToday && "text-primary font-medium"
                 )}
                 style={{ flex: `${unit.weight} 0 0px` }}
               >
+                {/* follow-up to 0c8432aa (#219 dr3-219a MEDIUM #1): `truncate` used to sit on
+                    this flex cell itself - `text-overflow` never applies to a `display:flex`
+                    box's own anonymous item, so the class did nothing (harmless today only
+                    because unit labels are short day/date strings). `truncate` now lives on a
+                    non-flex child span instead, mirroring `gantt-bar.tsx:532` and the ghost
+                    title fix. */}
                 {/* today reads as a soft pill, not just tinted text */}
                 {unit.isToday ? (
                   <span className="bg-primary/10 truncate rounded-full px-1.5 py-px">
                     {unit.label}
                   </span>
                 ) : (
-                  unit.label
+                  <span className="truncate">{unit.label}</span>
                 )}
               </div>
             ))}
