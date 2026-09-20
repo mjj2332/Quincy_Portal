@@ -614,8 +614,17 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
 // rule would be both wrong and immediately red on real, correct code. `data-today`'s own tinted
 // column (`bg-primary/5`, the header's today pill) is a DIFFERENT element and untouched either way
 // - this detector does not reach it.
+//
+// #219 PR A fix (dr-219a r6 LOW #4): the opening tag used to be required to end in a literal
+// `/>` (self-closing) - GanttNowLine/GanttNowDot render exactly that shape today (no children),
+// but an ordinary refactor giving either element a child (a label, an icon) turns it into paired
+// JSX (`<div …>…</div>`), and the old regex would silently stop matching - no red test, no
+// warning, just a detector that quietly checks nothing from that point on. This detector only
+// ever inspects the OPENING tag's own attributes either way (it has never looked at children), so
+// the fix is simply not to require a particular way of closing that tag: `/?>` accepts a bare `>`
+// (paired) exactly as readily as `/>` (self-closing).
 const NOW_LINE_ELEMENT =
-  /<(?:div|span)\b[^>]*\bdata-slot="gantt-now-(?:indicator|dot)"[^>]*\/>/g;
+  /<(?:div|span)\b[^>]*\bdata-slot="gantt-now-(?:indicator|dot)"[^>]*\/?>/g;
 const DESTRUCTIVE_TOKEN = /\bdestructive\b/;
 
 function findDestructiveOnNowLine(files: Map<string, string>): Record<string, string[]> {
@@ -648,6 +657,15 @@ describe("guard: no `destructive` token on the today/now-line elements", () => {
           '<span aria-hidden data-slot="gantt-now-dot" className="bg-destructive absolute -bottom-0.75 z-10 size-1.5 -translate-x-1/2 rounded-full" style={{ insetInlineStart: `${fraction * 100}%` }} />'
         ),
       ],
+      // #219 PR A fix (dr-219a r6 LOW #4): PAIRED JSX, not self-closing - an ordinary refactor
+      // that gives the now-indicator children (a label, an icon, …) would otherwise silently
+      // disable this detector, since the old regex demanded a literal `/>` at the end.
+      [
+        "fixture-now-indicator-destructive-paired.tsx",
+        stripComments(
+          '<div data-slot="gantt-now-indicator" className="bg-destructive absolute inset-y-0 z-10 w-px"><span className="sr-only">Now</span></div>'
+        ),
+      ],
       [
         "fixture-now-indicator-clean.tsx",
         stripComments(
@@ -671,6 +689,7 @@ describe("guard: no `destructive` token on the today/now-line elements", () => {
     expect(findDestructiveOnNowLine(planted)).toEqual({
       "fixture-now-indicator-destructive.tsx": ["gantt-now-indicator"],
       "fixture-now-dot-destructive.tsx": ["gantt-now-dot"],
+      "fixture-now-indicator-destructive-paired.tsx": ["gantt-now-indicator"],
     });
   });
 
