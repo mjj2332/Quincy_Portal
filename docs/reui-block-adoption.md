@@ -107,6 +107,38 @@ Budget both into the estimate whenever a block is vendored before its consumer e
 not Gantt-specific, and the next primitive landed ahead of its own wiring should reuse this shape
 rather than re-deriving it.
 
+PR B (`@reui/event-calendar`, 13 files, `components/reui/event-calendar/`) confirmed that by
+reusing it wholesale: the shape held a SECOND time with no new mechanism needed.
+`forbid-dev-only-modules` and the reachability guard both extended by one prefix each to cover the
+new harness and the new vendored tree — PR A had already pre-wired two of the three lists, so
+there was a third list left to touch, not a new mechanism to invent.
+
+The calendar is roughly 2.2x the Gantt by size (13 files / 9,715 lines vs 9 files / ~4,400 lines),
+but cost far LESS to adopt: zero new primitives — all seven externals it depends on (`button`,
+`calendar`, `dropdown-menu`, `popover`, `scroll-area`, `tooltip`, `icon-stack`) already existed in
+Quincy's tree and were adapted, not installed — zero new dependencies, and 553 net added lines
+inside the vendored tree against PR A's roughly 2,960. Size and adoption cost are not the same
+number; a bigger vendored tree with primitives you already own is cheaper than a smaller one that
+needs new ones.
+
+Genuinely new costs, worth naming for the next block:
+
+- **The vendor does not compile under this repo's `noUncheckedIndexedAccess`.** 24 errors across 4
+  files, all resolved with local narrowing rather than a blanket `!`. Budget for this on any block.
+- **Upstream correctness bugs surface only under a non-UTC, DST-observing timezone.** The DST
+  bounds defect (`docs/lessons.md`, "Wall-clock minutes and elapsed minutes are different units")
+  was invisible in every 24-hour-day fixture.
+- **A block with its own pointer-gesture engine keeps its geometry in module-private closures.**
+  Anything that needs to interoperate with it goes inside the tree (see ADR 0010) — budget for
+  that when a block does its own drag and drop rather than using dnd-kit.
+
+The trap that generalises: when a second block arrives, its skin guard is a PORT, not a copy. Two
+of PR A's detectors were vacuous against the new tree for structural reasons — a matcher that
+could not see a hex buried inside an arbitrary value, and a detector scoped to an element that
+was a bare wrapper in the new tree (`docs/lessons.md`, "A guard's matcher must be validated
+against forms that actually exist" and "A detector scoped to the wrong element is vacuous"). Run
+every ported detector against the new tree and confirm it can fail.
+
 ## Estimating the next block
 
 The next adoption named in #76 is the app shell (`app-shell-2`), and it is **not** simply the next

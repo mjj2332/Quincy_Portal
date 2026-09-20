@@ -3462,6 +3462,10 @@ Three things about it are load-bearing:
   `[data-surface="default"]` it returns to `#cfc7b6`. A cascade argument that has not been measured
   is a guess — layer order is exactly the kind of claim that reads correct and renders wrong.
 
+The calendar tree corroborates the same point independently: all 13 files, zero `border-border`
+classes, roughly 48 bare hairlines, and every one of them the compat rule coloured correctly with
+no per-site edit — the evidence that fixing the cause beat fixing 48 call sites.
+
 **Detector 6 was deleted in the same commit, on purpose.** A guard whose premise has been removed
 does not become a harmless extra check — left passing, it goes on asserting a hazard that no longer
 exists, and teaches the next reader to keep paying a cost that has been retired. The general rule:
@@ -3469,7 +3473,7 @@ when you fix a defect class at its cause, delete the detector that pinned it at 
 the same commit, and say so where the detector used to live. Reinstating it now would require
 deleting the compat rule first.
 
-## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth and fifth time (#219, 2026-09-20)
+## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth, fifth and sixth time (#219, 2026-09-20)
 
 `styles/tokens/reui.css:160-166` already records this correction twice over (`reui/badge.tsx`
 correction 2, `reui/button.tsx` divergence 5): `styles/tokens/base.css:25` declares an unlayered
@@ -3479,13 +3483,23 @@ global outline — it paints a SECOND indicator beside it that `tailwind-merge` 
 (different property, not a conflicting utility class). #219 PR A hit it twice more, independently,
 in two different vendored Gantt files — the bar's own focus state (`gantt-bar.tsx`, dr-219a HIGH
 #2) and the tree/timeline splitter (`gantt-view.tsx`, dr-219a HIGH #2 and HIGH #3) — bringing the
-running count to five.
+running count to five. #219 PR B hit a sixth, in the vendored event-calendar's own chip:
+`event-calendar/event-calendar-event.tsx` carried the identical
+`outline-none focus-visible:ring-ring/50 focus-visible:ring-2` pair.
 
 Four occurrences in two unrelated adoptions (the sidebar block, then the Gantt) is no longer a
 coincidence worth re-discovering per file: any newly vendored ReUI/shadcn component that ships its
 own `focus-visible:ring-*` should have that ring dropped on sight, the same way a bare `border` is
 now checked on sight above — `tokens/base.css:25`'s global outline is the only focus indicator this
 app wants, and the vendor's own ring is never additive, only redundant.
+
+**Verifying the fix needs a REAL keyboard press.** A programmatic `element.focus()` does not match
+`:focus-visible` (Chrome gates it on the last interaction having been keyboard), and dispatching
+a synthetic `KeyboardEvent` does not flip that heuristic either because the event is untrusted.
+Both read back `outline-style: none` on a correctly-fixed element. PR B initially misread that
+as the app's outline being clipped by the chip's `overflow-hidden`. Measured with a real Tab
+keypress the chip shows `outline: 2px solid rgb(10,10,10)` at `outline-offset: 2px` — and the
+offset is why `overflow-hidden` cannot clip it: the outline paints outside the box.
 
 ## A guard widened to make a build pass is a guard that has already failed once (#219, 2026-09-20)
 
@@ -3510,3 +3524,66 @@ must not depend on nothing having collided YET. Any widening of a guard's matche
 negative fixture — a case the widening should still catch — checked BEFORE the widening lands, the
 same "prove a gate can fail before trusting it" rule `## A grep gate that cannot fail is not a
 gate` names, applied to a guard's *matcher* as well as its presence.
+
+## A guard's matcher must be validated against forms that actually exist (#219, 2026-09-20)
+
+PR A's skin-guard Detector 3 matched a hex literal inside a Tailwind arbitrary value only when
+the `#` came immediately after `[` or after a type hint (`bg-[#0a0a0a]`, `bg-[color:#fff]`). The
+calendar tree contains
+`@max-[10rem]:[mask-image:linear-gradient(to_right,#000_calc(100%-0.75rem),transparent)]` — a
+hex buried arbitrarily deep inside the value. The regex could not see it. The guard would have
+reported green on a tree containing the exact thing it exists to forbid.
+
+This is the same failure as the earlier "a guard widened to make a build pass" lesson, one step
+earlier in its life: not a matcher loosened under pressure, but a matcher whose shape was never
+checked against the shapes in the wild.
+
+What PR B did: added the negative fixture FIRST, widened to match a hex anywhere inside `[...]`,
+allowlisted the single real site with its reason (`#000` there is a mask ALPHA stop, not paint —
+any fully opaque colour is equivalent), and back-ported the identical widening and fixture to
+`gantt-skin.guard.test.ts` in the same commit so two sibling guards cannot silently diverge.
+
+The generalisation: when you port a detector to a second tree, run it against that tree and
+confirm it can still FAIL there. A detector that has only ever been green is untested.
+
+## A detector scoped to the wrong element is vacuous (#219, 2026-09-20)
+
+PR A's Detector 7 forbids `destructive` on the now-indicator by matching the element that
+carries `data-slot="event-calendar-now-indicator"` and testing its opening tag. In the calendar
+tree that slot is a bare wrapper and the three `destructive` classes sit on three CHILD divs.
+Ported verbatim the detector returns green while the violation ships.
+
+Rescoping it to the whole FILE would be wrong in the other direction — `destructive` is
+legitimate elsewhere in that same file. PR B scoped it to the `EventCalendarNowIndicator`
+function body, and landed a negative fixture proving a `destructive` in a NEIGHBOURING function
+body does not fire, in the same commit.
+
+The generalisation: a detector carries an implicit claim about where the thing it forbids can
+appear. Re-check that claim in every tree you port it to, and pin both directions with fixtures.
+
+## Wall-clock minutes and elapsed minutes are different units; mixing them breaks only on DST days (#219, 2026-09-20)
+
+The vendored calendar computed a day's lower/upper render bounds as
+`Math.min(dayEndHour * 60, getDayTotalMinutes(day, timeZone))`. `dayEndHour * 60` is WALL-CLOCK
+minutes (hour 24 = end of day); `getDayTotalMinutes` returns ELAPSED minutes (1500 on a 25-hour
+day, 1380 on a 23-hour day). `Math.min` of the two is meaningless. Everything the calendar
+positions is in elapsed minutes from zoned midnight.
+
+Consequence on Australia/Sydney's 25-hour autumn day: the bound clamps to 1440, an event at
+wall-clock 23:15 has an elapsed offset of 1455, the visibility filter is `startMin < boundsEndMin`
+— so the event is SILENTLY INVISIBLE, cannot be dropped there either, and the now-indicator
+disappears for the last hour of that day. Browser-confirmed with a control: the same fixture
+renders on a 24-hour day and on a 23-hour day, and vanishes only on the 25-hour one.
+
+The fix is not a special case for hour 24. It is a helper that converts a wall-clock hour to
+elapsed minutes for THAT day, used for both bounds: `elapsedMinutesAtWallClockHour`.
+
+The generalisation: any time a `* 60` sits next to a timezone-aware duration, one of them is the
+wrong unit. Name the unit in the identifier, and put a DST day in the fixtures — a 24-hour day
+cannot distinguish the two.
+
+Honest note: this fix trades a silent failure for a visible one. On transition days the shared
+hour gutter now disagrees with the transition day's column by one hour-height, because the gutter
+renders a fixed 24 labels while stretching to the tallest column. Losing an hour of data is worse
+than losing alignment, so the trade is right, but it is a trade and the residual misalignment is
+tracked separately.
