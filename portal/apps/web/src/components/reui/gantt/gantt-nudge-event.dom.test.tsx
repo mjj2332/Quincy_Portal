@@ -87,7 +87,13 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
     const event: GanttEvent = { id: "e-not-draggable", title: "Fixed", start: START, end: END, draggable: false };
     await render(<Gantt apiRef={apiRef} events={[event]} onEventsChange={onEventsChange} timeZone="UTC" />);
     expect(apiRef.current!.nudgeEvent("e-not-draggable", "move", 1)).toEqual({ applied: false, reason: "locked" });
-    expect(apiRef.current!.nudgeEvent("e-not-draggable", "resize-end", 1)).toEqual({ applied: true });
+    // sol1 item 7: a successful nudge's result now also carries the accepted range.
+    expect(apiRef.current!.nudgeEvent("e-not-draggable", "resize-end", 1)).toEqual({
+      applied: true,
+      start: START,
+      end: new Date(END.getTime() + 15 * 60000),
+      allDay: false,
+    });
   });
 
   it("an unknown event id answers { applied: false, reason: 'not-found' }", async () => {
@@ -129,7 +135,12 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
       <Gantt apiRef={apiRef} events={[event]} onEventsChange={onEventsChange} canDropEvent={canDropEvent} timeZone="UTC" />,
     );
     const result = apiRef.current!.nudgeEvent("e-advisory", "move", 1);
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({
+      applied: true,
+      start: new Date(START.getTime() + 15 * 60000),
+      end: new Date(END.getTime() + 15 * 60000),
+      allDay: false,
+    });
     expect(onEventsChange).toHaveBeenCalledTimes(1);
   });
 
@@ -164,7 +175,12 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
     const event: GanttEvent = { id: "e-moved", title: "Moved", start: START, end: END };
     await render(<Gantt apiRef={apiRef} events={[event]} onEventsChange={onEventsChange} timeZone="UTC" />);
     const result = apiRef.current!.nudgeEvent("e-moved", "move", 1);
-    expect(result).toEqual({ applied: true });
+    expect(result).toEqual({
+      applied: true,
+      start: new Date(START.getTime() + 15 * 60000),
+      end: new Date(END.getTime() + 15 * 60000),
+      allDay: false,
+    });
     const [next] = onEventsChange.mock.calls[0]![0] as GanttEvent[];
     expect(next!.start.getTime()).toBe(START.getTime() + 15 * 60000);
     expect(next!.end.getTime()).toBe(END.getTime() + 15 * 60000);
@@ -215,11 +231,14 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
       <Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} overlap="clamp" date={START} timeZone="UTC" />,
     );
     const result = apiRef.current!.nudgeEvent("e-a", "move", 1);
-    expect(result).toEqual({ applied: true });
+    // Parked against the neighbour's start, duration preserved (1h), NOT the raw 09:15-10:15 step -
+    // and the result itself (sol1 item 7) reports this CLAMPED range, not the raw proposal.
+    const clampedEnd = bStart;
+    const clampedStart = new Date(bStart.getTime() - (END.getTime() - START.getTime()));
+    expect(result).toEqual({ applied: true, start: clampedStart, end: clampedEnd, allDay: false });
     const [next] = onEventsChange.mock.calls[0]![0] as GanttEvent[];
-    // Parked against the neighbour's start, duration preserved (1h), NOT the raw 09:15-10:15 step.
-    expect(next!.end.getTime()).toBe(bStart.getTime());
-    expect(next!.start.getTime()).toBe(bStart.getTime() - (END.getTime() - START.getTime()));
+    expect(next!.end.getTime()).toBe(clampedEnd.getTime());
+    expect(next!.start.getTime()).toBe(clampedStart.getTime());
   });
 
   it("without a passed-in viewScheduleMode, overlap 'allow' (the default) lets a same-resource nudge through", async () => {
@@ -228,7 +247,12 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
     const a: GanttEvent = { id: "e-a", title: "A", start: START, end: END, resourceId: "r1" };
     const b: GanttEvent = { id: "e-b", title: "B", start: END, end: new Date(END.getTime() + 60 * 60000), resourceId: "r1" };
     await render(<Gantt apiRef={apiRef} events={[a, b]} onEventsChange={onEventsChange} date={START} timeZone="UTC" />);
-    expect(apiRef.current!.nudgeEvent("e-a", "move", 1)).toEqual({ applied: true });
+    expect(apiRef.current!.nudgeEvent("e-a", "move", 1)).toEqual({
+      applied: true,
+      start: new Date(START.getTime() + 15 * 60000),
+      end: new Date(END.getTime() + 15 * 60000),
+      allDay: false,
+    });
     expect(onEventsChange).toHaveBeenCalledTimes(1);
   });
 

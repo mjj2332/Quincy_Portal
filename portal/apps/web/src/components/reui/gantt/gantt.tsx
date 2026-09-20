@@ -58,6 +58,14 @@
  *    whatever the store's CURRENT `visibleRange` happens to be, so an off-screen same-resource
  *    neighbour was invisible to it). It now queries the UNION of the event's own current span and
  *    the proposed range — `gantt-dnd.tsx`'s pointer gesture engine received the identical fix.
+ *
+ * #219 PR A fix (Sol review, sol1 item 7): `applyProposedUpdate` (used by both `nudgeEvent` here and
+ * `gantt-dnd.tsx`'s pointer release) now returns the ACCEPTED `{ start, end, allDay }` instead of a
+ * bare `boolean`, and `nudgeEvent`'s result carries those same fields. `gantt-bar.tsx`'s success
+ * announcement used to re-fetch via `api.getEvent(event.id)` right after this call, which can read
+ * the OLD range: under a controlled `events` prop, `setField`'s controlled path only invokes
+ * `onEventsChange` — it never mutates internal state — so the parent's own state update (which
+ * carries the new range) has not landed by the time that same synchronous call stack reads it back.
  */
 
 import {
@@ -339,7 +347,18 @@ interface GanttInternals<TData = unknown> {
   getIndex(): GanttIndex<TData>
   setDrag(drag: GanttDragState<TData> | null): void
   setSlotDraft(draft: GanttSlotDraft | null): void
-  applyProposedUpdate(update: GanttProposedUpdate<TData>): boolean
+  /**
+   * Quincy fix (#219 PR A, Sol review, sol1 item 7): returns the ACCEPTED range (after any
+   * `onEventUpdate` consumer adjustment), not just whether the commit happened - `nudgeEvent`'s own
+   * success announcement used to re-fetch via `api.getEvent` immediately after this call, which
+   * reads the OLD range under a controlled `events` prop (the parent's state update that actually
+   * carries the new range has not landed yet - `setField`'s controlled path only invokes the
+   * `onEventsChange` callback, it never mutates internal state). Returning the accepted values
+   * directly removes that read-after-write race. `null` means rejected (mirrors the old `false`).
+   */
+  applyProposedUpdate(
+    update: GanttProposedUpdate<TData>
+  ): { start: Date; end: Date; allDay: boolean } | null
   getSettingsVersion(): number
   /**
    * Grow visibleRange by whole periods for infinite scrolling; resets on
@@ -582,17 +601,17 @@ function createGanttStore<TData>(
     // setField pass would read stale controlled options.events and emit an
     // array without the timing change
     extra?: Partial<GanttEvent<TData>>
-  ): boolean => {
+  ): { start: Date; end: Date; allDay: boolean } | null => {
     const result = settings.onEventUpdate?.(update)
-    if (result === false) return false
-    const adjusted: Partial<GanttEvent<TData>> =
-      result && typeof result === "object"
-        ? {
-            start: result.start ?? update.start,
-            end: result.end ?? update.end,
-            allDay: result.allDay ?? update.allDay,
-          }
-        : { start: update.start, end: update.end, allDay: update.allDay }
+    if (result === false) return null
+    const acceptedStart = result && typeof result === "object" ? result.start ?? update.start : update.start
+    const acceptedEnd = result && typeof result === "object" ? result.end ?? update.end : update.end
+    const acceptedAllDay = result && typeof result === "object" ? result.allDay ?? update.allDay : update.allDay
+    const adjusted: Partial<GanttEvent<TData>> = {
+      start: acceptedStart,
+      end: acceptedEnd,
+      allDay: acceptedAllDay,
+    }
     if (update.resourceId !== undefined) adjusted.resourceId = update.resourceId
     const merged = extra ? { ...extra, ...adjusted } : adjusted
     const events = getState().events
@@ -600,7 +619,10 @@ function createGanttStore<TData>(
       event.id === update.event.id ? { ...event, ...merged } : event
     )
     setField("events", next)
-    return true
+    // update.start/end/allDay are always Date/boolean at both call sites (nudgeEvent's own
+    // proposal, gantt-dnd.tsx's drag.proposed*) - a consumer's `result` can only override with
+    // its own concrete values, never introduce `undefined`, so these are never undefined either.
+    return { start: acceptedStart!, end: acceptedEnd!, allDay: acceptedAllDay! }
   }
 
   const getIndex = (): GanttIndex<TData> => {
@@ -820,7 +842,12 @@ function createGanttStore<TData>(
       // Commit through the one validation funnel; onEventUpdate can still
       // veto (-> "rejected"), same as a pointer drag's own commit.
       const accepted = applyProposedUpdate(update)
-      return accepted ? { applied: true } : { applied: false, reason: "rejected" }
+      // Quincy fix (#219 PR A, Sol review, sol1 item 7): return the ACCEPTED range from
+      // `applyProposedUpdate` itself, not a follow-up `api.getEvent` read - see that
+      // function's own header for the controlled-mode race this closes.
+      return accepted
+        ? { applied: true, start: accepted.start, end: accepted.end, allDay: accepted.allDay }
+        : { applied: false, reason: "rejected" }
     },
     removeEvent(id) {
       setField(

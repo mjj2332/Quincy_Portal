@@ -15,7 +15,7 @@
  * matched via a substring of the event title) via a plain title-text query — role/name, not a
  * vendored `data-slot`.
  */
-import { act, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { act, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gantt, useGantt, useGanttSelector } from "@/components/reui/gantt/gantt";
@@ -138,6 +138,32 @@ describe("GanttBar keyboard move/resize (#219 stage 2)", () => {
     expect(document.activeElement?.textContent).toContain("Keyboard Move");
 
     expect(announcerText()).toContain("Keyboard Move");
+  });
+
+  it("announces the NEW range in genuinely controlled mode (sol1 item 7 - the old re-fetch read stale state)", async () => {
+    // A REAL controlled wrapper: `events` comes from this component's own state, fed by
+    // `onEventsChange`, the same as any real consumer. `nudgeEvent`'s commit and the live-region
+    // announcement both happen SYNCHRONOUSLY inside the keydown handler, before React processes
+    // the `setEvents` update this wrapper schedules - so a correct implementation must announce
+    // from the value `nudgeEvent` itself computed and accepted, not a `getEvent` re-fetch (which,
+    // under `events` being controlled, reads back the OLD prop value that this render closed over).
+    function ControlledHost() {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "kb-controlled", title: "Controlled Move", start: START, end: END },
+      ]);
+      return (
+        <Gantt events={events} onEventsChange={setEvents} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="kb-controlled" />
+        </Gantt>
+      );
+    }
+    await render(<ControlledHost />);
+    const bar = findBarByTitle("Controlled Move");
+    await focusBar(bar);
+    await keydown(bar, { key: "ArrowRight", altKey: true });
+    // moved 09:00 -> 09:15 UTC; the announcement must carry the NEW start, not the old one.
+    expect(announcerText()).toContain("9:15 AM");
+    expect(announcerText()).not.toContain("9:00 AM");
   });
 
   it("Alt+ArrowLeft moves the bar earlier", async () => {

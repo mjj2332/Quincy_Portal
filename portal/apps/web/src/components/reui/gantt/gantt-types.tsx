@@ -40,6 +40,10 @@
  *    `nudgeEvent` instance API method — the keyboard equivalent of the pointer move/resize
  *    gestures, since upstream had no keyboard path for either. `GanttProposedUpdate.source` below
  *    already admitted `"keyboard"` before this stage; `nudgeEvent` is what finally emits it.
+ *
+ * #219 PR A fix (Sol review, sol1 item 7), additive: `GanttNudgeResult` gained optional
+ * `start`/`end`/`allDay`, present iff `applied` is true — see that field's own doc comment on
+ * `GanttNudgeResult` below.
  */
 
 type GanttBarId = string
@@ -286,6 +290,16 @@ type GanttNudgeAction = "move" | "resize-start" | "resize-end"
 interface GanttNudgeResult {
   applied: boolean
   reason?: "locked" | "invalid" | "rejected" | "not-found"
+  /**
+   * Quincy addition (#219 PR A, Sol review, sol1 item 7): the ACCEPTED range, present iff
+   * `applied` is true - after any overlap clamp AND any `onEventUpdate` consumer adjustment. The
+   * caller (`gantt-bar.tsx`'s keyboard handler) announces from these fields directly instead of
+   * re-fetching via `api.getEvent` right after the call, which can read the OLD range under a
+   * controlled `events` prop (see `gantt.tsx`'s `applyProposedUpdate` header for why).
+   */
+  start?: Date
+  end?: Date
+  allDay?: boolean
 }
 
 /** A click is a point, not a range; `end` is reserved for future gestures. */

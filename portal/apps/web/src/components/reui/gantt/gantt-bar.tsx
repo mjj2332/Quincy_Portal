@@ -62,6 +62,15 @@
  *    bar in a `useEffect` on its NEXT mount is the smallest fix that stays inside this file, in the
  *    same spirit as `gantt-dnd.tsx`'s own module-level `lastGestureEndedAt` flag.
  *
+ * #219 PR A fix (Sol review, sol1 item 7): the success announcement above reads
+ * `result.start`/`result.end`/`result.allDay` — the range `nudgeEvent` itself just accepted —
+ * instead of a follow-up `instance.api.getEvent(event.id)` call. That re-fetch read STALE data
+ * under a controlled `events` prop: `gantt.tsx`'s `setField` never mutates internal state on the
+ * controlled path, so until the parent's own `onEventsChange`-driven re-render lands (which has
+ * not happened yet — this is still the same synchronous keydown handler that just queued it), a
+ * `getEvent` call sees the OLD range. See `gantt.tsx`'s `applyProposedUpdate` header for the other
+ * half of this fix (it now returns the accepted range itself, not a bare `boolean`).
+ *
  * #219 stage 3 (PR A) edit, additive: `data-completed` bars (progress === 100) get a reduced-
  * emphasis fill — the outer shell's tint drops from `/20` (`/30` on hover) to `/10` (`/15` on
  * hover), and the progress-fill child's own tint drops from `/40` (border `/65`) to `/20` (border
@@ -527,15 +536,17 @@ function GanttBar<TData = unknown>({
       )
       if (!announcer) return
       if (result.applied) {
-        const fresh = instance.api.getEvent(event.id)
-        if (fresh) {
-          announcer.textContent = `${fresh.title}, ${settings.i18n.functions.formatEventTime(
-            toZoned(fresh.start, settings.timeZone),
-            toZoned(fresh.end, settings.timeZone),
-            fresh.allDay ?? false,
-            settings.locale
-          )}`
-        }
+        // Quincy fix (#219 PR A, Sol review, sol1 item 7): announce from the result's OWN
+        // accepted range, not a follow-up `api.getEvent` re-fetch - under a controlled `events`
+        // prop that read the OLD range synchronously, before the parent's state update (queued by
+        // this same nudge, via onEventsChange) had landed. See `gantt.tsx`'s `applyProposedUpdate`
+        // header for the full mechanics. `result.start`/`end` are always set when `applied` is true.
+        announcer.textContent = `${event.title}, ${settings.i18n.functions.formatEventTime(
+          toZoned(result.start!, settings.timeZone),
+          toZoned(result.end!, settings.timeZone),
+          result.allDay ?? false,
+          settings.locale
+        )}`
         return
       }
       if (result.reason === "locked") {
