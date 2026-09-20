@@ -832,4 +832,66 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
     expect(announcerText()).toBe("No change made.");
     expect(onEventsChange).not.toHaveBeenCalled();
   });
+
+  it("round 4, Sol LOW: a real bar drives the SAME either-edge commit re-validation as gantt-adjust-internals.dom.test.tsx's store-level 'round 3, Sol HIGH #2b' - a neighbour on the edge the FIRST target already moved is still refused through Enter, not silently committed", async () => {
+    // That store-level test calls `commitAdjust()` directly and asserts its return value; this is
+    // the DOM-level companion, driving the identical scenario (move, then retarget to resize-end,
+    // then a neighbour added on the START edge the CURRENT target's own clamp never defends)
+    // through a REAL bar's Space/Shift+Arrow/retarget/Enter, so the refusal is observed exactly the
+    // way a keyboard user would: the announcer's own rejection text and the mode actually exiting,
+    // not a bare `{ committed: false }` return.
+    const onEventUpdate = vi.fn(() => true);
+    function NeighbourHost({ setEventsRef }: { setEventsRef: { current: ((v: GanttEvent[]) => void) | null } }) {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "either-a", title: "Either A", start: START, end: END, resourceId: "r1" },
+      ]);
+      useEffect(() => {
+        setEventsRef.current = setEvents;
+      }, []);
+      return (
+        <Gantt events={events} onEventsChange={setEvents} onEventUpdate={onEventUpdate} overlap="clamp" date={START} timeZone="UTC">
+          <KeyedBarHost eventId="either-a" />
+        </Gantt>
+      );
+    }
+    const setEventsRef: { current: ((v: GanttEvent[]) => void) | null } = { current: null };
+    await render(<NeighbourHost setEventsRef={setEventsRef} />);
+    const bar = findBarByTitle("Either A");
+    await focusBar(bar);
+    await keydown(bar, { key: " " }); // enters move (the default target - both edges resizable, draggable)
+    await keydown(bar, { key: "ArrowLeft", shiftKey: true }); // large step, -60min: 08:00-09:00
+    await keydown(bar, { key: "ArrowLeft", shiftKey: true }); // large step again, -60min: 07:00-08:00
+    await keydown(bar, { key: "e" }); // retarget to resize-end - move stays a TOUCHED target
+    expect(bar.getAttribute("data-adjusting")).not.toBeNull();
+
+    // Consumer adds a neighbour AFTER the move, BEFORE commit - clear of the event's ORIGINAL
+    // [09:00, 10:00) window but overlapping the START of the MOVED preview [07:00, 08:00).
+    // `clampToNeighbours`'s "resize-end" kind only ever bounds the END ("to"); it never touches
+    // "from" at all, so nothing defends this START-edge overlap once the session's CURRENT target
+    // is resize-end - only re-validating against every touched target catches it.
+    const neighbour: GanttEvent = {
+      id: "either-b",
+      title: "Either B",
+      start: new Date(START.getTime() - 2 * 3600000 - 15 * 60000), // 06:45
+      end: new Date(START.getTime() - 2 * 3600000 + 15 * 60000), // 07:15 - overlaps 07:00
+      resourceId: "r1",
+    };
+    await act(async () => {
+      setEventsRef.current!([
+        { id: "either-a", title: "Either A", start: START, end: END, resourceId: "r1" },
+        neighbour,
+      ]);
+      await Promise.resolve();
+    });
+    // The session's own event is UNCHANGED (same start/end/resourceId) - adding an unrelated
+    // neighbour must not have orphaned it before Enter is even pressed.
+    expect(bar.getAttribute("data-adjusting")).not.toBeNull();
+
+    await keydown(bar, { key: "Enter" });
+
+    expect(onEventUpdate).not.toHaveBeenCalled();
+    expect(announcerText()).toBe("That change was rejected.");
+    expect(bar.getAttribute("data-adjusting")).toBeNull();
+    expect(bar.getAttribute("role")).not.toBe("application");
+  });
 });
