@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { hashKey, QueryClient } from "@tanstack/react-query";
-import { dashboardProjectSearchKey, dashboardProjectsKey, removeProjectFromDashboardQueries } from "./dashboard-projects";
+import { dashboardProjectSearchKey, dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, removeProjectFromDashboardQueries } from "./dashboard-projects";
 import type { ProjectSummary } from "./kanban-interaction";
 
 function client() { return new QueryClient({ defaultOptions: { queries: { retry: false } } }); }
@@ -70,5 +70,62 @@ describe("removeProjectFromDashboardQueries (#217)", () => {
 
     expect(queryClient.getQueryData(otherKey)).toEqual([project("a")]);
     expect(queryClient.getQueryData(otherSearchKey)).toEqual({ query: "", matching: 1, total: 1 });
+  });
+});
+
+// #230, item 3. The cache-key shape (prefix + sibling predicate) moved here from Dashboard.tsx so
+// the screen no longer has to know what a dashboard-projects key looks like to scan or match one.
+describe("dashboardProjectsKeyPrefix / isDashboardProjectsQueryFor (#230)", () => {
+  it("dashboardProjectsKeyPrefix is the leading two elements every dashboardProjectsKey starts with", () => {
+    expect(dashboardProjectsKeyPrefix("principal")).toEqual(["dashboard-projects", "principal"]);
+    expect(dashboardProjectsKey("principal", "admin", 0, false, "smith").slice(0, 2)).toEqual(dashboardProjectsKeyPrefix("principal"));
+  });
+
+  it("isDashboardProjectsQueryFor matches every dashboard-projects entry for the principal, regardless of role/epoch/archived/q", () => {
+    const queryClient = client();
+    const keyA = dashboardProjectsKey("principal", "admin", 0, false);
+    const keyB = dashboardProjectsKey("principal", "photographer", 1, true, "smith");
+    queryClient.setQueryData(keyA, [project("a")]);
+    queryClient.setQueryData(keyB, [project("b")]);
+
+    const matches = isDashboardProjectsQueryFor("principal");
+    const matched = queryClient.getQueryCache().getAll().filter(matches).map((query) => query.queryKey);
+    expect(matched).toEqual(expect.arrayContaining([keyA, keyB]));
+    expect(matched).toHaveLength(2);
+  });
+
+  it("isDashboardProjectsQueryFor never matches another principal's entries or the dashboard-project-search sibling", () => {
+    const queryClient = client();
+    const ownKey = dashboardProjectsKey("principal", "admin", 0, false);
+    const otherPrincipalKey = dashboardProjectsKey("someone-else", "admin", 0, false);
+    const searchSiblingKey = dashboardProjectSearchKey("principal", "admin", 0, false);
+    queryClient.setQueryData(ownKey, [project("a")]);
+    queryClient.setQueryData(otherPrincipalKey, [project("a")]);
+    queryClient.setQueryData(searchSiblingKey, { query: "", matching: 0, total: 0 });
+
+    const matches = isDashboardProjectsQueryFor("principal");
+    const matched = queryClient.getQueryCache().getAll().filter(matches).map((query) => query.queryKey);
+    expect(matched).toEqual([ownKey]);
+  });
+
+  it("isDashboardProjectsQueryFor excludes the exact key passed as exceptKeyString, structurally not by reference", () => {
+    const queryClient = client();
+    const activeKey = dashboardProjectsKey("principal", "admin", 0, false, "smith");
+    const siblingKey = dashboardProjectsKey("principal", "admin", 0, false);
+    queryClient.setQueryData(activeKey, [project("a")]);
+    queryClient.setQueryData(siblingKey, [project("a")]);
+
+    const matches = isDashboardProjectsQueryFor("principal", JSON.stringify(activeKey));
+    const matched = queryClient.getQueryCache().getAll().filter(matches).map((query) => query.queryKey);
+    expect(matched).toEqual([siblingKey]);
+  });
+
+  it("isDashboardProjectsQueryFor with no exceptKeyString matches every sibling, including one that would otherwise be excluded", () => {
+    const queryClient = client();
+    const keyA = dashboardProjectsKey("principal", "admin", 0, false);
+    queryClient.setQueryData(keyA, [project("a")]);
+
+    const matches = isDashboardProjectsQueryFor("principal");
+    expect(queryClient.getQueryCache().getAll().filter(matches).map((query) => query.queryKey)).toEqual([keyA]);
   });
 });

@@ -239,6 +239,41 @@ describe("Dashboard search results and Kanban movement gating (#217 fix round 1,
     await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
   });
+
+  // #230, step 5. `runBoardMovement` stamps `boardOverlay` with the dashboardKeyString CURRENT at
+  // drag time (Dashboard.tsx ~:998); `acceptDashboardProjects` stamps `acceptedProjects` the same
+  // way. Before #230's fix, dashboardKeyString omitted `committedQuery`, so a search commit mid-drag
+  // would leave BOTH still "matching" the post-search dashboardKeyString (nothing about the key
+  // depended on `q`) -- the drag's optimistic overlay, painted for the unfiltered board, would have
+  // kept rendering on top of the newly-searched results. #230's fix (dashboardKey now carries
+  // `committedQuery`) closes this for free: a search commit changes dashboardKeyString, so the
+  // stamped overlay/accepted-snapshot keys stop matching and `projects` (~:370) falls back straight
+  // to the fresh `queryProjects` for the new key -- the same fallback `placeholderData` already
+  // proves flash-free for an UNsearched q change (`lib/dashboard-projects.ts` ~:103-109). If this
+  // already passes after step 2 alone, it is a regression test, not a fix commit's proof -- kept as
+  // one and said so in the commit message.
+  it("a search that commits while a Board move is pending does not leave the stale unfiltered overlay painted over the searched results (#230)", async () => {
+    await act(async () => { root.render(<Dashboard currentUserId="admin-1" role="admin" />); await Promise.resolve(); }); await flush();
+    expect(addresses(host)).toEqual(expect.arrayContaining(["Source Street", "Before Street", "Target Street"]));
+
+    // Held open deliberately (precedent: Dashboard-priority-coordinator.dom.test.tsx's own
+    // `deferredPost`) -- `pendingMoves`/`boardOverlay` must stay live through the whole search
+    // commit below, and are never settled: left pending at test end is an accepted pattern here.
+    apiPostMock.mockImplementation(() => new Promise(() => {}));
+
+    await dndStart("before");
+    await dndOver("before", "target");
+    await dndEnd("before", "target");
+    await flush();
+    expect(apiPostMock).toHaveBeenCalled();
+
+    await act(async () => { setDashboardSearchDraft("smith", "admin-1"); commitDashboardSearchNow("admin-1"); });
+    await flush();
+
+    expect(addresses(host)).toEqual(["Target Street"]);
+    expect(addresses(host)).not.toContain("Source Street");
+    expect(addresses(host)).not.toContain("Before Street");
+  });
 });
 
 /**

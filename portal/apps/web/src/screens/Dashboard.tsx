@@ -26,7 +26,7 @@ import { cn } from "../lib/utils";
 import { CALENDAR_STATE_BOX } from "../components/production-calendar-classes";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
-import { dashboardProjectsKey, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
+import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
 import {
@@ -288,16 +288,51 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity, committedQuery);
   const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, committedQuery);
-  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
+  // #230: widened to carry `committedQuery` as the fifth argument -- ONE q-aware key, not a second
+  // "scope identity" alongside it. `updateProjects`'s optimistic/confirmed/rollback writes
+  // (`setProjectPriority`'s only caller, below) `setQueryData` this exact key, so they now land in
+  // the SAME cache entry `useDashboardProjects` above actually reads while a search is active,
+  // instead of an unfiltered entry nobody is looking at. `acceptedProjects`/`boardOverlay`, both
+  // keyed off `dashboardKeyString` too (see their own state below), inherit the fix the same way: a
+  // committedQuery change now makes their stamped key stop matching, same as an archived-scope
+  // toggle already did, so the `projects` constant below falls back to `queryProjects` for that key
+  // instead of painting the previous search's data (or a movement overlay computed against it) over
+  // the new one. That fallback is NOT necessarily fresh, though: `queryProjects` can itself be
+  // react-query's own PLACEHOLDER data for the new key (the previous committed query's rows, kept by
+  // `keepPreviousData` in `useDashboardProjects`'s `placeholderData` while the new fetch is still in
+  // flight) -- the accept effect below (gated on `projectsQuery.isPlaceholderData`, see its own
+  // comment) is what keeps that placeholder from ever being STAMPED into `acceptedProjects` under
+  // the new key as though it were that key's own confirmed result; this fallback is simply what
+  // renders it in the meantime.
+  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
+  // #230: `setProjectPriority`'s sibling predicate needs the key ACTIVE at CONFIRMATION time, not
+  // the one its own closure captured at click time -- `setProjectPriority` is a plain function
+  // recreated every render, so the instance a click actually reaches is whichever render was
+  // current when the click landed. Updated on every render; read only AFTER the POST resolves.
+  // Holds the TUPLE, not just its JSON string -- `queryClient.getQueryState` takes a real query
+  // key, and deriving the string from the tuple (`JSON.stringify(dashboardKeyRef.current)`) where
+  // a string is actually needed is one less round-trip than storing the string and `JSON.parse`ing
+  // it back into a key later.
+  const dashboardKeyRef = useRef(dashboardKey);
+  dashboardKeyRef.current = dashboardKey;
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
-  // no-op (the store's own `principalId === id` guard) on every OTHER dashboardKeyString change
-  // (archived toggle, role/epoch untouched). Declared BEFORE the Calendar route-reconciliation
-  // effect below (React commits effects in hook-declaration order): on a fresh mount the store's
-  // `principalId` starts `""`, genuinely different from any real `currentUserId`, so this must run
-  // and settle first or a stale draft could still be showing when that effect's own canonicalising
-  // URL write lands. URL-authoritative committed query; the store holds draft/timer/owner only --
-  // there is no URL-search adoption left for either effect to race.
+  // no-op (the store's own `principalId === id` guard) on every render this effect reruns for.
+  // Declared BEFORE the Calendar route-reconciliation effect below (React commits effects in
+  // hook-declaration order): on a fresh mount the store's `principalId` starts `""`, genuinely
+  // different from any real `currentUserId`, so this must run and settle first or a stale draft
+  // could still be showing when that effect's own canonicalising URL write lands. URL-authoritative
+  // committed query; the store holds draft/timer/owner only -- there is no URL-search adoption left
+  // for either effect to race.
+  //
+  // #230: depends on `currentUserId` alone now, not `dashboardKeyString` -- `dashboardKey` just
+  // above was widened to carry `committedQuery`, so keeping it in this effect's deps would re-run
+  // `resetDashboardSearchForPrincipal` on every keystroke's committed-query change (the archived
+  // toggle and role/epoch changes already did this too, before #230, since they were also part of
+  // `dashboardKeyString`). The guard inside `resetDashboardSearchForPrincipal` makes every one of
+  // those a same-principal no-op regardless, but the ordering contract this comment documents only
+  // ever needed `currentUserId` to be current when this effect runs -- it never needed to re-fire on
+  // a scope or search change at all, only a principal change.
   //
   // #217 fix round 3, item 2 (Sol's whole-branch review): `PrincipalFreshnessBoundary` now ALSO
   // calls `resetDashboardSearchForPrincipal` on every principal change, at shell level -- it wraps
@@ -311,7 +346,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // than a race that could otherwise leave a stale draft showing momentarily.
   useEffect(() => {
     resetDashboardSearchForPrincipal(currentUserId);
-  }, [dashboardKeyString, currentUserId]);
+  }, [currentUserId]);
   const queryProjects = projectsQuery.data;
   const queryDataUpdatedAt = projectsQuery.dataUpdatedAt;
   const [acceptedProjects, setAcceptedProjects] = useState<{ key: string; projects: ProjectSummary[] }>();
@@ -347,7 +382,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const queuedRefreshRef = useRef(false);
   const focusRestoreRef = useRef<FocusRestore | null>(null);
   const movementRecoveryRef = useRef<MovementRecovery | null>(null);
-  const acceptedQueryUpdatedAtRef = useRef<number | null>(null);
+  // The last key + dataUpdatedAt millisecond acceptDashboardProjects actually accepted -- `{ key,
+  // updatedAt }`, not a bare timestamp, because two different keys' results can carry the identical
+  // millisecond `dataUpdatedAt` (system clock resolution, or two fetches racing to resolve in the
+  // same tick), which a bare-timestamp dedupe would confuse for "already accepted", silently
+  // dropping a genuinely new key's own first-ever result.
+  const lastAcceptedResultRef = useRef<{ key: string; updatedAt: number } | null>(null);
   const projects = boardOverlay?.key === dashboardKeyString
     ? boardOverlay.model
     : acceptedProjects?.key === dashboardKeyString
@@ -394,8 +434,25 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useLayoutEffect(() => () => releaseDashboardView(dashboardViewOwnerRef.current), []);
   // Priority is deliberately the only Dashboard path that still writes this query cache.
   const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
-    queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
+    // A confirm or rollback against a click-time key whose entry has since been evicted (gc, or a
+    // principal/scope change) must not manufacture one -- react-query treats an updater that
+    // returns `undefined` as "leave this entry alone" (no write, no create).
+    queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => current === undefined ? undefined : update(current));
   }, [dashboardKey, queryClient]);
+
+  // #230: the CONFIRMED response only, never the optimistic write or the rollback -- those stay
+  // EXACT-KEY (`updateProjects` above), so an unconfirmed value never lands in a cache entry nobody
+  // is looking at. `queueDashboardRefresh` (below) refetches only the ACTIVE observer's own key, and
+  // `invalidateProjectSurfaces(..., producer: "dashboard")` deliberately skips the in-tab Dashboard
+  // scan -- so without this, a q-less entry loaded before the search (or any other scope's entry)
+  // keeps the stale value and shows it the moment the search is cleared or the scope changes back.
+  // `setQueriesData` on the principal-scoped prefix (`dashboardProjectsKeyPrefix`, same one
+  // `removeProjectFromDashboardQueries` in `lib/dashboard-projects.ts` scans) only touches entries
+  // that ALREADY EXIST in the cache -- it must never manufacture an empty entry for a scope nobody
+  // has loaded yet.
+  const updateAllProjectScopes = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
+    queryClient?.setQueriesData<ProjectSummary[]>({ queryKey: dashboardProjectsKeyPrefix(currentUserId) }, (current) => current ? update(current) : current);
+  }, [currentUserId, queryClient]);
 
   const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey, descriptor?: FocusDescriptor) => {
     if (focusRestoreRef.current) return;
@@ -599,12 +656,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
-    if (dataUpdatedAt !== undefined && acceptedQueryUpdatedAtRef.current === dataUpdatedAt) return;
+    // Dedupe on key AND updatedAt together -- `dashboardKeyString` here is the key this specific
+    // call is stamping under (this closure's own, same as `replaceAcceptedProjects` below uses), so
+    // a match requires both the SAME key and the SAME millisecond, not just a coincidentally-equal
+    // timestamp from an unrelated key's own result.
+    const lastAccepted = lastAcceptedResultRef.current;
+    if (dataUpdatedAt !== undefined && lastAccepted !== null && lastAccepted.key === dashboardKeyString && lastAccepted.updatedAt === dataUpdatedAt) return;
     const safeProjects = queryRuntime ? next.filter((project) => !queryRuntime.isProjectRemoved(project.id)) : next;
-    if (dataUpdatedAt !== undefined) acceptedQueryUpdatedAtRef.current = dataUpdatedAt;
+    if (dataUpdatedAt !== undefined) lastAcceptedResultRef.current = { key: dashboardKeyString, updatedAt: dataUpdatedAt };
     if (safeProjects.every((project) => project.boardContractEnabled !== false)) setBoardUnavailableReason(null);
     replaceAcceptedProjects(safeProjects);
-  }, [queryRuntime, replaceAcceptedProjects]);
+  }, [dashboardKeyString, queryRuntime, replaceAcceptedProjects]);
 
   useLayoutEffect(() => {
     if (pendingMoves.size > 0 || pendingOrdering.size > 0 || (movementSettlePending && !recoveryReason)) return;
@@ -630,8 +692,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus({ preventScroll: true });
   }, [acceptedProjects, announcement, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects, recoveryReason]);
 
+  // Gated on `projectsQuery.isPlaceholderData` -- react-query serves the PREVIOUS committed-query's
+  // dataset as `queryProjects` (`keepPreviousData`, `lib/dashboard-projects.ts`'s `placeholderData`)
+  // while a NEW committed-query's fetch is still in flight. Accepting that placeholder under the NEW
+  // `dashboardKeyString` would stamp it as though it were that key's own confirmed result;
+  // `hasAcceptedDashboard` would then suppress the error state if the fetch went on to fail, leaving
+  // the WRONG query's rows on screen as though they were correct. The `projects` constant above
+  // already falls back to `queryProjects` directly whenever `acceptedProjects` doesn't match the
+  // current key, so refusing to accept here costs no loading/empty flash -- the placeholder rows
+  // still render, just never get stamped as this key's own.
   useEffect(() => {
-    if (!queryProjects || queryRuntime?.principalTerminal) return;
+    if (!queryProjects || projectsQuery.isPlaceholderData || queryRuntime?.principalTerminal) return;
     if (interactionBlocked) {
       queuedRefreshRef.current = true;
       return;
@@ -644,14 +715,41 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       setRecoveryReason(null);
       movementRecoveryRef.current = null;
     }
-  }, [acceptDashboardProjects, interactionBlocked, queryDataUpdatedAt, queryProjects, queryRuntime]);
+  }, [acceptDashboardProjects, interactionBlocked, projectsQuery.isPlaceholderData, queryDataUpdatedAt, queryProjects, queryRuntime]);
 
   useEffect(() => {
     if (interactionBlocked || !queuedRefreshRef.current) return;
     queuedRefreshRef.current = false;
+    // Snapshot the key this refetch is FOR, same reasoning as `setProjectPriority`'s own
+    // `currentKeyAtConfirm` below -- `QueryObserver#fetch()`'s own `.then()` reads
+    // `this.#currentResult` AFTER the underlying fetch settles, which is the observer's CURRENT
+    // result for whatever key is active THEN, not necessarily this one. This closure's own
+    // `acceptDashboardProjects`/`replaceAcceptedProjects` are bound to dashboardKeyString as of
+    // THIS render (the key below), so accepting a result for a since-changed key would stamp it
+    // under this stale one.
+    // Snapshot the tuple and its string together, from the same ref read -- `getQueryState` below
+    // takes the tuple directly (no `JSON.parse`, no cast), and the string is what the later
+    // identity check compares against.
+    const refreshKeyTuple = dashboardKeyRef.current;
+    const refreshKey = JSON.stringify(refreshKeyTuple);
     void projectsQuery.refetch().then((result) => {
       const settling = movementSettlePendingRef.current;
-      if (result.isError || !result.data) {
+      // ABA fix (diagnosed via instrumentation): `result` is `QueryObserver#fetch()`'s own resolved
+      // value, which reads `this.#currentResult` AFTER the underlying fetch settles -- the
+      // OBSERVER's CURRENT result for whatever key is active THEN, not necessarily `refreshKey`. If
+      // the committed search goes A -> B -> A while this refetch (issued for A, `refreshKey`) is
+      // still in flight, `result` can by then be back on A too (the identity check below would
+      // pass) while still carrying B's rows, because the observer's own current result was computed
+      // while ITS current query was still B -- `result.isPlaceholderData` is false in that case (B's
+      // data is real, not a placeholder), so a key-string + isPlaceholderData guard alone would let
+      // it through. Trusting `result`'s PAYLOAD at all, for either branch, is the vulnerability --
+      // query identity, not payload shape, is what actually distinguishes refreshKey's own outcome.
+      // Read provenance from the cache entry for `refreshKey` itself instead: `queryClient.getQueryState`
+      // returns that key's own persisted status/data, which is what the real underlying fetch (the
+      // one this promise settling proves already ran) actually wrote, regardless of what the
+      // observer's `result` currently shows.
+      const refreshState = queryClient?.getQueryState<ProjectSummary[]>(refreshKeyTuple);
+      if (refreshState?.status === "error") {
         if (settling) {
           const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
           setRecoveryReason(message);
@@ -662,13 +760,32 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         }
         return;
       }
+      if (refreshState?.status !== "success" || !refreshState.data) {
+        // Not (yet) a confirmed outcome for refreshKey -- no cache entry, or still pending/fetching.
+        // In practice this should not happen (the underlying fetch settling is what resolved this
+        // promise in the first place, and it writes refreshKey's own cache entry inline before
+        // settling), but if it ever does, do nothing harmful: this is neither a confirmed success
+        // (nothing to accept) nor a confirmed error (no reason to show the recovery/error state for
+        // a fetch that, for all this closure knows, never actually failed). Re-arm the queued refresh
+        // ONLY while an interaction is blocking, same as the old "unusable result" branch did; when
+        // unblocked, the primary accept effect picks up refreshKey's data on its own. The ref write
+        // schedules nothing, so this cannot spin: blocked -> unblocked allows at most one retry.
+        if (interactionBlockedRef.current) queuedRefreshRef.current = true;
+        return;
+      }
       if (interactionBlockedRef.current) {
         queuedRefreshRef.current = true;
         return;
       }
       if (queryRuntime?.principalTerminal) return;
-      acceptDashboardProjects(result.data, result.dataUpdatedAt);
-      // Keep this release outside acceptDashboardProjects; its acceptedQueryUpdatedAtRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
+      // The committed search moved on while this refetch was in flight -- refreshKey's own confirmed
+      // result still exists in the cache (accepted above via `refreshState`), but it is no longer
+      // the ACTIVE key: refuse to stamp it under refreshKey. The primary accept effect (above)
+      // already owns accepting the current key's own data once it's real, under its own (current,
+      // non-stale) closure.
+      if (JSON.stringify(dashboardKeyRef.current) !== refreshKey) return;
+      acceptDashboardProjects(refreshState.data, refreshState.dataUpdatedAt);
+      // Keep this release outside acceptDashboardProjects; its lastAcceptedResultRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
       if (settling) {
         movementSettlePendingRef.current = false;
         setMovementSettlePending(false);
@@ -685,7 +802,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         queuedRefreshRef.current = true;
       }
     });
-  }, [acceptDashboardProjects, effectiveKanbanSort, interactionBlocked, projectsQuery.refetch, queryRuntime]);
+  }, [acceptDashboardProjects, effectiveKanbanSort, interactionBlocked, projectsQuery.refetch, queryClient, queryRuntime]);
 
   useEffect(() => {
     if (!queryRuntime) return;
@@ -1095,7 +1212,45 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
-      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item));
+      // The fan-out below opens two races once it lands in a SIBLING entry no observer is currently
+      // reading -- (A) a sibling's own refetch that started BEFORE this POST resolving AFTER the
+      // fan-out write and putting the stale value back, (B) this response being older than a
+      // sibling that already holds a NEWER server `boardRevision` (a later stage move, say) and
+      // regressing it. `isSiblingDashboardQuery` structurally compares `queryKey` (JSON, not
+      // reference) against the key ACTIVE at confirmation -- the ACTIVE entry's own refresh is owned
+      // by `queueDashboardRefresh` below and must never be cancelled or invalidated here.
+      //
+      // Snapshot `dashboardKeyRef.current` HERE, immediately after the POST resolves, not
+      // `dashboardKeyString` from this closure's own render (the CLICK-time key). If the committed
+      // search (or archived scope) changed while the POST was in flight, the
+      // NEWLY active key must be excluded from cancel/invalidate below -- it's the entry
+      // `queueDashboardRefresh` is about to refresh, and cancelling its in-flight fetch or marking it
+      // stale with no refetch regresses whatever it's showing. The origin key, now inactive, is just
+      // another sibling once it's no longer the active one: it still gets the fan-out patch (via the
+      // prefix write below, unconditional on this predicate), has its own late fetch cancelled, and
+      // is marked stale, same as any other sibling.
+      const currentKeyAtConfirm = JSON.stringify(dashboardKeyRef.current);
+      const isSiblingDashboardQuery = isDashboardProjectsQueryFor(currentUserId, currentKeyAtConfirm);
+      // (A) cancel every sibling's in-flight fetch FIRST -- its late result, once cancelled, can no
+      // longer overwrite the fan-out write that follows.
+      if (queryClient) await queryClient.cancelQueries({ predicate: isSiblingDashboardQuery });
+      // (B) never patch an item whose cached `boardRevision` is already NEWER than this response's
+      // -- leave it untouched. Applied to the exact-key write too, for the same reason: the active
+      // entry can equally hold a boardRevision this response has fallen behind.
+      const applyConfirmed = (current: ProjectSummary[]) => current.map((item) => {
+        if (item.id !== project.id) return item;
+        if (item.boardRevision > response.boardRevision) return item;
+        return { ...item, priority: response.priority, boardRevision: response.boardRevision };
+      });
+      // The prefix fan-out below already covers the exact click-time entry (it matches on
+      // `currentUserId` alone), so a separate exact-key write here would just be a redundant second
+      // pass over the same entry.
+      updateAllProjectScopes(applyConfirmed);
+      // Mark the patched SIBLINGS stale without refetching them now (`refetchType: "none"`) -- a
+      // same-`boardRevision` race then self-heals the next time that entry is actually observed
+      // again, instead of firing a request for a scope nobody is looking at right now. Never the
+      // active key: its own refresh is `queueDashboardRefresh` below.
+      if (queryClient) queryClient.invalidateQueries({ predicate: isSiblingDashboardQuery, refetchType: "none" });
       queueDashboardRefresh();
       if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: false, gantt: false, producer: "dashboard" });
     } catch (reason) {

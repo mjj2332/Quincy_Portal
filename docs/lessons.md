@@ -3193,3 +3193,223 @@ progressively smarter. The one exception worth keeping a local copy for is genui
 NOT-yet-authoritative state — the DRAFT here, which is real user input the authoritative source
 does not have yet — and even that copy needs exactly one function that reconciles it against the
 authoritative source on every change, not one adoption path per call site.
+
+## A cache key that omits one of the query's inputs patches an entry nobody is looking at (#230)
+
+`Dashboard.tsx`'s `dashboardKey` (~:291, feeding `updateProjects`'s `setQueryData` writes) was built
+from `currentUserId`/`role`/`authorizationEpoch`/`viewingArchived` only — no `q` — while the
+`useDashboardProjects` query it was meant to coordinate with (~:289) is keyed WITH the committed
+search (`committedQuery`, the fifth argument `dashboardProjectsKey` has carried since #217). At
+`/?q=smith`, `setProjectPriority`'s optimistic write, its confirmed write, and its failure rollback
+all landed in the q-LESS cache entry — a CACHE MISS: the write patched an entry nothing was reading,
+not merely an entry the rendered control happened not to reflect (the accepted-snapshot barrier is a
+separate, later reason the rendered control wouldn't have shown it either regardless, #232). The
+searched entry the Staff member was actually looking at kept whatever it already held until
+`queueDashboardRefresh()`'s own refetch of the ACTIVE (searched) key — deliberate, not a
+coincidental unrelated refetch — pulled the real confirmed value back in from the server on its next
+successful fetch; a failed save, meanwhile, rolled back an entry nobody was reading at all. The fix
+is one line: pass `committedQuery` as `dashboardKey`'s own fifth argument, so it is the SAME key the
+read side already uses — not a second, parallel "scope identity" computed differently for reads and
+writes.
+
+**The rule for sibling entries a mutation's write has to reach, once the exact key is fixed.** A
+resource can have more than one cache entry alive at once for genuinely different reasons (here: the
+current search's entry, plus a q-less entry left over from before the Staff member searched) — a
+mutation against ONE entry has to decide, explicitly, what happens to the others:
+- **The OPTIMISTIC write and its ROLLBACK stay EXACT-KEY.** An unconfirmed value must never land in
+  an entry nobody is currently looking at — if the write reaches a scope that isn't rendering right
+  now, whoever DOES look at that scope later sees a value the server never actually returned.
+- **The CONFIRMED response, once the server has actually agreed to it, fans out to every EXISTING
+  sibling entry** (here, `queryClient.setQueriesData` on the `["dashboard-projects", currentUserId]`
+  prefix — precedent: `removeProjectFromDashboardQueries`, `lib/dashboard-projects.ts` ~:128-136).
+  Without this, a value confirmed while searched only updates the searched entry; clearing the
+  search a moment later shows the STALE q-less entry until its own refetch happens to land, because
+  `queueDashboardRefresh()` only refetches the currently-ACTIVE observer's key and
+  `invalidateProjectSurfaces(..., producer: "dashboard")` deliberately skips the in-tab Dashboard
+  scan — neither of those touches an inactive sibling entry on its own.
+- **The fan-out must never CREATE an entry that didn't already exist.** `setQueriesData` only
+  updates queries already present in the cache by construction (it iterates `findAll`'s matches, not
+  every key that could theoretically match) — a Staff member who deep-links straight into a search
+  and never had an unfiltered load must not get a phantom q-less entry manufactured for them.
+- **The fan-out itself still needs freshness protection, once it exists at all** (Sol review round
+  1): cancel every sibling's own in-flight fetch FIRST, or its late result can resolve after the
+  fan-out and put the stale value back; never patch an item whose cached `boardRevision` is already
+  newer than the confirmed response's, or a slow write can regress a sibling a later change already
+  moved past; then mark the patched siblings stale WITHOUT refetching them now (`refetchType:
+  "none"`) so a same-revision race self-heals the next time that entry is actually observed again,
+  rather than firing a request for a scope nobody is looking at right now.
+- **Placeholder data must never be stamped as accepted under a new key.** `keepPreviousData`
+  (`placeholderData`) serves the PREVIOUS query's rows while a new committed-query's fetch is still
+  in flight — accepting that placeholder as though it were the NEW key's own confirmed result means
+  a subsequent failure on that fetch gets silently absorbed, and the wrong query's rows stay on
+  screen presented as correct. Gate acceptance on `isPlaceholderData`; let the existing key-mismatch
+  fallback keep rendering the placeholder in the meantime, so refusing to accept it costs no
+  loading/empty flash.
+
+**A DOM test cannot observe an optimistic cache write while a mutation is pending, in this
+component, and that is not this bug.** `Dashboard.tsx` renders the `acceptedProjects` SNAPSHOT
+(~:370), not the query cache directly, and the effect that would refresh that snapshot from a fresh
+`queryProjects` explicitly defers while `interactionBlocked` is true (~:354, which includes
+`pendingOrdering.size > 0`) — for the ENTIRE duration of a priority mutation, searched or not, on
+`main` today, independent of this fix. A rendered `<select>`/star control genuinely cannot show "2"
+while its own POST is still in flight; the correct assertion for "did the optimistic/confirmed/
+rollback write land in the right place" is `queryClient.getQueryData` on the exact key directly, not
+the rendered control — proven empirically here (a temporary render/tick trace showed the control
+stuck at the old value through every tick of even a FAST-resolving POST, with a refetch already
+fired by the first tick) before trusting it, rather than assumed from reading the effect once. Filed
+separately as its own issue; not touched by this fix.
+
+## A captured key or a captured timestamp is only as fresh as the render that captured it (#230, Sol review round 2)
+
+Three more bugs in this same fan-out/accept machinery, all one shape: something captured a value from
+"the current key" at one point in time and kept trusting it after the world moved on.
+
+- **The sibling fan-out's own predicate used the CLICK-time key, not the CONFIRMATION-time key.**
+  Corrected (Sol review round 3, item 2 — the original write-up here mis-described this): the
+  predicate (`isSiblingDashboardQuery`) is not what gates the confirmed-value fan-out at all — that
+  write (`updateProjects`/`updateAllProjectScopes`) is unconditional. The predicate only decides which
+  entries `cancelQueries`/`invalidateQueries` treat as "a sibling" of the entry the confirmed write
+  just targeted directly. `setProjectPriority` computed that key once, at the top of the handler, from
+  whatever search was committed when the Staff member clicked, then reused that same captured value
+  when the POST resolved. If the committed search changed while the POST was still in flight, the
+  predicate was comparing against a key nobody is looking at anymore: the entry ACTUALLY active at
+  confirmation time no longer matched the stale captured key, so the predicate wrongly treated it AS a
+  sibling — its in-flight fetch got cancelled and it got marked stale, even though it's the entry
+  `queueDashboardRefresh` owns and was about to refresh itself. Meanwhile the OLD origin key, now
+  genuinely inactive, still matched the stale captured key, so the predicate wrongly EXEMPTED it from
+  the cancel+invalidate every other inactive sibling gets. Fix: read the key fresh at the point the
+  confirmed response lands, not at the point the click happened — the two are the same render only if
+  nothing changed in between, and the whole point of this bug class is that something did.
+- **The queued-refresh effect's own `.then()` is a stale closure, exactly like the fan-out predicate
+  above.** `queueDashboardRefresh()` (fired after a confirmed mutation settles while `interactionBlocked`
+  was true) issues its OWN `projectsQuery.refetch()` from inside a `useEffect` closure bound to whatever
+  key was active when that effect ran. `QueryObserver#fetch()`'s promise resolves with
+  `this.#currentResult` READ AT SETTLE TIME, not at issue time — if the committed query changed again
+  while that refetch was in flight, the promise resolves with the OBSERVER'S NEWER result (a different
+  key's rows, possibly still placeholder), and the stale `.then()` was accepting it unconditionally,
+  stamping it under the STALE key it was issued for. Same fix shape as the primary accept effect's own
+  key-mismatch guard (round 1, `## Placeholder data must never be stamped as accepted under a new key`
+  above): re-read the CURRENT key via a ref at settle time, compare it against the key the refetch was
+  issued for, and refuse (along with `result.isPlaceholderData`) rather than accept.
+- **`acceptedQueryUpdatedAtRef`'s dedupe compared `dataUpdatedAt` ALONE, with no key attached.** The
+  accept effect's own re-entrancy guard was "skip if this exact timestamp was already accepted" — but
+  the ref held a bare number, not a `{key, updatedAt}` pair. Two DIFFERENT committed searches' results
+  can legitimately carry the same `dataUpdatedAt` (react-query stamps it with `Date.now()`, 1ms
+  resolution; two fetches issued close together, or literally in the same test tick, collide easily) —
+  when they do, the guard treats the SECOND key's first-ever acceptance as though it were a duplicate
+  of the FIRST key's already-accepted result, and silently drops it forever (there is no future retry
+  trigger once the query itself stops fetching). The dropped key then relies entirely on the
+  key-mismatch fallback to `queryProjects` to look correct — which works right up until that key's own
+  cache entry is evicted or a later fetch for it fails, at which point the Dashboard shows the "Projects
+  are unavailable" error instead of the accepted-snapshot resilience the round-1 fix was for. Fix: key
+  the dedupe ref on `{key: dashboardKeyString, updatedAt: dataUpdatedAt}` and require BOTH to match
+  before skipping.
+
+**Two testing techniques worth keeping, both surfaced the hard way while proving these three failing
+first:**
+- **React's controlled `<select>` never assigns `.value`.** It sets `.selected` on each `<option>` to
+  match the desired value (`ReactDOMSelect`'s update path), on both mount and update. A DOM test that
+  patches `HTMLSelectElement.prototype.value`'s setter to catch a transient wrong render will silently
+  record nothing and look like the bug never fires. Patch `HTMLOptionElement.prototype.selected`
+  instead if you need to catch a value that gets corrected within the same commit.
+- **A wrongly-stamped `acceptedProjects` snapshot is not durably observable through rendered content by
+  itself**, because the key-mismatch fallback (`acceptedProjects?.key === dashboardKeyString ?
+  accepted : queryProjects`) shows the CORRECT cache content anyway whenever the stamped key doesn't
+  match the currently-viewed key — and the primary accept effect self-heals a wrong stamp the moment
+  its OWN key's data next changes with a genuinely different timestamp, which happens well within a
+  single `act()` flush. Proving the queued-refresh key-mismatch bug (item above) required both (a)
+  draining only MICROTASKS between two competing async resolutions — react-query's own cache write
+  (`Query.setData`) is visible to `queryClient.getQueryData` after a handful of microtask hops, but the
+  React re-render that would let the primary effect self-heal only happens after react-query's
+  subscriber-notify scheduler runs, which defers to a real `setTimeout(0)` macrotask — so resolving two
+  competing fetches with only microtask ticks in between lets you land the buggy accept BEFORE the
+  correct one has a chance to claim the dedupe slot, and (b) a scenario where the corruption's
+  consequence PERSISTS (the dedupe-poisoning chain above) rather than one where the very next normal
+  render quietly fixes it, since a persisted consequence is asserted with an ordinary settled-DOM check
+  while a merely-transient one is not.
+
+**Correction (Sol review round 3, item 1): the "self-heal needs a real macrotask" claim just above is
+wrong, and it is what let test (l) below stop discriminating.** `useQuery`'s `useSyncExternalStore`
+re-reads a FRESH cache snapshot on EVERY render, for ANY reason, not only when react-query's own
+`setTimeout(0)` notify fires — so the very re-render a wrong accept's own `setAcceptedProjects` causes
+already observes a sibling key's real, already-cached-but-un-notified data, and that sibling's OWN
+primary accept effect self-heals `acceptedProjects` back to its own key as a passive effect off THAT
+SAME render, no macrotask involved. Measured empirically (hop-by-hop instrumentation, one
+`await Promise.resolve()` logged per hop): a corrupted accept lands within ~4 microtask hops of the
+resolution that causes it; the correctly-keyed sibling's self-heal follows within ~9-10 — both inside
+ONE continuous flush. `act()` fully drains all pending work, including every subsequent effect, before
+its own call resolves, so there is no external "pause partway through" available from a SEPARATE,
+later `act()`/microtask-draining call, no matter how few hops it drains — by the time any later call is
+reached, both the corruption and its self-heal have already happened. Test (l) originally returned to
+search A in a separate `act()` call after resolving the stale refetch, on the theory that staying
+"microtask-only" (no `flush()`) would keep it ahead of the self-heal; empirically it did not, and the
+test passed even with its own guard deleted. The fix: return to A from INSIDE the SAME, still-open
+`act()` call that resolves the stale refetch — and assert the transient probe both DID see the
+corrupted value and DID see the eventual correct one, not just that it never saw the corrupted value,
+so a future change to how React writes controlled `<select>` selections can't make the assertion pass
+vacuously by observing nothing at all.
+
+A single fixed hop count is itself a second, narrower version of the same brittleness this correction
+exists to fix: a React or react-query upgrade that shifts exactly where the corrupted-accept/self-heal
+window falls would make a hard-coded hop count pass vacuously (landing outside the window on both
+sides) without the guard doing any work. Test (l) does not pick one — it sweeps EVERY hop count from 0
+to 16 inclusive (`it.each`, fresh render/`QueryClient` per iteration), a range chosen to generously
+bracket the measured window on both sides regardless of where a future build moves it. With the guard
+in place, every swept hop count passes. Disabling the guard (`Dashboard.tsx`'s
+`if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData) return;`) and
+re-running makes hop counts 5 through 16 fail — 5-9/11/13-15 because the probe never observed the
+sibling's self-heal back to "2" inside that return-to-A window (only the corrupted "3"), and 10/16
+because it observed both "3" and "2", i.e. the corrupted value was genuinely selected before the
+self-heal corrected it — both failures are the guard doing its job, for the right reason, not test
+noise. Hop counts 0-4 land before the corrupted accept happens at all, so they pass with or without
+the guard; that's expected and does not weaken the sweep, since the failing majority of the range is
+what proves the guard matters.
+
+## A key-equality guard is ABA-blind; read provenance from the cache entry, not the observer's result (#230, item 1)
+
+The round-2 fix above (`if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData)
+return;`) still had a gap: it re-checks the key AFTER the refetch settles, but only ever inspects
+`result` — `QueryObserver#fetch()`'s own resolved value, read from `this.#currentResult` at settle time.
+If the committed search goes A → B → A while a refetch issued for A is still in flight, by the time it
+settles `dashboardKeyStringRef.current` can be back to A (the key check passes) while `result` still
+carries B's rows and `result.isPlaceholderData` is `false` (B's data is real, not a placeholder) —
+because the observer's own current result was computed while its `#currentQuery` was still B. A
+key-equality check alone cannot see this: it compares "the key I issued this for" against "the key
+that's active now," but never checks whether the PAYLOAD in hand actually belongs to either one. Fix:
+once you have the key you issued a fetch for, don't trust anything the fetch's own promise resolves
+with — read that key's own cache entry directly (`queryClient.getQueryState(key)`) and act on ITS
+`status`/`data`/`dataUpdatedAt`. The cache entry is written by the underlying `Query#fetch()` inline, off
+the same settling promise, so it is always current for that key specifically, unaffected by whatever
+key the observer has since moved on to.
+
+**A flaky pass/fail correlated with same-millisecond timestamps means a dedupe is masking a bug, not
+that the bug is intermittent.** The hop sweep proving this (test (l)) went from "fails reliably at
+hop=4" to "passes even at hop=4" across otherwise-identical runs, with no code change — traced to
+`acceptedQueryUpdatedAtRef`'s own `(key, updatedAt)` dedupe (round 2, item 3, above): a fast synchronous
+test can complete multiple `Date.now()`-stamped fetches within the same real millisecond, and when it
+does, the dedupe treats the corrupted accept this test exists to catch as "already accepted" and
+silently no-ops it — the test then passes because the write never visibly happened, not because the
+guard held. The fix is not a looser assertion or a retry; it's removing the ambiguity the dedupe was
+exploiting: pin `Date.now()` with a monotonically-incrementing spy (a plain `mockReturnValue` collides
+by construction; a spy that increments on every call cannot) so every `dataUpdatedAt` the scenario
+produces is provably distinct, then re-run to confirm the failure is deterministic before fixing it.
+
+**Not every theoretically-corrupted branch is independently observable, and forcing a test through one
+that isn't produces a permanently-vacuous green, which is worse than no test.** The mirror-image bug —
+an observer's stale `result.isError` (reflecting a DIFFERENT key's real failure) wrongly read as the
+issuing key's own outcome — is real and the fix above closes it for both directions (success wrongly
+trusted, error wrongly trusted) via the same provenance read. But constructing a DOM test that catches
+the error direction specifically, across two different producers of this same queued refresh (a Priority
+save, and a Board move settling), found that Dashboard's OWN primary accept effect (`## Placeholder
+data must never be stamped as accepted under a new key`, round 1) already self-heals both of this
+bug's candidate observables — `acceptedProjects` and, less obviously, `movementSettlePending`/
+`recoveryReason` too, since that same effect unconditionally releases the settle barrier whenever it
+successfully accepts ANY fresh data for the currently-active key — the instant the Staff member returns
+to the original key with anything already cached, independent of whether the specific stale refetch
+under test has resolved yet at all. Swept 0-16 (matching test (l)'s bracket) and then 0-59 for the
+Board-move producer specifically; every hop count passed even with the whole guard+provenance block
+disabled, because `movementSettlePendingRef.current` reads `false` by the time the corrupted `.then()`
+even runs — the self-heal wins the race unconditionally in this construction, not just usually. Confirm
+a branch is actually reachable at the DOM layer (instrument and read the values the code branches on,
+the way test (m)'s `Date.now` collision was confirmed above) before spending a sweep's worth of effort
+trying to catch it there.

@@ -5,9 +5,12 @@
 // capability) before this refactor, and to pass after it.
 import { act, createElement, useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
+import { ApiError } from "../lib/api";
 import { locationStore, parseStaffLocation } from "../lib/router";
+import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import { dashboardSearchOf } from "@quincy/shared";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { TooltipProvider } from "@/components/reui/tooltip";
@@ -387,5 +390,141 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     expect(input.value).toBe("");
     const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
     expect(projectsCalls.at(-1)).not.toContain("q=");
+  });
+});
+
+// Sol review round 1, item 2. On a committed-query change, `useDashboardProjects`'s own
+// `placeholderData` (`lib/dashboard-projects.ts`) serves the PREVIOUS dataset while the new fetch is
+// in flight (`isPlaceholderData === true`). `Dashboard.tsx`'s accept effect used to stamp that
+// placeholder into `acceptedProjects` under the NEW `dashboardKeyString` regardless -- so if the new
+// fetch went on to fail, `hasAcceptedDashboard` suppressed the error state and the WRONG query's rows
+// stayed on screen as though they were the new key's own confirmed result.
+describe("Dashboard never accepts placeholder rows as the new committed query's own result (Sol review round 1, item 2)", () => {
+  it("(i) a committed search whose fetch is DEFERRED still renders the previous rows while pending, then the error state (not the previous rows) once it's REJECTED", async () => {
+    window.history.replaceState(null, "", "/?view=list");
+    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await settle();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    let rejectSmith!: (reason: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.startsWith("/api/projects") && path.includes("q=smith")) return new Promise((_resolve, reject) => { rejectSmith = reject; });
+      return Promise.resolve(path.startsWith("/api/projects") ? projectResponseFor(path) : {});
+    });
+
+    act(() => {
+      window.history.pushState(null, "", "/?view=list&q=smith");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+
+    // Still pending: no error/empty state, and the PREVIOUS rows are still what's rendered -- the
+    // fallback to `queryProjects` (placeholder data), not an accepted stamp.
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    // A 400 `ApiError`, not a bare `Error` -- `projectQueryRetry` (`lib/project-data.ts`) retries any
+    // non-`ApiError`/non-4xx failure (including a bare `Error`, and 5xx/408/429) up to twice with a
+    // real backoff delay, which this test's short, fake-timer-free `settle()` never reaches; a 4xx
+    // `ApiError` outside 408/429 is the one class `projectQueryRetry` never retries, so the query
+    // settles to `status: "error"` deterministically within one `settle()`.
+    await act(async () => { rejectSmith(new ApiError("Offline", 400)); await settle(); });
+
+    // `settle()`'s single `setTimeout(0)` hop can end before the 400 rejection's own re-render
+    // lands -- the same artefact commit 69d8ac4 documents on this file's sibling
+    // (`Dashboard-priority-coordinator.dom.test.tsx`'s test (m)): a rejection settling via
+    // `queryFn`'s own throw is one more microtask hop removed than a resolved value, occasionally
+    // enough to still be mid-flight (the PREVIOUS rows, no alert) when `settle()` returns. Confirmed
+    // under CPU load (4 parallel loops of this file): `host.querySelector('[role="alert"]')` reads
+    // null, not a wrong terminal state -- still the loading/previous-rows render from just above,
+    // one commit behind. Wait for the error alert to land before asserting on it.
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    });
+
+    // Rejected: the error state shows -- the previous (Alpha/Beta) rows must NOT still be presented
+    // as though they were smith's own result.
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="project-list-row"]')).toHaveLength(0);
+  });
+
+  it("(j) a committed search whose fetch is DEFERRED then RESOLVED replaces the previous rows with the new ones and accepts them", async () => {
+    // #230 Sol review round 2, item 4: a `QueryClientProvider` this test itself owns, rather than
+    // `Dashboard`'s own internal `StandaloneDashboard` fallback (`Dashboard.tsx`'s exported
+    // `Dashboard` uses whatever `QueryClientContext` it finds, falling back to a private one only
+    // when there is none) -- needed below to reach into the cache directly and prove ACCEPTANCE,
+    // not just that the new rows rendered (they could be rendering through the direct-query
+    // fallback, indistinguishable from acceptance by content alone -- see that item's own Dashboard.
+    // tsx fix and its test (m) for the full mechanism this reuses).
+    const testQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    window.history.replaceState(null, "", "/?view=list");
+    await act(async () => {
+      root.render(<QueryClientProvider client={testQueryClient}><ShellRouteHarness userId="user-1" role="admin" /></QueryClientProvider>);
+      await Promise.resolve();
+    });
+    await settle();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    let resolveSmith!: (value: unknown) => void;
+    let smithCalls = 0;
+    let rejectSecondSmith!: (reason: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.startsWith("/api/projects") && path.includes("q=smith")) {
+        smithCalls += 1;
+        if (smithCalls === 1) return new Promise((resolve) => { resolveSmith = resolve; });
+        // The forced re-fetch below, after smith's own cache entry is evicted.
+        return new Promise((_resolve, reject) => { rejectSecondSmith = reject; });
+      }
+      return Promise.resolve(path.startsWith("/api/projects") ? projectResponseFor(path) : {});
+    });
+
+    act(() => {
+      window.history.pushState(null, "", "/?view=list&q=smith");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    await act(async () => { resolveSmith(smithBoard); await settle(); });
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const rows = [...host.querySelectorAll('[data-testid="project-list-row"]')];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("Beta Street");
+
+    // Strengthened (#230 Sol review round 2, item 4): prove smith's row above was truly ACCEPTED,
+    // not merely rendered through the direct-query fallback that happens to carry the same content.
+    // Evict smith's own cache entry entirely (a legitimate, public `queryClient` operation -- the
+    // same thing a `gcTime` expiry does in production) and force a fresh fetch that FAILS. An
+    // accepted key's rows survive this (#232: Dashboard renders an accepted snapshot, not the
+    // cache) -- an UN-accepted key, with no cached data of its own left either, shows the error
+    // state instead, exactly as test (i) shows for a key that was never accepted at all.
+    const smithKey = dashboardProjectsKey("user-1", "admin", 0, false, "smith");
+    await act(async () => {
+      // Not awaited -- `resetQueries()`'s own promise resolves only once the refetch it triggers
+      // settles, and this test holds that refetch open deliberately (below).
+      void testQueryClient.resetQueries({ queryKey: smithKey, exact: true });
+      await settle();
+    });
+    expect(smithCalls).toBe(2);
+
+    await act(async () => { rejectSecondSmith(new ApiError("Offline", 400)); await settle(); });
+
+    // Same artefact as test (i)'s own fix above, and commit 69d8ac4's original on
+    // `Dashboard-priority-coordinator.dom.test.tsx`'s test (m): `settle()`'s single `setTimeout(0)`
+    // hop can end before this rejection's own re-render lands. Confirmed under CPU load (4 parallel
+    // loops of this file): the failure reads `rowsAfterEviction` as length 0, not a wrong row count
+    // or an unexpected alert -- the loading skeleton (no rows accepted-snapshot fallback painted
+    // yet, no alert either) one commit behind. Wait for either terminal state -- the error alert
+    // (buggy: B's accepted snapshot did not survive) or a row actually rendering (fixed) -- before
+    // asserting on which one it is.
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]') ?? host.querySelector('[data-testid="project-list-row"]')).not.toBeNull();
+    });
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const rowsAfterEviction = [...host.querySelectorAll('[data-testid="project-list-row"]')];
+    expect(rowsAfterEviction).toHaveLength(1);
+    expect(rowsAfterEviction[0]?.textContent).toContain("Beta Street");
   });
 });
