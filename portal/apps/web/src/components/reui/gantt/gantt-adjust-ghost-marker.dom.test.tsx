@@ -383,3 +383,49 @@ describe("dr2-219a HIGH #2: the Adjust ghost's title follows the SAME width-driv
     expect(titleSpan?.className).toContain("text-background");
   });
 });
+
+describe("dr3-219a MEDIUM #1: the INSIDE ghost title's truncating element is a CHILD of the flex/positioning box, not the box itself - `truncate` on a `display:flex` container does nothing (`text-overflow` does not apply to a flex container's own anonymous item), mirroring `gantt-bar.tsx:532`'s child-span pattern", () => {
+  it("the element carrying `truncate` is NOT the flex container that carries `inset-0`/`flex` - it is a non-flex child of it", async () => {
+    // Default (no barLabel="auto") config, same as the top "real Adjust session" test above: the
+    // title always renders INSIDE (`gantt.tsx`'s own default is `barLabel: "inside"`), so this
+    // exercises the exact box the MEDIUM defect lives in regardless of ghost width.
+    const event: GanttEvent = {
+      id: "clip-ghost",
+      title: "A Title Far Too Long To Fit This Narrow Ghost Box",
+      start: START,
+      end: END,
+      resourceId: "r1",
+    };
+    await render(
+      <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const bar = findBar("A Title Far Too Long To Fit This Narrow Ghost Box");
+    await focusBar(bar);
+    await keydown(bar, { key: " " });
+    await keydown(bar, { key: "ArrowRight" });
+
+    const ghost = ghostEl();
+    expect(ghost).not.toBeNull();
+
+    const flexBox = ghost!.querySelector("span");
+    expect(flexBox).not.toBeNull();
+    expect(flexBox!.className).toContain("inset-0");
+    expect(flexBox!.className).toMatch(/\bflex\b/);
+
+    const truncateEl = ghost!.querySelector(".truncate");
+    expect(truncateEl).not.toBeNull();
+    expect(truncateEl!.textContent).toBe("A Title Far Too Long To Fit This Narrow Ghost Box");
+    // The bug: at HEAD the SAME element carries both `flex`/`inset-0` AND `truncate` - a
+    // `display:flex` container's own `text-overflow` never applies to its anonymous box, so the
+    // class does nothing and the text clips mid-glyph with no ellipsis instead. The truncating
+    // element must be a DIFFERENT node from the flex/positioning box - a child of it, exactly the
+    // way `gantt-bar.tsx:532`'s resting-bar label already does it.
+    expect(truncateEl).not.toBe(flexBox);
+    expect(truncateEl!.className).not.toMatch(/\bflex\b/);
+    expect(truncateEl!.className).not.toContain("inset-0");
+    expect(flexBox!.contains(truncateEl!)).toBe(true);
+  });
+});

@@ -4402,8 +4402,14 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                     {ghost.title}
                   </span>
                 ) : (
-                  <span className="pointer-events-none absolute inset-0 flex items-center truncate px-1.5 font-medium">
-                    {ghost.title}
+                  // dr3-219a MEDIUM #1: `truncate` used to sit HERE, on this flex container itself
+                  // - `text-overflow` never applies to a `display:flex` box's own anonymous item, so
+                  // the class did nothing and a too-long title clipped mid-glyph with no ellipsis.
+                  // Every resting bar gets this right (`gantt-bar.tsx:532` puts `truncate` on a
+                  // CHILD span of its own flex shell); this mirrors that - `truncate` moves onto an
+                  // inner span, the outer keeps only the flex/positioning classes.
+                  <span className="pointer-events-none absolute inset-0 flex items-center px-1.5 font-medium">
+                    <span className="truncate">{ghost.title}</span>
                   </span>
                 ))
             }
