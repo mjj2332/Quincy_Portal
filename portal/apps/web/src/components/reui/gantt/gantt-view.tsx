@@ -2740,8 +2740,13 @@ function GanttView({
             tabIndex={0}
             data-slot="gantt-splitter"
             className={cn(
-              "group/gantt-splitter bg-border hover:bg-primary/60 data-resizing:bg-primary relative z-30 w-px shrink-0 cursor-col-resize touch-none outline-none",
-              "focus-visible:ring-ring/50 focus-visible:ring-2",
+              // #219 PR A fix (dr-219a HIGH #2): dropped `outline-none` and `focus-visible:ring-2
+              // focus-visible:ring-ring/50` - `styles/tokens/base.css:25`'s unlayered
+              // `:focus-visible { outline }` beats `@layer utilities`, so the pair ADDED a second
+              // focus indicator instead of replacing the global one (the two classes lived in
+              // separate `cn()` string args, but `cn()` concatenates them into one class list at
+              // runtime, so the pairing was real). The global outline now stands alone.
+              "group/gantt-splitter bg-border hover:bg-primary/60 data-resizing:bg-primary relative z-30 w-px shrink-0 cursor-col-resize touch-none",
               "after:absolute after:inset-y-0 after:-start-1 after:-end-1"
             )}
             onPointerDown={beginSplit}

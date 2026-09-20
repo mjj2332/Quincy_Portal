@@ -794,7 +794,12 @@ function GanttBar<TData = unknown>({
     },
     className: cn(
       "group/gantt-bar-group text-foreground @container relative flex w-full min-w-0 cursor-pointer touch-none items-center gap-1.5 overflow-hidden rounded-sm px-1.5 py-0.5 text-start leading-normal select-none",
-      "focus-visible:ring-ring/50 outline-none focus-visible:ring-2",
+      // #219 PR A fix (dr-219a HIGH #2): dropped `outline-none focus-visible:ring-2
+      // focus-visible:ring-ring/50` - `styles/tokens/base.css:25`'s unlayered `:focus-visible {
+      // outline }` beats `@layer utilities`, so this pair ADDED a second focus indicator instead
+      // of replacing the global one (the same trap `styles/tokens/reui.css:160-166` already
+      // records three times; see `components/reui/button.tsx`'s own divergence 5). The global
+      // outline now stands alone as this bar's focus indication.
       // the unfilled remainder has to be legible on its own - at /12 a bar
       // with a progress fill read as a floating segment with no basement
       "bg-(--gantt-event-color)/20 hover:bg-(--gantt-event-color)/30",
@@ -810,12 +815,14 @@ function GanttBar<TData = unknown>({
       "data-selected:bg-(--gantt-event-color)/30",
       // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
       // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
-      // the ordinary `focus-visible:ring` above even while the bar was visible, and once a step
+      // the bar's own focus ring at the time even while the bar was visible, and once a step
       // drove `state.drag`, a move gesture hides the bar entirely (`data-[drag-kind=move]:opacity-0`
       // above) - focus stayed on an invisible element with nothing to show for it. The
       // Adjust-specific treatment now lives on `gantt-view.tsx`'s own drag ghost
       // (`data-adjust-ghost`), which is never hidden and never competes with the bar's own focus
-      // ring; that ring (unchanged, above) remains this element's visible focus indication.
+      // indication. #219 PR A fix (dr-219a HIGH #2): that indication is now the global
+      // `:focus-visible` outline alone (`styles/tokens/base.css:25`) - the bar's own
+      // `focus-visible:ring` was removed above, so this comment no longer names a ring that exists.
       /* the diamond is the milestone's body, so the shell sheds its own
          tinted fill and centers the glyph on the instant */
       milestone &&

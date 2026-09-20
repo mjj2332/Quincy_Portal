@@ -13,6 +13,11 @@
  * (`styles/tokens/colors.css`) and every colour a Gantt surface needs already has a semantic role
  * (`bg-background`, `text-foreground`, `border-border`, the inline `--gantt-event-color`, …).
  *
+ * #219 PR A fix (dr-219a HIGH #2), additive detector: `outline-none` paired with a
+ * `focus-visible:ring-*` class anywhere in a vendored file — `styles/tokens/base.css:25`'s
+ * unlayered `:focus-visible { outline }` beats `@layer utilities`, so the pair ADDS a second focus
+ * indicator instead of replacing the global one. See that detector's own doc comment, below.
+ *
  * Each detector is a pure function over injected text, self-tested against a planted fixture that
  * PLANTS the violation it looks for — same convention as `harness-reachability.guard.test.ts` and
  * `styles/design-system-guards.test.ts` (`docs/lessons.md`: "a grep gate that cannot fail is not a
@@ -251,6 +256,66 @@ describe("guard: no non-token Tailwind palette class", () => {
       "semantic token. The brand is monochrome (styles/tokens/colors.css) — replace it with the",
       "Quincy role that already covers this ground (bg-background, text-foreground, bg-muted,",
       "border-border, ring-ring, the inline --gantt-event-color, …). Found in:",
+      ...offenders.map((name) => `  ${name}`),
+    ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 5 — `outline-none` paired with a `focus-visible:ring-*` class
+// ---------------------------------------------------------------------------
+// #219 PR A fix (dr-219a HIGH #2): `styles/tokens/base.css:25` declares an UNLAYERED
+// `:focus-visible { outline: … }`, which beats anything in `@layer utilities` (Tailwind's own
+// utility classes, including `focus-visible:ring-*`, live in that layer). So `outline-none`
+// paired with `focus-visible:ring-*` never REPLACES the global indicator the way it would in an
+// app with no such override — it ADDS a second one beside it. `styles/tokens/reui.css:160-166`
+// records this exact trap three times already (badge correction 2, button divergence 5, sidebar
+// `--sidebar-ring`); this is its fourth appearance, in the Gantt bar and the tree/timeline
+// splitter. File-level (not same-className) detection: the splitter's own two classes land in
+// SEPARATE string arguments to the same `cn()` call (`outline-none` ends one string, the ring
+// classes open the next) — `cn()` concatenates every arg into one class list at runtime, so the
+// pairing is real even though the two substrings never share a single string literal.
+const OUTLINE_NONE = /(?<![\w-])outline-none\b/;
+const FOCUS_VISIBLE_RING = /focus-visible:ring-/;
+
+function findOutlineRingPairs(files: Map<string, string>): string[] {
+  const offenders: string[] = [];
+  for (const [name, text] of files) {
+    if (OUTLINE_NONE.test(text) && FOCUS_VISIBLE_RING.test(text)) offenders.push(name);
+  }
+  return offenders.sort();
+}
+
+describe("guard: no `outline-none` paired with a `focus-visible:ring-*` class", () => {
+  it("self-test: the real detector fires when a file has BOTH classes (even in separate string args to the same cn()), not when it has only one, and not on a comment naming the trap", () => {
+    const planted = new Map([
+      [
+        "fixture-same-string.tsx",
+        stripComments('className="outline-none focus-visible:ring-2 focus-visible:ring-ring/50"'),
+      ],
+      [
+        "fixture-separate-args.tsx",
+        stripComments('cn("relative w-px outline-none", "focus-visible:ring-ring/50 focus-visible:ring-2")'),
+      ],
+      ["fixture-outline-only.tsx", stripComments('className="rounded-sm outline-none"')],
+      ["fixture-ring-only.tsx", stripComments('className="focus-visible:ring-2 focus-visible:ring-ring/50"')],
+      [
+        "fixture-clean.tsx",
+        stripComments(
+          '// outline-none and focus-visible:ring-2 mentioned only in this comment\nclassName="rounded-sm"'
+        ),
+      ],
+    ]);
+    expect(findOutlineRingPairs(planted)).toEqual(["fixture-same-string.tsx", "fixture-separate-args.tsx"].sort());
+  });
+
+  it("has no `outline-none` / `focus-visible:ring-*` pairing in the nine vendored files", () => {
+    const offenders = findOutlineRingPairs(readVendoredFiles());
+    expect(offenders, [
+      "outline-none paired with focus-visible:ring-* adds a SECOND focus indicator instead of",
+      "replacing the global one - styles/tokens/base.css:25's unlayered `:focus-visible { outline }`",
+      "already beats @layer utilities. Drop both classes and let the global outline stand, as",
+      "components/reui/button.tsx does. Found in:",
       ...offenders.map((name) => `  ${name}`),
     ].join("\n")).toEqual([]);
   });
