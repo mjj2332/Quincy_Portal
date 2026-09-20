@@ -206,6 +206,16 @@
  * the same token hairline treatment nine other bare-border sites in `gantt-view.tsx` already got
  * (that file's own header, dr-219a HIGH #3). The fill's own alpha is untouched — MEDIUM #5's own
  * calculation already proves it quieter than the active palette; raising it would undo that work.
+ *
+ * #219 PR A fix (dr2-219a MEDIUM #4, second design re-review pass): the r6 HIGH #1 fix above
+ * (`ring-ring/50 ring-2` for a completed+selected bar) did not, in fact, stay clear of the global
+ * `:focus-visible` outline as claimed — both paint at once when a completed+selected bar is ALSO
+ * the focused element (Tab to it, or the keyboard-adjust session's own focus hand-off), stacking
+ * two competing indicators. Fixed by gating the ring on `not-focus-visible:` too —
+ * `data-completed:data-selected:not-focus-visible:ring-2` — so the ring stands down for exactly as
+ * long as the native focus outline is showing, and returns the instant focus moves elsewhere
+ * (blur, or Escape closing the keyboard-adjust session) while the bar is still selected. Selection
+ * on a completed bar is therefore shown by the ring OR the focus outline, never both.
  */
 
 import {
@@ -934,7 +944,14 @@ function GanttBar<TData = unknown>({
       // completed+selected combination, not for every selected bar - a non-completed selected bar
       // already reads clearly via its own tinted `data-selected:bg-(--gantt-event-color)/30`
       // background above, which this fix leaves untouched.
-      "data-completed:data-selected:ring-2 data-completed:data-selected:ring-ring/50",
+      // #219 PR A fix (dr2-219a MEDIUM #4): `not-focus-visible:` added to both — the ring painted
+      // 0-2px outside the border box while the app's own unlayered `:focus-visible { outline }`
+      // (`styles/tokens/base.css:25`) painted 2-4px with a 2px offset, so a completed bar that was
+      // ALSO selected AND keyboard-focused showed both at once, the exact double-indicator HIGH #2
+      // above already removed for the ordinary case. The ring now never paints while this element
+      // is focus-visible — only the global outline does, keeping HIGH #2's "one indicator" promise
+      // for this narrower state too.
+      "data-completed:data-selected:not-focus-visible:ring-2 data-completed:data-selected:not-focus-visible:ring-ring/50",
       // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
       // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
       // the bar's own focus ring at the time even while the bar was visible, and once a step

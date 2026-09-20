@@ -287,8 +287,10 @@ describe("a completed bar that is ALSO selected keeps the neutral completed back
     // background (which the fix pins to the neutral completed treatment either way) — and that
     // means must be gated on the SAME two-attribute compound, not on `data-selected` alone,
     // otherwise it would just be the plain (already-correct) non-completed selected treatment
-    // and prove nothing about THIS bug.
-    const selectionIndicator = /data-completed:data-selected:(?:ring-|border-|font-)\S+/;
+    // and prove nothing about THIS bug. `(?:[\w-]+:)*` tolerates an extra modifier layered on
+    // later (dr2-219a MEDIUM #4 below adds `not-focus-visible:` between the compound and the
+    // utility) without caring WHICH extra modifier - this test's own job is narrower than that.
+    const selectionIndicator = /data-completed:data-selected:(?:[\w-]+:)*(?:ring-|border-|font-)\S+/;
     expect(bar.className).toMatch(selectionIndicator);
 
     // Hue-independence still holds for whatever that indicator is: it must not reference the
@@ -358,5 +360,100 @@ describe("a completed bar gets an explicit border hairline, distinct from its ow
       ...[0, 1, 2].map((i) => Math.abs(borderRgb[i]! - fillRgb[i]!)),
     );
     expect(maxChannelDelta).toBeGreaterThan(40);
+  });
+});
+
+/**
+ * #219 PR A fix (dr2-219a MEDIUM #4) — `data-completed:data-selected:ring-2 ring-ring/50` paints
+ * 0-2px outside the border box; the app's own unlayered `:focus-visible { outline }`
+ * (`styles/tokens/base.css:25`) paints 2-4px with a 2px offset. A completed bar that is selected
+ * AND keyboard-focused showed both at once - the exact double-indicator HIGH #2 above already
+ * removed for the ordinary case, reachable again in this narrower one. Fix: gate the ring on
+ * `not-focus-visible:` too, so it never paints while the element is focus-visible - only the
+ * global outline does.
+ *
+ * `hasActiveRingWidthUtility` resolves whether SOME `ring-<width>` utility on the element is
+ * actually active given its real `data-*` attributes and real focus-visible state - not just
+ * present in the (static) class string - the same reasoning `effectiveOpacity` in
+ * `gantt-adjust-ghost-marker.dom.test.tsx` documents at length: a class name proves what was
+ * WRITTEN, not what paints. Deliberately narrow, matching that helper: only `data-[attr=value]:`
+ * attribute modifiers and a `not-focus-visible:` pseudo-class modifier are modelled (AND-ed
+ * together per token) - the exact vocabulary this shell's own ring rule uses. Width, not colour
+ * (`ring-ring/50`): a colour utility with no width utility active paints nothing (box-shadow
+ * spread 0), so width alone answers "does a ring actually show".
+ */
+function hasActiveRingWidthUtility(el: Element): boolean {
+  const ATTR_VALUE_MODIFIER = /^data-\[([a-z-]+)=([a-z0-9-]+)\]$/;
+  // `data-completed:`/`data-selected:` are Tailwind's BOOLEAN data-variant shorthand - present iff
+  // the attribute is present at all (`[data-completed]`, no `=value`), unlike the bracket form
+  // above which requires a specific value.
+  const ATTR_PRESENT_MODIFIER = /^data-([a-z-]+)$/;
+  for (const token of el.className.split(/\s+/).filter(Boolean)) {
+    const parts = token.split(":");
+    if (!/^ring-\d+$/.test(parts[parts.length - 1]!)) continue;
+    const active = parts.slice(0, -1).every((modifier) => {
+      if (modifier === "not-focus-visible") return !el.matches(":focus-visible");
+      const valueMatch = ATTR_VALUE_MODIFIER.exec(modifier);
+      if (valueMatch) return el.getAttribute(`data-${valueMatch[1]}`) === valueMatch[2];
+      const presentMatch = ATTR_PRESENT_MODIFIER.exec(modifier);
+      if (presentMatch) return el.hasAttribute(`data-${presentMatch[1]}`);
+      return false;
+    });
+    if (active) return true;
+  }
+  return false;
+}
+
+describe("a completed+selected bar's selection ring never paints while the bar is :focus-visible - exactly one indicator at a time (#219 PR A, dr2-219a MEDIUM #4)", () => {
+  it("the ring class carries a not-focus-visible: gate, and resolves inactive while focused and active once blurred", async () => {
+    const event: GanttEvent = {
+      id: "done-selected-focused",
+      title: "Done Selected Focused",
+      start: START,
+      end: END,
+      resourceId: "r1",
+      color: "var(--signal-positive)",
+      progress: 100,
+    };
+    await render(
+      <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const bar = findBar("Done Selected Focused");
+    await act(async () => {
+      bar.click();
+      await Promise.resolve();
+    });
+    expect(bar.getAttribute("data-completed")).toBe("true");
+    expect(bar.getAttribute("data-selected")).toBe("true");
+
+    // The gate is present at all (static class list, present regardless of live state).
+    expect(bar.className).toMatch(
+      /data-completed:data-selected:not-focus-visible:ring-\d+/,
+    );
+
+    // Not focused: the ring resolves ACTIVE - selection must still be visible some other way when
+    // nothing competes with it.
+    expect(document.activeElement).not.toBe(bar);
+    expect(hasActiveRingWidthUtility(bar)).toBe(true);
+
+    // Focused (happy-dom's own `:focus-visible` match follows a real `.focus()` call, the same
+    // signal a keyboard Tab produces): the ring resolves INACTIVE - only the global outline paints.
+    await act(async () => {
+      bar.focus();
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(bar);
+    expect(bar.matches(":focus-visible")).toBe(true);
+    expect(hasActiveRingWidthUtility(bar)).toBe(false);
+
+    // Blurred again: the ring resolves active again - the gate is state-driven, not a one-way trip.
+    await act(async () => {
+      bar.blur();
+      await Promise.resolve();
+    });
+    expect(hasActiveRingWidthUtility(bar)).toBe(true);
   });
 });
