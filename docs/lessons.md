@@ -3364,3 +3364,52 @@ self-heal corrected it — both failures are the guard doing its job, for the ri
 noise. Hop counts 0-4 land before the corrupted accept happens at all, so they pass with or without
 the guard; that's expected and does not weaken the sweep, since the failing majority of the range is
 what proves the guard matters.
+
+## A key-equality guard is ABA-blind; read provenance from the cache entry, not the observer's result (#230, item 1)
+
+The round-2 fix above (`if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData)
+return;`) still had a gap: it re-checks the key AFTER the refetch settles, but only ever inspects
+`result` — `QueryObserver#fetch()`'s own resolved value, read from `this.#currentResult` at settle time.
+If the committed search goes A → B → A while a refetch issued for A is still in flight, by the time it
+settles `dashboardKeyStringRef.current` can be back to A (the key check passes) while `result` still
+carries B's rows and `result.isPlaceholderData` is `false` (B's data is real, not a placeholder) —
+because the observer's own current result was computed while its `#currentQuery` was still B. A
+key-equality check alone cannot see this: it compares "the key I issued this for" against "the key
+that's active now," but never checks whether the PAYLOAD in hand actually belongs to either one. Fix:
+once you have the key you issued a fetch for, don't trust anything the fetch's own promise resolves
+with — read that key's own cache entry directly (`queryClient.getQueryState(key)`) and act on ITS
+`status`/`data`/`dataUpdatedAt`. The cache entry is written by the underlying `Query#fetch()` inline, off
+the same settling promise, so it is always current for that key specifically, unaffected by whatever
+key the observer has since moved on to.
+
+**A flaky pass/fail correlated with same-millisecond timestamps means a dedupe is masking a bug, not
+that the bug is intermittent.** The hop sweep proving this (test (l)) went from "fails reliably at
+hop=4" to "passes even at hop=4" across otherwise-identical runs, with no code change — traced to
+`acceptedQueryUpdatedAtRef`'s own `(key, updatedAt)` dedupe (round 2, item 3, above): a fast synchronous
+test can complete multiple `Date.now()`-stamped fetches within the same real millisecond, and when it
+does, the dedupe treats the corrupted accept this test exists to catch as "already accepted" and
+silently no-ops it — the test then passes because the write never visibly happened, not because the
+guard held. The fix is not a looser assertion or a retry; it's removing the ambiguity the dedupe was
+exploiting: pin `Date.now()` with a monotonically-incrementing spy (a plain `mockReturnValue` collides
+by construction; a spy that increments on every call cannot) so every `dataUpdatedAt` the scenario
+produces is provably distinct, then re-run to confirm the failure is deterministic before fixing it.
+
+**Not every theoretically-corrupted branch is independently observable, and forcing a test through one
+that isn't produces a permanently-vacuous green, which is worse than no test.** The mirror-image bug —
+an observer's stale `result.isError` (reflecting a DIFFERENT key's real failure) wrongly read as the
+issuing key's own outcome — is real and the fix above closes it for both directions (success wrongly
+trusted, error wrongly trusted) via the same provenance read. But constructing a DOM test that catches
+the error direction specifically, across two different producers of this same queued refresh (a Priority
+save, and a Board move settling), found that Dashboard's OWN primary accept effect (`## Placeholder
+data must never be stamped as accepted under a new key`, round 1) already self-heals both of this
+bug's candidate observables — `acceptedProjects` and, less obviously, `movementSettlePending`/
+`recoveryReason` too, since that same effect unconditionally releases the settle barrier whenever it
+successfully accepts ANY fresh data for the currently-active key — the instant the Staff member returns
+to the original key with anything already cached, independent of whether the specific stale refetch
+under test has resolved yet at all. Swept 0-16 (matching test (l)'s bracket) and then 0-59 for the
+Board-move producer specifically; every hop count passed even with the whole guard+provenance block
+disabled, because `movementSettlePendingRef.current` reads `false` by the time the corrupted `.then()`
+even runs — the self-heal wins the race unconditionally in this construction, not just usually. Confirm
+a branch is actually reachable at the DOM layer (instrument and read the values the code branches on,
+the way test (m)'s `Date.now` collision was confirmed above) before spending a sweep's worth of effort
+trying to catch it there.
