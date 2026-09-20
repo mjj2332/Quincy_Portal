@@ -368,7 +368,7 @@ function extractClassChunks(text: string): string[] {
   const chunks: string[] = [];
   const literalRe = /className="([^"]*)"/g;
   let m: RegExpExecArray | null;
-  while ((m = literalRe.exec(text))) chunks.push(m[1]);
+  while ((m = literalRe.exec(text))) chunks.push(m[1] ?? "");
   const cnStart = /\bcn\(/g;
   while ((m = cnStart.exec(text))) {
     let depth = 1;
