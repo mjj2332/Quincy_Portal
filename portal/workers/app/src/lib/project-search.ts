@@ -1,6 +1,7 @@
 import { schema } from "@quincy/db";
 import { or, sql, type SQL } from "drizzle-orm";
 import { normalizeProductionCalendarSearch } from "@quincy/shared";
+import { chunked } from "./project-covers";
 
 /** Bounded normalized search length. Mirrors `productionCalendarFiltersSchema`'s own 200-code-point
  * cap (`packages/shared/src/production-calendar.ts:139`); kept as its own constant here because this
@@ -42,6 +43,42 @@ export function projectSearchSql(searchParam: string, columns: {
     `instr(lower(${columns.agent}), lower(${searchParam})) > 0`,
   );
   return `(${searchParam} = '' OR ${clauses.join("\n      OR ")})`;
+}
+
+/**
+ * Raw-D1 id-set matcher (#217, generalized to also serve the `external_editor` List path). Given
+ * an already-authorised id set, returns the subset whose row (optionally joined to
+ * `project_subtasks`) satisfies `projectSearchSql`'s clause. `p.id IN (...)` / `s.project_id IN
+ * (...)` IS the authorisation boundary here — every id this function is ever called with already
+ * passed its caller's own access check, so this introduces no second authorisation path.
+ * Chunked over D1's bound-parameter ceiling; the search term is `?1`, reused across every
+ * generated clause but bound once per chunk, with the authorised ids filling the remaining
+ * numbered slots.
+ *
+ * `idColumn`/`fromClause` let a caller point this at a different table shape entirely — the
+ * internal path's `projects p LEFT JOIN project_subtasks s`, or the external path's bare
+ * `project_subtasks s` (title-only: externals have no reason to match `p.agency_name` here, since
+ * their own list response already matches the DTO's display-name fields in JS).
+ */
+export async function matchingProjectIds(
+  database: D1Database,
+  authorizedIds: string[],
+  search: string,
+  options: { idColumn: string; fromClause: string; columns: Parameters<typeof projectSearchSql>[1] },
+): Promise<Set<string>> {
+  const matches = new Set<string>();
+  if (authorizedIds.length === 0 || search === "") return matches;
+  const clause = projectSearchSql("?1", options.columns);
+  for (const ids of chunked(authorizedIds)) {
+    const placeholders = ids.map((_, index) => `?${index + 2}`).join(", ");
+    const result = await database.prepare(`
+      SELECT DISTINCT ${options.idColumn} AS id FROM ${options.fromClause}
+      WHERE ${options.idColumn} IN (${placeholders})
+        AND ${clause}
+    `).bind(search, ...ids).all<{ id: string }>();
+    for (const row of result.results ?? []) matches.add(row.id);
+  }
+  return matches;
 }
 
 /** Drizzle predicate for /api/projects (#217). Undefined for an empty search, so callers can

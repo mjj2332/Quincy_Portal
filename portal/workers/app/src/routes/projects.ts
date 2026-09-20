@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { capDashboardSearchText, COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, stripUnsafeText, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -25,6 +25,7 @@ import { moveProjectStage } from "../lib/project-stage";
 import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-order";
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
+import { matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -200,6 +201,50 @@ function authorizedInternalBoardOrder(rows: Array<{ project: { id: string; stage
   return orderedProjectIdsByStage;
 }
 
+/**
+ * #217 -- the Dashboard's `q`. Unsafe characters (backslash, the C0 controls, DEL -- the same
+ * class `sanitizeDashboardCalendarSearch` strips client-side) come out first, then
+ * `normalizeProjectSearch` (the #218 shared helper) collapses whitespace and trims, then the
+ * result is capped to `PROJECT_SEARCH_MAX_LENGTH` code points -- the ACTIVE cap here is the
+ * shared Dashboard cap (`@quincy/shared`'s `DASHBOARD_SEARCH_MAX_CHARS`, below), not a
+ * locally-invented number that merely happens to agree with it. Not lowercased here: the match
+ * itself is case-insensitive via SQL `lower(...)` on both sides (`projectSearchSql`), so the
+ * ORIGINAL casing survives into the `search.query` echoed back in the response.
+ *
+ * #217 fix round 3, item 4 (Sol's whole-branch review): the strip and the cap now come from
+ * `@quincy/shared` (`stripUnsafeText`/`capDashboardSearchText`) instead of a hand-rolled local
+ * copy of each -- one definition shared with `staff-routes.ts`'s own serializer and the web
+ * store's commit path, so the 200-char cap in particular can never drift between them.
+ * `PROJECT_SEARCH_MAX_LENGTH` itself stays defined in `../lib/project-search.ts`, an unmodified
+ * #218 cherry-pick this file must not edit -- `project-search.test.ts` asserts it stays
+ * numerically equal to the shared `DASHBOARD_SEARCH_MAX_CHARS` cap instead.
+ */
+function normalizeProjectListSearch(raw: string): string {
+  const stripped = stripUnsafeText(raw);
+  const collapsed = normalizeProjectSearch(stripped);
+  return capDashboardSearchText(collapsed);
+}
+
+/**
+ * The internal path's own column/table shape for `lib/project-search.ts`'s shared
+ * `matchingProjectIds` (#217) -- `projects p LEFT JOIN project_subtasks s`, matching
+ * `p.agency_name`/`p.agent_name` directly (not the Calendar's own `COALESCE(agencies.name,
+ * ...)`), since the list response renders the denormalised columns.
+ */
+async function matchingInternalProjectIds(database: D1Database, authorizedIds: string[], search: string): Promise<Set<string>> {
+  return matchingProjectIds(database, authorizedIds, search, {
+    idColumn: "p.id",
+    fromClause: "projects p LEFT JOIN project_subtasks s ON s.project_id = p.id",
+    columns: {
+      checklistTitle: "s.title",
+      street: "p.street",
+      suburb: "COALESCE(p.suburb, '')",
+      agency: "COALESCE(p.agency_name, '')",
+      agent: "COALESCE(p.agent_name, '')",
+    },
+  });
+}
+
 type AssignmentCandidate = { id: string; name: string; email: string; globalRole: Role; active: true };
 type ProjectAssignmentCandidatesResponse = { photographers: AssignmentCandidate[]; editors: AssignmentCandidate[] };
 
@@ -350,7 +395,10 @@ export const projectsRoutes = new Hono<AppEnv>();
 projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const variant = await boardSchemaVariant(c.env.DB);
   const db = createDb(c.env.DB); const user = c.get("user");
-  if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role));
+  // #217: normalised once, shared by both roles below -- empty means current behaviour, byte for
+  // byte (no `search` key in the response, no id-set query, no filtering).
+  const search = normalizeProjectListSearch(c.req.query("q") ?? "");
+  if (user.role === "external_editor") return c.json(await listExternalProjects(c.env, user.id, user.role, search));
   const archived = c.req.query("archived") === "1" && roleHasCapability(user.role, "adminBackend");
   const archivedFilter = archived ? isNotNull(schema.projects.archivedAt) : isNull(schema.projects.archivedAt);
   const projectColumns = projectColumnsForVariant(variant);
@@ -358,13 +406,19 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const rows = user.role === "photographer"
     ? await base.where(and(archivedFilter, exists(db.select({ id: schema.projectMembers.id }).from(schema.projectMembers).where(and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, user.id)))), inArray(schema.projects.stageKey, PHOTOGRAPHER_VISIBLE_STAGES))).orderBy(...dashboardProjectOrder).all()
     : await base.where(archivedFilter).orderBy(...dashboardProjectOrder).all();
+  // `orderedRows` stays UNFILTERED: it feeds `authorizedInternalBoardOrder` below and `total`,
+  // both of which describe the full authorised set regardless of `q`. Filtering it here would
+  // make `boardRank` a rank-within-the-filtered-set and corrupt drag positions.
   const orderedRows = orderDashboardStreetTies(rows);
-  const projectIds = orderedRows.map(({ project }) => project.id);
+  const matchingIds = search === "" ? null : await matchingInternalProjectIds(c.env.DB, orderedRows.map(({ project }) => project.id), search);
+  const matchedRows = matchingIds === null ? orderedRows : orderedRows.filter(({ project }) => matchingIds.has(project.id));
+  // Enrichment (covers, editors) runs only over matches, not the full authorised set.
+  const projectIds = matchedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
   const editorsByProject = await activeEditorRefsByProject(db, projectIds);
   const enabled = await boardContractEnabled(c.env.DB, variant);
   return c.json({
-    projects: orderedRows.map((r) => projectStageForRole({
+    projects: matchedRows.map((r) => projectStageForRole({
       ...r.project,
       boardRevision: variant === "tb5a_0037" && "boardRevision" in r.project ? Number(r.project.boardRevision) : 0,
       coverAssetId: storedByProject.get(r.project.id) ?? automaticByProject.get(r.project.id) ?? null,
@@ -377,8 +431,11 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
     }, user.role)),
     board: {
       contractEnabled: enabled,
+      // Built from the UNFILTERED `orderedRows` -- the authorised Board-order envelope, not a
+      // rank-within-the-filtered-set.
       orderedProjectIdsByStage: variant === "tb5a_0037" && !archived ? authorizedInternalBoardOrder(orderedRows, user.role) : {},
     },
+    ...(matchingIds === null ? {} : { search: { query: search, matching: matchedRows.length, total: orderedRows.length } }),
   });
 }));
 projectsRoutes.get("/project-assignment-candidates", terminalRoute("/project-assignment-candidates", async (c) => {

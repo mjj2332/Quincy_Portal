@@ -1,6 +1,6 @@
-import { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute } from "@quincy/shared";
+import { dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute } from "@quincy/shared";
 
-export { parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute };
+export { dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, type DashboardCalendarFacetRoute, type DashboardViewRoute, type DashboardRoute, type StaffRoute };
 
 export type HistorySource = {
   location: Pick<Location, "pathname" | "search">;
@@ -42,6 +42,44 @@ const browserHistory = typeof window === "undefined" ? null : createHistoryAdapt
 export function locationStore() {
   if (!browserHistory) throw new Error("Browser history is unavailable.");
   return browserHistory;
+}
+
+/**
+ * #217 fix round 5, item 3 (Sol re-review, BLOCKER). Explicit sign-out (`NavigationRail.tsx`'s own
+ * `handleSignOut`) leaves the URL alone: `App.tsx` hands that same URL to `SignIn`, and
+ * `lib/auth.ts`'s `beginSignIn` preserves it as the OAuth callback / sign-in return path, so
+ * signing out at `/?q=smith` and signing in as ANYONE re-applies `smith` (`Dashboard.tsx`'s
+ * `committedQuery` is derived straight from the route at render, `dashboardSearchOf(parsedRoute)`
+ * -- #217 build step 4 -- so it shows for a genuine deep link exactly the same way it would here).
+ * Deep links must keep working — a shared `/?q=smith` URL opened while signed OUT should
+ * still apply after sign-in — so this is deliberately NOT a parse-level or sign-in-time strip; only
+ * the explicit sign-out ACTION scrubs the CURRENT location's own Dashboard search, through the
+ * shared route parse/serialize (never string surgery, so it can never drift from what the parser
+ * itself considers the search field on each shape): `q` on the bare/List/Kanban/Calendar-intent
+ * arms, the facet's own `search` on the canonical Calendar URL. A location that isn't a Dashboard
+ * route (nothing here carries a search) is returned unchanged.
+ */
+export function stripDashboardSearchFromLocation(location: string): string {
+  const route = parseStaffLocation(location);
+  if (route.kind !== "dashboard") return location;
+  // #217 build, step 2: `dashboardSearchOf` is the one accessor for "what committed search does
+  // this route carry" — reading through it, rather than reaching into `route.calendar.search`
+  // directly a second way, is what keeps this in step with every other render-time reader of a
+  // route. Already-empty is a real, safe no-op here (unlike the non-calendar arm just below):
+  // `route` came from parsing `location` itself, so re-serialising an ALREADY-`""` calendar search
+  // back through `staffPathFor` reproduces the exact same canonical string `location` already is —
+  // this only skips a redundant round trip, it does not change what gets returned.
+  if ("calendar" in route) {
+    if (dashboardSearchOf(route) === "") return location;
+    return staffPathFor({ kind: "dashboard", calendar: { ...route.calendar, search: "" } });
+  }
+  // #217 fix round 6, item 2 (Sol re-review, NIT). Always re-serialises from the PARSED route,
+  // never the raw input string — a whitespace-only `q` (`/?q=+++`) normalises to NO search at
+  // parse time (#217 fix round 5, item 4), so `route.search` is already `undefined` here and an
+  // early "already stripped, return `location` unchanged" path handed back the literal `q=+++`
+  // param untouched. `staffPathFor` on the searchless route is what actually removes it.
+  const { search: _search, ...rest } = route;
+  return staffPathFor(rest);
 }
 
 export type LinkClick = {

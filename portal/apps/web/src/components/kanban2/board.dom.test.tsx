@@ -320,6 +320,20 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(wrap!.className).not.toContain("[touch-action:none]");
   });
 
+  // #217 design-review, item 5: a disabled grip painted nothing (only `disabled` was set, no
+  // class), so a searched/locked Board's grip looked identical whether draggable or not. The
+  // handle's class string now carries the SAME quiet-colour technique `quincy/icon-button.tsx`
+  // documents for a disabled affordance -- `bg-surface-sunken`, never an opacity multiplier
+  // (TB8-06/TB8-07 §2.1) -- plus `cursor-not-allowed`.
+  it("paints the drag handle as disabled, not silently (#217 design-review, item 5)", async () => {
+    await renderBoard({ canPrioritize: true, sameStageReorderEnabled: false, canMoveStages: false });
+    const handle = host.querySelector<HTMLButtonElement>('[data-testid="kanban2-card-handle"]');
+    expect(handle, "no drag handle rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(handle!.disabled).toBe(true);
+    expect(handle!.className).toContain("disabled:bg-surface-sunken");
+    expect(handle!.className).toContain("disabled:cursor-not-allowed");
+  });
+
   // #83: the last assertion of `screens/dashboard-routing.test.ts`'s retired card-markup suite
   // (`expect(html).not.toContain("draggable=")`). The defect is specific: the native HTML5 drag
   // the attribute switches on is not dnd-kit's, and a card carrying it hands the browser a

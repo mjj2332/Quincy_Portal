@@ -35,15 +35,16 @@
  * components keep navigating through `locationStore()`. The adapter subscription in
  * `staff-history.ts` is how the router hears about the writes they make.
  */
-import { createContext, use, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, use, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
-import { roleHasCapability, type DashboardCalendarState, type Role } from "@quincy/shared";
+import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role } from "@quincy/shared";
 import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from "./router";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
-import { buildStaffNavigation } from "./staff-navigation";
+import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
 import { DASHBOARD_VIEW_KEY, readRememberedDashboardView } from "../screens/dashboard-helpers";
 import { readDashboardView, subscribeDashboardView } from "./dashboard-view-store";
+import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch, syncDashboardSearchDraftFromLocation } from "./dashboard-search-store";
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
@@ -98,6 +99,77 @@ function NotAvailable() {
       </div>
     </main>
   );
+}
+
+/** `staff-navigation.ts`'s own Dashboard child ids, mapped back onto the view they mean — kept
+ * here rather than exported from that module, since ids are its own implementation detail. */
+const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
+  "dashboard-list": "list",
+  "dashboard-kanban": "kanban",
+  "dashboard-calendar": "calendar",
+};
+
+/**
+ * #217 fix round 3, item 1 (Sol's whole-branch review). `staff-navigation.ts` stays pure — no
+ * search-store or route-serializer knowledge — so this is where the rail's Dashboard child hrefs
+ * get the LIVE search grafted back on, after the pure model has already built them. Reads
+ * `draft`, not `query`: the input already renders the draft directly, and building the href from
+ * the same value means a rail click mid-debounce (before the 300ms commit) still carries the
+ * in-progress text, with no separate "flush before navigating" step needed here (unlike
+ * `selectView`'s in-app switch, which must flush because it reads the draft, normalised, to build
+ * its `history.push` synchronously — URL-authoritative committed query; the store holds
+ * draft/timer/owner only).
+ *
+ * List/Kanban map the search onto `q` directly, through `staffPathFor`. Calendar does too now
+ * (#217 fix round 4, item 1, BLOCKER): the bare intent became a legal spelling for `q`
+ * (`staff-routes.ts`'s `DashboardCalendarIntentRoute`) specifically because a native navigation —
+ * keyboard Enter (`InternalLink`'s own `shouldInterceptInternalLink` only claims a genuine
+ * left-click), cmd/middle-click, "open in new tab", a reload — loads `href` as a fresh document
+ * with a COLD, empty search store, and the old bare-intent href lost the search on every one of
+ * those paths. When `dashboardCalendar` is non-null (the CURRENT route is already a calendar facet
+ * with known date/subview/filters), the href stays the full facet URL, mapping the search onto its
+ * `search` field the same way `selectView` does when switching INTO Calendar. Resolving those
+ * date/subview preferences here for the general case (arriving at Calendar from List/Kanban/
+ * elsewhere, no facet state to carry forward) was rejected for the same reason `staff-routes.ts`'s
+ * own docblock gives: it would put that preference-resolution logic in two places — `Dashboard.tsx`'s
+ * own canonicaliser is still what owns the one full-facet rewrite for THAT case, reading the search
+ * this href now carries on the intent itself.
+ *
+ * Neither branch pre-normalises `query` before handing it to `staffPathFor`/`calendarPathFor`
+ * (#217 fix round 4, item 2, do-with-1): both now run every `search` through the one shared
+ * `normalizeDashboardSearchText` themselves, so a raw, not-yet-committed draft (`"  smith   street
+ * "`) reaches the URL exactly as normalised as a commit through the store would write it — no
+ * caller-side pre-processing left to get out of sync with it. URL-authoritative committed query;
+ * the store holds draft/timer/owner only.
+ */
+function withLiveDashboardSearch(navigation: StaffNavigation, query: string, dashboardCalendar: DashboardCalendarState | null): StaffNavigation {
+  function hrefFor(child: StaffNavigationItem): string {
+    const view = DASHBOARD_CHILD_VIEW[child.id];
+    if (view === "list" || view === "kanban") return staffPathFor({ kind: "dashboard", dashboardView: view, ...(query ? { search: query } : {}) });
+    if (view === "calendar") {
+      if (dashboardCalendar) return staffPathFor({ kind: "dashboard", calendar: { ...dashboardCalendar, search: query } });
+      return staffPathFor({ kind: "dashboard", dashboardView: "calendar", ...(query ? { search: query } : {}) });
+    }
+    return child.href;
+  }
+  // #217 fix round 8, Sol review, item 1 (HIGH). The top-level "Dashboard" item
+  // (`staff-navigation.ts`'s `id: "dashboard"`) is itself a real, clickable rail link
+  // (`NavigationRail.tsx`), not just a container for the children `hrefFor` above already covers.
+  // Left bare `/`, clicking it from off-Dashboard landed on a q-less URL that `ShellRoute`'s own
+  // sync then treated as authoritative and used to clear an in-progress draft that had never been
+  // committed anywhere else. Built with the same `staffPathFor` the List/Kanban children use, so an
+  // empty draft still yields the bare `/` this link has always had.
+  return {
+    ...navigation,
+    groups: navigation.groups.map((group) => ({
+      ...group,
+      items: group.items.map((item) => !item.children ? item : {
+        ...item,
+        ...(item.id === "dashboard" ? { href: staffPathFor({ kind: "dashboard", ...(query ? { search: query } : {}) }) } : {}),
+        children: item.children.map((child) => ({ ...child, href: hrefFor(child) })),
+      }),
+    })),
+  };
 }
 
 /**
@@ -165,9 +237,35 @@ function ShellRoute() {
     if (blocked) history.replace("/");
   }, [blocked, history]);
 
+  // #217 build, step 3: the ONE draft-from-URL sync call, replacing every render-side adoption
+  // path `Dashboard.tsx` used to own (step 4 deletes that machinery). `useLayoutEffect`, not
+  // `useEffect` -- same reasoning `ShellSearch.tsx`'s own ownership-claim effect already documents:
+  // React flushes every layout effect in a commit, tree-wide, before any passive effect in that
+  // same commit, so the draft is never one paint behind the URL that governs it. Keyed on
+  // `completeLocation` (not just `route`, though the two always change together here) and
+  // `user.id` -- the exact two inputs `syncDashboardSearchDraftFromLocation` itself takes -- so a
+  // location OR a principal change (impersonation start/stop; `App.tsx` remounts this component's
+  // whole subtree for a principal change via its own `key`, but the layout effect ordering
+  // guarantee is what matters for a location change alone) both run it. A non-Dashboard route's
+  // lack of `q` is not authoritative (an Enter on the rail must still navigate with whatever text
+  // is showing, `ShellSearch.tsx`'s own off-Dashboard Enter path) -- this only calls the store when
+  // `route.kind === "dashboard"`, never unconditionally.
+  useLayoutEffect(() => {
+    if (route.kind !== "dashboard") return;
+    syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), user.id);
+  }, [completeLocation, route, user.id]);
+
+  // #217 fix round 5, item 5 (Sol re-review, SHOULD-FIX). Calendar itself stays inaccessible
+  // either way, but the redirect used to drop straight to "/", discarding whatever `q` the blocked
+  // URL carried -- unlike every OTHER q-carrying redirect in this app. `route` already has the
+  // parsed search on either Calendar shape (`calendar` in route: the facet's own `search` field;
+  // `dashboardView === "calendar"`: the intent's own optional `search`), so this reads it from
+  // there rather than re-parsing anything.
   useEffect(() => {
-    if (calendarBlocked) history.replace("/");
-  }, [calendarBlocked, history]);
+    if (!calendarBlocked || route.kind !== "dashboard") return;
+    const search = "calendar" in route ? route.calendar.search : "dashboardView" in route ? route.search : undefined;
+    history.replace(staffPathFor({ kind: "dashboard", ...(search ? { search } : {}) }));
+  }, [calendarBlocked, history, route]);
 
   function navigate(path: string, message?: string, replace = false) {
     if (message) setNotice({ path, message });
@@ -182,13 +280,26 @@ function ShellRoute() {
   // must not come back. The remembered preference remains the pre-mount fallback, for the single
   // frame before any Dashboard instance has published.
   const publishedDashboardView = useSyncExternalStore(subscribeDashboardView, readDashboardView, () => null);
-  const navigation = useMemo(() => buildStaffNavigation(
+  const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
+  // #217 fix round 3, item 1: the rail's own Dashboard child links, read here (not inside
+  // `staff-navigation.ts`, which stays pure) so a rail click carries the live search the same way
+  // the in-Dashboard view switcher already does. `ShellSearch` reads the identical store, so the
+  // input and every rail href this produces can never disagree about what "the current q" is.
+  // #217 fix round 5, item 1 (Sol re-review, BLOCKER): principal-scoped -- an unscoped read here
+  // could serialise the PREVIOUS principal's draft into the rail's own hrefs for a render pass
+  // (worst on the narrow layout with the Sheet closed, where no `ShellSearch` instance is even
+  // mounted to make the layout-effect ownership claim).
+  const dashboardSearchDraft = useSyncExternalStore(
+    subscribeDashboardSearch,
+    () => getDashboardSearchSnapshotForPrincipal(user.id),
+    () => getDashboardSearchSnapshotForPrincipal(user.id),
+  ).draft;
+  const navigation = useMemo(() => withLiveDashboardSearch(buildStaffNavigation(
     route,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
     { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar") },
     publishedDashboardView,
-  ), [canAccessAdmin, publishedDashboardView, route, user.role]);
-  const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
+  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, route, user.role]);
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
@@ -201,7 +312,7 @@ function ShellRoute() {
 
   return (
     <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
-      <RailedShell navigation={navigation} user={user}>{routedContent}</RailedShell>
+      <RailedShell navigation={navigation} user={user} principalId={user.id}>{routedContent}</RailedShell>
     </div>
   );
 }

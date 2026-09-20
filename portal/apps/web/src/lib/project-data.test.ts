@@ -210,6 +210,36 @@ describe("project data key and request seam", () => {
     stopDashboard(); stopCalendar(); runtime.dispose(); queryClient.clear();
   });
 
+  it("dashboardSearchOnly scopes in-tab convergence to dashboard-projects queries carrying a non-empty q, but still broadcasts (#217 fix round 1, item 4)", async () => {
+    const queryClient = client();
+    const runtime = new ProjectQueryRuntime(queryClient, "search-only-coordinator");
+    const bareKey = ["dashboard-projects", "principal", "admin", 0, { archived: false, q: "" }] as const;
+    const searchedKey = ["dashboard-projects", "principal", "admin", 0, { archived: false, q: "smith" }] as const;
+    queryClient.setQueryData(bareKey, []);
+    queryClient.setQueryData(searchedKey, []);
+    const stopBare = new QueryObserver(queryClient, { queryKey: bareKey, queryFn: () => Promise.resolve([]), staleTime: Infinity }).subscribe(() => undefined);
+    const stopSearched = new QueryObserver(queryClient, { queryKey: searchedKey, queryFn: () => Promise.resolve([]), staleTime: Infinity }).subscribe(() => undefined);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const publish = vi.spyOn(runtime, "publish");
+
+    await invalidateProjectSurfaces(queryClient, {
+      projectId: "p",
+      resources: [{ kind: "subtasks" }, { kind: "activity" }],
+      dashboard: true,
+      calendar: false,
+      gantt: false,
+      dashboardSearchOnly: true,
+    });
+
+    expect(invalidate.mock.calls.map(([options]) => options)).toEqual(
+      expect.arrayContaining([{ queryKey: searchedKey, exact: true, refetchType: "active" }]),
+    );
+    expect(invalidate.mock.calls.some(([options]) => JSON.stringify(options?.queryKey) === JSON.stringify(bareKey))).toBe(false);
+    // Cross-tab still publishes the same generic message regardless of the local scoping.
+    expect(publish.mock.calls.some(([message]) => message.type === "dashboard-board-invalidated")).toBe(true);
+    stopBare(); stopSearched(); runtime.dispose(); queryClient.clear();
+  });
+
   it("suppresses only the producer surface's in-tab invalidation while still broadcasting it", async () => {
     const queryClient = client();
     const runtime = new ProjectQueryRuntime(queryClient, "producer-coordinator");

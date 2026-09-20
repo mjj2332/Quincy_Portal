@@ -16,11 +16,22 @@ import { Input } from "@/components/reui/input"
 //    Enhanced / HIG, not a spacing token), `rounded-[var(--radius-sm)]`, a hairline
 //    `border-border`, and `bg-card`.
 //
-// 2. Focus and hover are re-pointed from nova's ring to Quincy's, and moved from `has-[…]` onto
-//    `focus-within:`. Both spellings mean the same thing here, but `focus-within` is what the
-//    shipped search label uses, and matching it keeps the swap a component exchange rather than a
-//    behaviour question. `border-primary` plus a real `outline` (not a ring) is Quincy's focus
-//    treatment; `hover:border-border-hover` is the resting affordance nova has no equivalent for.
+// 2. Focus and hover are re-pointed from nova's ring to Quincy's. `border-primary` plus a real
+//    `outline` (not a ring) is Quincy's focus treatment; `hover:border-border-hover` is the
+//    resting affordance nova has no equivalent for.
+//
+//    The SELECTOR is `has-[input:focus-visible]:`, not `focus-within:` (#217 design-fix round 2,
+//    item 2). `focus-within` originally matched the shipped search label this box replaces, but
+//    it fires on ANY focused descendant — including an `InputGroupButton` (the combobox
+//    trigger/clear this file restored in #202) — so a focused BUTTON painted its own global
+//    `:focus-visible` outline (`tokens/base.css:25`, unsuppressed on `Button` — see
+//    `reui/button.tsx`'s own divergence 5) AND this wrapper's `focus-within` outline at once: two
+//    indicators on one focused control. `has-[input:focus-visible]:` scopes the wrapper's own
+//    treatment to the INPUT specifically, so a focused button now shows exactly its own
+//    indicator and nothing from the wrapper. The input's own global outline stays suppressed by
+//    `InputGroupInput`'s `focus-visible:!outline-none` below (divergence 3 lower down), so the
+//    wrapper's `has-[input:focus-visible]:outline-*` remains the field's single visible
+//    indicator when the INPUT itself is focused — unchanged from before this item.
 //
 // 3. `outline-none` is REMOVED, the same correction #54 applied to `reui/button.tsx` and
 //    `reui/input.tsx`. It is dead — `tokens/base.css:25` declares an unlayered
@@ -57,7 +68,7 @@ function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="input-group"
       role="group"
       className={cn(
-        "group/input-group relative flex min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 items-center rounded-[var(--radius-sm)] border border-border bg-card transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover focus-within:border-primary focus-within:outline-[length:var(--border-width-bold)] focus-within:outline-solid focus-within:outline-ring focus-within:outline-offset-2 has-disabled:bg-surface-sunken has-disabled:cursor-not-allowed has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3",
+        "group/input-group relative flex min-h-[38px] max-[721px]:min-h-[44px] w-full min-w-0 items-center rounded-[var(--radius-sm)] border border-border bg-card transition-[border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:border-border-hover has-[input:focus-visible]:border-primary has-[input:focus-visible]:outline-[length:var(--border-width-bold)] has-[input:focus-visible]:outline-solid has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-offset-2 has-disabled:bg-surface-sunken has-disabled:cursor-not-allowed has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3",
         className
       )}
       {...props}
@@ -122,7 +133,14 @@ function InputGroupAddon({
 // group wrapper, which is already painting them. `focus-visible:ring-0` stays: ReUI's ring is a
 // box-shadow, so suppressing it here does NOT suppress a focus indicator — `tokens/base.css`'s
 // unlayered `:focus-visible { outline: … }` still paints on the focused input, and the wrapper
-// draws its own `focus-within` outline besides.
+// draws its own outline besides — TWO indicators on one field (#217 design-review, item 4).
+// `focus-visible:!outline-none` below is the fix, and the `!` is required for the SAME reason
+// `quincy/icon-button.tsx`'s own `focus-visible:!outline` needs it in the other direction:
+// `tokens/base.css:25`'s `:focus-visible { outline: … }` is unlayered author CSS, which beats
+// Tailwind's `@layer utilities` regardless of source order or specificity, so a bare
+// `outline-none` here would never suppress it. The group's own `has-[input:focus-visible]:outline-*`
+// (scoped to the INPUT specifically, not `focus-within:` — #217 design-fix round 2, item 2, divergence
+// 2 above) is Tailwind utility-layer, unaffected, and remains the field's single visible indicator.
 //
 // Type is spelled as four LONGHANDS (`text-sm`, `leading-`, `font-[…]` weight, `font-[family-name:…]`)
 // and deliberately NOT as the `[font:var(--weight-regular)_var(--text-sm)/…]` shorthand the shipped
@@ -142,7 +160,7 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        "flex-1 min-h-0 max-[721px]:min-h-0 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 focus-visible:border-0 px-[var(--space-3)] py-[var(--space-2)] max-[721px]:py-[var(--space-3)] text-foreground text-sm leading-[var(--leading-normal)] font-[var(--weight-regular)] font-[family-name:var(--font-sans)] placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100 aria-invalid:ring-0 aria-invalid:border-0",
+        "flex-1 min-h-0 max-[721px]:min-h-0 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 focus-visible:border-0 focus-visible:!outline-none px-[var(--space-3)] py-[var(--space-2)] max-[721px]:py-[var(--space-3)] text-foreground text-sm leading-[var(--leading-normal)] font-[var(--weight-regular)] font-[family-name:var(--font-sans)] placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100 aria-invalid:ring-0 aria-invalid:border-0",
         className
       )}
       {...props}

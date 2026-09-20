@@ -202,3 +202,16 @@ export function formatDashboardDate(value: string | null): string {
   if (!parsed) return value;
   return `${parsed.day} ${MONTHS[parsed.month - 1]} ${parsed.year}`;
 }
+
+/**
+ * #217. Where focus goes after the search chip's Clear button unmounts itself: a control that
+ * SURVIVES the clear. The active view button first; it is absent in archived scope and
+ * unfocusable while disabled (`interactionBlocked`), so the active scope button is next, and the
+ * toolbar itself (`tabIndex={-1}`) is the target that always exists.
+ */
+export function focusTargetAfterClearingSearch(toolbar: HTMLElement | null): HTMLElement | null {
+  if (!toolbar) return null;
+  return toolbar.querySelector<HTMLElement>('[data-focus-key^="dashboard-view-"][data-active="true"]:not(:disabled)')
+    ?? toolbar.querySelector<HTMLElement>("button.is-active:not(:disabled)")
+    ?? toolbar;
+}

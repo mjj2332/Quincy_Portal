@@ -190,8 +190,8 @@ const UTILITY_EXACT = new Set([
   "flex", "grid", "block", "inline", "inline-block", "inline-flex", "hidden", "contents", "isolate",
   "absolute", "relative", "fixed", "sticky", "static", "border", "rounded", "shrink", "grow",
   "transition", "shadow", "ring", "outline", "truncate", "filter", "blur", "peer", "group",
-  "italic", "underline", "uppercase", "lowercase", "capitalize", "antialiased", "invisible",
-  "visible", "sr-only", "not-sr-only",
+  "italic", "underline", "uppercase", "lowercase", "capitalize", "normal-case", "antialiased",
+  "invisible", "visible", "sr-only", "not-sr-only",
 ]);
 
 /**
@@ -679,6 +679,11 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ["group-header", false],
     ["group", true],
     ["contents-panel", false],
+    // `normal-case` (#217 design-fix round 2, item 4) is exact, not a prefix: the query span's
+    // own `normal-case` class must classify as a utility, but a lookalike Quincy BEM name sharing
+    // its stem must not silently ride along as one.
+    ["normal-case", true],
+    ["normal-case-foo", false],
   ])("isUtilityClass(%j) === %s — prefixes are bounded", (token, expected) => {
     expect(isUtilityClass(token)).toBe(expected);
   });

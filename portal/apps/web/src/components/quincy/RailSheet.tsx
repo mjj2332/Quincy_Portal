@@ -22,18 +22,26 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
  * inside the popup; this does the same, so the account menu portals inside the Sheet instead of
  * past it.
  *
- * `finalFocus` (#122 P3) forwards straight through to `SheetContent`'s own `...props` spread onto
- * `SheetPrimitive.Popup` — `Dialog.Popup` already accepts it (`@base-ui/react/dialog`), so no edit
- * to `reui/sheet.tsx` is needed. `RailedShell` uses it to suppress the Sheet's own close-focuses-
- * the-trigger behaviour for exactly one close: a ⌘K search tap inside the Sheet needs the
- * Dashboard's own input focused instead, once it mounts, not the (about to vanish) sheet trigger.
+ * `finalFocus`/`initialFocus` forward straight through to `SheetContent`'s own `...props` spread
+ * onto `SheetPrimitive.Popup` — `Dialog.Popup` already accepts both (`@base-ui/react/dialog`), so
+ * no edit to `reui/sheet.tsx` is needed. `finalFocus` is unused since #217's rail-input rewrite
+ * retired the one-shot suppression it existed for (#122 P3); kept as generic plumbing. `initialFocus`
+ * (#217 fix round 1, item 6) is how `RailedShell` sends ⌘K's search focus into a Sheet that was
+ * just opened for it — the Sheet's own default open-focus behaviour (an animation-completion wait
+ * an ancestor's plain `useEffect` cannot reliably out-race) is the reason this goes through Base
+ * UI's own mechanism rather than an imperative `.focus()` call, same as `ShellSearch`'s `collapsed`
+ * Popover already does. `RailedShell` returns `true` (not `undefined` — `@base-ui/react/dialog`'s
+ * own `DialogPopup` prop docs spell that out as "do nothing", leaving focus on the trigger outside
+ * the modal, #217 fix round 2 item 2) from its `initialFocus` function for an ORDINARY
+ * hamburger-tap open, which uses the Sheet's own default initial focus.
  */
 export type RailSheetProps = {
   children: ReactNode;
   finalFocus?: React.ComponentProps<typeof SheetContent>["finalFocus"];
+  initialFocus?: React.ComponentProps<typeof SheetContent>["initialFocus"];
 };
 
-export function RailSheet({ children, finalFocus }: RailSheetProps) {
+export function RailSheet({ children, finalFocus, initialFocus }: RailSheetProps) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
 
   return (
@@ -43,6 +51,7 @@ export function RailSheet({ children, finalFocus }: RailSheetProps) {
       data-testid="rail-sheet"
       className="z-[var(--z-dialog)] gap-0 bg-sidebar p-0 text-sidebar-foreground border-sidebar-border data-[side=left]:w-[288px]"
       finalFocus={finalFocus}
+      initialFocus={initialFocus}
       overlayProps={{
         "data-testid": "rail-sheet-scrim",
         // The token plus a 3px blur — the same scrim `Modal.tsx`'s own `SCRIM` reaches for, not an

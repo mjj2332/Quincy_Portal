@@ -9,6 +9,7 @@ import { removeProjectFromDashboardQueries } from "../lib/dashboard-projects";
 import { removeProductionCalendarQueries } from "../lib/production-calendar-query";
 import { removeProductionGanttQueries } from "../lib/production-gantt-query";
 import { locationStore } from "../lib/router";
+import { dropDashboardSearchOwnership, resetDashboardSearchForPrincipal } from "../lib/dashboard-search-store";
 
 type Snapshot = { principal: { id: string; role: Role; authorizationEpoch: number }; authorizationFingerprint: string; projects: Array<{ projectId: string; membershipCycleIds: string[] }> };
 
@@ -25,6 +26,41 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
   const session = useSession();
   const history = locationStore();
   const previous = useRef<Snapshot | undefined>(undefined);
+  // #217 fix round 3, item 2 (Sol's whole-branch review). `dashboard-search-store.ts` is a module
+  // singleton, so a DRAFT typed on the Dashboard (never a committed search -- #217 build step 4/5
+  // moved that to the URL, which is deliberately shared, principal-agnostic state) otherwise
+  // outlives the principal who typed it: sign out, or an impersonation switch, while parked on
+  // `/admin` or a project route
+  // never remounts `Dashboard` (its own reset lived only inside `Dashboard.tsx`, #217's original
+  // cut), so the NEXT principal's rail search box showed the PREVIOUS principal's text until a
+  // Dashboard happened to mount again. This boundary is the right place instead: it already wraps
+  // `StaffRouter` (every staff route, `App.tsx`) and is keyed off exactly this `principalId` prop
+  // for its own cache-purge concerns, so it observes every principal change regardless of which
+  // screen is current. `resetDashboardSearchForPrincipal` is itself a no-op once this principal is
+  // already the store's own recorded owner (its own `id === principalId` guard), so this fires
+  // harmlessly on every unrelated re-render, not just a genuine change.
+  //
+  // #217 fix round 4, item 3 (BLOCKER). `ShellSearch`'s own render-time read (`getDashboardSearch
+  // SnapshotForPrincipal`, `dashboard-search-store.ts`) is what closes the "first render shows the
+  // PREVIOUS principal's text" flash — it compares the render-time-current principal against the
+  // store's recorded owner on every render, with no dependence on this effect's timing. What this
+  // effect still owns is the store's own bookkeeping (draft/timer -- the store carries no committed
+  // copy for it to reset; #217 build step 5), and specifically the
+  // UNMOUNT case the guarded reset above cannot cover: sign-out unmounts this boundary entirely,
+  // with no NEXT principal to reset FOR yet, so the mount-time call above never runs again until
+  // sign-in — and if that sign-in is the SAME person, the guard (`id === principalId`, still true
+  // since nothing cleared it) would make it a no-op and leave their old search sitting there. The
+  // cleanup below calls `dropDashboardSearchOwnership` instead — unconditional, drops the recorded
+  // owner back to "no owner" — specifically so THAT next mount's guarded reset (same id or not)
+  // is never mistaken for "nothing changed". Also fires on every principal change while mounted
+  // (impersonation start/stop, `App.tsx`'s own `key` on `QuincyQueryProvider` unmounts/remounts this
+  // whole boundary for those, so this is the same unmount path, not a separate one).
+  useEffect(() => {
+    resetDashboardSearchForPrincipal(principalId);
+    return () => {
+      dropDashboardSearchOwnership();
+    };
+  }, [principalId]);
   const query = useQuery<Snapshot, Error>({
     queryKey: snapshotKey(principalId, role, authorizationEpoch),
     queryFn: async ({ signal }) => {

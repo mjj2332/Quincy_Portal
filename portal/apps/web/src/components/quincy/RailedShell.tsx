@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, 
 import { Sheet } from "@/components/reui/sheet";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { cn } from "../../lib/utils";
-import { locationStore } from "../../lib/router";
+import { locationStore, parseStaffLocation } from "../../lib/router";
 import { useMediaQuery } from "../../lib/use-media-query";
 import {
   SHELL_NARROW_QUERY,
@@ -13,9 +13,10 @@ import {
   type RailPreference,
   type RailShortcutTarget,
 } from "../../lib/shell-rail";
-import { activateProjectSearch, isSearchShortcut } from "../../lib/shell-search";
+import { isSearchShortcut } from "../../lib/shell-search";
 import type { StaffNavigation } from "../../lib/staff-navigation";
 import { NavigationRail } from "./NavigationRail";
+import type { ShellSearchHandle } from "./ShellSearch";
 import { RailSheet } from "./RailSheet";
 import { ShellHeader } from "./ShellHeader";
 
@@ -52,14 +53,24 @@ import { ShellHeader } from "./ShellHeader";
  * directly, for the same reason: it is the provider wrapper's flex child now, not
  * `.app--railed`'s.
  *
- * `handleSearch` (#122 P3) is the one activation path for both the rail's own search control and
- * the ⌘K window listener below it: navigate to the Dashboard when elsewhere, then latch
- * `lib/shell-search.ts`'s focus request. The ⌘K effect installs nothing while `mode === "sheet"` —
- * the same inertness `isRailShortcut`'s own effect gives ⌘B while narrow (`reui/sidebar.tsx`
- * patch 3) — and closes the Sheet first when it fires from inside one, via
- * `suppressSheetFinalFocusRef`: without it, the Sheet's own close-restores-focus-to-trigger
- * behaviour would steal focus back from the Dashboard input a moment after `RailSheet`'s
- * `finalFocus` lets this component suppress it for exactly that one close.
+ * The ⌘K window listener (#217, replacing #122 P3's `activateProjectSearch`) focuses
+ * `NavigationRail`'s own `ShellSearch` input through `searchRef` — it never navigates. Unlike ⌘B
+ * (`isRailShortcut`'s own effect, inert while narrow — `reui/sidebar.tsx` patch 3), ⌘K stays live
+ * in `mode === "sheet"` (#217 fix round 1, item 6): with the Sheet already open, it focuses the
+ * Sheet's own `ShellSearch` instance (a second ref, `sheetSearchRef`, since it is a genuinely
+ * different mounted component from the wide/collapsed one); with the Sheet closed, it opens the
+ * Sheet and focuses that same input once its content actually mounts, via `RailSheet`'s own
+ * `initialFocus` (a one-shot pending flag, `pendingSheetSearchFocusRef`, consumed and cleared by
+ * `sheetInitialFocus` below) — an imperative `.focus()` call from an ancestor effect is not
+ * reliable here: the Sheet's own default open-focus behaviour resolves on its own
+ * animation-completion timing and wins that race. `initialFocus` returning `true` for an ORDINARY
+ * hamburger-tap open uses the Sheet's own default target — NOT `undefined`, which
+ * `@base-ui/react/dialog`'s own `DialogPopup` prop docs spell out as "do nothing" (leave focus on
+ * the, now inert, trigger outside the modal), a real #217 fix round 2 regression this file shipped
+ * with, not a hypothetical. The old
+ * `suppressSheetFinalFocusRef`/custom `finalFocus` dance is gone — the rail no longer has a
+ * second, Dashboard-owned input to preserve focus toward, so `RailSheet`'s Sheet closing (on any
+ * location change, below) can restore focus to its own trigger the ordinary way.
  */
 
 function safeLocalStorage(): Storage | null {
@@ -75,10 +86,12 @@ function safeLocalStorage(): Storage | null {
 export type RailedShellProps = {
   navigation: StaffNavigation;
   user: { name?: string | null; email?: string | null };
+  /** Forwarded to `NavigationRail`/`ShellSearch` — see `NavigationRailProps.principalId`. */
+  principalId?: string;
   children: ReactNode;
 };
 
-export function RailedShell({ navigation, user, children }: RailedShellProps) {
+export function RailedShell({ navigation, user, principalId, children }: RailedShellProps) {
   const [preference, setPreference] = useState<RailPreference>(() => {
     const storage = safeLocalStorage();
     return storage ? readRailPreference(storage) : "expanded";
@@ -105,28 +118,18 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
     if (storage) writeRailPreference(storage, next);
   }
 
-  // The model's own Dashboard item, not a hard-coded "/" — falls back to it only if the model ever
-  // omitted the item entirely (it never does today; every capability set includes Dashboard).
-  const dashboardHref = navigation.groups.flatMap((group) => group.items).find((item) => item.id === "dashboard")?.href ?? "/";
+  const isDashboard = parseStaffLocation(location).kind === "dashboard";
+  const searchRef = useRef<ShellSearchHandle>(null);
+  const sheetSearchRef = useRef<ShellSearchHandle>(null);
+  // Set when ⌘K opens the (closed) Sheet itself — consumed by the effect below once `sheetOpen`
+  // actually flips, so a ⌘K-triggered open focuses search and an ordinary hamburger-tap open does
+  // not.
+  const pendingSheetSearchFocusRef = useRef(false);
 
-  // Set for exactly one Sheet close: a ⌘K/search-control tap inside the Sheet closes it before
-  // navigating, and the Sheet's own `finalFocus` (below) reads and clears this to skip restoring
-  // focus to the (about to vanish) sheet trigger for that one close only — Escape and an ordinary
-  // link click keep the default restoration.
-  const suppressSheetFinalFocusRef = useRef(false);
-
-  function handleSearch() {
-    if (mode === "sheet") {
-      suppressSheetFinalFocusRef.current = true;
-      setSheetOpen(false);
-    }
-    activateProjectSearch(dashboardHref);
-  }
-
-  // ⌘K, mirroring `reui/sidebar.tsx`'s own ⌘B effect (patch 3) — inert while `mode === "sheet"`,
-  // where there is no Dashboard search control to focus behind the Sheet in the first place.
+  // ⌘K. Only focuses; #217 replaces #122 P3's navigate-then-latch with a real input, so typing and
+  // Enter are what navigate, not the shortcut itself. Unlike ⌘B, this stays live while
+  // `mode === "sheet"` (#217 fix round 1, item 6) — see this file's own docblock.
   useEffect(() => {
-    if (mode === "sheet") return undefined;
     function handleKeyDown(event: KeyboardEvent) {
       if (
         !isSearchShortcut({
@@ -144,11 +147,32 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
         return;
       }
       event.preventDefault();
-      handleSearch();
+      if (mode === "sheet") {
+        if (sheetOpen) sheetSearchRef.current?.focus();
+        else { pendingSheetSearchFocusRef.current = true; setSheetOpen(true); }
+        return;
+      }
+      searchRef.current?.focus();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mode, dashboardHref]);
+  }, [mode, sheetOpen]);
+
+  // Base UI's own `initialFocus` mechanism (`RailSheet` -> `SheetContent` -> `Dialog.Popup`),
+  // called once per open — one-shot, not a `useEffect`. Per `@base-ui/react/dialog`'s own
+  // `DialogPopup` prop docs (confirmed against the installed package, not assumed): a `function`
+  // return of an `HTMLElement` focuses it; `true` (or `null`) uses/falls back to the Popup's
+  // default behaviour; `false`/`undefined` mean "do nothing" — i.e. LEAVE focus where it was,
+  // outside the modal, on the (now inert) trigger (#217 fix round 2, item 2: the original
+  // `undefined` return for an ordinary hamburger-tap open was exactly this bug, not a no-op).
+  // An ORDINARY open (the pending flag never set) returns `true` for the Popup's own default
+  // target; a ⌘K-triggered open returns the search input, falling back to `true` rather than
+  // `undefined` in the unexpected case that element isn't available yet either.
+  function sheetInitialFocus(): true | HTMLElement {
+    if (!pendingSheetSearchFocusRef.current) return true;
+    pendingSheetSearchFocusRef.current = false;
+    return sheetSearchRef.current?.getElement() ?? true;
+  }
 
   const contentColumn = (
     <div
@@ -174,37 +198,18 @@ export function RailedShell({ navigation, user, children }: RailedShellProps) {
     if ((event.target as Element).closest("a[href]")) setSheetOpen(false);
   }
 
-  // `FloatingFocusManager`'s return-focus cleanup — the thing that actually reads `finalFocus` —
-  // only runs once the popup finishes unmounting after its exit transition. Reopening the Sheet
-  // before that transition completes would otherwise leave `suppressSheetFinalFocusRef` latched
-  // `true` from a previous search-triggered close, so the NEXT Escape/link close would also skip
-  // focus restoration. Clearing it on every open, not only inside `finalFocus` itself, is what
-  // keeps the suppression scoped to the one close it was set for.
   function handleSheetOpenChange(open: boolean) {
-    if (open) suppressSheetFinalFocusRef.current = false;
     setSheetOpen(open);
   }
 
   const railSlot = (
     <>
-      <RailSheet
-        // `false` suppresses restore for exactly the one close `handleSearch` set the ref for;
-        // every other close must resolve to `true`, not `undefined` — floating-ui-react's own
-        // `getReturnElement` (`FloatingFocusManager.mjs`) treats an `undefined` return from this
-        // callback identically to `false` (both hit its early `return null`), so `undefined` here
-        // would silently disable Escape/link-close focus restoration for every close, not just the
-        // suppressed one.
-        finalFocus={() => {
-          const suppress = suppressSheetFinalFocusRef.current;
-          suppressSheetFinalFocusRef.current = false;
-          return suppress ? false : true;
-        }}
-      >
+      <RailSheet initialFocus={sheetInitialFocus}>
         <div className="contents" onClick={closeSheetOnLinkClick}>
-          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} onSearch={handleSearch} />
+          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} isDashboard={isDashboard} searchRef={sheetSearchRef} principalId={principalId} />
         </div>
       </RailSheet>
-      {mode !== "sheet" && <NavigationRail navigation={navigation} user={user} variant={mode} onSearch={handleSearch} />}
+      {mode !== "sheet" && <NavigationRail navigation={navigation} user={user} variant={mode} isDashboard={isDashboard} searchRef={searchRef} principalId={principalId} />}
     </>
   );
 

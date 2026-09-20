@@ -68,8 +68,11 @@ describe("Dashboard routing grammar", () => {
   });
 
   it("keeps the List/Kanban and Calendar allow-lists separate", () => {
+    // `q` is deliberately NOT in this list (#217): it is a legal parameter on the bare Dashboard
+    // and the List/Kanban facets, exercised by the round-trip test just below. Only date/sub/layers
+    // -- Calendar-facet-only parameters -- stay rejected here.
     for (const view of ["list", "kanban"]) {
-      for (const parameter of ["date=2026-08-30", "sub=week", "layers=project", "q=search"]) {
+      for (const parameter of ["date=2026-08-30", "sub=week", "layers=project"]) {
         expect(parseStaffLocation(`/?view=${view}&${parameter}`), `${view} ${parameter}`).toEqual({ kind: "not-found" });
       }
     }
@@ -87,6 +90,18 @@ describe("Dashboard routing grammar", () => {
     ]) {
       expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
       expect(safeStaffDestination(location), location).toBeNull();
+    }
+  });
+
+  it("makes `q` legal on the bare Dashboard and the List/Kanban facets (#217)", () => {
+    for (const [location, route] of [
+      ["/?view=list&q=search", { kind: "dashboard", dashboardView: "list", search: "search" }],
+      ["/?view=kanban&q=search", { kind: "dashboard", dashboardView: "kanban", search: "search" }],
+      ["/?q=search", { kind: "dashboard", search: "search" }],
+    ] as const) {
+      expect(parseStaffLocation(location), location).toEqual(route);
+      expect(staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>), location).toBe(location);
+      expect(safeStaffDestination(location), location).toBe(location);
     }
   });
 

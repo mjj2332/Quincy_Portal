@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { DASHBOARD_SEARCH_MAX_CHARS } from "@quincy/shared";
 import { productionCalendarFacetsSql, productionCalendarRangeSql } from "../src/routes/production-calendar";
 import { normalizeProjectSearch, projectSearchSql, PROJECT_SEARCH_MAX_LENGTH } from "../src/lib/project-search";
 
@@ -64,6 +65,15 @@ describe("project-search", () => {
 
     it("has a bounded max length constant", () => {
       expect(PROJECT_SEARCH_MAX_LENGTH).toBe(200);
+    });
+
+    // #217 fix round 3, item 4 (Sol's whole-branch review): `project-search.ts` is an unmodified
+    // #218 cherry-pick and must stay byte-identical, so its own `PROJECT_SEARCH_MAX_LENGTH` cannot
+    // import the shared `DASHBOARD_SEARCH_MAX_CHARS` constant directly the way `routes/projects.ts`
+    // now does for the cap ITSELF (`capDashboardSearchText`). This is the guard that keeps the two
+    // constants from silently drifting apart instead.
+    it("stays numerically equal to the shared Dashboard search cap, since routes/projects.ts's own `q` cap is the shared one", () => {
+      expect(PROJECT_SEARCH_MAX_LENGTH).toBe(DASHBOARD_SEARCH_MAX_CHARS);
     });
   });
 

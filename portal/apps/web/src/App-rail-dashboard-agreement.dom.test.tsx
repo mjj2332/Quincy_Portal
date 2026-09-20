@@ -761,3 +761,153 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(confirmStore.getSnapshot()).toBeNull();
   });
 });
+
+/**
+ * #217 fix round 8, Sol review, item 1 (HIGH). `withLiveDashboardSearch` (`lib/app-router.tsx`)
+ * used to rewrite only the Dashboard CHILD hrefs (List/Kanban/Calendar), leaving the top-level
+ * "Dashboard" rail link (`staff-navigation.ts`'s own `id: "dashboard"` item, rendered as a real
+ * `<a>` by `NavigationRail.tsx`) bare `/`. Clicking it landed on a q-less URL, which `ShellRoute`'s
+ * own sync (`syncDashboardSearchDraftFromLocation`) then treated as authoritative and used to clear
+ * the draft — discarding an off-Dashboard draft that had never been committed anywhere else.
+ */
+function railParentDashboardLink(host: ParentNode): HTMLAnchorElement | undefined {
+  return [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="navigation-rail-link"]')]
+    .find((link) => link.textContent?.trim() === "Dashboard");
+}
+
+describe("the rail's top-level Dashboard link carries the live off-Dashboard draft (#217 fix round 8, item 1)", () => {
+  async function typeIntoShellSearch(host: ParentNode, value: string) {
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+  }
+
+  it("clicking Dashboard mid-debounce (before the 300ms commit) lands on ?q=smith, keeps the input, and the projects request carries q", async () => {
+    const host = await renderApp("/admin");
+    await typeIntoShellSearch(host, "smith");
+    // Still inside the 300ms debounce — no commit has happened anywhere yet.
+    expect(railParentDashboardLink(host)!.getAttribute("href")).toBe("/?q=smith");
+
+    await click(railParentDashboardLink(host)!);
+
+    expect(currentUrl()).toBe("/?q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
+  });
+
+  // #217 fix round 9, Sol review, item 5. Off-Dashboard, at `/admin`, no writer is registered
+  // (only a mounted `Dashboard` registers one) -- so the debounce firing after 300ms here is
+  // DROPPED, not "written through" to the URL (#217 build step 5). The rail's own href already
+  // carries the live draft (`withLiveDashboardSearch`, `lib/app-router.tsx`), so clicking it is
+  // what lands on `?q=smith`, independent of whether the dropped timer fired first.
+  it("clicking Dashboard after the 300ms debounce fires (and is dropped, off-Dashboard) still lands on ?q=smith via the rail href, keeps the input, and the projects request carries q", async () => {
+    const host = await renderApp("/admin");
+    await typeIntoShellSearch(host, "smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+
+    await click(railParentDashboardLink(host)!);
+
+    expect(currentUrl()).toBe("/?q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+    expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
+  });
+
+  it("an empty draft keeps the top-level Dashboard href bare `/`", async () => {
+    const host = await renderApp("/admin");
+    expect(railParentDashboardLink(host)!.getAttribute("href")).toBe("/");
+  });
+});
+
+/**
+ * #217 fix round 9, Sol review, item 2. Ported from `Dashboard-search-interaction.dom.test.tsx`'s
+ * own former "a debounce armed off-Dashboard is cancelled on arrival" test, which mounted a bare
+ * `Dashboard` under `<StrictMode>` but synthesised the arrival itself — it pushed `/?q=smith` onto
+ * `window.history` directly and drove the draft-to-URL sync through a LOCAL `ArrivalSync`
+ * stand-in, never the real rail click/Enter path or the real `ShellRoute`. Hosted here instead,
+ * against the real `App` this file already mounts: types into the REAL `ShellSearch` at `/admin`
+ * under `<StrictMode>`, then arrives at Dashboard through (i) a REAL click on the rail's parent
+ * Dashboard link and (ii) a REAL Enter keydown — asserting against a spy on `locationStore()`'s
+ * own `push`/`replace`, not `window.location.search` alone, so a same-URL write that string
+ * equality would miss is still caught. Uses its own fake-timers-throughout render/type/arrive
+ * helpers rather than the file's `renderApp`/`click`/`settle` (which drive real `setTimeout`s) —
+ * mixing the two would leave the debounce's own 300ms timer unadvanceable.
+ */
+describe("off-Dashboard, the draft reaches the URL exactly once through the rail click/Enter itself (never the dropped debounce), under StrictMode (#217 fix round 9, item 2)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  async function typeIntoShellSearchFakeTimers(host: ParentNode, value: string) {
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function renderAppUnderStrictModeFakeTimers(path: string) {
+    window.history.replaceState(null, "", path);
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<StrictMode><App /></StrictMode>); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    return host;
+  }
+
+  it("(i) clicking the rail's parent Dashboard link", async () => {
+    vi.useFakeTimers();
+    const host = await renderAppUnderStrictModeFakeTimers("/admin");
+    await typeIntoShellSearchFakeTimers(host, "smith");
+
+    const pushSpy = vi.spyOn(locationStore(), "push");
+    const replaceSpy = vi.spyOn(locationStore(), "replace");
+
+    // Still inside the 300ms debounce — the rail link's own href already carries the draft (#217
+    // fix round 8, item 1), so clicking it is what commits, not the stale off-Dashboard timer.
+    await act(async () => {
+      railParentDashboardLink(host)!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+
+    expect(currentUrl()).toBe("/?q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+
+    const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
+    // A full second past the original 300ms debounce — no LATER write occurs: the arrival itself
+    // (`ShellRoute`'s own `syncDashboardSearchDraftFromLocation`) cancelled the obsolete timer.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+    expect(pushSpy.mock.calls.length + replaceSpy.mock.calls.length).toBe(writesAtArrival);
+    expect(currentUrl()).toBe("/?q=smith");
+    pushSpy.mockRestore();
+    replaceSpy.mockRestore();
+  });
+
+  it("(ii) pressing Enter in the ShellSearch input", async () => {
+    vi.useFakeTimers();
+    const host = await renderAppUnderStrictModeFakeTimers("/admin");
+    await typeIntoShellSearchFakeTimers(host, "smith");
+
+    const pushSpy = vi.spyOn(locationStore(), "push");
+    const replaceSpy = vi.spyOn(locationStore(), "replace");
+
+    const input = host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+
+    expect(currentUrl()).toBe("/?q=smith");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!.value).toBe("smith");
+
+    const writesAtArrival = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+    expect(pushSpy.mock.calls.length + replaceSpy.mock.calls.length).toBe(writesAtArrival);
+    expect(currentUrl()).toBe("/?q=smith");
+    pushSpy.mockRestore();
+    replaceSpy.mockRestore();
+  });
+});

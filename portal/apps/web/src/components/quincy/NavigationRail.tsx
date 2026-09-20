@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef, useState, type MouseEvent, type Ref } from "react";
 import {
   LayoutDashboard,
   List,
@@ -32,8 +32,10 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
 import { Menu } from "./menu";
 import { NotificationBell } from "./NotificationBell";
-import { ShellSearch } from "./ShellSearch";
+import { ShellSearch, type ShellSearchHandle } from "./ShellSearch";
 import { signOut } from "../../lib/auth";
+import { dropDashboardSearchOwnership } from "../../lib/dashboard-search-store";
+import { locationStore, stripDashboardSearchFromLocation } from "../../lib/router";
 import { cn } from "../../lib/utils";
 import type { RailMode } from "../../lib/shell-rail";
 import type {
@@ -237,13 +239,27 @@ export type NavigationRailProps = {
    */
   showBell?: boolean;
   /**
-   * Runs `lib/shell-search.ts`'s activation from `ShellSearch` — the rail renders the control and
-   * decides nothing about where the request lands. Defaults to a no-op.
+   * Whether the current route is already a Dashboard route — forwarded straight to `ShellSearch`,
+   * which only navigates on Enter when it isn't. Defaults to `false` so every #111/#112 call site
+   * that predates #217 keeps compiling.
    */
-  onSearch?: () => void;
+  isDashboard?: boolean;
+  /**
+   * `RailedShell`'s ⌘K listener focuses `ShellSearch`'s real input through this ref — the rail
+   * renders the control and decides nothing about when the shortcut fires.
+   */
+  searchRef?: Ref<ShellSearchHandle>;
+  /**
+   * Forwarded straight to `ShellSearch` (#217 fix round 4, item 3) — the render-time-current
+   * principal, for isolating the search box from a principal change with no flash. A SEPARATE prop
+   * from `user` (name/email only) rather than widening that type, so existing call sites/tests that
+   * construct a bare `{ name, email }` stay unaffected; optional, defaults through to `ShellSearch`'s
+   * own `""` default.
+   */
+  principalId?: string;
 };
 
-export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, onSearch = () => {} }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "expanded", showBell = true, isDashboard = false, searchRef, principalId }: NavigationRailProps) {
   const isCollapsed = variant === "collapsed";
   const isSheet = variant === "sheet";
 
@@ -256,6 +272,29 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
     event.preventDefault();
     setSignOutError(null);
     try {
+      // #217 fix round 6, item 1 (Sol re-review, BLOCKER). `dropDashboardSearchOwnership` runs
+      // FIRST, synchronously, before anything else in this handler -- a keystroke inside the last
+      // `DASHBOARD_SEARCH_DEBOUNCE_MS` has not reached the URL yet (still a pending timer, no `q`
+      // there for the scrub below to find), so without this, `signOut()` awaiting the network gave
+      // that timer time to fire, commit through Dashboard's own registered writer
+      // (`lib/dashboard-search-store.ts`'s `commit`/`Dashboard.tsx`'s writer registration), and put
+      // `q` BACK in the URL after the scrub had already run -- exactly what the next sign-in would
+      // then SHOW, since `committedQuery` reads straight off the URL at render (#217 build step 4,
+      // no store copy left to "adopt" it from). `dropDashboardSearchOwnership` cancels the store's
+      // own pending timer outright
+      // (`clearTimer()`), not merely races it: a timer already cancelled cannot fire at all, late or
+      // otherwise, which is what makes this ordering airtight rather than merely narrower.
+      dropDashboardSearchOwnership();
+      // #217 fix round 5, item 3 (Sol re-review, BLOCKER). Only the explicit sign-out ACTION
+      // scrubs the Dashboard search out of the current URL, before signing out -- `App.tsx` hands
+      // this same URL to `SignIn`, and `lib/auth.ts`'s `beginSignIn` preserves it as the OAuth
+      // return destination, so leaving it alone re-applies whoever was signed out's search to
+      // whoever signs in next, including the same person. `replace`, not `push`: this is a
+      // correction to the CURRENT entry, not a new destination -- see `stripDashboardSearchFromLocation`'s
+      // own docblock for why sign-in itself (and a cold deep link) must NOT do this.
+      const history = locationStore();
+      const stripped = stripDashboardSearchFromLocation(history.getLocation());
+      if (stripped !== history.getLocation()) history.replace(stripped);
       await signOut();
     } catch (error) {
       setSignOutError(
@@ -336,9 +375,9 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
           — so rendering the rail without this would silently remove primary navigation from a
           screen reader's landmark list. */}
       <SidebarContent>
-        {/* The search control sits above the nav landmark, not inside it — it is not a
-            destination, only a trigger for `lib/shell-search.ts`'s focus request. */}
-        <ShellSearch variant={variant} onActivate={onSearch} />
+        {/* The search control sits above the nav landmark, not inside it — it is a real input now
+            (#217), not a destination. */}
+        <ShellSearch ref={searchRef} variant={variant} isDashboard={isDashboard} principalId={principalId} />
         <nav aria-label="Primary navigation" className="contents">
         {navigation.groups.map((group) => (
           <SidebarGroup key={group.id} data-testid="navigation-rail-group">

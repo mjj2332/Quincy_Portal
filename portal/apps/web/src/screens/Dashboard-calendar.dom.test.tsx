@@ -1,12 +1,12 @@
-import { act, createElement, useSyncExternalStore } from "react";
+import { act, createElement, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
+import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
-import { requestProjectSearchFocus } from "../lib/shell-search";
 import { confirmStore } from "../lib/confirm";
+import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,10 +47,20 @@ function projectResponse() {
   };
 }
 
+// #217 build, step 4: `Dashboard.tsx` reads the committed `q` from the route at render; nothing adopts it --
+// `ShellRoute` only syncs the input DRAFT from the location (`syncDashboardSearchDraftFromLocation`, wired in a
+// `useLayoutEffect` keyed on location + principal). This harness mirrors exactly that wiring, the
+// same way `lib/app-router.tsx`'s real `ShellRoute` derives the `calendar` prop from the parsed
+// route -- without it, a test that arrives directly at a URL carrying `q` (rather than typing it
+// through `setDashboardSearchDraft`) would see a draft that never catches up to the URL.
 function DashboardRouteHarness() {
   const history = locationStore();
   const location = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const route = parseStaffLocation(location);
+  useLayoutEffect(() => {
+    if (route.kind !== "dashboard") return;
+    syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), "user-1");
+  }, [location, route]);
   return <Dashboard currentUserId="user-1" role={authRole.value} authorizationEpoch={0} calendar={route.kind === "dashboard" && "calendar" in route ? route.calendar : null} />;
 }
 
@@ -82,9 +92,10 @@ describe("Dashboard Calendar routing", () => {
     const storage = new Map<string, string>();
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
     window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
-  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); });
+  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
 
   // Dashboard code-splits ProductionCalendar behind React.lazy; warm the dynamic
   // import so the Suspense boundary resolves within the render helper's ticks.
@@ -97,12 +108,12 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   }
 
+  // #217: the Dashboard no longer owns a search field -- the rail's `ShellSearch` does, and
+  // neither `render()` nor `DashboardRouteHarness` mount the rail. Drives the shared store
+  // directly, exactly as `ShellSearch`'s own `onChange` would.
   async function typeSearch(value: string) {
-    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]');
-    if (!input) throw new Error("Dashboard search input is missing");
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      setDashboardSearchDraft(value, "user-1");
       await Promise.resolve();
     });
   }
@@ -226,39 +237,82 @@ describe("Dashboard Calendar routing", () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
     await typeSearch(`smith\\${String.fromCharCode(7)} street`);
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
     expect(window.location.search).toBe("?view=list");
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
     expect(window.location.search).toContain("view=calendar");
     expect(window.location.search).toContain("q=smith+street");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
   });
 
-  it("focuses the shared search input on a request latched before this component mounts", async () => {
-    // #122 P3: the rail's search control / ⌘K (`lib/shell-search.ts`) can fire before the
-    // Dashboard exists at all — the request must still land once it does.
-    requestProjectSearchFocus();
-    await render();
-    expect(host.querySelector('[data-testid="dashboard-search-input"]')).toBe(document.activeElement);
+  // #217 fix round 3, item 1 (Sol's whole-branch review). Unlike the toolbar's own Calendar switch
+  // above (`selectView` builds the full facet URL itself, straight from the live store — it never
+  // touches this path at all), the RAIL's Calendar child link is the BARE `/?view=calendar` intent
+  // (it carries no `q` of its own — `staff-routes.ts`'s `DashboardCalendarIntentRoute`). Arriving
+  // at that bare intent is what reaches the reconciliation effect's OWN canonicaliser
+  // (`Dashboard.tsx:~437`), which used to read `calendarState.search` — whatever this component
+  // last wrote there, not necessarily what is live in the store right now.
+  it("canonicalises a bare `/?view=calendar` arrival (the rail's own link) with the LIVE search, not a stale remembered one", async () => {
+    await render({ calendar: { ...routeCalendar, editorIds: [], search: "oldterm" } });
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("newterm");
+    // Still mid-debounce -- the URL has not been written yet, only the store's `draft` has changed.
+    expect(window.location.search).not.toContain("newterm");
+
+    await act(async () => { locationStore().push("/?view=calendar"); await Promise.resolve(); });
+
+    expect(window.location.search).toContain("view=calendar");
+    expect(window.location.search).toContain("q=newterm");
+    expect(window.location.search).not.toContain("oldterm");
   });
 
-  it("focuses the shared search input on a request made while already mounted, without touching query", async () => {
-    await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith" } });
-    const input = host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')!;
-    expect(document.activeElement).not.toBe(input);
+  // #217: the #122 P3 "latched focus request" tests that lived here (`requestProjectSearchFocus`
+  // firing before/after mount) are deleted, not rewritten — the scenario they covered (a request
+  // that must outlive the Dashboard not yet existing to mount its OWN search field) no longer
+  // exists. The rail's `ShellSearch` is the one search input now, always present regardless of
+  // which screen is showing, so there is nothing left to latch a request for. Superseded by
+  // `dashboard-search-store.test.ts` (the store) and `ShellSearch.dom.test.tsx` (the rail's ⌘K
+  // ref-focus, including the collapsed popover-then-focus case).
 
-    await act(async () => { requestProjectSearchFocus(); await Promise.resolve(); });
+  // #217 build, step 4: a `calendar` PROP with no URL backing it no longer seeds the shared
+  // store's draft -- `Dashboard.tsx` reads no search from anywhere but the route (`committedQuery`)
+  // and its own draft-sync is `ShellRoute`'s job now, not this component's. In production the
+  // `calendar` prop is ALWAYS derived from the same parsed route (`lib/app-router.tsx`'s
+  // `dashboardRoute`), so this test now puts the search on the actual URL too, through
+  // `DashboardRouteHarness` (mirrors `ShellRoute`'s own draft-sync wiring), rather than a prop that
+  // could never arise this way for real.
+  // #217 fix round 8, Sol review, item 2 (MEDIUM). Clicking the already-active Calendar control
+  // (`selectView("calendar")` while `view` is already "calendar") used to read
+  // `effectiveRouteCalendar.search`/`calendarState.search` (the STALE, already-committed `q`) and
+  // write that value back into the shared draft via `setDashboardSearchDraft` -- clobbering
+  // whatever the user had typed since, one line before `navigateCalendar` reads the draft back out
+  // through `takeDashboardSearchForNavigation`. The fix deletes that Calendar-state search read
+  // entirely: `navigateCalendar` already flushes and reads the CURRENT draft itself.
+  it("clicking the already-active Calendar control carries a mid-debounce draft, not the stale committed q", async () => {
+    window.history.replaceState(null, "", `/?view=calendar&date=${routeCalendar.date}&sub=month&layers=project%2Cchecklist&q=smith`);
+    await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(window.location.search).toContain("q=smith");
 
-    expect(document.activeElement).toBe(input);
-    expect(input.value).toBe("smith");
+    await typeSearch("jones");
+    // Still mid-debounce -- the URL has not been written yet, only the store's `draft` has changed.
+    expect(window.location.search).toContain("q=smith");
+
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Calendar")?.click(); await Promise.resolve(); });
+
+    expect(window.location.search).toContain("q=jones");
+    expect(window.location.search).not.toContain("q=smith");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("jones");
   });
 
   it("reflects route search and replaces the normalized debounced value without a history push", async () => {
-    await render({ calendar: { ...routeCalendar, editorIds: [], search: "smith street" } });
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("smith street");
+    window.history.replaceState(null, "", `/?view=calendar&date=${routeCalendar.date}&sub=month&layers=project%2Cchecklist&q=smith+street`);
+    await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith street");
     const lengthBefore = window.history.length;
     await typeSearch("a b ");
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("a b ");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("a b ");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
     expect(window.history.length).toBe(lengthBefore);
     expect(window.location.search).toContain("q=a+b");
@@ -281,7 +335,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     window.history.pushState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist&q=harbour");
     await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search-input"]')?.value).toBe("harbour");
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("harbour");
   });
 
   it("pushes committed filter changes and keeps them beside a debounced q", async () => {
@@ -298,6 +352,92 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toContain("unassigned=1");
     expect(window.location.search).toContain("q=a+b");
     expect(window.location.search.indexOf("unassigned=1")).toBeLessThan(window.location.search.indexOf("q="));
+  });
+
+  // #217 fix round 1, item 3 (Sol's diff review). Restores the coverage this suite had before:
+  // a committed search must survive a view switch or a Calendar facet change, and view-switching
+  // must not be disabled just because a search is active.
+  it("type then switch view inside the debounce carries q into the new view's URL", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    // Switched BEFORE the 300ms debounce elapses -- the pending draft must not be dropped.
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Kanban")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("view=kanban");
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  // #217 fix round 3, item 2 (Sol's whole-branch review). The writer-registration effect
+  // registers a STABLE writer once per Dashboard mount (a ref, not the raw `view`/`calendarState`
+  // dependency list), so unmount is the only thing that ever unregisters it. #217 build, step 6:
+  // the cleanup no longer needs to cancel the pending timer explicitly either -- `commit()` simply
+  // drops a fire with no writer registered (there is no local committed copy left for it to update
+  // instead), so the SAME outcome (no later commit, no later URL write) now falls out of the
+  // writer being gone, not an explicit `cancelPendingDashboardSearchWrite()` call in the cleanup.
+  it("cancels a pending debounce on unmount: no later commit and no later URL write", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    const locationBeforeUnmount = window.location.search;
+    // Still mid-debounce: the draft is live, but the URL hasn't been written yet.
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+    expect(window.location.search).toBe(locationBeforeUnmount);
+
+    await act(async () => { root.unmount(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+
+    expect(window.location.search).toBe(locationBeforeUnmount);
+    // The draft itself survives -- it is what lets an off-Dashboard Enter (the rail's
+    // `ShellSearch`, mounted everywhere) still navigate with whatever text was showing.
+    expect(__getDashboardSearchSnapshotForTest().draft).toBe("smith");
+  });
+
+  it("type then change a Calendar facet inside the debounce keeps q", async () => {
+    window.history.replaceState(null, "", "/?view=calendar&date=2026-08-12&sub=month&layers=project%2Cchecklist");
+    await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await typeSearch("smith");
+    // Toggled BEFORE the 300ms debounce elapses.
+    await act(async () => { [...host.querySelectorAll("label")].find((label) => label.textContent?.includes("Unassigned"))?.querySelector<HTMLInputElement>("input")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("unassigned=1");
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  it("a committed search survives a view switch and does not disable the view buttons", async () => {
+    await render();
+    await typeSearch("smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(window.location.search).toContain("q=smith");
+    const listButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;
+    expect(listButton.disabled).toBe(false);
+    await act(async () => { listButton.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("view=list");
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  // #217 chip-row: the same toolbar/summary separation checked in List and Kanban
+  // (Dashboard-search-adversarial.dom.test.tsx), for Calendar -- the summary sits between the
+  // toolbar and the Calendar surface, so the chip never sits beside the Calendar's own controls.
+  it("keeps the search summary between the toolbar and the Calendar surface, not inside the toolbar (#217 chip-row)", async () => {
+    window.history.replaceState(null, "", "/?view=calendar&q=smith");
+    await render({ calendar: { ...routeCalendar, search: "smith" } });
+
+    const toolbar = host.querySelector('[data-testid="dashboard-toolbar"]');
+    const summary = host.querySelector('[data-testid="dashboard-search-summary"]');
+    const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
+    const newShootLink = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
+    const calendarSurface = host.querySelector('[data-testid="dashboard-calendar-surface"]');
+
+    expect(toolbar, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(summary, "no search summary rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(newShootLink, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
+    expect(calendarSurface, "no Calendar surface rendered — the assertions below would be vacuous").not.toBeNull();
+
+    expect(toolbar!.contains(chip!)).toBe(false);
+    expect(toolbar!.contains(newShootLink!)).toBe(true);
+    expect(toolbar!.nextElementSibling).toBe(summary);
+    expect(summary!.nextElementSibling?.contains(calendarSurface)).toBe(true);
   });
 
   it("silently replaces a URL after the server drops an inaccessible Editor", async () => {
@@ -323,6 +463,32 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("list");
     expect(host.textContent).toContain("Archived projects");
+  });
+
+  // #217 fix round 2, item 1 (Sol's diff review). `selectProjectScope` never pushes a URL when
+  // `next === "archived"` and `view` is ALREADY "list" (the common case) -- the class-level bug is
+  // that `viewingArchived` changing recreates `navigateCalendar` (its own dep list), which
+  // re-registers the search-store's URL writer, and a re-registration must not strand a search
+  // that is still mid-debounce (or, defensively, one already committed) regardless of which
+  // specific call site triggered it.
+  it("type then select Archived while already on List (inside the debounce) still carries q into the URL", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    // Selected BEFORE the 300ms debounce elapses.
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(window.location.search).toContain("q=smith");
+  });
+
+  it("a committed q survives selecting Archived while already on List", async () => {
+    await render();
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "List")?.click(); await Promise.resolve(); });
+    await typeSearch("smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(window.location.search).toContain("q=smith");
+    await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
+    expect(window.location.search).toContain("q=smith");
   });
 
   it("disables Dashboard view navigation only while the Calendar accept gate is active", async () => {

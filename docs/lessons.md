@@ -1893,10 +1893,23 @@ Kanban board mounted, the Calendar's own loading region present), and leave the 
 Calendar surface itself renders to `screens/Dashboard-calendar.dom.test.tsx`, which mounts with
 the calendar facet already in hand and so has the surface in its first commit.
 
+**Correction (#217 build, step 7).** The premise above was wrong, not just the test. The Calendar
+surface never resolving under the intent harness was NOT a property of the lazy-boundary timing —
+it was an invalid fixture: `filterFacets.myTasksUserId: null` in this file's own response fixture,
+which the strict `z.string().uuid()` schema rejects, so every load sat in react-query's retry loop
+and never left the loading state. With an honest fixture the range decodes on the first commit and
+the surface renders directly, same as any other Calendar-facet arrival —
+`Dashboard-calendar-intent.dom.test.tsx`'s own "gives the viewport to the Calendar" test asserts
+the surface directly now, not the Suspense fallback. The general rule below about a lazy boundary
+needing a further update to retry is still true; it just was not what this particular test was
+hitting.
+
 **Rule.** When a lazy boundary becomes reachable only as the RESULT of an update (a redirect, a
 canonicalising replace, a route change), do not expect it to resolve within that same settle loop.
 Split the assertion: one test for which branch became active, a separate test — one that mounts
-with the target state already present — for what that branch renders.
+with the target state already present — for what that branch renders. And before blaming the
+harness's timing, check the fixture is actually valid against the schema the real code path
+enforces — an invalid fixture that silently retries forever looks exactly like a timing problem.
 
 ## Vite only replaces `import.meta.env` when it sees a literal member access (#111, 2026-09-13)
 
@@ -2933,6 +2946,173 @@ crumb and hairline from 2a):
   the line. The candidate list stops copying the anchor's width the moment the anchor becomes
   content-sized, or a one-member team gets a one-chip-wide list.
 
+## The shell search (#217): a debounce and a popstate race, an envelope that must stay unfiltered, and an escape sequence that stopped being text
+
+Four defects from replacing the Dashboard's own search field with a single rail-owned store and
+server-side `q`, each the kind this file exists for because none showed up in a type error.
+
+- **A debounce timer and a popstate landing in the same tick is a race, and the debounce must lose
+  every time.** `lib/dashboard-search-store.ts`'s `adoptDashboardSearchFromUrl` (Back/Forward, or
+  a route the URL itself carries `q` on) cancels the pending debounce timer *before* adopting the
+  URL's value — not after, and not by relying on the timer's own guard. A keystroke typed a moment
+  before Back is pressed schedules a commit 300ms out; if that commit is allowed to fire after the
+  popstate has already landed, it silently overwrites the destination the user actually navigated
+  to with whatever they were mid-typing when they left. The fix is one call ordered first in the
+  function, not a comparison — there is no correct value to compare against once both writers are
+  racing for the same field.
+- **Two adoption effects both touching the same field is itself a race, and effect declaration
+  order decides who wins.** Dashboard.tsx's principal-reset effect
+  (`resetDashboardSearchForPrincipal`) and its route-reconciliation effect (which adopts a route's
+  `q` into the store) both run on first mount. React commits effects in hook-declaration order,
+  not dependency order, so the reset effect has to be declared *before* the reconciliation effect
+  — the store's `principalId` starts empty on a cold module, genuinely different from any real
+  `currentUserId`, so an out-of-order reset would clobber the URL's adopted search a commit after
+  it landed. Declaring the "generic" adoption call unconditionally at the top of the
+  reconciliation effect had the same class of bug from a different angle: `currentDashboardRoute`
+  (URL-derived) and `effectiveRouteCalendar` (which falls back to a `calendar` PROP that can
+  outlive the URL that produced it, per this file's own docblock) can disagree about which branch
+  governs, and adopting from the route on every pass — including while the Calendar-prop branch is
+  the one actually deciding — fought that branch's own adoption of the identical field and looped
+  (a "Maximum update depth exceeded" React error, caught by `Dashboard-calendar.dom.test.tsx`
+  before the fix shipped). The rule that generalizes: when two effects write the same
+  external-store field from different sources of truth, scope each write to the exact branch that
+  owns it, never a shared prelude both branches fall through.
+- **The Board's authorized-order envelope has to be built from the unfiltered row set, not the
+  search-filtered one, or reorder math silently corrupts.** `/api/projects?q=...` runs two
+  queries — the base project list (still every authorized row) and a separate `SELECT DISTINCT
+  p.id` matching query — and only the SECOND filters. `board.orderedProjectIdsByStage` and
+  `total` are built from the first. Read as "filter, then build the envelope" instead, `boardRank`
+  becomes a rank-within-the-filtered-set, and a drag computed against it lands the dropped card at
+  the wrong neighbor the moment fewer than all rows match. Reading the issue text alone this was
+  invisible; only tracing where `boardRank` is consumed downstream (Kanban's own reorder gap math)
+  surfaces it.
+- **An edit tool that accepts backslash-`u`-style escape text in a parameter is not guaranteed to
+  preserve it as source text.** Typing a fresh character-class regex literal covering the NUL byte
+  through the DEL byte (the same control-character class the client-side search sanitizer already
+  strips) into an `Edit` call rewrote it into three *raw control bytes* in the committed file —
+  confirmed with `file(1)` (reported "data", not "ASCII/UTF-8 text") and `od -c` (literal control
+  bytes where six-character escape text should have been) — silently, with no error from the tool
+  and no complaint from `tsc` (it happily typechecks a NUL byte inside a regex literal). `grep` on
+  the corrupted file returned "binary file matches" instead of line numbers, which was the first
+  visible symptom. The fix was mechanical once found — rewrite the same character-class check as
+  `codePointAt(0)` numeric comparisons against hex code-point constants, which has no
+  backslash-escape sequences for anything downstream to misinterpret — but the rule going forward
+  is to treat any freshly-typed backslash-`u` escape in an edit as suspect and verify the file
+  round-trips as clean text (`file`, or `grep` returning line numbers instead of "binary file
+  matches") before trusting it compiled correctly, since a passing `tsc` run is not evidence the
+  bytes on disk are what was intended.
+
+## A module-singleton store outlives whatever mounted it — scope its reset to the identity that owns it, not the component that happened to create it (#217 fix round 3)
+
+Sol's whole-branch review, after the shell search (#217) had already shipped several rounds of
+debounce/race fixes (the section above): `lib/dashboard-search-store.ts` is a module-level
+singleton — deliberately, so the rail's `ShellSearch` (mounted on every staff route) and
+`Dashboard.tsx` read the same `draft`/`query` without a React context or provider. Its principal
+reset (`resetDashboardSearchForPrincipal`) lived only inside `Dashboard.tsx`, guarded correctly
+against races on the SAME principal — but scoped to the wrong lifetime entirely: a module
+singleton has no idea a principal changed unless something tells it, and the only thing that told
+it was a component that is not even mounted for most of the app. Sign out, or switch who you are
+impersonating, while parked on `/admin` or a project route (no Dashboard instance to run that
+reset), and the NEXT principal's rail search box showed the PREVIOUS principal's draft/committed
+text until a Dashboard happened to mount again — an actual cross-principal data leak in the UI, not
+merely stale cache.
+
+**The rule: a module singleton's reset belongs at the identity boundary the WHOLE APP already
+tracks, not inside whichever screen first needed the reset.** `components/PrincipalFreshnessBoundary.tsx`
+already wraps every staff route and is already keyed off `principalId` for its own cache-purge
+concerns — that is the right home, not a second one. `Dashboard.tsx`'s own reset was kept
+alongside it rather than deleted, and that is deliberate, not an oversight: on a COLD mount landing
+directly on a Dashboard route, both mount in the same commit, and child effects run before the
+parent's (React's bottom-up commit order) — Dashboard's own reset sets the store's `principalId`
+first, so the boundary's later reset in the same commit finds it already current and is a
+guaranteed no-op, rather than a race that could occasionally clobber the URL's own adopted search.
+Removing the "local" reset once a "global" one exists can silently break the one ordering guarantee
+the local one was providing.
+
+A related trap in the same store: distinguish a writer being TORN DOWN AND RE-REGISTERED (identity
+churn while the owning component is still mounted — a pending debounce must survive it, since
+there is still somewhere for it to land) from the owning component actually UNMOUNTING (a pending
+debounce must NOT survive it — there is no writer left to receive it, and letting the timer fire
+anyway writes into whatever mounts next with no relation to who typed it). The fix was registering
+a STABLE writer once per mount, through a ref updated every render rather than a dependency list
+that changed on every view/facet switch — which turns "was this an unregister-then-reregister, or
+a real unmount?" from something the store had to guess (and had guessed wrong twice already,
+across two earlier rounds) into something structurally impossible to conflate: unmount becomes the
+ONLY unregister the component ever triggers.
+
+## An effect-only fix to a module singleton's identity scoping still has a gap: the render that shows the stale value happens before the effect that would clear it (#217 fix round 4, item 3)
+
+Round 3's fix above (`PrincipalFreshnessBoundary` resetting `dashboard-search-store.ts` on every
+principal change) closed the "no Dashboard mounted to run the reset" gap, but it is still a
+PASSIVE effect — scheduled after commit, after paint in production. Three narrower gaps survived
+it: (1) the NEW principal's very first render, before that effect has had any chance to run,
+still shows the PREVIOUS principal's draft — a real, if brief, cross-principal flash, not merely a
+timing curiosity; (2) a debounce timer armed by the old principal a few milliseconds before it
+fires has a genuine (if narrow) chance to win a race against the effect that would have cancelled
+it; (3) sign-out unmounts the boundary with no NEXT principal to reset FOR, so the mount-time
+reset's own `id === principalId` guard — correct for suppressing a no-op on every ordinary
+re-render — makes signing back in as the SAME person a no-op too, and their old search reappears.
+
+The fix generalizes past this one store: a component that reads external, principal-scoped state
+should compare the CURRENT, render-time-known principal against the state's own recorded owner
+DURING RENDER (`getDashboardSearchSnapshotForPrincipal`), not lean on an effect to have already
+reconciled them by the time the render happens — a render-time comparison cannot be "too late" the
+way an effect can. `ShellSearch.tsx` itself gained a second, EARLIER write-side guard for the same
+reason: a `useLayoutEffect` claiming ownership on its own `principalId` prop change, deliberately
+duplicating `PrincipalFreshnessBoundary`'s passive-effect reset rather than replacing it — React
+flushes every layout effect in a commit, tree-wide, before it flushes any passive effect in that
+same commit, which is a scheduling GUARANTEE, not a timing coincidence, and is what actually closes
+gap (2) rather than merely making it rarer. Gap (3) needed a third, different shape: not a
+render-time read (nothing renders during sign-out) and not a faster effect (there is no next
+principal to reset FOR), but an UNCONDITIONAL drop of the recorded owner on the boundary's own
+unmount (`dropDashboardSearchOwnership`, deliberately a new function rather than removing the
+existing guard on `resetDashboardSearchForPrincipal` — that guard is load-bearing for
+`Dashboard.tsx`'s own COLD-mount ordering the previous lesson entry describes, and an unconditional
+reset there would have reintroduced exactly the clobber-the-URL's-adopted-search race that entry
+already fixed once).
+
+A testing note worth keeping: proving "before any effect has run" in a DOM test cannot rely on a
+raw, un-`act`-wrapped `render()` call — React 18+ concurrent roots do not commit synchronously
+outside `act`, so reading the DOM right after one reads the PREVIOUS commit, not the new one, and
+can pass or fail for the wrong reason regardless of what the component under test does.
+`useLayoutEffect` in a sibling "Probe" component is the reliable technique: React guarantees every
+layout effect in a commit runs before any passive effect in that same commit, so capturing inside
+one genuinely observes the render-committed DOM before ANY passive effect (including the one under
+test) has had a chance to run — inside one ordinary `act(() => {...})` call, no unwrapped `render()`
+needed.
+
+## `<StrictMode>`'s mount-cleanup-mount replay can cancel state that predates the component it replays (#217 fix round 4, item 4)
+
+`Dashboard.tsx`'s writer-registration effect (previous section) registers once per mount and
+cancels the shared store's pending debounce on its own cleanup — correct for a genuine unmount.
+`main.tsx` mounts the whole app under `<StrictMode>`, which double-invokes an INITIAL mount's
+effects (mount, cleanup, mount again) synchronously, in the same commit, specifically to surface
+effects that are not safely re-runnable. That synthetic cleanup ran the same unconditional
+cancellation a real unmount does, which cancelled a debounce armed OFF-Dashboard (the rail's
+`ShellSearch`, mounted everywhere, typed on `/admin`) an instant before Dashboard's own first
+mount — even though, once the double-invoke dance settled, Dashboard was still mounted with a
+perfectly good writer to receive that debounce's eventual commit. The fix is a generation counter
+bumped at the top of the effect body, read by its own cleanup through `queueMicrotask`: StrictMode's
+replay is entirely synchronous (mount → cleanup → mount, no microtask boundary between them), so by
+the time the deferred cancellation check runs, a same-tick re-registration has already bumped the
+counter and the check backs off; a REAL unmount has no such follow-up invocation, so the counter is
+unchanged when the microtask fires and it cancels exactly as before. The general shape: when a
+cleanup's action is only safe for ONE of the two events that can trigger it (a real unmount, not a
+same-tick synthetic replay), defer the action past the point where a same-tick replay would have
+already announced itself, rather than trying to tell the two events apart from inside the cleanup
+itself (they look identical at that point).
+
+**Correction (#217 build, step 6).** The generation-counter/`queueMicrotask` mechanism this entry
+describes is deleted, not just described in the past tense: #217 build, step 5 removed the reason
+it existed. Once a commit with no writer registered is simply dropped (there is no local committed
+copy left for it to update either), the cleanup can unregister unconditionally with no deferred
+check — a StrictMode replay re-registers a writer before the timer can fire (still commits); a
+real unmount never re-registers one (never commits). The general shape the entry closes with —
+defer a cleanup action that is only safe for one of two same-looking triggers — is still a real
+technique worth knowing; it is just no longer what this particular file does, because the
+asymmetry it was working around (a fire with no writer used to silently update local state) no
+longer exists.
+
 ## A mocked-fetch DOM suite hid a client/route id mismatch in both directions (#226)
 
 The Calendar's checklist event/unscheduled-entry `id` is a `checklist:`-prefixed ENTITY id —
@@ -2962,3 +3142,54 @@ to round-trip. Pin the contract itself with one worker integration test that tak
 id from one route and feeds it into the route that consumes it (here: GET the Calendar range,
 PATCH the subtasks route with the id verbatim, expect 400 for the raw id and 200 for the unwrapped
 one) — a unit test on either side alone can drift with the other without failing.
+
+## A copy of URL state in a store is a seam that finds a new bug every review round — delete the copy, not the bug (#217 build)
+
+The shell search's committed query lived in two places at once: the URL (`q` on bare/List/Kanban/
+calendar-intent, and the calendar facet's own `q`) and a `query` field the shared store also kept,
+"adopted" from the URL by a passive effect. Seven review rounds each found a DIFFERENT bug living
+in the seam between the two — a Back/Forward race, two adoption effects fighting over declaration
+order, a stale adoption marker that ignored the principal, a render reading a ref mutated in an
+effect, and, the release blocker that finally forced the redesign: a role without Calendar
+capability returned from the reconciliation effect before ever adopting a bare/List/Kanban route's
+own `q`, so the filter, chip and Kanban movement gate fell back to an empty store after the first
+commit while the URL still said `q=smith`. Every fix landed in the seam itself — tightening an
+adoption effect's guard, reordering two effects, scoping a marker to a principal — and every fix
+left the seam standing, so the next round found the next bug in it.
+
+The actual fix was structural, not another patch to the seam: stop keeping a second copy at all.
+`Dashboard.tsx` now derives the committed query at RENDER, straight from the currently governing
+parsed route (`committedQuery = dashboardSearchOf(route) ?? ""`), for every role and every view —
+there is no adoption effect left to lag behind, and no store copy left to disagree with the URL for
+even one render. The store keeps only what genuinely is not in the URL: the DRAFT (what is showing
+in the input, including an uncommitted trailing space or mid-debounce keystroke), the debounce
+timer, IME composing state, and the owning principal. Committing is a URL write through a writer
+the currently-mounted Dashboard registers; with no writer registered (off-Dashboard, or after this
+component's own unmount) a debounce firing is simply dropped — there is nothing local left for it
+to fall back to, which is itself new behaviour now that there is no copy to fall into.
+
+What replaced the seam is ONE stateless sync rule, not a smarter adoption effect:
+`syncDashboardSearchDraftFromLocation(routeQuery, viewerId)`, called exactly once, in `ShellRoute`'s
+own `useLayoutEffect` keyed on location + principal. For a non-Dashboard route it returns
+immediately — the route's lack of a `q` is not authoritative off-Dashboard, since an Enter on the
+rail must still navigate with whatever was typed. Otherwise: claim ownership, cancel the pending
+timer UNCONDITIONALLY (the Back/Forward race fix, generalised — a location change must never let an
+in-flight debounce fire after the fact and overwrite what the URL now says), then compare the draft
+NORMALISED against the route's own `q` before ever overwriting it. That comparison is what keeps
+the store's own debounced write from fighting the very typing that produced it: the write emits
+exactly `normalize(draft)`, so the resulting location compares equal once it lands back here, and a
+raw draft (trailing space, mid-collapse whitespace) is left alone. Only a location carrying a
+GENUINELY different committed search — a rail click to a different `q`, Back/Forward, a pasted deep
+link — ever overwrites the draft. One function, one call site, one comparison rule; nowhere left
+for a seventh bug to hide, because there is no longer a second field for two sources of truth to
+disagree about.
+
+**Rule.** When a value already has one authoritative source (here, the URL), a component-local
+"cache" of it that gets "kept in sync" by an effect is not a performance optimisation — it is a
+second source of truth, and every review round will find the next place the two can disagree. If a
+value is cheap to derive from its authoritative source at render (a route parse, here), derive it
+at render and delete the copy entirely, rather than making the sync effect that maintains the copy
+progressively smarter. The one exception worth keeping a local copy for is genuinely
+NOT-yet-authoritative state — the DRAFT here, which is real user input the authoritative source
+does not have yet — and even that copy needs exactly one function that reconciles it against the
+authoritative source on every change, not one adoption path per call site.

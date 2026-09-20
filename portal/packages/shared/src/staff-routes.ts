@@ -1,4 +1,5 @@
 import {
+  normalizeProductionCalendarSearch,
   PRODUCTION_CALENDAR_LAYERS,
   PRODUCTION_CALENDAR_MAX_EDITOR_IDS,
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
@@ -36,17 +37,48 @@ export type DashboardCalendarState = {
  * now falls through to `not-found`, not to a redirect or a normalisation.
  *
  * `calendar` joined the allow-list in #111 and is not symmetrical with the other two. `list` and
- * `kanban` are destinations; a bare `/?view=calendar` is an *intent*, legal only as the sole query
- * field. The navigation rail links to it and the Dashboard canonicalises it to the parameterised
- * facet URL that `DashboardCalendarFacetRoute` describes, using the remembered subview and last
- * date it already reads. The rail resolving those preferences itself was rejected: it would put the
- * preference logic in two places. The accepted cost is one URL rewrite on arrival, which is why
- * this spelling should never be observed in the address bar for more than a commit.
+ * `kanban` are destinations; a bare `/?view=calendar` is an *intent*, legal as the sole query
+ * field OR paired with exactly one `q` (#217 fix round 4, item 1 -- `DashboardCalendarIntentRoute`'s
+ * own docblock has why). The navigation rail links to it and the Dashboard canonicalises it to the
+ * parameterised facet URL that `DashboardCalendarFacetRoute` describes, using the remembered
+ * subview and last date it already reads. The rail resolving those preferences itself was
+ * rejected: it would put the preference logic in two places. The accepted cost is one URL rewrite
+ * on arrival, which is why this spelling should never be observed in the address bar for more than
+ * a commit.
  */
-export type DashboardViewRoute = {
+/** List/Kanban carry the Dashboard's own `q` (#217). */
+export type DashboardListKanbanRoute = {
   kind: "dashboard";
-  dashboardView: "list" | "kanban" | "calendar";
+  dashboardView: "list" | "kanban";
+  search?: string;
 };
+
+/**
+ * The bare `/?view=calendar` intent (#111) -- CAN carry a `search` field, as of #217 fix round 4,
+ * item 1 (Sol re-review). Round 3, item 3 made `{ dashboardView: "calendar", search }`
+ * unrepresentable specifically because `staffPathFor` could serialize it to
+ * `/?view=calendar&q=...` while `parseStaffLocation` rejected that exact spelling outright -- a
+ * route the serializer could produce but the parser could never read back. That analysis was
+ * right about the MISMATCH; the fix it chose (forbid the state) turned out to be the wrong side of
+ * it. The rail's Calendar link is a plain `<a href>` the browser also owns: keyboard Enter (not
+ * intercepted -- `router.ts`'s own `shouldInterceptInternalLink` only claims a genuine left-click),
+ * cmd/middle-click, "open in new tab" and a reload all load `href` as a fresh document, with a
+ * COLD, empty `lib/dashboard-search-store.ts` singleton -- so a canonicaliser that could only read
+ * the in-memory store from that intent lost the search on every one of those paths. The fix this
+ * round makes instead: `/?view=calendar&q=<text>` is now a legal INTENT spelling too (the parser
+ * accepts `view` plus, optionally, exactly one `q` -- still rejecting every partial facet, exactly
+ * as before), so the search survives in the URL itself regardless of how the browser got there.
+ * `Dashboard.tsx`'s one full-facet rewrite still owns carrying it into the concrete Calendar URL —
+ * that part of item 1's round-3 design was already right — but now reads it FROM THE ROUTE first,
+ * falling back to the live store only for a draft still in flight during an intercepted SPA click.
+ */
+export type DashboardCalendarIntentRoute = {
+  kind: "dashboard";
+  dashboardView: "calendar";
+  search?: string;
+};
+
+export type DashboardViewRoute = DashboardListKanbanRoute | DashboardCalendarIntentRoute;
 
 export type DashboardCalendarFacetRoute = {
   kind: "dashboard";
@@ -54,7 +86,7 @@ export type DashboardCalendarFacetRoute = {
 };
 
 export type DashboardRoute =
-  | { kind: "dashboard" }
+  | { kind: "dashboard"; search?: string }
   | DashboardViewRoute
   | DashboardCalendarFacetRoute;
 
@@ -76,8 +108,12 @@ const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned
 const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
-const dashboardListKanbanParameterNames = new Set(["view"]);
+const dashboardListKanbanParameterNames = new Set(["view", "q"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
+
+/** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
+ * call, `~432`) so both enforce the same cap. */
+export const DASHBOARD_SEARCH_MAX_CHARS = 200;
 
 function unsafeText(value: string): boolean {
   return /[\\\u0000-\u001f\u007f]/.test(value);
@@ -92,6 +128,42 @@ function unsafeText(value: string): boolean {
  */
 export function stripUnsafeText(value: string): string {
   return Array.from(value).filter((char) => !unsafeText(char)).join("");
+}
+
+/**
+ * Caps a search value to `DASHBOARD_SEARCH_MAX_CHARS` code points -- the ONE definition
+ * `calendarPathFor`/`staffPathFor` below, `apps/web/src/lib/dashboard-search-store.ts`'s own
+ * commit path, and the worker's `/api/projects?q=` matcher (`workers/app/src/routes/projects.ts`)
+ * all share, so the 200-char cap can never drift between them (#217 fix round 3, items 3 and 4;
+ * `workers/app/src/lib/project-search.ts`'s own `PROJECT_SEARCH_MAX_LENGTH` stays a separate
+ * constant — that file is an unmodified #218 cherry-pick — but a worker test asserts the two stay
+ * numerically equal). Serializing an over-limit search used to emit a `q` the parser then rejected
+ * outright, collapsing the whole route to `not-found` rather than a capped, still-legal one; this
+ * is what makes the serializer total over every `search` a caller passes it, not only the ones
+ * already known to be short enough.
+ */
+export function capDashboardSearchText(value: string): string {
+  const chars = [...value];
+  return chars.length > DASHBOARD_SEARCH_MAX_CHARS ? chars.slice(0, DASHBOARD_SEARCH_MAX_CHARS).join("") : value;
+}
+
+/**
+ * The ONE shared normaliser for a Dashboard search value: strip unsafe characters, collapse/trim
+ * whitespace, then cap -- #217 fix round 4, item 2 (Sol re-review). `staffPathFor`/`calendarPathFor`
+ * below used to only strip and cap (#217 fix round 3), so a raw, not-yet-committed draft
+ * (`"  smith   street  "`, reaching a URL straight from `apps/web/src/lib/app-router.tsx`'s rail
+ * hrefs before this fix) served AND parsed back as that exact raw text — never actually collapsed
+ * to the same value `dashboard-search-store.ts`'s own commit path produces, so the URL and the
+ * store's own committed `query` could disagree on what "the same search" even looks like. Every
+ * href/URL this module builds from a live (possibly still-mid-keystroke) search now goes through
+ * this one function, so no caller can reproduce that drift by getting the composition order wrong.
+ * Idempotent by construction (strip/trim/collapse/cap are each idempotent), which is what keeps
+ * `staffPathFor(parseStaffLocation(staffPathFor(x))) === staffPathFor(x)` a fixed point: the parser
+ * itself stays a strict reader of whatever raw text is in `q` — it does not also need to normalise
+ * — because the SERIALIZER's own output is already normalised, and normalising it again is a no-op.
+ */
+export function normalizeDashboardSearchText(value: string): string {
+  return capDashboardSearchText(normalizeProductionCalendarSearch(stripUnsafeText(value)));
 }
 
 /** Parse an unescaped pathname only; query and hash are intentionally out of contract. */
@@ -235,8 +307,12 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   const myTasks = parseCalendarFlag(params, "mine");
   if (includeUnassigned === null || showCompletedChecklist === null || showDeliveredProjects === null || overdueOnly === null || myTasks === null) return null;
 
-  const search = params.get("q") ?? "";
-  if ([...search].length > 200) return null;
+  const rawSearch = params.get("q") ?? "";
+  if ([...rawSearch].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
+  // #217 fix round 5, item 4 (Sol re-review): normalized here too -- a freshly-typed, padded `q`
+  // on the calendar facet must read back as the same value the store's own commit path and
+  // `calendarPathFor` would both produce, not the raw spacing.
+  const search = normalizeDashboardSearchText(rawSearch);
 
   return {
     view: "calendar",
@@ -254,14 +330,42 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   };
 }
 
-function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardViewRoute | null {
+/**
+ * `undefined` = `q` absent OR normalizes to no search (legal, both read the same way); `null` =
+ * reject. Reject an empty raw `q` -- the serializer never emits one, so accepting it would break
+ * the `staffPathFor` -> `parseStaffLocation` fixed point -- or a raw value over
+ * `DASHBOARD_SEARCH_MAX_CHARS` code points (checked on the RAW value, before normalising, so an
+ * over-limit `q` still rejects the whole route rather than silently truncating it). Unsafe
+ * characters, duplicate keys, non-canonical percent-encoding and an oversized query are already
+ * rejected upstream by `parseDashboardQuery`; this helper does not re-check them.
+ *
+ * #217 fix round 5, item 4 (Sol re-review, SHOULD-FIX). A within-limit but otherwise raw `q` --
+ * padded, multi-space, e.g. a freshly-typed `/?q=++smith+++street++` that was never something
+ * `staffPathFor`/`dashboard-search-store.ts`'s own commit path would themselves have emitted --
+ * used to be returned exactly as written, disagreeing with what the SAME text normalises to
+ * everywhere else in the app. Every `q` this function accepts now goes through the one shared
+ * `normalizeDashboardSearchText`, the same normaliser the serializer already uses -- so a value
+ * that normalizes down to "" (all-whitespace) reads as "no search", identically to `q` being
+ * absent, rather than a rejected route.
+ */
+function parseDashboardSearch(params: URLSearchParams): string | null | undefined {
+  if (!params.has("q")) return undefined;
+  const value = params.get("q")!;
+  if (value === "" || [...value].length > DASHBOARD_SEARCH_MAX_CHARS) return null;
+  const normalized = normalizeDashboardSearchText(value);
+  return normalized === "" ? undefined : normalized;
+}
+
+function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardListKanbanRoute | null {
   for (const name of params.keys()) {
     if (!dashboardListKanbanParameterNames.has(name)) return null;
   }
   const dashboardView = params.get("view");
   if (dashboardView !== "list" && dashboardView !== "kanban") return null;
+  const search = parseDashboardSearch(params);
+  if (search === null) return null;
 
-  return { kind: "dashboard", dashboardView };
+  return { kind: "dashboard", dashboardView, ...(search ? { search } : {}) };
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
@@ -278,21 +382,57 @@ export function parseStaffLocation(location: string): StaffRoute {
   const params = parseDashboardQuery(query);
   if (params === null) return { kind: "not-found" };
   const view = params.get("view");
+  if (!params.has("view")) {
+    // Bare `/?q=...`: the only legal key here is `q` itself -- everything else (including a
+    // `view` spelling this arm didn't already claim) falls through to `not-found` below.
+    for (const name of params.keys()) {
+      if (name !== "q") return { kind: "not-found" };
+    }
+    const search = parseDashboardSearch(params);
+    if (search === null) return { kind: "not-found" };
+    // #217 fix round 5, item 4: `undefined` now also covers a `q` that NORMALIZES to no search
+    // (all-whitespace) -- that reads as the plain bare route, not a rejection, the same way `q`
+    // being entirely absent already did.
+    return { kind: "dashboard", ...(search !== undefined ? { search } : {}) };
+  }
   if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
-    // The bare `/?view=calendar` intent (#111), legal only as the sole query field. Checked before
-    // `parseCalendarLocation` because that function requires a complete facet — a date, a subview
-    // and a non-empty layer list — and would reject this spelling. Every partial facet still falls
-    // through to it and is still rejected: accepting `view=calendar` plus *some* of its parameters
-    // would silently discard the rest. Duplicate keys, a trailing `&`, an oversized query and
-    // non-canonical percent-encoding are already rejected by `parseDashboardQuery` above, so this
-    // arm inherits all of that and only has to count the keys.
-    if ([...params.keys()].length === 1) return { kind: "dashboard", dashboardView: "calendar" };
+    // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
+    // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
+    // docblock for why). Checked before `parseCalendarLocation` because that function requires a
+    // complete facet — a date, a subview and a non-empty layer list — and would reject this
+    // spelling. Every partial facet still falls through to it and is still rejected: accepting
+    // `view=calendar` plus *some* of its parameters (other than `q`) would silently discard the
+    // rest. Duplicate keys, a trailing `&`, an oversized query and non-canonical percent-encoding
+    // are already rejected by `parseDashboardQuery` above, so this arm inherits all of that and
+    // only has to count and name the keys.
+    const keys = [...params.keys()];
+    if (keys.length === 1 || (keys.length === 2 && params.has("q"))) {
+      const search = parseDashboardSearch(params);
+      if (search === null) return { kind: "not-found" };
+      return { kind: "dashboard", dashboardView: "calendar", ...(search ? { search } : {}) };
+    }
     const calendar = parseCalendarLocation(params);
     if (calendar === null) return { kind: "not-found" };
     return { kind: "dashboard", calendar };
   }
   return { kind: "not-found" };
+}
+
+/**
+ * The ONE accessor for "what committed search does this route carry" — #217 build, step 2. Every
+ * Dashboard route arm's own `search` (bare/List/Kanban/the Calendar intent) or the Calendar
+ * facet's own `calendar.search` is already normalised by the parser (`parseDashboardSearch`/
+ * `parseCalendarLocation`'s own `normalizeDashboardSearchText` calls above) before it ever reaches
+ * here, so this never re-normalises. `undefined` for any non-Dashboard route, and for a Dashboard
+ * route that carries no `q` at all — never `""` for "absent" (the Calendar facet's own `search` is
+ * a required `string`, so an intentionally-empty facet search is a real `""`, distinguishable from
+ * "the route carries no search field").
+ */
+export function dashboardSearchOf(route: StaffRoute): string | undefined {
+  if (route.kind !== "dashboard") return undefined;
+  if ("calendar" in route) return route.calendar.search;
+  return route.search;
 }
 
 function serializedList(values: readonly string[], order: readonly string[]): string {
@@ -322,7 +462,11 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   if (calendar.showDeliveredProjects !== calendarFilterDefaults.showDeliveredProjects) params.set("delivered", "1");
   if (calendar.overdueOnly !== calendarFilterDefaults.overdueOnly) params.set("overdue", "1");
   if (calendar.myTasks !== calendarFilterDefaults.myTasks) params.set("mine", "1");
-  const safeSearch = stripUnsafeText(calendar.search);
+  // #217 fix round 3, item 3 / round 4, item 2: normalised (strip, collapse whitespace, trim, cap)
+  // through the one shared `normalizeDashboardSearchText`, not just stripped and capped -- a raw
+  // draft's stray whitespace must never reach the URL differently than the store's own debounced
+  // URL write would put there.
+  const safeSearch = normalizeDashboardSearchText(calendar.search);
   if (safeSearch !== calendarFilterDefaults.search) params.set("q", safeSearch);
   return `/?${params.toString()}`;
 }
@@ -331,8 +475,17 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
   switch (route.kind) {
     case "dashboard": {
       if ("calendar" in route) return calendarPathFor(route.calendar);
-      if ("dashboardView" in route) return `/?view=${route.dashboardView}`;
-      return "/";
+      const params = new URLSearchParams();
+      // `search` exists on every arm here now (#217 fix round 4, item 1 gave the Calendar INTENT
+      // arm one too), so it is read from `route` uniformly.
+      if ("dashboardView" in route) params.set("view", route.dashboardView);
+      const search = route.search;
+      if (search !== undefined) {
+        const safeSearch = normalizeDashboardSearchText(search);
+        if (safeSearch !== "") params.set("q", safeSearch);
+      }
+      const qs = params.toString();
+      return qs ? `/?${qs}` : "/";
     }
     case "create-project": return "/projects/new";
     case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;
