@@ -76,6 +76,30 @@ async function focusBar(el: HTMLElement) {
   });
 }
 
+/**
+ * #219 PR A fix (Sol re-review round 2, LOW): a real browser's activation behaviour for Space on a
+ * focused, un-prevented `<button>` is keydown, then (on keyup, per the HTML spec's button
+ * activation behaviour) a synthetic `click`. Neither jsdom nor happy-dom (this suite's DOM
+ * environment) synthesizes that click on its own - a test that only asserts
+ * `keydown.defaultPrevented === false` proves this component did not BLOCK native activation, but
+ * never actually proves activation still WORKS. This dispatches all three events, in that order,
+ * the way a real browser would, and returns the click event so a caller can also assert its own
+ * `defaultPrevented`.
+ */
+async function nativeSpaceActivate(el: HTMLElement): Promise<{ keydown: KeyboardEvent; click: MouseEvent }> {
+  const keydownEvent = await keydown(el, { key: " " });
+  await act(async () => {
+    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: " " }));
+    await Promise.resolve();
+  });
+  const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
+  await act(async () => {
+    el.dispatchEvent(clickEvent);
+    await Promise.resolve();
+  });
+  return { keydown: keydownEvent, click: clickEvent };
+}
+
 beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -364,7 +388,8 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
     expect(announcerText()).toBe("That target can't be adjusted.");
   });
 
-  it("a fully locked, non-recurring bar: aria-keyshortcuts is null; Space does not enter, left un-prevented (native activate still available)", async () => {
+  it("a fully locked, non-recurring bar: aria-keyshortcuts is null; Space does not enter, and NATIVE ACTIVATION (keydown+keyup+click, as a browser does for Space on a button) still opens the event exactly once", async () => {
+    const onEventClick = vi.fn();
     const event: GanttEvent = {
       id: "kb-fully-locked",
       title: "Fully Locked",
@@ -374,21 +399,26 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
       resizableEdges: { start: false, end: false },
     };
     await render(
-      <Gantt events={[event]} date={START} timeZone="UTC">
+      <Gantt events={[event]} onEventClick={onEventClick} date={START} timeZone="UTC">
         <KeyedBarHost eventId="kb-fully-locked" />
       </Gantt>,
     );
     const bar = findBarByTitle("Fully Locked");
     expect(bar.getAttribute("aria-keyshortcuts")).toBeNull();
     await focusBar(bar);
-    const nativeEvent = await keydown(bar, { key: " " });
+    const { keydown: nativeEvent, click } = await nativeSpaceActivate(bar);
     expect(nativeEvent.defaultPrevented).toBe(false);
+    expect(click.defaultPrevented).toBe(false);
     expect(bar.getAttribute("data-adjusting")).toBeNull();
     expect(bar.getAttribute("role")).not.toBe("application");
+    // The actual proof "native activate still available" was only asserted by implication before
+    // (Sol re-review round 2, LOW) - this is the open itself, exactly once.
+    expect(onEventClick).toHaveBeenCalledTimes(1);
   });
 
-  it("a recurring occurrence: aria-keyshortcuts is null; Space does not enter Adjust mode and is left un-prevented", async () => {
+  it("a recurring occurrence: aria-keyshortcuts is null; Space does not enter Adjust mode, and NATIVE ACTIVATION (keydown+keyup+click) still opens the event exactly once", async () => {
     const onEventsChange = vi.fn();
+    const onEventClick = vi.fn();
     const event: GanttEvent = {
       id: "kb-recurring",
       title: "Recurring",
@@ -397,17 +427,19 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
       recurrence: { freq: "daily" },
     };
     await render(
-      <Gantt events={[event]} onEventsChange={onEventsChange} date={START} timeZone="UTC">
+      <Gantt events={[event]} onEventsChange={onEventsChange} onEventClick={onEventClick} date={START} timeZone="UTC">
         <KeyedBarHost eventId="kb-recurring" />
       </Gantt>,
     );
     const bar = findBarByTitle("Recurring");
     expect(bar.getAttribute("aria-keyshortcuts")).toBeNull();
     await focusBar(bar);
-    const nativeEvent = await keydown(bar, { key: " " });
+    const { keydown: nativeEvent, click } = await nativeSpaceActivate(bar);
     expect(onEventsChange).not.toHaveBeenCalled();
     expect(nativeEvent.defaultPrevented).toBe(false);
+    expect(click.defaultPrevented).toBe(false);
     expect(bar.getAttribute("data-adjusting")).toBeNull();
+    expect(onEventClick).toHaveBeenCalledTimes(1);
   });
 
   it("a plain ArrowRight while idle is left alone: not prevented, not entering Adjust mode, and the consumer's own onKeyDown still fires", async () => {
