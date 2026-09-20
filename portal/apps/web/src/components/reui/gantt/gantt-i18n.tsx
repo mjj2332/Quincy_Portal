@@ -32,6 +32,16 @@
  * `keyboardNudgeInvalid`, `keyboardNudgeRejected` — the short reasons `gantt-bar.tsx`'s keyboard
  * move/resize announces through the gantt root's live region on a failed nudge (the success case
  * reuses the existing `functions.formatEventTime`, unchanged).
+ *
+ * #219 PR A (Adjust mode) edit, additive: eight more `labels` for the modal keyboard Adjust
+ * session that replaces the chords above (`gantt-bar.tsx`'s new `matchGanttBarKey` / Space to
+ * enter) — `adjustInstructions` (the visually-hidden `aria-describedby` text, also prefixed onto
+ * the entry announcement), `adjustTargetLabels` (names the three targets), and five composers
+ * (`adjustEntered`/`adjustRetargeted`/`adjustStepped`/`adjustCommitted`) plus two plain strings
+ * (`adjustNoChange`, `adjustCancelled`, `adjustTargetLocked`). A refused STEP (not a refused
+ * retarget) reuses the existing `keyboardNudgeLocked`/`keyboardNudgeInvalid`/
+ * `keyboardNudgeRejected` above unchanged — the same three reasons `nudgeEvent`'s single commit
+ * already announces, on the SAME gate (`proposeNudge`, shared by both).
  */
 
 import type {
@@ -90,6 +100,28 @@ interface GanttI18nConfig {
     keyboardNudgeInvalid: string
     /** Live-region reason on a keyboard nudge blocked by the overlap policy, canDropEvent, or onEventUpdate. */
     keyboardNudgeRejected: string
+    /** #219 PR A (Adjust mode) — visually-hidden `aria-describedby` text while adjusting; also prefixed onto the entry announcement. */
+    adjustInstructions: string
+    /** #219 PR A (Adjust mode) — names the three retarget-able parts of a bar. */
+    adjustTargetLabels: {
+      move: string
+      resizeStart: string
+      resizeEnd: string
+    }
+    /** #219 PR A (Adjust mode) — live-region text on Space entering the mode: which target, and its current range. */
+    adjustEntered: (targetLabel: string, rangeLabel: string) => string
+    /** #219 PR A (Adjust mode) — live-region text on M/S/E switching the target. */
+    adjustRetargeted: (targetLabel: string) => string
+    /** #219 PR A (Adjust mode) — live-region text on an accepted Arrow/Shift+Arrow step: the NEW preview range. */
+    adjustStepped: (rangeLabel: string) => string
+    /** #219 PR A (Adjust mode) — live-region reason when M/S/E targets an edge this segment does not own. */
+    adjustTargetLocked: string
+    /** #219 PR A (Adjust mode) — live-region text on Enter/Space committing a net change. */
+    adjustCommitted: (rangeLabel: string) => string
+    /** #219 PR A (Adjust mode) — live-region text on Enter/Space with no net change; the session just closes. */
+    adjustNoChange: string
+    /** #219 PR A (Adjust mode) — live-region text on Escape, or a blur/pointer-elsewhere cancel. */
+    adjustCancelled: string
     scales: {
       day: string
       week: string
@@ -166,6 +198,21 @@ const DEFAULT_LABELS: GanttI18nConfig["labels"] = {
   keyboardNudgeLocked: "That can't be changed.",
   keyboardNudgeInvalid: "That change isn't possible.",
   keyboardNudgeRejected: "That change was rejected.",
+  adjustInstructions:
+    "Adjust mode. Use the arrow keys to move by one step, Shift plus an arrow key for a larger step, M, S, or E to target the whole bar, the start, or the end, Enter or Space to commit, and Escape to cancel.",
+  adjustTargetLabels: {
+    move: "whole bar",
+    resizeStart: "start",
+    resizeEnd: "end",
+  },
+  adjustEntered: (targetLabel, rangeLabel) =>
+    `Adjusting the ${targetLabel}, currently ${rangeLabel}.`,
+  adjustRetargeted: (targetLabel) => `Now adjusting the ${targetLabel}.`,
+  adjustStepped: (rangeLabel) => `Now ${rangeLabel}.`,
+  adjustTargetLocked: "That target can't be adjusted.",
+  adjustCommitted: (rangeLabel) => `Adjusted to ${rangeLabel}.`,
+  adjustNoChange: "No change made.",
+  adjustCancelled: "Adjustment cancelled.",
   scales: {
     day: "Day",
     week: "Week",
@@ -292,8 +339,11 @@ const DEFAULT_GANTT_I18N: GanttI18nConfig = {
 
 /** Deep-partial override shape: replace individual keys, never sections. */
 interface GanttI18nOverrides {
-  labels?: Partial<Omit<GanttI18nConfig["labels"], "scales">> & {
+  labels?: Partial<Omit<GanttI18nConfig["labels"], "scales" | "adjustTargetLabels">> & {
     scales?: Partial<GanttI18nConfig["labels"]["scales"]>
+    // #219 PR A (Adjust mode): same per-key merge treatment as `scales` above - an override of
+    // just one target name must not drop the other two defaults.
+    adjustTargetLabels?: Partial<GanttI18nConfig["labels"]["adjustTargetLabels"]>
   }
   formats?: Partial<GanttI18nConfig["formats"]>
   functions?: Partial<GanttI18nConfig["functions"]>
@@ -315,6 +365,11 @@ function mergeGanttI18n(overrides?: GanttI18nOverrides): GanttI18nConfig {
     scales: {
       ...DEFAULT_LABELS.scales,
       ...overrides.labels?.scales,
+    },
+    // #219 PR A (Adjust mode): same per-key merge treatment as `scales` above.
+    adjustTargetLabels: {
+      ...DEFAULT_LABELS.adjustTargetLabels,
+      ...overrides.labels?.adjustTargetLabels,
     },
   }
   const formats = { ...DEFAULT_FORMATS, ...overrides.formats }

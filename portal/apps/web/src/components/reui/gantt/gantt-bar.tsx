@@ -105,12 +105,53 @@
  * oxblood at the OLD pre-dim /20+/40 compounded fill measured ~3.2:1 for that lighter role, under
  * the 4.5:1 floor — `text-foreground` measured ~7.2:1 in the same worst case). `data-past` is
  * untouched: an overdue unfinished task must not read as de-emphasised.
+ *
+ * #219 PR A (Adjust mode) edit — replaces the whole Alt+Arrow / Shift+Alt+Arrow / Ctrl+Alt+Arrow
+ * chord scheme above with a modal keyboard session (Opus and Sol both rejected the chords:
+ * Ctrl+Alt+Arrow is OS-intercepted on some desktops, Alt+Arrow is browser Back/Forward):
+ * - `matchGanttBarKeyChord` is GONE; `onKeyDown` now calls `gantt-lib.tsx`'s new
+ *   `matchGanttBarKey(e, adjusting, rtl)` instead - one pure matcher for the WHOLE scheme (idle
+ *   Space enters; while adjusting, Arrow/Shift+Arrow steps, M/S/E retargets, Enter/Space commits,
+ *   Escape cancels). `adjusting` is read from `state.adjust` via `useGanttSelector`, keyed on
+ *   `occurrence.key` the same way `isDragging`/`dragKind` already are.
+ * - Space's "enter" match still gates on the SAME `canMove`/`canResizeStart`/`canResizeEnd` flags
+ *   `aria-keyshortcuts` is built from (now just `"Space"`, not a per-chord list), plus
+ *   `occurrence.isRecurring` - exactly the sol1 item 5/item 2 gating the old chords had, applied to
+ *   the ONE new entry point instead of three. An INELIGIBLE Space is left un-prevented, so the
+ *   button's native activate (open event) still fires - "Space keeps its current activate
+ *   behaviour" per the spec.
+ * - `step`/`retarget`/`commit`/`cancel` (while already adjusting) call the five `GanttInternals`
+ *   Adjust methods (`gantt.tsx`) directly; a refused step reuses the EXISTING
+ *   `keyboardNudgeLocked`/`Invalid`/`Rejected` announcements unchanged (same `proposeNudge` gate
+ *   `nudgeEvent` uses), and a refused retarget announces the new `adjustTargetLocked` instead
+ *   (a different failure shape: the target itself is unavailable, not a step within it).
+ * - `role="application"`, `data-adjusting`, and `aria-describedby` (a visually-hidden `sr-only`
+ *   span holding `i18n.labels.adjustInstructions`) are set only while THIS bar is the one
+ *   adjusting; a hairline dashed `outline` (own-color token, no shadow, no `dark:`) marks it
+ *   visibly. The bar itself never renders the moving/resizing PREVIEW - `stepAdjust` drives
+ *   `state.drag` the same shape a pointer gesture's own `applyProposal` does, so `gantt-view.tsx`'s
+ *   existing ghost (and this bar's own `data-drag-kind` fade, via the SAME `isDragging`/`dragKind`
+ *   selectors a real drag already uses) renders it with no new preview surface.
+ * - A commit that changes `start` (move, or a start-edge resize) claims the focus hand-off the same
+ *   way a successful move/resize-start nudge always did, comparing the committed `start` against
+ *   `occurrence.start` directly (NOT "was the last target resize-end" - Adjust mode's target can
+ *   change mid-session via M/S/E, so only the ACTUAL net start delta says whether a remount, and
+ *   therefore a refocus, is coming).
+ * - Blur, or a `pointerdown` anywhere outside this bar (captured at `document` while adjusting),
+ *   CANCELS - both re-read `instance.getState().adjust` live (not a closed-over boolean) rather
+ *   than trust a stale render's `adjusting` prop, because a COMMIT that remounts this bar can fire
+ *   a browser blur on the outgoing node with this component's LAST-rendered handler closure (still
+ *   `adjusting: true`) - a stale-closure cancel here would silently overwrite the commit's own
+ *   announcement with "cancelled" moments after a real write succeeded. `cancelAdjust` no-ops
+ *   harmlessly on an already-empty session either way, but the announcement race is the real risk
+ *   this guards.
  */
 
 import {
   createContext,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -129,10 +170,12 @@ import {
 import {
   flattenResources,
   getBaselineVariance,
+  matchGanttBarKey,
   resolveEventBaseline,
   toZoned,
 } from "@/components/reui/gantt/gantt-lib"
 import type {
+  GanttNudgeAction,
   GanttOccurrence,
   GanttSegment,
 } from "@/components/reui/gantt/gantt-types"
@@ -153,60 +196,21 @@ import {
 } from "@/components/reui/tooltip"
 import { RepeatIcon, CheckIcon } from "lucide-react"
 
-/** Which of the three keyboard chords (if any) a keydown matches. */
-type GanttBarKeyChord = "move" | "resize-start" | "resize-end"
-
 /**
- * Alt+ArrowLeft/Right = move, Shift+Alt+ArrowLeft/Right = resize the END edge,
- * Ctrl+Alt+ArrowLeft/Right = resize the START edge. Meta+Alt+Arrow (Cmd on
- * macOS) never matches - that chord space belongs to the OS. Shift+Ctrl
- * together matches neither (ambiguous, and none of the three chords needs
- * both modifiers at once).
- */
-function matchGanttBarKeyChord(e: {
-  key: string
-  altKey: boolean
-  shiftKey: boolean
-  ctrlKey: boolean
-  metaKey: boolean
-}): GanttBarKeyChord | null {
-  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return null
-  if (!e.altKey || e.metaKey) return null
-  if (e.shiftKey && e.ctrlKey) return null
-  if (e.shiftKey) return "resize-end"
-  if (e.ctrlKey) return "resize-start"
-  return "move"
-}
-
-/**
- * Logical time-axis direction (-1 earlier, +1 later) for an ArrowLeft/Right
- * key, RTL-aware the same way the splitter's key handler in `gantt-view.tsx`
- * (`~:2744`) is: physical ArrowLeft/Right, mirrored by `direction: rtl`.
- */
-function ganttArrowDirection(key: "ArrowLeft" | "ArrowRight", rtl: boolean): -1 | 1 {
-  const physical = key === "ArrowLeft" ? -1 : 1
-  return (rtl ? -physical : physical) as -1 | 1
-}
-
-/**
- * `aria-keyshortcuts` value: only the chords permitted for THIS bar, or `undefined` for none.
- * `isRecurring` always wins to `undefined` - Quincy fix (#219 PR A, Sol review, sol1 item 2):
- * `nudgeEvent` has no occurrence-aware exception semantics yet (see `gantt.tsx`'s own doc comment
- * on it), so a recurring occurrence's bar must neither advertise nor act on a keyboard nudge - it
- * would silently rewrite the SERIES MASTER, not just this occurrence.
+ * `aria-keyshortcuts` value while idle: `"Space"` when eligible for Adjust mode, `undefined`
+ * otherwise. `isRecurring` always wins to `undefined` - Quincy fix (#219 PR A, Sol review, sol1
+ * item 2): the store's Adjust methods have no occurrence-aware exception semantics yet (see
+ * `gantt.tsx`'s doc comment on `nudgeEvent`, which `proposeNudge` - shared by Adjust mode's
+ * `stepAdjust` - inherits), so a recurring occurrence's bar must neither advertise nor act on a
+ * keyboard adjustment - it would silently rewrite the SERIES MASTER, not just this occurrence.
+ * #219 PR A (Adjust mode): replaces the old per-chord list (`Alt+ArrowLeft Control+Alt+...` etc.)
+ * with the single new entry point - one Space chord covers all three targets now.
  */
 function buildGanttBarKeyShortcuts(
-  canMove: boolean,
-  canResizeStart: boolean,
-  canResizeEnd: boolean,
+  canAdjust: boolean,
   isRecurring: boolean
 ): string | undefined {
-  if (isRecurring) return undefined
-  const chords: string[] = []
-  if (canMove) chords.push("Alt+ArrowLeft", "Alt+ArrowRight")
-  if (canResizeStart) chords.push("Control+Alt+ArrowLeft", "Control+Alt+ArrowRight")
-  if (canResizeEnd) chords.push("Shift+Alt+ArrowLeft", "Shift+Alt+ArrowRight")
-  return chords.length > 0 ? chords.join(" ") : undefined
+  return canAdjust && !isRecurring ? "Space" : undefined
 }
 
 /**
@@ -332,6 +336,66 @@ function GanttBar<TData = unknown>({
       state.drag?.occurrence.key === occurrence.key ? state.drag.kind : null,
     { calendar: instance }
   )
+  // #219 PR A (Adjust mode) - this bar's own Adjust session, keyed on occurrence.key the same way
+  // isDragging/dragKind are above (a session's `occurrence` never changes mid-session - see
+  // gantt-types.tsx's GanttAdjustState doc comment - so this stays TRUE across every step/retarget
+  // until commit/cancel, without racing the occurrence.key checks those selectors already do).
+  const adjustTarget = useGanttSelector<TData, GanttNudgeAction | null>(
+    (state) =>
+      state.adjust?.occurrence.key === occurrence.key ? state.adjust.target : null,
+    { calendar: instance }
+  )
+  const adjusting = adjustTarget !== null
+
+  // Finds the ONE shared live region the same way gantt-dnd.tsx's beginGesture already does for a
+  // pointer drag - reused, not one per bar.
+  const announce = (text: string) => {
+    const ganttRoot = barRef.current?.closest<HTMLElement>("[data-slot=gantt]")
+    const announcer = ganttRoot?.querySelector<HTMLElement>(
+      "[data-slot=gantt-announcer]"
+    )
+    if (announcer) announcer.textContent = text
+  }
+  const formatRange = (start: Date, end: Date, allDay: boolean) =>
+    settings.i18n.functions.formatEventTime(
+      toZoned(start, settings.timeZone),
+      toZoned(end, settings.timeZone),
+      allDay,
+      settings.locale
+    )
+  const adjustTargetLabel = (target: GanttNudgeAction): string => {
+    const labels = settings.i18n.labels.adjustTargetLabels
+    if (target === "move") return labels.move
+    if (target === "resize-start") return labels.resizeStart
+    return labels.resizeEnd
+  }
+
+  // Pointer-down ANYWHERE outside this bar cancels the session (the spec's "Blur / pointer-down
+  // elsewhere = CANCEL" - blur is handled by the button's own onBlur below; this covers a pointer
+  // interaction that never focuses anything, e.g. a drag started on a different bar entirely).
+  // Captured at `document` (not this bar) because "elsewhere" is everywhere else in the page; the
+  // capture phase means it still fires even if some inner handler stops propagation. Re-reads
+  // `instance.getState().adjust` live rather than trusting `adjusting` from this closure - see the
+  // effect's own dependency comment and this file's header for the stale-closure race this avoids.
+  useEffect(() => {
+    if (!adjusting) return
+    const onDocumentPointerDown = (ev: PointerEvent) => {
+      const live = instance.getState().adjust
+      if (live?.occurrence.key !== occurrence.key) return
+      if (ev.target instanceof Node && barRef.current?.contains(ev.target)) {
+        return
+      }
+      instance.internals.cancelAdjust()
+      announce(settings.i18n.labels.adjustCancelled)
+    }
+    document.addEventListener("pointerdown", onDocumentPointerDown, true)
+    return () =>
+      document.removeEventListener("pointerdown", onDocumentPointerDown, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `announce`/`settings` close over this
+    // render's values, which is what we want the NEXT pointerdown to see too; re-running the effect
+    // on every render (by adding them) would thrash the listener for no behavioral gain.
+  }, [adjusting, instance, occurrence.key])
+
   // Hover-only range tooltip. Focus opens are ignored (the known button+
   // tooltip flash: clicking a bar opens a dialog, focus returns, and a
   // focus-triggered tooltip would pop). Hidden while dragging/resizing.
@@ -437,16 +501,13 @@ function GanttBar<TData = unknown>({
   // Each grip is gated on ITS OWN edge, not "does this bar resize at all":
   // a start-locked bar (owner decision on #215 — a project bar's shoot/start
   // edge is fixed) draws no start grip while its end grip still works. The
-  // same three flags gate the keyboard chords below and aria-keyshortcuts.
+  // same three flags gate Adjust mode's entry point (Space) and aria-keyshortcuts.
   const canMove = gestures.canDrag(segment)
   const canResizeStart = segment.isStart && gestures.canResize(segment, "start")
   const canResizeEnd = segment.isEnd && gestures.canResize(segment, "end")
-  const keyShortcuts = buildGanttBarKeyShortcuts(
-    canMove,
-    canResizeStart,
-    canResizeEnd,
-    occurrence.isRecurring
-  )
+  const canAdjust = canMove || canResizeStart || canResizeEnd
+  const keyShortcuts = buildGanttBarKeyShortcuts(canAdjust, occurrence.isRecurring)
+  const instructionsId = useId()
   const resizeHandles = (canResizeStart || canResizeEnd) && (
     <>
       {canResizeStart && (
@@ -462,6 +523,13 @@ function GanttBar<TData = unknown>({
             // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
             // explicit clear triggers for a stale keyboard-focus claim.
             instance.internals.clearKeyboardFocus()
+            // #219 PR A (Adjust mode): a pointer gesture on THIS bar mid-session would otherwise
+            // race stepAdjust for state.drag - cancel first, same as the document pointerdown-
+            // elsewhere handler above (both re-read live state, not the `adjusting` closure).
+            if (instance.getState().adjust?.occurrence.key === occurrence.key) {
+              instance.internals.cancelAdjust()
+              announce(settings.i18n.labels.adjustCancelled)
+            }
             gestures.beginResize(e, segment, "start")
           }}
         >
@@ -482,6 +550,10 @@ function GanttBar<TData = unknown>({
           className="absolute inset-y-0 end-0.5 flex w-2 cursor-ew-resize items-center justify-end opacity-0 group-hover/gantt-bar-group:opacity-100 pointer-coarse:opacity-100"
           onPointerDown={(e) => {
             instance.internals.clearKeyboardFocus()
+            if (instance.getState().adjust?.occurrence.key === occurrence.key) {
+              instance.internals.cancelAdjust()
+              announce(settings.i18n.labels.adjustCancelled)
+            }
             gestures.beginResize(e, segment, "end")
           }}
         >
@@ -511,6 +583,12 @@ function GanttBar<TData = unknown>({
     "data-completed": progress === 100 || undefined,
     "data-baseline": !!baseline || undefined,
     "data-baseline-variance": baselineVariance ?? undefined,
+    // #219 PR A (Adjust mode) - see this file's header. `role="application"` re-scopes ALL keyboard
+    // interaction on this element while it holds an active session (arrow keys mean "step", not
+    // "scroll the page"); `aria-describedby` points at the visually-hidden instructions span below.
+    role: adjusting ? "application" : undefined,
+    "data-adjusting": adjusting || undefined,
+    "aria-describedby": adjusting ? instructionsId : undefined,
     "aria-keyshortcuts": keyShortcuts,
     "aria-label": settings.i18n.functions.formatEventAriaLabel({
       title: event.title,
@@ -530,6 +608,13 @@ function GanttBar<TData = unknown>({
       // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
       // explicit clear triggers for a stale keyboard-focus claim.
       instance.internals.clearKeyboardFocus()
+      // #219 PR A (Adjust mode): a pointer gesture on THIS bar mid-session would otherwise race
+      // stepAdjust for state.drag - cancel first (re-reads live state; see the grips above and
+      // this file's header for why not the `adjusting` closure).
+      if (instance.getState().adjust?.occurrence.key === occurrence.key) {
+        instance.internals.cancelAdjust()
+        announce(settings.i18n.labels.adjustCancelled)
+      }
       gestures.beginMove(e, segment)
     },
     onClick: (e: React.MouseEvent) => {
@@ -542,83 +627,121 @@ function GanttBar<TData = unknown>({
       e.stopPropagation()
       settings.onEventDoubleClick?.(occurrence, e)
     },
+    // #219 PR A (Adjust mode) - Blur is one of the two CANCEL triggers (the other is a pointer-down
+    // elsewhere, in the effect above). Re-reads live state rather than the `adjusting` closure - see
+    // this file's header for the stale-closure race a commit's own remount can otherwise cause.
+    onBlur: () => {
+      const live = instance.getState().adjust
+      if (live?.occurrence.key !== occurrence.key) return
+      instance.internals.cancelAdjust()
+      announce(settings.i18n.labels.adjustCancelled)
+    },
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
-      const chord = matchGanttBarKeyChord(e)
-      if (!chord) return
-      // Quincy fix (#219 PR A, Sol review, sol1 item 2): a chord can still MATCH here even though
-      // a recurring occurrence advertises none (aria-keyshortcuts and the matcher are independent)
-      // - this bar must not act on it either, for the same reason it does not advertise it.
-      if (occurrence.isRecurring) return
-      // Quincy fix (#219 PR A, Sol review, sol1 item 5): gate on the SAME canMove/canResizeStart/
-      // canResizeEnd flags aria-keyshortcuts advertises, BEFORE preventDefault/nudgeEvent - a
-      // clipped edge (segment.isStart/isEnd false, a multi-day bar cut off at the viewport edge)
-      // omits a chord from aria-keyshortcuts for a reason nudgeEvent cannot see: it operates on
-      // the EVENT's own resizableEdges, not on which edge THIS rendered segment owns. Without this
-      // gate, a chord not advertised here could still fire and resize the wrong edge of the event.
-      if (chord === "move" && !canMove) return
-      if (chord === "resize-start" && !canResizeStart) return
-      if (chord === "resize-end" && !canResizeEnd) return
-      // Quincy fix (#219 PR A, Sol review, sol1 item 6): clear any STALE claim from an earlier
-      // nudge before processing this one - "the next nudge" is one of the explicit clear triggers
-      // (see `gantt.tsx`'s `GanttInternals.clearKeyboardFocus`), independent of whether THIS nudge
-      // goes on to claim a new one below.
-      instance.internals.clearKeyboardFocus()
-      // preventDefault only for a chord that is actually ours - Alt+Arrow
-      // etc. otherwise falls through to whatever else is listening
-      e.preventDefault()
       const rtl = getComputedStyle(e.currentTarget).direction === "rtl"
-      const direction = ganttArrowDirection(
-        e.key as "ArrowLeft" | "ArrowRight",
-        rtl
-      )
-      // Quincy fix (#219 PR A, Sol review, sol1 item 3): pass the effective view-level
-      // scheduleMode through explicitly - nudgeEvent is a store-level method with no component
-      // in its call stack to read useGanttViewConfig() from itself.
-      const result = instance.api.nudgeEvent(
-        event.id,
-        chord,
-        direction,
-        viewConfig.scheduleMode
-      )
-      // A move or resize-start commit changes this occurrence's key (see this file's header) -
-      // claim the hand-off with the EXACT target key (event id + the accepted new start - see
-      // `gantt-lib.tsx`'s `buildEventIndex` for the `${eventId}::${start.toISOString()}` format)
-      // so the next bar mounted for this event id reclaims focus, and ONLY that bar.
-      if (result.applied && chord !== "resize-end") {
-        instance.internals.claimKeyboardFocus({
-          eventId: event.id,
-          targetKey: `${event.id}::${result.start!.toISOString()}`,
-        })
-      }
-      const ganttRoot = e.currentTarget.closest<HTMLElement>(
-        "[data-slot=gantt]"
-      )
-      const announcer = ganttRoot?.querySelector<HTMLElement>(
-        "[data-slot=gantt-announcer]"
-      )
-      if (!announcer) return
-      if (result.applied) {
-        // Quincy fix (#219 PR A, Sol review, sol1 item 7): announce from the result's OWN
-        // accepted range, not a follow-up `api.getEvent` re-fetch - under a controlled `events`
-        // prop that read the OLD range synchronously, before the parent's state update (queued by
-        // this same nudge, via onEventsChange) had landed. See `gantt.tsx`'s `applyProposedUpdate`
-        // header for the full mechanics. `result.start`/`end` are always set when `applied` is true.
-        announcer.textContent = `${event.title}, ${settings.i18n.functions.formatEventTime(
-          toZoned(result.start!, settings.timeZone),
-          toZoned(result.end!, settings.timeZone),
-          result.allDay ?? false,
-          settings.locale
-        )}`
+      const match = matchGanttBarKey(e, adjusting, rtl)
+      if (!match) return
+
+      if (match.type === "enter") {
+        // Quincy fix (#219 PR A, Sol review, sol1 item 2/5, carried over): gate on the SAME
+        // canMove/canResizeStart/canResizeEnd/isRecurring flags aria-keyshortcuts is built from,
+        // BEFORE preventDefault - an ineligible Space is left un-prevented, so the button's native
+        // activate (open event) still fires, exactly as the spec requires ("Space keeps its current
+        // activate behaviour").
+        if (!canAdjust || occurrence.isRecurring) return
+        e.preventDefault()
+        // Quincy fix (#219 PR A, Sol review, sol1 item 6): clear any STALE claim from an earlier
+        // nudge before processing this one.
+        instance.internals.clearKeyboardFocus()
+        const initialTarget: GanttNudgeAction = canMove
+          ? "move"
+          : canResizeStart
+            ? "resize-start"
+            : "resize-end"
+        instance.internals.beginAdjust(event.id, occurrence, initialTarget)
+        announce(
+          `${settings.i18n.labels.adjustInstructions} ${settings.i18n.labels.adjustEntered(
+            adjustTargetLabel(initialTarget),
+            formatRange(occurrence.start, occurrence.end, occurrence.allDay)
+          )}`
+        )
         return
       }
-      if (result.reason === "locked") {
-        announcer.textContent = settings.i18n.labels.keyboardNudgeLocked
-      } else if (result.reason === "invalid") {
-        announcer.textContent = settings.i18n.labels.keyboardNudgeInvalid
-      } else if (result.reason === "rejected") {
-        announcer.textContent = settings.i18n.labels.keyboardNudgeRejected
+
+      // Every other match type only comes back while `adjusting` is true (matchGanttBarKey's own
+      // adjusting table) - all of them are handled keys per the spec ("All handled keys
+      // preventDefault... grid must not scroll, no text selection").
+      e.preventDefault()
+
+      if (match.type === "cancel") {
+        instance.internals.cancelAdjust()
+        announce(settings.i18n.labels.adjustCancelled)
+        return
       }
-      // "not-found" is defensive only - a bar always names a real event id.
+
+      if (match.type === "retarget") {
+        const eligible =
+          match.target === "move"
+            ? canMove
+            : match.target === "resize-start"
+              ? canResizeStart
+              : canResizeEnd
+        if (!eligible) {
+          announce(settings.i18n.labels.adjustTargetLocked)
+          return
+        }
+        instance.internals.retargetAdjust(match.target)
+        announce(settings.i18n.labels.adjustRetargeted(adjustTargetLabel(match.target)))
+        return
+      }
+
+      if (match.type === "step") {
+        // Quincy fix (#219 PR A, Sol review, sol1 item 3, carried over): pass the effective
+        // view-level scheduleMode through explicitly - the store has no component in its call
+        // stack to read useGanttViewConfig() from itself.
+        const result = instance.internals.stepAdjust(
+          match.direction,
+          match.unit,
+          viewConfig.scheduleMode
+        )
+        if (result.applied) {
+          announce(
+            settings.i18n.labels.adjustStepped(
+              formatRange(result.start!, result.end!, result.allDay ?? false)
+            )
+          )
+        } else if (result.reason === "locked") {
+          announce(settings.i18n.labels.keyboardNudgeLocked)
+        } else if (result.reason === "invalid") {
+          announce(settings.i18n.labels.keyboardNudgeInvalid)
+        } else if (result.reason === "rejected") {
+          announce(settings.i18n.labels.keyboardNudgeRejected)
+        }
+        return
+      }
+
+      // match.type === "commit"
+      const result = instance.internals.commitAdjust()
+      if (result.committed) {
+        // A committed START change (move, or a start-edge resize - whichever target actually moved
+        // it, regardless of which target was LAST selected via M/S/E) changes this occurrence's key
+        // (see this file's header) and remounts the bar - claim the hand-off the same way a
+        // successful move/resize-start nudge always did.
+        if (result.start!.getTime() !== occurrence.start.getTime()) {
+          instance.internals.claimKeyboardFocus({
+            eventId: event.id,
+            targetKey: `${event.id}::${result.start!.toISOString()}`,
+          })
+        }
+        announce(
+          settings.i18n.labels.adjustCommitted(
+            formatRange(result.start!, result.end!, result.allDay ?? false)
+          )
+        )
+      } else if (result.noChange) {
+        announce(settings.i18n.labels.adjustNoChange)
+      } else {
+        announce(settings.i18n.labels.keyboardNudgeRejected)
+      }
     },
     className: cn(
       "group/gantt-bar-group text-foreground @container relative flex w-full min-w-0 cursor-pointer touch-none items-center gap-1.5 overflow-hidden rounded-sm px-1.5 py-0.5 text-start leading-normal select-none",
@@ -636,6 +759,11 @@ function GanttBar<TData = unknown>({
       // placeholder behind the dashed preview - no dramatic restyle
       "data-[drag-kind=resize-start]:opacity-40 data-[drag-kind=resize-end]:opacity-40",
       "data-selected:bg-(--gantt-event-color)/30",
+      // #219 PR A (Adjust mode) - a hairline dashed outline marks the bar itself while a keyboard
+      // Adjust session is active (own-color token, matching the ghost's own border color below; no
+      // shadow, no `dark:` per the spec). Independent of the data-drag-kind fade above - the two
+      // combine naturally once a step drives state.drag (see this file's header).
+      "data-adjusting:outline data-adjusting:outline-1 data-adjusting:outline-dashed data-adjusting:outline-offset-1 data-adjusting:outline-(--gantt-event-color)",
       /* the diamond is the milestone's body, so the shell sheds its own
          tinted fill and centers the glyph on the instant */
       milestone &&
@@ -647,6 +775,13 @@ function GanttBar<TData = unknown>({
     ),
     children: (
       <>
+        {adjusting && (
+          // #219 PR A (Adjust mode) - the aria-describedby target above; visually hidden, always
+          // readable by AT (unlike aria-hidden content, which this deliberately is NOT).
+          <span id={instructionsId} className="sr-only">
+            {settings.i18n.labels.adjustInstructions}
+          </span>
+        )}
         {milestone && !consumerOwnsContent && (
           // the filled diamond IS the milestone's body - chrome, so a custom
           // renderEvent still starts from a blank canvas (data-milestone
