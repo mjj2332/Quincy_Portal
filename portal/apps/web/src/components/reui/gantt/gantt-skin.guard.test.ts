@@ -58,6 +58,19 @@
  * Re-skinning them is a separate change, deliberately not folded into this one — see the #219 PR A
  * standards review for the filed count. This paragraph exists so a reader does not mistake this
  * guard's silence on those five files for a clean bill of health.
+ *
+ * #219 PR A standards review item 12: the re-skin claimed more rules than this file mechanises.
+ * MECHANISED, by the eight detectors below: no `dark:` variant, no `shadow-*` outside the
+ * allowlist, no hex/rgb() literal, no non-token Tailwind palette class, no `outline-none` +
+ * `focus-visible:ring-*` pairing, no bare `border*` without a colour token, no `destructive` on
+ * the now-line, and — Detector 8 — square surfaces (no `rounded-lg`/`rounded-xl`/`rounded-2xl` or
+ * larger anywhere in the tree; `rounded-sm` on the bar family is a deliberate, documented choice,
+ * not an exception this detector carves around — it is simply below the threshold this detector
+ * flags). NOT mechanised, and resting on review instead: muted stage tints. "Muted" has no
+ * mechanical test — a hue and an alpha value are both individually valid tokens, and whether a
+ * given combination reads as "muted" is a judgment call, not a grep. Rather than ship a detector
+ * that pretends to check that and does not, there is no detector for it; catching a regression
+ * there is a reviewer's job, not this file's.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -861,6 +874,76 @@ describe("guard: no `destructive` token on the today/now-line elements", () => {
       "The now-line/now-dot must not borrow --signal-critical (destructive) - red already means",
       "overdue/critical elsewhere in this app, and the now-line has no causal link to an overdue",
       "bar. Use border-strong/ink instead. Found on:",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 8 — square surfaces: no `rounded-lg`/`rounded-xl`/`rounded-2xl` or larger
+// ---------------------------------------------------------------------------
+/**
+ * #219 PR A standards review item 12. `styles/tokens/spacing.css` declares the brand "square-ish"
+ * and `--radius-card: var(--radius-none)` — "cards are square by default". The re-skin claimed
+ * this Gantt tree followed suit; nothing mechanised it. This flags `rounded-lg`/`rounded-xl`/
+ * `rounded-2xl` and any larger named step (`rounded-3xl`, …) — Tailwind's scale from "lg" up —
+ * anywhere in the tree, on the bare form or a side/corner-scoped one (`rounded-t-lg`,
+ * `rounded-tl-xl`, …).
+ *
+ * `rounded-sm` (and `rounded-xs`/`rounded-md`/`rounded-none`/`rounded-full`) are NOT flagged.
+ * `rounded-sm` on the bar family is a deliberate, documented choice — it matches Quincy's own
+ * `badge` — and it needs no special-casing here: it is simply below the threshold this detector
+ * targets, the same way a Tailwind utility with a scale this detector does not name was never in
+ * its reach to begin with. `rounded-full` (pills, dots, avatars-in-miniature — the resize grips,
+ * the zoom control's circular buttons) is a different shape entirely, not a "square surface" this
+ * rule is about, so it is likewise untouched.
+ */
+const ROUNDED_LARGE = /\brounded(?:-(?:t|r|b|l|s|e|tl|tr|bl|br|ss|se|es|ee))?-(?:lg|xl|\dxl)\b/g;
+
+function findLargeRadii(files: Map<string, string>): Record<string, string[]> {
+  const found: Record<string, string[]> = {};
+  for (const [name, text] of files) {
+    const hits = [...text.matchAll(ROUNDED_LARGE)].map((match) => match[0]);
+    if (hits.length > 0) found[name] = hits;
+  }
+  return found;
+}
+
+describe("guard: no rounded-lg/rounded-xl/rounded-2xl (or larger) anywhere in the vendored tree", () => {
+  it("self-test: the real detector fires on a bare or corner-scoped large radius, not on rounded-sm/md/none/full or a comment naming the trap", () => {
+    const planted = new Map([
+      ["fixture-lg.tsx", stripComments('className="rounded-lg border"')],
+      ["fixture-xl.tsx", stripComments('className="rounded-xl"')],
+      ["fixture-2xl.tsx", stripComments('className="rounded-2xl"')],
+      ["fixture-3xl.tsx", stripComments('className="rounded-3xl"')],
+      ["fixture-corner.tsx", stripComments('className="rounded-tl-lg rounded-br-lg"')],
+      ["fixture-side.tsx", stripComments('className="rounded-t-xl"')],
+      [
+        "fixture-clean.tsx",
+        stripComments(
+          'className="rounded-sm rounded-xs rounded-md rounded-none rounded-full"\n// not rounded-lg, just this comment'
+        ),
+      ],
+    ]);
+    expect(findLargeRadii(planted)).toEqual({
+      "fixture-lg.tsx": ["rounded-lg"],
+      "fixture-xl.tsx": ["rounded-xl"],
+      "fixture-2xl.tsx": ["rounded-2xl"],
+      "fixture-3xl.tsx": ["rounded-3xl"],
+      "fixture-corner.tsx": ["rounded-tl-lg", "rounded-br-lg"],
+      "fixture-side.tsx": ["rounded-t-xl"],
+    });
+  });
+
+  it("has no rounded-lg/rounded-xl/rounded-2xl (or larger) class in the nine vendored files", () => {
+    const found = findLargeRadii(readVendoredFiles());
+    const offenders = Object.entries(found).map(([name, hits]) => `  ${name}: ${hits.join(", ")}`);
+    expect(offenders, [
+      "A rounded-lg/rounded-xl/rounded-2xl (or larger) class survives in the vendored Gantt tree.",
+      "The brand is square-ish (styles/tokens/spacing.css) and cards are square by default",
+      "(--radius-card: var(--radius-none)). rounded-sm on the bar family (matching Quincy's own",
+      "badge) and rounded-full on pills/dots/circular controls are both fine and not what this",
+      "flags. Found in:",
       ...offenders,
     ].join("\n")).toEqual([]);
   });
