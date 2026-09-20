@@ -17,8 +17,13 @@ export default defineConfig({
   // see `forbid-dev-only-modules.ts`'s own header for why a fresh, stateless instance is safe here
   // (the plugin closes over nothing but the `root` argument). See
   // `harness-reachability.guard.test.ts`'s "registers forbid-dev-only-modules ... via worker.plugins
-  // too" block, which asserts this stays wired, and this same file's own commit message for the
-  // one-off manual end-to-end build-failure proof.
+  // too" block, which asserts this stays wired. #219 PR A standards review item 9: the one-off
+  // manual end-to-end build-failure proof used to be pointed at "this same file's own commit
+  // message" — unreachable once that commit is squash-merged. The proof itself, so it survives a
+  // squash: temporarily plant a worker import of the harness in `main.tsx`
+  // (`new Worker(new URL("../harness/reui-scheduling/main.tsx", import.meta.url))`), run
+  // `npm run build -w @quincy/web`, observe the build fail with the `quincy:forbid-dev-only-modules`
+  // error naming that module, then revert the planted import exactly.
   worker: {
     plugins: () => [forbidDevOnlyModules(projectRoot)],
   },

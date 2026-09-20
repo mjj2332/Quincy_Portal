@@ -16,7 +16,10 @@
  *
  * The Gantt render itself lives in the lazy-imported `./GanttPreview` (#219 stage 1) — local
  * fixture rows only, no `lib/use-scheduling-commands`, no `lib/scheduling-policy`, no API client.
- * This file has not been run in a browser; it typechecks and is wired, no more.
+ * #219 PR A standards review item 9: this comment used to say the file had not been run in a
+ * browser, typechecked and wired, no more — stale since GanttPreview's stage-3 rewrite turned it
+ * into a real acceptance surface. It has since been driven in a real browser across three
+ * acceptance passes (evidence retained under the worktree's `qa-evidence/`).
  */
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
