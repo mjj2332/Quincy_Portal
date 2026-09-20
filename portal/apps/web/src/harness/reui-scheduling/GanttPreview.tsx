@@ -11,6 +11,10 @@
  * `enforceCanDrop` toggle against a fixed-deadline `canDropEvent` fixture. `date`/`scale`/
  * `resources`/`events` are all CONTROLLED (see the `<Gantt>` props below) so switching scenarios
  * swaps the whole board in one render, the same pattern `onEventsChange` already used here.
+ *
+ * #219 PR A: the on-screen "Keyboard" legend below tracks gantt-bar.tsx's Adjust-mode scheme
+ * (matchGanttBarKey in gantt-lib.tsx) -- Space enters/exits, not the old Alt+Arrow / Ctrl+Alt+Arrow
+ * chords those replaced.
  */
 import { useCallback, useState } from "react";
 import { Gantt } from "@/components/reui/gantt/gantt";
@@ -119,6 +123,17 @@ export default function GanttPreview() {
         <GanttToolbar />
         <GanttView />
       </Gantt>
+
+      <div data-testid="harness-key-help">
+        <h2 className="q-h3">Keyboard</h2>
+        <ul>
+          <li>Enter on a focused bar — open the event.</li>
+          <li>Space on a focused, non-recurring, adjustable bar — enter Adjust mode.</li>
+          <li>Arrow — step the current target by one snap unit (Shift+Arrow — one larger unit).</li>
+          <li>M / S / E — target the whole bar / start edge / end edge.</li>
+          <li>Enter or Space — commit and exit. Escape, blur, or a click elsewhere — cancel and exit.</li>
+        </ul>
+      </div>
 
       <div data-testid="harness-event-log">
         <h2 className="q-h3">Event log (newest first, last {LOG_CAP})</h2>
