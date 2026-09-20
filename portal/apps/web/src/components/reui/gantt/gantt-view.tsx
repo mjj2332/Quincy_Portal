@@ -127,12 +127,21 @@
  *
  * #219 PR A fix (dr2-219a LOW #5): `GanttNowLine`'s own comet-tail gradient faded past legibility
  * before reaching the bottom of a grid with more than a handful of rows — the design reviewer
- * measured its floor stop (`to-border-strong/15`) at ~1.4:1 against the canvas. The floor now
- * matches the gradient's own `via` (midpoint) stop, `/45` (~3.1:1, at WCAG 1.4.11's 3:1 floor for
- * a non-text graphical object) — the tail still tapers from the cap to the midpoint, then holds at
- * that legible level for the rest of its height instead of continuing to fade. See that element's
- * own class comment for the numbers, and its `data-testid` comment for why this DOM test selects
- * on an additive `data-testid` rather than its `data-slot`.
+ * measured its floor stop (`to-border-strong/15`) at ~1.4:1 against the canvas. The floor was
+ * raised to match the gradient's own `via` (midpoint) stop so the tail still tapers from the cap to
+ * the midpoint, then holds at that legible level for the rest of its height instead of continuing
+ * to fade.
+ *
+ * #219 PR A fix (dr3-219a LOW #2): that round's `/45` value, and this comment, justified it against
+ * the CANVAS (`~3.1:1, at WCAG 1.4.11's 3:1 floor`) — but the line runs the full height of the grid
+ * body, and for the current day that body is the shaded `data-today` column's own tint
+ * (`bg-primary/5`, a DIFFERENT element painted underneath it — `gantt-view.tsx:2646`), not bare
+ * canvas. Measured against that shaded column, not canvas, `/45` was ~2.90:1 — under the floor the
+ * comment claimed. The floor (and the `via` midpoint it still matches) is now `/50`, ~3.58:1 against
+ * the shaded today column — real margin over 3:1 against the background the line actually sits on,
+ * not a value idealized alpha-compositing math alone happens to clear by a few hundredths. See that
+ * element's own class comment for the numbers, and its `data-testid` comment for why this DOM test
+ * selects on an additive `data-testid` rather than its `data-slot`.
  *
  * #219 PR A fix (dr2-219a LOW #6): the floating zoom control's `MinusIcon` reads fainter than its
  * `PlusIcon` sibling — the design reviewer measured each 44px button's darkest glyph pixel at 166
@@ -3107,11 +3116,18 @@ function GanttNowLine({
       //
       // #219 PR A fix (dr2-219a LOW #5): the floor used to keep fading past this point, down to
       // `/15` (~1.4:1 against the canvas, measured) - invisible on a grid with more than a
-      // handful of rows. The floor now matches the `via` stop's own `/45` (~3.1:1, at WCAG
-      // 1.4.11's 3:1 floor for a non-text graphical object) instead of continuing past it, so the
-      // tail still tapers from the cap down to the midpoint, then HOLDS legible for the rest of
-      // its height regardless of row count.
-      className="from-border-strong/80 via-border-strong/45 to-border-strong/45 absolute inset-y-0 z-10 w-px bg-linear-to-b"
+      // handful of rows. The floor was raised to match the `via` stop's own alpha instead of
+      // continuing past it, so the tail still tapers from the cap down to the midpoint, then
+      // HOLDS legible for the rest of its height regardless of row count.
+      //
+      // #219 PR A fix (dr3-219a LOW #2): that round landed the floor (and `via`) at `/45`, and
+      // justified it against the CANVAS (`~3.1:1, at WCAG 1.4.11's 3:1 floor`) - but the line runs
+      // the full grid body, and for the current day that body is the shaded `data-today` column's
+      // own tint (`bg-primary/5`, a DIFFERENT element painted underneath it, below), not bare
+      // canvas. Against that shaded column, `/45` measured ~2.90:1 - under the floor the comment
+      // claimed. Both stops are now `/50`, ~3.58:1 against the shaded today column - real margin
+      // against the background this line actually sits on.
+      className="from-border-strong/80 via-border-strong/50 to-border-strong/50 absolute inset-y-0 z-10 w-px bg-linear-to-b"
       style={{ insetInlineStart: `${fraction * 100}%` }}
     />
   )

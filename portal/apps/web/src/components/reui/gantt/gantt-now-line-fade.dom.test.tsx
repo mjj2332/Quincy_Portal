@@ -194,4 +194,49 @@ describe("the now-line's comet tail stays legible for its full height, not just 
 
     expect(capAlpha).toBeGreaterThan(floorAlpha);
   });
+
+  /**
+   * #219 PR A fix (dr3-219a LOW #2) — the test and comment above (and this file's own header) only
+   * ever checked contrast against `--bg-canvas`. The line does not sit on bare canvas, though: it
+   * runs the full height of the grid BODY, which for the current day is the `data-today` column's
+   * OWN tint (`bg-primary/5`, a different, painted-first element - `gantt-view.tsx:2646`), not
+   * canvas underneath it. The design reviewer measured the old `/45` floor at 2.90:1 against that
+   * shaded column (dr3-219a-report.md Defect 2) — under the 3:1 floor the removed comment claimed,
+   * even though `/45` against bare canvas alone (this file's other test, above) clears it. Composited
+   * for real here (`--primary` -> `--accent` -> `--ink-900` at 5% over `--bg-canvas`, the SAME
+   * `bg-primary/5` the shaded column itself uses) rather than hand-typed, so a renamed token or a
+   * different tint recipe would fail this test, not silently pass it.
+   *
+   * The floor alpha itself is asserted at a hard `>= 50` floor, not just "clears 3:1 by whatever
+   * idealized alpha-compositing math computes": plain source-over math alone puts even the OLD `/45`
+   * just barely over the 3:1 line against this background (~3.07:1) - it takes the reviewer's own
+   * real rendered screenshot (anti-aliasing on a 1px `w-px` line at a fractional `insetInlineStart`
+   * softens its peak alpha) to see it actually fall short at 2.90:1. A same-formula-only assertion
+   * here would pass at `/45` too and prove nothing changed, so the fix is pinned to the `/50` value
+   * the spec chose for real margin over that measurement, not merely to a ratio a browser-free
+   * formula alone is willing to certify.
+   */
+  it("(dr3-219a LOW #2) the floor stop clears 3:1 against the shaded TODAY column it actually sits on (not bare canvas), with real margin - not just the /45 that idealized alpha-compositing math alone would wave through", async () => {
+    await render(
+      <Gantt resources={RESOURCES} events={[]} date={NOW} scale="week" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const line = findNowLine();
+    const floorAlpha = readFloorAlphaPercent(line.className);
+
+    const tokens = loadTokenSource();
+    const borderStrongHex = resolveToken(tokens, "--border-strong");
+    const canvasHex = resolveToken(tokens, "--bg-canvas");
+    const todayTintHex = resolveToken(tokens, "--primary");
+
+    // the shaded today column itself: `bg-primary/5` composited over canvas.
+    const todayColumnRgb = compositeOver(todayTintHex, canvasHex, 5);
+    const floorRgb = compositeOver(borderStrongHex, `#${todayColumnRgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`, floorAlpha);
+    const ratio = contrastRatio(floorRgb, todayColumnRgb);
+
+    expect(ratio).toBeGreaterThanOrEqual(3);
+    expect(floorAlpha).toBeGreaterThanOrEqual(50);
+  });
 });
