@@ -95,16 +95,24 @@
  * half of this fix (it now returns the accepted range itself, not a bare `boolean`).
  *
  * #219 stage 3 (PR A) edit, additive: `data-completed` bars (progress === 100) get a reduced-
- * emphasis fill — the outer shell's tint drops from `/20` (`/30` on hover) to `/10` (`/15` on
- * hover), and the progress-fill child's own tint drops from `/40` (border `/65`) to `/20` (border
- * `/35`) via `group-data-completed/gantt-bar-group:`. The label's `text-foreground` is left alone
- * on purpose: lowering a translucent accent fill's own alpha can only move the composited
+ * emphasis fill. Originally an alpha step on the event's OWN per-stage hue - the outer shell's
+ * tint dropped from `/20` (`/30` on hover) to `/10` (`/15` on hover), and the progress-fill
+ * child's own tint dropped from `/40` (border `/65`) to `/20` (border `/35`) via
+ * `group-data-completed/gantt-bar-group:`. #219 PR A fix (dr-219a MEDIUM #5): that per-hue alpha
+ * step could not guarantee "done reads quieter than active" across arbitrary stage hues (a low
+ * alpha of a naturally dark/saturated hue can still out-contrast a higher alpha of a naturally
+ * light one) - now a fixed hue-independent `bg-border`/`border-border` treatment instead, same
+ * `/15`-`/20` shell and `/20` progress-fill shape but off the app's own neutral token, not
+ * `--gantt-event-color` - see the shell's own class comment (below) for the verified numbers.
+ * The label stays `text-foreground` either way, left alone on purpose: lowering a translucent
+ * fill's own alpha (or, now, using a fixed low-alpha neutral) can only move the composited
  * background CLOSER to the light canvas underneath, which can only RAISE contrast against a fixed
  * dark label — so this dimming is safe by construction, whereas swapping the label itself to
  * `text-foreground-secondary` was checked and rejected (worst case, a dark stage colour like
  * oxblood at the OLD pre-dim /20+/40 compounded fill measured ~3.2:1 for that lighter role, under
- * the 4.5:1 floor — `text-foreground` measured ~7.2:1 in the same worst case). `data-past` is
- * untouched: an overdue unfinished task must not read as de-emphasised.
+ * the 4.5:1 floor — `text-foreground` measured ~7.2:1 in the same worst case, and the NEW
+ * hue-independent fill is strictly lighter than that old worst case, so this bound still holds).
+ * `data-past` is untouched: an overdue unfinished task must not read as de-emphasised.
  *
  * #219 PR A (Adjust mode) edit — replaces the whole Alt+Arrow / Shift+Alt+Arrow / Ctrl+Alt+Arrow
  * chord scheme above with a modal keyboard session (Opus and Sol both rejected the chords:
@@ -822,10 +830,25 @@ function GanttBar<TData = unknown>({
       // the unfilled remainder has to be legible on its own - at /12 a bar
       // with a progress fill read as a floating segment with no basement
       "bg-(--gantt-event-color)/20 hover:bg-(--gantt-event-color)/30",
-      // done: reduced emphasis, never reduced legibility - the label stays
-      // text-foreground (see this file's header), only the tint itself
-      // fades, which can only raise contrast against that fixed dark label
-      "data-completed:bg-(--gantt-event-color)/10 data-completed:hover:bg-(--gantt-event-color)/15",
+      // done: #219 PR A fix (dr-219a MEDIUM #5) - this used to be an ALPHA STEP on the event's
+      // OWN hue (`bg-(--gantt-event-color)/10`, hover `/15`) - reduced emphasis, but not
+      // guaranteed reduced LOUDNESS: a 10% wash of a naturally dark/saturated stage colour (e.g.
+      // `--signal-positive`) can still read louder than a 20% wash of a naturally light one (e.g.
+      // `--greige-400`) - the design reviewer measured a completed bar at Δ52 from paper against
+      // Δ22 for an idle one, backwards from "done is always quieter than active". Hue-independent
+      // now: the SAME fixed `--color-border` token every stage shares (`bg-border`, the app's own
+      // hairline-grey neutral, `tokens/tailwind.css`), one value regardless of `--gantt-event-color`
+      // - a done bar can no longer read louder than an active one just because its OWN stage
+      // happens to be dark. Verified without a browser (this fix's commit message has the script
+      // and full numbers): composited over both canvas tones this app uses (`--bg-canvas` and
+      // `--bg-surface`), `bg-border` at this fix's chosen alpha values measures Δ12.6/14.9 from
+      // paper for the full done treatment (shell + the progress-fill child below, which is what a
+      // sighted user actually sees once progress reaches 100 - see that span's own comment),
+      // against Δ18.2/20.0 for `--greige-400` (the harness's own QUIETEST active-state stage) at
+      // its unchanged `/20` - a comfortable ~30% margin, for every stage in
+      // `harness/reui-scheduling/fixtures.ts`'s `STAGE_COLORS`, not just the quietest one. The
+      // label stays `text-foreground` (see this file's header) either way - only the tint changed.
+      "data-completed:bg-border/15 data-completed:hover:bg-border/20",
       // move: a POINTER move hides the original (the smooth cursor clone represents it instead).
       // #219 PR A fix (dr-219a HIGH #4, part 1): a KEYBOARD move has no cursor clone, and DOM
       // focus never leaves this exact bar, so it instead gets the SAME faded-placeholder
@@ -888,12 +911,23 @@ function GanttBar<TData = unknown>({
           <span
             aria-hidden
             data-slot="gantt-bar-progress"
+            // #219 PR A fix (dr-219a MEDIUM #5): additive, same reasoning as the resize grips'
+            // own `data-testid` (this file's header) - nothing Quincy-owned composes this deep
+            // vendor internal from the outside for a DOM test to hook a `data-testid` onto
+            // instead, and `test-seam.guard.test.ts` Guard F forbids selecting on the `data-slot`
+            // above.
+            data-testid="gantt-bar-progress"
             className={cn(
               "pointer-events-none absolute inset-y-0 start-0 border-e border-(--gantt-event-color)/65 bg-(--gantt-event-color)/40 data-full:border-e-0",
-              // done: same reduced-emphasis fill as the shell above, read off
-              // the ancestor's data-completed (this span carries no attribute
-              // of its own) via the shell's named group
-              "group-data-completed/gantt-bar-group:border-(--gantt-event-color)/35 group-data-completed/gantt-bar-group:bg-(--gantt-event-color)/20"
+              // done: #219 PR A fix (dr-219a MEDIUM #5) - was the SAME per-hue alpha step as the
+              // shell above (`border-(--gantt-event-color)/35 bg-(--gantt-event-color)/20`), which
+              // could not guarantee "quieter than any active bar" across arbitrary stage hues (see
+              // the shell's own `data-completed:bg-border` comment below for the full reasoning
+              // and the measured numbers in this fix's commit message). Hue-independent now: the
+              // SAME fixed `--color-border` token every stage shares, read off the ancestor's
+              // `data-completed` (this span carries no attribute of its own) via the shell's named
+              // group, exactly as before.
+              "group-data-completed/gantt-bar-group:border-border group-data-completed/gantt-bar-group:bg-border/20"
             )}
             data-full={progress === 100 || undefined}
             style={{ width: `${progress}%` }}
