@@ -157,16 +157,26 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
     expect(onEventsChange).not.toHaveBeenCalled();
   });
 
-  it("the emitted proposed update carries source: 'keyboard'", async () => {
+  it("the emitted proposed update carries source: 'keyboard' and a non-null occurrence (#219 PR A, Sol re-review round 2, MEDIUM #5)", async () => {
     const apiRef = apiRefOf();
     const onEventUpdate = vi.fn((_update: GanttProposedUpdate) => true);
+    const canDropEvent = vi.fn((_update: GanttProposedUpdate) => true);
     const event: GanttEvent = { id: "e-sourced", title: "Sourced", start: START, end: END };
-    await render(<Gantt apiRef={apiRef} events={[event]} onEventUpdate={onEventUpdate} timeZone="UTC" />);
+    await render(
+      <Gantt apiRef={apiRef} events={[event]} onEventUpdate={onEventUpdate} canDropEvent={canDropEvent} timeZone="UTC" />,
+    );
     apiRef.current!.nudgeEvent("e-sourced", "move", 1);
     expect(onEventUpdate).toHaveBeenCalledTimes(1);
+    expect(canDropEvent).toHaveBeenCalledTimes(1);
     const update = onEventUpdate.mock.calls[0]![0] as GanttProposedUpdate;
+    const canDropUpdate = canDropEvent.mock.calls[0]![0] as GanttProposedUpdate;
     expect(update.source).toBe("keyboard");
-    expect(update.occurrence).toBeNull();
+    expect(update.occurrence).not.toBeNull();
+    expect(update.occurrence?.eventId).toBe("e-sourced");
+    expect(update.occurrence?.isRecurring).toBe(false);
+    // canDropEvent's own step-time check gets the identical occurrence, not a separate null.
+    expect(canDropUpdate.occurrence).not.toBeNull();
+    expect(canDropUpdate.occurrence?.eventId).toBe("e-sourced");
   });
 
   it("a successful move commits the exact proposed range (default day scale, 15-minute step)", async () => {

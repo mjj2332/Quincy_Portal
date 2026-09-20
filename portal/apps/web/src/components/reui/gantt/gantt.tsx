@@ -824,6 +824,23 @@ function createGanttStore<TData>(
    * `recurrence` are event-wide, checked once by callers before iterating actions; this only covers
    * the per-ACTION (move vs. a specific resize edge) half of the gate.
    */
+  /**
+   * Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #5): `nudgeEvent` (unlike Adjust mode,
+   * which already carries `session.occurrence` from `beginAdjust`) has no occurrence in hand.
+   * `proposeNudge` always refuses `event.recurrence` before this could ever be reached for a
+   * recurring event (see its own check, below), so the event's own start/end IS its sole
+   * occurrence - the same shape `gantt-recurrence.tsx`'s own non-recurring branch builds.
+   */
+  const soleOccurrenceOf = (event: GanttEvent<TData>): GanttOccurrence<TData> => ({
+    key: `${event.id}::${event.start.toISOString()}`,
+    eventId: event.id,
+    event,
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay ?? false,
+    isRecurring: false,
+  })
+
   const isActionLocked = (
     event: GanttEvent<TData>,
     action: GanttNudgeAction,
@@ -851,7 +868,11 @@ function createGanttStore<TData>(
     direction: -1 | 1,
     step: number,
     viewScheduleMode: GanttScheduleMode | undefined,
-    excludeEventId: GanttBarId
+    excludeEventId: GanttBarId,
+    // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #5): the caller's occurrence, passed
+    // through to the `canDropEvent` check below instead of a hardcoded null - `nudgeEvent` builds
+    // one (`soleOccurrenceOf`), `stepAdjust` passes its session's own.
+    occurrence: GanttOccurrence<TData>
   ):
     | { ok: true; start: Date; end: Date; allDay: boolean }
     | { ok: false; reason: "locked" | "invalid" | "rejected" } => {
@@ -924,7 +945,7 @@ function createGanttStore<TData>(
 
     const update: GanttProposedUpdate<TData> = {
       event,
-      occurrence: null,
+      occurrence,
       start: finalProposal.start,
       end: finalProposal.end,
       allDay: finalProposal.allDay,
@@ -1029,7 +1050,7 @@ function createGanttStore<TData>(
 
     const update: GanttProposedUpdate<TData> = {
       event,
-      occurrence: null,
+      occurrence: session.occurrence,
       start: finalRange.start,
       end: finalRange.end,
       allDay: finalRange.allDay,
@@ -1143,6 +1164,10 @@ function createGanttStore<TData>(
       // (`internals`) so both a single programmatic nudge and a chained Adjust-mode step apply the
       // IDENTICAL gates. Behavior is unchanged - subject is this event's own current start/end,
       // exactly as before.
+      // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #5): `nudgeEvent` has no bar/session
+      // to read an occurrence off, so it builds the event's sole one - `proposeNudge` already
+      // refuses `event.recurrence` before either use touches it.
+      const occurrence = soleOccurrenceOf(event)
       const outcome = proposeNudge(
         event,
         { start: event.start, end: event.end, allDay: event.allDay ?? false },
@@ -1150,12 +1175,13 @@ function createGanttStore<TData>(
         direction,
         baseNudgeStepMinutes(),
         viewScheduleMode,
-        id
+        id,
+        occurrence
       )
       if (!outcome.ok) return { applied: false, reason: outcome.reason }
       const update: GanttProposedUpdate<TData> = {
         event,
-        occurrence: null,
+        occurrence,
         start: outcome.start,
         end: outcome.end,
         allDay: outcome.allDay,
@@ -1368,7 +1394,8 @@ function createGanttStore<TData>(
         direction,
         step,
         viewScheduleMode,
-        session.eventId
+        session.eventId,
+        session.occurrence
       )
       if (!outcome.ok) return { applied: false, reason: outcome.reason }
       const preview = {
@@ -1450,7 +1477,7 @@ function createGanttStore<TData>(
       }
       const update: GanttProposedUpdate<TData> = {
         event,
-        occurrence: null,
+        occurrence: session.occurrence,
         start: revalidation.start,
         end: revalidation.end,
         allDay: revalidation.allDay,

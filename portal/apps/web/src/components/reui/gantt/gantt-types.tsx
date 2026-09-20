@@ -326,16 +326,30 @@ interface GanttRangeInfo {
   timeZone: string
 }
 
-interface GanttProposedUpdate<TData = unknown> {
+/**
+ * #219 PR A fix (Sol re-review round 2, MEDIUM #5): `occurrence` is null ONLY for `source: "api"`
+ * (an arbitrary `api.updateEvent` patch has no occurrence context to derive - the caller passed a
+ * bare id + patch, not a bar). Every other source - a pointer gesture (`"drag"` /
+ * `"resize-start"` / `"resize-end"`) or a keyboard nudge (`"keyboard"`, from `nudgeEvent` or
+ * Adjust mode) - always has a real occurrence in hand (the bar that was dragged, or the sole
+ * non-recurring occurrence `nudgeEvent` resolves before proposing) and must pass it through, so a
+ * consumer's `canDropEvent`/`onEventUpdate` can read `update.occurrence` on those paths without a
+ * null check. The union, not a plain `| null` field, is what makes an accidental null on a
+ * non-`"api"` source a type error at the construction site instead of a runtime surprise.
+ */
+type GanttProposedUpdate<TData = unknown> = {
   event: GanttEvent<TData>
-  /** null when source === "api". */
-  occurrence: GanttOccurrence<TData> | null
   start: Date
   end: Date
   allDay: boolean
   resourceId?: string
-  source: "drag" | "resize-start" | "resize-end" | "keyboard" | "api"
-}
+} & (
+  | { source: "api"; occurrence: GanttOccurrence<TData> | null }
+  | {
+      source: "drag" | "resize-start" | "resize-end" | "keyboard"
+      occurrence: GanttOccurrence<TData>
+    }
+)
 
 /** false = reject/revert; void or true = accept; object = accept with adjustment. */
 type GanttUpdateResult =

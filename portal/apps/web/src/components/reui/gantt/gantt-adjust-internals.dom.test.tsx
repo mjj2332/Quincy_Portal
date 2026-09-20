@@ -298,6 +298,10 @@ describe("GanttInternals Adjust-mode methods (#219 PR A)", () => {
     expect(onEventUpdate).toHaveBeenCalledTimes(1);
     const update = onEventUpdate.mock.calls[0]![0] as GanttProposedUpdate;
     expect(update.source).toBe("keyboard");
+    // #219 PR A, Sol re-review round 2, MEDIUM #5: the commit carries the session's own
+    // occurrence, not null.
+    expect(update.occurrence).not.toBeNull();
+    expect(update.occurrence?.key).toBe(occurrence.key);
     expect(onEventsChange).toHaveBeenCalledTimes(1);
     const state = getState();
     expect(state.adjust).toBeNull();
