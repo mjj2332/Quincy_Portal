@@ -769,4 +769,63 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(revived.getAttribute("data-adjusting")).toBeNull();
     expect(host.querySelector('[data-testid="gantt-drag-ghost"]')).toBeNull();
   });
+
+  it("round 4, Sol MEDIUM: swapping to a DIFFERENT hoisted calendar instance (same <Gantt> root, never unmounted) does not falsely announce cancellation on the new instance's first ordinary notify", async () => {
+    // The root's owner-death announcer effect (`lastExternalTeardownVersionRef`) compares
+    // `instance.internals.getAdjustCancelledVersion()` against a ref baseline - see that effect's
+    // own doc comment. `useRef`'s initializer argument only applies on the VERY FIRST call ever
+    // for this hook identity; it is ignored on every later render, so swapping the `calendar` prop
+    // to a DIFFERENT store (this <Gantt> itself never unmounts - same component instance, only
+    // its `calendar` prop's VALUE changes) left the ref holding the OLD instance's counter. The
+    // NEW instance's own counter starts from ITS OWN history (0 here - it never had a teardown),
+    // which reads as "different from the leftover ref" on the very first notify from the new
+    // instance - even an ordinary one, no teardown at all - and falsely announced cancellation.
+    const eventA: GanttEvent = { id: "swap-a", title: "Swap A", start: START, end: END };
+    const eventB: GanttEvent = { id: "swap-b", title: "Swap B", start: START, end: END };
+    const apiRef: { current: GanttApi | null } = { current: null };
+    function SwapHost({ which }: { which: "a" | "b" }) {
+      const calendarA = useGanttState<unknown>({ defaultEvents: [eventA], defaultDate: START, timeZone: "UTC" });
+      const calendarB = useGanttState<unknown>({ defaultEvents: [eventB], defaultDate: START, timeZone: "UTC" });
+      return (
+        <Gantt calendar={which === "a" ? calendarA : calendarB}>
+          <KeyedBarHost eventId={which === "a" ? eventA.id : eventB.id} />
+          <InternalsProbe internalsRef={{ current: null }} getStateRef={{ current: null }} apiRef={apiRef} />
+        </Gantt>
+      );
+    }
+    await render(<SwapHost which="a" />);
+    const barA = findBar(host, "Swap A")!;
+    await focusBar(barA);
+    await keydown(barA, { key: " " });
+    await keydown(barA, { key: "ArrowRight" });
+    expect(barA.getAttribute("data-adjusting")).not.toBeNull();
+
+    // A REAL teardown on A - bumps A's OWN counter to 1, so its baseline genuinely diverges from
+    // B's (which will start fresh at 0 below).
+    await keydown(barA, { key: "Escape" });
+    expect(announcerText(host)).toBe("Adjustment cancelled.");
+    expect(barA.getAttribute("data-adjusting")).toBeNull();
+
+    // Swap to a DIFFERENT hoisted calendar - the SAME <Gantt> root stays mounted (React
+    // reconciles by type at the same position; SwapHost itself never unmounts either), only the
+    // `calendar` prop's VALUE changes.
+    await render(<SwapHost which="b" />);
+    expect(findBar(host, "Swap A")).toBeUndefined();
+    const barB = findBar(host, "Swap B")!;
+
+    // Clear the leftover text - it already happens to read "Adjustment cancelled." from A's REAL
+    // teardown above, so a false re-write of the IDENTICAL string would otherwise be invisible to
+    // a final-text-only check.
+    const announcerEl = host.querySelector<HTMLElement>("[data-slot=gantt-announcer]")!;
+    announcerEl.textContent = "";
+
+    // An ORDINARY notify on the NEW instance B - `addEvent`, no Adjust session ever opened on B,
+    // nothing to tear down.
+    await act(async () => {
+      apiRef.current!.addEvent({ id: "swap-b-extra", title: "Extra", start: START, end: END });
+      await Promise.resolve();
+    });
+    expect(announcerText(host)).not.toBe("Adjustment cancelled.");
+    expect(barB.getAttribute("data-adjusting")).toBeNull();
+  });
 });

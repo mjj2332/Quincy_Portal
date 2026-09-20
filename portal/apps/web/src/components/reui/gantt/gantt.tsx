@@ -2688,10 +2688,21 @@ function Gantt<TData = unknown>({
   // that method's own comment). Comparing against a ref means a later notify with no NEW teardown
   // (nothing left to tear down) never re-announces, and a fresh mount only starts watching from
   // whatever version already exists at that point - no backlog fires retroactively.
+  //
+  // Quincy fix (#219 PR A round 4, Sol MEDIUM): `useRef`'s initializer only ever applies on this
+  // hook's VERY FIRST call - every later render ignores it, so it used to carry a STALE baseline
+  // across an `instance` change (the `calendar` prop swapping to a DIFFERENT hoisted store; this
+  // component itself never unmounts). The new instance's own counter starts from ITS OWN history
+  // (typically 0), which reads as "different" from the leftover baseline on its first notify -
+  // even an ordinary one, no teardown at all - and falsely announced cancellation. The effect
+  // below now RESETS the baseline to the new instance's current counter every time `instance`
+  // itself changes, before it ever subscribes.
   const lastExternalTeardownVersionRef = useRef(
     instance.internals.getAdjustCancelledVersion()
   )
   useEffect(() => {
+    lastExternalTeardownVersionRef.current =
+      instance.internals.getAdjustCancelledVersion()
     const unsubscribe = instance.subscribe(() => {
       const version = instance.internals.getAdjustCancelledVersion()
       if (version === lastExternalTeardownVersionRef.current) return
