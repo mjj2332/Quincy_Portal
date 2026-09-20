@@ -1409,6 +1409,24 @@ function createGanttStore<TData>(
         session.occurrence
       )
       if (!outcome.ok) return { applied: false, reason: outcome.reason }
+      // Quincy fix (#219 PR A, Sol re-review round 2, LOW): a post-clamp proposal identical to the
+      // session's CURRENT preview (already sitting at an overlap-"clamp" neighbour's edge, or a
+      // bounds clamp) is a no-op - true no state write at all (not even `invalidate()`/`notify()`),
+      // and `gantt-bar.tsx`'s own caller skips announcing, so held-down key-repeat past that point
+      // is silent instead of re-announcing the identical range on every repeat.
+      if (
+        outcome.start.getTime() === session.preview.start.getTime() &&
+        outcome.end.getTime() === session.preview.end.getTime() &&
+        outcome.allDay === session.preview.allDay
+      ) {
+        return {
+          applied: false,
+          noChange: true,
+          start: session.preview.start,
+          end: session.preview.end,
+          allDay: session.preview.allDay,
+        }
+      }
       const preview = {
         start: outcome.start,
         end: outcome.end,

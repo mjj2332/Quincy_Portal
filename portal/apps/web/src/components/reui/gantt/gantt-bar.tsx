@@ -755,6 +755,11 @@ function GanttBar<TData = unknown>({
         } else if (result.reason === "rejected") {
           announce(settings.i18n.labels.keyboardNudgeRejected)
         }
+        // Quincy fix (#219 PR A, Sol re-review round 2, LOW): `result.noChange` (a post-clamp
+        // proposal identical to the current preview) sets no `reason` and `applied: false` -
+        // none of the branches above match, so held-down key-repeat past a clamp is silently a
+        // no-op instead of re-announcing the identical range on every repeat. See
+        // `GanttInternals.stepAdjust`'s own doc comment.
         return
       }
 

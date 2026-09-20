@@ -278,10 +278,18 @@ interface GanttAdjustState<TData = unknown> {
   touchedTargets: GanttNudgeAction[]
 }
 
-/** `gantt.tsx`'s `GanttInternals.stepAdjust` verdict — one Arrow/Shift+Arrow step. */
+/**
+ * `gantt.tsx`'s `GanttInternals.stepAdjust` verdict — one Arrow/Shift+Arrow step. `noChange: true`
+ * (#219 PR A fix, Sol re-review round 2, LOW) mirrors `GanttAdjustCommitResult`'s own field: the
+ * step computed a valid, unlocked, un-rejected proposal, but the post-clamp result is IDENTICAL to
+ * the session's current preview (already at an overlap-"clamp" neighbour's edge, or a bounds
+ * clamp) - held-down Arrow/Shift+Arrow key-repeat past that point writes nothing further and
+ * re-announces nothing, rather than spamming the SAME range text on every repeat.
+ */
 interface GanttAdjustStepResult {
   applied: boolean
   reason?: "locked" | "invalid" | "rejected"
+  noChange?: boolean
   start?: Date
   end?: Date
   allDay?: boolean

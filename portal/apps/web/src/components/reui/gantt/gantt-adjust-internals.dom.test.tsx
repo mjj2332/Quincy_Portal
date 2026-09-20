@@ -261,6 +261,73 @@ describe("GanttInternals Adjust-mode methods (#219 PR A)", () => {
     expect(getState().adjust!.preview).toEqual({ start: START, end: END, allDay: false });
   });
 
+  it("a post-clamp step identical to the current preview is a no-op: no state write, no re-announcement text to build (#219 PR A, Sol re-review round 2, LOW)", async () => {
+    // A (the session's own bar) at 09:00-10:00; B starts at 10:30 on the SAME resource, a 30-minute
+    // gap - two real 15-minute steps move A to exactly touch B's edge (09:30-10:30); a THIRD step in
+    // the same direction (standing in for held-down key-repeat) computes the identical range again.
+    const a: GanttEvent = { id: "adj-a", title: "A", start: START, end: END, resourceId: "r1" };
+    const b: GanttEvent = {
+      id: "adj-b",
+      title: "B",
+      start: new Date(END.getTime() + 30 * 60000),
+      end: new Date(END.getTime() + 90 * 60000),
+      resourceId: "r1",
+    };
+    const internalsRef: { current: GanttInternals | null } = { current: null };
+    const getStateRef: {
+      current: (() => ReturnType<ReturnType<typeof useGantt>["getState"]>) | null;
+    } = { current: null };
+    await render(
+      <Gantt events={[a, b]} date={START} timeZone="UTC" overlap="clamp">
+        <InternalsProbe internalsRef={internalsRef} getStateRef={getStateRef} />
+      </Gantt>,
+    );
+    const internals = internalsRef.current!;
+    const getState = getStateRef.current!;
+    const occurrence = occurrenceOf(a);
+    await act(async () => {
+      internals.beginAdjust(a.id, occurrence, "move");
+    });
+
+    let result: ReturnType<GanttInternals["stepAdjust"]>;
+    await act(async () => {
+      result = internals.stepAdjust(1, "snap");
+    });
+    expect(result!).toEqual({
+      applied: true,
+      start: new Date(START.getTime() + 15 * 60000),
+      end: new Date(END.getTime() + 15 * 60000),
+      allDay: false,
+    });
+    await act(async () => {
+      result = internals.stepAdjust(1, "snap");
+    });
+    expect(result!).toEqual({
+      applied: true,
+      start: new Date(START.getTime() + 30 * 60000),
+      end: new Date(END.getTime() + 30 * 60000),
+      allDay: false,
+    });
+    const previewAtBoundary = getState().adjust!.preview;
+    const dragAtBoundary = getState().drag;
+
+    // The no-op step: reports noChange, no `reason`, and the CURRENT (unmoved) range - not a
+    // write of any kind.
+    await act(async () => {
+      result = internals.stepAdjust(1, "snap");
+    });
+    expect(result!).toEqual({
+      applied: false,
+      noChange: true,
+      start: new Date(START.getTime() + 30 * 60000),
+      end: new Date(END.getTime() + 30 * 60000),
+      allDay: false,
+    });
+    // No write at all — same preview/drag object identity, not merely equal values.
+    expect(getState().adjust!.preview).toBe(previewAtBoundary);
+    expect(getState().drag).toBe(dragAtBoundary);
+  });
+
   it("retargetAdjust switches the target and keeps the accumulated preview", async () => {
     const { internals, getState, event } = await setup();
     const occurrence = occurrenceOf(event);
