@@ -132,7 +132,13 @@ function InternalsProbe({ internalsRef }: { internalsRef: { current: GanttIntern
 }
 
 function findBar(title: string): HTMLButtonElement {
-  const bar = [...host.querySelectorAll("button")].find((el) => el.textContent?.includes(title));
+  // dr2-219a HIGH #2: `barLabel="auto"` moves a narrow bar's own title OUTSIDE the button (a
+  // sibling span, not inside its textContent) - `aria-label` always leads with the raw event
+  // title regardless of where the VISUAL label lands (`gantt-i18n.tsx`'s own
+  // `formatEventAriaLabel`), so it is the placement-independent match.
+  const bar = [...host.querySelectorAll("button")].find(
+    (el) => el.textContent?.includes(title) || el.getAttribute("aria-label")?.includes(title),
+  );
   if (!bar) throw new Error(`no bar found for title ${title}`);
   return bar as HTMLButtonElement;
 }
@@ -240,6 +246,15 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     // Round 4 (dr-219a HIGH #4, part 3): a move-kind ghost now renders its event title - a
     // keyboard move has no cursor clone to carry it, unlike a pointer move.
     expect(ghost!.textContent).toContain("Ghost Me");
+    // dr2-219a HIGH #2: `<Gantt>`'s own default is `barLabel: "inside"` (`gantt.tsx`), under which
+    // EVERY bar's title sits inside regardless of width (`wantsOutside` only fires for
+    // `barLabel: "outside"`/`"auto"`) - so under this suite's default config the ghost's title must
+    // match every resting bar and sit inside too, not ride outside unconditionally the way the
+    // pre-fix code did (see the dedicated `barLabel="auto"` tests below for the width-driven case).
+    const titleSpan = ghost!.querySelector("span");
+    expect(titleSpan?.textContent).toBe("Ghost Me");
+    expect(titleSpan?.className).toContain("inset-0");
+    expect(titleSpan?.className).not.toContain("start-full");
 
     // Round 4 (dr-219a HIGH #4, part 1): the origin bar stays visible at reduced opacity for a
     // KEYBOARD move (same occurrence.key, so still the same DOM node - no remount before commit).
@@ -310,5 +325,61 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     // dr2-219a HIGH #1: a pointer-owned move must still composite to fully invisible - the cursor
     // clone carries the visual, so the origin bar staying hidden here is the correct outcome.
     expect(effectiveOpacity(bar, host)).toBe(0);
+  });
+});
+
+describe("dr2-219a HIGH #2: the Adjust ghost's title follows the SAME width-driven inside/outside rule a resting bar's own label already uses (barLabel=\"auto\"), instead of always riding outside unconditionally", () => {
+  it("sits INSIDE the ghost's own box when the ghost is wide enough to hold it", async () => {
+    // 4 hours: (240/60)*5 = 20rem of ghostRemWidth at this suite's default metrics (interval 60,
+    // unitWidthRem 5, zoom 1), well over the 7rem auto-label floor - the same rule a resting
+    // segment's own `wantsOutside` already uses.
+    const wideEnd = new Date(START.getTime() + 4 * 60 * 60000);
+    const event: GanttEvent = { id: "wide-ghost", title: "Wide Ghost Title", start: START, end: wideEnd, resourceId: "r1" };
+    await render(
+      <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC" barLabel="auto">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const bar = findBar("Wide Ghost Title");
+    await focusBar(bar);
+    await keydown(bar, { key: " " });
+    await keydown(bar, { key: "ArrowRight" });
+
+    const ghost = ghostEl();
+    expect(ghost).not.toBeNull();
+    const titleSpan = ghost!.querySelector("span");
+    expect(titleSpan?.textContent).toBe("Wide Ghost Title");
+    expect(titleSpan?.className).toContain("inset-0");
+    expect(titleSpan?.className).not.toContain("start-full");
+    expect(titleSpan?.className).not.toContain("bg-foreground");
+  });
+
+  it("sits OUTSIDE on an opaque bg-foreground/text-background chip - not bare text - when the ghost is too narrow to hold it", async () => {
+    // 15 minutes: (15/60)*5 = 1.25rem, well under the 7rem floor.
+    const narrowEnd = new Date(START.getTime() + 15 * 60000);
+    const event: GanttEvent = { id: "narrow-ghost", title: "Narrow Ghost Title", start: START, end: narrowEnd, resourceId: "r1" };
+    await render(
+      <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC" barLabel="auto">
+        <GanttView />
+      </Gantt>,
+    );
+
+    const bar = findBar("Narrow Ghost Title");
+    await focusBar(bar);
+    await keydown(bar, { key: " " });
+    await keydown(bar, { key: "ArrowRight" });
+
+    const ghost = ghostEl();
+    expect(ghost).not.toBeNull();
+    const titleSpan = ghost!.querySelector("span");
+    expect(titleSpan?.textContent).toBe("Narrow Ghost Title");
+    expect(titleSpan?.className).not.toContain("inset-0");
+    // dr2-219a HIGH #2: the pre-fix outside title had no background at all and ran straight over
+    // whatever sat beside the ghost (dr2-219a-report.md measured it crossing both the neighbouring
+    // bar and the now-line). It now carries the same opaque chip treatment `gantt-dnd.tsx`'s
+    // resize-status chip and this file's own create-task draft label already use.
+    expect(titleSpan?.className).toContain("bg-foreground");
+    expect(titleSpan?.className).toContain("text-background");
   });
 });

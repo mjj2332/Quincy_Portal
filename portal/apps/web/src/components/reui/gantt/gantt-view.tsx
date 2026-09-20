@@ -111,6 +111,19 @@
  * narrower hide, it gained the matching `group-data-[drag-kind=move]/gantt-seg:group-data-
  * [drag-source=keyboard]/gantt-seg:opacity-0` so it does not show ALONGSIDE the drag ghost's own
  * title during a keyboard move (see that class's own comment for the full reasoning).
+ *
+ * #219 PR A fix (dr2-219a HIGH #2): the Adjust ghost's own title (below, inside the `ghost &&`
+ * block) used to ride OUTSIDE the ghost UNCONDITIONALLY — `absolute start-full … ms-2 truncate`,
+ * no background — ignoring both the ghost's own width and `viewConfig.barLabel`, unlike every
+ * resting segment above (`placement`/`wantsOutside`), which only goes outside when it does not
+ * fit. On a narrow ghost the title ran straight across whatever sat beside it — the design
+ * reviewer measured it spanning both the neighbouring bar and the now-line
+ * (dr2-219a-report.md). It now computes its own `ghostRemWidth`/`ghostTitleOutside` (declared
+ * beside the `ghost` selector above) via the EXACT SAME comparison `wantsOutside` uses, and
+ * renders inside (centered in the ghost's own box) when it fits, outside only when it does not —
+ * and, when outside, on an opaque `bg-foreground text-background` chip (the same treatment
+ * `gantt-dnd.tsx`'s resize-status chip and this file's own create-task draft label already use for
+ * a drag-adjacent floating label) instead of bare text with nothing behind it.
  */
 
 import {
@@ -3623,6 +3636,22 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
           a.source === b.source),
     }
   )
+  // #219 PR A fix (dr2-219a HIGH #2): same inside/outside rule the segments above already use
+  // (`barRemWidth`/`wantsOutside`) - a milestone ghost has no room inside its diamond (always
+  // outside, matching the resting milestone's own rule), otherwise the title goes inside when the
+  // ghost is wide enough to hold it and `viewConfig.barLabel` does not force one placement or the
+  // other. Read below, at the ghost's own title render.
+  const ghostRemWidth = ghost
+    ? ghost.milestone
+      ? laneHeightRem
+      : (ghost.to - ghost.from) * trackRemWidth
+    : 0
+  const ghostTitleOutside =
+    !ghost ||
+    ghost.milestone ||
+    viewConfig.barLabel === "outside" ||
+    (viewConfig.barLabel === "auto" &&
+      ghostRemWidth < (viewConfig.metrics?.autoLabelMin ?? AUTO_LABEL_MIN_REM))
   const draft = useGanttSelector<
     unknown,
     {
@@ -4305,18 +4334,34 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
               />
             )}
             {
-              // label rides OUTSIDE after the bar, exactly like the resting outside placement -
-              // never inside the schedule. A resize always showed it. #219 PR A fix (dr-219a
-              // HIGH #4, part 3): a move now shows it too, but ONLY for a keyboard-sourced move -
-              // a pointer move's smooth cursor clone (`gantt-dnd.tsx`) already carries the title,
-              // and this ghost is the drop-target placeholder beside it (this file's own comment
-              // above, "the smooth cursor clone carries the visual"); a keyboard move has no
-              // clone, so its ghost is the only on-screen representation and needs the title.
-              (ghost.kind !== "move" || ghost.source === "keyboard") && (
-                <span className="pointer-events-none absolute start-full top-1/2 ms-2 max-w-60 -translate-y-1/2 truncate whitespace-nowrap">
-                  {ghost.title}
-                </span>
-              )
+              // A resize always showed it. #219 PR A fix (dr-219a HIGH #4, part 3): a move now
+              // shows it too, but ONLY for a keyboard-sourced move - a pointer move's smooth cursor
+              // clone (`gantt-dnd.tsx`) already carries the title, and this ghost is the
+              // drop-target placeholder beside it (this file's own comment above, "the smooth
+              // cursor clone carries the visual"); a keyboard move has no clone, so its ghost is
+              // the only on-screen representation and needs the title.
+              //
+              // #219 PR A fix (dr2-219a HIGH #2): this used to ALWAYS ride outside, unconditionally
+              // - `absolute start-full … ms-2 truncate`, no background - so on a narrow ghost it ran
+              // straight across whatever sat beside it (the neighbouring bar, the now-line;
+              // dr2-219a-report.md HIGH #2 measured it spanning both). It now follows the SAME
+              // inside/outside rule the resting bar itself uses (`ghostTitleOutside`, computed
+              // above from the same `barRemWidth`/`AUTO_LABEL_MIN_REM` comparison `wantsOutside`
+              // uses for a segment): inside, centered in the ghost's own box, when the ghost is wide
+              // enough to hold it; outside only when it is not, and THEN on an opaque chip (the same
+              // `bg-foreground text-background rounded-md px-2 py-1` treatment this file's own
+              // create-task draft label and `gantt-dnd.tsx`'s resize-status chip already use for a
+              // drag-adjacent floating label) instead of bare text over whatever is underneath.
+              (ghost.kind !== "move" || ghost.source === "keyboard") &&
+                (ghostTitleOutside ? (
+                  <span className="bg-foreground text-background pointer-events-none absolute start-full top-1/2 ms-2 max-w-60 -translate-y-1/2 truncate rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap">
+                    {ghost.title}
+                  </span>
+                ) : (
+                  <span className="pointer-events-none absolute inset-0 flex items-center truncate px-1.5 font-medium">
+                    {ghost.title}
+                  </span>
+                ))
             }
           </div>
         )}
