@@ -34,8 +34,20 @@
  *    under `src/harness/` or `src/components/reui/gantt/` at all (except a literal `.html`/`.md`
  *    directly inside the harness's own HTML entry dir), so there is never an asset in either
  *    restricted tree for this hole to apply to in the first place.
+ *
+ * #219 PR A standards review item 6: this file lives in `src/build/`, a new top-level directory,
+ * rather than beside `dev-proxy.ts` in `src/config/` — which already holds one Vite-integration
+ * module plus its guard tests, in exactly this shape. The two directories draw a real, if narrow,
+ * line: `src/config/` holds RUNTIME configuration Vite consults while serving requests (the dev
+ * proxy's target and header rewrite, consulted on every proxied request); `src/build/` holds a
+ * BUILD-TIME plugin that runs once, at `generateBundle`, and never executes under `vite dev` at
+ * all (`apply: "build"`, above). A module that only ever runs during a production build is not
+ * "config" in the sense `src/config/` is named for, so it gets its own directory rather than
+ * blurring that line. Semicolons below match every neighbouring Quincy module (including
+ * `dev-proxy.ts`) — the prior semicolon-free style here was an artifact of following the ReUI
+ * vendor convention this file has nothing to do with; it is Quincy-owned, not vendored.
  */
-import type { Plugin } from "vite"
+import type { Plugin } from "vite";
 
 /**
  * Directories (relative to `apps/web`, forward-slash, trailing slash) that must never appear as a
@@ -48,7 +60,7 @@ import type { Plugin } from "vite"
  *   from this list by the slice that adopts the Gantt into the Dashboard (#220), which is exactly
  *   the point at which a real production consumer starts importing it on purpose.
  */
-export const RESTRICTED_MODULE_PREFIXES = ["src/harness/", "src/components/reui/gantt/"] as const
+export const RESTRICTED_MODULE_PREFIXES = ["src/harness/", "src/components/reui/gantt/"] as const;
 
 /**
  * Strips the parts of a Rollup/Rolldown module id that are not part of the on-disk path: a leading
@@ -58,15 +70,15 @@ export const RESTRICTED_MODULE_PREFIXES = ["src/harness/", "src/components/reui/
  * normalised to forward slashes so prefix matching is platform-independent.
  */
 export function normalizeModuleId(id: string): string {
-  let normalized = id
-  while (normalized.startsWith("\0")) normalized = normalized.slice(1)
-  const queryIndex = normalized.indexOf("?")
-  if (queryIndex !== -1) normalized = normalized.slice(0, queryIndex)
-  const hashIndex = normalized.indexOf("#")
-  if (hashIndex !== -1) normalized = normalized.slice(0, hashIndex)
-  normalized = normalized.split("\\").join("/")
-  if (normalized.startsWith("/@fs/")) normalized = normalized.slice("/@fs/".length)
-  return normalized
+  let normalized = id;
+  while (normalized.startsWith("\0")) normalized = normalized.slice(1);
+  const queryIndex = normalized.indexOf("?");
+  if (queryIndex !== -1) normalized = normalized.slice(0, queryIndex);
+  const hashIndex = normalized.indexOf("#");
+  if (hashIndex !== -1) normalized = normalized.slice(0, hashIndex);
+  normalized = normalized.split("\\").join("/");
+  if (normalized.startsWith("/@fs/")) normalized = normalized.slice("/@fs/".length);
+  return normalized;
 }
 
 /**
@@ -77,11 +89,11 @@ export function normalizeModuleId(id: string): string {
  * the project) or is under `root` but not inside a restricted directory.
  */
 export function matchRestrictedModuleId(id: string, root: string): (typeof RESTRICTED_MODULE_PREFIXES)[number] | undefined {
-  const normalizedId = normalizeModuleId(id)
-  const normalizedRoot = normalizeModuleId(root).replace(/\/+$/, "")
-  if (normalizedId !== normalizedRoot && !normalizedId.startsWith(`${normalizedRoot}/`)) return undefined
-  const relativeToRoot = normalizedId === normalizedRoot ? "" : normalizedId.slice(normalizedRoot.length + 1)
-  return RESTRICTED_MODULE_PREFIXES.find((prefix) => relativeToRoot.startsWith(prefix))
+  const normalizedId = normalizeModuleId(id);
+  const normalizedRoot = normalizeModuleId(root).replace(/\/+$/, "");
+  if (normalizedId !== normalizedRoot && !normalizedId.startsWith(`${normalizedRoot}/`)) return undefined;
+  const relativeToRoot = normalizedId === normalizedRoot ? "" : normalizedId.slice(normalizedRoot.length + 1);
+  return RESTRICTED_MODULE_PREFIXES.find((prefix) => relativeToRoot.startsWith(prefix));
 }
 
 /**
@@ -93,9 +105,9 @@ export function matchRestrictedModuleId(id: string, root: string): (typeof RESTR
  * members.
  */
 export interface RestrictedModuleGraphContext {
-  getModuleIds(): Iterable<string>
-  getModuleInfo(id: string): { importers: readonly string[] } | null | undefined
-  error(message: string): never
+  getModuleIds(): Iterable<string>;
+  getModuleInfo(id: string): { importers: readonly string[] } | null | undefined;
+  error(message: string): never;
 }
 
 /**
@@ -106,15 +118,15 @@ export interface RestrictedModuleGraphContext {
  * Rollup/Rolldown build.
  */
 export function checkForRestrictedModules(context: RestrictedModuleGraphContext, root: string): void {
-  const offenders: string[] = []
+  const offenders: string[] = [];
   for (const id of context.getModuleIds()) {
-    const prefix = matchRestrictedModuleId(id, root)
-    if (!prefix) continue
-    const info = context.getModuleInfo(id)
-    const importers = info?.importers.length ? info.importers.join(", ") : "(entry point / no importers recorded)"
-    offenders.push(`  ${id} (matched restricted prefix "${prefix}"), imported by: ${importers}`)
+    const prefix = matchRestrictedModuleId(id, root);
+    if (!prefix) continue;
+    const info = context.getModuleInfo(id);
+    const importers = info?.importers.length ? info.importers.join(", ") : "(entry point / no importers recorded)";
+    offenders.push(`  ${id} (matched restricted prefix "${prefix}"), imported by: ${importers}`);
   }
-  if (offenders.length === 0) return
+  if (offenders.length === 0) return;
   context.error(
     [
       "Production bundle reaches a dev-only module that must never ship. The static",
@@ -122,7 +134,7 @@ export function checkForRestrictedModules(context: RestrictedModuleGraphContext,
       "authority here, so the build fails instead of shipping it:",
       ...offenders,
     ].join("\n"),
-  )
+  );
 }
 
 /**
@@ -135,7 +147,7 @@ export function forbidDevOnlyModules(root: string): Plugin {
     name: "quincy:forbid-dev-only-modules",
     apply: "build",
     generateBundle() {
-      checkForRestrictedModules(this, root)
+      checkForRestrictedModules(this, root);
     },
-  }
+  };
 }
