@@ -105,6 +105,7 @@ import {
   getRangeKey,
   isResizableEdge,
   overlapsAnyNeighbour,
+  resolveAdjustLargerStepMinutes,
   resolveOverlapPolicy,
   stepGanttDate,
   toZoned,
@@ -113,6 +114,9 @@ import {
   type WeekStartsOn,
 } from "@/components/reui/gantt/gantt-lib"
 import type {
+  GanttAdjustCommitResult,
+  GanttAdjustState,
+  GanttAdjustStepResult,
   GanttBarId,
   GanttBaseline,
   GanttBaselineVariance,
@@ -402,6 +406,52 @@ interface GanttInternals<TData = unknown> {
    * `notify()`) before being dropped as stale on its own.
    */
   clearKeyboardFocus(): void
+  /**
+   * #219 PR A — begins one bar's modal keyboard Adjust session (`GanttState.adjust`). The CALLER
+   * (`gantt-bar.tsx`'s Space handler) is the only place that knows this SEGMENT's own clip state,
+   * so it has already gated eligibility (not recurring, at least one of canMove/canResizeStart/
+   * canResizeEnd) and computed `initialTarget` (move if canMove, else the first resizable edge)
+   * before calling this - this method does not re-derive either.
+   */
+  beginAdjust(
+    eventId: GanttBarId,
+    occurrence: GanttOccurrence<TData>,
+    initialTarget: GanttNudgeAction
+  ): void
+  /**
+   * One Arrow (`unit: "snap"`) or Shift+Arrow (`unit: "large"`) step on the session's CURRENT
+   * target, from its CURRENT preview (not the original committed range - repeated steps
+   * accumulate). Runs the SAME lock/overlap/clamp/canDropEvent gates `nudgeEvent` does (the shared
+   * `proposeNudge` helper below); a refused step leaves `preview` untouched. An accepted step
+   * updates `preview` AND drives `state.drag` with the identical shape a pointer gesture's own
+   * `applyProposal` (`gantt-dnd.tsx`) produces - reusing the SAME ghost-preview render path in
+   * `gantt-view.tsx` (`fractionOf(drag.proposedStart/End)`) a sighted keyboard user sees, with zero
+   * changes to that layout code (Adjust-mode preference (a) over building a second preview
+   * surface - see `gantt-bar.tsx`'s header for the fallback (b) this repo did not need).
+   */
+  stepAdjust(
+    direction: -1 | 1,
+    unit: "snap" | "large",
+    viewScheduleMode?: GanttScheduleMode
+  ): GanttAdjustStepResult
+  /**
+   * M/S/E - switches the session's target. The CALLER has already validated availability the same
+   * segment-aware way `beginAdjust`'s `initialTarget` is computed; this method does not re-check it
+   * (there is no segment-clip information at the store level to check it against).
+   */
+  retargetAdjust(target: GanttNudgeAction): void
+  /**
+   * Enter or Space - commits the NET preview (relative to entry) through the same
+   * `applyProposedUpdate` funnel a pointer release uses, exactly once, with `source: "keyboard"`;
+   * no net change emits nothing. Always clears the session (and any driven `state.drag`), win or
+   * lose.
+   */
+  commitAdjust(): GanttAdjustCommitResult
+  /**
+   * Escape, blur, or a pointer-down outside the bar - discards the preview, emits nothing, clears
+   * the session (and any driven `state.drag`). A no-op when no session is active.
+   */
+  cancelAdjust(): void
 }
 
 /** See `GanttInternals.claimKeyboardFocus`. */
@@ -497,6 +547,8 @@ function createGanttStore<TData>(
     interactions: { ...DEFAULT_INTERACTIONS, ...initial.defaultInteractions },
     drag: null as GanttDragState<TData> | null,
     slotDraft: null as GanttSlotDraft | null,
+    /** #219 PR A — the active Adjust-mode session, if any. See `GanttAdjustState`'s own doc comment. */
+    adjust: null as GanttAdjustState<TData> | null,
     /** Whole extra periods rendered on each side (infinite scroll). */
     rangeWindow: { before: 0, after: 0 },
     /** Visible-center instant reported by the view; drives the nav title. */
@@ -584,6 +636,7 @@ function createGanttStore<TData>(
       loading: options.loading ?? false,
       drag: internal.drag,
       slotDraft: internal.slotDraft,
+      adjust: internal.adjust,
       viewportCenter: internal.viewportCenter,
     }
     return snapshot
@@ -704,6 +757,131 @@ function createGanttStore<TData>(
     return index
   }
 
+  /** The SAME keyboard step (in minutes) `nudgeEvent` has always used, factored out so Adjust
+   * mode's `stepAdjust` can size its own "snap" step from the identical rule. Mirrors
+   * `gantt-view.tsx`'s own `snapMin` for the pointer's sub-day snap. */
+  const baseNudgeStepMinutes = (): number => {
+    const state = getState()
+    return state.scale === "day" ? settings.snapDuration : 24 * 60
+  }
+
+  /**
+   * The shared core of ONE keyboard move/resize proposal - locks, the day/minute step math
+   * (`computeGanttKeyboardProposal`), the overlap/clamp policy, and the advisory/enforced
+   * `canDropEvent` check. `nudgeEvent` (below) calls this once with `subject = {event.start,
+   * event.end}` and commits immediately; Adjust mode's `stepAdjust` (in `internals`) calls this
+   * repeatedly with `subject = ` the session's CURRENT preview, so steps accumulate, and defers
+   * committing until `commitAdjust`. Never commits anything itself - purely a gated proposal.
+   */
+  const proposeNudge = (
+    event: GanttEvent<TData>,
+    subject: { start: Date; end: Date; allDay: boolean },
+    action: GanttNudgeAction,
+    direction: -1 | 1,
+    step: number,
+    viewScheduleMode: GanttScheduleMode | undefined,
+    excludeEventId: GanttBarId
+  ):
+    | { ok: true; start: Date; end: Date; allDay: boolean }
+    | { ok: false; reason: "locked" | "invalid" | "rejected" } => {
+    if (event.readOnly) return { ok: false, reason: "locked" }
+    // Quincy fix (#219 PR A, Sol review, sol1 item 2): no occurrence-aware exception semantics yet
+    // - see `nudgeEvent`'s own comment on the identical check, which this replaces.
+    if (event.recurrence) return { ok: false, reason: "locked" }
+    const state = getState()
+    if (action === "move") {
+      if (!state.interactions.drag || event.draggable === false) {
+        return { ok: false, reason: "locked" }
+      }
+    } else {
+      const edge = action === "resize-start" ? "start" : "end"
+      if (!state.interactions.resize || !isResizableEdge(event, edge)) {
+        return { ok: false, reason: "locked" }
+      }
+    }
+
+    const proposal = computeGanttKeyboardProposal(
+      subject,
+      action,
+      direction,
+      step,
+      settings.timeZone
+    )
+    if (!proposal) return { ok: false, reason: "invalid" }
+
+    // Overlap policy: a "single" schedule-mode node always rejects concurrency; otherwise
+    // settings.overlap decides, through the SAME shared gantt-lib.tsx helpers gantt-dnd.tsx's
+    // beginGesture uses (sol1 item 3) - shared by nudgeEvent AND stepAdjust via this function.
+    const node = event.resourceId
+      ? findResource(settings.resources, event.resourceId)
+      : null
+    const nodeMode = resolveScheduleMode(node, viewScheduleMode)
+    const overlapPolicy = resolveOverlapPolicy(nodeMode, settings.overlap)
+
+    let finalProposal = proposal
+    if (overlapPolicy !== "allow" && event.resourceId !== undefined) {
+      // Range-aware, not `visibleRange`-limited (Sol MEDIUM, sol1 item 3): the query spans the
+      // UNION of the CURRENT subject's own span and the proposal, so a same-resource neighbour the
+      // step is actually about to touch is seen even when it sits outside the current viewport.
+      // For a chained Adjust-mode step this is the session's current PREVIEW, not the originally
+      // committed range - the same rule nudgeEvent's single step already applies (subject ===
+      // event.start/end there).
+      const neighbourFrom = new Date(
+        Math.min(proposal.start.getTime(), subject.start.getTime())
+      )
+      const neighbourTo = new Date(
+        Math.max(proposal.end.getTime(), subject.end.getTime())
+      )
+      const neighbours: GanttOverlapNeighbour[] = api
+        .getOccurrences({ start: neighbourFrom, end: neighbourTo })
+        .filter(
+          (other) =>
+            other.event.resourceId === event.resourceId &&
+            other.eventId !== excludeEventId
+        )
+        .map((other) => ({
+          start: other.start.getTime(),
+          end: other.end.getTime(),
+        }))
+
+      if (overlapPolicy === "clamp") {
+        const clamped = clampToNeighbours(
+          action,
+          { start: subject.start, end: subject.end },
+          proposal,
+          neighbours,
+          overlapPolicy
+        )
+        finalProposal = { ...proposal, start: clamped.start, end: clamped.end }
+      } else if (overlapsAnyNeighbour(neighbours, proposal)) {
+        return { ok: false, reason: "rejected" }
+      }
+    }
+
+    const update: GanttProposedUpdate<TData> = {
+      event,
+      occurrence: null,
+      start: finalProposal.start,
+      end: finalProposal.end,
+      allDay: finalProposal.allDay,
+      resourceId: event.resourceId,
+      source: "keyboard",
+    }
+    // canDropEvent stays advisory unless enforceCanDrop, mirroring the pointer release check in
+    // gantt-dnd.tsx's onPointerUp exactly.
+    const valid = settings.canDropEvent ? settings.canDropEvent(update) : true
+    if (settings.enforceCanDrop && !valid) {
+      return { ok: false, reason: "rejected" }
+    }
+
+    return {
+      ok: true,
+      start: finalProposal.start,
+      end: finalProposal.end,
+      allDay: finalProposal.allDay,
+    }
+  }
+
   /** Anchor clamp: navigation may never leave the configured bounds. */
   const clampToBounds = (date: Date): Date => {
     const bounds = settings.rangeBounds
@@ -793,106 +971,30 @@ function createGanttStore<TData>(
     nudgeEvent(id, action, direction, viewScheduleMode) {
       const event = api.getEvent(id)
       if (!event) return { applied: false, reason: "not-found" }
-      if (event.readOnly) return { applied: false, reason: "locked" }
-      // Quincy fix (#219 PR A, Sol review, sol1 item 2): nudgeEvent has no occurrence-aware
-      // exception semantics - it computes from the MASTER's own start/end and always emits
-      // `occurrence: null` (an API-shaped update, per gantt-types.tsx's GanttProposedUpdate doc).
-      // A keyboard nudge on ANY ONE occurrence of a recurring event would therefore silently
-      // rewrite the whole series. Refuse until occurrence-aware exceptions exist (creating or
-      // updating a recurringEventId/originalStart override) - future work, not this fix.
-      if (event.recurrence) return { applied: false, reason: "locked" }
-      const state = getState()
-      if (action === "move") {
-        if (!state.interactions.drag || event.draggable === false) {
-          return { applied: false, reason: "locked" }
-        }
-      } else {
-        const edge = action === "resize-start" ? "start" : "end"
-        if (!state.interactions.resize || !isResizableEdge(event, edge)) {
-          return { applied: false, reason: "locked" }
-        }
-      }
-
-      // Mirrors gantt-view.tsx's own `snapMin` - the pointer drag's snap
-      // unit: settings.snapDuration at the day scale, one civil day
-      // otherwise (week/month/quarter/year all snap to whole days).
-      const step = state.scale === "day" ? settings.snapDuration : 24 * 60
-      const proposal = computeGanttKeyboardProposal(
+      // #219 PR A (Adjust mode) refactor: the lock/step/overlap/clamp/canDropEvent gating below
+      // used to live inline here; it is now `proposeNudge`, shared with Adjust mode's `stepAdjust`
+      // (`internals`) so both a single programmatic nudge and a chained Adjust-mode step apply the
+      // IDENTICAL gates. Behavior is unchanged - subject is this event's own current start/end,
+      // exactly as before.
+      const outcome = proposeNudge(
+        event,
         { start: event.start, end: event.end, allDay: event.allDay ?? false },
         action,
         direction,
-        step,
-        settings.timeZone
+        baseNudgeStepMinutes(),
+        viewScheduleMode,
+        id
       )
-      if (!proposal) return { applied: false, reason: "invalid" }
-
-      // Overlap policy: a "single" schedule-mode node always rejects
-      // concurrency; otherwise settings.overlap decides - now via the SAME
-      // shared `gantt-lib.tsx` helpers `beginGesture` uses in gantt-dnd.tsx
-      // (Quincy fix, #219 PR A, Sol review, sol1 item 3), so "clamp" is
-      // honoured here too (it used to be silently ignored - only "reject"
-      // was ever checked) and the effective scheduleMode comes from the
-      // CALLER's view context when passed, not just a node's own override.
-      const node = event.resourceId
-        ? findResource(settings.resources, event.resourceId)
-        : null
-      const nodeMode = resolveScheduleMode(node, viewScheduleMode)
-      const overlapPolicy = resolveOverlapPolicy(nodeMode, settings.overlap)
-
-      let finalProposal = proposal
-      if (overlapPolicy !== "allow" && event.resourceId !== undefined) {
-        // Range-aware, not `visibleRange`-limited (Sol MEDIUM, same fix): the
-        // query spans the UNION of the event's own current span and the
-        // proposal, so a same-resource neighbour the nudge is actually about
-        // to touch is seen even when it sits outside the current viewport.
-        const neighbourFrom = new Date(
-          Math.min(proposal.start.getTime(), event.start.getTime())
-        )
-        const neighbourTo = new Date(
-          Math.max(proposal.end.getTime(), event.end.getTime())
-        )
-        const neighbours: GanttOverlapNeighbour[] = api
-          .getOccurrences({ start: neighbourFrom, end: neighbourTo })
-          .filter(
-            (other) =>
-              other.event.resourceId === event.resourceId &&
-              other.eventId !== id
-          )
-          .map((other) => ({
-            start: other.start.getTime(),
-            end: other.end.getTime(),
-          }))
-
-        if (overlapPolicy === "clamp") {
-          const clamped = clampToNeighbours(
-            action,
-            { start: event.start, end: event.end },
-            proposal,
-            neighbours,
-            overlapPolicy
-          )
-          finalProposal = { ...proposal, start: clamped.start, end: clamped.end }
-        } else if (overlapsAnyNeighbour(neighbours, proposal)) {
-          return { applied: false, reason: "rejected" }
-        }
-      }
-
+      if (!outcome.ok) return { applied: false, reason: outcome.reason }
       const update: GanttProposedUpdate<TData> = {
         event,
         occurrence: null,
-        start: finalProposal.start,
-        end: finalProposal.end,
-        allDay: finalProposal.allDay,
+        start: outcome.start,
+        end: outcome.end,
+        allDay: outcome.allDay,
         resourceId: event.resourceId,
         source: "keyboard",
       }
-      // canDropEvent stays advisory unless enforceCanDrop, mirroring the
-      // pointer release check in gantt-dnd.tsx's onPointerUp exactly.
-      const valid = settings.canDropEvent ? settings.canDropEvent(update) : true
-      if (settings.enforceCanDrop && !valid) {
-        return { applied: false, reason: "rejected" }
-      }
-
       // Commit through the one validation funnel; onEventUpdate can still
       // veto (-> "rejected"), same as a pointer drag's own commit.
       const accepted = applyProposedUpdate(update)
@@ -1055,6 +1157,133 @@ function createGanttStore<TData>(
     },
     clearKeyboardFocus() {
       pendingKeyboardFocus = null
+    },
+    beginAdjust(eventId, occurrence, initialTarget) {
+      const entry = {
+        start: occurrence.start,
+        end: occurrence.end,
+        allDay: occurrence.allDay,
+      }
+      internal.adjust = {
+        eventId,
+        occurrence,
+        target: initialTarget,
+        entry,
+        // No `state.drag` yet: the committed bar's own position IS the preview until the
+        // first accepted step (the bar renders it via `data-adjusting`, not a ghost - see
+        // this interface's `stepAdjust` doc comment for when the ghost path starts).
+        preview: entry,
+      }
+      invalidate()
+      notify()
+    },
+    stepAdjust(direction, unit, viewScheduleMode) {
+      const session = internal.adjust
+      if (!session) return { applied: false, reason: "invalid" }
+      const event = api.getEvent(session.eventId)
+      if (!event) return { applied: false, reason: "invalid" }
+      const base = baseNudgeStepMinutes()
+      const step =
+        unit === "large" ? resolveAdjustLargerStepMinutes(base) : base
+      const outcome = proposeNudge(
+        event,
+        session.preview,
+        session.target,
+        direction,
+        step,
+        viewScheduleMode,
+        session.eventId
+      )
+      if (!outcome.ok) return { applied: false, reason: outcome.reason }
+      const preview = {
+        start: outcome.start,
+        end: outcome.end,
+        allDay: outcome.allDay,
+      }
+      internal.adjust = { ...session, preview }
+      // Drives the SAME ghost-preview render path a pointer gesture's own `applyProposal`
+      // does (`gantt-view.tsx`'s `fractionOf(drag.proposedStart/End)`) - see this interface's
+      // `stepAdjust` doc comment. `valid: true`: an accepted step already passed the identical
+      // lock/overlap/canDropEvent gate `nudgeEvent`'s single commit does (`proposeNudge`), so
+      // there is nothing left to style as invalid.
+      internal.drag = {
+        kind: session.target,
+        occurrence: session.occurrence,
+        proposedStart: preview.start,
+        proposedEnd: preview.end,
+        proposedAllDay: preview.allDay,
+        proposedResourceId: event.resourceId,
+        valid: true,
+      }
+      invalidate()
+      notify()
+      return {
+        applied: true,
+        start: preview.start,
+        end: preview.end,
+        allDay: preview.allDay,
+      }
+    },
+    retargetAdjust(target) {
+      if (!internal.adjust) return
+      // Preview carries over: switching M/S/E mid-session keeps whatever the prior target
+      // already moved/resized to, so a move-then-resize sequence composes instead of the
+      // second target discarding the first's work.
+      internal.adjust = { ...internal.adjust, target }
+      invalidate()
+      notify()
+    },
+    commitAdjust() {
+      const session = internal.adjust
+      if (!session) return { committed: false }
+      const event = api.getEvent(session.eventId)
+      // Clear the session (and any driven ghost) before the commit call below, so its own
+      // `notify()` (uncontrolled `events`) already reflects Adjust mode having ended - a
+      // controlled `events` prop never calls `setField`'s internal `notify()`, so this
+      // function's own `invalidate()`/`notify()` below is what a controlled consumer relies on.
+      internal.adjust = null
+      internal.drag = null
+      if (!event) {
+        invalidate()
+        notify()
+        return { committed: false }
+      }
+      const noChange =
+        session.preview.start.getTime() === session.entry.start.getTime() &&
+        session.preview.end.getTime() === session.entry.end.getTime() &&
+        session.preview.allDay === session.entry.allDay
+      if (noChange) {
+        invalidate()
+        notify()
+        return { committed: false, noChange: true }
+      }
+      const update: GanttProposedUpdate<TData> = {
+        event,
+        occurrence: null,
+        start: session.preview.start,
+        end: session.preview.end,
+        allDay: session.preview.allDay,
+        resourceId: event.resourceId,
+        source: "keyboard",
+      }
+      const accepted = applyProposedUpdate(update)
+      invalidate()
+      notify()
+      return accepted
+        ? {
+            committed: true,
+            start: accepted.start,
+            end: accepted.end,
+            allDay: accepted.allDay,
+          }
+        : { committed: false }
+    },
+    cancelAdjust() {
+      if (!internal.adjust) return
+      internal.adjust = null
+      internal.drag = null
+      invalidate()
+      notify()
     },
   }
 

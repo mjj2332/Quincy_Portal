@@ -44,6 +44,13 @@
  * #219 PR A fix (Sol review, sol1 item 7), additive: `GanttNudgeResult` gained optional
  * `start`/`end`/`allDay`, present iff `applied` is true — see that field's own doc comment on
  * `GanttNudgeResult` below.
+ *
+ * #219 PR A (Adjust mode) addition, additive: `GanttAdjustState`, `GanttAdjustStepResult`, and
+ * `GanttAdjustCommitResult` — the modal keyboard "Adjust" session that replaces the Ctrl+Alt+Arrow
+ * / Shift+Alt+Arrow / Alt+Arrow chords (Opus and Sol both rejected them: Ctrl+Alt+Arrow is
+ * OS-intercepted on some desktops, Alt+Arrow is browser Back/Forward). One `GanttAdjustState` lives
+ * on `GanttState.adjust`, per instance, the same way `drag`/`slotDraft` do — see `gantt.tsx`'s
+ * header for the begin/step/retarget/commit/cancel mechanics.
  */
 
 type GanttBarId = string
@@ -236,6 +243,45 @@ interface GanttSlotDraft {
   resourceId?: string
 }
 
+/**
+ * #219 PR A (Adjust mode) — one bar's modal keyboard Adjust session, on `GanttState.adjust`. Lives
+ * on the STORE (per instance), never module-level and never bar `useState` (bars remount on a
+ * move / resize-start commit — see `gantt-bar.tsx`'s header). `occurrence` is the exact bar that
+ * opened the session (recurring events never enter, so this is always the event's sole occurrence);
+ * `entry` is the snapshot to revert to on cancel and to diff against at commit ("no net change = no
+ * emit"); `preview` is the CURRENT proposed range, which each accepted step updates and each
+ * refused step leaves untouched.
+ */
+interface GanttAdjustState<TData = unknown> {
+  eventId: GanttBarId
+  occurrence: GanttOccurrence<TData>
+  target: GanttNudgeAction
+  entry: { start: Date; end: Date; allDay: boolean }
+  preview: { start: Date; end: Date; allDay: boolean }
+}
+
+/** `gantt.tsx`'s `GanttInternals.stepAdjust` verdict — one Arrow/Shift+Arrow step. */
+interface GanttAdjustStepResult {
+  applied: boolean
+  reason?: "locked" | "invalid" | "rejected"
+  start?: Date
+  end?: Date
+  allDay?: boolean
+}
+
+/**
+ * `gantt.tsx`'s `GanttInternals.commitAdjust` verdict. `committed: false` means there was nothing
+ * to commit (defensive only) or `onEventUpdate` rejected the net change; `noChange: true` means the
+ * session ended exactly where it started (no `onEventUpdate` was emitted either way).
+ */
+interface GanttAdjustCommitResult {
+  committed: boolean
+  noChange?: boolean
+  start?: Date
+  end?: Date
+  allDay?: boolean
+}
+
 interface GanttState<TData = unknown> {
   scale: GanttScale
   date: Date
@@ -248,6 +294,8 @@ interface GanttState<TData = unknown> {
   loading: boolean
   drag: GanttDragState<TData> | null
   slotDraft: GanttSlotDraft | null
+  /** #219 PR A (Adjust mode) — see `GanttAdjustState`'s own doc comment. */
+  adjust: GanttAdjustState<TData> | null
   /** Center of the scrolled viewport; the nav title follows it. null falls back to the anchor date. */
   viewportCenter: Date | null
 }
@@ -331,6 +379,9 @@ interface GanttDataAdapter<TData = unknown> {
 }
 
 export type {
+  GanttAdjustCommitResult,
+  GanttAdjustState,
+  GanttAdjustStepResult,
   GanttBaseline,
   GanttBaselineVariance,
   GanttEvent,
