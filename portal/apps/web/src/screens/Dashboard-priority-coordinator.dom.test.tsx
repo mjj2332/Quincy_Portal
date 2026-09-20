@@ -568,7 +568,7 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     // #230 fix-verification (test-first, item 1). Without this, every `Date.now()` call this
     // scenario's several fetches/accepts produce can coincidentally land in the SAME real
     // millisecond -- a fast, synchronous test routinely completes well inside 1ms of wall-clock
-    // time. `acceptedQueryUpdatedAtRef`'s own (key, updatedAt) dedupe (Dashboard.tsx ~:656) then
+    // time. `lastAcceptedResultRef`'s own (key, updatedAt) dedupe (Dashboard.tsx's acceptDashboardProjects) then
     // swallows the corrupted accept this sweep exists to catch as a silent no-op: the test would
     // pass not because the fix held, but because the write it is supposed to catch never visibly
     // happened at all (same failure shape as this file's own test (m), which pins `Date.now` for
@@ -644,7 +644,7 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     // settled promise -- no `setTimeout` involved -- but react-query's scheduler notifies
     // subscribers (and so React re-renders and B's own accept effect runs) via a `setTimeout(0)`.
     // Holding that back keeps B's own (correctly-keyed) accept from running yet, so it can't
-    // consume `acceptedQueryUpdatedAtRef`'s dedupe slot for B's `dataUpdatedAt` before the stale
+    // consume `lastAcceptedResultRef`'s dedupe slot for B's `dataUpdatedAt` before the stale
     // alpha refetch (below) gets a chance to -- which would otherwise make `acceptDashboardProjects`
     // silently no-op the very call this test exists to catch, for a reason unrelated to the fix.
     await microflush();
@@ -766,12 +766,13 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
   );
 });
 
-// #230 Sol review round 2, item 3 (MEDIUM). `acceptedQueryUpdatedAtRef` (Dashboard.tsx ~:382)
-// dedupes `acceptDashboardProjects` calls by `dataUpdatedAt` ALONE, a bare millisecond timestamp.
-// Two different keys' results can carry the identical millisecond (system clock resolution, or two
-// fetches racing to resolve in the same tick) -- a genuinely new key's own first-ever result is then
-// silently deduped away, and `acceptedProjects` never picks up that key at all.
-describe("acceptedQueryUpdatedAtRef dedupes by key AND updatedAt, not updatedAt alone (#230 Sol review round 2, item 3)", () => {
+// #230 Sol review round 2, item 3 (MEDIUM). `lastAcceptedResultRef` (Dashboard.tsx's
+// acceptDashboardProjects) dedupes `acceptDashboardProjects` calls by `dataUpdatedAt` ALONE, a bare
+// millisecond timestamp. Two different keys' results can carry the identical millisecond (system
+// clock resolution, or two fetches racing to resolve in the same tick) -- a genuinely new key's own
+// first-ever result is then silently deduped away, and `acceptedProjects` never picks up that key at
+// all.
+describe("lastAcceptedResultRef dedupes by key AND updatedAt, not updatedAt alone (#230 Sol review round 2, item 3)", () => {
   const alphaProject = { id: "proj-alpha", street: "1 Alpha Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const betaProject = { id: "proj-beta", street: "9 Beta Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 3, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
   const qLessProject = { id: "proj-q", street: "0 Unfiltered Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
@@ -822,7 +823,7 @@ describe("acceptedQueryUpdatedAtRef dedupes by key AND updatedAt, not updatedAt 
     });
     await flush();
 
-    // Commit search A -- its accept stamps `acceptedQueryUpdatedAtRef.current` with this frozen
+    // Commit search A -- its accept stamps `lastAcceptedResultRef.current` with this frozen
     // millisecond (buggy: a bare number; fixed: `{ key: A, updatedAt: <the millisecond> }`).
     act(() => {
       locationStore().replace("/?q=alpha");
@@ -832,7 +833,7 @@ describe("acceptedQueryUpdatedAtRef dedupes by key AND updatedAt, not updatedAt 
     await vi.waitFor(() => expect(queryClient.getQueryData(dashboardProjectsKey("admin-1", "admin", 0, false, "alpha"))).toBeDefined());
 
     // Commit search B -- a BRAND NEW key, never fetched before. Its first-ever fetch ALSO resolves
-    // at the identical frozen millisecond. Buggy: `acceptedQueryUpdatedAtRef.current` already equals
+    // at the identical frozen millisecond. Buggy: `lastAcceptedResultRef.current` already equals
     // that millisecond (from A, above) -- `acceptDashboardProjects` dedupes this call away and
     // `acceptedProjects` never becomes key B's. Fixed: different key, same millisecond -- accepted.
     act(() => {

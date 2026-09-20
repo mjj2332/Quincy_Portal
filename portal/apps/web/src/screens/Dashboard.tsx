@@ -382,11 +382,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const queuedRefreshRef = useRef(false);
   const focusRestoreRef = useRef<FocusRestore | null>(null);
   const movementRecoveryRef = useRef<MovementRecovery | null>(null);
-  // Sol review round 2, item 3: `{ key, updatedAt }`, not a bare timestamp -- two different keys'
-  // results can carry the identical millisecond `dataUpdatedAt` (system clock resolution, or two
-  // fetches racing to resolve in the same tick), which a bare-timestamp dedupe would confuse for
-  // "already accepted", silently dropping a genuinely new key's own first-ever result.
-  const acceptedQueryUpdatedAtRef = useRef<{ key: string; updatedAt: number } | null>(null);
+  // The last key + dataUpdatedAt millisecond acceptDashboardProjects actually accepted -- `{ key,
+  // updatedAt }`, not a bare timestamp, because two different keys' results can carry the identical
+  // millisecond `dataUpdatedAt` (system clock resolution, or two fetches racing to resolve in the
+  // same tick), which a bare-timestamp dedupe would confuse for "already accepted", silently
+  // dropping a genuinely new key's own first-ever result.
+  const lastAcceptedResultRef = useRef<{ key: string; updatedAt: number } | null>(null);
   const projects = boardOverlay?.key === dashboardKeyString
     ? boardOverlay.model
     : acceptedProjects?.key === dashboardKeyString
@@ -655,14 +656,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   const acceptDashboardProjects = useCallback((next: ProjectSummary[], dataUpdatedAt?: number) => {
     if (queryRuntime?.principalTerminal) return;
-    // Sol review round 2, item 3: dedupe on key AND updatedAt together -- `dashboardKeyString` here
-    // is the key this specific call is stamping under (this closure's own, same as
-    // `replaceAcceptedProjects` below uses), so a match requires both the SAME key and the SAME
-    // millisecond, not just a coincidentally-equal timestamp from an unrelated key's own result.
-    const lastAccepted = acceptedQueryUpdatedAtRef.current;
+    // Dedupe on key AND updatedAt together -- `dashboardKeyString` here is the key this specific
+    // call is stamping under (this closure's own, same as `replaceAcceptedProjects` below uses), so
+    // a match requires both the SAME key and the SAME millisecond, not just a coincidentally-equal
+    // timestamp from an unrelated key's own result.
+    const lastAccepted = lastAcceptedResultRef.current;
     if (dataUpdatedAt !== undefined && lastAccepted !== null && lastAccepted.key === dashboardKeyString && lastAccepted.updatedAt === dataUpdatedAt) return;
     const safeProjects = queryRuntime ? next.filter((project) => !queryRuntime.isProjectRemoved(project.id)) : next;
-    if (dataUpdatedAt !== undefined) acceptedQueryUpdatedAtRef.current = { key: dashboardKeyString, updatedAt: dataUpdatedAt };
+    if (dataUpdatedAt !== undefined) lastAcceptedResultRef.current = { key: dashboardKeyString, updatedAt: dataUpdatedAt };
     if (safeProjects.every((project) => project.boardContractEnabled !== false)) setBoardUnavailableReason(null);
     replaceAcceptedProjects(safeProjects);
   }, [dashboardKeyString, queryRuntime, replaceAcceptedProjects]);
@@ -784,7 +785,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // non-stale) closure.
       if (JSON.stringify(dashboardKeyRef.current) !== refreshKey) return;
       acceptDashboardProjects(refreshState.data, refreshState.dataUpdatedAt);
-      // Keep this release outside acceptDashboardProjects; its acceptedQueryUpdatedAtRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
+      // Keep this release outside acceptDashboardProjects; its lastAcceptedResultRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
       if (settling) {
         movementSettlePendingRef.current = false;
         setMovementSettlePending(false);
