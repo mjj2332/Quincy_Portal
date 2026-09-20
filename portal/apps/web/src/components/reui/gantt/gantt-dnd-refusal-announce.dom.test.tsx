@@ -151,7 +151,9 @@ function findAccessorDescriptor(obj: object, prop: string): PropertyDescriptor {
 }
 
 function watchAnnouncerWrites(): { count: () => number } {
-  const announcer = host.querySelector<HTMLElement>("[data-slot=gantt-announcer]")!;
+  // Guard F (`test-seam.guard.test.ts`, issue #92) forbids selecting on the vendor's own
+  // `[data-slot="gantt-announcer"]` — same reasoning as `announcerText` above.
+  const announcer = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
   const original = findAccessorDescriptor(announcer, "textContent");
   let writes = 0;
   Object.defineProperty(announcer, "textContent", {

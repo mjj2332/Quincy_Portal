@@ -92,7 +92,8 @@ export function isFullyComputedTemplate(quote: string, body: string): boolean {
 }
 
 /**
- * Every `[data-slot="X"]` attribute selector inside a selector literal — guard F's matcher.
+ * Every `[data-slot="X"]` (or unquoted `[data-slot=X]`) attribute selector inside a selector
+ * literal — guard F's matcher.
  *
  * A single selector can carry more than one, either combined with an element/attribute
  * selector (`form[data-slot="notice-board-composer"] [contenteditable="true"]`) or with a second
@@ -101,11 +102,22 @@ export function isFullyComputedTemplate(quote: string, body: string): boolean {
  * VALUE of a different attribute — `[data-testid="data-slot-legacy"]` has no `[data-slot=`
  * substring, because the text before "data-slot" there is `"data-slot-legacy"`'s own quote, not an
  * attribute-selector open bracket.
+ *
+ * #219 PR A fix (item 1): CSS attribute selectors don't require quotes around the value —
+ * `[data-slot=gantt-announcer]` is exactly as valid as `[data-slot="gantt-announcer"]` — and the
+ * quote-only form above matched neither. Three call sites (`gantt-adjust-session-ownership.dom
+ * .test.tsx:571,882`, `gantt-dnd-refusal-announce.dom.test.tsx:154`) selected
+ * `[data-slot=gantt-announcer]` — a slot only the VENDORED `gantt/gantt.tsx` authors, exactly the
+ * coupling guard F exists to prevent — and were invisible to it purely because of a missing pair
+ * of quotes. The quoted alternative is tried first so an author's own quotes are still honoured
+ * verbatim (including escapes); the unquoted alternative only engages when there is no leading
+ * quote to match, and only accepts CSS-identifier characters, so it cannot swallow the closing
+ * `]` of a differently-shaped selector.
  */
-const DATA_SLOT_SELECTOR = /\[data-slot=(["'])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\]/g;
+const DATA_SLOT_SELECTOR = /\[data-slot=(?:(["'])((?:\\[\s\S]|(?!\1)[^\\])*?)\1|([\w-]+))\]/g;
 
 export function dataSlotsIn(selector: string): string[] {
-  return [...selector.matchAll(DATA_SLOT_SELECTOR)].map((match) => match[2]!);
+  return [...selector.matchAll(DATA_SLOT_SELECTOR)].map((match) => match[2] ?? match[3]!);
 }
 
 /**
@@ -801,6 +813,14 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ['[data-slot="field"][data-disabled]', ["field"]],
     ['[data-testid="kanban2-column"]', []],
     ['[data-testid="data-slot-legacy"]', []],
+    // #219 PR A fix (item 1): the UNQUOTED attribute-selector form — `[data-slot=x]`, no quotes
+    // around the value. Guard F's own baseline was built entirely from quoted `[data-slot="x"]`
+    // examples, so a missing pair of quotes at a call site walked straight past it: three
+    // `gantt-*.dom.test.tsx` call sites selected `[data-slot=gantt-announcer]` — a slot only the
+    // vendored `gantt/gantt.tsx` authors — and Guard F never saw them. A matcher that only
+    // recognises the quoted spelling is not a gate against the unquoted one.
+    ["[data-slot=gantt-announcer]", ["gantt-announcer"]],
+    ["[data-slot=gantt] [data-slot=gantt-announcer]", ["gantt", "gantt-announcer"]],
   ])("dataSlotsIn(%j) === %j", (selector, expected) => {
     expect(dataSlotsIn(selector)).toEqual(expected);
   });

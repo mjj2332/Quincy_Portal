@@ -568,7 +568,9 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
    * counts an unreliable proxy for "how many writes happened").
    */
   function watchAnnouncerWrites(host_: HTMLElement): { count: () => number; restore: () => void } {
-    const announcer = host_.querySelector<HTMLElement>("[data-slot=gantt-announcer]")!;
+    // Guard F (`test-seam.guard.test.ts`, issue #92) forbids selecting on the vendor's own
+    // `[data-slot="gantt-announcer"]` — same reasoning as `announcerText` above.
+    const announcer = host_.querySelector<HTMLElement>('[aria-live="polite"]')!;
     const original = findAccessorDescriptor(announcer, "textContent");
     let writes = 0;
     Object.defineProperty(announcer, "textContent", {
@@ -879,7 +881,9 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     // Clear the leftover text - it already happens to read "Adjustment cancelled." from A's REAL
     // teardown above, so a false re-write of the IDENTICAL string would otherwise be invisible to
     // a final-text-only check.
-    const announcerEl = host.querySelector<HTMLElement>("[data-slot=gantt-announcer]")!;
+    // Guard F (`test-seam.guard.test.ts`, issue #92) forbids selecting on the vendor's own
+    // `[data-slot="gantt-announcer"]` — same reasoning as `announcerText` above.
+    const announcerEl = host.querySelector<HTMLElement>('[aria-live="polite"]')!;
     announcerEl.textContent = "";
 
     // An ORDINARY notify on the NEW instance B - `addEvent`, no Adjust session ever opened on B,
