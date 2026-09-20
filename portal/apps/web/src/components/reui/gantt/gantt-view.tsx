@@ -4058,11 +4058,17 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
             // DOM focus on the origin bar, which a move gesture hides at opacity-0 (see
             // `gantt-bar.tsx`'s own `data-[drag-kind=move]:opacity-0`) and whose own dashed outline
             // otherwise loses to the ordinary `focus-visible` ring even when visible (a resize).
-            // This ghost already renders a dashed hairline in existing `--gantt-event-color`
-            // tokens with no shadow and no `dark:` override for BOTH sources (`stepAdjust` drives
-            // `state.drag` in the identical shape a pointer gesture's own `applyProposal` does) -
-            // `data-adjust-ghost` only marks WHICH one drove it, for a sighted user's affordance
-            // hooks and this file's own DOM test, not a different look.
+            // `data-adjust-ghost` marks WHICH source drove it, for a sighted user's affordance
+            // hooks and this file's own DOM test.
+            //
+            // Quincy fix (#219 PR A round 3, Sol MEDIUM #6): round 2 left the LOOK identical
+            // between sources - `data-adjust-ghost` was a marker with no treatment attached to it.
+            // The `ring-ring ring-1` class below (conditional on `source === "keyboard"`, alongside
+            // the SAME dashed hairline border both sources already carry, not replacing it) is a
+            // solid hairline ring in the EXISTING focus-ring token - the identical one
+            // `gantt-bar.tsx`'s own `focus-visible:ring-ring/50` already uses elsewhere in this
+            // tree - not a new colour, not a `shadow-*` class, no `dark:` variant, so
+            // `gantt-skin.guard.test.ts` stays green.
             data-adjust-ghost={ghost.source === "keyboard" || undefined}
             className={cn(
               // Slight dashed indicator, never a dramatic restyle. Move shows a
@@ -4084,7 +4090,8 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                  wrapper sheds its own dashed box and centers a dashed diamond
                  instead - a dashed rectangle read as a different object */
               ghost.milestone &&
-                "flex items-center justify-center rounded-none border-0 bg-transparent"
+                "flex items-center justify-center rounded-none border-0 bg-transparent",
+              ghost.source === "keyboard" && "ring-ring ring-1"
             )}
             style={
               {

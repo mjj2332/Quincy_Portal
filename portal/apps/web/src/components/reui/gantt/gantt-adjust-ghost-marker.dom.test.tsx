@@ -9,10 +9,16 @@
  * visible said "you are adjusting this" at all. The fix moves the marker onto `gantt-view.tsx`'s
  * own drag ghost (`data-adjust-ghost`), which is never hidden and never competes with a focus
  * ring, tagged from `state.drag.source` (added #219 PR A HIGH #4) - "keyboard" for an Adjust
- * session's own `stepAdjust`, absent for a pointer gesture's `applyProposal`. The ghost's actual
- * LOOK (dashed hairline, `--gantt-event-color` tokens, no shadow, no `dark:`) is untouched — both
- * sources already rendered through the identical `state.drag` shape and the identical ghost
- * element; only the marker attribute is new.
+ * session's own `stepAdjust`, absent for a pointer gesture's `applyProposal`. Round 2's fix left
+ * the ghost's actual LOOK identical either way — `data-adjust-ghost` marked WHICH source drove it
+ * for a DOM test/affordance hook only, no different treatment.
+ *
+ * Round 3 (Sol MEDIUM #6) closed that gap: `data-adjust-ghost` now ALSO carries a solid hairline
+ * ring in the existing focus-ring token (`ring-ring`, the SAME one `gantt-bar.tsx`'s own
+ * `focus-visible:ring-ring/50` already uses), layered on top of the dashed hairline border every
+ * ghost still carries either way — not a different border, not a new colour, no shadow class, no
+ * `dark:`, so `gantt-skin.guard.test.ts` stays green. A pointer-sourced ghost keeps the dashed
+ * border alone.
  *
  * This renders the REAL `<GanttView>` (not a hand-built row/axis stand-in — the ghost element
  * only exists inside it) to observe the actual DOM. The keyboard case drives a real Adjust session
@@ -113,8 +119,8 @@ function ghostEl(): HTMLElement | null {
   return host.querySelector<HTMLElement>('[data-testid="gantt-drag-ghost"]');
 }
 
-describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session, not a pointer drag (#219 PR A, Sol re-review round 2, MEDIUM #7)", () => {
-  it("a real Adjust session (Space, then ArrowRight) renders a ghost with data-adjust-ghost", async () => {
+describe("the drag ghost carries data-adjust-ghost (and, round 3, a distinct ring treatment) for a keyboard Adjust session, not a pointer drag (#219 PR A, Sol re-review round 2 MEDIUM #7 / round 3 MEDIUM #6)", () => {
+  it("a real Adjust session (Space, then ArrowRight) renders a ghost with data-adjust-ghost and a ring-ring hairline ring distinct from a pointer ghost's", async () => {
     const event: GanttEvent = { id: "kb-ghost", title: "Ghost Me", start: START, end: END, resourceId: "r1" };
     await render(
       <Gantt resources={RESOURCES} events={[event]} date={START} scale="day" timeZone="UTC">
@@ -135,9 +141,12 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     expect(ghost).not.toBeNull();
     expect(ghost!.getAttribute("data-adjust-ghost")).toBe("true");
     expect(ghost!.getAttribute("data-kind")).toBe("move");
-    // The look itself - dashed hairline, existing --gantt-event-color tokens, no shadow, no
-    // dark: - is unchanged by this fix; only the marker is new.
+    // Round 3, Sol MEDIUM #6: a keyboard-sourced ghost now ALSO carries a solid hairline ring in
+    // the existing focus-ring token, distinct from a pointer ghost (see the test below) - layered
+    // on top of the SAME dashed hairline border either source already carried (round 2's fix).
     expect(ghost!.className).toContain("border-dashed");
+    expect(ghost!.className).toMatch(/\bring-ring\b/);
+    expect(ghost!.className).toMatch(/\bring-1\b/);
     expect(ghost!.className).not.toMatch(/\bshadow/);
     expect(ghost!.className).not.toMatch(/\bdark:/);
 
@@ -145,7 +154,7 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     expect(ghostEl()).toBeNull();
   });
 
-  it("a pointer-owned ghost (the identical shape gantt-dnd.tsx's applyProposal produces, source: 'pointer') renders with NO data-adjust-ghost", async () => {
+  it("a pointer-owned ghost (the identical shape gantt-dnd.tsx's applyProposal produces, source: 'pointer') renders with NO data-adjust-ghost and NO ring-ring treatment", async () => {
     const event: GanttEvent = { id: "ptr-ghost", title: "Pointer Ghost", start: START, end: END, resourceId: "r1" };
     const internalsRef: { current: GanttInternals | null } = { current: null };
     await render(
@@ -182,7 +191,9 @@ describe("the drag ghost carries data-adjust-ghost for a keyboard Adjust session
     expect(ghost).not.toBeNull();
     expect(ghost!.getAttribute("data-kind")).toBe("move");
     expect(ghost!.hasAttribute("data-adjust-ghost")).toBe(false);
-    // Same dashed-hairline look either way - the fix only changes the marker, not the styling.
+    // Same dashed-hairline border either way, but round 3 (Sol MEDIUM #6) adds the ring ONLY for
+    // the keyboard-sourced ghost above - this is the class/marker-set difference that fix asserts.
     expect(ghost!.className).toContain("border-dashed");
+    expect(ghost!.className).not.toMatch(/\bring-ring\b/);
   });
 });
