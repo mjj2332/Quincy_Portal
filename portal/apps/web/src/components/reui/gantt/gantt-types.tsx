@@ -17,6 +17,13 @@
  *    primitives this registry item depends on (`button`, `calendar`, `checkbox`, `context-menu`,
  *    `dropdown-menu`, `popover`, `scroll-area`, `tooltip` — all already vendored in this
  *    directory, the last six as of #219 stage 1).
+ * 4. Landed inside a `gantt/` subdirectory of `components/reui/`, not flat alongside the other
+ *    38 pre-existing vendored files — `docs/reui-reuse.md` now permits a subdirectory for a
+ *    multi-file registry item like this one (#219 PR A standards review item 7). The nesting is
+ *    what lets `gantt-skin.guard.test.ts` scope itself to exactly this directory (its own explicit
+ *    nine-file list, `VENDORED_FILES`, is read relative to this folder) instead of having to scan
+ *    every file under `components/reui/` and separate Gantt classes from every other vendored
+ *    primitive's by filename pattern alone.
  *
  * NOTHING ELSE changed. Diffed against the sandbox's own `src/components/vendor-219/<name>.tsx`
  * output, every line differs only in one of the three ways above.
