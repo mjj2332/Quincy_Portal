@@ -103,6 +103,7 @@ import {
   findResource,
   getGanttDateRange,
   getRangeKey,
+  isGanttGestureInFlight,
   isResizableEdge,
   overlapsAnyNeighbour,
   resolveAdjustLargerStepMinutes,
@@ -412,12 +413,20 @@ interface GanttInternals<TData = unknown> {
    * so it has already gated eligibility (not recurring, at least one of canMove/canResizeStart/
    * canResizeEnd) and computed `initialTarget` (move if canMove, else the first resizable edge)
    * before calling this - this method does not re-derive either.
+   *
+   * Quincy fix (#219 PR A, Sol re-review round 2, HIGH #4): refuses (returns `false`, no session
+   * opened) while ANY gantt pointer gesture, anywhere on the page, is pending or active
+   * (`gantt-lib.tsx`'s `isGanttGestureInFlight`) - centralizing the "pointer vs keyboard ownership
+   * of state.drag" rule at its OTHER end: `gantt-dnd.tsx`'s `beginGesture` already cancels an
+   * active Adjust session on the SAME occurrence before a gesture starts, so together the two
+   * inputs are structurally mutually exclusive, never both driving `state.drag` at once. The
+   * caller must check the return value - a refused Space enters nothing and announces nothing.
    */
   beginAdjust(
     eventId: GanttBarId,
     occurrence: GanttOccurrence<TData>,
     initialTarget: GanttNudgeAction
-  ): void
+  ): boolean
   /**
    * One Arrow (`unit: "snap"`) or Shift+Arrow (`unit: "large"`) step on the session's CURRENT
    * target, from its CURRENT preview (not the original committed range - repeated steps
@@ -1317,6 +1326,10 @@ function createGanttStore<TData>(
       pendingKeyboardFocus = null
     },
     beginAdjust(eventId, occurrence, initialTarget) {
+      // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #4): see this method's own interface
+      // doc comment - a pointer gesture anywhere on the page (pending, not only active) refuses a
+      // NEW keyboard session outright, rather than letting both inputs drive `state.drag` at once.
+      if (isGanttGestureInFlight()) return false
       const entry = {
         start: occurrence.start,
         end: occurrence.end,
@@ -1338,6 +1351,7 @@ function createGanttStore<TData>(
       }
       invalidate()
       notify()
+      return true
     },
     stepAdjust(direction, unit, viewScheduleMode) {
       const session = internal.adjust
@@ -1376,6 +1390,9 @@ function createGanttStore<TData>(
         proposedAllDay: preview.allDay,
         proposedResourceId: event.resourceId,
         valid: true,
+        // #219 PR A fix (Sol re-review round 2, HIGH #4): tags this ghost as keyboard-owned - see
+        // `gantt-types.tsx`'s `GanttDragState.source` doc comment.
+        source: "keyboard",
       }
       invalidate()
       notify()

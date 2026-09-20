@@ -698,6 +698,7 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
       proposedAllDay: false,
       proposedResourceId: undefined,
       valid: true,
+      source: "keyboard", // #219 PR A fix (Sol re-review round 2, HIGH #4)
     });
   });
 

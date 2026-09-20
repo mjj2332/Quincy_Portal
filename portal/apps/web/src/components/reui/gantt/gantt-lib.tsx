@@ -1092,9 +1092,47 @@ function matchGanttBarKey(
   return null
 }
 
+/**
+ * #219 PR A fix (Sol re-review round 2, HIGH #4) — the page-wide in-flight-gesture registry,
+ * relocated here (was `gantt-dnd.tsx`'s module-level `activeGestureCancels`, still exported as
+ * `cancelActiveGanttGestures` from there unchanged) so `gantt.tsx`'s `beginAdjust` can check it
+ * too: a pointer gesture is registered here from `beginGesture`'s very first line (BEFORE
+ * activation - a "pending" gesture that has only moved less than the activation threshold is
+ * still registered) until its `cleanup()`, so `isGanttGestureInFlight()` is true for the gesture's
+ * ENTIRE lifetime, pending or active. `gantt.tsx` cannot depend on `gantt-dnd.tsx` directly (that
+ * file already imports `useGantt`/`GanttInstance` FROM `gantt.tsx` - the reverse would cycle),
+ * which is the same reason `computeGanttKeyboardProposal`/`isResizableEdge`/`matchGanttBarKey`
+ * above live here rather than in either of those two files. Global (not per-`<Gantt>`-instance) on
+ * purpose, same as `cancelActiveGanttGestures` always was: a pointer gesture on ANY gantt bar on
+ * the page blocks Space starting a NEW keyboard session on any OTHER gantt bar too, exactly as
+ * conservative as the existing "cancel every in-flight gesture on view unmount" behavior.
+ */
+const activeGanttGestureCancels = new Set<() => void>()
+
+/** Registers one in-flight gesture's cancel callback - called once, at `beginGesture`'s start. */
+function registerGanttGesture(cancel: () => void): void {
+  activeGanttGestureCancels.add(cancel)
+}
+
+/** Deregisters one gesture - called once, from that SAME gesture's own `cleanup()`. */
+function unregisterGanttGesture(cancel: () => void): void {
+  activeGanttGestureCancels.delete(cancel)
+}
+
+/** True while ANY gantt pointer gesture, anywhere on the page, is pending or active. */
+function isGanttGestureInFlight(): boolean {
+  return activeGanttGestureCancels.size > 0
+}
+
+/** Cancel (and fully revert) every in-flight gantt pointer gesture. */
+function cancelActiveGanttGestures(): void {
+  for (const cancel of [...activeGanttGestureCancels]) cancel()
+}
+
 export {
   buildDependencyPath,
   buildEventIndex,
+  cancelActiveGanttGestures,
   clampToNeighbours,
   computeGanttKeyboardProposal,
   defaultEventOrder,
@@ -1108,6 +1146,7 @@ export {
   getGanttDateRange,
   getLaneKey,
   getRangeKey,
+  isGanttGestureInFlight,
   isResizableEdge,
   matchGanttBarKey,
   MIN_PACK_SLOT,
@@ -1115,6 +1154,7 @@ export {
   overlapsAnyNeighbour,
   packTimedSegments,
   rangesIntersect,
+  registerGanttGesture,
   reorderResources,
   resolveAdjustLargerStepMinutes,
   resolveEventBaseline,
@@ -1124,6 +1164,7 @@ export {
   spansMultipleDays,
   stepGanttDate,
   toZoned,
+  unregisterGanttGesture,
   zonedStartOfDay,
 }
 export type {

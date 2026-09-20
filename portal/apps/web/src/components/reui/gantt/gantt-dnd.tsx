@@ -70,13 +70,16 @@ import {
   type GanttInstance,
 } from "@/components/reui/gantt/gantt"
 import {
+  cancelActiveGanttGestures,
   clampToNeighbours,
   findResource,
   isResizableEdge,
   overlapsAnyNeighbour,
+  registerGanttGesture,
   resolveOverlapPolicy,
   snapMinutes,
   toZoned,
+  unregisterGanttGesture,
   zonedStartOfDay,
   type GanttOverlapNeighbour,
 } from "@/components/reui/gantt/gantt-lib"
@@ -134,20 +137,17 @@ function markGestureEnd(): void {
   lastGestureEndedAt = performance.now()
 }
 
-/**
- * Registry of in-flight gesture cancels. A gesture measures its surface
- * (axis + row rects) once at activation, so the VIEW - not the bar, bars
- * legitimately unmount mid-gesture - must be able to abort gestures when it
- * unmounts or when the measured geometry changes under them (zoom, scale,
- * range growth, splitter). Cancel fully reverts: listeners, overlays and the
- * body drag state all clear, and no update is committed.
- */
-const activeGestureCancels = new Set<() => void>()
-
-/** Cancel (and fully revert) every in-flight gantt pointer gesture. */
-function cancelActiveGanttGestures(): void {
-  for (const cancel of [...activeGestureCancels]) cancel()
-}
+// #219 PR A fix (Sol re-review round 2, HIGH #4): the in-flight-gesture registry itself (was a
+// module-level `Set` defined right here) moved to `gantt-lib.tsx` as `registerGanttGesture`/
+// `unregisterGanttGesture`/`isGanttGestureInFlight`/`cancelActiveGanttGestures` (re-exported below,
+// unchanged name) - see that file's own header comment on the move for why: `gantt.tsx`'s
+// `beginAdjust` needs to read it too (refuse while a pointer gesture is pending/active), and
+// `gantt.tsx` cannot import FROM this file (this file already imports `useGantt`/`GanttInstance`
+// from `gantt.tsx` - the reverse would cycle). A gesture measures its surface (axis + row rects)
+// once at activation, so the VIEW - not the bar, bars legitimately unmount mid-gesture - must be
+// able to abort gestures when it unmounts or when the measured geometry changes under them (zoom,
+// scale, range growth, splitter). Cancel fully reverts: listeners, overlays and the body drag state
+// all clear, and no update is committed.
 
 /**
  * View-level teardown, mounted once by GanttView: aborts any in-flight
@@ -262,6 +262,22 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   let lastPointer: PointerEvent = startEvent
 
   const occurrence = segment?.occurrence
+
+  // #219 PR A fix (Sol re-review round 2, HIGH #4): a pointer gesture starting on THIS bar while
+  // ITS OWN Adjust session is active cancels Adjust first - was duplicated three times in
+  // `gantt-bar.tsx` (the bar's own move `onPointerDown`, and each resize grip's), all re-reading
+  // live state the identical way; centralized here instead, `beginGesture`'s single entry point
+  // for every pointer gesture, so there is exactly one place this rule lives. Does NOT cover
+  // "pointer-down on a DIFFERENT bar/empty space while another bar is adjusting" - that is the
+  // document-level `pointerdown`-elsewhere handler `gantt-bar.tsx` already registers per adjusting
+  // bar (which explicitly exempts a pointerdown ON that bar itself, deferring to this check).
+  // Deliberately does NOT announce here (this closure has no bar `localTeardownRef` to set): the
+  // bar's OWN owner-death effect (#219 PR A fix, Sol re-review round 2, HIGH #3) already announces
+  // "cancelled" exactly once whenever `state.adjust` clears with no LOCAL handler in the loop -
+  // this cancellation rides that same mechanism instead of a second announcement path.
+  if (occurrence && instance.getState().adjust?.occurrence.key === occurrence.key) {
+    instance.internals.cancelAdjust()
+  }
 
   // ----- neighbour awareness: the other schedules in the SAME node -----
   // A node in "single" mode rejects any concurrency regardless of the
@@ -756,6 +772,10 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       proposedAllDay: proposal.allDay,
       proposedResourceId: proposal.resourceId,
       valid,
+      // #219 PR A fix (Sol re-review round 2, HIGH #4): tags this ghost as pointer-owned - see
+      // `gantt-types.tsx`'s `GanttDragState.source` doc comment and this file's own `onPointerUp`,
+      // which refuses to commit a `state.drag` that is not tagged this way.
+      source: "pointer",
     })
   }
 
@@ -807,7 +827,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   const cleanup = () => {
     if (finished) return
     finished = true
-    activeGestureCancels.delete(cancel)
+    unregisterGanttGesture(cancel)
     if (autoScrollRaf) cancelAnimationFrame(autoScrollRaf)
     try {
       origin.releasePointerCapture(pointerId)
@@ -889,6 +909,13 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     const drag = state.drag
     internals.setDrag(null)
     if (!drag || !occurrence) return
+    // #219 PR A fix (Sol re-review round 2, HIGH #4): a release must never commit a keyboard-
+    // owned preview (`gantt.tsx`'s `stepAdjust`) it did not itself drive - `beginAdjust` refusing
+    // while a gesture is pending/active, and a pointer-down on the session's own occurrence
+    // cancelling Adjust first (both centralized in `beginGesture` below and `gantt.tsx`), already
+    // make this structurally unreachable; this is the defensive last line, checked against the
+    // OWNER TAG rather than re-deriving "is a session active" here.
+    if (drag.source !== "pointer") return
     // the node refuses concurrency: revert instead of committing an overlap
     if (overlapRejected) return
     // enforceCanDrop makes the advisory verdict binding: a release whose
@@ -933,7 +960,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   window.addEventListener("pointercancel", onCancel)
   window.addEventListener("blur", onWindowBlur)
   window.addEventListener("keydown", onKeyDown, true)
-  activeGestureCancels.add(cancel)
+  registerGanttGesture(cancel)
 
   // Capture the pointer so a release OUTSIDE the OS window still delivers
   // pointerup here instead of leaving the gesture stuck. Captured events keep

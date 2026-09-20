@@ -233,6 +233,16 @@ interface GanttDragState<TData = unknown> {
   proposedResourceId?: string
   /** Last canDropEvent verdict; drives data-drop-invalid styling. */
   valid: boolean
+  /**
+   * #219 PR A fix (Sol re-review round 2, HIGH #4): which input owns this ghost -
+   * `gantt-dnd.tsx`'s `applyProposal` (pointer) or `gantt.tsx`'s `stepAdjust` (keyboard). The two
+   * inputs are mutually exclusive by construction (`beginAdjust` refuses while a pointer gesture is
+   * pending/active; a pointer gesture starting on the session's own occurrence cancels Adjust
+   * first - both centralized, not per-call-site), but `gantt-dnd.tsx`'s `onPointerUp` still checks
+   * this before committing, defensively: a release must never commit a keyboard-owned preview it
+   * did not itself drive.
+   */
+  source: "pointer" | "keyboard"
 }
 
 /** The in-gesture drag-create rectangle only; the committed slot is GanttSelection.slot. */

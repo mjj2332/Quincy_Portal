@@ -552,14 +552,11 @@ function GanttBar<TData = unknown>({
             // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
             // explicit clear triggers for a stale keyboard-focus claim.
             instance.internals.clearKeyboardFocus()
-            // #219 PR A (Adjust mode): a pointer gesture on THIS bar mid-session would otherwise
-            // race stepAdjust for state.drag - cancel first, same as the document pointerdown-
-            // elsewhere handler above (both re-read live state, not the `adjusting` closure).
-            if (instance.getState().adjust?.occurrence.key === occurrence.key) {
-              localTeardownRef.current = true
-              instance.internals.cancelAdjust()
-              announce(settings.i18n.labels.adjustCancelled)
-            }
+            // #219 PR A fix (Sol re-review round 2, HIGH #4): the "cancel Adjust first" check that
+            // used to live here (a pointer gesture on THIS bar mid-session would otherwise race
+            // stepAdjust for state.drag) moved into `gantt-dnd.tsx`'s `beginGesture` - the single
+            // entry point EVERY pointer gesture goes through, not one copy per call site. The
+            // owner-death effect above still announces the cancellation.
             gestures.beginResize(e, segment, "start")
           }}
         >
@@ -580,11 +577,8 @@ function GanttBar<TData = unknown>({
           className="absolute inset-y-0 end-0.5 flex w-2 cursor-ew-resize items-center justify-end opacity-0 group-hover/gantt-bar-group:opacity-100 pointer-coarse:opacity-100"
           onPointerDown={(e) => {
             instance.internals.clearKeyboardFocus()
-            if (instance.getState().adjust?.occurrence.key === occurrence.key) {
-              localTeardownRef.current = true
-              instance.internals.cancelAdjust()
-              announce(settings.i18n.labels.adjustCancelled)
-            }
+            // #219 PR A fix (Sol re-review round 2, HIGH #4): see the start grip's own comment -
+            // the "cancel Adjust first" check moved to `gantt-dnd.tsx`'s `beginGesture`.
             gestures.beginResize(e, segment, "end")
           }}
         >
@@ -639,14 +633,8 @@ function GanttBar<TData = unknown>({
       // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
       // explicit clear triggers for a stale keyboard-focus claim.
       instance.internals.clearKeyboardFocus()
-      // #219 PR A (Adjust mode): a pointer gesture on THIS bar mid-session would otherwise race
-      // stepAdjust for state.drag - cancel first (re-reads live state; see the grips above and
-      // this file's header for why not the `adjusting` closure).
-      if (instance.getState().adjust?.occurrence.key === occurrence.key) {
-        localTeardownRef.current = true
-        instance.internals.cancelAdjust()
-        announce(settings.i18n.labels.adjustCancelled)
-      }
+      // #219 PR A fix (Sol re-review round 2, HIGH #4): see the resize grips' own comment above -
+      // the "cancel Adjust first" check moved to `gantt-dnd.tsx`'s `beginGesture`.
       gestures.beginMove(e, segment)
     },
     onClick: (e: React.MouseEvent) => {
@@ -690,7 +678,14 @@ function GanttBar<TData = unknown>({
           : canResizeStart
             ? "resize-start"
             : "resize-end"
-        instance.internals.beginAdjust(event.id, occurrence, initialTarget)
+        // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #4): a pointer gesture pending or
+        // active anywhere on the page refuses the session outright (see `gantt.tsx`'s own doc
+        // comment on this method) - no session, no announcement, no ghost. `preventDefault` above
+        // already stands either way: this Space chord IS ours (canAdjust/isRecurring already
+        // passed), the refusal is a transient pointer/keyboard race, not "this key means nothing
+        // here" - the button's native activate must not ALSO fire on top of a chord we claimed.
+        const entered = instance.internals.beginAdjust(event.id, occurrence, initialTarget)
+        if (!entered) return
         announce(
           `${settings.i18n.labels.adjustInstructions} ${settings.i18n.labels.adjustEntered(
             adjustTargetLabel(initialTarget),
