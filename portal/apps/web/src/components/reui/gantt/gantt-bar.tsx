@@ -821,6 +821,19 @@ function GanttBar<TData = unknown>({
     },
     className: cn(
       "group/gantt-bar-group text-foreground @container relative flex w-full min-w-0 cursor-pointer touch-none items-center gap-1.5 overflow-hidden rounded-sm px-1.5 py-0.5 text-start leading-normal select-none",
+      // #219 PR A fix (dr-219a LOW #7, part 1): a resize grip is absolutely positioned, so it
+      // never participates in flex layout and never pushes the label - it simply overlays the
+      // label's own `px-1.5` (6px) padding. The grip itself spans from `start-0.5`/`end-0.5` (2px
+      // inset) to `+w-2` (8px wide), so it reaches 10px in from the edge - 4px past the label's
+      // own 6px padding - and a hovered bar with a short title read as "|Unlocke…|", the grip
+      // visually eating the first/last glyph. Reserving the grip's width from the label box
+      // (`ps-3`/`pe-3`, 12px - clears the grip's 10px reach with a hairline to spare) ONLY on the
+      // side(s) that actually render a grip (`canResizeStart`/`canResizeEnd`, the SAME flags that
+      // gate the grips themselves, below) - a bar with no grip on a given edge keeps the tighter
+      // `px-1.5` there. `cn()` resolves this via `tailwind-merge`, so `ps-3` wins over `px-1.5`'s
+      // start side regardless of argument order (see `lib/utils.ts`).
+      canResizeStart && "ps-3",
+      canResizeEnd && "pe-3",
       // #219 PR A fix (dr-219a HIGH #2): dropped `outline-none focus-visible:ring-2
       // focus-visible:ring-ring/50` - `styles/tokens/base.css:25`'s unlayered `:focus-visible {
       // outline }` beats `@layer utilities`, so this pair ADDED a second focus indicator instead

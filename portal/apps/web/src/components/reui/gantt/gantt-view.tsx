@@ -2806,13 +2806,24 @@ function GanttView({
           {viewConfig.zoomControl && (
             <div
               data-slot="gantt-zoom"
+              // #219 PR A fix (dr-219a LOW #7, part 3): additive, same reasoning as the resize
+              // grips' own data-testid (gantt-bar.tsx's header) - nothing Quincy-owned composes
+              // this deep vendor internal from the outside for a DOM test to hook onto instead.
+              data-testid="gantt-zoom"
               /* --gantt-zoom-shift comes from the offscreen-chips measure
                  pass: the control glides inward while a chip occupies its
                  band, because the chips' position IS their meaning and this
                  corner spot is merely a habit */
               // #219 PR A fix (dr-219a HIGH #3, LOW #7): border was bare - see the tree
-              // header's own comment above for why.
-              className="bg-background border-border absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-md border transition-[inset-inline-end] duration-200"
+              // header's own comment above for why. #219 PR A fix (dr-219a LOW #7, part 3):
+              // `rounded-md` (8px) is GONE - `styles/tokens/spacing.css`'s own `--radius-card: 0`
+              // ("cards are square by default") already covers a small floating control like this
+              // one, sitting over a square grid of squared bars/rows; `rounded-md`'s 8px corners
+              // read as a stray soft shape against that. Chosen: `rounded-none`, matching
+              // `--radius-card` exactly rather than picking a smaller-but-still-rounded rung
+              // (`rounded-xs`/`rounded-sm`) - the grid it floats over has no rounding at all, so
+              // neither does the control that sits on it.
+              className="bg-background border-border absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-none border transition-[inset-inline-end] duration-200"
             >
               {/* aria-disabled instead of disabled: the not-allowed cursor
                   must still show at the zoom limits */}
@@ -2825,7 +2836,15 @@ function GanttView({
                         size="icon-xs"
                         aria-label={settings.i18n.labels.zoomIn}
                         aria-disabled={!canZoomIn || undefined}
-                        className="text-muted-foreground hover:text-foreground size-5! rounded-b-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                        // #219 PR A fix (dr-219a LOW #7, part 3): `size-5!` (20px) was well under
+                        // the 44px minimum target size (WCAG 2.5.5/2.5.8) for a `size-5` hit area
+                        // over a square grid meant to be clicked precisely. `size-11!` (44px)
+                        // instead - the icon itself stays `size-3` (unchanged, below) so the
+                        // glyph does not grow just because its tappable area did.
+                        // `rounded-b-none` -> `rounded-none`: the outer capsule is `rounded-none`
+                        // now too (see that element's own comment), so there is no outer corner
+                        // left for this button to inherit and partially cancel.
+                        className="text-muted-foreground hover:text-foreground size-11! rounded-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                         onClick={() => {
                           if (!canZoomIn) return
                           // controlled zoom anchors via fineCenterRef when
@@ -2854,8 +2873,10 @@ function GanttView({
                         aria-label={settings.i18n.labels.zoomOut}
                         aria-disabled={!canZoomOut || undefined}
                         // #219 PR A fix (dr-219a HIGH #3): border-t was bare - see the tree
-                        // header's own comment above for why.
-                        className="text-muted-foreground hover:text-foreground border-border size-5! rounded-t-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                        // header's own comment above for why. #219 PR A fix (dr-219a LOW #7, part
+                        // 3): `size-5!` -> `size-11!` (44px target) and `rounded-t-none` ->
+                        // `rounded-none` - see the sibling zoom-in button's own comment above.
+                        className="text-muted-foreground hover:text-foreground border-border size-11! rounded-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                         onClick={() => {
                           if (!canZoomOut) return
                           if (viewConfig.zoom === undefined) anchorZoomCenter()
@@ -4068,17 +4089,40 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                   aria-hidden
                   className="bg-muted-foreground/50 absolute end-0 top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full"
                 />
-                <div className="bg-muted-foreground/20 relative h-1.5 overflow-hidden rounded-full">
+                {/* #219 PR A fix (dr-219a LOW #7, part 2): this rail used to be
+                    `bg-muted-foreground/20 ... rounded-full` with a `bg-muted-foreground/50
+                    ... rounded-full` fill - indistinguishable from the horizontal scrollbar
+                    thumb (`components/reui/scroll-area.tsx`'s `rounded-full bg-border`), which
+                    sits in a track of a similar taupe and a similar height a few rows away. A
+                    squarer, hairline-bounded treatment instead: `rounded-xs` (not the scrollbar's
+                    pill), an explicit `border-border` hairline outline (the scrollbar thumb has
+                    no border at all - a solid fill with no outline), and a transparent track
+                    (`bg-transparent`, not a second flat tint) so the outline itself reads as the
+                    rail's own shape, not a smudge that could be mistaken for scroll affordance. */}
+                <div
+                  // #219 PR A fix (dr-219a LOW #7, part 2): additive, same reasoning as the
+                  // resize grips' and progress-fill's own data-testid (gantt-bar.tsx's header) -
+                  // nothing Quincy-owned composes this deep vendor internal from the outside for
+                  // a DOM test to hook onto instead.
+                  data-testid="gantt-summary-rail"
+                  className="border-border relative h-1.5 overflow-hidden rounded-xs border bg-transparent"
+                >
                   {bars.summary.progress !== null && (
                     <div
                       data-slot="gantt-summary-progress"
-                      className="bg-muted-foreground/50 absolute inset-y-0 start-0 rounded-full"
+                      className="bg-muted-foreground/50 absolute inset-y-0 start-0"
                       style={{ width: `${bars.summary.progress}%` }}
                     />
                   )}
                 </div>
                 {bars.summary.progress !== null && (
-                  <span className="text-muted-foreground absolute start-full top-1/2 ms-2 -translate-y-1/2 whitespace-nowrap">
+                  // #219 PR A fix (dr-219a LOW #7, part 2): "23%" raised from text-muted-foreground
+                  // to text-foreground - a rollup's own completion figure is content, not chrome,
+                  // and read too quiet next to the bars it summarizes.
+                  <span
+                    data-testid="gantt-summary-label"
+                    className="text-foreground absolute start-full top-1/2 ms-2 -translate-y-1/2 whitespace-nowrap"
+                  >
                     {bars.summary.progress}%
                   </span>
                 )}
