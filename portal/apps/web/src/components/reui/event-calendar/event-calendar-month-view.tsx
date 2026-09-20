@@ -148,7 +148,12 @@ function restoreChipFocus(
   if (!chip) return
   // cleared first: focus() re-records through the new chip's own onFocus
   focusedChip = null
-  chip.focus()
+  // QUINCY (#219 PR B stage 3): `preventScroll`. This restores focus to where it ALREADY was
+  // after a re-render (lane repacking, a "+N more" popover closing), so the browser's default
+  // scroll-into-view is pure unwanted movement — it yanks the month grid's scroll container while
+  // the user is reading. `docs/lessons.md` records this exact trap; a bare `.focus()` inside a
+  // scrollable region is a scroll bug as well as an accessibility one.
+  chip.focus({ preventScroll: true })
 }
 
 interface EventCalendarMonthViewProps extends useRender.ComponentProps<"div"> {
