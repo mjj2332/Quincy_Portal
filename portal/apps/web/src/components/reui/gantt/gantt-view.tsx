@@ -59,6 +59,35 @@
  * and the offscreen edge chip) that used to paint Tailwind v4 preflight's default `currentColor`
  * (near-black) instead of the greige hairline — see `gantt-skin.guard.test.ts`'s Detector 6, and
  * each site's own inline comment.
+ *
+ * #219 PR A fix (dr-219a HIGH #4, part 2): the Adjust-mode ghost's `ring-ring ring-1` is gone —
+ * same reasoning as HIGH #2 above (the unlayered `:focus-visible` ring already wins the contest,
+ * so a SECOND ring competing for the same visual role only muddies it). A move-kind ghost that is
+ * keyboard-owned (`data-drag-source=keyboard`, via `gantt-bar.tsx`'s new selector) now also
+ * renders the event's own title inside itself, since `gantt-bar.tsx`'s companion fix keeps the
+ * origin bar visible (faded, not hidden) for a keyboard move — without a title, the ghost was a
+ * bare rectangle no sighted or assistive-tech user could identify. A pointer-owned ghost (the
+ * cursor clone stands in for the hidden origin bar already) keeps no title, unchanged.
+ *
+ * #219 PR A fix (dr-219a MEDIUM #6): `GanttNowLine` and `GanttNowDot` both used `destructive`
+ * (oxblood `--signal-critical`) — a color this palette already spends on overdue/critical, which
+ * a bar two rows away could legitimately be showing at the same time. Both now use `border-strong`
+ * (ink, `--ink-900`) instead, leaving the today column's own `data-today` tint (`bg-primary/5`, a
+ * different, untouched element) as the only visual emphasis — see each site's own inline comment
+ * and `gantt-skin.guard.test.ts`'s Detector 7 (no destructive token on the now-line elements).
+ *
+ * #219 PR A fix (dr-219a LOW #7, parts 2 and 3): the group-progress rail (`rounded-full
+ * bg-muted-foreground/20`, `h-1.5`) read as the SAME control as `ScrollBar`'s thumb
+ * (`rounded-full bg-border`) sitting directly below it in the same horizontal strip. The rail is
+ * now `rounded-xs` with a `border-border` hairline outline instead of a solid pill fill, and its
+ * "N%" label raised from `text-muted-foreground` to `text-foreground`. Separately, the floating
+ * zoom control's `size-5` (20px) hit targets were well under WCAG 2.5.5/2.5.8's 44px minimum for
+ * a control this precise, sitting over a square grid meant to be clicked exactly — each button is
+ * now `size-11!` (44px, the glyph itself stays `size-3` so it does not grow just because its
+ * tappable area did). Its `rounded-md` (8px) is also gone: chosen `rounded-none`, matching
+ * `--radius-card: 0` exactly (`styles/tokens/spacing.css`: "cards are square by default") rather
+ * than a smaller-but-still-rounded rung, since the grid this control floats over has no rounding
+ * at all either — see each site's own inline comment.
  */
 
 import {

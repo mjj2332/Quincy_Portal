@@ -178,6 +178,13 @@
  * it first) already relied on this same generic mechanism and needed no change. Commit's own
  * distinct message is unaffected either way — `commitAdjust` clears the session through neither of
  * the two counter-bumping methods (see that method's own doc comment in `gantt.tsx`).
+ *
+ * #219 PR A fix (dr-219a LOW #7, part 1): the resize grips render inside the label's own padding
+ * box, so a hovered/focused bar's visible grip overlaps the first/last character of its title
+ * (`|Unlocke…|`). The bar now reserves the grip's own width from the label side it occupies —
+ * `ps-3`/`pe-3` (12px) instead of the base `px-1.5` (6px), gated on `canResizeStart`/
+ * `canResizeEnd` (the same flags that gate the grips themselves — a bar with no live grip on a
+ * side keeps the tighter `px-1.5` there) — see the label wrapper's own class comment.
  */
 
 import {
