@@ -7,6 +7,7 @@ import { act, createElement, useEffect, useLayoutEffect, useSyncExternalStore } 
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard, type ProjectSummary } from "./Dashboard";
+import { ApiError } from "../lib/api";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { dashboardSearchOf } from "@quincy/shared";
 import { SidebarProvider } from "@/components/reui/sidebar";
@@ -387,5 +388,76 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     expect(input.value).toBe("");
     const projectsCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/projects"));
     expect(projectsCalls.at(-1)).not.toContain("q=");
+  });
+});
+
+// Sol review round 1, item 2. On a committed-query change, `useDashboardProjects`'s own
+// `placeholderData` (`lib/dashboard-projects.ts`) serves the PREVIOUS dataset while the new fetch is
+// in flight (`isPlaceholderData === true`). `Dashboard.tsx`'s accept effect used to stamp that
+// placeholder into `acceptedProjects` under the NEW `dashboardKeyString` regardless -- so if the new
+// fetch went on to fail, `hasAcceptedDashboard` suppressed the error state and the WRONG query's rows
+// stayed on screen as though they were the new key's own confirmed result.
+describe("Dashboard never accepts placeholder rows as the new committed query's own result (Sol review round 1, item 2)", () => {
+  it("(i) a committed search whose fetch is DEFERRED still renders the previous rows while pending, then the error state (not the previous rows) once it's REJECTED", async () => {
+    window.history.replaceState(null, "", "/?view=list");
+    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await settle();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    let rejectSmith!: (reason: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.startsWith("/api/projects") && path.includes("q=smith")) return new Promise((_resolve, reject) => { rejectSmith = reject; });
+      return Promise.resolve(path.startsWith("/api/projects") ? projectResponseFor(path) : {});
+    });
+
+    act(() => {
+      window.history.pushState(null, "", "/?view=list&q=smith");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+
+    // Still pending: no error/empty state, and the PREVIOUS rows are still what's rendered -- the
+    // fallback to `queryProjects` (placeholder data), not an accepted stamp.
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    // A 400 `ApiError`, not a bare `Error` -- `projectQueryRetry` (`lib/project-data.ts`) retries any
+    // non-`ApiError`/non-4xx failure (including a bare `Error`, and 5xx/408/429) up to twice with a
+    // real backoff delay, which this test's short, fake-timer-free `settle()` never reaches; a 4xx
+    // `ApiError` outside 408/429 is the one class `projectQueryRetry` never retries, so the query
+    // settles to `status: "error"` deterministically within one `settle()`.
+    await act(async () => { rejectSmith(new ApiError("Offline", 400)); await settle(); });
+
+    // Rejected: the error state shows -- the previous (Alpha/Beta) rows must NOT still be presented
+    // as though they were smith's own result.
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="project-list-row"]')).toHaveLength(0);
+  });
+
+  it("(j) a committed search whose fetch is DEFERRED then RESOLVED replaces the previous rows with the new ones and accepts them", async () => {
+    window.history.replaceState(null, "", "/?view=list");
+    await act(async () => { root.render(<ShellRouteHarness userId="user-1" role="admin" />); await Promise.resolve(); });
+    await settle();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    let resolveSmith!: (value: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.startsWith("/api/projects") && path.includes("q=smith")) return new Promise((resolve) => { resolveSmith = resolve; });
+      return Promise.resolve(path.startsWith("/api/projects") ? projectResponseFor(path) : {});
+    });
+
+    act(() => {
+      window.history.pushState(null, "", "/?view=list&q=smith");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+    expect([...host.querySelectorAll('[data-testid="project-list-row"]')]).toHaveLength(2);
+
+    await act(async () => { resolveSmith(smithBoard); await settle(); });
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const rows = [...host.querySelectorAll('[data-testid="project-list-row"]')];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("Beta Street");
   });
 });

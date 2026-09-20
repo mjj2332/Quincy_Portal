@@ -295,9 +295,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // instead of an unfiltered entry nobody is looking at. `acceptedProjects`/`boardOverlay`, both
   // keyed off `dashboardKeyString` too (see their own state below), inherit the fix the same way: a
   // committedQuery change now makes their stamped key stop matching, same as an archived-scope
-  // toggle already did, so `projects` (~:351) falls back to the fresh `queryProjects` for that key
-  // instead of painting the previous search's data (or a movement overlay computed against it)
-  // over the new one.
+  // toggle already did, so `projects` (~:370) falls back to `queryProjects` for that key instead of
+  // painting the previous search's data (or a movement overlay computed against it) over the new
+  // one. That fallback is NOT necessarily fresh, though: `queryProjects` can itself be react-query's
+  // own PLACEHOLDER data for the new key (the previous committed query's rows, kept by
+  // `keepPreviousData` in `useDashboardProjects`'s `placeholderData` while the new fetch is still in
+  // flight) -- Sol review round 1, item 2 is what keeps that placeholder from ever being STAMPED into
+  // `acceptedProjects` under the new key as though it were that key's own confirmed result (the
+  // accept effect, ~:672, gates on `projectsQuery.isPlaceholderData`); this fallback is simply what
+  // renders it in the meantime.
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
@@ -662,8 +668,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     (fallback ?? document.querySelector<HTMLElement>('[data-focus-key="board"]'))?.focus({ preventScroll: true });
   }, [acceptedProjects, announcement, boardOverlay, boardUnavailableMessage, dashboardKeyString, movementSettlePending, pendingMoves, pendingOrdering, projects, recoveryReason]);
 
+  // Sol review round 1, item 2: `projectsQuery.isPlaceholderData` -- react-query serves the
+  // PREVIOUS committed-query's dataset as `queryProjects` (`keepPreviousData`,
+  // `lib/dashboard-projects.ts`'s `placeholderData`) while a NEW committed-query's fetch is still in
+  // flight. Accepting that placeholder under the NEW `dashboardKeyString` would stamp it as though it
+  // were that key's own confirmed result; `hasAcceptedDashboard` would then suppress the error state
+  // if the fetch went on to fail, leaving the WRONG query's rows on screen as though they were
+  // correct. `projects` (~:370) already falls back to `queryProjects` directly whenever
+  // `acceptedProjects` doesn't match the current key, so refusing to accept here costs no loading/
+  // empty flash -- the placeholder rows still render, just never get stamped as this key's own.
   useEffect(() => {
-    if (!queryProjects || queryRuntime?.principalTerminal) return;
+    if (!queryProjects || projectsQuery.isPlaceholderData || queryRuntime?.principalTerminal) return;
     if (interactionBlocked) {
       queuedRefreshRef.current = true;
       return;
@@ -676,7 +691,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       setRecoveryReason(null);
       movementRecoveryRef.current = null;
     }
-  }, [acceptDashboardProjects, interactionBlocked, queryDataUpdatedAt, queryProjects, queryRuntime]);
+  }, [acceptDashboardProjects, interactionBlocked, projectsQuery.isPlaceholderData, queryDataUpdatedAt, queryProjects, queryRuntime]);
 
   useEffect(() => {
     if (interactionBlocked || !queuedRefreshRef.current) return;
