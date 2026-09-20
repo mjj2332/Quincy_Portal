@@ -15,7 +15,7 @@ import {
  * replaced, and the `kanban2` comparison value this type and the route grammar once carried for
  * #80, are both retired — see `docs/lessons.md` for the cutover.
  */
-export type DashboardView = "kanban" | "list" | "calendar";
+export type DashboardView = "kanban" | "list" | "gantt" | "calendar";
 export type KanbanSortMode = "board" | "priority" | "shootDate-asc" | "shootDate-desc";
 
 export const DASHBOARD_CALENDAR_SUBVIEW_KEY = "quincy:dashboard:calendar:subview";
@@ -52,7 +52,7 @@ function daysInMonth(year: number, month: number): number {
 }
 
 export function normalizeDashboardView(value: string | null): DashboardView {
-  return value === "list" || value === "kanban" || value === "calendar" ? value : "kanban";
+  return value === "list" || value === "kanban" || value === "gantt" || value === "calendar" ? value : "kanban";
 }
 
 export const DASHBOARD_VIEW_KEY = "quincy:dashboard:view";

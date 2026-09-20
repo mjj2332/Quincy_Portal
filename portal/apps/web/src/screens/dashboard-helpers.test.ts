@@ -5,6 +5,7 @@ describe("dashboard view preferences", () => {
   it("keeps supported views and migrates grid, missing, and invalid values to kanban", () => {
     expect(normalizeDashboardView("list")).toBe("list");
     expect(normalizeDashboardView("kanban")).toBe("kanban");
+    expect(normalizeDashboardView("gantt")).toBe("gantt");
     expect(normalizeDashboardView("calendar")).toBe("calendar");
     expect(normalizeDashboardView("grid")).toBe("kanban");
     expect(normalizeDashboardView(null)).toBe("kanban");
