@@ -271,10 +271,10 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // "pointer-down on a DIFFERENT bar/empty space while another bar is adjusting" - that is the
   // document-level `pointerdown`-elsewhere handler `gantt-bar.tsx` already registers per adjusting
   // bar (which explicitly exempts a pointerdown ON that bar itself, deferring to this check).
-  // Deliberately does NOT announce here (this closure has no bar `localTeardownRef` to set): the
-  // bar's OWN owner-death effect (#219 PR A fix, Sol re-review round 2, HIGH #3) already announces
-  // "cancelled" exactly once whenever `state.adjust` clears with no LOCAL handler in the loop -
-  // this cancellation rides that same mechanism instead of a second announcement path.
+  // Deliberately does NOT announce here (this closure has no announcer ref in scope): Quincy fix
+  // (#219 PR A round 3, Sol HIGH #5) - `cancelAdjust()` itself bumps `getAdjustCancelledVersion`,
+  // which `gantt.tsx`'s `<Gantt>` root subscribes to and announces "Adjustment cancelled." from
+  // exactly once - this cancellation rides that mechanism instead of a second announcement path.
   if (occurrence && instance.getState().adjust?.occurrence.key === occurrence.key) {
     instance.internals.cancelAdjust()
   }

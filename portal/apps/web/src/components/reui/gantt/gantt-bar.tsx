@@ -149,6 +149,21 @@
  *   announcement with "cancelled" moments after a real write succeeded. `cancelAdjust` no-ops
  *   harmlessly on an already-empty session either way, but the announcement race is the real risk
  *   this guards.
+ *
+ * #219 PR A round 3 (Sol HIGH #5) — the OWNER-DEATH announcement (a session dying with no local
+ * cancel/commit handler in the loop: a deleted/replaced event, a date/scale/anchor-slide change)
+ * moved OUT of this file entirely, to `gantt.tsx`'s `<Gantt>` root. It used to be a per-bar effect
+ * here, gated on a `localTeardownRef` set right before every local cancel/commit call — which
+ * structurally could never cover a DELETED event, since deletion unmounts the exact bar the effect
+ * lived on before the effect could ever observe the transition. `gantt.tsx`'s `cancelAdjust`/
+ * `killAdjustSessionIfOrphaned` now bump a `getAdjustCancelledVersion` counter the root subscribes
+ * to instead, so the three LOCAL cancel triggers in this file (blur, document-level
+ * pointerdown-elsewhere, Escape) no longer call `announce()` for "Adjustment cancelled." themselves
+ * — the root does it for them uniformly, along with the external and deletion cases it could not
+ * reach before. `gantt-dnd.tsx`'s `beginGesture` (a pointer gesture starting mid-session cancelling
+ * it first) already relied on this same generic mechanism and needed no change. Commit's own
+ * distinct message is unaffected either way — `commitAdjust` clears the session through neither of
+ * the two counter-bumping methods (see that method's own doc comment in `gantt.tsx`).
  */
 
 import {
@@ -356,10 +371,6 @@ function GanttBar<TData = unknown>({
     { calendar: instance }
   )
   const adjusting = adjustTarget !== null
-  // #219 PR A fix (Sol re-review round 2, HIGH #3): set right before every LOCAL cancel/commit
-  // call below, consumed by the owner-death effect further down - see that effect's own comment.
-  const localTeardownRef = useRef(false)
-  const wasAdjustingRef = useRef(adjusting)
 
   // Finds the ONE shared live region the same way gantt-dnd.tsx's beginGesture already does for a
   // pointer drag - reused, not one per bar.
@@ -391,6 +402,11 @@ function GanttBar<TData = unknown>({
   // capture phase means it still fires even if some inner handler stops propagation. Re-reads
   // `instance.getState().adjust` live rather than trusting `adjusting` from this closure - see the
   // effect's own dependency comment and this file's header for the stale-closure race this avoids.
+  //
+  // Quincy fix (#219 PR A round 3, Sol HIGH #5): no longer calls `announce()` itself -
+  // `instance.internals.cancelAdjust()` now bumps `getAdjustCancelledVersion`, which `gantt.tsx`'s
+  // `<Gantt>` root subscribes to and announces "Adjustment cancelled." from, exactly once, for
+  // every caller of `cancelAdjust` uniformly (see that method's own doc comment).
   useEffect(() => {
     if (!adjusting) return
     const onDocumentPointerDown = (ev: PointerEvent) => {
@@ -399,41 +415,24 @@ function GanttBar<TData = unknown>({
       if (ev.target instanceof Node && barRef.current?.contains(ev.target)) {
         return
       }
-      localTeardownRef.current = true
       instance.internals.cancelAdjust()
-      announce(settings.i18n.labels.adjustCancelled)
     }
     document.addEventListener("pointerdown", onDocumentPointerDown, true)
     return () =>
       document.removeEventListener("pointerdown", onDocumentPointerDown, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `announce`/`settings` close over this
-    // render's values, which is what we want the NEXT pointerdown to see too; re-running the effect
-    // on every render (by adding them) would thrash the listener for no behavioral gain.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `instance` closes over this render's
+    // values, which is what we want the NEXT pointerdown to see too; re-running the effect on every
+    // render would thrash the listener for no behavioral gain.
   }, [adjusting, instance, occurrence.key])
 
-  // #219 PR A fix (Sol re-review round 2, HIGH #3): every cancel/commit path ABOVE runs inside
-  // this bar's own handlers and already announces inline - set right before each one's own
-  // `cancelAdjust`/`commitAdjust` call. But the session's OWNER can die with none of them ever
-  // running: the owning event deleted or replaced from outside, or the view's date/scale changing
-  // mid-session (`gantt.tsx`'s `killAdjustSessionIfOrphaned`, called from both `setOptions` and
-  // `setField`). That store-level teardown flips `adjusting` true -> false on this bar's next
-  // render with no local handler in the loop, so the cancellation announcement has to happen
-  // here instead. Gated on `localTeardownRef` so it fires exactly once and never re-announces
-  // "cancelled" over a cancel/commit branch's OWN just-set message - the same stale-overwrite
-  // race the blur handler above is already written to avoid.
-  useEffect(() => {
-    const wasAdjusting = wasAdjustingRef.current
-    wasAdjustingRef.current = adjusting
-    if (!wasAdjusting || adjusting) return
-    if (localTeardownRef.current) {
-      localTeardownRef.current = false
-      return
-    }
-    announce(settings.i18n.labels.adjustCancelled)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- same reasoning as the
-    // pointerdown-elsewhere effect above: `announce`/`settings` close over this render's values
-    // on purpose.
-  }, [adjusting])
+  // #219 PR A fix (Sol re-review round 2, HIGH #3; removed round 3, Sol HIGH #5): a per-bar
+  // owner-death effect used to live here, gated on a `localTeardownRef` set right before every
+  // LOCAL cancel/commit call in this file. It is GONE - `gantt.tsx`'s `<Gantt>` root now owns
+  // this announcement for every external teardown, local and remote bar alike, because a per-bar
+  // effect structurally could not cover a DELETED event: deletion unmounts the exact bar the
+  // effect lived on before it could ever observe the `adjusting` true -> false transition. See
+  // `gantt.tsx`'s own `getExternalTeardownVersion`/`<Gantt>`'s announcer effect for the mechanism
+  // that replaced it, and this file's header for the fuller history.
 
   // Hover-only range tooltip. Focus opens are ignored (the known button+
   // tooltip flash: clicking a bar opens a dialog, focus returns, and a
@@ -565,8 +564,9 @@ function GanttBar<TData = unknown>({
             // #219 PR A fix (Sol re-review round 2, HIGH #4): the "cancel Adjust first" check that
             // used to live here (a pointer gesture on THIS bar mid-session would otherwise race
             // stepAdjust for state.drag) moved into `gantt-dnd.tsx`'s `beginGesture` - the single
-            // entry point EVERY pointer gesture goes through, not one copy per call site. The
-            // owner-death effect above still announces the cancellation.
+            // entry point EVERY pointer gesture goes through, not one copy per call site.
+            // `gantt.tsx`'s `<Gantt>` root (round 3, Sol HIGH #5) still announces the cancellation -
+            // see that root's own doc comment.
             gestures.beginResize(e, segment, "start")
           }}
         >
@@ -660,12 +660,12 @@ function GanttBar<TData = unknown>({
     // #219 PR A (Adjust mode) - Blur is one of the two CANCEL triggers (the other is a pointer-down
     // elsewhere, in the effect above). Re-reads live state rather than the `adjusting` closure - see
     // this file's header for the stale-closure race a commit's own remount can otherwise cause.
+    // Quincy fix (#219 PR A round 3, Sol HIGH #5): no longer calls `announce()` itself - see the
+    // pointerdown-elsewhere effect's own comment above for why.
     onBlur: () => {
       const live = instance.getState().adjust
       if (live?.occurrence.key !== occurrence.key) return
-      localTeardownRef.current = true
       instance.internals.cancelAdjust()
-      announce(settings.i18n.labels.adjustCancelled)
     },
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
       const rtl = getComputedStyle(e.currentTarget).direction === "rtl"
@@ -711,9 +711,9 @@ function GanttBar<TData = unknown>({
       e.preventDefault()
 
       if (match.type === "cancel") {
-        localTeardownRef.current = true
+        // Quincy fix (#219 PR A round 3, Sol HIGH #5): no longer calls `announce()` itself - see
+        // the pointerdown-elsewhere effect's own comment above for why.
         instance.internals.cancelAdjust()
-        announce(settings.i18n.labels.adjustCancelled)
         return
       }
 
@@ -767,7 +767,6 @@ function GanttBar<TData = unknown>({
       // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): the same view-scheduleMode
       // pass-through `stepAdjust` above already needs - `commitAdjust` now re-validates the overlap
       // policy against the CURRENT resource, which needs it too.
-      localTeardownRef.current = true
       const result = instance.internals.commitAdjust(viewConfig.scheduleMode)
       if (result.committed) {
         // A committed START change (move, or a start-edge resize - whichever target actually moved

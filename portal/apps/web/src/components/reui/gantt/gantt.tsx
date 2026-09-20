@@ -384,6 +384,27 @@ interface GanttInternals<TData = unknown> {
    * (not a navigation) - the view keeps its scroll guard across slides.
    */
   didAnchorSlide(): boolean
+  /**
+   * Quincy addition (#219 PR A round 3, Sol HIGH #5): bumps every time `cancelAdjust` or
+   * `killAdjustSessionIfOrphaned` actually tears down a session - the ONLY two callers that ever
+   * bump it, so it is a clean, cheap signal for "a session just ended with the CANCELLED outcome,
+   * from somewhere that has no announcer of its own in scope" - covers an external teardown
+   * (deletion, a replaced event, a date/scale/anchor-slide change), AND a programmatic cancel with
+   * no local announcer available, like `gantt-dnd.tsx`'s `beginGesture` cancelling a same-bar
+   * session before a pointer gesture starts (its own doc comment there explains why it deliberately
+   * does not announce itself). It never fires for `commitAdjust` (see that method's own comment for
+   * why it clears the session through a path that never reaches either of these two), so a
+   * successful commit's own distinct message is never at risk of being overwritten here.
+   * `<Gantt>`'s root-level announcer effect subscribes to this instead of `state.adjust` itself so
+   * it can tell "the session just died and needs the standard 'cancelled' announcement" apart from
+   * "the session just died because THIS bar's own handler already announced something else inline"
+   * (blur/Escape/pointerdown-elsewhere in `gantt-bar.tsx` used to self-announce for exactly this
+   * reason; they no longer need to, since this now covers them uniformly too) - and, critically,
+   * apart from "the bar that owned it unmounted" (deletion), which no per-bar effect could ever
+   * observe in the first place. See `gantt-bar.tsx`'s header for why the per-bar owner-death effect
+   * this replaced could not cover that last case.
+   */
+  getAdjustCancelledVersion(): number
   /** View reports the visible-center instant (or null) for the nav title. */
   setViewportCenter(date: Date | null): void
   /**
@@ -465,7 +486,14 @@ interface GanttInternals<TData = unknown> {
   commitAdjust(viewScheduleMode?: GanttScheduleMode): GanttAdjustCommitResult
   /**
    * Escape, blur, or a pointer-down outside the bar - discards the preview, emits nothing, clears
-   * the session (and any driven `state.drag`). A no-op when no session is active.
+   * the session (and any driven `state.drag`). A no-op when no session is active. Also called by
+   * `gantt-dnd.tsx`'s `beginGesture` (a pointer gesture starting on the session's own bar) and
+   * `gantt.tsx`'s `<Gantt>` on its own unmount (a hoisted calendar's session outliving the root -
+   * see #219 PR A round 3, Sol HIGH #4b).
+   *
+   * Quincy addition (#219 PR A round 3, Sol HIGH #5): bumps `getAdjustCancelledVersion` on an
+   * actual teardown - see that method's own doc comment for the single "Adjustment cancelled."
+   * announcement this drives from `<Gantt>`'s root, uniformly, for every caller above.
    */
   cancelAdjust(): void
 }
@@ -581,6 +609,11 @@ function createGanttStore<TData>(
   let lastEmittedRangeKey: string | null = null
   /** Whether the last anchor change came from an extendRange window slide. */
   let lastAnchorChangeWasSlide = false
+  /**
+   * Quincy addition (#219 PR A round 3, Sol HIGH #5): see `GanttInternals.getAdjustCancelledVersion`'s
+   * doc comment - bumped ONLY inside `killAdjustSessionIfOrphaned`, below.
+   */
+  let adjustCancelledVersion = 0
 
   // Quincy addition (#219 PR A, Sol review, sol1 item 6): this instance's keyboard focus hand-off
   // token - see `GanttInternals.claimKeyboardFocus`'s doc comment. `notifyCount` gives it a bounded
@@ -634,6 +667,10 @@ function createGanttStore<TData>(
    * with it, atomically, so a render never shows one without the other. Returns whether a session
    * was actually torn down, so callers only pay for an extra `notify()` when one was.
    *
+   * Quincy addition (#219 PR A round 3, Sol HIGH #5): also bumps `adjustCancelledVersion` on a
+   * real teardown - see `GanttInternals.getAdjustCancelledVersion`'s own doc comment for why this
+   * is the one function that ever does.
+   *
    * Quincy fix (#219 PR A round 3, Sol HIGH #3): "replaced with a new object under the same id"
    * used to be OBJECT IDENTITY (`stillPresent !== session.occurrence.event`) - any fresh object
    * reference orphaned the session, even one carrying identical scheduling fields. A controlled
@@ -666,6 +703,10 @@ function createGanttStore<TData>(
     if (!orphaned) return false
     internal.adjust = null
     internal.drag = null
+    // Quincy addition (#219 PR A round 3, Sol HIGH #5): this IS the external teardown - see
+    // `GanttInternals.getAdjustCancelledVersion`'s doc comment for why this is the one and only
+    // place that bumps it.
+    adjustCancelledVersion++
     return true
   }
 
@@ -1393,6 +1434,9 @@ function createGanttStore<TData>(
     didAnchorSlide() {
       return lastAnchorChangeWasSlide
     },
+    getAdjustCancelledVersion() {
+      return adjustCancelledVersion
+    },
     claimKeyboardFocus(token) {
       pendingKeyboardFocus = token
       pendingKeyboardFocusClaimedAtNotifyCount = notifyCount
@@ -1578,6 +1622,12 @@ function createGanttStore<TData>(
       if (!internal.adjust) return
       internal.adjust = null
       internal.drag = null
+      // Quincy addition (#219 PR A round 3, Sol HIGH #5): see `GanttInternals.getAdjustCancelledVersion`'s
+      // own doc comment - this and `killAdjustSessionIfOrphaned` are the two callers that ever bump
+      // it; `<Gantt>`'s root announcer effect is what turns this into the single "Adjustment
+      // cancelled." message now, so the three `gantt-bar.tsx` call sites that used to announce it
+      // inline (blur, pointerdown-elsewhere, Escape) no longer need to.
+      adjustCancelledVersion++
       invalidate()
       notify()
     },
@@ -2538,6 +2588,14 @@ function Gantt<TData = unknown>({
   className,
   render,
   children,
+  // Quincy fix (#219 PR A round 3, Sol HIGH #5): pulled out explicitly for the SAME reason
+  // `gantt-bar.tsx`'s own `ref: consumerRef` destructure is - `mergeProps` does not merge `ref`
+  // (rightmost prop wins like any other plain key), so leaving it inside `...props` (which flows
+  // into `rest` below, then `mergeProps(defaultProps, rest)`) would silently drop this component's
+  // own `containerRef`, or overwrite it with `undefined`, the moment a consumer's JSX included a
+  // `ref` prop key at all. Merged explicitly via `useRender`'s own `ref` parameter instead, which
+  // DOES merge (see the `useRender(...)` call below).
+  ref: consumerRef,
   ...props
 }: GanttProps<TData>) {
   const { options, viewConfig, rest } = splitOptions<TData>(
@@ -2591,6 +2649,41 @@ function Gantt<TData = unknown>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instance])
 
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Quincy fix (#219 PR A round 3, Sol HIGH #5): moved here from a per-bar effect in
+  // `gantt-bar.tsx` - that effect could only announce an external teardown when the bar it lived
+  // on SURVIVED the teardown (a replaced resource/timing, or a date/scale change: same occurrence
+  // key, same bar node, next render sees `adjusting` flip true -> false). A DELETED event's bar
+  // unmounts before any such effect could ever fire, so cancellation went completely unannounced -
+  // see `gantt-bar.tsx`'s header for the fuller history. The announcer div is a sibling of
+  // `children` above, not inside any bar, so THIS root survives every teardown that isn't its own
+  // unmount (item #4b's `cancelAdjust()` above already covers that one, silently - there is no
+  // live region left to announce into once this root itself is gone).
+  //
+  // `getAdjustCancelledVersion()` (see its own doc comment) - not `state.adjust` - is what this
+  // subscribes to: it bumps EXACTLY once per genuine external teardown and never for a LOCAL
+  // cancel/commit (both already announce their own message inline, from `gantt-bar.tsx`, and
+  // clear `internal.adjust` through a path that never reaches `killAdjustSessionIfOrphaned` - see
+  // that method's own comment). Comparing against a ref means a later notify with no NEW teardown
+  // (nothing left to tear down) never re-announces, and a fresh mount only starts watching from
+  // whatever version already exists at that point - no backlog fires retroactively.
+  const lastExternalTeardownVersionRef = useRef(
+    instance.internals.getAdjustCancelledVersion()
+  )
+  useEffect(() => {
+    const unsubscribe = instance.subscribe(() => {
+      const version = instance.internals.getAdjustCancelledVersion()
+      if (version === lastExternalTeardownVersionRef.current) return
+      lastExternalTeardownVersionRef.current = version
+      const announcer = containerRef.current?.querySelector<HTMLElement>(
+        "[data-slot=gantt-announcer]"
+      )
+      if (announcer) announcer.textContent = instance.settings.i18n.labels.adjustCancelled
+    })
+    return unsubscribe
+  }, [instance])
+
   const defaultProps = {
     "data-slot": "gantt",
     // own the foreground (previews and consumer shells may not set body
@@ -2620,6 +2713,15 @@ function Gantt<TData = unknown>({
           defaultTagName: "div",
           render,
           props: mergeProps<"div">(defaultProps, rest),
+          // Quincy fix (#219 PR A round 3, Sol HIGH #5): same `ref` composition `gantt-bar.tsx`'s
+          // own `barButton` `useRender` call already uses - merged internally (via
+          // `@base-ui/utils/useMergedRefs`) with whatever the CONSUMER passed as
+          // `<Gantt ref={...}>`, both receive the node.
+          ref: consumerRef == null
+            ? [containerRef]
+            : Array.isArray(consumerRef)
+              ? [containerRef, ...consumerRef]
+              : [containerRef, consumerRef],
         })}
       </GanttViewConfigContext.Provider>
     </GanttContext.Provider>

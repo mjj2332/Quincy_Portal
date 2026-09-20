@@ -14,11 +14,18 @@
  * prop, an uncontrolled `api.*` mutator, or a consumer's own `onEventUpdate` racing this session),
  * or the date/scale changed — any of those clears `adjust` AND `drag` together, atomically.
  *
- * `gantt-bar.tsx`'s own new effect (gated on `localTeardownRef`, set immediately before every
- * LOCAL cancel/commit call this file already had) announces the cancellation exactly once when
- * the session dies with NO local handler in the loop — never re-announcing "cancelled" over a
- * cancel/commit branch's own message (the same stale-overwrite race the file's header already
- * documents for blur).
+ * Announcing this teardown originally lived on `gantt-bar.tsx` as a per-bar effect gated on a
+ * `localTeardownRef` set immediately before every LOCAL cancel/commit call. Round 3 (Sol HIGH #5)
+ * moved it to `gantt.tsx`'s `<Gantt>` root instead — a per-bar effect can only announce when ITS
+ * OWN bar survives the teardown (a replaced resource/timing, or a date/scale change: same
+ * occurrence key, same bar node), and a DELETED event's bar unmounts before any such effect could
+ * ever fire. `<Gantt>` now subscribes to a `getAdjustCancelledVersion()` counter that `cancelAdjust`
+ * and `killAdjustSessionIfOrphaned` bump (never `commitAdjust` — see that method's own doc comment
+ * for why), so the "exactly once, never over a different message" guarantee no longer needs a
+ * per-bar ref at all: a successful commit's own distinct message simply never bumps the counter the
+ * root is watching, and every CANCELLED-outcome path — local (blur/Escape/pointerdown-elsewhere/a
+ * pointer gesture starting mid-session) or external (deletion/replacement/date-scale-anchor
+ * changes) — now announces through the same single place.
  *
  * Round 3 fix (Sol's round-3 review, HIGH #3): `killAdjustSessionIfOrphaned` used to compare
  * `stillPresent !== session.occurrence.event` — OBJECT IDENTITY, not value. A controlled consumer
@@ -527,6 +534,52 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(revived.getAttribute("data-adjusting")).toBeNull();
   });
 
+  it("round 3, Sol HIGH #5: deleting the owning event mid-session announces cancellation exactly once, from the still-mounted Gantt root, even though the bar itself unmounts", async () => {
+    // Before the fix, the ONLY owner-death announcer lived on the bar being torn down — deletion
+    // unmounts that exact bar before its own effect could ever observe the `adjusting` true ->
+    // false transition, so cancellation went unannounced. The announcer div lives on `<Gantt>`
+    // itself (`data-slot="gantt-announcer"`, rendered as a sibling of children, not inside any
+    // bar), so it survives the deleted bar's unmount and is where the announcement now has to
+    // come from.
+    function DeleteHost({ setEventsRef }: { setEventsRef: { current: ((v: GanttEvent[]) => void) | null } }) {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "del-announce", title: "Delete Announce", start: START, end: END },
+      ]);
+      useEffect(() => {
+        setEventsRef.current = setEvents;
+      }, []);
+      return (
+        <Gantt events={events} onEventsChange={setEvents} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="del-announce" />
+        </Gantt>
+      );
+    }
+    const setEventsRef: { current: ((v: GanttEvent[]) => void) | null } = { current: null };
+    await render(<DeleteHost setEventsRef={setEventsRef} />);
+    const bar = findBar(host, "Delete Announce")!;
+    await focusBar(bar);
+    await keydown(bar, { key: " " });
+    await keydown(bar, { key: "ArrowRight" });
+    expect(bar.getAttribute("data-adjusting")).not.toBeNull();
+    expect(announcerText(host)).not.toBe("Adjustment cancelled.");
+
+    await act(async () => {
+      setEventsRef.current!([]);
+      await Promise.resolve();
+    });
+    expect(findBar(host, "Delete Announce")).toBeUndefined();
+    expect(announcerText(host)).toBe("Adjustment cancelled.");
+
+    // Exactly once: a further notify with no NEW teardown (the session is already gone, so
+    // `killAdjustSessionIfOrphaned` returns false and never bumps the version again) must not
+    // re-announce. A naive "session is null -> always announce" implementation would fail this.
+    await act(async () => {
+      setEventsRef.current!([]);
+      await Promise.resolve();
+    });
+    expect(announcerText(host)).toBe("Adjustment cancelled.");
+  });
+
   it("controlled: replacing the owning event's resource mid-session (same occurrence key — the bar stays mounted) restores role/data-adjusting and announces cancellation exactly once", async () => {
     function ReplaceHost({ setEventsRef }: { setEventsRef: { current: ((v: GanttEvent[]) => void) | null } }) {
       const [events, setEvents] = useState<GanttEvent[]>([
@@ -597,7 +650,7 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     expect(announcerText(host)).toBe("Adjustment cancelled.");
   });
 
-  it("a LOCAL commit is never double-announced by the owner-death effect (regression guard on localTeardownRef)", async () => {
+  it("a LOCAL commit is never double-announced by the root's owner-death announcer (round 3, Sol HIGH #5 — regression guard, moved from a `localTeardownRef` ref to the getAdjustCancelledVersion counter)", async () => {
     const onEventsChange = vi.fn();
     const event: GanttEvent = { id: "local-commit", title: "Local Commit", start: START, end: END };
     await render(
@@ -611,7 +664,10 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     await keydown(bar, { key: "ArrowRight" });
     await keydown(bar, { key: "Enter" });
     // The commit's OWN success message must survive — not overwritten by "Adjustment cancelled."
-    // from the new owner-death effect reacting to the SAME true -> false `adjusting` transition.
+    // from the root's owner-death effect reacting to the SAME true -> false `adjusting` transition.
+    // `commitAdjust` clears `internal.adjust` directly, BEFORE its own write, through neither
+    // `cancelAdjust` nor `killAdjustSessionIfOrphaned` (the only two things that bump
+    // `getAdjustCancelledVersion`) — see that method's own doc comment.
     expect(announcerText(host)).toContain("Adjusted to");
     expect(announcerText(host)).not.toBe("Adjustment cancelled.");
   });
