@@ -4089,20 +4089,24 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
             data-drop-invalid={!ghost.valid || undefined}
             // #219 PR A fix (Sol re-review round 2, MEDIUM #7): the Adjust-specific "you are
             // adjusting this" marker lives HERE, not on the bar - a keyboard Adjust session keeps
-            // DOM focus on the origin bar, which a move gesture hides at opacity-0 (see
-            // `gantt-bar.tsx`'s own `data-[drag-kind=move]:opacity-0`) and whose own dashed outline
-            // otherwise loses to the ordinary `focus-visible` ring even when visible (a resize).
-            // `data-adjust-ghost` marks WHICH source drove it, for a sighted user's affordance
-            // hooks and this file's own DOM test.
+            // DOM focus on the origin bar, and its own dashed outline otherwise loses to the
+            // ordinary `focus-visible` ring even when visible (a resize). `data-adjust-ghost` marks
+            // WHICH source drove it, for a sighted user's affordance hooks and this file's own DOM
+            // test.
             //
             // Quincy fix (#219 PR A round 3, Sol MEDIUM #6): round 2 left the LOOK identical
-            // between sources - `data-adjust-ghost` was a marker with no treatment attached to it.
-            // The `ring-ring ring-1` class below (conditional on `source === "keyboard"`, alongside
-            // the SAME dashed hairline border both sources already carry, not replacing it) is a
-            // solid hairline ring in the EXISTING focus-ring token - the identical one
-            // `gantt-bar.tsx`'s own `focus-visible:ring-ring/50` already uses elsewhere in this
-            // tree - not a new colour, not a `shadow-*` class, no `dark:` variant, so
-            // `gantt-skin.guard.test.ts` stays green.
+            // between sources, so round 3 added a `ring-ring ring-1` for the keyboard-sourced ghost
+            // only. #219 PR A fix (dr-219a HIGH #4, part 2): that ring is GONE again - a solid
+            // full-ink ring buried the dashed border underneath it instead of accenting it. The
+            // dashed border alone carries the "this is a preview" cue for both sources now; no
+            // replacement ring. A keyboard-owned and a pointer-owned ghost can never be on screen
+            // at the same time to confuse (`gantt.tsx`'s `beginAdjust` refuses while ANY pointer
+            // gesture anywhere is pending/active; `gantt-dnd.tsx`'s `beginGesture` cancels an
+            // active Adjust session before a gesture starts - the two inputs are structurally,
+            // globally mutually exclusive), so no distinguishing treatment is needed beyond what
+            // `gantt-bar.tsx`'s own `data-drag-source` fade and this ghost's title (below, dr-219a
+            // HIGH #4 part 3) already produce as a side effect: a keyboard move's ghost now shows a
+            // title a pointer move's never did (its cursor clone carries the title instead).
             data-adjust-ghost={ghost.source === "keyboard" || undefined}
             className={cn(
               // Slight dashed indicator, never a dramatic restyle. Move shows a
@@ -4124,8 +4128,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                  wrapper sheds its own dashed box and centers a dashed diamond
                  instead - a dashed rectangle read as a different object */
               ghost.milestone &&
-                "flex items-center justify-center rounded-none border-0 bg-transparent",
-              ghost.source === "keyboard" && "ring-ring ring-1"
+                "flex items-center justify-center rounded-none border-0 bg-transparent"
             )}
             style={
               {
@@ -4159,13 +4162,20 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                 )}
               />
             )}
-            {ghost.kind !== "move" && (
-              // label rides OUTSIDE after the bar, exactly like the resting
-              // outside placement - never inside the schedule
-              <span className="pointer-events-none absolute start-full top-1/2 ms-2 max-w-60 -translate-y-1/2 truncate whitespace-nowrap">
-                {ghost.title}
-              </span>
-            )}
+            {
+              // label rides OUTSIDE after the bar, exactly like the resting outside placement -
+              // never inside the schedule. A resize always showed it. #219 PR A fix (dr-219a
+              // HIGH #4, part 3): a move now shows it too, but ONLY for a keyboard-sourced move -
+              // a pointer move's smooth cursor clone (`gantt-dnd.tsx`) already carries the title,
+              // and this ghost is the drop-target placeholder beside it (this file's own comment
+              // above, "the smooth cursor clone carries the visual"); a keyboard move has no
+              // clone, so its ghost is the only on-screen representation and needs the title.
+              (ghost.kind !== "move" || ghost.source === "keyboard") && (
+                <span className="pointer-events-none absolute start-full top-1/2 ms-2 max-w-60 -translate-y-1/2 truncate whitespace-nowrap">
+                  {ghost.title}
+                </span>
+              )
+            }
           </div>
         )}
         {draft && (

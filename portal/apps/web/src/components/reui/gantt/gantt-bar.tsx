@@ -134,10 +134,14 @@
  *   existing ghost (and this bar's own `data-drag-kind` fade, via the SAME `isDragging`/`dragKind`
  *   selectors a real drag already uses) renders it with no new preview surface. Quincy fix (#219 PR
  *   A, Sol re-review round 2, MEDIUM #7): the bar itself carries no Adjust-specific outline any
- *   more - it visually lost to the ordinary `focus-visible` ring even when visible, and a move
- *   gesture hides the bar entirely (opacity-0) while it still holds keyboard focus, showing nothing
- *   either way. `gantt-view.tsx`'s ghost, which is never hidden, carries `data-adjust-ghost` while
- *   it is keyboard-owned instead - see that file's own comment beside it.
+ *   more - it visually lost to the ordinary `focus-visible` ring even when visible. `gantt-view.tsx`'s
+ *   ghost, which is never hidden, carries `data-adjust-ghost` while it is keyboard-owned instead -
+ *   see that file's own comment beside it. #219 PR A fix (dr-219a HIGH #4, part 1): a move gesture
+ *   used to hide the bar entirely (opacity-0) regardless of source, showing nothing while it still
+ *   held keyboard focus - now split by `data-drag-source`: a POINTER move still hides it (the
+ *   cursor clone stands in), a KEYBOARD move keeps it visible at reduced opacity instead, the same
+ *   treatment a resize already got either way, since a keyboard move has no clone and focus never
+ *   leaves this exact bar.
  * - A commit that changes `start` (move, or a start-edge resize) claims the focus hand-off the same
  *   way a successful move/resize-start nudge always did, comparing the committed `start` against
  *   `occurrence.start` directly (NOT "was the last target resize-end" - Adjust mode's target can
@@ -361,6 +365,18 @@ function GanttBar<TData = unknown>({
   const dragKind = useGanttSelector<TData, string | null>(
     (state) =>
       state.drag?.occurrence.key === occurrence.key ? state.drag.kind : null,
+    { calendar: instance }
+  )
+  // #219 PR A fix (dr-219a HIGH #4): which INPUT owns the current drag on this bar - a pointer
+  // move still hides the original entirely (the smooth cursor clone represents it, so the origin
+  // bar would be a redundant second copy); a KEYBOARD move now keeps the original visible at
+  // reduced opacity instead, the same treatment a resize already gets either way, because there is
+  // no cursor clone for a keyboard gesture and DOM focus stays on this exact bar - hiding it left
+  // Adjust mode with nothing focused-and-visible on screen (dr-219a HIGH #4, part 1). See the
+  // `data-[drag-kind=move]:data-[drag-source=…]` pair below.
+  const dragSource = useGanttSelector<TData, "pointer" | "keyboard" | null>(
+    (state) =>
+      state.drag?.occurrence.key === occurrence.key ? state.drag.source : null,
     { calendar: instance }
   )
   // #219 PR A (Adjust mode) - this bar's own Adjust session, keyed on occurrence.key the same way
@@ -614,6 +630,9 @@ function GanttBar<TData = unknown>({
     "data-selected": isSelected || undefined,
     "data-dragging": isDragging || undefined,
     "data-drag-kind": dragKind ?? undefined,
+    // #219 PR A fix (dr-219a HIGH #4): drives the `data-[drag-kind=move]:data-[drag-source=…]`
+    // pair below - see `dragSource`'s own doc comment above.
+    "data-drag-source": dragSource ?? undefined,
     "data-past": occurrence.end.getTime() < Date.now() || undefined,
     "data-label-outside": labelOutside || undefined,
     "data-progress": progress ?? undefined,
@@ -807,8 +826,13 @@ function GanttBar<TData = unknown>({
       // text-foreground (see this file's header), only the tint itself
       // fades, which can only raise contrast against that fixed dark label
       "data-completed:bg-(--gantt-event-color)/10 data-completed:hover:bg-(--gantt-event-color)/15",
-      // move: hide the original (the smooth cursor clone represents it)
-      "data-[drag-kind=move]:opacity-0",
+      // move: a POINTER move hides the original (the smooth cursor clone represents it instead).
+      // #219 PR A fix (dr-219a HIGH #4, part 1): a KEYBOARD move has no cursor clone, and DOM
+      // focus never leaves this exact bar, so it instead gets the SAME faded-placeholder
+      // treatment a resize already gets either way (below) - hiding it left Adjust mode with
+      // nothing focused-and-visible on screen.
+      "data-[drag-kind=move]:data-[drag-source=pointer]:opacity-0",
+      "data-[drag-kind=move]:data-[drag-source=keyboard]:opacity-40",
       // resize: keep the original event exactly, just fade it to a soft
       // placeholder behind the dashed preview - no dramatic restyle
       "data-[drag-kind=resize-start]:opacity-40 data-[drag-kind=resize-end]:opacity-40",
@@ -816,8 +840,10 @@ function GanttBar<TData = unknown>({
       // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
       // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
       // the bar's own focus ring at the time even while the bar was visible, and once a step
-      // drove `state.drag`, a move gesture hides the bar entirely (`data-[drag-kind=move]:opacity-0`
-      // above) - focus stayed on an invisible element with nothing to show for it. The
+      // drove `state.drag`, a move gesture used to hide the bar entirely regardless of source -
+      // focus stayed on an invisible element with nothing to show for it. #219 PR A fix (dr-219a
+      // HIGH #4, part 1): that unconditional hide is GONE - see
+      // `data-[drag-kind=move]:data-[drag-source=…]` above, split by source. The
       // Adjust-specific treatment now lives on `gantt-view.tsx`'s own drag ghost
       // (`data-adjust-ghost`), which is never hidden and never competes with the bar's own focus
       // indication. #219 PR A fix (dr-219a HIGH #2): that indication is now the global
