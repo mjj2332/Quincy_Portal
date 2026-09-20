@@ -318,7 +318,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
   // `clearDashboardSearch` directly.
   // #217 design review (browser pass 3). The committed query is capped at 200 code points, not
   // 200 pixels, and the Badge is `whitespace-nowrap`: an unbounded echo turns a deep link into a
-  // ~1000px pill that reflows the whole toolbar. jsdom cannot lay out, so this pins the contract
+  // ~1000px pill that overflows the summary row and the page. jsdom cannot lay out, so this pins the contract
   // the layout depends on: the echo is width-bounded + truncating, and the full text stays
   // reachable through `title`.
   it("(g) a 200-character committed query is echoed width-bounded and truncating, with the full text in its title", async () => {
@@ -338,6 +338,8 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     // the echo's cap cannot be conditional on viewport size either.
     expect(classes.filter((token) => token.startsWith("max-w-"))).toHaveLength(1);
     expect(classes.some((token) => token.includes("min-["))).toBe(false);
+    // The exact cap, so the two failed intermediate caps (12ch, 28ch) cannot come back either.
+    expect(classes).toContain("max-w-[40ch]");
   });
 
   it("(f1) the chip's x clears the URL, the chip, the input and the list in one step", async () => {
@@ -349,9 +351,16 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
 
     const clearButton = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-search-chip"] button[aria-label="Clear search"]')!;
+    // Clear unmounts the very button that holds focus. Focus must land on a deliberate surviving
+    // control (the active view button, the same target `selectProjectScope` already uses), never
+    // fall back to `document.body` -- from there the next Tab restarts in the page chrome.
+    clearButton.focus();
+    expect(document.activeElement).toBe(clearButton);
     await act(async () => { clearButton.click(); await Promise.resolve(); });
     await settle();
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 5)); });
 
+    expect(document.activeElement).toBe(host.querySelector('[data-focus-key="dashboard-view-list"]'));
     expect(window.location.search).toBe("?view=list");
     expect(host.querySelector('[data-testid="dashboard-search-chip"]')).toBeNull();
     expect(host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')?.value).toBe("");

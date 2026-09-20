@@ -121,11 +121,18 @@ function assertToolbarChipSeparation(host: HTMLDivElement) {
   expect(toolbar!.contains(chip!)).toBe(false);
   expect(toolbar!.contains(newShootLink!)).toBe(true);
   expect(toolbar!.nextElementSibling).toBe(summary);
+  expect(summary!.contains(chip!)).toBe(true);
 }
 
-/** Every descendant's tag + testid, in document order -- used to prove the toolbar's shape does not change with the query. */
+/** Every descendant's tag, testid, focus key, label and leaf text, in document order -- used to prove the toolbar's shape does not change with the query. */
 function toolbarShape(toolbar: Element): string[] {
-  return [...toolbar.querySelectorAll("*")].map((node) => `${node.tagName}:${node.getAttribute("data-testid") ?? ""}`);
+  return [...toolbar.querySelectorAll("*")].map((node) => [
+    node.tagName,
+    node.getAttribute("data-testid") ?? "",
+    node.getAttribute("data-focus-key") ?? "",
+    node.getAttribute("aria-label") ?? "",
+    node.children.length === 0 ? (node.textContent ?? "").trim() : "",
+  ].join(":"));
 }
 
 describe("Dashboard search presentation and navigation adversarial probes (#217)", () => {
@@ -218,6 +225,8 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     });
     await settle();
 
+    // Prove the switch happened -- otherwise this would merely repeat the List assertion.
+    expect(window.location.search).toContain("view=kanban");
     assertToolbarChipSeparation(host);
   });
 

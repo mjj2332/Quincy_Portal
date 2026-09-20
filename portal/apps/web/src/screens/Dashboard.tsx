@@ -1234,7 +1234,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <button
               type="button"
               aria-label="Clear search"
-              onClick={() => clearDashboardSearch(currentUserId)}
+              onClick={() => {
+                clearDashboardSearch(currentUserId);
+                // Clearing unmounts this very button. Hand focus to a deliberate surviving control
+                // (the active view button -- the same target `selectProjectScope` uses) so it never
+                // falls back to `document.body`, from where the next Tab restarts in page chrome.
+                window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key^="dashboard-view-"][data-active="true"]')?.focus(), 0);
+              }}
               className="relative inline-flex items-center shrink-0 after:absolute after:-inset-2 max-[721px]:after:-inset-4"
             >
               <XIcon aria-hidden="true" className="size-3" />
