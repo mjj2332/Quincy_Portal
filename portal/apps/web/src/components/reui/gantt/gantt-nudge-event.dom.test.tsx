@@ -170,6 +170,23 @@ describe("GanttApi.nudgeEvent (#219 stage 2)", () => {
     expect(next!.end.getTime()).toBe(END.getTime() + 15 * 60000);
   });
 
+  it("refuses on a recurring event's master — no action ever nudges the SERIES, per event.recurrence (sol1 item 2)", async () => {
+    const apiRef = apiRefOf();
+    const onEventsChange = vi.fn();
+    const event: GanttEvent = {
+      id: "e-recurring",
+      title: "Recurring",
+      start: START,
+      end: END,
+      recurrence: { freq: "daily" },
+    };
+    await render(<Gantt apiRef={apiRef} events={[event]} onEventsChange={onEventsChange} timeZone="UTC" />);
+    expect(apiRef.current!.nudgeEvent("e-recurring", "move", 1)).toEqual({ applied: false, reason: "locked" });
+    expect(apiRef.current!.nudgeEvent("e-recurring", "resize-start", -1)).toEqual({ applied: false, reason: "locked" });
+    expect(apiRef.current!.nudgeEvent("e-recurring", "resize-end", 1)).toEqual({ applied: false, reason: "locked" });
+    expect(onEventsChange).not.toHaveBeenCalled();
+  });
+
   it("the overlap 'reject' policy blocks a nudge that would overlap a sibling on the same resource", async () => {
     const apiRef = apiRefOf();
     const onEventsChange = vi.fn();

@@ -156,12 +156,20 @@ function ganttArrowDirection(key: "ArrowLeft" | "ArrowRight", rtl: boolean): -1 
   return (rtl ? -physical : physical) as -1 | 1
 }
 
-/** `aria-keyshortcuts` value: only the chords permitted for THIS bar, or `undefined` for none. */
+/**
+ * `aria-keyshortcuts` value: only the chords permitted for THIS bar, or `undefined` for none.
+ * `isRecurring` always wins to `undefined` - Quincy fix (#219 PR A, Sol review, sol1 item 2):
+ * `nudgeEvent` has no occurrence-aware exception semantics yet (see `gantt.tsx`'s own doc comment
+ * on it), so a recurring occurrence's bar must neither advertise nor act on a keyboard nudge - it
+ * would silently rewrite the SERIES MASTER, not just this occurrence.
+ */
 function buildGanttBarKeyShortcuts(
   canMove: boolean,
   canResizeStart: boolean,
-  canResizeEnd: boolean
+  canResizeEnd: boolean,
+  isRecurring: boolean
 ): string | undefined {
+  if (isRecurring) return undefined
   const chords: string[] = []
   if (canMove) chords.push("Alt+ArrowLeft", "Alt+ArrowRight")
   if (canResizeStart) chords.push("Control+Alt+ArrowLeft", "Control+Alt+ArrowRight")
@@ -392,7 +400,12 @@ function GanttBar<TData = unknown>({
   const canMove = gestures.canDrag(segment)
   const canResizeStart = segment.isStart && gestures.canResize(segment, "start")
   const canResizeEnd = segment.isEnd && gestures.canResize(segment, "end")
-  const keyShortcuts = buildGanttBarKeyShortcuts(canMove, canResizeStart, canResizeEnd)
+  const keyShortcuts = buildGanttBarKeyShortcuts(
+    canMove,
+    canResizeStart,
+    canResizeEnd,
+    occurrence.isRecurring
+  )
   const resizeHandles = (canResizeStart || canResizeEnd) && (
     <>
       {canResizeStart && (
@@ -479,6 +492,10 @@ function GanttBar<TData = unknown>({
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
       const chord = matchGanttBarKeyChord(e)
       if (!chord) return
+      // Quincy fix (#219 PR A, Sol review, sol1 item 2): a chord can still MATCH here even though
+      // a recurring occurrence advertises none (aria-keyshortcuts and the matcher are independent)
+      // - this bar must not act on it either, for the same reason it does not advertise it.
+      if (occurrence.isRecurring) return
       // preventDefault only for a chord that is actually ours - Alt+Arrow
       // etc. otherwise falls through to whatever else is listening
       e.preventDefault()

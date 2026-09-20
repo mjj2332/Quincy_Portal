@@ -266,6 +266,31 @@ describe("GanttBar keyboard move/resize (#219 stage 2)", () => {
     expect(updated!.end.getTime()).toBe(END.getTime() - 15 * 60000);
   });
 
+  it("a recurring occurrence's bar advertises no keyboard chords, and a would-be-matching chord is left alone (sol1 item 2)", async () => {
+    const onEventsChange = vi.fn();
+    const event: GanttEvent = {
+      id: "kb-recurring",
+      title: "Recurring",
+      start: START,
+      end: END,
+      recurrence: { freq: "daily" },
+    };
+    await render(
+      <Gantt events={[event]} onEventsChange={onEventsChange} date={START} timeZone="UTC">
+        <KeyedBarHost eventId="kb-recurring" />
+      </Gantt>,
+    );
+    const bar = findBarByTitle("Recurring");
+    expect(bar.getAttribute("aria-keyshortcuts")).toBeNull();
+
+    await focusBar(bar);
+    const nativeEvent = await keydown(bar, { key: "ArrowRight", altKey: true });
+    expect(onEventsChange).not.toHaveBeenCalled();
+    // Not ours to act on: never claimed via preventDefault either, so a page-level Alt+Arrow
+    // fallback (or the browser's own) still runs - this bar did not silently swallow the key.
+    expect(nativeEvent.defaultPrevented).toBe(false);
+  });
+
   it("a chord that is not ours (plain ArrowRight, no Alt) is left alone: not prevented, not nudged, and the consumer's own onKeyDown still fires", async () => {
     const onEventsChange = vi.fn();
     const onKeyDown = vi.fn();

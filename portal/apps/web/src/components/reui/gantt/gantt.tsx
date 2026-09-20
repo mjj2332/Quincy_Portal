@@ -694,6 +694,13 @@ function createGanttStore<TData>(
       const event = api.getEvent(id)
       if (!event) return { applied: false, reason: "not-found" }
       if (event.readOnly) return { applied: false, reason: "locked" }
+      // Quincy fix (#219 PR A, Sol review, sol1 item 2): nudgeEvent has no occurrence-aware
+      // exception semantics - it computes from the MASTER's own start/end and always emits
+      // `occurrence: null` (an API-shaped update, per gantt-types.tsx's GanttProposedUpdate doc).
+      // A keyboard nudge on ANY ONE occurrence of a recurring event would therefore silently
+      // rewrite the whole series. Refuse until occurrence-aware exceptions exist (creating or
+      // updating a recurringEventId/originalStart override) - future work, not this fix.
+      if (event.recurrence) return { applied: false, reason: "locked" }
       const state = getState()
       if (action === "move") {
         if (!state.interactions.drag || event.draggable === false) {
