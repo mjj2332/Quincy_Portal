@@ -85,6 +85,23 @@ segment always exists, and unsound for a payload-only gesture, where none does. 
 external gesture through it means auditing every one of them and re-paying 0009's merge cost for
 no functional gain.
 
+### Addendum — #241 (2026-09-21)
+
+Two statements above are true of the commit they measured and no longer true of the tree. #241
+painted the time grid on a wall-clock axis, and the gesture engine has to read a pixel the same
+way the column paints it, so:
+
+- **The attribute contract is six, not four.** Both grid views also publish `data-ec-wall-start`
+  and `data-ec-wall-end`. They are optional to the reader: a column without them is read as
+  elapsed-linear, exactly as before.
+- **`pointerMinutes` was rewritten and takes `timeZone`**, and its four call sites inside
+  `beginGesture` pass it. That is a one-argument edit at each site, not a control-flow change —
+  every caller still receives elapsed minutes — but "`beginGesture` is untouched" is no longer
+  literally so, and a re-vendor must replay it. `event-calendar-dnd.tsx` entry 5 is the
+  instruction.
+
+The decision itself is unchanged: geometry inside the tree, policy outside it.
+
 ## What enforces this
 
 Prose does not. `event-calendar-skin.guard.test.ts` Detector 9 scans every non-test file under

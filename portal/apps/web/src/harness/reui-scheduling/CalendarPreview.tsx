@@ -272,15 +272,20 @@ export default function CalendarPreview() {
         <h2 className="q-h3">DST notes — check in the browser</h2>
         <ul>
           <li>
-            dst-autumn (25h day): "DST probe: late-night edit" (23:15–23:45) should be INVISIBLE in
-            a time-grid view (week/day/days) — its elapsed startMin (1455) is past the vendor's
-            1440-minute bounds-end clamp. See `fixtures.ts`'s `dst-late-night` comment.
+            dst-autumn (25h day): "DST probe: late-night edit" (23:15–23:45) should sit beside the
+            gutter's 11 PM label, level with a 23:15 event on any other day — every week column is
+            24 hour-heights tall (#241). Events in the repeated 2 AM hour share one slot, side by
+            side.
           </li>
           <li>
-            dst-spring (23h day): "DST probe: transition-hour edit" (1:30–3:30) should render a
-            SHORTER block than the same event on dst-autumn — 1 real elapsed hour on the spring day
-            vs. 3 real elapsed hours on the autumn day for the same wall-clock span. Compare the
-            event's own height against the hour gutter lines to see whether they still agree.
+            dst-spring (23h day): the 2 AM slot of the transition column should be EMPTY, and
+            "DST probe: transition-hour edit" (1:30–3:30) should span the gutter's 1:30 to 3:30 on
+            both dst scenarios — it is painted between its clock labels, though it lasts 1 real
+            hour in spring and 3 in autumn.
+          </li>
+          <li>
+            day / days / resource views follow the same model: a transition day is 24 hour-heights
+            tall with the ordinary 24 labels — no skipped or repeated label.
           </li>
         </ul>
       </div>

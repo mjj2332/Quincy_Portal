@@ -54,6 +54,9 @@
  *    classes, the seam '#219's "dimmed done tasks" needs. Also listed in VIEW_CONFIG_KEYS,
  *    which is a RUNTIME allow-list: a key on the interface but missing there typechecks
  *    everywhere and is then silently dropped. Pinned by event-calendar-done-dim.dom.test.tsx.
+ *
+ * 3. 2026-09-21, #241 — comment only: `renderDayColumnBackground`'s docstring now says its
+ *    minutes are ELAPSED and how to convert them for the wall-clock-painted column.
  */
 import {
   createContext,
@@ -1594,6 +1597,11 @@ interface EventCalendarViewConfig<TData = unknown> {
    * Time-grid business-logic layer, rendered pointer-events-none BEHIND event
    * segments in each day column. Position overlays with
    * top/height: calc(var(--ec-hour-height) * minutes / 60).
+   *
+   * QUINCY (#241): the three minute values are ELAPSED minutes, and the column is painted on a
+   * WALL-CLOCK axis, so that formula is an hour out after the transition on a DST day. Convert
+   * first: `wallClockColumn(day, startHour, endHour, timeZone).blockStyle(startMin, endMin)`
+   * from event-calendar-time-grid.tsx returns the top/height to use.
    */
   renderDayColumnBackground?: (props: {
     day: Date

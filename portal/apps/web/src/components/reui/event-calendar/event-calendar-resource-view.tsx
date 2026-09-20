@@ -43,6 +43,10 @@
  *    as `event-calendar-time-grid.tsx` entry 2, which carries the full explanation; this view had
  *    an identical copy of the defect. `getDayTotalMinutes` is no longer imported here (the time
  *    grid still needs it for its public render callback; this view never exposed one).
+ *
+ * 2. 2026-09-21, #241 — BEHAVIOUR CHANGE, DST. The resource column is painted on the shared
+ *    gutter's wall-clock axis via `wallClockColumn`, same as `event-calendar-time-grid.tsx`
+ *    entry 4, which carries the explanation. `minuteBlockStyle` is no longer imported.
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
@@ -78,7 +82,7 @@ import {
   EVENT_TRACK_WIDTH,
   EventCalendarNowIndicator,
   EventCalendarTimeGutter,
-  minuteBlockStyle,
+  wallClockColumn,
 } from "@/components/reui/event-calendar/event-calendar-time-grid"
 import type {
   EventCalendarResource,
@@ -536,7 +540,15 @@ function EventCalendarResourceColumn({
   // QUINCY (#219 PR B stage 3): elapsed bounds — see the twin comment in event-calendar-time-grid.
   const boundsStartMin = elapsedMinutesAtWallClockHour(day, startHour, timeZone)
   const boundsEndMin = elapsedMinutesAtWallClockHour(day, endHour, timeZone)
-  const boundsMinutes = Math.max(60, boundsEndMin - boundsStartMin)
+  // QUINCY (#241): painted on the shared gutter's wall-clock axis — see `wallClockColumn` in
+  // event-calendar-time-grid.tsx, whose day column this one is a twin of.
+  // Keyed on the day's INSTANT: this view derives `day` afresh each render, and an unstable
+  // `wallColumn` would repack every resource column on every parent render.
+  const dayTime = dayStart.getTime()
+  const wallColumn = useMemo(
+    () => wallClockColumn(new Date(dayTime), startHour, endHour, timeZone),
+    [dayTime, startHour, endHour, timeZone]
+  )
 
   // Filter this resource's timed segments and repack per column.
   // Clones keep the shared index cache untouched. Segments the day bounds clip
@@ -551,9 +563,10 @@ function EventCalendarResourceColumn({
         return endMin > boundsStartMin && startMin < boundsEndMin
       })
       .map((segment) => ({ ...segment }) as EventCalendarSegment)
-    packTimedSegments(mine)
+    // QUINCY (#241): a transition day packs by PAINTED window — `wallClockColumn.packWindowOf`.
+    packTimedSegments(mine, wallColumn.packWindowOf)
     return mine
-  }, [segments.timed, resource.id, boundsStartMin, boundsEndMin])
+  }, [segments.timed, resource.id, boundsStartMin, boundsEndMin, wallColumn])
 
   const dragGhost = useEventCalendarSelector<
     unknown,
@@ -667,6 +680,8 @@ function EventCalendarResourceColumn({
       data-ec-day={dayStart.getTime()}
       data-ec-bounds-start={boundsStartMin}
       data-ec-bounds-end={boundsEndMin}
+      data-ec-wall-start={wallColumn.wallStartMin}
+      data-ec-wall-end={wallColumn.wallEndMin}
       data-ec-resource={resource.id}
       data-drop-target={
         dragGhost ? (dragGhost.valid ? "valid" : "invalid") : undefined
@@ -683,7 +698,7 @@ function EventCalendarResourceColumn({
         viewConfig.classNames?.dayColumn
       )}
       style={{
-        height: `calc(var(--ec-hour-height) * ${boundsMinutes / 60})`,
+        height: `calc(var(--ec-hour-height) * ${wallColumn.hours})`,
         backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60}))`,
       }}
       onPointerDown={(e) => {
@@ -697,9 +712,8 @@ function EventCalendarResourceColumn({
         )
           return
         const rect = e.currentTarget.getBoundingClientRect()
-        const pxPerMinute = rect.height / boundsMinutes
         const minutes = snapMinutes(
-          boundsStartMin + (e.clientY - rect.top) / pxPerMinute,
+          wallColumn.elapsedAtOffset(e.clientY - rect.top, rect.height),
           settings.snapDuration
         )
         const clamped = Math.min(
@@ -737,7 +751,7 @@ function EventCalendarResourceColumn({
             className="absolute z-(--ec-z) min-h-(--ec-event-min-h,1.5rem) px-0.5 hover:z-40"
             style={
               {
-                ...minuteBlockStyle(startMin, endMin, boundsStartMin),
+                ...wallColumn.blockStyle(startMin, endMin),
                 left: `calc(${EVENT_TRACK_WIDTH} * ${column / columnCount})`,
                 width: `calc(${EVENT_TRACK_WIDTH} * ${span / columnCount})`,
                 "--ec-z": zIndex,
@@ -782,10 +796,9 @@ function EventCalendarResourceColumn({
           )}
           style={
             {
-              ...minuteBlockStyle(
+              ...wallColumn.blockStyle(
                 dragGhost.window[0],
-                dragGhost.window[1],
-                boundsStartMin
+                dragGhost.window[1]
               ),
               "--ec-event-color": dragGhost.color ?? "var(--color-primary)",
             } as CSSProperties
@@ -830,11 +843,7 @@ function EventCalendarResourceColumn({
             "pointer-events-none absolute inset-x-0.5 z-40 overflow-hidden",
             viewConfig.classNames?.slotDraft
           )}
-          style={minuteBlockStyle(
-            draftWindow[0],
-            draftWindow[1],
-            boundsStartMin
-          )}
+          style={wallColumn.blockStyle(draftWindow[0], draftWindow[1])}
         >
           {draftRange && (
             <span className={cn("block", EVENT_CALENDAR_SLOT_DRAFT.label)}>
