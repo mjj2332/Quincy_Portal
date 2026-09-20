@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quincy Portal — ReUI scheduling harness (dev only)</title>
+  </head>
+  <body>
+    <!--
+      Dev-only vendor harness for #219 (Gantt / event-calendar). Reachable ONLY under `vite dev`,
+      at /harness/reui-scheduling/ — this HTML file is not listed in vite.config.ts's
+      build.rollupOptions.input, so `vite build` never emits it or the chunk it roots. See
+      src/harness/harness-reachability.guard.test.ts, which makes both facts a build failure
+      rather than a bug report.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/harness/reui-scheduling/main.tsx"></script>
+  </body>
+</html>

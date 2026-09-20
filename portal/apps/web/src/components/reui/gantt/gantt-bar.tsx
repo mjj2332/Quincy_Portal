@@ -1,0 +1,1159 @@
+/**
+ * ReUI's `@reui/gantt` — a headless-first Gantt (horizontal resource timeline, day-to-year
+ * scales, external CRUD contract, a subscribable store) shipped as 9 files. Fetched via
+ * `npx shadcn@latest add @reui/gantt` into a sandbox (`tmp/ReUI-Test-1`, `--path
+ * src/components/vendor-219`) for #219 (PR A, stage 1 of 3: shared infra + Gantt vendor, no
+ * consumer yet). VERBATIM: `add` already resolves every registry `IconPlaceholder` to a real
+ * lucide icon (see below), so the only edits here are mechanical, identical in kind across all 9
+ * files:
+ *
+ * 1. Dropped the registry's `"use client"` directive (meaningless in this Vite SPA) — present in
+ *    gantt.tsx, gantt-bar.tsx, gantt-nav.tsx; absent from the other six.
+ * 2. `cn` imported from `@/lib/utils` instead of the registry's raw `"cn"` package (see
+ *    `reui/checkbox.tsx`'s header for why that package must never be installed).
+ * 3. Every cross-file import repointed from the sandbox's `--path`
+ *    (`@/components/vendor-219/<name>`) to this file's real home: `@/components/reui/gantt/<name>`
+ *    for the other eight gantt files, `@/components/reui/<name>` for the shared base-nova/ReUI
+ *    primitives this registry item depends on (`button`, `calendar`, `checkbox`, `context-menu`,
+ *    `dropdown-menu`, `popover`, `scroll-area`, `tooltip` — all already vendored in this
+ *    directory, the last six as of #219 stage 1).
+ *
+ * Separately from the three mechanical, per-line edits above: this registry item landed inside a
+ * `gantt/` subdirectory of `components/reui/`, not flat alongside the other 38 pre-existing
+ * vendored files — `docs/reui-reuse.md` now permits a subdirectory for a multi-file registry item
+ * like this one (#219 PR A standards review item 7). The nesting is what lets
+ * `gantt-skin.guard.test.ts` scope itself to exactly this directory (its own explicit nine-file
+ * list, `VENDORED_FILES`, is read relative to this folder) instead of having to scan every file
+ * under `components/reui/` and separate Gantt classes from every other vendored primitive's by
+ * filename pattern alone.
+ *
+ * Vendored verbatim at commit `4bb46296`: diffed against the sandbox's own
+ * `src/components/vendor-219/<name>.tsx` output, every line differed only in one of the three
+ * ways above, nothing else — TRUE of this file's state AT THAT COMMIT. #219 PR A standards
+ * review item 10: it is not true of this file's state now. Everything logged below is a real,
+ * dated Quincy edit made SINCE that commit; `git diff --stat 4bb46296 HEAD -- gantt-bar.tsx`
+ * currently reads +679/−10.
+ *
+ * No production code imports this tree yet — `src/harness/harness-reachability.guard.test.ts`
+ * makes that a build failure rather than a bug report, and the dev-only harness at
+ * `src/harness/reui-scheduling/` is the only thing that renders it, with local fixture data.
+ *
+ * This file: the interactive bar — selection, the resize grips, the recurrence/completion
+ * indicators, and the context menu. Two `IconPlaceholder`s resolved by `add`, matching each
+ * placeholder's own `lucide=` prop (verified against the unprocessed registry JSON): `RepeatIcon`
+ * (recurrence indicator) and `CheckIcon` (completion indicator).
+ *
+ * #219 stage 2 (PR A) edits, both additive:
+ * 1. The single `showResize`-gated grip pair became two independently-gated grips, each checked
+ *    against `gantt-dnd.tsx`'s edge-aware `canResize(segment, edge)` (owner decision on #215 — a
+ *    project bar's shoot/start edge is fixed, only the deadline/end edge drags). Also added a
+ *    `data-testid` on each grip (`gantt-resize-handle-start` / `-end`), additive: nothing
+ *    Quincy-owned composes this deep inside the vendor's own render tree for a DOM test to hook a
+ *    `data-testid` onto from the outside (unlike `<GanttBar>` itself, whose consumer props already
+ *    reach the outer `<button>`), so `test-seam.guard.test.ts` Guard F's own suggested fix — "add a
+ *    data-testid to the Quincy component that composes the vendor primitive" — has no Quincy
+ *    component to add it to at this granularity. A minimal additive `data-testid` here is the
+ *    honest hook; it is not `data-slot`, so Guard F (which governs `[data-slot=…]` selectors
+ *    specifically) does not apply to it either way.
+ * 2. Added keyboard move/resize (upstream has no keyboard path for either pointer gesture):
+ *    `onKeyDown` (composed with any consumer handler via `mergeProps`, never replacing it) reads
+ *    `Alt+ArrowLeft/Right` (move), `Shift+Alt+ArrowLeft/Right` (resize the end edge) and
+ *    `Ctrl+Alt+ArrowLeft/Right` (resize the start edge), RTL-aware the same way the splitter's key
+ *    handler in `gantt-view.tsx` does, and calls `gantt.tsx`'s new `nudgeEvent`. `aria-keyshortcuts`
+ *    advertises only the chords permitted for THAT bar. The outcome announces through the gantt
+ *    root's existing `[data-slot=gantt-announcer]` live region (found by DOM query from the bar,
+ *    the same way `gantt-dnd.tsx`'s `beginGesture` already finds it for a pointer drag) — one
+ *    region, reused, not one per bar.
+ *
+ *    `pendingKeyboardFocusEventId` below is the one non-obvious piece: `gantt-view.tsx` keys each
+ *    bar's wrapping element on `segment.occurrence.key`, which embeds the occurrence's OWN start
+ *    time (`gantt-lib.tsx`'s `buildEventIndex`). A move or a resize-start nudge changes `start`,
+ *    which changes that key, which makes REACT UNMOUNT AND REMOUNT THE BAR — a real DOM node swap
+ *    that drops browser focus with no help from React. (A resize-end nudge does not change `start`,
+ *    so its key is stable and focus survives on its own — this module-level hand-off exists only
+ *    for the other two actions.) Recording the nudged event's id here and refocusing the matching
+ *    bar in a `useEffect` on its NEXT mount is the smallest fix that stays inside this file, in the
+ *    same spirit as `gantt-dnd.tsx`'s own module-level `lastGestureEndedAt` flag.
+ *
+ * #219 PR A fix (Sol review, sol1 item 5): a matched chord is now gated on the SAME
+ * `canMove`/`canResizeStart`/`canResizeEnd` flags `aria-keyshortcuts` is built from, BEFORE
+ * `preventDefault`/`nudgeEvent` — see the `onKeyDown` handler's own comment at that gate for why
+ * `nudgeEvent` alone cannot substitute for it (it has no notion of which edge THIS segment owns).
+ *
+ * #219 PR A fix (Sol review, sol1 item 6), three parts:
+ * 1. The focus hand-off token moved to `instance.internals.claimKeyboardFocus`/
+ *    `consumeKeyboardFocus`/`clearKeyboardFocus` — see the module-level doc comment above (where
+ *    `pendingKeyboardFocusEventId` used to live) and `gantt.tsx`'s own header for the full
+ *    mechanics. `onKeyDown` clears any stale claim before processing a NEW chord; both
+ *    `onPointerDown` handlers (the bar's own move, and each resize grip's) clear it too — a pointer
+ *    interaction abandons whatever a previous keyboard nudge was waiting on.
+ * 2. `ref: consumerRef` is now destructured OUT of the incoming props (see that destructure's own
+ *    comment) and merged with `barRef` via `useRender`'s own `ref` parameter, instead of living in
+ *    `defaultProps.ref` where `mergeProps(defaultProps, props)` would silently drop it the moment a
+ *    consumer's JSX included a `ref` prop key at all (mergeProps does not treat `ref` specially -
+ *    rightmost wins, same as any other plain key).
+ * 3. The mount effect now checks the occurrence KEY too, not just the event id — closing a gap the
+ *    module-level version never had to worry about (it only ever compared ids): the same event id
+ *    rendered by two SEPARATE `<Gantt>` instances is now structurally impossible to confuse anyway
+ *    (fix 1's per-instance store), but a DIFFERENT occurrence of the SAME event under the same
+ *    instance is a real case the key check still guards.
+ *
+ * #219 PR A fix (Sol review, sol1 item 7): the success announcement above reads
+ * `result.start`/`result.end`/`result.allDay` — the range `nudgeEvent` itself just accepted —
+ * instead of a follow-up `instance.api.getEvent(event.id)` call. That re-fetch read STALE data
+ * under a controlled `events` prop: `gantt.tsx`'s `setField` never mutates internal state on the
+ * controlled path, so until the parent's own `onEventsChange`-driven re-render lands (which has
+ * not happened yet — this is still the same synchronous keydown handler that just queued it), a
+ * `getEvent` call sees the OLD range. See `gantt.tsx`'s `applyProposedUpdate` header for the other
+ * half of this fix (it now returns the accepted range itself, not a bare `boolean`).
+ *
+ * #219 stage 3 (PR A) edit, additive: `data-completed` bars (progress === 100) get a reduced-
+ * emphasis fill. Originally an alpha step on the event's OWN per-stage hue - the outer shell's
+ * tint dropped from `/20` (`/30` on hover) to `/10` (`/15` on hover), and the progress-fill
+ * child's own tint dropped from `/40` (border `/65`) to `/20` (border `/35`) via
+ * `group-data-completed/gantt-bar-group:`. #219 PR A fix (dr-219a MEDIUM #5): that per-hue alpha
+ * step could not guarantee "done reads quieter than active" across arbitrary stage hues (a low
+ * alpha of a naturally dark/saturated hue can still out-contrast a higher alpha of a naturally
+ * light one) - now a fixed hue-independent `bg-border`/`border-border` treatment instead, same
+ * `/15`-`/20` shell and `/20` progress-fill shape but off the app's own neutral token, not
+ * `--gantt-event-color` - see the shell's own class comment (below) for the verified numbers.
+ * The label stays `text-foreground` either way, left alone on purpose: lowering a translucent
+ * fill's own alpha (or, now, using a fixed low-alpha neutral) can only move the composited
+ * background CLOSER to the light canvas underneath, which can only RAISE contrast against a fixed
+ * dark label — so this dimming is safe by construction, whereas swapping the label itself to
+ * `text-foreground-secondary` was checked and rejected (worst case, a dark stage colour like
+ * oxblood at the OLD pre-dim /20+/40 compounded fill measured ~3.2:1 for that lighter role, under
+ * the 4.5:1 floor — `text-foreground` measured ~7.2:1 in the same worst case, and the NEW
+ * hue-independent fill is strictly lighter than that old worst case, so this bound still holds).
+ * `data-past` is untouched: an overdue unfinished task must not read as de-emphasised.
+ *
+ * #219 PR A (Adjust mode) edit — replaces the whole Alt+Arrow / Shift+Alt+Arrow / Ctrl+Alt+Arrow
+ * chord scheme above with a modal keyboard session (Opus and Sol both rejected the chords:
+ * Ctrl+Alt+Arrow is OS-intercepted on some desktops, Alt+Arrow is browser Back/Forward):
+ * - `matchGanttBarKeyChord` is GONE; `onKeyDown` now calls `gantt-lib.tsx`'s new
+ *   `matchGanttBarKey(e, adjusting, rtl)` instead - one pure matcher for the WHOLE scheme (idle
+ *   Space enters; while adjusting, Arrow/Shift+Arrow steps, M/S/E retargets, Enter/Space commits,
+ *   Escape cancels). `adjusting` is read from `state.adjust` via `useGanttSelector`, keyed on
+ *   `occurrence.key` the same way `isDragging`/`dragKind` already are.
+ * - Space's "enter" match still gates on the SAME `canMove`/`canResizeStart`/`canResizeEnd` flags
+ *   `aria-keyshortcuts` is built from (now just `"Space"`, not a per-chord list), plus
+ *   `occurrence.isRecurring` - exactly the sol1 item 5/item 2 gating the old chords had, applied to
+ *   the ONE new entry point instead of three. An INELIGIBLE Space is left un-prevented, so the
+ *   button's native activate (open event) still fires - "Space keeps its current activate
+ *   behaviour" per the spec.
+ * - `step`/`retarget`/`commit`/`cancel` (while already adjusting) call the five `GanttInternals`
+ *   Adjust methods (`gantt.tsx`) directly; a refused step reuses the EXISTING
+ *   `changeBlockedLocked`/`Invalid`/`Rejected` announcements unchanged (same `proposeNudge` gate
+ *   `nudgeEvent` uses; renamed from `keyboardNudge*` in the #219 PR A dr-219a HIGH #1 fix once
+ *   `gantt-dnd.tsx`'s pointer release started announcing through the same labels), and a refused
+ *   retarget announces the new `adjustTargetLocked` instead (a different failure shape: the target
+ *   itself is unavailable, not a step within it).
+ * - `role="application"`, `data-adjusting`, and `aria-describedby` (a visually-hidden `sr-only`
+ *   span holding `i18n.labels.adjustInstructions`) are set only while THIS bar is the one
+ *   adjusting. The bar itself never renders the moving/resizing PREVIEW - `stepAdjust` drives
+ *   `state.drag` the same shape a pointer gesture's own `applyProposal` does, so `gantt-view.tsx`'s
+ *   existing ghost (and this bar's own `data-drag-kind` fade, via the SAME `isDragging`/`dragKind`
+ *   selectors a real drag already uses) renders it with no new preview surface. Quincy fix (#219 PR
+ *   A, Sol re-review round 2, MEDIUM #7): the bar itself carries no Adjust-specific outline any
+ *   more - it visually lost to the ordinary `focus-visible` ring even when visible. `gantt-view.tsx`'s
+ *   ghost, which is never hidden, carries `data-adjust-ghost` while it is keyboard-owned instead -
+ *   see that file's own comment beside it. #219 PR A fix (dr-219a HIGH #4, part 1): a move gesture
+ *   used to hide the bar entirely (opacity-0) regardless of source, showing nothing while it still
+ *   held keyboard focus - now split by `data-drag-source`: a POINTER move still hides it (the
+ *   cursor clone stands in), a KEYBOARD move keeps it visible at reduced opacity instead, the same
+ *   treatment a resize already got either way, since a keyboard move has no clone and focus never
+ *   leaves this exact bar.
+ * - A commit that changes `start` (move, or a start-edge resize) claims the focus hand-off the same
+ *   way a successful move/resize-start nudge always did, comparing the committed `start` against
+ *   `occurrence.start` directly (NOT "was the last target resize-end" - Adjust mode's target can
+ *   change mid-session via M/S/E, so only the ACTUAL net start delta says whether a remount, and
+ *   therefore a refocus, is coming).
+ * - Blur, or a `pointerdown` anywhere outside this bar (captured at `document` while adjusting),
+ *   CANCELS - both re-read `instance.getState().adjust` live (not a closed-over boolean) rather
+ *   than trust a stale render's `adjusting` prop, because a COMMIT that remounts this bar can fire
+ *   a browser blur on the outgoing node with this component's LAST-rendered handler closure (still
+ *   `adjusting: true`) - a stale-closure cancel here would silently overwrite the commit's own
+ *   announcement with "cancelled" moments after a real write succeeded. `cancelAdjust` no-ops
+ *   harmlessly on an already-empty session either way, but the announcement race is the real risk
+ *   this guards.
+ *
+ * #219 PR A round 3 (Sol HIGH #5) — the OWNER-DEATH announcement (a session dying with no local
+ * cancel/commit handler in the loop: a deleted/replaced event, a date/scale/anchor-slide change)
+ * moved OUT of this file entirely, to `gantt.tsx`'s `<Gantt>` root. It used to be a per-bar effect
+ * here, gated on a `localTeardownRef` set right before every local cancel/commit call — which
+ * structurally could never cover a DELETED event, since deletion unmounts the exact bar the effect
+ * lived on before the effect could ever observe the transition. `gantt.tsx`'s `cancelAdjust`/
+ * `killAdjustSessionIfOrphaned` now bump a `getAdjustCancelledVersion` counter the root subscribes
+ * to instead, so the three LOCAL cancel triggers in this file (blur, document-level
+ * pointerdown-elsewhere, Escape) no longer call `announce()` for "Adjustment cancelled." themselves
+ * — the root does it for them uniformly, along with the external and deletion cases it could not
+ * reach before. `gantt-dnd.tsx`'s `beginGesture` (a pointer gesture starting mid-session cancelling
+ * it first) already relied on this same generic mechanism and needed no change. Commit's own
+ * distinct message is unaffected either way — `commitAdjust` clears the session through neither of
+ * the two counter-bumping methods (see that method's own doc comment in `gantt.tsx`).
+ *
+ * #219 PR A fix (dr-219a LOW #7, part 1): the resize grips render inside the label's own padding
+ * box, so a hovered/focused bar's visible grip overlaps the first/last character of its title
+ * (`|Unlocke…|`). The bar now reserves the grip's own width from the label side it occupies —
+ * `ps-3`/`pe-3` (12px) instead of the base `px-1.5` (6px), gated on `canResizeStart`/
+ * `canResizeEnd` (the same flags that gate the grips themselves — a bar with no live grip on a
+ * side keeps the tighter `px-1.5` there) — see the label wrapper's own class comment.
+ *
+ * #219 PR A fix (dr-219a r6 HIGH #1): a completed bar that was ALSO selected re-painted in its
+ * own stage hue - `data-completed:bg-border/15` and `data-selected:bg-(--gantt-event-color)/30`
+ * were both single-attribute-selector rules (equal CSS specificity), so which one painted
+ * depended on Tailwind's own emission order, not on the bar's state, and `data-selected` happened
+ * to win - undoing the MEDIUM #5 fix above through an ordinary click. Fixed with a
+ * `data-completed:data-selected:bg-border/15` rule: a two-attribute selector, strictly higher
+ * specificity than either single-attribute rule, so the neutral background wins independent of
+ * source order — reordering the two single-attribute classes can no longer flip the outcome.
+ * (Round-7 note: the ring this paragraph originally described replacing the background with is
+ * GONE — see the round-7 paragraph below for what selection on a completed bar shows today.)
+ *
+ * #219 PR A fix (dr2-219a MEDIUM #3, second design re-review pass): a completed-but-unselected bar
+ * had no boundary at all — the MEDIUM #5 fill above measured 1.18:1 against the canvas, and the
+ * shell carried no border. Fixed additively: `data-completed:border data-completed:border-border`,
+ * the same token hairline treatment nine other bare-border sites in `gantt-view.tsx` already got
+ * (that file's own header, dr-219a HIGH #3). The fill's own alpha is untouched — MEDIUM #5's own
+ * calculation already proves it quieter than the active palette; raising it would undo that work.
+ *
+ * #219 PR A fix (dr2-219a MEDIUM #4, second design re-review pass, SUPERSEDED by round-7 below): a
+ * `ring-ring/50 ring-2` used to carry the completed+selected cue, gated `not-focus-visible:`
+ * because a ring sits 0-2px outside the border box, the same footprint the global
+ * `:focus-visible` outline (2-4px out, 2px offset) occupies — both painted at once on a
+ * completed+selected+focused bar otherwise. Suppressing the ring while focused fixed the double
+ * indicator, but see round-7 below for what that traded away.
+ *
+ * #219 PR A fix (Sol round-7 MEDIUM #2a): the MEDIUM #4 `not-focus-visible:` gate above left
+ * completed+selected+focused with NO selection cue at all — it then painted identically to
+ * completed+unselected+focused, both showing only the global outline. Replaced the ring entirely
+ * with a colour swap on this bar's OWN existing completed-state hairline (dr2-219a MEDIUM #3
+ * above): `border-border` (`--border`, greige) becomes `border-border-strong` (`--border-strong`,
+ * `--ink-900`) when the bar is ALSO selected. A 1px, INSET, flush-to-the-edge line is
+ * geometrically the opposite of the outline's 2px, OUTSET, 2px-offset ring, so the two can never
+ * be mistaken for one indicator doubling up, and — unlike the ring — this hairline needs no
+ * `not-focus-visible:` gate: it is visible unfocused, focused, and everywhere between. Neutral
+ * ink, not `--gantt-event-color` — the stage hue stays out of this exactly as dr-219a r6 HIGH #1
+ * and dr-219a MEDIUM #5 above already established for this bar's other completed-state
+ * treatments. Same two-attribute-selector pattern as the background rule above
+ * (`data-completed:data-selected:`), so it wins over the single-attribute
+ * `data-completed:border-border` rule by CSS specificity, independent of Tailwind's emission
+ * order — r6 HIGH #1's own reasoning, repeated here for the border colour instead of the
+ * background. Non-visually, `aria-pressed` on the bar's own element carries the same state to a
+ * screen reader, focused or not (see `defaultProps.aria-pressed` below) — `aria-selected`, not
+ * `aria-pressed`, is what this file's own header calls "or equivalent" in some ARIA vocabularies,
+ * but `aria-selected` is only a supported state on `option`/`row`/`tab`/`gridcell`/`treeitem`-
+ * shaped roles per the ARIA spec, not on `button` (this bar's own implicit role — see
+ * `defaultProps.type`/`role` below) — `aria-pressed` is the state ARIA actually defines for a
+ * toggleable button, and matches every other plain `type="button"` toggle in this app
+ * (`RichTextEditor.tsx`, `ProjectDeadlineControl.tsx`, `Lightbox.tsx`, …), none of which use
+ * `aria-selected` for the same reason.
+ */
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react"
+import {
+  useGantt,
+  useGanttSelector,
+  useGanttViewConfig,
+} from "@/components/reui/gantt/gantt"
+import {
+  useGanttGestures,
+  wasRecentDrag,
+} from "@/components/reui/gantt/gantt-dnd"
+import {
+  flattenResources,
+  getBaselineVariance,
+  matchGanttBarKey,
+  resolveEventBaseline,
+  toZoned,
+} from "@/components/reui/gantt/gantt-lib"
+import type {
+  GanttNudgeAction,
+  GanttOccurrence,
+  GanttSegment,
+} from "@/components/reui/gantt/gantt-types"
+import { mergeProps } from "@base-ui/react/merge-props"
+import { useRender } from "@base-ui/react/use-render"
+
+import { cn } from "@/lib/utils"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@/components/reui/context-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/reui/tooltip"
+import { RepeatIcon, CheckIcon } from "lucide-react"
+
+/**
+ * `aria-keyshortcuts` value while idle: `"Space"` when eligible for Adjust mode, `undefined`
+ * otherwise. `isRecurring` always wins to `undefined` - Quincy fix (#219 PR A, Sol review, sol1
+ * item 2): the store's Adjust methods have no occurrence-aware exception semantics yet (see
+ * `gantt.tsx`'s doc comment on `nudgeEvent`, which `proposeNudge` - shared by Adjust mode's
+ * `stepAdjust` - inherits), so a recurring occurrence's bar must neither advertise nor act on a
+ * keyboard adjustment - it would silently rewrite the SERIES MASTER, not just this occurrence.
+ * #219 PR A (Adjust mode): replaces the old per-chord list (`Alt+ArrowLeft Control+Alt+...` etc.)
+ * with the single new entry point - one Space chord covers all three targets now.
+ */
+function buildGanttBarKeyShortcuts(
+  canAdjust: boolean,
+  isRecurring: boolean
+): string | undefined {
+  return canAdjust && !isRecurring ? "Space" : undefined
+}
+
+/**
+ * Quincy fix (#219 PR A, Sol review, sol1 item 6): the keyboard focus hand-off's pending token USED
+ * TO live in a module-level `pendingKeyboardFocusEventId` here - a single slot shared by EVERY
+ * `<Gantt>` instance in the process, so two instances rendering the same event id could steal focus
+ * from each other, and it held only the event id (not the exact target key), so an unrelated later
+ * mount for that id could consume a claim that was never meant for it. It now lives on the owning
+ * `<Gantt>` instance's own store (`gantt.tsx`'s `GanttInternals.claimKeyboardFocus`/
+ * `consumeKeyboardFocus`/`clearKeyboardFocus` - see that file's header for the storage/staleness
+ * mechanics), keyed on event id AND occurrence key together.
+ */
+
+/**
+ * Effective Tailwind palette presets for bar colors, vendor default — UNUSED and UNRENDERED in
+ * this app (`gantt-skin.guard.test.ts` asserts it has no non-test consumer). #219 PR A fix (item
+ * 5b): the vendor's original claim here, "every entry works on light and dark surfaces," does not
+ * hold in this app — the Portal has no Tailwind dark mode (`gantt-skin.guard.test.ts` Detector 1
+ * asserts that directly); inversion is `styles/tokens/inverse.css`'s `[data-surface="inverse"]`
+ * scope, a different mechanism these ten hardcoded `var(--color-<hue>-500)` values do not
+ * participate in either way.
+ */
+const GANTT_COLORS: Array<{ name: string; value: string }> = [
+  { name: "Blue", value: "var(--color-blue-500)" },
+  { name: "Emerald", value: "var(--color-emerald-500)" },
+  { name: "Violet", value: "var(--color-violet-500)" },
+  { name: "Rose", value: "var(--color-rose-500)" },
+  { name: "Amber", value: "var(--color-amber-500)" },
+  { name: "Cyan", value: "var(--color-cyan-500)" },
+  { name: "Orange", value: "var(--color-orange-500)" },
+  { name: "Pink", value: "var(--color-pink-500)" },
+  { name: "Teal", value: "var(--color-teal-500)" },
+  { name: "Indigo", value: "var(--color-indigo-500)" },
+]
+
+interface GanttBarContextValue<TData = unknown> {
+  occurrence: GanttOccurrence<TData>
+  segment: GanttSegment<TData>
+  isDragging: boolean
+  isSelected: boolean
+}
+
+const GanttBarContext =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  createContext<GanttBarContextValue<any> | null>(null)
+
+/** The bar's subject; usable inside renderEvent content and bar children. */
+function useGanttBarContext<TData = unknown>(): GanttBarContextValue<TData> {
+  const ctx = useContext(GanttBarContext)
+  if (!ctx) {
+    throw new Error("useGanttBarContext must be used within <GanttBar>")
+  }
+  return ctx as GanttBarContextValue<TData>
+}
+
+interface GanttBarProps<TData = unknown> extends Omit<
+  useRender.ComponentProps<"button">,
+  "children"
+> {
+  segment: GanttSegment<TData>
+  /** Replaces the default bar CONTENT; the wrapper stays gantt-owned. */
+  children?: ReactNode
+  /**
+   * The title renders beside the bar (view-owned), so the default inner
+   * content is suppressed. Explicit children and renderEvent still win.
+   */
+  labelOutside?: boolean
+  /**
+   * The owning row's title for the aria-label. Pass it when the row is in
+   * scope (the internal view does); omitting falls back to a tree lookup.
+   */
+  rowTitle?: string
+}
+
+/**
+ * The one interactive bar element. The wrapper owns positioning hooks, a11y,
+ * selection, drag/resize listeners, and data attributes; content comes from
+ * children, the root renderEvent override, or the built-in default.
+ */
+function GanttBar<TData = unknown>({
+  segment,
+  className,
+  render,
+  children,
+  labelOutside,
+  rowTitle: rowTitleProp,
+  // Quincy fix (#219 PR A, Sol review, sol1 item 6): pulled out explicitly rather than left inside
+  // `...props` - `@base-ui/react/merge-props`'s `mergeProps` does NOT merge `ref` (rightmost prop
+  // wins like any other plain key), so `mergeProps(defaultProps, props)` below would silently
+  // overwrite this component's own `barRef` with a consumer-supplied one (or with `undefined`, if
+  // the consumer's JSX includes a `ref` prop key at all, even unset). Merged explicitly via
+  // `useRender`'s own `ref` parameter instead, which DOES merge (see the `useRender(...)` call).
+  ref: consumerRef,
+  ...props
+}: GanttBarProps<TData>) {
+  const instance = useGantt<TData>()
+  const viewConfig = useGanttViewConfig<TData>()
+  const gestures = useGanttGestures<TData>()
+  const { settings } = instance
+  const occurrence = segment.occurrence
+  const event = occurrence.event
+
+  // Reclaims focus after a move / resize-start nudge remounts this bar under a new occurrence key
+  // - see this file's header for why. A resize-end nudge never claims a token (its key is stable,
+  // so this effect has nothing to do); any OTHER bar's mount (wrong event id, or the right id under
+  // a different key) leaves a real pending claim untouched - `consumeKeyboardFocus` only clears on
+  // an exact match.
+  const barRef = useRef<HTMLButtonElement>(null)
+  // Quincy fix (#219 PR A, Sol re-review round 2, MEDIUM #6): `useLayoutEffect`, not `useEffect` -
+  // the reclaim must land, and the token must be consumed (nulled), synchronously in the SAME
+  // commit that mounts this bar under its new key, before the browser paints and before any LATER
+  // notify() could observe an unconsumed token past its one intended render - see
+  // `gantt.tsx`'s `notify()` doc comment on the token's lifetime.
+  useLayoutEffect(() => {
+    if (instance.internals.consumeKeyboardFocus(event.id, occurrence.key)) {
+      barRef.current?.focus({ preventScroll: true })
+    }
+  }, [instance, event.id, occurrence.key])
+
+  const isSelected = useGanttSelector<TData, boolean>(
+    (state) => state.selection.eventKeys.includes(occurrence.key),
+    { calendar: instance }
+  )
+  const isDragging = useGanttSelector<TData, boolean>(
+    (state) => state.drag?.occurrence.key === occurrence.key,
+    { calendar: instance }
+  )
+  // Which gesture owns this bar: a move hides the original (the smooth clone
+  // stands in for it); a resize keeps it as a faint placeholder behind the
+  // dashed preview so you can see the original extent.
+  const dragKind = useGanttSelector<TData, string | null>(
+    (state) =>
+      state.drag?.occurrence.key === occurrence.key ? state.drag.kind : null,
+    { calendar: instance }
+  )
+  // #219 PR A fix (dr-219a HIGH #4): which INPUT owns the current drag on this bar - a pointer
+  // move still hides the original entirely (the smooth cursor clone represents it, so the origin
+  // bar would be a redundant second copy); a KEYBOARD move now keeps the original visible at
+  // reduced opacity instead, the same treatment a resize already gets either way, because there is
+  // no cursor clone for a keyboard gesture and DOM focus stays on this exact bar - hiding it left
+  // Adjust mode with nothing focused-and-visible on screen (dr-219a HIGH #4, part 1). See the
+  // `data-[drag-kind=move]:data-[drag-source=…]` pair below.
+  const dragSource = useGanttSelector<TData, "pointer" | "keyboard" | null>(
+    (state) =>
+      state.drag?.occurrence.key === occurrence.key ? state.drag.source : null,
+    { calendar: instance }
+  )
+  // #219 PR A (Adjust mode) - this bar's own Adjust session, keyed on occurrence.key the same way
+  // isDragging/dragKind are above (a session's `occurrence` never changes mid-session - see
+  // gantt-types.tsx's GanttAdjustState doc comment - so this stays TRUE across every step/retarget
+  // until commit/cancel, without racing the occurrence.key checks those selectors already do).
+  const adjustTarget = useGanttSelector<TData, GanttNudgeAction | null>(
+    (state) =>
+      state.adjust?.occurrence.key === occurrence.key ? state.adjust.target : null,
+    { calendar: instance }
+  )
+  const adjusting = adjustTarget !== null
+
+  // Finds the ONE shared live region the same way gantt-dnd.tsx's beginGesture already does for a
+  // pointer drag - reused, not one per bar.
+  const announce = (text: string) => {
+    const ganttRoot = barRef.current?.closest<HTMLElement>("[data-slot=gantt]")
+    const announcer = ganttRoot?.querySelector<HTMLElement>(
+      "[data-slot=gantt-announcer]"
+    )
+    if (announcer) announcer.textContent = text
+  }
+  const formatRange = (start: Date, end: Date, allDay: boolean) =>
+    settings.i18n.functions.formatEventTime(
+      toZoned(start, settings.timeZone),
+      toZoned(end, settings.timeZone),
+      allDay,
+      settings.locale
+    )
+  const adjustTargetLabel = (target: GanttNudgeAction): string => {
+    const labels = settings.i18n.labels.adjustTargetLabels
+    if (target === "move") return labels.move
+    if (target === "resize-start") return labels.resizeStart
+    return labels.resizeEnd
+  }
+
+  // Pointer-down ANYWHERE outside this bar cancels the session (the spec's "Blur / pointer-down
+  // elsewhere = CANCEL" - blur is handled by the button's own onBlur below; this covers a pointer
+  // interaction that never focuses anything, e.g. a drag started on a different bar entirely).
+  // Captured at `document` (not this bar) because "elsewhere" is everywhere else in the page; the
+  // capture phase means it still fires even if some inner handler stops propagation. Re-reads
+  // `instance.getState().adjust` live rather than trusting `adjusting` from this closure - see the
+  // effect's own dependency comment and this file's header for the stale-closure race this avoids.
+  //
+  // Quincy fix (#219 PR A round 3, Sol HIGH #5): no longer calls `announce()` itself -
+  // `instance.internals.cancelAdjust()` now bumps `getAdjustCancelledVersion`, which `gantt.tsx`'s
+  // `<Gantt>` root subscribes to and announces "Adjustment cancelled." from, exactly once, for
+  // every caller of `cancelAdjust` uniformly (see that method's own doc comment).
+  useEffect(() => {
+    if (!adjusting) return
+    const onDocumentPointerDown = (ev: PointerEvent) => {
+      const live = instance.getState().adjust
+      if (live?.occurrence.key !== occurrence.key) return
+      if (ev.target instanceof Node && barRef.current?.contains(ev.target)) {
+        return
+      }
+      instance.internals.cancelAdjust()
+    }
+    document.addEventListener("pointerdown", onDocumentPointerDown, true)
+    return () =>
+      document.removeEventListener("pointerdown", onDocumentPointerDown, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `instance` closes over this render's
+    // values, which is what we want the NEXT pointerdown to see too; re-running the effect on every
+    // render would thrash the listener for no behavioral gain.
+  }, [adjusting, instance, occurrence.key])
+
+  // #219 PR A fix (Sol re-review round 2, HIGH #3; removed round 3, Sol HIGH #5): a per-bar
+  // owner-death effect used to live here, gated on a `localTeardownRef` set right before every
+  // LOCAL cancel/commit call in this file. It is GONE - `gantt.tsx`'s `<Gantt>` root now owns
+  // this announcement for every external teardown, local and remote bar alike, because a per-bar
+  // effect structurally could not cover a DELETED event: deletion unmounts the exact bar the
+  // effect lived on before it could ever observe the `adjusting` true -> false transition. See
+  // `gantt.tsx`'s own `getExternalTeardownVersion`/`<Gantt>`'s announcer effect for the mechanism
+  // that replaced it, and this file's header for the fuller history.
+
+  // Hover-only range tooltip. Focus opens are ignored (the known button+
+  // tooltip flash: clicking a bar opens a dialog, focus returns, and a
+  // focus-triggered tooltip would pop). Hidden while dragging/resizing.
+  const [tipOpen, setTipOpen] = useState(false)
+  // Gated on tipOpen: with the tooltip closed the selector returns a stable
+  // false, so gesture start/end doesn't re-render every mounted bar.
+  const anyInteracting = useGanttSelector<TData, boolean>(
+    (state) => tipOpen && (state.drag !== null || state.slotDraft !== null),
+    { calendar: instance }
+  )
+
+  const progress =
+    typeof event.progress === "number"
+      ? Math.min(Math.max(Math.round(event.progress), 0), 100)
+      : null
+
+  // A zero-duration occurrence is a MILESTONE: the button stays the
+  // interactive shell (click, select, menu, move), the diamond replaces the
+  // tinted bar body, and the view keeps the title outside.
+  const milestone = occurrence.end.getTime() === occurrence.start.getTime()
+
+  // The bar only LABELS its baseline (attributes, tooltip, aria); the ghost
+  // itself is view-owned chrome, because its range differs from this bar's.
+  const baseline = viewConfig.baselineBars ? resolveEventBaseline(event) : null
+  const baselineVariance = baseline ? getBaselineVariance(event) : null
+
+  const defaultContent = (
+    <>
+      {occurrence.isRecurring && (
+        <RepeatIcon className="size-2.5 shrink-0 opacity-70" aria-hidden="true" />
+      )}
+      <span className="truncate font-medium">{event.title}</span>
+      {!occurrence.allDay && segment.isStart && (
+        <span className="text-muted-foreground hidden truncate @[8rem]:inline">
+          {settings.i18n.functions.formatEventTime(
+            toZoned(occurrence.start, settings.timeZone),
+            toZoned(occurrence.end, settings.timeZone),
+            occurrence.allDay,
+            settings.locale
+          )}
+        </span>
+      )}
+    </>
+  )
+
+  const renderProps = { occurrence, segment, isDragging, isSelected }
+  const content =
+    children ??
+    viewConfig.renderEvent?.(renderProps) ??
+    (labelOutside || milestone ? null : defaultContent)
+  // Consumer-owned content owns the WHOLE inner visualization: the built-in
+  // progress fill and done mark yield so custom bars start from a blank
+  // canvas (progress stays readable via data-progress/data-completed).
+  const consumerOwnsContent = children !== undefined || !!viewConfig.renderEvent
+
+  const timeLabel = settings.i18n.functions.formatEventTime(
+    toZoned(occurrence.start, settings.timeZone),
+    toZoned(occurrence.end, settings.timeZone),
+    occurrence.allDay,
+    settings.locale
+  )
+  // Memoized: a second full formatEventTime per render would double the
+  // bar's formatting cost, and it cannot wait for the tooltip because the
+  // label also feeds aria-label. Keyed on the instants, not the baseline
+  // object - resolveEventBaseline allocates a fresh one every render.
+  const baselineStartMs = baseline?.start.getTime()
+  const baselineEndMs = baseline?.end.getTime()
+  const plannedLabel = useMemo(
+    () =>
+      baselineStartMs === undefined || baselineEndMs === undefined
+        ? undefined
+        : settings.i18n.labels.planned(
+            settings.i18n.functions.formatEventTime(
+              toZoned(new Date(baselineStartMs), settings.timeZone),
+              toZoned(new Date(baselineEndMs), settings.timeZone),
+              occurrence.allDay,
+              settings.locale
+            )
+          ),
+    [
+      baselineStartMs,
+      baselineEndMs,
+      occurrence.allDay,
+      settings.i18n,
+      settings.timeZone,
+      settings.locale,
+    ]
+  )
+  // name the row too: the split-pane layout carries no grid semantics.
+  // The prop path is O(1); the lookup fallback is memoized so external
+  // GanttBar usage never flattens the tree per render.
+  const fallbackRowTitle = useMemo(
+    () =>
+      rowTitleProp === undefined && event.resourceId
+        ? flattenResources(settings.resources).find(
+            ({ resource }) => resource.id === event.resourceId
+          )?.resource.title
+        : undefined,
+    [rowTitleProp, event.resourceId, settings.resources]
+  )
+  const rowTitle = rowTitleProp ?? fallbackRowTitle
+
+  // Each grip is gated on ITS OWN edge, not "does this bar resize at all":
+  // a start-locked bar (owner decision on #215 — a project bar's shoot/start
+  // edge is fixed) draws no start grip while its end grip still works. The
+  // same three flags gate Adjust mode's entry point (Space) and aria-keyshortcuts.
+  const canMove = gestures.canDrag(segment)
+  const canResizeStart = segment.isStart && gestures.canResize(segment, "start")
+  const canResizeEnd = segment.isEnd && gestures.canResize(segment, "end")
+  const canAdjust = canMove || canResizeStart || canResizeEnd
+  const keyShortcuts = buildGanttBarKeyShortcuts(canAdjust, occurrence.isRecurring)
+  const instructionsId = useId()
+  const resizeHandles = (canResizeStart || canResizeEnd) && (
+    <>
+      {canResizeStart && (
+        <span
+          data-slot="gantt-resize-handle"
+          data-edge="start"
+          data-testid="gantt-resize-handle-start"
+          // grip hugs the start edge (justify-start + tight inset) so the
+          // indicator reads as "resize this end", not a centered pill.
+          // pointer-coarse keeps it visible on touch, where hover never fires
+          className="absolute inset-y-0 start-0.5 flex w-2 cursor-ew-resize items-center justify-start opacity-0 group-hover/gantt-bar-group:opacity-100 pointer-coarse:opacity-100"
+          onPointerDown={(e) => {
+            // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
+            // explicit clear triggers for a stale keyboard-focus claim.
+            instance.internals.clearKeyboardFocus()
+            // #219 PR A fix (Sol re-review round 2, HIGH #4): the "cancel Adjust first" check that
+            // used to live here (a pointer gesture on THIS bar mid-session would otherwise race
+            // stepAdjust for state.drag) moved into `gantt-dnd.tsx`'s `beginGesture` - the single
+            // entry point EVERY pointer gesture goes through, not one copy per call site.
+            // `gantt.tsx`'s `<Gantt>` root (round 3, Sol HIGH #5) still announces the cancellation -
+            // see that root's own doc comment.
+            gestures.beginResize(e, segment, "start")
+          }}
+        >
+          <span
+            aria-hidden
+            className="bg-foreground/40 h-2.5 w-0.5 rounded-full"
+          />
+        </span>
+      )}
+      {canResizeEnd && (
+        <span
+          data-slot="gantt-resize-handle"
+          data-edge="end"
+          data-testid="gantt-resize-handle-end"
+          // grip hugs the end edge (justify-end + tight inset) so the
+          // indicator reads as "resize this end", not a centered pill.
+          // pointer-coarse keeps it visible on touch, where hover never fires
+          className="absolute inset-y-0 end-0.5 flex w-2 cursor-ew-resize items-center justify-end opacity-0 group-hover/gantt-bar-group:opacity-100 pointer-coarse:opacity-100"
+          onPointerDown={(e) => {
+            instance.internals.clearKeyboardFocus()
+            // #219 PR A fix (Sol re-review round 2, HIGH #4): see the start grip's own comment -
+            // the "cancel Adjust first" check moved to `gantt-dnd.tsx`'s `beginGesture`.
+            gestures.beginResize(e, segment, "end")
+          }}
+        >
+          <span
+            aria-hidden
+            className="bg-foreground/40 h-2.5 w-0.5 rounded-full"
+          />
+        </span>
+      )}
+    </>
+  )
+
+  const defaultProps = {
+    type: "button" as const,
+    // ref is intentionally absent here - see the `ref: consumerRef` destructure above. It is
+    // merged with `barRef` via `useRender`'s own `ref` parameter below instead.
+    "data-slot": "gantt-bar",
+    "data-milestone": milestone || undefined,
+    "data-all-day": occurrence.allDay || undefined,
+    "data-recurring": occurrence.isRecurring || undefined,
+    "data-selected": isSelected || undefined,
+    // #219 PR A fix (Sol round-7 MEDIUM #2b): no ARIA exposed selection at all before this - a
+    // screen-reader user had no way to tell a selected bar from an unselected one, focused or
+    // not. `aria-selected` is not valid here: it is only a supported state on `option`/`row`/
+    // `tab`/`gridcell`/`treeitem`-shaped roles per the ARIA spec, and this bar's own role is
+    // `button` (implicit from `type: "button"` below, or explicit `"application"` while
+    // adjusting - neither supports `aria-selected` either). `aria-pressed` is the state ARIA
+    // defines for a toggleable button, and matches every other plain `type="button"` toggle in
+    // this app (`RichTextEditor.tsx`, `ProjectDeadlineControl.tsx`, `Lightbox.tsx`, …).
+    "aria-pressed": isSelected,
+    "data-dragging": isDragging || undefined,
+    "data-drag-kind": dragKind ?? undefined,
+    // #219 PR A fix (dr-219a HIGH #4): drives the `data-[drag-kind=move]:data-[drag-source=…]`
+    // pair below - see `dragSource`'s own doc comment above.
+    "data-drag-source": dragSource ?? undefined,
+    "data-past": occurrence.end.getTime() < Date.now() || undefined,
+    "data-label-outside": labelOutside || undefined,
+    "data-progress": progress ?? undefined,
+    "data-completed": progress === 100 || undefined,
+    "data-baseline": !!baseline || undefined,
+    "data-baseline-variance": baselineVariance ?? undefined,
+    // #219 PR A (Adjust mode) - see this file's header. `role="application"` re-scopes ALL keyboard
+    // interaction on this element while it holds an active session (arrow keys mean "step", not
+    // "scroll the page"); `aria-describedby` points at the visually-hidden instructions span below.
+    role: adjusting ? "application" : undefined,
+    "data-adjusting": adjusting || undefined,
+    "aria-describedby": adjusting ? instructionsId : undefined,
+    "aria-keyshortcuts": keyShortcuts,
+    "aria-label": settings.i18n.functions.formatEventAriaLabel({
+      title: event.title,
+      timeLabel,
+      milestoneLabel: milestone ? settings.i18n.labels.milestone : undefined,
+      rowTitle,
+      progressLabel:
+        progress !== null ? settings.i18n.labels.progress(progress) : undefined,
+      plannedLabel,
+      continues: segment.continuesBefore || segment.continuesAfter,
+    }),
+    style: {
+      "--gantt-event-color": event.color ?? "var(--color-primary)",
+    } as CSSProperties,
+    onPointerDown: (e: React.PointerEvent) => {
+      e.stopPropagation()
+      // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
+      // explicit clear triggers for a stale keyboard-focus claim.
+      instance.internals.clearKeyboardFocus()
+      // #219 PR A fix (Sol re-review round 2, HIGH #4): see the resize grips' own comment above -
+      // the "cancel Adjust first" check moved to `gantt-dnd.tsx`'s `beginGesture`.
+      gestures.beginMove(e, segment)
+    },
+    onClick: (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (wasRecentDrag()) return
+      instance.api.selectEvent(occurrence.key)
+      settings.onEventClick?.(occurrence, e)
+    },
+    onDoubleClick: (e: React.MouseEvent) => {
+      e.stopPropagation()
+      settings.onEventDoubleClick?.(occurrence, e)
+    },
+    // #219 PR A (Adjust mode) - Blur is one of the two CANCEL triggers (the other is a pointer-down
+    // elsewhere, in the effect above). Re-reads live state rather than the `adjusting` closure - see
+    // this file's header for the stale-closure race a commit's own remount can otherwise cause.
+    // Quincy fix (#219 PR A round 3, Sol HIGH #5): no longer calls `announce()` itself - see the
+    // pointerdown-elsewhere effect's own comment above for why.
+    onBlur: () => {
+      const live = instance.getState().adjust
+      if (live?.occurrence.key !== occurrence.key) return
+      instance.internals.cancelAdjust()
+    },
+    onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
+      const rtl = getComputedStyle(e.currentTarget).direction === "rtl"
+      const match = matchGanttBarKey(e, adjusting, rtl)
+      if (!match) return
+
+      if (match.type === "enter") {
+        // Quincy fix (#219 PR A, Sol review, sol1 item 2/5, carried over): gate on the SAME
+        // canMove/canResizeStart/canResizeEnd/isRecurring flags aria-keyshortcuts is built from,
+        // BEFORE preventDefault - an ineligible Space is left un-prevented, so the button's native
+        // activate (open event) still fires, exactly as the spec requires ("Space keeps its current
+        // activate behaviour").
+        if (!canAdjust || occurrence.isRecurring) return
+        e.preventDefault()
+        // Quincy fix (#219 PR A, Sol review, sol1 item 6): clear any STALE claim from an earlier
+        // nudge before processing this one.
+        instance.internals.clearKeyboardFocus()
+        const initialTarget: GanttNudgeAction = canMove
+          ? "move"
+          : canResizeStart
+            ? "resize-start"
+            : "resize-end"
+        // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #4): a pointer gesture pending or
+        // active anywhere on the page refuses the session outright (see `gantt.tsx`'s own doc
+        // comment on this method) - no session, no announcement, no ghost. `preventDefault` above
+        // already stands either way: this Space chord IS ours (canAdjust/isRecurring already
+        // passed), the refusal is a transient pointer/keyboard race, not "this key means nothing
+        // here" - the button's native activate must not ALSO fire on top of a chord we claimed.
+        const entered = instance.internals.beginAdjust(event.id, occurrence, initialTarget)
+        if (!entered) return
+        announce(
+          `${settings.i18n.labels.adjustInstructions} ${settings.i18n.labels.adjustEntered(
+            adjustTargetLabel(initialTarget),
+            formatRange(occurrence.start, occurrence.end, occurrence.allDay)
+          )}`
+        )
+        return
+      }
+
+      // Every other match type only comes back while `adjusting` is true (matchGanttBarKey's own
+      // adjusting table) - all of them are handled keys per the spec ("All handled keys
+      // preventDefault... grid must not scroll, no text selection").
+      e.preventDefault()
+
+      if (match.type === "cancel") {
+        // Quincy fix (#219 PR A round 3, Sol HIGH #5): no longer calls `announce()` itself - see
+        // the pointerdown-elsewhere effect's own comment above for why.
+        instance.internals.cancelAdjust()
+        return
+      }
+
+      if (match.type === "retarget") {
+        const eligible =
+          match.target === "move"
+            ? canMove
+            : match.target === "resize-start"
+              ? canResizeStart
+              : canResizeEnd
+        if (!eligible) {
+          announce(settings.i18n.labels.adjustTargetLocked)
+          return
+        }
+        instance.internals.retargetAdjust(match.target)
+        announce(settings.i18n.labels.adjustRetargeted(adjustTargetLabel(match.target)))
+        return
+      }
+
+      if (match.type === "step") {
+        // Quincy fix (#219 PR A, Sol review, sol1 item 3, carried over): pass the effective
+        // view-level scheduleMode through explicitly - the store has no component in its call
+        // stack to read useGanttViewConfig() from itself.
+        const result = instance.internals.stepAdjust(
+          match.direction,
+          match.unit,
+          viewConfig.scheduleMode
+        )
+        if (result.applied) {
+          announce(
+            settings.i18n.labels.adjustStepped(
+              formatRange(result.start!, result.end!, result.allDay ?? false)
+            )
+          )
+        } else if (result.reason === "locked") {
+          announce(settings.i18n.labels.changeBlockedLocked)
+        } else if (result.reason === "invalid") {
+          announce(settings.i18n.labels.changeBlockedInvalid)
+        } else if (result.reason === "rejected") {
+          announce(settings.i18n.labels.changeBlockedRejected)
+        }
+        // Quincy fix (#219 PR A, Sol re-review round 2, LOW): `result.noChange` (a post-clamp
+        // proposal identical to the current preview) sets no `reason` and `applied: false` -
+        // none of the branches above match, so held-down key-repeat past a clamp is silently a
+        // no-op instead of re-announcing the identical range on every repeat. See
+        // `GanttInternals.stepAdjust`'s own doc comment.
+        return
+      }
+
+      // match.type === "commit"
+      // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): the same view-scheduleMode
+      // pass-through `stepAdjust` above already needs - `commitAdjust` now re-validates the overlap
+      // policy against the CURRENT resource, which needs it too.
+      const result = instance.internals.commitAdjust(viewConfig.scheduleMode)
+      if (result.committed) {
+        // A committed START change (move, or a start-edge resize - whichever target actually moved
+        // it, regardless of which target was LAST selected via M/S/E) changes this occurrence's key
+        // (see this file's header) and remounts the bar - claim the hand-off the same way a
+        // successful move/resize-start nudge always did.
+        if (result.start!.getTime() !== occurrence.start.getTime()) {
+          instance.internals.claimKeyboardFocus({
+            eventId: event.id,
+            targetKey: `${event.id}::${result.start!.toISOString()}`,
+          })
+        }
+        announce(
+          settings.i18n.labels.adjustCommitted(
+            formatRange(result.start!, result.end!, result.allDay ?? false)
+          )
+        )
+      } else if (result.noChange) {
+        announce(settings.i18n.labels.adjustNoChange)
+      } else {
+        announce(settings.i18n.labels.changeBlockedRejected)
+      }
+    },
+    className: cn(
+      "group/gantt-bar-group text-foreground @container relative flex w-full min-w-0 cursor-pointer touch-none items-center gap-1.5 overflow-hidden rounded-sm px-1.5 py-0.5 text-start leading-normal select-none",
+      // #219 PR A fix (dr-219a LOW #7, part 1): a resize grip is absolutely positioned, so it
+      // never participates in flex layout and never pushes the label - it simply overlays the
+      // label's own `px-1.5` (6px) padding. The grip itself spans from `start-0.5`/`end-0.5` (2px
+      // inset) to `+w-2` (8px wide), so it reaches 10px in from the edge - 4px past the label's
+      // own 6px padding - and a hovered bar with a short title read as "|Unlocke…|", the grip
+      // visually eating the first/last glyph. Reserving the grip's width from the label box
+      // (`ps-3`/`pe-3`, 12px - clears the grip's 10px reach with a hairline to spare) ONLY on the
+      // side(s) that actually render a grip (`canResizeStart`/`canResizeEnd`, the SAME flags that
+      // gate the grips themselves, below) - a bar with no grip on a given edge keeps the tighter
+      // `px-1.5` there. `cn()` resolves this via `tailwind-merge`, so `ps-3` wins over `px-1.5`'s
+      // start side regardless of argument order (see `lib/utils.ts`).
+      canResizeStart && "ps-3",
+      canResizeEnd && "pe-3",
+      // #219 PR A fix (dr-219a HIGH #2): dropped `outline-none focus-visible:ring-2
+      // focus-visible:ring-ring/50` - `styles/tokens/base.css:25`'s unlayered `:focus-visible {
+      // outline }` beats `@layer utilities`, so this pair ADDED a second focus indicator instead
+      // of replacing the global one (the same trap `styles/tokens/reui.css:160-166` already
+      // records three times; see `components/reui/button.tsx`'s own divergence 5). The global
+      // outline now stands alone as this bar's focus indication.
+      // the unfilled remainder has to be legible on its own - at /12 a bar
+      // with a progress fill read as a floating segment with no basement
+      "bg-(--gantt-event-color)/20 hover:bg-(--gantt-event-color)/30",
+      // done: #219 PR A fix (dr-219a MEDIUM #5) - this used to be an ALPHA STEP on the event's
+      // OWN hue (`bg-(--gantt-event-color)/10`, hover `/15`) - reduced emphasis, but not
+      // guaranteed reduced LOUDNESS: a 10% wash of a naturally dark/saturated stage colour (e.g.
+      // `--signal-positive`) can still read louder than a 20% wash of a naturally light one (e.g.
+      // `--greige-400`) - the design reviewer measured a completed bar at Δ52 from paper against
+      // Δ22 for an idle one, backwards from "done is always quieter than active". Hue-independent
+      // now: the SAME fixed `--color-border` token every stage shares (`bg-border`, the app's own
+      // hairline-grey neutral, `tokens/tailwind.css`), one value regardless of `--gantt-event-color`
+      // - a done bar can no longer read louder than an active one just because its OWN stage
+      // happens to be dark. Verified without a browser (this fix's commit message has the script
+      // and full numbers): composited over both canvas tones this app uses (`--bg-canvas` and
+      // `--bg-surface`), `bg-border` at this fix's chosen alpha values measures Δ12.6/14.9 from
+      // paper for the full done treatment (shell + the progress-fill child below, which is what a
+      // sighted user actually sees once progress reaches 100 - see that span's own comment),
+      // against Δ18.2/20.0 for `--greige-400` (the harness's own QUIETEST active-state stage) at
+      // its unchanged `/20` - a comfortable ~30% margin, for every stage in
+      // `harness/reui-scheduling/fixtures.ts`'s `STAGE_COLORS`, not just the quietest one. The
+      // label stays `text-foreground` (see this file's header) either way - only the tint changed.
+      "data-completed:bg-border/15 data-completed:hover:bg-border/20",
+      // #219 PR A fix (dr2-219a MEDIUM #3): the fill above measured 1.18:1 against the canvas -
+      // the r6 HIGH #1 fix above already gives the shell a border-WIDTH tool for completed+selected
+      // (the ring), but a merely-completed, unselected bar had no boundary of its own at all. An
+      // explicit token hairline, not a raised fill - the fill's own alpha is already proven quieter
+      // than the active palette by the MEDIUM #5 calculation above, and raising it would undo that.
+      "data-completed:border data-completed:border-border",
+      // move: a POINTER move hides the original (the smooth cursor clone represents it instead).
+      // #219 PR A fix (dr-219a HIGH #4, part 1): a KEYBOARD move has no cursor clone, and DOM
+      // focus never leaves this exact bar, so it instead gets the SAME faded-placeholder
+      // treatment a resize already gets either way (below) - hiding it left Adjust mode with
+      // nothing focused-and-visible on screen.
+      "data-[drag-kind=move]:data-[drag-source=pointer]:opacity-0",
+      "data-[drag-kind=move]:data-[drag-source=keyboard]:opacity-40",
+      // resize: keep the original event exactly, just fade it to a soft
+      // placeholder behind the dashed preview - no dramatic restyle
+      "data-[drag-kind=resize-start]:opacity-40 data-[drag-kind=resize-end]:opacity-40",
+      "data-selected:bg-(--gantt-event-color)/30",
+      // #219 PR A fix (dr-219a r6 HIGH #1): the rule above and `data-completed:bg-border/15`
+      // (the "done" comment block above) used to be the WHOLE story, and both are exactly one
+      // attribute selector each - equal CSS specificity, so which one painted a completed bar
+      // that was ALSO selected depended on which Tailwind happened to emit LATER in the generated
+      // stylesheet, not on anything about the bar's own state. `data-selected` lost that draw, so
+      // selecting a done bar brought its stage hue straight back - the exact hue-dependence the
+      // "done" fix above exists to remove, reachable through an ordinary click. Reordering the two
+      // single-attribute classes would only flip which one wins BY EMISSION ORDER again, which a
+      // later refactor could just as easily flip back - the fix instead gives the COMBINATION its
+      // own rule, which Tailwind compiles to a selector with two attribute conditions
+      // (specificity 0,0,2,0) - strictly higher than either single-attribute rule above (0,0,1,0)
+      // - so the neutral completed background wins by CSS SPECIFICITY, independent of source
+      // order, and cannot be flipped back by reordering. Selection stays visible on a completed
+      // bar through the border-colour swap below instead of the background.
+      "data-completed:data-selected:bg-border/15",
+      // #219 PR A fix (Sol round-7 MEDIUM #2a): a `ring-ring/50 ring-2` used to carry this cue,
+      // gated `not-focus-visible:` (dr2-219a MEDIUM #4) because it shared the global focus
+      // outline's footprint and doubled up when a completed+selected bar was ALSO the focused
+      // element - suppressing it there fixed the double indicator, but left NO selection cue at
+      // all while focused: completed+selected+focused and completed+unselected+focused then
+      // painted identically, both showing just the outline. Replaced with a colour swap on this
+      // bar's OWN completed-state hairline (`data-completed:border-border`, dr2-219a MEDIUM #3
+      // above, `--border` greige) to `border-border-strong` (`--border-strong`, `--ink-900`) when
+      // ALSO selected. A 1px, INSET, flush-to-the-edge line is geometrically the opposite of the
+      // outline's 2px, OUTSET, 2px-offset ring, so the two can never read as one indicator
+      // doubling up - unlike the ring, this needs no `not-focus-visible:` gate, so it stays
+      // visible unfocused, focused, and everywhere between. Neutral ink, not
+      // `--gantt-event-color` - the stage hue stays out of this exactly as r6 HIGH #1 and MEDIUM
+      // #5 above already established for this bar's other completed-state treatments. Same
+      // two-attribute-selector pattern as the background rule immediately above
+      // (`data-completed:data-selected:`), so it wins over the single-attribute
+      // `data-completed:border-border` rule by CSS specificity, independent of Tailwind's
+      // emission order - r6 HIGH #1's own reasoning, repeated here for the border colour instead
+      // of the background. It fires only for the completed+selected combination, not for every
+      // selected bar - a non-completed selected bar already reads clearly via its own tinted
+      // `data-selected:bg-(--gantt-event-color)/30` background above, which this fix leaves
+      // untouched.
+      "data-completed:data-selected:border-border-strong",
+      // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
+      // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
+      // the bar's own focus ring at the time even while the bar was visible, and once a step
+      // drove `state.drag`, a move gesture used to hide the bar entirely regardless of source -
+      // focus stayed on an invisible element with nothing to show for it. #219 PR A fix (dr-219a
+      // HIGH #4, part 1): that unconditional hide is GONE - see
+      // `data-[drag-kind=move]:data-[drag-source=…]` above, split by source. The
+      // Adjust-specific treatment now lives on `gantt-view.tsx`'s own drag ghost
+      // (`data-adjust-ghost`), which is never hidden and never competes with the bar's own focus
+      // indication. #219 PR A fix (dr-219a HIGH #2): that indication is now the global
+      // `:focus-visible` outline alone (`styles/tokens/base.css:25`) - the bar's own
+      // `focus-visible:ring` was removed above, so this comment no longer names a ring that exists.
+      /* the diamond is the milestone's body, so the shell sheds its own
+         tinted fill and centers the glyph on the instant */
+      milestone &&
+        "justify-center bg-transparent px-0 hover:bg-transparent data-selected:bg-transparent",
+      segment.continuesBefore && "rounded-s-none",
+      segment.continuesAfter && "rounded-e-none",
+      viewConfig.classNames?.event,
+      className
+    ),
+    children: (
+      <>
+        {adjusting && (
+          // #219 PR A (Adjust mode) - the aria-describedby target above; visually hidden, always
+          // readable by AT (unlike aria-hidden content, which this deliberately is NOT).
+          <span id={instructionsId} className="sr-only">
+            {settings.i18n.labels.adjustInstructions}
+          </span>
+        )}
+        {milestone && !consumerOwnsContent && (
+          // the filled diamond IS the milestone's body - chrome, so a custom
+          // renderEvent still starts from a blank canvas (data-milestone
+          // keeps the fact readable there)
+          <span
+            aria-hidden
+            data-slot="gantt-bar-milestone"
+            className={cn(
+              "size-2.5 shrink-0 rotate-45 rounded-[2px] border border-(--gantt-event-color) bg-(--gantt-event-color)/80",
+              isSelected && "ring-ring/50 ring-2"
+            )}
+          />
+        )}
+        {progress !== null && !milestone && (
+          // Chrome, not content: it is an absolutely-positioned layer BEHIND
+          // whatever the bar renders, so a consumer bar (renderEvent) keeps
+          // its completion fill instead of silently losing it. The inline
+          // done-mark below stays gated, because that one really is content.
+          <span
+            aria-hidden
+            data-slot="gantt-bar-progress"
+            // #219 PR A fix (dr-219a MEDIUM #5): additive, same reasoning as the resize grips'
+            // own `data-testid` (this file's header) - nothing Quincy-owned composes this deep
+            // vendor internal from the outside for a DOM test to hook a `data-testid` onto
+            // instead, and `test-seam.guard.test.ts` Guard F forbids selecting on the `data-slot`
+            // above.
+            data-testid="gantt-bar-progress"
+            className={cn(
+              "pointer-events-none absolute inset-y-0 start-0 border-e border-(--gantt-event-color)/65 bg-(--gantt-event-color)/40 data-full:border-e-0",
+              // done: #219 PR A fix (dr-219a MEDIUM #5) - was the SAME per-hue alpha step as the
+              // shell above (`border-(--gantt-event-color)/35 bg-(--gantt-event-color)/20`), which
+              // could not guarantee "quieter than any active bar" across arbitrary stage hues (see
+              // the shell's own `data-completed:bg-border` comment below for the full reasoning
+              // and the measured numbers in this fix's commit message). Hue-independent now: the
+              // SAME fixed `--color-border` token every stage shares, read off the ancestor's
+              // `data-completed` (this span carries no attribute of its own) via the shell's named
+              // group, exactly as before.
+              "group-data-completed/gantt-bar-group:border-border group-data-completed/gantt-bar-group:bg-border/20"
+            )}
+            data-full={progress === 100 || undefined}
+            style={{ width: `${progress}%` }}
+          />
+        )}
+        {progress === 100 && !consumerOwnsContent && !milestone && (
+          // done mark: completion chrome like the fill itself, so it shows
+          // for outside-label bars too (where the inner content is empty)
+          <CheckIcon className="relative size-2.5 shrink-0 opacity-80" aria-hidden="true" />
+        )}
+        {content}
+        {resizeHandles}
+      </>
+    ),
+  }
+
+  const barButton = useRender({
+    defaultTagName: "button",
+    render,
+    props: mergeProps<"button">(defaultProps, props),
+    // Quincy fix (#219 PR A, Sol review, sol1 item 6): `useRender`'s own `ref` PARAMETER (distinct
+    // from `props.ref`, which `mergeProps` above never sets - see the `ref: consumerRef` destructure
+    // higher up) is merged internally (via `@base-ui/utils/useMergedRefs`) with any `ref` on `render`
+    // itself, so passing an array here composes `barRef` (this component's own hand-off target) with
+    // whatever the CONSUMER passed as `<GanttBar ref={...}>` - both receive the node. Normalized to
+    // a flat array because `consumerRef` is itself typed to accept an array (mirroring `useRender`'s
+    // own `ref` prop), which `Array.isArray` narrows before spreading.
+    ref: consumerRef == null
+      ? [barRef]
+      : Array.isArray(consumerRef)
+        ? [barRef, ...consumerRef]
+        : [barRef, consumerRef],
+  })
+
+  // Consumer-owned right-click menu (headless): the primitive only wires the
+  // ContextMenu; the items and their handlers come entirely from the block.
+  const menu = viewConfig.renderEventMenu?.(renderProps)
+
+  // The bar is simultaneously the tooltip trigger and (when a menu exists)
+  // the context-menu trigger; Base UI composes both via render props.
+  const trigger = menu ? (
+    <ContextMenuTrigger render={<TooltipTrigger render={barButton} />} />
+  ) : (
+    <TooltipTrigger render={barButton} />
+  )
+
+  const barTree = (
+    <TooltipProvider delay={500} closeDelay={0} timeout={300}>
+      <Tooltip
+        open={tipOpen && !anyInteracting}
+        onOpenChange={(next: boolean, details: { reason?: string }) => {
+          // opens only on hover; focus/press opens are dropped
+          if (next && details?.reason !== "trigger-hover") return
+          setTipOpen(next)
+        }}
+      >
+        {trigger}
+        {tipOpen && !anyInteracting && (
+          <TooltipContent side="top" className="pointer-events-none">
+            <div className="font-medium">{event.title}</div>
+            <div className="opacity-80">{timeLabel}</div>
+            {plannedLabel && <div className="opacity-80">{plannedLabel}</div>}
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
+  )
+
+  return (
+    <GanttBarContext.Provider
+      value={{ occurrence, segment, isDragging, isSelected }}
+    >
+      {menu ? (
+        <ContextMenu>
+          {barTree}
+          <ContextMenuContent data-slot="gantt-bar-menu" className="min-w-44">
+            {menu}
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        barTree
+      )}
+    </GanttBarContext.Provider>
+  )
+}
+
+export { GANTT_COLORS, GanttBar, useGanttBarContext }
+export type { GanttBarContextValue, GanttBarProps }

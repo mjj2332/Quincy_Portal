@@ -71,6 +71,42 @@ never let an edit be discoverable only by diffing against the registry.
    real-browser-only. Every drag slice cost a scripted browser pass; plan for it (#63 exists to make
    that harness permanent).
 
+## Vendoring ahead of a consumer: the dev-only Vite HTML entry and the build-time module-graph guard (#219)
+
+The Board vendored `kanban.tsx` and wired it to a real screen inside the same slice — the doc above
+has no vocabulary for a registry item landing with **no consumer at all**. #219 PR A vendored
+`@reui/gantt` (9 files, `components/reui/gantt/`) a full stage ahead of anything importing it, so
+it could be exercised and reviewed with local fixture data before the eventual Dashboard/Editor
+consumer existed. That needed two mechanisms the Board never did:
+
+- **A dev-only Vite HTML entry**, not a route, a feature flag, or a branch in `main.tsx`.
+  `harness/reui-scheduling/index.html` + `src/harness/reui-scheduling/main.tsx` is a SECOND Vite
+  HTML entry, reachable at `/harness/reui-scheduling/` only because `vite dev` serves any HTML file
+  under the project root at its own path — and unreachable in production because
+  `vite.config.ts`'s `build.rollupOptions.input` is never pointed at it, so `vite build`'s only
+  input stays `index.html` and no harness chunk or URL reaches `dist/`. Reach for this shape
+  whenever a vendored primitive needs to be driven in a real browser before its production
+  consumer is ready — it is cheaper than a feature-flagged route and cannot leak into a build the
+  way an unguarded flag branch can.
+- **A build-time module-graph guard**, because a route/flag-style "nothing imports it yet" claim
+  is not self-enforcing — the next PR can add the import and nobody notices until it ships.
+  `src/harness/harness-reachability.guard.test.ts` reads the whole `src/` tree with `@babel/parser`
+  and asserts, by AST rather than grep, that (i) nothing outside `src/harness/` imports it, (ii)
+  nothing outside `src/harness/` and the vendored tree imports the vendored tree, (iii) no new
+  non-literal `import()` could reach either at runtime beyond a fixed baseline, and (iv)
+  `vite.config.ts` both keeps `build.rollupOptions.input` at `index.html` alone AND registers a
+  companion Rolldown plugin, `src/build/forbid-dev-only-modules.ts`, as the bundler-level backstop
+  for whatever the import-form enumeration misses — including a `new Worker(new URL(...))` sub-build,
+  which runs its own separate bundling pass with its own plugin pipeline and needs the same plugin
+  registered a second time, via `worker.plugins`. A dist/-content string scan was tried first and
+  dropped: it reads nothing after minification and Tailwind's content scanner, and goes stale
+  between builds outside CI. The module graph itself, asserted by the bundler's own plugin API, is
+  the only backstop that cannot silently rot.
+
+Budget both into the estimate whenever a block is vendored before its consumer exists — they are
+not Gantt-specific, and the next primitive landed ahead of its own wiring should reuse this shape
+rather than re-deriving it.
+
 ## Estimating the next block
 
 The next adoption named in #76 is the app shell (`app-shell-2`), and it is **not** simply the next

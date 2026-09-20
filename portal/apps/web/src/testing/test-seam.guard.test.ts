@@ -92,7 +92,8 @@ export function isFullyComputedTemplate(quote: string, body: string): boolean {
 }
 
 /**
- * Every `[data-slot="X"]` attribute selector inside a selector literal — guard F's matcher.
+ * Every `[data-slot="X"]` (or unquoted `[data-slot=X]`) attribute selector inside a selector
+ * literal — guard F's matcher.
  *
  * A single selector can carry more than one, either combined with an element/attribute
  * selector (`form[data-slot="notice-board-composer"] [contenteditable="true"]`) or with a second
@@ -101,11 +102,22 @@ export function isFullyComputedTemplate(quote: string, body: string): boolean {
  * VALUE of a different attribute — `[data-testid="data-slot-legacy"]` has no `[data-slot=`
  * substring, because the text before "data-slot" there is `"data-slot-legacy"`'s own quote, not an
  * attribute-selector open bracket.
+ *
+ * #219 PR A fix (item 1): CSS attribute selectors don't require quotes around the value —
+ * `[data-slot=gantt-announcer]` is exactly as valid as `[data-slot="gantt-announcer"]` — and the
+ * quote-only form above matched neither. Three call sites (`gantt-adjust-session-ownership.dom
+ * .test.tsx:571,882`, `gantt-dnd-refusal-announce.dom.test.tsx:154`) selected
+ * `[data-slot=gantt-announcer]` — a slot only the VENDORED `gantt/gantt.tsx` authors, exactly the
+ * coupling guard F exists to prevent — and were invisible to it purely because of a missing pair
+ * of quotes. The quoted alternative is tried first so an author's own quotes are still honoured
+ * verbatim (including escapes); the unquoted alternative only engages when there is no leading
+ * quote to match, and only accepts CSS-identifier characters, so it cannot swallow the closing
+ * `]` of a differently-shaped selector.
  */
-const DATA_SLOT_SELECTOR = /\[data-slot=(["'])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\]/g;
+const DATA_SLOT_SELECTOR = /\[data-slot=(?:(["'])((?:\\[\s\S]|(?!\1)[^\\])*?)\1|([\w-]+))\]/g;
 
 export function dataSlotsIn(selector: string): string[] {
-  return [...selector.matchAll(DATA_SLOT_SELECTOR)].map((match) => match[2]!);
+  return [...selector.matchAll(DATA_SLOT_SELECTOR)].map((match) => match[2] ?? match[3]!);
 }
 
 /**
@@ -200,9 +212,52 @@ const UTILITY_EXACT = new Set([
  *
  * `group-` and `peer-` are deliberately absent — their real forms (`group-hover:…`) carry a `:`,
  * which the punctuation test already catches, so listing them here would only re-open the hole.
+ *
+ * `p[xytblr]?-`/`m[xytblr]?-` cover every PHYSICAL padding/margin side (`px-`, `pt-`, `pl-`, …) —
+ * bare prefixes, same as every other family below. Tailwind's LOGICAL-property forms (`ps-`/`pe-`,
+ * `ms-`/`me-`) are handled separately, by `isLogicalSpacingUtility` below — see its own comment
+ * for why a bare prefix match is the wrong shape for those specifically.
  */
 const UTILITY_PREFIX =
   /^(?:min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
+
+/**
+ * The Tailwind SCALE a spacing utility's value can take, as this repo actually uses it: the
+ * default numeric/fraction scale (`3`, `1.5`, `1/2`), an arbitrary bracket value (`[10px]`), the
+ * literal `px` step, or `auto`. Anything else is not a shape Tailwind itself generates.
+ */
+const SPACING_SCALE_VALUE = /^(?:\d+(?:\.\d+)?|\d+\/\d+|\[[^\]]+\]|px|auto)$/;
+
+/**
+ * Tailwind's LOGICAL-property padding/margin forms — `ps-`/`pe-` (padding-inline-start/end),
+ * `ms-`/`me-` (margin-inline-start/end), optionally negative for margin (`-ms-1.5`,
+ * `gantt-view.tsx`'s own row-drag grip) — this RTL-aware codebase uses pervasively (20
+ * occurrences in `gantt-view.tsx` alone, 4 in `gantt-bar.tsx`).
+ *
+ * #219 PR A fix (dr-219a r6 MEDIUM #2): dr-219a LOW #7's own fix widened `UTILITY_PREFIX`'s
+ * `p[xytblr]?-`/`m[xytblr]?-` groups to `p[xytblrse]?-`/`m[xytblrse]?-` so `ps-3`/`pe-3`/`ms-2`/
+ * `me-2` (that fix's own DOM-test assertions, `gantt-low-fixes.dom.test.tsx`) would classify as
+ * utilities. But `UTILITY_PREFIX` is a bare PREFIX match with no suffix validation, so the widened
+ * group accepted `ps-`/`pe-`/`ms-`/`me-` regardless of what followed: `ms-fraction` — a plausible
+ * Quincy BEM name (this file's own sibling, `gantt-view.tsx:564`, uses the phrase "ms-fraction bar
+ * geometry" in an ordinary comment) — matched `m[xytblrse]?-` exactly as readily as `ms-2` did,
+ * and would have slipped past guard C entirely. That fix's own grep check ("no real Quincy class
+ * in this repo begins ps-/pe-/ms-/me- TODAY") was true but not the point — the classifier itself
+ * must not depend on nothing having collided YET.
+ *
+ * Handled separately from `UTILITY_PREFIX`'s bare-prefix families: `ps-`/`pe-`/`ms-`/`me-` must be
+ * followed by an actual `SPACING_SCALE_VALUE`, not any suffix. The punctuation shortcut in
+ * `isUtilityClass` below already classifies every BRACKET/FRACTION Tailwind value
+ * (`ps-[10px]`, `ms-1/2`) as a utility regardless of prefix, so this only needs to cover the
+ * bare numeric/`px`/`auto` suffix and reject everything else — `ms-fraction` included.
+ */
+const LOGICAL_SPACING_PREFIX = /^-?(?:ps|pe|ms|me)-(.+)$/;
+
+export function isLogicalSpacingUtility(token: string): boolean {
+  const match = LOGICAL_SPACING_PREFIX.exec(token);
+  if (!match) return false;
+  return SPACING_SCALE_VALUE.test(match[1]!);
+}
 
 /**
  * A Tailwind utility carries punctuation a Quincy BEM/state name never does, or a well-known
@@ -210,7 +265,12 @@ const UTILITY_PREFIX =
  * WCAG 2.5.5 touch target, not styling trivia) and must survive; Quincy BEM names are the coupling.
  */
 export function isUtilityClass(token: string): boolean {
-  return /[[\]:/!]/.test(token) || UTILITY_EXACT.has(token) || UTILITY_PREFIX.test(token);
+  return (
+    /[[\]:/!]/.test(token) ||
+    UTILITY_EXACT.has(token) ||
+    UTILITY_PREFIX.test(token) ||
+    isLogicalSpacingUtility(token)
+  );
 }
 
 type Finding = { file: string; line: number; detail: string };
@@ -662,6 +722,18 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ["sr-only", true],
     ["flex", true],
     ["text-foreground", true],
+    // #219 PR A fix (dr-219a LOW #7): the logical-property padding/margin forms - see
+    // UTILITY_PREFIX's own comment for why `p[xytblr]?-`/`m[xytblr]?-` alone missed these.
+    ["ps-3", true],
+    ["pe-3", true],
+    ["ms-2", true],
+    ["me-2", true],
+    // #219 PR A fix (dr-219a r6 MEDIUM #2): dr-219a LOW #7's own fix above widened
+    // `p[xytblr]?-`/`m[xytblr]?-` to `p[xytblrse]?-`/`m[xytblrse]?-` - a bare PREFIX match, so it
+    // accepted `ps-`/`pe-`/`ms-`/`me-` regardless of what followed. `ms-fraction` is a plausible
+    // Quincy BEM name (this exact file's sibling, gantt-view.tsx:564, uses the phrase "ms-fraction
+    // bar geometry" in an ordinary comment) that would have slipped past guard C entirely.
+    ["ms-fraction", false],
   ])("isUtilityClass(%j) === %s", (token, expected) => {
     expect(isUtilityClass(token)).toBe(expected);
   });
@@ -741,6 +813,14 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ['[data-slot="field"][data-disabled]', ["field"]],
     ['[data-testid="kanban2-column"]', []],
     ['[data-testid="data-slot-legacy"]', []],
+    // #219 PR A fix (item 1): the UNQUOTED attribute-selector form — `[data-slot=x]`, no quotes
+    // around the value. Guard F's own baseline was built entirely from quoted `[data-slot="x"]`
+    // examples, so a missing pair of quotes at a call site walked straight past it: three
+    // `gantt-*.dom.test.tsx` call sites selected `[data-slot=gantt-announcer]` — a slot only the
+    // vendored `gantt/gantt.tsx` authors — and Guard F never saw them. A matcher that only
+    // recognises the quoted spelling is not a gate against the unquoted one.
+    ["[data-slot=gantt-announcer]", ["gantt-announcer"]],
+    ["[data-slot=gantt] [data-slot=gantt-announcer]", ["gantt", "gantt-announcer"]],
   ])("dataSlotsIn(%j) === %j", (selector, expected) => {
     expect(dataSlotsIn(selector)).toEqual(expected);
   });

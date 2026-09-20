@@ -17,6 +17,12 @@ ADR, a proven token conflict).
 Both land in `portal/apps/web/src/components/reui/`, because the `ui` alias points there. A block's
 `registryDependencies` mixes both forms: `@reui/badge` is ReUI's, `sheet` is base-nova's.
 
+A single-file registry item lands flat, as all 38 pre-#219 files do. A **multi-file** registry item
+(`@reui/gantt`'s 9 files, #219) may land in its own subdirectory — `components/reui/gantt/` — rather
+than flat: it keeps the set's own file-to-file imports short and lets a guard scoped to that item
+alone (`gantt-skin.guard.test.ts`) read the directory rather than an allowlist of names scattered
+across the flat registry root.
+
 **A 404 on `@reui/<name>` means "look in base-nova", not "it does not exist".** `@reui/sheet`,
 `@reui/sidebar` and `@reui/breadcrumb` all 404, and all three exist as bare base-nova names. Confirm
 with `npx shadcn@latest view <name>` (it returns the item's `registryDependencies` and files)
