@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
-import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientContext, QueryClientProvider, type Query } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
 import { ApiError, apiPost } from "../lib/api";
@@ -1127,9 +1127,37 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
-      const applyConfirmed = (current: ProjectSummary[]) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item);
+      // Sol review round 1, item 1: the fan-out below opens two races once it lands in a SIBLING
+      // entry no observer is currently reading -- (A) a sibling's own refetch that started BEFORE
+      // this POST resolving AFTER the fan-out write and putting the stale value back, (B) this
+      // response being older than a sibling that already holds a NEWER server `boardRevision` (a
+      // later stage move, say) and regressing it. `isSiblingDashboardQuery` structurally compares
+      // `queryKey` (JSON, not reference) against `dashboardKeyString` -- the ACTIVE entry's own
+      // refresh is owned by `queueDashboardRefresh` below and must never be cancelled or invalidated
+      // here.
+      const isSiblingDashboardQuery = (query: Query) =>
+        Array.isArray(query.queryKey) &&
+        query.queryKey[0] === "dashboard-projects" &&
+        query.queryKey[1] === currentUserId &&
+        JSON.stringify(query.queryKey) !== dashboardKeyString;
+      // (A) cancel every sibling's in-flight fetch FIRST -- its late result, once cancelled, can no
+      // longer overwrite the fan-out write that follows.
+      if (queryClient) await queryClient.cancelQueries({ predicate: isSiblingDashboardQuery });
+      // (B) never patch an item whose cached `boardRevision` is already NEWER than this response's
+      // -- leave it untouched. Applied to the exact-key write too, for the same reason: the active
+      // entry can equally hold a boardRevision this response has fallen behind.
+      const applyConfirmed = (current: ProjectSummary[]) => current.map((item) => {
+        if (item.id !== project.id) return item;
+        if (item.boardRevision > response.boardRevision) return item;
+        return { ...item, priority: response.priority, boardRevision: response.boardRevision };
+      });
       updateProjects(applyConfirmed);
       updateAllProjectScopes(applyConfirmed);
+      // Mark the patched SIBLINGS stale without refetching them now (`refetchType: "none"`) -- a
+      // same-`boardRevision` race then self-heals the next time that entry is actually observed
+      // again, instead of firing a request for a scope nobody is looking at right now. Never the
+      // active key: its own refresh is `queueDashboardRefresh` below.
+      if (queryClient) queryClient.invalidateQueries({ predicate: isSiblingDashboardQuery, refetchType: "none" });
       queueDashboardRefresh();
       if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: false, gantt: false, producer: "dashboard" });
     } catch (reason) {
