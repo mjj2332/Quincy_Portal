@@ -333,6 +333,11 @@ describe("Dashboard's committed query is derived from the route, not adopted int
     const classes = echo!.className.split(/\s+/);
     expect(classes).toContain("truncate");
     expect(classes.some((token) => token.startsWith("max-w-["))).toBe(true);
+    // #217 chip-row: exactly one `max-w-` bound, and no responsive `min-[...]:` variant swapping it
+    // out at a breakpoint -- the toolbar's geometry must not depend on the query at ANY width, so
+    // the echo's cap cannot be conditional on viewport size either.
+    expect(classes.filter((token) => token.startsWith("max-w-"))).toHaveLength(1);
+    expect(classes.some((token) => token.includes("min-["))).toBe(false);
   });
 
   it("(f1) the chip's x clears the URL, the chip, the input and the list in one step", async () => {

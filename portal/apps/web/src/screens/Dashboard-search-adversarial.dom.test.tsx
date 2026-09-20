@@ -105,6 +105,29 @@ afterEach(() => {
   __resetDashboardSearchStoreForTest();
 });
 
+// #217 chip-row: the toolbar -> active search -> results reading order, checked the same way in
+// List, Kanban, and (Dashboard-calendar.dom.test.tsx) Calendar -- the chip must never be a toolbar
+// descendant, and the summary must be the toolbar's very next sibling.
+function assertToolbarChipSeparation(host: HTMLDivElement) {
+  const toolbar = host.querySelector('[data-testid="dashboard-toolbar"]');
+  const summary = host.querySelector('[data-testid="dashboard-search-summary"]');
+  const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
+  const newShootLink = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
+  expect(toolbar, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(summary, "no search summary rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
+  expect(newShootLink, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
+
+  expect(toolbar!.contains(chip!)).toBe(false);
+  expect(toolbar!.contains(newShootLink!)).toBe(true);
+  expect(toolbar!.nextElementSibling).toBe(summary);
+}
+
+/** Every descendant's tag + testid, in document order -- used to prove the toolbar's shape does not change with the query. */
+function toolbarShape(toolbar: Element): string[] {
+  return [...toolbar.querySelectorAll("*")].map((node) => `${node.tagName}:${node.getAttribute("data-testid") ?? ""}`);
+}
+
 describe("Dashboard search presentation and navigation adversarial probes (#217)", () => {
   it("hides the stats strip and reports exact matching/total counts in the search chip", async () => {
     await renderAt("/?view=list&q=smith", {
@@ -164,21 +187,61 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     expect(clearButton!.className).toContain("after:-inset-2");
   });
 
-  it("keeps 'New shoot' out of the chip's cluster, so its position does not slide with query length (#217 design-review, item 3)", async () => {
+  // SANCTIONED REWRITE (#217 chip-row): the chip moved out of the toolbar entirely, into a sibling
+  // "active search" summary row, so the old "not the same parent as New shoot" assertion no longer
+  // states the real contract. The toolbar's own geometry must never depend on the query -- the chip
+  // is not inside it at all, and the summary reads as the next thing on the page, not a toolbar
+  // child.
+  it("keeps the chip out of the toolbar entirely: it renders in a sibling summary row, reading toolbar -> active search -> results (#217 chip-row)", async () => {
     await renderAt("/?view=list&q=smith", {
       projects: match,
       board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
       search: { query: "smith", matching: 1, total: 3 },
     });
 
-    const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
-    const newShoot = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
-    expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
-    expect(newShoot, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
-    expect(chip!.parentElement).not.toBe(newShoot!.parentElement);
-    // The chip is the first child of its own cluster -- the one that also holds the
-    // scope/view/sort controls, not the one that holds "New shoot".
-    expect(chip!.parentElement!.firstElementChild).toBe(chip);
+    assertToolbarChipSeparation(host);
+  });
+
+  it("holds the toolbar/summary separation in Kanban after switching from a searched List (#217 chip-row)", async () => {
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 3 },
+    });
+    assertToolbarChipSeparation(host);
+
+    const kanban = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban");
+    expect(kanban, "no Kanban control rendered — the assertion below would be vacuous").not.toBeUndefined();
+    await act(async () => {
+      kanban!.click();
+      await Promise.resolve();
+    });
+    await settle();
+
+    assertToolbarChipSeparation(host);
+  });
+
+  it("keeps the toolbar's children identical, and the summary absent, when there is no search (#217 chip-row) — proves the toolbar's geometry does not depend on the query", async () => {
+    await renderAt("/?view=list", {
+      projects: full,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+    });
+    const toolbarUnsearched = host.querySelector('[data-testid="dashboard-toolbar"]');
+    expect(toolbarUnsearched, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
+    const shapeUnsearched = toolbarShape(toolbarUnsearched!);
+    expect(host.querySelector('[data-testid="dashboard-search-summary"]')).toBeNull();
+
+    await renderAt("/?view=list&q=smith", {
+      projects: match,
+      board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a", "b", "c"] } },
+      search: { query: "smith", matching: 1, total: 3 },
+    });
+    const toolbarSearched = host.querySelector('[data-testid="dashboard-toolbar"]');
+    expect(toolbarSearched, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
+    const shapeSearched = toolbarShape(toolbarSearched!);
+    expect(host.querySelector('[data-testid="dashboard-search-summary"]')).not.toBeNull();
+
+    expect(shapeSearched).toEqual(shapeUnsearched);
   });
 
   it("titles a zero-result search 'No matches.', not the unsearched empty-Dashboard copy (#217 design-review, item 9)", async () => {

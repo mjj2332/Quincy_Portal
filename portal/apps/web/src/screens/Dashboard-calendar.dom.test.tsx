@@ -415,6 +415,31 @@ describe("Dashboard Calendar routing", () => {
     expect(window.location.search).toContain("q=smith");
   });
 
+  // #217 chip-row: the same toolbar/summary separation checked in List and Kanban
+  // (Dashboard-search-adversarial.dom.test.tsx), for Calendar -- the summary sits between the
+  // toolbar and the Calendar surface, so the chip never sits beside the Calendar's own controls.
+  it("keeps the search summary between the toolbar and the Calendar surface, not inside the toolbar (#217 chip-row)", async () => {
+    window.history.replaceState(null, "", "/?view=calendar&q=smith");
+    await render({ calendar: { ...routeCalendar, search: "smith" } });
+
+    const toolbar = host.querySelector('[data-testid="dashboard-toolbar"]');
+    const summary = host.querySelector('[data-testid="dashboard-search-summary"]');
+    const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
+    const newShootLink = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
+    const calendarSurface = host.querySelector('[data-testid="dashboard-calendar-surface"]');
+
+    expect(toolbar, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(summary, "no search summary rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(chip, "no chip rendered — the assertions below would be vacuous").not.toBeNull();
+    expect(newShootLink, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
+    expect(calendarSurface, "no Calendar surface rendered — the assertions below would be vacuous").not.toBeNull();
+
+    expect(toolbar!.contains(chip!)).toBe(false);
+    expect(toolbar!.contains(newShootLink!)).toBe(true);
+    expect(toolbar!.nextElementSibling).toBe(summary);
+    expect(summary!.nextElementSibling?.contains(calendarSurface)).toBe(true);
+  });
+
   it("silently replaces a URL after the server drops an inaccessible Editor", async () => {
     apiGetMock.mockImplementation((path) => path.startsWith("/api/production-calendar") ? Promise.resolve(calendarResponse([])) : Promise.resolve(projectResponse()));
     await render({ calendar: routeCalendar });

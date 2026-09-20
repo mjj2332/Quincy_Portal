@@ -1155,7 +1155,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       </section>}
 
-      <div className={cn(
+      <div data-testid="dashboard-toolbar" className={cn(
         "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
         "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
         "border-t-[length:var(--border-width-hair)] border-t-border")}>
@@ -1163,50 +1163,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>
         <div className="flex items-center flex-wrap justify-end gap-x-[var(--space-3)] gap-y-[var(--space-2)] ml-auto max-[721px]:basis-full max-[721px]:justify-start">
-        {/* #217 design-review, item 3: the chip is the first child of THIS cluster (scope/view/
-            sort), not the left-hand cluster that holds `New shoot` -- otherwise the primary
-            action's position slides with the query's length. */}
-        {/* #217: the rail's `ShellSearch` is the one search input now -- this chip is the
-            Dashboard's only trace of an active query, not a second field. */}
-        {searchActive && (
-          <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)] mr-[var(--space-3)]">
-            {searchCountsQuery.data && (
-              <>
-                {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
-                {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
-              </>
-            )}
-            {/* #217 design review (browser pass 3). The query is capped at 200 code points, not
-                200 pixels, and `Badge` is `whitespace-nowrap`: unbounded, a deep-linked long query
-                is a ~1000px pill and even a 12-character one wrapped the toolbar at 1440. Bounded
-                and truncating here, full text in `title`. `tracking-normal` finishes what
-                `normal-case` started -- the user's own text is shown as typed, not with the
-                Badge's eyebrow letter-spacing. `mr` on the Badge keeps the chip from reading as
-                part of the `Projects` eyebrow beside it. 12ch is what the toolbar holds on ONE row
-                beside the rail at 1440 (measured in the browser: 28ch still wrapped it to three);
-                28ch only from 1600 up. */}
-            <span
-              className="inline-block max-w-[12ch] min-[1600px]:max-w-[28ch] truncate align-bottom normal-case tracking-normal"
-              data-testid="dashboard-search-chip-query"
-              title={committedQuery}
-            >
-              '{committedQuery}'
-            </span>
-            {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
-                rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
-                `after:absolute after:-inset-2`) pads the actual hit target to >=24px without
-                growing the chip's own visible box. At phone width the rail's own 44px touch
-                convention applies (`ShellSearch.tsx`'s Sheet trigger): 12 + 2 x 16 = 44px. */}
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => clearDashboardSearch(currentUserId)}
-              className="relative inline-flex items-center after:absolute after:-inset-2 max-[721px]:after:-inset-4"
-            >
-              <XIcon aria-hidden="true" className="size-3" />
-            </button>
-          </Badge>
-        )}
         {canViewArchived && <>
           <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">Projects</Eyebrow>
           <div className={SEGMENT_GROUP} aria-label="Project status">
@@ -1241,6 +1197,51 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </>}
         </div>
       </div>
+
+      {/* #217 chip-row: the toolbar's geometry must never depend on the query -- measured in a real
+          browser, with the rail expanded the toolbar's fixed controls take ~864 of ~1076px at 1440,
+          and the chip's count text alone is ~148px, so no echo width kept the toolbar on one row
+          (three rows at 1280, even after two rounds of shrinking the echo). The chip now renders in
+          its own row below the toolbar instead, reading toolbar -> active search -> results. */}
+      {searchActive && (
+        <div data-testid="dashboard-search-summary" role="group" aria-label="Active search" className="flex min-w-0 items-center mb-[var(--space-4)]">
+          <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)] max-w-full min-w-0">
+            <span className="shrink-0">
+              {searchCountsQuery.data && (
+                <>
+                  {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
+                  {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
+                </>
+              )}
+            </span>
+            {/* #217 design review (browser pass 3). The query is capped at 200 code points, not
+                200 pixels, and `Badge` is `whitespace-nowrap`: unbounded, a deep-linked long query
+                is a ~1000px pill. Bounded and truncating here, full text in `title`.
+                `tracking-normal` finishes what `normal-case` started -- the user's own text is
+                shown as typed, not with the Badge's eyebrow letter-spacing. */}
+            <span
+              className="min-w-0 max-w-[40ch] truncate normal-case tracking-normal"
+              data-testid="dashboard-search-chip-query"
+              title={committedQuery}
+            >
+              '{committedQuery}'
+            </span>
+            {/* WCAG 2.5.8: a `size-3` glyph alone is a ~12px hit area. `relative` plus the
+                rail's own hit-expansion pattern (`reui/sidebar.tsx`'s `SidebarGroupAction`,
+                `after:absolute after:-inset-2`) pads the actual hit target to >=24px without
+                growing the chip's own visible box. At phone width the rail's own 44px touch
+                convention applies (`ShellSearch.tsx`'s Sheet trigger): 12 + 2 x 16 = 44px. */}
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => clearDashboardSearch(currentUserId)}
+              className="relative inline-flex items-center shrink-0 after:absolute after:-inset-2 max-[721px]:after:-inset-4"
+            >
+              <XIcon aria-hidden="true" className="size-3" />
+            </button>
+          </Badge>
+        </div>
+      )}
 
       {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
         <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
