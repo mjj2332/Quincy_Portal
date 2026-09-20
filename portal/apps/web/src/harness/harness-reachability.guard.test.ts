@@ -1117,21 +1117,30 @@ describe("whole-scanner fixtures: every extraction form is caught end to end", (
 // module id shape this file's import-form scan OR `forbid-dev-only-modules.ts`'s module-graph scan
 // is guaranteed to see (an emitted asset is a Rollup/Rolldown ASSET, not necessarily a MODULE id).
 // Orchestrator decision (this fix): do not build an asset-origin scanner to close that gap — make
-// the hole impossible instead. `src/harness/` and `src/components/reui/gantt/` may contain ONLY a
+// the hole impossible instead. `src/harness/`, `src/components/reui/gantt/` and
+// `src/components/reui/event-calendar/` may contain ONLY a
 // Vite source file (`isViteSourceFile`, the same extension set the rest of this file scans), or a
 // literal `.html`/`.md` directly inside `harness/reui-scheduling/` itself (the dev-only Vite HTML
 // entry dir — `apps/web/harness/reui-scheduling/`, NOT under `src/`, which is where `index.html`
 // and any future landing-page README have to live). Any other file (`.css`, `.svg`, `.png`,
-// `.json`, `.wasm`, …) anywhere in either restricted tree fails this guard outright: extend
+// `.json`, `.wasm`, …) anywhere in any restricted tree fails this guard outright: extend
 // `forbid-dev-only-modules.ts` (or move the asset elsewhere) rather than let one land silently.
 
 /** The dev-only Vite HTML entry dir itself — `apps/web/harness/reui-scheduling/`, sibling to
- * `src/`, not inside it. Only place under either restricted tree a non-source file may exist. */
+ * `src/`, not inside it. Only place under any restricted tree a non-source file may exist. */
 const HARNESS_ENTRY_DIR = join(webDir, "harness", "reui-scheduling");
 
 const RESTRICTED_ASSET_SCAN_DIRS = [
   { label: "src/harness/", abs: join(srcDir, "harness") },
   { label: "src/components/reui/gantt/", abs: join(srcDir, "components", "reui", "gantt") },
+  // #219 PR B: the vendored event-calendar tree, on the same terms as the Gantt above. PR A
+  // pre-wired this path into RESTRICTED_GLOB_DIRS and VENDOR_SCHEDULING_PREFIXES but not here,
+  // so until PR B the calendar tree could have taken a `.css` or `.png` without this guard
+  // noticing — the one of the three lists that is about EMITTED ASSETS rather than imports.
+  {
+    label: "src/components/reui/event-calendar/",
+    abs: join(srcDir, "components", "reui", "event-calendar"),
+  },
 ];
 
 /**

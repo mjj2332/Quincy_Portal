@@ -27,6 +27,33 @@ a { color: inherit; }
   outline-offset: 2px;
 }
 
+/* ---- The border-colour compat rule (#219 PR B) ----------------------------
+   Tailwind v4's preflight resets every element to `border: 0 solid currentColor`.
+   A class that sets only a border WIDTH (`border`, `border-b`, `border-t`, `border-s`, …)
+   therefore paints whatever `color` the element already has — and most Quincy text sits on
+   `--ink-900`-adjacent colours, so a bare structural border rendered near-black instead of the
+   greige hairline it was meant to be. Some registries ship this compat rule to neutralise the
+   reset; this repo did not, which made every bare `border*` class in the app silently wrong.
+   See `docs/lessons.md`, "Tailwind v4 preflight makes a bare `border`/`border-b` paint
+   near-black".
+
+   `--border` is a ROLE token, re-scoped per surface by `inverse.css`
+   (`[data-surface="inverse"]` takes the greige-500 hairline that reads on ink,
+   `[data-surface="default"]` restores the paper one for a light panel nested inside it), so a
+   bare border inside an inverted surface gets that surface's own hairline for free.
+
+   THIS RULE MUST STAY INSIDE `@layer base`, unlike the `:focus-visible` rule directly above it,
+   which is deliberately unlayered so nothing can override the focus indicator. Layered `base`
+   loses to `@layer utilities`, which is the point: `border-border`, `border-primary/40`,
+   `border-(--ec-event-color)/50` and every other colour utility still win. Unlayered, this rule
+   would beat all of them and break every intentional border colour in the app. It sits after
+   preflight's own `@import … layer(base)` in source order, so within that one layer it wins
+   against `currentColor`.
+   -------------------------------------------------------------------------- */
+@layer base {
+  *, *::before, *::after { border-color: var(--border); }
+}
+
 /* ---- Brand display helpers ------------------------------------------ */
 .q-display   { font: var(--type-display); letter-spacing: var(--tracking-tightest); }
 .q-h1        { font: var(--type-h1); letter-spacing: var(--tracking-tight); }

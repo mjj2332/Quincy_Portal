@@ -1,0 +1,286 @@
+/**
+ * ReUI's `@reui/event-calendar` — a headless-first event calendar (month, week, day, N-day, agenda
+ * and resource views, pointer drag/resize/drag-create, an RFC 5545 recurrence subset, display time
+ * zones, and an external CRUD contract) shipped as 13 files. Fetched via
+ * `npx shadcn@latest add @reui/event-calendar` into a sandbox (`tmp/ReUI-Test-1`, `--path
+ * src/components/vendor-219b`) for #219 (PR B: vendor the calendar, re-skin it, no consumer yet).
+ *
+ * VERBATIM. The only edits are mechanical, identical in kind across all 13 files, and machine-
+ * checked at the vendoring commit — every differing line was one of these three:
+ *
+ * 1. Dropped the registry's `"use client"` directive (meaningless in this Vite SPA) — present in
+ *    5 of the 13: this file's siblings `event-calendar.tsx`, `-agenda-view`, `-dnd`, `-month-view`
+ *    and `-resource-view`.
+ * 2. `cn` imported from `@/lib/utils` instead of the registry's raw `"cn"` package (8 files; see
+ *    `reui/checkbox.tsx`'s header for why that package must never be installed).
+ * 3. Shared primitives repointed from `@/components/ui/<name>` to `@/components/reui/<name>`
+ *    (11 sites). Those seven — `button`, `calendar`, `dropdown-menu`, `popover`, `scroll-area`,
+ *    `tooltip`, `icon-stack` — were ALREADY vendored and adapted before PR B, so this item added
+ *    no new primitive and no new dependency. The sandbox's own copies of them were deliberately
+ *    NOT copied across: Quincy's carry documented corrections the registry's do not.
+ *
+ * The tree's own file-to-file imports needed no rewrite — the registry emits them as
+ * `@/components/reui/event-calendar/<name>` already, which is exactly where this lands. Like
+ * `gantt/`, this multi-file item sits in its own subdirectory rather than flat among the other
+ * vendored files, which is what lets `event-calendar-skin.guard.test.ts` scope itself to this
+ * directory (`docs/reui-reuse.md`).
+ *
+ * No production code imports this tree. `src/harness/harness-reachability.guard.test.ts` and
+ * `src/build/forbid-dev-only-modules.ts` make that a build failure rather than a bug report; the
+ * dev-only harness at `src/harness/reui-scheduling/` is the only thing that renders it, on local
+ * fixture data. FullCalendar remains the production calendar and PR B does not touch it.
+ *
+ * QUINCY EDIT LOG — every dated entry below is a real Quincy change made after the verbatim
+ * vendoring commit. ADR 0009 (written for the Gantt, and the precedent this tree follows) calls
+ * these headers the merge instructions: a future re-vendor re-runs the same sandbox install, then
+ * replays each entry against the new file. Losing the log is the real cost, not the line count.
+ *
+ * THIS FILE: the agenda view — a chronological list grouped by day, with sticky date gutters, collapsible days and expandable per-event detail.
+ *
+ *   - The agenda renders NO `data-ec-day` nodes and consumes no slot draft, so it has no drop
+ *     geometry at all. A pointer release over the agenda must be an explicit, tested no-op rather
+ *     than an accidental one.
+ *
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 4 — the row hover went from `hover:bg-accent/40` to
+ *    `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the registry's value painted a 40%
+ *    near-black wash over a whole agenda row on hover — correct on a theme whose accent is a
+ *    light tint, very wrong here. `--muted` (`--bg-raised`) is the surface this repo uses for a
+ *    raised/hovered row.
+ */
+import { useMemo } from "react"
+import {
+  EventCalendarViewContext,
+  useEventCalendar,
+  useEventCalendarSelector,
+  useEventCalendarSettings,
+  useEventCalendarViewConfig,
+} from "@/components/reui/event-calendar/event-calendar"
+import { EventCalendarEvent } from "@/components/reui/event-calendar/event-calendar-event"
+import {
+  getDayKey,
+  getRangeKey,
+  toZoned,
+  zonedStartOfDay,
+} from "@/components/reui/event-calendar/event-calendar-lib"
+import type {
+  EventCalendarDateRange,
+  EventCalendarSegment,
+} from "@/components/reui/event-calendar/event-calendar-types"
+import { IconStack } from "@/components/reui/icon-stack"
+import { mergeProps } from "@base-ui/react/merge-props"
+import { useRender } from "@base-ui/react/use-render"
+import { addDays, format } from "date-fns"
+
+import { cn } from "@/lib/utils"
+import { ScrollArea } from "@/components/reui/scroll-area"
+import { CalendarIcon } from "lucide-react"
+
+// The agenda window length is the agendaDayCount SETTING (the store derives
+// visibleRange from it); a per-view prop here would silently disagree.
+type EventCalendarAgendaViewProps = useRender.ComponentProps<"div">
+
+function EventCalendarAgendaView({
+  className,
+  render,
+  ...props
+}: EventCalendarAgendaViewProps) {
+  const instance = useEventCalendar()
+  const settings = useEventCalendarSettings()
+  const viewConfig = useEventCalendarViewConfig()
+  const visibleRange = useEventCalendarSelector<
+    unknown,
+    EventCalendarDateRange
+  >((state) => state.visibleRange, {
+    isEqual: (a, b) => getRangeKey(a) === getRangeKey(b),
+  })
+  // Subscribe to event changes via the day-bucket content of the whole range
+  useEventCalendarSelector((state) => state.events)
+
+  const days = useMemo(() => {
+    const result: Date[] = []
+    let cursor = zonedStartOfDay(visibleRange.start, settings.timeZone)
+    while (cursor < visibleRange.end) {
+      result.push(cursor)
+      cursor = zonedStartOfDay(
+        addDays(toZoned(cursor, settings.timeZone), 1),
+        settings.timeZone
+      )
+    }
+    return result
+  }, [visibleRange, settings.timeZone])
+
+  const index = instance.internals.getIndex()
+  const groups = days
+    .map((day) => ({
+      day,
+      bucket: index.byDay.get(getDayKey(day, settings.timeZone)),
+    }))
+    .filter((group) => {
+      const total =
+        (group.bucket?.allDay.length ?? 0) + (group.bucket?.timed.length ?? 0)
+      return total > 0
+    })
+
+  const isToday = (day: Date) =>
+    getDayKey(day, settings.timeZone) ===
+    getDayKey(new Date(), settings.timeZone)
+
+  const native = viewConfig.scrollbars === "native"
+
+  const body = (
+    <>
+      {groups.length === 0 ? (
+        <div
+          data-slot="event-calendar-no-events"
+          className={cn(
+            "flex min-h-72 flex-col items-center justify-center gap-4 py-16",
+            viewConfig.classNames?.noEvents
+          )}
+        >
+          {viewConfig.renderNoEvents?.() ?? (
+            <>
+              <IconStack>
+                <CalendarIcon className="size-5" aria-hidden="true" />
+              </IconStack>
+              <span className="text-muted-foreground text-sm">
+                {settings.i18n.labels.noEvents}
+              </span>
+            </>
+          )}
+        </div>
+      ) : (
+        // Drop the very last row's bottom border so it does not double up with
+        // the calendar container's own bottom border. Targets the last day
+        // group's last child (its last agenda item); per-item `border-b` is
+        // kept everywhere else, including each day's internal rows.
+        <div className="flex flex-col [&>*:last-child>*:last-child]:border-b-0">
+          {groups.map(({ day, bucket }) => {
+            const items = [...(bucket?.allDay ?? []), ...(bucket?.timed ?? [])]
+            const zoned = toZoned(day, settings.timeZone)
+            const weekday = format(zoned, "EEEE", { locale: settings.locale })
+            const dayDate = format(zoned, "MMMM d, yyyy", {
+              locale: settings.locale,
+            })
+            return (
+              <div
+                key={day.getTime()}
+                data-slot="event-calendar-agenda-day"
+                data-today={isToday(day) || undefined}
+                // A named group per day so a screen reader can step day by day
+                // (and hear how full one is) instead of arrowing every row.
+                role="group"
+                aria-label={`${weekday}, ${dayDate}, ${settings.i18n.labels.events(items.length)}`}
+              >
+                {/* Group header: weekday (leading) + full date (trailing) */}
+                <div
+                  data-slot="event-calendar-agenda-day-header"
+                  // The day bar is the agenda's only structure, so give it a
+                  // heading level: the H key and the rotor can jump between
+                  // days, which is the whole point of a long agenda.
+                  role="heading"
+                  aria-level={3}
+                  className={cn(
+                    "bg-muted/60 sticky top-0 z-10 flex items-baseline justify-between gap-4 border-b px-4 py-2",
+                    // The custom ScrollArea's overlay scrollbar (w-2.5 = 10px)
+                    // is painted UNDER this sticky, z-10, opaque header, so the
+                    // thumb vanishes behind the day bar at the top of the view.
+                    // Inset the header by the scrollbar lane so its background
+                    // stops before the scrollbar instead of covering it. Native
+                    // scrollbars already sit outside the content box, so this
+                    // only applies to the custom-scrollbar path.
+                    !native && "me-2.5",
+                    viewConfig.classNames?.agendaDayHeader
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "text-foreground font-semibold",
+                      isToday(day) && "text-primary"
+                    )}
+                  >
+                    {weekday}
+                  </span>
+                  <span className="text-muted-foreground font-medium tabular-nums">
+                    {dayDate}
+                  </span>
+                </div>
+                {items.map((segment) => (
+                  <EventCalendarAgendaItem
+                    key={segment.occurrence.key}
+                    segment={segment}
+                  />
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
+
+  const defaultProps = {
+    "data-slot": "event-calendar-agenda-view",
+    "data-view": "agenda",
+    // Unlike the grid views the agenda has no row/column semantics to carry a
+    // name, so label the region with the day range it covers - through
+    // formatDayRange, so a consumer override reaches it.
+    role: "group",
+    "aria-label": settings.i18n.functions.formatDayRange(visibleRange, {
+      locale: settings.locale,
+    }),
+    className: cn(
+      "flex min-h-0 flex-1 flex-col overflow-hidden border-t",
+      viewConfig.classNames?.agendaView,
+      className
+    ),
+    children: native ? (
+      <div
+        data-slot="scroll-area-viewport"
+        data-ec-native-scroll=""
+        className="h-full overflow-y-auto"
+      >
+        {body}
+      </div>
+    ) : (
+      <ScrollArea className="h-full">{body}</ScrollArea>
+    ),
+  }
+
+  return (
+    <EventCalendarViewContext.Provider value={{ view: "agenda" }}>
+      {useRender({
+        defaultTagName: "div",
+        render,
+        props: mergeProps<"div">(defaultProps, props),
+      })}
+    </EventCalendarViewContext.Provider>
+  )
+}
+
+/**
+ * One agenda row: a full-width, selectable table row - time column, color dot,
+ * and title (all replaceable via renderAgendaEvent). Clicking selects the
+ * event (drag/resize stay off in the agenda).
+ */
+function EventCalendarAgendaItem({
+  segment,
+}: {
+  segment: EventCalendarSegment
+}) {
+  const viewConfig = useEventCalendarViewConfig()
+  return (
+    <EventCalendarEvent
+      segment={segment}
+      className={cn(
+        // read-only list: hover only, no selected/focused styling on click
+        "hover:bg-muted gap-3 rounded-none border-b px-4 py-2.5 transition-colors",
+        viewConfig.classNames?.agendaItem
+      )}
+    />
+  )
+}
+
+export { EventCalendarAgendaView }
+export type { EventCalendarAgendaViewProps }

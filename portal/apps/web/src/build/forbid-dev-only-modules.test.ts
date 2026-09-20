@@ -131,8 +131,16 @@ describe("matchRestrictedModuleId", () => {
 });
 
 describe("RESTRICTED_MODULE_PREFIXES", () => {
-  it("is exactly the two documented prefixes", () => {
-    expect(RESTRICTED_MODULE_PREFIXES).toEqual(["src/harness/", "src/components/reui/gantt/"]);
+  // Exact-array, not `toContain`: the point of this assertion is that a prefix cannot be added
+  // (widening what is kept out of production) or removed (letting a vendored tree ship) without
+  // the change being visible here and in this file's own doc block. Each entry is removed by the
+  // slice that gives that tree a real production consumer, never as a tidy-up.
+  it("is exactly the three documented prefixes", () => {
+    expect(RESTRICTED_MODULE_PREFIXES).toEqual([
+      "src/harness/",
+      "src/components/reui/gantt/",
+      "src/components/reui/event-calendar/",
+    ]);
   });
 });
 

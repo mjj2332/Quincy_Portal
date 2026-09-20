@@ -3414,7 +3414,7 @@ a branch is actually reachable at the DOM layer (instrument and read the values 
 the way test (m)'s `Date.now` collision was confirmed above) before spending a sweep's worth of effort
 trying to catch it there.
 
-## Tailwind v4 preflight makes a bare `border`/`border-b` paint near-black — this repo ships no compat rule for it (#219, 2026-09-20)
+## Tailwind v4 preflight makes a bare `border`/`border-b` paint near-black — fixed at the cause in PR B, after two rounds of fixing it at the call site (#219, 2026-09-20)
 
 `gantt-nav.tsx`'s toolbar and `gantt-view.tsx`'s tree/timeline splitter both shipped a bare
 `border-b`/`border` with no colour utility beside it, and both painted near-black instead of the
@@ -3427,15 +3427,53 @@ every surface. Contrast with the sibling shadcn convention: some registries ship
 does not have one** — `styles/tokens/base.css` has no such rule — so every bare `border*` class
 anywhere in the app is silently exposed to this hazard, not only inside the Gantt.
 
-This is a repo-wide defect class, currently pinned by a detector scoped to nine files
-(`gantt-skin.guard.test.ts` Detector 6, added alongside the two fixes above) that only watches the
-vendored Gantt tree. Nothing scans `components/quincy/` or the rest of `components/reui/` for the
-same bare-border shape. A future author reaching for `border-b` anywhere else in the app should
-pair it with a colour token (`border-border`, or whatever role the surface calls for) on sight —
-Tailwind's own reset will not tell them anything is wrong; the element will simply render with a
-border, just the wrong one.
+**PR B fixed the cause, and that is the actual lesson here.** PR A answered this twice at the call
+site — two hand-applied `border-border` fixes plus `gantt-skin.guard.test.ts` Detector 6, a detector
+scoped to nine files that only ever watched the vendored Gantt tree while the paragraph above
+correctly described the hazard as repo-wide. PR B then vendored `@reui/event-calendar` and found
+**zero occurrences of `border-border` across all 13 files and roughly 48 bare `border*` classes** —
+every hairline in a month grid, a time grid, a resource grid and an agenda list. At that scale the
+call-site fix stopped being a fix and became a tax: 48 more edits inside a vendored tree, 48 more
+lines for a future re-vendor to replay, and still nothing protecting the rest of the app.
 
-## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth and fifth time (#219, 2026-09-20)
+So `styles/tokens/base.css` now carries the one line that was missing all along:
+
+```css
+@layer base {
+  *, *::before, *::after { border-color: var(--border); }
+}
+```
+
+Three things about it are load-bearing:
+
+- **It must be inside `@layer base`.** Unlayered — the way the `:focus-visible` rule directly above
+  it in the same file deliberately is — it would beat `@layer utilities` and override every
+  intentional border colour in the app. Layered, utilities still win, which is the entire point. It
+  lands after preflight's own `layer(base)` import in source order, so within that one layer it
+  beats `currentColor`.
+- **`--border` is a role token, so the rule is surface-aware for free.** `inverse.css` re-scopes it
+  for `[data-surface="inverse"]` (greige-500, which reads on ink) and restores it for a nested
+  `[data-surface="default"]` panel. A bare border inside the Lightbox gets the ink hairline without
+  anyone writing a variant.
+- **It was verified in a real browser, not reasoned about.** Four probes: a bare `border-b` on paper
+  paints `#cfc7b6` while the element's own `color` is near-black (so it no longer follows
+  `currentColor`); `border-b border-primary` still paints `#0a0a0a` (so utilities still win);
+  the same bare class inside `[data-surface="inverse"]` paints `#6d6657`; and inside a nested
+  `[data-surface="default"]` it returns to `#cfc7b6`. A cascade argument that has not been measured
+  is a guess — layer order is exactly the kind of claim that reads correct and renders wrong.
+
+The calendar tree corroborates the same point independently: all 13 files, zero `border-border`
+classes, roughly 48 bare hairlines, and every one of them the compat rule coloured correctly with
+no per-site edit — the evidence that fixing the cause beat fixing 48 call sites.
+
+**Detector 6 was deleted in the same commit, on purpose.** A guard whose premise has been removed
+does not become a harmless extra check — left passing, it goes on asserting a hazard that no longer
+exists, and teaches the next reader to keep paying a cost that has been retired. The general rule:
+when you fix a defect class at its cause, delete the detector that pinned it at the call site, in
+the same commit, and say so where the detector used to live. Reinstating it now would require
+deleting the compat rule first.
+
+## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth, fifth and sixth time (#219, 2026-09-20)
 
 `styles/tokens/reui.css:160-166` already records this correction twice over (`reui/badge.tsx`
 correction 2, `reui/button.tsx` divergence 5): `styles/tokens/base.css:25` declares an unlayered
@@ -3445,13 +3483,23 @@ global outline — it paints a SECOND indicator beside it that `tailwind-merge` 
 (different property, not a conflicting utility class). #219 PR A hit it twice more, independently,
 in two different vendored Gantt files — the bar's own focus state (`gantt-bar.tsx`, dr-219a HIGH
 #2) and the tree/timeline splitter (`gantt-view.tsx`, dr-219a HIGH #2 and HIGH #3) — bringing the
-running count to five.
+running count to five. #219 PR B hit a sixth, in the vendored event-calendar's own chip:
+`event-calendar/event-calendar-event.tsx` carried the identical
+`outline-none focus-visible:ring-ring/50 focus-visible:ring-2` pair.
 
 Four occurrences in two unrelated adoptions (the sidebar block, then the Gantt) is no longer a
 coincidence worth re-discovering per file: any newly vendored ReUI/shadcn component that ships its
 own `focus-visible:ring-*` should have that ring dropped on sight, the same way a bare `border` is
 now checked on sight above — `tokens/base.css:25`'s global outline is the only focus indicator this
 app wants, and the vendor's own ring is never additive, only redundant.
+
+**Verifying the fix needs a REAL keyboard press.** A programmatic `element.focus()` does not match
+`:focus-visible` (Chrome gates it on the last interaction having been keyboard), and dispatching
+a synthetic `KeyboardEvent` does not flip that heuristic either because the event is untrusted.
+Both read back `outline-style: none` on a correctly-fixed element. PR B initially misread that
+as the app's outline being clipped by the chip's `overflow-hidden`. Measured with a real Tab
+keypress the chip shows `outline: 2px solid rgb(10,10,10)` at `outline-offset: 2px` — and the
+offset is why `overflow-hidden` cannot clip it: the outline paints outside the box.
 
 ## A guard widened to make a build pass is a guard that has already failed once (#219, 2026-09-20)
 
@@ -3476,3 +3524,91 @@ must not depend on nothing having collided YET. Any widening of a guard's matche
 negative fixture — a case the widening should still catch — checked BEFORE the widening lands, the
 same "prove a gate can fail before trusting it" rule `## A grep gate that cannot fail is not a
 gate` names, applied to a guard's *matcher* as well as its presence.
+
+## A guard's matcher must be validated against forms that actually exist (#219, 2026-09-20)
+
+PR A's skin-guard Detector 3 matched a hex literal inside a Tailwind arbitrary value only when
+the `#` came immediately after `[` or after a type hint (`bg-[#0a0a0a]`, `bg-[color:#fff]`). The
+calendar tree contains
+`@max-[10rem]:[mask-image:linear-gradient(to_right,#000_calc(100%-0.75rem),transparent)]` — a
+hex buried arbitrarily deep inside the value. The regex could not see it. The guard would have
+reported green on a tree containing the exact thing it exists to forbid.
+
+This is the same failure as the earlier "a guard widened to make a build pass" lesson, one step
+earlier in its life: not a matcher loosened under pressure, but a matcher whose shape was never
+checked against the shapes in the wild.
+
+What PR B did: added the negative fixture FIRST, widened to match a hex anywhere inside `[...]`,
+allowlisted the single real site with its reason (`#000` there is a mask ALPHA stop, not paint —
+any fully opaque colour is equivalent), and back-ported the identical widening and fixture to
+`gantt-skin.guard.test.ts` in the same commit so two sibling guards cannot silently diverge.
+
+The generalisation: when you port a detector to a second tree, run it against that tree and
+confirm it can still FAIL there. A detector that has only ever been green is untested.
+
+## A detector scoped to the wrong element is vacuous (#219, 2026-09-20)
+
+PR A's Detector 7 forbids `destructive` on the now-indicator by matching the element that
+carries `data-slot="event-calendar-now-indicator"` and testing its opening tag. In the calendar
+tree that slot is a bare wrapper and the three `destructive` classes sit on three CHILD divs.
+Ported verbatim the detector returns green while the violation ships.
+
+Rescoping it to the whole FILE would be wrong in the other direction — `destructive` is
+legitimate elsewhere in that same file. PR B scoped it to the `EventCalendarNowIndicator`
+function body, and landed a negative fixture proving a `destructive` in a NEIGHBOURING function
+body does not fire, in the same commit.
+
+The generalisation: a detector carries an implicit claim about where the thing it forbids can
+appear. Re-check that claim in every tree you port it to, and pin both directions with fixtures.
+
+## Wall-clock minutes and elapsed minutes are different units; mixing them breaks only on DST days (#219, 2026-09-20)
+
+The vendored calendar computed a day's lower/upper render bounds as
+`Math.min(dayEndHour * 60, getDayTotalMinutes(day, timeZone))`. `dayEndHour * 60` is WALL-CLOCK
+minutes (hour 24 = end of day); `getDayTotalMinutes` returns ELAPSED minutes (1500 on a 25-hour
+day, 1380 on a 23-hour day). `Math.min` of the two is meaningless. Everything the calendar
+positions is in elapsed minutes from zoned midnight.
+
+Consequence on Australia/Sydney's 25-hour autumn day: the bound clamps to 1440, an event at
+wall-clock 23:15 has an elapsed offset of 1455, the visibility filter is `startMin < boundsEndMin`
+— so the event is SILENTLY INVISIBLE, cannot be dropped there either, and the now-indicator
+disappears for the last hour of that day. Browser-confirmed with a control: the same fixture
+renders on a 24-hour day and on a 23-hour day, and vanishes only on the 25-hour one.
+
+The fix is not a special case for hour 24. It is a helper that converts a wall-clock hour to
+elapsed minutes for THAT day, used for both bounds: `elapsedMinutesAtWallClockHour`.
+
+The generalisation: any time a `* 60` sits next to a timezone-aware duration, one of them is the
+wrong unit. Name the unit in the identifier, and put a DST day in the fixtures — a 24-hour day
+cannot distinguish the two.
+
+Honest note: this fix trades a silent failure for a visible one. On transition days the shared
+hour gutter now disagrees with the transition day's column by one hour-height, because the gutter
+renders a fixed 24 labels while stretching to the tallest column. Losing an hour of data is worse
+than losing alignment, so the trade is right, but it is a trade and the residual misalignment is
+tracked separately as #241.
+
+## A typed config key can be silently dropped by a runtime allow-list (#219, 2026-09-21)
+
+`@reui/event-calendar` resolves its view configuration through `VIEW_CONFIG_KEYS`, an explicit
+array of key names, and copies only those keys into the context its views read. The TYPE
+(`EventCalendarViewConfig`) and the runtime list are maintained separately and nothing ties them
+together.
+
+Adding `eventClassName` to the interface and consuming it in the chip therefore typechecked
+cleanly at every call site — including the consumer passing the prop — and rendered nothing. The
+browser showed the vendor's own default styling with no error, no warning, and no failing test.
+`tsc` cannot see this: as far as the type system is concerned the prop was accepted.
+
+What caught it was rendering the component and asserting on the result. What would NOT have caught
+it: a unit test of the callback, a typecheck, a lint rule, or reading the diff.
+
+The generalisation, which is not specific to this block: **when a library resolves configuration
+through a hand-maintained list of key names, adding to its type is only half the change.** Look
+for the list — `*_KEYS`, a `pick(...)`, a destructure with explicit names, a reducer over a
+literal array — and add the key there too. Then pin it with a test that RENDERS, because every
+cheaper check passes.
+
+`event-calendar-done-dim.dom.test.tsx` is that test, and its failure message names
+`VIEW_CONFIG_KEYS` directly so the next person does not have to rediscover the mechanism. Deleting
+the key from the list turns three of its five cases red.

@@ -18,8 +18,14 @@
  * scenarios rather than switching scale per scenario.
  */
 import { TZDate } from "@date-fns/tz";
-import { addDays, format } from "date-fns";
+import { addDays, differenceInMinutes, format } from "date-fns";
 import type { GanttEvent, GanttResource, GanttScale } from "@/components/reui/gantt/gantt-types";
+// `event-calendar-types.tsx` exports all of these publicly (checked directly in that file before
+// writing this import) — no fallback import path was needed.
+import type {
+  CalendarEvent,
+  EventCalendarResource,
+} from "@/components/reui/event-calendar/event-calendar-types";
 
 export const SYDNEY_TZ = "Australia/Sydney";
 
@@ -203,4 +209,191 @@ export function civilDaySpan(start: Date, end: Date): number {
   const fromDay = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
   const toDay = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
   return Math.round((toDay - fromDay) / 86_400_000);
+}
+
+// ---------------------------------------------------------------------------------------------
+// #219 stage 3 (PR B) calendar fixtures — `CalendarPreview.tsx`'s data. Same anchor convention as
+// the Gantt fixtures above (`sydneyMidnight` + `addDays` for whole-day offsets, `sydneyTime` for
+// timed instants), reusing the same `SYDNEY_TZ`, `ScenarioId`, `SCENARIOS` and `STAGE_COLORS`. Kept
+// in this file (not a sibling) so `fixtures.test.ts` can assert both surfaces' DST invariants
+// against one canonical anchor-building implementation.
+
+const CALENDAR_RESOURCES: EventCalendarResource[] = [
+  {
+    id: "team-alpha",
+    title: "Team Alpha",
+    children: [
+      { id: "shoot-auckland", title: "Auckland Shoot" },
+      { id: "shoot-wellington", title: "Wellington Shoot" },
+    ],
+  },
+];
+
+export interface UnscheduledItem {
+  id: string;
+  title: string;
+  durationMinutes: number;
+  color: string;
+}
+
+export interface CalendarFixture {
+  date: Date;
+  events: CalendarEvent[];
+  resources: EventCalendarResource[];
+  /** Items not yet on the calendar — the external-drag tray's source (stage 3 wires the drag). */
+  unscheduled: UnscheduledItem[];
+}
+
+const UNSCHEDULED: UnscheduledItem[] = [
+  { id: "unsched-scout", title: "Location scout", durationMinutes: 90, color: STAGE_COLORS.awaitingRaw },
+  { id: "unsched-grade", title: "Colour grade", durationMinutes: 60, color: STAGE_COLORS.editing },
+  { id: "unsched-review", title: "Client review", durationMinutes: 30, color: STAGE_COLORS.rawReview },
+];
+
+/**
+ * One scenario's calendar fixture, anchored the same way `buildFromAnchor` above anchors the
+ * Gantt fixture — every whole-day offset via `addDays` on `anchor`, every timed instant via
+ * `sydneyTime` on the anchor's own civil Y/M/D (or an `addDays`-derived day's Y/M/D).
+ */
+function buildCalendarFromAnchor(anchor: TZDate): Omit<CalendarFixture, "date"> {
+  const day = (offset: number) => addDays(anchor, offset);
+  const y = anchor.getFullYear();
+  const m = anchor.getMonth() + 1;
+  const d = anchor.getDate();
+
+  const events: CalendarEvent[] = [
+    {
+      // Multi-day all-day lane packing: an all-day bar spanning the anchor, half-open per
+      // `CalendarEvent.end`'s own contract (start inclusive, end exclusive).
+      id: "all-day-bar",
+      title: "All-day shoot block",
+      start: day(-1),
+      end: day(2),
+      allDay: true,
+      resourceId: "shoot-wellington",
+      color: STAGE_COLORS.editing,
+    },
+    {
+      // THE vendor defect probe. On the 25-hour autumn day (`dst-autumn`), 23:15 Sydney wall-clock
+      // is 1455 elapsed minutes from that day's own Sydney zoned midnight (verified: the autumn
+      // day repeats the 2–3am hour, adding 60 minutes on top of 23:15's ordinary 1395; see
+      // `fixtures.test.ts`), NOT the wall-clock-looking 1395 and NOT the spec's originally assumed
+      // 1440 — that number was checked against a real `node` run before being written here (see
+      // this harness's PR B report). `event-calendar-time-grid.tsx` clamps the day's visible bound
+      // to `boundsEndMin = Math.min(dayEndHour * 60, totalMinutes)`; with the default
+      // `dayEndHour = 24` that is `Math.min(1440, 1500) = 1440`. Since this event's `startMin`
+      // (1455) is >= that 1440 bound, `event-calendar-time-grid.tsx`'s own visibility test
+      // (`startMin < boundsEndMin`) is false and THE EVENT IS INVISIBLE — on this one calendar day
+      // only. This probe exists to make that vendor defect observable; stage 3 (a later PR) fixes
+      // it, not this one.
+      id: "dst-late-night",
+      title: "DST probe: late-night edit (may be invisible — see comment)",
+      start: sydneyTime(y, m, d, 23, 15),
+      end: sydneyTime(y, m, d, 23, 45),
+      resourceId: "shoot-auckland",
+      color: STAGE_COLORS.rawReview,
+    },
+    {
+      // Elapsed-vs-wall-clock split. 1:30am -> 3:30am wall clock is always 2 wall-clock hours, but
+      // the REAL elapsed span differs by scenario: on `dst-spring` (23h day, clocks skip 2am-3am)
+      // it is 1 real hour; on `dst-autumn` (25h day, clocks repeat 2am-3am) it is 3 real hours.
+      // Rendered pixel height in a time-grid view that positions by elapsed minutes (not by naive
+      // wall-clock difference) should visibly differ between the two scenarios for this same
+      // "1:30–3:30" event. Numbers verified with a real `node` run — see `fixtures.test.ts`.
+      id: "dst-transition-span",
+      title: "DST probe: transition-hour edit",
+      start: sydneyTime(y, m, d, 1, 30),
+      end: sydneyTime(y, m, d, 3, 30),
+      resourceId: "shoot-auckland",
+      color: STAGE_COLORS.editing,
+    },
+    {
+      // Segment split across the zoned midnight: built from the anchor day's 22:00 to the NEXT
+      // civil day's (via `addDays`, never `+2.5 hours`) 00:30 — so this instant is always the
+      // correct Sydney midnight-plus-thirty regardless of which side of a DST transition the
+      // anchor day sits on.
+      id: "cross-midnight",
+      title: "Cross-midnight wrap",
+      start: sydneyTime(y, m, d, 22, 0),
+      end: (() => {
+        const next = day(1);
+        return sydneyTime(next.getFullYear(), next.getMonth() + 1, next.getDate(), 0, 30);
+      })(),
+      resourceId: "shoot-wellington",
+      color: STAGE_COLORS.awaitingRaw,
+    },
+    {
+      // Wall-clock 09:00 must survive the transition: `recurrence` steps this weekly series with
+      // `addWeeks` on a zoned start, so the fourth (and every) occurrence should still read as
+      // 09:00 Sydney wall-clock even though one of the intervening weeks crosses the DST boundary.
+      id: "weekly-standup",
+      title: "Weekly standup",
+      start: sydneyTime(day(-7).getFullYear(), day(-7).getMonth() + 1, day(-7).getDate(), 9, 0),
+      end: sydneyTime(day(-7).getFullYear(), day(-7).getMonth() + 1, day(-7).getDate(), 9, 30),
+      recurrence: { freq: "weekly", interval: 1, count: 4 },
+      resourceId: "shoot-auckland",
+      color: STAGE_COLORS.delivered,
+    },
+    {
+      // The vendor's `data-past` chip attribute is derived from the clock alone (see
+      // `event-calendar-types.tsx`'s own header). This event IS in the past relative to a real
+      // wall clock most of the time this scenario is viewed, but it is deliberately UNFINISHED —
+      // completion rides in `data.done`, a Quincy concern, never in the vendor's clock-derived
+      // `data-past`.
+      id: "past-not-done",
+      title: "Past but not done",
+      start: sydneyTime(day(-3).getFullYear(), day(-3).getMonth() + 1, day(-3).getDate(), 10, 0),
+      end: sydneyTime(day(-3).getFullYear(), day(-3).getMonth() + 1, day(-3).getDate(), 11, 0),
+      resourceId: "shoot-wellington",
+      color: STAGE_COLORS.awaitingRaw,
+      data: { done: false },
+    },
+    {
+      // The other half of the pair: DONE, and deliberately in the FUTURE, so it cannot be
+      // confused with the vendor's clock-derived `data-past`. A task finished early is done
+      // while still ahead of the clock; this fixture is what proves the harness dims on
+      // `data.done` and not on time.
+      id: "future-and-done",
+      title: "Done ahead of schedule",
+      start: sydneyTime(day(2).getFullYear(), day(2).getMonth() + 1, day(2).getDate(), 14, 0),
+      end: sydneyTime(day(2).getFullYear(), day(2).getMonth() + 1, day(2).getDate(), 15, 30),
+      resourceId: "shoot-auckland",
+      color: STAGE_COLORS.delivered,
+      data: { done: true },
+    },
+  ];
+
+  return {
+    events,
+    resources: CALENDAR_RESOURCES,
+    unscheduled: UNSCHEDULED,
+  };
+}
+
+export function buildCalendarScenario(id: ScenarioId): CalendarFixture {
+  if (id === "dst-spring") {
+    // First Sunday of October 2026 — Sydney's spring-forward transition (2am -> 3am), 23h day.
+    const anchor = sydneyMidnight(2026, 10, 4);
+    return { date: anchor, ...buildCalendarFromAnchor(anchor) };
+  }
+  if (id === "dst-autumn") {
+    // First Sunday of April 2026 — Sydney's autumn transition (3am -> 2am), 25h day.
+    const anchor = sydneyMidnight(2026, 4, 5);
+    return { date: anchor, ...buildCalendarFromAnchor(anchor) };
+  }
+  const now = new TZDate(Date.now(), SYDNEY_TZ);
+  const anchor = sydneyMidnight(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  return { date: anchor, ...buildCalendarFromAnchor(anchor) };
+}
+
+/**
+ * Elapsed minutes from the event's own Sydney zoned midnight — the same quantity the vendor's
+ * segmentation computes (`differenceInMinutes(segStart, zonedStartOfDay)` in
+ * `event-calendar-lib.tsx`), NOT wall-clock minutes. On an ordinary 24h day these coincide; on a
+ * DST transition day they diverge, which is exactly what the `dst-*` probes above exist to show.
+ */
+export function elapsedMinutesFromZonedMidnight(instant: Date): number {
+  const zoned = new TZDate(instant.getTime(), SYDNEY_TZ);
+  const midnight = new TZDate(zoned.getFullYear(), zoned.getMonth(), zoned.getDate(), 0, 0, 0, 0, SYDNEY_TZ);
+  return differenceInMinutes(zoned, midnight);
 }
