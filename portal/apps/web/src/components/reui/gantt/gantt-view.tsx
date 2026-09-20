@@ -2951,9 +2951,19 @@ function GanttView({
 }
 
 /**
- * The red now-line, self-ticking: only this component re-renders on the 30s
+ * The now-line, self-ticking: only this component re-renders on the 30s
  * clock, never the grid around it. z-10 keeps it above row content but UNDER
  * the sticky header (z-30) - vertical scrolling slides it beneath, never over.
+ *
+ * #219 PR A fix (dr-219a MEDIUM #6): this used to be `destructive` (oxblood `--signal-critical`)
+ * - in this palette red already means overdue/critical (an overdue bar's own `data-past` styling,
+ * the drag ghost's `!valid` state, the row-reorder caret's invalid drop), and an overdue bar can
+ * sit rows away from the now-line with no causal link between the two - a now-line borrowing that
+ * colour reads as "something is wrong here" when nothing is. `border-strong` (ink, `--ink-900`)
+ * instead - the same neutral-emphasis token the app already uses for a strong hairline - keeping
+ * the tinted `data-today` column (`bg-primary/5`, a DIFFERENT element, untouched) as the actual
+ * emphasis. Mechanised: `gantt-skin.guard.test.ts`'s Detector 7 fails on a `destructive` class
+ * specifically on this element or `GanttNowDot`'s below.
  */
 function GanttNowLine({
   rangeStartMs,
@@ -2971,7 +2981,7 @@ function GanttNowLine({
       data-slot="gantt-now-indicator"
       // comet tail: solid at the cap, dissolving toward the bottom -
       // present without ruling a hard line through every row
-      className="from-destructive/80 via-destructive/45 to-destructive/15 absolute inset-y-0 z-10 w-px bg-linear-to-b"
+      className="from-border-strong/80 via-border-strong/45 to-border-strong/15 absolute inset-y-0 z-10 w-px bg-linear-to-b"
       style={{ insetInlineStart: `${fraction * 100}%` }}
     />
   )
@@ -2996,7 +3006,9 @@ function GanttNowDot({
     <span
       aria-hidden
       data-slot="gantt-now-dot"
-      className="bg-destructive absolute -bottom-0.75 z-10 size-1.5 -translate-x-1/2 rounded-full"
+      // #219 PR A fix (dr-219a MEDIUM #6): matches GanttNowLine's own fix above - border-strong
+      // (ink), not destructive.
+      className="bg-border-strong absolute -bottom-0.75 z-10 size-1.5 -translate-x-1/2 rounded-full"
       style={{ insetInlineStart: `${fraction * 100}%` }}
     />
   )

@@ -24,6 +24,11 @@
  * `* { border-color: var(--border) }` compat rule, so a bare structural border class paints near-
  * black instead of the greige hairline. See that detector's own doc comment, below.
  *
+ * #219 PR A fix (dr-219a MEDIUM #6), additive detector, scoped to exactly two elements (not the
+ * whole file): a `destructive` class on the now-line or its dot cap — red already means
+ * overdue/critical elsewhere in this app, and the now-line has no causal link to an overdue bar.
+ * See that detector's own doc comment, below.
+ *
  * Each detector is a pure function over injected text, self-tested against a planted fixture that
  * PLANTS the violation it looks for — same convention as `harness-reachability.guard.test.ts` and
  * `styles/design-system-guards.test.ts` (`docs/lessons.md`: "a grep gate that cannot fail is not a
@@ -449,6 +454,92 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
       "(near-black) instead of the greige hairline (styles/tokens/colors.css's --border, drawn at",
       "189-196 greyscale by the grid lines around it). Give it an explicit border-<token>",
       "(border-border, or a deliberately different token, named) on the SAME element. Found in:",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 7 — a `destructive` token on the today/now-line elements
+// ---------------------------------------------------------------------------
+// #219 PR A fix (dr-219a MEDIUM #6): the now-line (`GanttNowLine`, `data-slot="gantt-now-
+// indicator"`) and its dot cap (`GanttNowDot`, `data-slot="gantt-now-dot"`) used to borrow
+// `--signal-critical` (`destructive`/`bg-destructive`) - in this palette red already means
+// overdue/critical (an overdue bar's own `data-past` styling, the drag ghost's `!valid` state, the
+// row-reorder caret's invalid drop), and an overdue bar can sit rows away from the now-line with no
+// causal link between the two. Scoped to exactly those two elements, NOT the whole file -
+// `destructive` is legitimate everywhere else in this file (the drag ghost's invalid state, the
+// reorder caret's invalid state, the invalid-drop-target backdrop), so a file-wide "no destructive"
+// rule would be both wrong and immediately red on real, correct code. `data-today`'s own tinted
+// column (`bg-primary/5`, the header's today pill) is a DIFFERENT element and untouched either way
+// - this detector does not reach it.
+const NOW_LINE_ELEMENT =
+  /<(?:div|span)\b[^>]*\bdata-slot="gantt-now-(?:indicator|dot)"[^>]*\/>/g;
+const DESTRUCTIVE_TOKEN = /\bdestructive\b/;
+
+function findDestructiveOnNowLine(files: Map<string, string>): Record<string, string[]> {
+  const found: Record<string, string[]> = {};
+  for (const [name, text] of files) {
+    const offenders: string[] = [];
+    for (const match of text.matchAll(NOW_LINE_ELEMENT)) {
+      if (DESTRUCTIVE_TOKEN.test(match[0])) {
+        const slot = /data-slot="(gantt-now-(?:indicator|dot))"/.exec(match[0])?.[1] ?? "?";
+        offenders.push(slot);
+      }
+    }
+    if (offenders.length > 0) found[name] = offenders;
+  }
+  return found;
+}
+
+describe("guard: no `destructive` token on the today/now-line elements", () => {
+  it("self-test: fires on gantt-now-indicator/gantt-now-dot carrying a destructive class, not on an unrelated element's destructive class or a comment naming the trap", () => {
+    const planted = new Map([
+      [
+        "fixture-now-indicator-destructive.tsx",
+        stripComments(
+          '<div data-slot="gantt-now-indicator" className="from-destructive/80 via-destructive/45 to-destructive/15 absolute inset-y-0 z-10 w-px bg-linear-to-b" style={{ insetInlineStart: `${fraction * 100}%` }} />'
+        ),
+      ],
+      [
+        "fixture-now-dot-destructive.tsx",
+        stripComments(
+          '<span aria-hidden data-slot="gantt-now-dot" className="bg-destructive absolute -bottom-0.75 z-10 size-1.5 -translate-x-1/2 rounded-full" style={{ insetInlineStart: `${fraction * 100}%` }} />'
+        ),
+      ],
+      [
+        "fixture-now-indicator-clean.tsx",
+        stripComments(
+          '<div data-slot="gantt-now-indicator" className="from-border-strong/80 via-border-strong/45 to-border-strong/15 absolute inset-y-0 z-10 w-px bg-linear-to-b" />'
+        ),
+      ],
+      [
+        "fixture-unrelated-destructive-not-flagged.tsx",
+        stripComments(
+          '<div data-slot="gantt-drag-ghost" className="border-destructive bg-destructive/10 text-destructive" />'
+        ),
+      ],
+      [
+        "fixture-clean-comment.tsx",
+        stripComments(
+          "// the now-line used to be bg-destructive here, fixed\n" +
+            '<div data-slot="gantt-now-indicator" className="bg-border-strong" />'
+        ),
+      ],
+    ]);
+    expect(findDestructiveOnNowLine(planted)).toEqual({
+      "fixture-now-indicator-destructive.tsx": ["gantt-now-indicator"],
+      "fixture-now-dot-destructive.tsx": ["gantt-now-dot"],
+    });
+  });
+
+  it("has no destructive token on gantt-now-indicator or gantt-now-dot in the nine vendored files", () => {
+    const found = findDestructiveOnNowLine(readVendoredFiles());
+    const offenders = Object.entries(found).map(([name, slots]) => `  ${name}: ${slots.join(", ")}`);
+    expect(offenders, [
+      "The now-line/now-dot must not borrow --signal-critical (destructive) - red already means",
+      "overdue/critical elsewhere in this app, and the now-line has no causal link to an overdue",
+      "bar. Use border-strong/ink instead. Found on:",
       ...offenders,
     ].join("\n")).toEqual([]);
   });
