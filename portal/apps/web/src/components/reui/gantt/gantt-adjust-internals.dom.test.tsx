@@ -534,6 +534,49 @@ describe("GanttInternals Adjust-mode methods (#219 PR A)", () => {
       expect(getState().adjust).toBeNull();
     });
 
+    it("round 3, Sol HIGH #2b: clamp only defends the LAST target after a retarget — a neighbour on the edge the FIRST target already moved is still refused, not silently committed overlapping", async () => {
+      // A moves (both edges shift together), then retargets to resize-end — clampToNeighbours'
+      // "resize-end" kind only ever bounds the END ("to"); it never touches "from" at all, so a
+      // neighbour that only overlaps the START a prior "move" step already produced has no clamp
+      // defending it once the session's CURRENT target is resize-end. Re-validation has to check
+      // the CLAMPED range against every neighbour, not just the one edge session.target implies.
+      const onEventsChange = vi.fn();
+      const a: GanttEvent = { id: "adj-mixed", title: "A", start: START, end: END, resourceId: "r1" };
+      const { internals, getState, api } = await setup({ onEventsChange, overlap: "clamp" }, a);
+      const occurrence = occurrenceOf(a);
+      await act(async () => {
+        internals.beginAdjust(a.id, occurrence, "move");
+        internals.stepAdjust(-1, "large"); // -60min
+        internals.stepAdjust(-1, "large"); // -60min again: preview now 07:00-08:00
+      });
+      const moved = getState().adjust!.preview;
+      expect(moved).toEqual({ start: new Date(START.getTime() - 2 * 3600000), end: new Date(END.getTime() - 2 * 3600000), allDay: false });
+      await act(async () => {
+        internals.retargetAdjust("resize-end");
+      });
+      expect(getState().adjust!.target).toBe("resize-end");
+      // A neighbour clear of the session's ORIGINAL entry [09:00,10:00) but overlapping the
+      // START of the MOVED preview [07:00,08:00) — introduced AFTER the move, BEFORE commit.
+      const b: GanttEvent = {
+        id: "adj-mixed-b",
+        title: "B",
+        start: new Date(moved.start.getTime() - 15 * 60000), // 06:45
+        end: new Date(moved.start.getTime() + 15 * 60000), // 07:15 — overlaps moved.start (07:00)
+        resourceId: "r1",
+      };
+      await act(async () => {
+        api.addEvent(b);
+      });
+      const callsBeforeCommit = onEventsChange.mock.calls.length;
+      let result: ReturnType<GanttInternals["commitAdjust"]>;
+      await act(async () => {
+        result = internals.commitAdjust();
+      });
+      expect(result!).toEqual({ committed: false });
+      expect(onEventsChange).toHaveBeenCalledTimes(callsBeforeCommit); // no ADDITIONAL call from the commit itself
+      expect(getState().adjust).toBeNull();
+    });
+
     it("enforceCanDrop flipped on mid-session refuses the commit even though every step along the way was accepted", async () => {
       const onEventsChange = vi.fn();
       const canDropEvent = vi.fn((_u: GanttProposedUpdate) => false);

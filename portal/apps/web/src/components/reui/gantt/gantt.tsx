@@ -998,6 +998,17 @@ function createGanttStore<TData>(
    * range on success - `commitAdjust` writes THAT, not the raw `session.preview`, so a neighbour that
    * appeared mid-session under "clamp" still stops the write at its edge instead of silently
    * overlapping it.
+   *
+   * Quincy fix (#219 PR A round 3, Sol HIGH #2): `clampToNeighbours` is called with `session.target`
+   * - the LAST target the session was retargeted to, not every edge it actually touched. A
+   * move-then-retarget-to-resize-end session's "resize-end" clamp kind only ever bounds the END
+   * ("to"); it never touches "from" at all, by design (a resize-end gesture should never move the
+   * start). But `finalRange.start` still carries whatever the earlier "move" step left it at, and a
+   * neighbour that only overlaps THAT edge has no clamp defending it once the CURRENT target has
+   * moved on - `session.target`'s own clamp has no reason to even look at that edge. Re-checking the
+   * CLAMPED range against every neighbour on both edges (not just the one `session.target` implies)
+   * closes that: any residual overlap under a policy that forbids one ("clamp" or "reject" - never
+   * "allow", which permits overlap by design) refuses the commit instead of writing it.
    */
   const validateAdjustCommit = (
     event: GanttEvent<TData>,
@@ -1054,6 +1065,14 @@ function createGanttStore<TData>(
           overlapPolicy
         )
         finalRange = { ...finalRange, start: clamped.start, end: clamped.end }
+        // Quincy fix (#219 PR A round 3, Sol HIGH #2): the clamp above only defends the edge
+        // session.target implies - see this method's own doc comment. Re-check the CLAMPED range
+        // against every neighbour on BOTH edges; a residual overlap on the edge an EARLIER target
+        // touched (and the current target's clamp kind never looks at) refuses the commit instead
+        // of silently writing an overlapping range.
+        if (overlapsAnyNeighbour(neighbours, finalRange)) {
+          return { ok: false, reason: "rejected" }
+        }
       } else if (overlapsAnyNeighbour(neighbours, finalRange)) {
         return { ok: false, reason: "rejected" }
       }
