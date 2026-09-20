@@ -5,7 +5,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { TZDate } from "@date-fns/tz";
-import { buildScenario, civilDaySpan, formatZonedInstant, SYDNEY_TZ } from "./fixtures";
+import {
+  buildCalendarScenario,
+  buildScenario,
+  civilDaySpan,
+  elapsedMinutesFromZonedMidnight,
+  formatZonedInstant,
+  SYDNEY_TZ,
+} from "./fixtures";
 
 function projectBar(id: "dst-spring" | "dst-autumn") {
   const fixture = buildScenario(id);
@@ -141,4 +148,62 @@ describe("civilDaySpan", () => {
     const milestone = buildScenario("today").events.find((event) => event.id === "milestone")!;
     expect(civilDaySpan(milestone.start, milestone.end)).toBe(0);
   });
+});
+
+/**
+ * #219 stage 3 (PR B) calendar fixture invariants (`buildCalendarScenario`). All numbers below
+ * were verified with a real `node` run against `@date-fns/tz` before being hard-coded here — see
+ * this file's own PR B report for the exact commands. None are assumed from the spec's original
+ * (and, for `dst-late-night`, incorrect) arithmetic.
+ */
+describe("calendar fixtures: DST elapsed-minute invariants", () => {
+  function calendarEvent(id: "dst-spring" | "dst-autumn", eventId: string) {
+    const fixture = buildCalendarScenario(id);
+    const event = fixture.events.find((candidate) => candidate.id === eventId);
+    if (!event) throw new Error(`calendar fixture "${id}" is missing event "${eventId}"`);
+    return event;
+  }
+
+  it("dst-autumn: dst-late-night's startMin is 1455 elapsed minutes, not 1440 — and either way >= the vendor's 1440 bounds-end, so it is hidden", () => {
+    // 23:15 wall-clock is ordinarily 1395 elapsed minutes (23*60 + 15); the autumn day repeats
+    // 2am-3am, adding 60 minutes ahead of 23:15, giving 1455 - verified via node, not assumed.
+    const event = calendarEvent("dst-autumn", "dst-late-night");
+    expect(elapsedMinutesFromZonedMidnight(event.start)).toBe(1455);
+    // event-calendar-time-grid.tsx's boundsEndMin = Math.min(dayEndHour*60, totalMinutes) = 1440
+    // with the default dayEndHour=24; 1455 >= 1440 so `startMin < boundsEndMin` is false - this is
+    // exactly why the vendor hides the event on this one day.
+    expect(elapsedMinutesFromZonedMidnight(event.start)).toBeGreaterThanOrEqual(1440);
+  });
+
+  it("dst-autumn: dst-transition-span elapsed start/end are 90 and 270 (2 wall-clock hours span 3 real hours on the 25h day)", () => {
+    const event = calendarEvent("dst-autumn", "dst-transition-span");
+    expect(elapsedMinutesFromZonedMidnight(event.start)).toBe(90);
+    expect(elapsedMinutesFromZonedMidnight(event.end)).toBe(270);
+  });
+
+  it("dst-spring: dst-transition-span elapsed start/end are 90 and 150 (2 wall-clock hours span 1 real hour on the 23h day)", () => {
+    const event = calendarEvent("dst-spring", "dst-transition-span");
+    expect(elapsedMinutesFromZonedMidnight(event.start)).toBe(90);
+    expect(elapsedMinutesFromZonedMidnight(event.end)).toBe(150);
+  });
+
+  it.each(["dst-spring", "dst-autumn"] as const)(
+    "%s: cross-midnight start and end land on different Sydney civil days",
+    (id) => {
+      const event = calendarEvent(id, "cross-midnight");
+      const start = new TZDate(event.start.getTime(), SYDNEY_TZ);
+      const end = new TZDate(event.end.getTime(), SYDNEY_TZ);
+      expect(start.getDate()).not.toBe(end.getDate());
+    },
+  );
+
+  it.each(["dst-spring", "dst-autumn"] as const)(
+    "%s: weekly-standup recurs 4 times, starting at wall-clock 09:00 Sydney",
+    (id) => {
+      const event = calendarEvent(id, "weekly-standup");
+      expect(event.recurrence).toEqual({ freq: "weekly", interval: 1, count: 4 });
+      const start = new TZDate(event.start.getTime(), SYDNEY_TZ);
+      expect(start.getHours()).toBe(9);
+    },
+  );
 });
