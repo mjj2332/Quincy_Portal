@@ -127,11 +127,15 @@
  *   (a different failure shape: the target itself is unavailable, not a step within it).
  * - `role="application"`, `data-adjusting`, and `aria-describedby` (a visually-hidden `sr-only`
  *   span holding `i18n.labels.adjustInstructions`) are set only while THIS bar is the one
- *   adjusting; a hairline dashed `outline` (own-color token, no shadow, no `dark:`) marks it
- *   visibly. The bar itself never renders the moving/resizing PREVIEW - `stepAdjust` drives
+ *   adjusting. The bar itself never renders the moving/resizing PREVIEW - `stepAdjust` drives
  *   `state.drag` the same shape a pointer gesture's own `applyProposal` does, so `gantt-view.tsx`'s
  *   existing ghost (and this bar's own `data-drag-kind` fade, via the SAME `isDragging`/`dragKind`
- *   selectors a real drag already uses) renders it with no new preview surface.
+ *   selectors a real drag already uses) renders it with no new preview surface. Quincy fix (#219 PR
+ *   A, Sol re-review round 2, MEDIUM #7): the bar itself carries no Adjust-specific outline any
+ *   more - it visually lost to the ordinary `focus-visible` ring even when visible, and a move
+ *   gesture hides the bar entirely (opacity-0) while it still holds keyboard focus, showing nothing
+ *   either way. `gantt-view.tsx`'s ghost, which is never hidden, carries `data-adjust-ghost` while
+ *   it is keyboard-owned instead - see that file's own comment beside it.
  * - A commit that changes `start` (move, or a start-edge resize) claims the focus hand-off the same
  *   way a successful move/resize-start nudge always did, comparing the committed `start` against
  *   `occurrence.start` directly (NOT "was the last target resize-end" - Adjust mode's target can
@@ -798,11 +802,14 @@ function GanttBar<TData = unknown>({
       // placeholder behind the dashed preview - no dramatic restyle
       "data-[drag-kind=resize-start]:opacity-40 data-[drag-kind=resize-end]:opacity-40",
       "data-selected:bg-(--gantt-event-color)/30",
-      // #219 PR A (Adjust mode) - a hairline dashed outline marks the bar itself while a keyboard
-      // Adjust session is active (own-color token, matching the ghost's own border color below; no
-      // shadow, no `dark:` per the spec). Independent of the data-drag-kind fade above - the two
-      // combine naturally once a step drives state.drag (see this file's header).
-      "data-adjusting:outline data-adjusting:outline-1 data-adjusting:outline-dashed data-adjusting:outline-offset-1 data-adjusting:outline-(--gantt-event-color)",
+      // #219 PR A fix (Sol re-review round 2, MEDIUM #7): a hairline dashed outline on the bar
+      // itself used to mark an active keyboard Adjust session here - removed. It visually lost to
+      // the ordinary `focus-visible:ring` above even while the bar was visible, and once a step
+      // drove `state.drag`, a move gesture hides the bar entirely (`data-[drag-kind=move]:opacity-0`
+      // above) - focus stayed on an invisible element with nothing to show for it. The
+      // Adjust-specific treatment now lives on `gantt-view.tsx`'s own drag ghost
+      // (`data-adjust-ghost`), which is never hidden and never competes with the bar's own focus
+      // ring; that ring (unchanged, above) remains this element's visible focus indication.
       /* the diamond is the milestone's body, so the shell sheds its own
          tinted fill and centers the glyph on the instant */
       milestone &&

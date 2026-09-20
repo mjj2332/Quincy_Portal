@@ -3473,6 +3473,9 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
       kind: string
       occurrenceKey: string
       milestone: boolean
+      // #219 PR A fix (Sol re-review round 2, MEDIUM #7): which input drove this ghost - see
+      // `data-adjust-ghost` below.
+      source: "pointer" | "keyboard"
     } | null
   >(
     (state) => {
@@ -3489,6 +3492,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         // real zero duration, not from==to: clamped fractions also coincide
         // for a bar dragged clear past a range edge
         milestone: drag.proposedEnd.getTime() === drag.proposedStart.getTime(),
+        source: drag.source,
       }
     },
     {
@@ -3498,7 +3502,8 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
           b !== null &&
           a.from === b.from &&
           a.to === b.to &&
-          a.valid === b.valid),
+          a.valid === b.valid &&
+          a.source === b.source),
     }
   )
   const draft = useGanttSelector<
@@ -4038,9 +4043,27 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         {ghost && (
           <div
             data-slot="gantt-drag-ghost"
+            // Quincy addition (#219 PR A, Sol re-review round 2, MEDIUM #7): `data-slot` above is
+            // vendor-authored - `test-seam.guard.test.ts`'s guard F forbids a DOM test selecting on
+            // it (a version bump could rename/drop it with no Quincy file to keep it stable). No
+            // Quincy component composes this deep inside the vendor's render tree to hang a testid
+            // on instead (same situation `gantt-bar.tsx`'s resize-grip testids are in - see that
+            // file's own header), so this vendor file is the honest place for it.
+            data-testid="gantt-drag-ghost"
             data-kind={ghost.kind}
             data-milestone={ghost.milestone || undefined}
             data-drop-invalid={!ghost.valid || undefined}
+            // #219 PR A fix (Sol re-review round 2, MEDIUM #7): the Adjust-specific "you are
+            // adjusting this" marker lives HERE, not on the bar - a keyboard Adjust session keeps
+            // DOM focus on the origin bar, which a move gesture hides at opacity-0 (see
+            // `gantt-bar.tsx`'s own `data-[drag-kind=move]:opacity-0`) and whose own dashed outline
+            // otherwise loses to the ordinary `focus-visible` ring even when visible (a resize).
+            // This ghost already renders a dashed hairline in existing `--gantt-event-color`
+            // tokens with no shadow and no `dark:` override for BOTH sources (`stepAdjust` drives
+            // `state.drag` in the identical shape a pointer gesture's own `applyProposal` does) -
+            // `data-adjust-ghost` only marks WHICH one drove it, for a sighted user's affordance
+            // hooks and this file's own DOM test, not a different look.
+            data-adjust-ghost={ghost.source === "keyboard" || undefined}
             className={cn(
               // Slight dashed indicator, never a dramatic restyle. Move shows a
               // faint drop-target placeholder (the smooth cursor clone carries
