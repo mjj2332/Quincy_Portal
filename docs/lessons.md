@@ -3413,3 +3413,66 @@ even runs — the self-heal wins the race unconditionally in this construction, 
 a branch is actually reachable at the DOM layer (instrument and read the values the code branches on,
 the way test (m)'s `Date.now` collision was confirmed above) before spending a sweep's worth of effort
 trying to catch it there.
+
+## Tailwind v4 preflight makes a bare `border`/`border-b` paint near-black — this repo ships no compat rule for it (#219, 2026-09-20)
+
+`gantt-nav.tsx`'s toolbar and `gantt-view.tsx`'s tree/timeline splitter both shipped a bare
+`border-b`/`border` with no colour utility beside it, and both painted near-black instead of the
+app's hairline grey. The cause is Tailwind v4's own preflight: it resets every element to
+`border: 0 solid currentColor`, so a class that only sets `border-width` (`border`, `border-b`,
+`border-t`, …) paints whatever `color` the element already has, not a border token — and most
+Quincy text sits on `--ink-900`-adjacent colours, so the reset border is nearly black on nearly
+every surface. Contrast with the sibling shadcn convention: some registries ship a global
+`* { border-color: var(--border) }` compat rule specifically to neutralise this reset. **This repo
+does not have one** — `styles/tokens/base.css` has no such rule — so every bare `border*` class
+anywhere in the app is silently exposed to this hazard, not only inside the Gantt.
+
+This is a repo-wide defect class, currently pinned by a detector scoped to nine files
+(`gantt-skin.guard.test.ts` Detector 6, added alongside the two fixes above) that only watches the
+vendored Gantt tree. Nothing scans `components/quincy/` or the rest of `components/reui/` for the
+same bare-border shape. A future author reaching for `border-b` anywhere else in the app should
+pair it with a colour token (`border-border`, or whatever role the surface calls for) on sight —
+Tailwind's own reset will not tell them anything is wrong; the element will simply render with a
+border, just the wrong one.
+
+## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth and fifth time (#219, 2026-09-20)
+
+`styles/tokens/reui.css:160-166` already records this correction twice over (`reui/badge.tsx`
+correction 2, `reui/button.tsx` divergence 5): `styles/tokens/base.css:25` declares an unlayered
+`:focus-visible { outline }` that beats Tailwind's `@layer utilities`, so a vendored component's
+own `outline-none focus-visible:ring-2 focus-visible:ring-ring/50` pair does not REPLACE the
+global outline — it paints a SECOND indicator beside it that `tailwind-merge` cannot collapse away
+(different property, not a conflicting utility class). #219 PR A hit it twice more, independently,
+in two different vendored Gantt files — the bar's own focus state (`gantt-bar.tsx`, dr-219a HIGH
+#2) and the tree/timeline splitter (`gantt-view.tsx`, dr-219a HIGH #2 and HIGH #3) — bringing the
+running count to five.
+
+Four occurrences in two unrelated adoptions (the sidebar block, then the Gantt) is no longer a
+coincidence worth re-discovering per file: any newly vendored ReUI/shadcn component that ships its
+own `focus-visible:ring-*` should have that ring dropped on sight, the same way a bare `border` is
+now checked on sight above — `tokens/base.css:25`'s global outline is the only focus indicator this
+app wants, and the vendor's own ring is never additive, only redundant.
+
+## A guard widened to make a build pass is a guard that has already failed once (#219, 2026-09-20)
+
+`test-seam.guard.test.ts`'s Guard F (`DATA_SLOT_SELECTOR`) required quotes around an attribute
+selector's value — `[data-slot="x"]` — and so was blind to the equally-valid unquoted CSS form,
+`[data-slot=x]`. Three call sites in this branch used the unquoted form and were invisible to the
+guard for the entire time they existed (item 1 of the #219 PR A standards review; see this file's
+`## A grep gate that cannot fail is not a gate` entry above, and the widened matcher itself). The
+`ps-`/`ms-` classifier hole in the same guard file is the identical shape one round earlier: a
+prior fix widened `UTILITY_PREFIX`'s bare-prefix families to accept the logical-property spacing
+classes (`ps-`/`pe-`/`ms-`/`me-`) so a build would pass, using a bare-prefix match with no suffix
+validation — which accepted `ms-fraction` (a plausible Quincy BEM name) exactly as readily as
+`ms-2`, and would have slipped straight past guard C. Caught a round later, not at the time the
+widening landed.
+
+Both are the same failure with a different regex: **a guard change made to unblock a build is not
+validated by the build passing.** The build passing only proves the guard did not fire on the
+CURRENT diff — it proves nothing about what the guard would now let through on a DIFFERENT diff
+that happens to share the widened shape. The `ps-`/`ms-` fix's own grep check ("no real Quincy
+class in this repo begins ps-/pe-/ms-/me- TODAY") was true and irrelevant: the classifier itself
+must not depend on nothing having collided YET. Any widening of a guard's matcher needs its own
+negative fixture — a case the widening should still catch — checked BEFORE the widening lands, the
+same "prove a gate can fail before trusting it" rule `## A grep gate that cannot fail is not a
+gate` names, applied to a guard's *matcher* as well as its presence.
