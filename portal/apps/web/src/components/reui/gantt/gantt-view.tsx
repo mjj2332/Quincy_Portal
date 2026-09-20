@@ -124,6 +124,15 @@
  * and, when outside, on an opaque `bg-foreground text-background` chip (the same treatment
  * `gantt-dnd.tsx`'s resize-status chip and this file's own create-task draft label already use for
  * a drag-adjacent floating label) instead of bare text with nothing behind it.
+ *
+ * #219 PR A fix (dr2-219a LOW #5): `GanttNowLine`'s own comet-tail gradient faded past legibility
+ * before reaching the bottom of a grid with more than a handful of rows — the design reviewer
+ * measured its floor stop (`to-border-strong/15`) at ~1.4:1 against the canvas. The floor now
+ * matches the gradient's own `via` (midpoint) stop, `/45` (~3.1:1, at WCAG 1.4.11's 3:1 floor for
+ * a non-text graphical object) — the tail still tapers from the cap to the midpoint, then holds at
+ * that legible level for the rest of its height instead of continuing to fade. See that element's
+ * own class comment for the numbers, and its `data-testid` comment for why this DOM test selects
+ * on an additive `data-testid` rather than its `data-slot`.
  */
 
 import {
@@ -3065,9 +3074,25 @@ function GanttNowLine({
   return (
     <div
       data-slot="gantt-now-indicator"
-      // comet tail: solid at the cap, dissolving toward the bottom -
-      // present without ruling a hard line through every row
-      className="from-border-strong/80 via-border-strong/45 to-border-strong/15 absolute inset-y-0 z-10 w-px bg-linear-to-b"
+      // #219 PR A fix (dr2-219a LOW #5): additive `data-testid`, same reasoning as
+      // `gantt-bar.tsx`'s own header gives for its resize-grip `data-testid`s - this file lives
+      // under `components/reui/`, so `test-seam.guard.test.ts` Guard F treats its own
+      // `data-slot="gantt-now-indicator"` as vendor-authored and won't let a DOM test select on
+      // it directly, and there is no Quincy-owned component composing this deep inside the
+      // vendor's own render tree to hang a `data-testid` on from the outside. A minimal additive
+      // `data-testid` here is the honest hook; it is not `data-slot`, so Guard F does not apply to
+      // it either way.
+      data-testid="gantt-now-indicator"
+      // comet tail: solid at the cap, tapering to a held floor - present without ruling a hard
+      // line through every row.
+      //
+      // #219 PR A fix (dr2-219a LOW #5): the floor used to keep fading past this point, down to
+      // `/15` (~1.4:1 against the canvas, measured) - invisible on a grid with more than a
+      // handful of rows. The floor now matches the `via` stop's own `/45` (~3.1:1, at WCAG
+      // 1.4.11's 3:1 floor for a non-text graphical object) instead of continuing past it, so the
+      // tail still tapers from the cap down to the midpoint, then HOLDS legible for the rest of
+      // its height regardless of row count.
+      className="from-border-strong/80 via-border-strong/45 to-border-strong/45 absolute inset-y-0 z-10 w-px bg-linear-to-b"
       style={{ insetInlineStart: `${fraction * 100}%` }}
     />
   )
