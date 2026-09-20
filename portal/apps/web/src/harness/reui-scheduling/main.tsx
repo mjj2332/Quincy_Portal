@@ -13,15 +13,23 @@
  * Imports the app's global stylesheet so Quincy's design tokens apply here the same as in the
  * real app — otherwise a vendored primitive would render against browser defaults, not the
  * tokens it will actually ship inside.
+ *
+ * The Gantt render itself lives in the lazy-imported `./GanttPreview` (#219 stage 1) — local
+ * fixture rows only, no `lib/use-scheduling-commands`, no `lib/scheduling-policy`, no API client.
+ * This file has not been run in a browser; it typechecks and is wired, no more.
  */
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import "@/styles/index.css";
 
-function VendorHarnessPlaceholder() {
+const GanttPreview = lazy(() => import("./GanttPreview"));
+
+function VendorHarness() {
   return (
     <div data-testid="vendor-harness">
-      <p>ReUI scheduling vendor harness — #219 stage 1. No vendored render wired up yet.</p>
+      <Suspense fallback={<p>Loading vendor harness…</p>}>
+        <GanttPreview />
+      </Suspense>
     </div>
   );
 }
@@ -34,6 +42,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <VendorHarnessPlaceholder />
+    <VendorHarness />
   </StrictMode>,
 );
