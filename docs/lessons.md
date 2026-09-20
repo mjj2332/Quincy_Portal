@@ -162,7 +162,7 @@
   using a real photographer session. **Rule:** always path-scope router middleware
   (`use("/x", mw); use("/x/*", mw)`), never `use("*")` on a router mounted at `/`; a
   boot-and-curl check is not an authorization test — every capability needs at least one
-  authenticated-session integration test per role. (Rule also lives in CLAUDE.md.)
+  authenticated-session integration test per role. (Rule also lives in AGENTS.md.)
 
 - **Verify agent-reported success independently.** Codex sandboxes couldn't bind loopback
   ports, so their "boot verification" silently no-opped; one agent shimmed `@quincy/shared`
@@ -1110,7 +1110,7 @@ advances ~1ms, so no realistic `n` can outwait the query client's real 1–4s `r
 exits 1 in this repo, because `packages/shared` has a vitest config but no `test` script and npm
 reports `Missing script: "test"`. It still runs every other workspace. Judge that command by the
 per-workspace summaries, never by its exit code — and keep running
-`npx vitest run --config packages/shared/vitest.config.ts` separately, as `CLAUDE.md` says.
+`npx vitest run --config packages/shared/vitest.config.ts` separately, as `AGENTS.md` says.
 
 ## Three CSS traps a Tailwind convergence walks straight into (TB8-04, 2026-09-03)
 
@@ -1234,7 +1234,7 @@ that did the same, so this is a pattern, not an accident:
 
 React 19 makes the runtime version of this worse: it **silently ignores** post-unmount state
 updates instead of warning, so a runtime unmount-safety test observes nothing whether the guard is
-present or not. (Note `portal/package.json` pins React **19.2.8**; `CLAUDE.md`'s "18.3.1 baseline"
+present or not. (Note `portal/package.json` pins React **19.2.8**; `AGENTS.md`'s "18.3.1 baseline"
 is stale.)
 
 **Rule: prove every gate can fail before trusting it.** Plant the thing it looks for, confirm

@@ -1,14 +1,3 @@
-# Codex project instructions
-
-For complex coding tasks, use the `astra-orchestrator` skill when its trigger conditions match.
-
-The root agent owns architecture, decomposition, integration, and final verification.
-Prefer specialized subagents for bounded exploration, implementation, testing, review, and technical research.
-
-Do not delegate trivial work merely for parallelism.
-Do not let multiple implementation agents edit the same files without explicit ownership boundaries.
-User instructions always take precedence over this orchestration policy.
-
 # Quincy Portal
 
 Internal media-pipeline + client-delivery web app for a real-estate photography studio. 
@@ -75,6 +64,15 @@ of truth for design; `design-system-guards.test.ts` beside it mechanises the rul
 already shipped defects more than once. The 2026-06-19 export in `docs/archive/` records where
 the tokens came from and has since been diverged from — never reconcile the app back to it.
 
+## Author-only rules and impersonation
+
+Annotation, project-comment and notice-board edit/delete are **author-only** — admins are not
+exempt — for audit integrity, and every mutation is audit-logged. **One deliberate exception:**
+while an Admin is impersonating a user through the runtime-gated impersonation feature
+(`docs/Guides/Admin-Impersonation.md`), they act as that user for every author-only check. That
+bypass is intentional, toggle-gated and audit-logged (`metaJson.impersonatedBy`) — it is the
+design, so leave it in place.
+
 ## ReUI component registry — do not "correct" the URL
 
 The component registry in `portal/apps/web/components.json` is:
@@ -135,3 +133,20 @@ Default canonical labels (needs-triage, needs-info, ready-for-agent, ready-for-h
 ### Domain docs
 
 Multi-context: root `CONTEXT-MAP.md` + one `CONTEXT.md` per workspace package under `portal/`. See `docs/agents/domain.md`.
+
+### TypeSafe verdicts
+
+A development tool for agents, never part of `portal/`. Get a typed **verdict** from TypeSafe when
+triaging review findings (honest mistake vs. sabotage-only vs. test gap), triaging a failing or
+flaky test (missing wait vs. wrong final state), or routing a spec to fast-worker vs.
+deep-reasoner. Questions, thresholds, key handling and what may be sent: `docs/agents/typesafe.md`.
+
+## Codex only
+
+Other agents skip this section; the Orchestration workflow above governs them.
+
+For complex coding tasks, use the `astra-orchestrator` skill when its trigger conditions match.
+The root agent owns architecture, decomposition, integration, and final verification. Prefer
+specialized subagents for bounded exploration, implementation, testing, review, and technical
+research. Delegate for a reason other than parallelism, and give each implementation agent
+explicit ownership of the files it edits. User instructions take precedence over this policy.

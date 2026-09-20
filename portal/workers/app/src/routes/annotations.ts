@@ -185,7 +185,7 @@ annotationsRoutes.delete("/annotations/:id", terminalRoute("/annotations/:id", a
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
   // An impersonated Admin intentionally acts as the effective author here — see the
-  // impersonation caveat on this rule in CLAUDE.md.
+  // impersonation caveat on this rule in AGENTS.md.
   if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this annotation." }, 403);
   // Retain stroke objects in R2: deletes only remove the D1 reference, preserving cheap, audit-friendly history.
   await db.delete(schema.annotations).where(eq(schema.annotations.id, id));
@@ -228,7 +228,7 @@ annotationsRoutes.patch("/annotations/:id", terminalRoute("/annotations/:id", as
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
   const scope = scopeForAsset(c, asset); if (scope instanceof Response) return scope;
   // An impersonated Admin intentionally acts as the effective author here — see the
-  // impersonation caveat on this rule in CLAUDE.md.
+  // impersonation caveat on this rule in AGENTS.md.
   if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can edit this annotation." }, 403);
   const data = await jsonInput(c, annotationEditInput); if (data instanceof Response) return data;
   const editedAt = new Date();

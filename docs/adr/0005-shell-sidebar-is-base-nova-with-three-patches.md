@@ -13,7 +13,7 @@ state machine, `quincy/RailedShell.tsx`'s ⌘B listener, and a hand-rolled hover
 `quincy/NavigationRail.tsx` with its own Escape/blur/suppress-ref bookkeeping.
 
 #122 (`@reui/app-shell-3`) adopts base-nova's FULL `sidebar.tsx` — provider included — and deletes
-all of that hand-built machinery in favour of it. CLAUDE.md's and `docs/lessons.md:1368-1380`'s
+all of that hand-built machinery in favour of it. AGENTS.md's and `docs/lessons.md:1368-1380`'s
 read-only history rule, the `quincy:` localStorage namespace (never a cookie), one JS-owned
 breakpoint (`styles/shell-breakpoint.guard.test.ts`), and the existing guard suite
 (`sidebar-token-bridge`, `no-document-cookie`) all still apply, unchanged — this ADR is about what
@@ -91,7 +91,7 @@ non-behavioural conformance edits (below) — its first real consumer is `Sideba
   supplies the actual off-canvas surface).
 - **`quincy/menu.tsx`, not the vendor's `dropdown-menu`**, for the collapsed rail's children and the
   account menu. `quincy/menu.tsx` is Quincy-owned Base UI (moved out of the registry layer in #56)
-  with the app's z-token and `OverlayContainerContext` wiring already in place; CLAUDE.md keeps it
+  with the app's z-token and `OverlayContainerContext` wiring already in place; AGENTS.md keeps it
   that way. `Menu` gained one additive prop, `triggerRender`, so a `SidebarMenuButton` — the item's
   own icon button — can BE the menu's trigger, rather than `Menu` wrapping a second, invisible
   button around it.
