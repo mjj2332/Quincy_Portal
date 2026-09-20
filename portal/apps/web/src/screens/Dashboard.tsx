@@ -755,8 +755,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         // promise in the first place, and it writes refreshKey's own cache entry inline before
         // settling), but if it ever does, do nothing harmful: this is neither a confirmed success
         // (nothing to accept) nor a confirmed error (no reason to show the recovery/error state for
-        // a fetch that, for all this closure knows, never actually failed) -- only re-arm the queued
-        // refresh so a future pass gets another chance, same as the old "unusable result" branch did.
+        // a fetch that, for all this closure knows, never actually failed). Re-arm the queued refresh
+        // ONLY while an interaction is blocking, same as the old "unusable result" branch did; when
+        // unblocked, the primary accept effect picks up refreshKey's data on its own. The ref write
+        // schedules nothing, so this cannot spin: blocked -> unblocked allows at most one retry.
         if (interactionBlockedRef.current) queuedRefreshRef.current = true;
         return;
       }
