@@ -96,6 +96,11 @@
  *    event-calendar.tsx now says how to convert. Bounds, segments, ghosts and proposals are
  *    still ELAPSED minutes.
  *    Cover: `event-calendar-dst-week.dom.test.tsx`, `event-calendar-dst.test.ts`.
+ * 5. 2026-09-21, #240 — BOTH drag-ghost selectors (day column and all-day row) carry `drag.keyboard` (and compares it, and
+ *    `kind`, in its equality check: an M / S / E retarget changes the kind and nothing else), and
+ *    the in-grid MOVE ghost renders the event's content when it is set. A pointer move shows an
+ *    empty placeholder because a cursor-following carry shows the content; a keyboard move has
+ *    no carry. Pointer behaviour is unchanged. See `event-calendar-dnd.tsx` entry 6.
  */
 import {
   useEffect,
@@ -632,7 +637,7 @@ function EventCalendarAllDayBars({
     unknown,
     | (Pick<
         EventCalendarDragState,
-        "kind" | "valid" | "occurrence" | "proposedStart" | "proposedEnd"
+        "kind" | "valid" | "occurrence" | "proposedStart" | "proposedEnd" | "keyboard"
       > & {
         colStart: number
         colSpan: number
@@ -663,6 +668,8 @@ function EventCalendarAllDayBars({
       if (colStart === -1) return null
       return {
         kind: drag.kind,
+        // QUINCY (#240): a keyboard move has no cursor carry, so its ghost shows content
+        keyboard: drag.keyboard === true,
         valid: drag.valid,
         occurrence: drag.occurrence,
         proposedStart: drag.proposedStart,
@@ -685,6 +692,7 @@ function EventCalendarAllDayBars({
           a.colSpan === b.colSpan &&
           a.valid === b.valid &&
           a.kind === b.kind &&
+          a.keyboard === b.keyboard &&
           a.proposedStart.getTime() === b.proposedStart.getTime() &&
           a.proposedEnd.getTime() === b.proposedEnd.getTime()),
     }
@@ -771,7 +779,7 @@ function EventCalendarAllDayBars({
                   } as CSSProperties
                 }
               >
-                {dragGhost.kind !== "move" && (
+                {(dragGhost.kind !== "move" || dragGhost.keyboard) && (
                   <EventCalendarEvent
                     preview
                     segment={{
@@ -1158,7 +1166,7 @@ function EventCalendarDayColumn({
     unknown,
     | (Pick<
         EventCalendarDragState,
-        "valid" | "kind" | "occurrence" | "proposedStart" | "proposedEnd"
+        "valid" | "kind" | "occurrence" | "proposedStart" | "proposedEnd" | "keyboard"
       > & {
         window: [number, number]
         color?: string
@@ -1174,6 +1182,8 @@ function EventCalendarDayColumn({
       return {
         valid: drag.valid,
         kind: drag.kind,
+        // QUINCY (#240): a keyboard move has no cursor carry, so its ghost shows content
+        keyboard: drag.keyboard === true,
         occurrence: drag.occurrence,
         proposedStart: drag.proposedStart,
         proposedEnd: drag.proposedEnd,
@@ -1191,6 +1201,7 @@ function EventCalendarDayColumn({
           a.window[1] === b.window[1] &&
           a.valid === b.valid &&
           a.kind === b.kind &&
+          a.keyboard === b.keyboard &&
           a.proposedStart.getTime() === b.proposedStart.getTime() &&
           a.proposedEnd.getTime() === b.proposedEnd.getTime()),
     }
@@ -1392,7 +1403,7 @@ function EventCalendarDayColumn({
             } as CSSProperties
           }
         >
-          {dragGhost.kind !== "move" && (
+          {(dragGhost.kind !== "move" || dragGhost.keyboard) && (
             <EventCalendarEvent
               preview
               segment={{

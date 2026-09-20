@@ -47,6 +47,11 @@
  * 2. 2026-09-21, #241 — BEHAVIOUR CHANGE, DST. The resource column is painted on the shared
  *    gutter's wall-clock axis via `wallClockColumn`, same as `event-calendar-time-grid.tsx`
  *    entry 4, which carries the explanation. `minuteBlockStyle` is no longer imported.
+ * 3. 2026-09-21, #240 — the drag-ghost selector carries `drag.keyboard` (and compares it, and
+ *    `kind`, in its equality check: an M / S / E retarget changes the kind and nothing else), and
+ *    the in-grid MOVE ghost renders the event's content when it is set. A pointer move shows an
+ *    empty placeholder because a cursor-following carry shows the content; a keyboard move has
+ *    no carry. Pointer behaviour is unchanged. See `event-calendar-dnd.tsx` entry 6.
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
@@ -574,6 +579,7 @@ function EventCalendarResourceColumn({
       window: [number, number]
       valid: boolean
       kind: string
+      keyboard: boolean
       color?: string
       title: string
       occurrence: EventCalendarSegment["occurrence"]
@@ -603,6 +609,8 @@ function EventCalendarResourceColumn({
         window: [from, to] as [number, number],
         valid: drag.valid,
         kind: drag.kind,
+        // QUINCY (#240): a keyboard move has no cursor carry, so its ghost shows content
+        keyboard: drag.keyboard === true,
         color: drag.occurrence.event.color,
         title: drag.occurrence.event.title,
         occurrence: drag.occurrence,
@@ -618,6 +626,9 @@ function EventCalendarResourceColumn({
           a.window[0] === b.window[0] &&
           a.window[1] === b.window[1] &&
           a.valid === b.valid &&
+          // QUINCY (#240): a keyboard retarget (M / S / E) changes the kind and nothing else
+          a.kind === b.kind &&
+          a.keyboard === b.keyboard &&
           a.proposedStart.getTime() === b.proposedStart.getTime() &&
           a.proposedEnd.getTime() === b.proposedEnd.getTime()),
     }
@@ -804,7 +815,7 @@ function EventCalendarResourceColumn({
             } as CSSProperties
           }
         >
-          {dragGhost.kind !== "move" && (
+          {(dragGhost.kind !== "move" || dragGhost.keyboard) && (
             <EventCalendarEvent
               preview
               segment={{

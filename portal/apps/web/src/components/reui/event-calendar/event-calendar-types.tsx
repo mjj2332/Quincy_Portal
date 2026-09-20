@@ -49,6 +49,8 @@
  *    drags), spelled identically on both trees. Additive and optional — an omitted object behaves
  *    exactly as before. Enforced in two places, see `event-calendar-dnd.tsx` entry 1 and
  *    `event-calendar-event.tsx` entry 1.
+ * 2. 2026-09-21, #240 — ADDED `keyboard?: boolean` to the drag state and `"keyboard"` is now a
+ *    `source` the tree actually emits. Additive and optional; see `event-calendar-dnd.tsx` entry 6.
  */
 type EventCalendarEventId = string
 
@@ -188,6 +190,12 @@ interface EventCalendarDragState<TData = unknown> {
   proposedResourceId?: string
   /** Last canDropEvent verdict; drives data-drop-invalid styling. */
   valid: boolean
+  /**
+   * QUINCY (#240): set by the keyboard Adjust session, which previews through this same state so
+   * every view's ghost is reused. No cursor-following carry exists for a keyboard move, so the
+   * in-grid move ghost shows the event's content when this is set instead of an empty placeholder.
+   */
+  keyboard?: boolean
 }
 
 /** The in-progress drag-create rectangle only; cleared on commit or cancel. */
