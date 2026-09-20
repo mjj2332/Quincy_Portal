@@ -48,7 +48,7 @@ export type StaffNavigationSectionId =
  * Note this is the opposite of the decision for notification rows, which deliberately have no type
  * icon. Different component, different constraint.
  */
-export type StaffNavigationIcon = "dashboard" | "list" | "kanban" | "calendar" | "admin";
+export type StaffNavigationIcon = "dashboard" | "list" | "kanban" | "gantt" | "calendar" | "admin";
 
 export type StaffNavigationItem = {
   id: string;
@@ -126,17 +126,22 @@ function resolvedDashboardView(route: StaffRoute, remembered: DashboardView, cap
   // this is transient rather than a way in; a nav tree with nothing marked active is still the
   // wrong thing to paint while it happens.
   const wanted = "calendar" in route ? "calendar" : "dashboardView" in route ? route.dashboardView : remembered;
-  if (wanted !== "calendar" || capabilities.viewProductionCalendar) return wanted;
+  if (!CAPABILITY_GATED_VIEWS.has(wanted) || capabilities.viewProductionCalendar) return wanted;
   // Coerced. The fallback is the REMEMBERED view when that is itself viewable, not a hardcoded
   // Kanban — a Staff member who works in List should land on List, not be moved to a third view
-  // they did not choose. Only a remembered Calendar (which this role also cannot see) falls
-  // through to Kanban.
-  return remembered === "calendar" ? "kanban" : remembered;
+  // they did not choose. Only a remembered Calendar or Gantt (which this role also cannot see)
+  // falls through to Kanban.
+  return CAPABILITY_GATED_VIEWS.has(remembered) ? "kanban" : remembered;
 }
+
+/** Dashboard children gated on the `viewProductionCalendar` capability — Gantt (#220) exactly like
+ * Calendar (#111): both read the production schedule, so both hide from a role that cannot see it. */
+const CAPABILITY_GATED_VIEWS = new Set<DashboardView>(["calendar", "gantt"]);
 
 const DASHBOARD_CHILDREN: readonly { view: DashboardView; id: string; label: string; icon: StaffNavigationIcon }[] = [
   { view: "list", id: "dashboard-list", label: "List", icon: "list" },
   { view: "kanban", id: "dashboard-kanban", label: "Kanban", icon: "kanban" },
+  { view: "gantt", id: "dashboard-gantt", label: "Gantt", icon: "gantt" },
   { view: "calendar", id: "dashboard-calendar", label: "Calendar", icon: "calendar" },
 ];
 
@@ -152,7 +157,7 @@ export function buildStaffNavigation(
   // Held as a list, and mapped rather than spelled out, so a fourth view later is one entry here
   // and no change at all in whatever renders it.
   const children = DASHBOARD_CHILDREN
-    .filter((child) => child.view !== "calendar" || capabilities.viewProductionCalendar)
+    .filter((child) => !CAPABILITY_GATED_VIEWS.has(child.view) || capabilities.viewProductionCalendar)
     .map<StaffNavigationItem>((child) => ({
       id: child.id,
       label: child.label,

@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   List,
   SquareKanban,
+  GanttChart,
   Calendar,
   Shield,
   ChevronsUpDown,
@@ -117,6 +118,7 @@ const NAVIGATION_ICONS: Record<StaffNavigationIcon, LucideIcon> = {
   dashboard: LayoutDashboard,
   list: List,
   kanban: SquareKanban,
+  gantt: GanttChart,
   calendar: Calendar,
   admin: Shield,
 };
