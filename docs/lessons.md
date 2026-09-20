@@ -3663,3 +3663,30 @@ do exactly that by hand before trusting a refactored detector — a self-test wi
 still share the SAME wrong assumption as the code it exercises if both were written by the same
 reasoning at the same time.
 
+## A render-override prop gated on its own PRESENCE, not its per-call return value, is global even when you only meant it for one case (#220, 2026-09-21)
+
+`gantt-bar.tsx` computes `consumerOwnsContent = children !== undefined || !!viewConfig.renderEvent`
+— true the moment `<Gantt renderEvent={...}>` is passed AT ALL, gating BOTH the automatic
+milestone diamond and the default title text, for every bar the component renders, not only the
+one call a consumer's override actually wanted to change. The build spec for this pass asked for
+"a conditional `renderEvent` for the hollow-start marker only, leaving stock bars and diamonds
+intact" — a reasonable-sounding ask that is not implementable against this particular gate: there
+is no way to make the PROP present for one bar and absent for the next render of a sibling bar in
+the same tree, because the prop lives on the shared `<Gantt>` element, not per-bar, and the gate
+reads whether the prop exists at all, never what a given invocation of it chose to return.
+
+The fix was not a workaround inside the callback (returning `undefined` to "opt out" for the
+common case does not un-set `consumerOwnsContent`, which was already computed from the prop's mere
+presence before any call happened). It was reproducing both stock looks — the title label, the
+milestone diamond — inside the override itself, so every bar keeps its intended appearance and
+only the one genuinely different case (a missing shoot date's hollow-start marker) adds anything
+new. `ProductionGantt.tsx`'s own header flags this as a place the build spec's design was wrong
+about the vendor's actual contract, rather than silently routing around it.
+
+The generalisation: **before designing "a conditional override for just this one case," check
+whether the override PROP is gated on its presence or on what a given call returns.** A
+presence-gated override (common in headless/vendored component libraries, where "did the consumer
+customize this at all" is cheaper to check than "did the consumer customize THIS instance")
+is all-or-nothing per component instance, not per render call — reproduce the stock behaviour
+inside the override for every case you are not actually changing, rather than assuming the
+override can stay silent for the common path.
