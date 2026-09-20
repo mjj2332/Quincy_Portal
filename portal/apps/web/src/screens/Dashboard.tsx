@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
-import { QueryClient, QueryClientContext, QueryClientProvider, type Query } from "@tanstack/react-query";
+import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
 import { ApiError, apiPost } from "../lib/api";
@@ -26,7 +26,7 @@ import { cn } from "../lib/utils";
 import { CALENDAR_STATE_BOX } from "../components/production-calendar-classes";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
-import { dashboardProjectsKey, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
+import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
 import {
@@ -442,11 +442,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // `invalidateProjectSurfaces(..., producer: "dashboard")` deliberately skips the in-tab Dashboard
   // scan -- so without this, a q-less entry loaded before the search (or any other scope's entry)
   // keeps the stale value and shows it the moment the search is cleared or the scope changes back.
-  // `setQueriesData` on the principal-scoped prefix (precedent: `removeProjectFromDashboardQueries`,
-  // `lib/dashboard-projects.ts` ~:128-136) only touches entries that ALREADY EXIST in the cache --
-  // it must never manufacture an empty entry for a scope nobody has loaded yet.
+  // `setQueriesData` on the principal-scoped prefix (`dashboardProjectsKeyPrefix`, same one
+  // `removeProjectFromDashboardQueries` in `lib/dashboard-projects.ts` scans) only touches entries
+  // that ALREADY EXIST in the cache -- it must never manufacture an empty entry for a scope nobody
+  // has loaded yet.
   const updateAllProjectScopes = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
-    queryClient?.setQueriesData<ProjectSummary[]>({ queryKey: ["dashboard-projects", currentUserId] }, (current) => current ? update(current) : current);
+    queryClient?.setQueriesData<ProjectSummary[]>({ queryKey: dashboardProjectsKeyPrefix(currentUserId) }, (current) => current ? update(current) : current);
   }, [currentUserId, queryClient]);
 
   const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey, descriptor?: FocusDescriptor) => {
@@ -1223,11 +1224,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // prefix write below, unconditional on this predicate), has its own late fetch cancelled, and
       // is marked stale, same as any other sibling.
       const currentKeyAtConfirm = dashboardKeyStringRef.current;
-      const isSiblingDashboardQuery = (query: Query) =>
-        Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "dashboard-projects" &&
-        query.queryKey[1] === currentUserId &&
-        JSON.stringify(query.queryKey) !== currentKeyAtConfirm;
+      const isSiblingDashboardQuery = isDashboardProjectsQueryFor(currentUserId, currentKeyAtConfirm);
       // (A) cancel every sibling's in-flight fetch FIRST -- its late result, once cancelled, can no
       // longer overwrite the fan-out write that follows.
       if (queryClient) await queryClient.cancelQueries({ predicate: isSiblingDashboardQuery });

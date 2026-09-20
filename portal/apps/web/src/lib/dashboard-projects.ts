@@ -1,5 +1,5 @@
 import { authorizedBoardRank, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
-import { keepPreviousData, skipToken, useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { keepPreviousData, skipToken, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
 import { projectQueryRetry } from "./project-data";
@@ -125,8 +125,34 @@ export function useDashboardProjectSearch(archived: boolean, identity: Dashboard
   });
 }
 
+/**
+ * The `["dashboard-projects", principalId]` prefix every dashboard-projects query key starts
+ * with, regardless of role/authorizationEpoch/archived/q -- the one piece of cache-key shape
+ * callers outside this file (Dashboard.tsx's confirmed-priority fan-out, this file's own
+ * `removeProjectFromDashboardQueries` below) need to scan or match against, without knowing the
+ * key's full five-element shape themselves.
+ */
+export function dashboardProjectsKeyPrefix(principalId: string) {
+  return ["dashboard-projects", principalId] as const;
+}
+
+/**
+ * A `Query` predicate: true for every dashboard-projects query belonging to `principalId`,
+ * optionally excluding one exact key (compared structurally, as `JSON.stringify`, matching how
+ * `dashboardKeyString` is derived) -- the sibling test `setProjectPriority`'s confirmed-fan-out
+ * uses to cancel/invalidate every OTHER scope's entry without touching the one currently active.
+ */
+export function isDashboardProjectsQueryFor(principalId: string, exceptKeyString?: string) {
+  const [kind, id] = dashboardProjectsKeyPrefix(principalId);
+  return (query: Query) =>
+    Array.isArray(query.queryKey) &&
+    query.queryKey[0] === kind &&
+    query.queryKey[1] === id &&
+    (exceptKeyString === undefined || JSON.stringify(query.queryKey) !== exceptKeyString);
+}
+
 export function removeProjectFromDashboardQueries(queryClient: import("@tanstack/react-query").QueryClient, principalId: string, projectId: string) {
-  for (const query of queryClient.getQueryCache().findAll({ queryKey: ["dashboard-projects", principalId] })) {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: dashboardProjectsKeyPrefix(principalId) })) {
     queryClient.setQueryData<ProjectSummary[]>(query.queryKey, (projects) => projects?.filter((project) => project.id !== projectId));
   }
   // The sibling search-counts cache can't be filtered by project id (its value is a counts
