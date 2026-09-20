@@ -14,6 +14,26 @@
  * The static guard remains — it is fast, cheap CI feedback that fires on `git diff` before anyone
  * waits on a full production build. This plugin is the backstop that cannot be fooled by a form the
  * guard's parser does not know about yet.
+ *
+ * #219 PR A round 3 (Sol's round-3 review) closed two remaining holes in this backstop:
+ *
+ * 1. BLOCKER — Vite 8's worker sub-builds (`new Worker(new URL("./x.ts", import.meta.url))`) run
+ *    an entirely separate Rolldown bundling pass with their OWN plugin pipeline; the top-level
+ *    `plugins` array this file is registered in is never consulted for it. `vite.config.ts` now
+ *    ALSO registers a fresh instance of this plugin via `worker: { plugins: () => [...] }` — Vite's
+ *    own `worker.plugins` type requires a NEW instance per call (one per worker bundle), which this
+ *    factory already satisfies: it closes over nothing but its `root` argument, so calling it twice
+ *    is always safe and never shares state between the two registrations.
+ * 2. An asset (`.css`/`.svg`/`.png`/`.json`/`.wasm`/…) referenced only via a Vite asset URL
+ *    (`new URL("./x.png", import.meta.url)`) or a CSS `url(...)` can be emitted by a production
+ *    build, or inlined, with no module id shape this plugin's `getModuleIds()` walk is guaranteed
+ *    to see — an emitted asset is a Rollup/Rolldown ASSET, not necessarily a MODULE id this plugin
+ *    can enumerate. Orchestrator decision: rather than build a second, asset-origin scanner here,
+ *    the hole is made impossible instead — `src/harness/harness-reachability.guard.test.ts`'s
+ *    "may contain only scanned source" guard fails the build the moment any non-source file lands
+ *    under `src/harness/` or `src/components/reui/gantt/` at all (except a literal `.html`/`.md`
+ *    directly inside the harness's own HTML entry dir), so there is never an asset in either
+ *    restricted tree for this hole to apply to in the first place.
  */
 import type { Plugin } from "vite"
 

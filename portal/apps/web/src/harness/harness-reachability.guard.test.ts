@@ -47,6 +47,20 @@
  * outside CI. The bundler's own module graph (the new `forbid-dev-only-modules` Vite plugin, (iv)
  * above) replaces it as the authoritative backstop; this guard only proves that plugin is wired.
  *
+ * ## Round 3 fixes (#219 PR A, Sol's round-3 review)
+ * `scratchpad/sol-219a-r3-report.md`'s BLOCKER found the round 2 backstop still had two holes:
+ * (1) `forbid-dev-only-modules.ts` was registered only in the top-level `plugins` array — Vite 8's
+ * worker sub-builds (`new Worker(new URL(...))`) run an entirely separate Rolldown bundling pass
+ * with their own plugin pipeline, so a restricted module reachable only through a worker evaded it.
+ * Fixed by ALSO registering a fresh instance via `worker.plugins` in `vite.config.ts` — see the
+ * "registers forbid-dev-only-modules ... via worker.plugins too" block below, and
+ * `vite.config.ts`'s own comment. (2) an asset (`.css`/`.svg`/`.png`/`.json`/`.wasm`/…) referenced
+ * only via a Vite asset URL or a CSS `url(...)` can be emitted with no module id shape either scan
+ * is guaranteed to see. Orchestrator decision: rather than build an asset-origin scanner, the hole
+ * is made impossible — see the "may contain only scanned source" guard below, which fails on any
+ * non-source file anywhere under `src/harness/` or `src/components/reui/gantt/` (except a literal
+ * `.html`/`.md` directly inside the harness's own HTML entry dir).
+ *
  * ## Parser decision (#219 PR A round 2)
  * `typescript` (7.0.2, native) has no public `createSourceFile` in this toolchain, so this guard
  * parses with `@babel/parser`, pinned as an exact `apps/web` devDependency
@@ -826,6 +840,118 @@ describe("guard: vite.config.ts registers the forbid-dev-only-modules build plug
 });
 
 // ---------------------------------------------------------------------------
+// Detector (iv), part 3 — vite.config.ts ALSO registers forbid-dev-only-modules through
+// worker.plugins, as a fresh instance per call (round 3, Sol BLOCKER 1a)
+// ---------------------------------------------------------------------------
+//
+// Vite 8's worker sub-builds (`new Worker(new URL("./x.ts", import.meta.url))`) run an entirely
+// separate Rolldown bundling pass with its OWN plugin pipeline — the top-level `plugins` array
+// above is never consulted for it. A restricted module reachable ONLY through a worker entry
+// therefore evaded `forbidDevOnlyModules` even after round 2's fix. Vite's own `worker.plugins`
+// type is `() => PluginOption[]`, required to return a FRESH instance every call (one per worker
+// bundle) — see `vite.config.ts`'s own comment beside the real registration.
+
+/**
+ * The `ArrayExpression` a `worker.plugins` factory function's body evaluates to — a concise-body
+ * arrow (`() => [x()]`) or a block body whose single `return` statement returns an array literal.
+ * Anything else (a non-function, a non-array return, more than one return statement) is NOT
+ * resolved — fails closed the same way the rest of this file's static analysis does.
+ */
+function extractArrayFromPluginsFactory(node: AstNode | undefined): AstNode | undefined {
+  if (!node) return undefined;
+  if (node.type !== "ArrowFunctionExpression" && node.type !== "FunctionExpression") return undefined;
+  const body = node.body as AstNode;
+  if (body.type === "ArrayExpression") return body;
+  if (body.type !== "BlockStatement") return undefined;
+  const returns = ((body.body as AstNode[]) ?? []).filter((statement) => statement.type === "ReturnStatement");
+  if (returns.length !== 1) return undefined;
+  const argument = returns[0]!.argument as AstNode | null | undefined;
+  return argument?.type === "ArrayExpression" ? argument : undefined;
+}
+
+/**
+ * True if `configObject`'s `worker.plugins` is a function (concise-arrow or block-bodied, per
+ * `extractArrayFromPluginsFactory`) whose returned array has `calleeName(...)` as one of its own
+ * direct elements — mirrors `pluginsArrayHasDirectCall`'s own "direct array slot only" rule, and
+ * fails closed on a spread anywhere in `worker`/on a `worker.plugins` that is not a function at
+ * all (a shared array reused across worker bundles, which Vite's own contract forbids).
+ */
+function workerPluginsArrayHasDirectCall(configObject: AstNode | undefined, calleeName: string): boolean {
+  const workerProp = getObjectProperty(configObject, "worker");
+  if (!workerProp || workerProp.type !== "ObjectExpression") return false;
+  if (objectExpressionHasSpread(workerProp)) return false;
+  const pluginsFactory = getObjectProperty(workerProp, "plugins");
+  const pluginsArray = extractArrayFromPluginsFactory(pluginsFactory);
+  return pluginsArrayHasDirectCall(pluginsArray, calleeName);
+}
+
+describe("guard: vite.config.ts ALSO registers forbid-dev-only-modules via worker.plugins (round 3, Sol BLOCKER 1a)", () => {
+  const FORBID_PLUGIN_CALLEE = "forbidDevOnlyModules";
+
+  function parseConfigObject(source: string): AstNode | undefined {
+    const parsed = parseSource(source, ".ts");
+    if (!parsed.ok) throw new Error(`fixture failed to parse: ${parsed.error}`);
+    return findExportedConfigObject(parsed.ast.program.body as AstNode[]);
+  }
+
+  it("self-test: fires when worker, worker.plugins, or the direct call itself is absent", () => {
+    const noWorker = `export default defineConfig({ plugins: [react()] });`;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(noWorker), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    const noPluginsKey = `export default defineConfig({ worker: { format: "es" } });`;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(noPluginsKey), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    const wrongCallee = `export default defineConfig({ worker: { plugins: () => [tailwindcss()] } });`;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(wrongCallee), FORBID_PLUGIN_CALLEE)).toBe(false);
+  });
+
+  it("self-test: fires closed on a non-function plugins value, a shared/reused array, and a spread on worker", () => {
+    const notAFunction = `export default defineConfig({ worker: { plugins: [forbidDevOnlyModules(root)] } });`;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(notAFunction), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    // A factory returning a variable (not a fresh literal array) cannot be proven, statically, to
+    // return a NEW instance every call - Vite's own contract requires exactly that, so this fails
+    // closed rather than trusting it.
+    const returnsVariable = `
+      const shared = [forbidDevOnlyModules(root)];
+      export default defineConfig({ worker: { plugins: () => shared } });
+    `;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(returnsVariable), FORBID_PLUGIN_CALLEE)).toBe(false);
+
+    const spreadOnWorker = `export default defineConfig({ worker: { ...sharedWorker, plugins: () => [forbidDevOnlyModules(root)] } });`;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(spreadOnWorker), FORBID_PLUGIN_CALLEE)).toBe(false);
+  });
+
+  it("self-test: recognises a concise-arrow factory returning a fresh array with a direct call", () => {
+    const source = `export default defineConfig({ worker: { plugins: () => [forbidDevOnlyModules(root)] } });`;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(source), FORBID_PLUGIN_CALLEE)).toBe(true);
+  });
+
+  it("self-test: recognises a block-bodied factory whose single return statement returns a fresh array", () => {
+    const source = `
+      export default defineConfig({
+        worker: {
+          plugins: () => {
+            return [forbidDevOnlyModules(root)];
+          },
+        },
+      });
+    `;
+    expect(workerPluginsArrayHasDirectCall(parseConfigObject(source), FORBID_PLUGIN_CALLEE)).toBe(true);
+  });
+
+  it("is registered via worker.plugins as a fresh-instance factory in the real vite.config.ts", () => {
+    const source = readFileSync(join(webDir, "vite.config.ts"), "utf8");
+    const configObject = parseConfigObject(source);
+    expect(configObject, "could not statically find the exported Vite config object").toBeDefined();
+    expect(
+      workerPluginsArrayHasDirectCall(configObject, FORBID_PLUGIN_CALLEE),
+      "vite.config.ts's worker.plugins does not register a fresh forbidDevOnlyModules(...) instance - a worker sub-build can still reach a restricted module undetected",
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Whole-scanner planted fixtures — one per extraction form, run through
 // parse -> extract -> resolve -> verdict (detector ii), not pre-resolved FileNodes.
 // ---------------------------------------------------------------------------
@@ -979,6 +1105,94 @@ describe("whole-scanner fixtures: every extraction form is caught end to end", (
   it("a file that fails to parse fails closed, not silently skipped", () => {
     const broken = extractSpecifiers("const x = ;;; this is not valid TS(((", ".ts");
     expect("parseError" in broken).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard (round 3, Sol BLOCKER 1b) — the restricted trees may contain only scanned source
+// ---------------------------------------------------------------------------
+//
+// Sol's round 3 report: an asset URL (`new URL("./x.png", import.meta.url)`) or a CSS-referenced
+// asset (`url(...)` inside a stylesheet) can be emitted by a production build, or inlined, with NO
+// module id shape this file's import-form scan OR `forbid-dev-only-modules.ts`'s module-graph scan
+// is guaranteed to see (an emitted asset is a Rollup/Rolldown ASSET, not necessarily a MODULE id).
+// Orchestrator decision (this fix): do not build an asset-origin scanner to close that gap — make
+// the hole impossible instead. `src/harness/` and `src/components/reui/gantt/` may contain ONLY a
+// Vite source file (`isViteSourceFile`, the same extension set the rest of this file scans), or a
+// literal `.html`/`.md` directly inside `harness/reui-scheduling/` itself (the dev-only Vite HTML
+// entry dir — `apps/web/harness/reui-scheduling/`, NOT under `src/`, which is where `index.html`
+// and any future landing-page README have to live). Any other file (`.css`, `.svg`, `.png`,
+// `.json`, `.wasm`, …) anywhere in either restricted tree fails this guard outright: extend
+// `forbid-dev-only-modules.ts` (or move the asset elsewhere) rather than let one land silently.
+
+/** The dev-only Vite HTML entry dir itself — `apps/web/harness/reui-scheduling/`, sibling to
+ * `src/`, not inside it. Only place under either restricted tree a non-source file may exist. */
+const HARNESS_ENTRY_DIR = join(webDir, "harness", "reui-scheduling");
+
+const RESTRICTED_ASSET_SCAN_DIRS = [
+  { label: "src/harness/", abs: join(srcDir, "harness") },
+  { label: "src/components/reui/gantt/", abs: join(srcDir, "components", "reui", "gantt") },
+];
+
+/**
+ * Whether `file` (an absolute path) is allowed to exist under a restricted-tree asset scan: any
+ * Vite source extension, anywhere in the tree, or a literal `.html`/`.md` sitting DIRECTLY inside
+ * `HARNESS_ENTRY_DIR` (not a subdirectory of it — `dirname(file) === HARNESS_ENTRY_DIR`, an exact
+ * match, not a prefix check).
+ */
+function isAllowedRestrictedTreeFile(file: string): boolean {
+  if (isViteSourceFile(file)) return true;
+  const ext = extname(file);
+  return dirname(file) === HARNESS_ENTRY_DIR && (ext === ".html" || ext === ".md");
+}
+
+function walkAllFiles(dir: string): string[] {
+  const out: string[] = [];
+  if (!existsSync(dir)) return out;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkAllFiles(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+function findNonSourceRestrictedTreeAssets(dirs: { abs: string }[]): string[] {
+  const offenders: string[] = [];
+  for (const { abs } of dirs) {
+    for (const file of walkAllFiles(abs)) {
+      if (!isAllowedRestrictedTreeFile(file)) offenders.push(relative(webDir, file).split(sep).join("/"));
+    }
+  }
+  return offenders.sort();
+}
+
+describe("guard: src/harness/ and src/components/reui/gantt/ may contain only scanned source (round 3, Sol BLOCKER 1b)", () => {
+  it("self-test: allows every Vite source extension and the harness entry's own .html/.md, rejects everything else", () => {
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "harness", "reui-scheduling", "main.tsx"))).toBe(true);
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "components", "reui", "gantt", "gantt.tsx"))).toBe(true);
+    expect(isAllowedRestrictedTreeFile(join(HARNESS_ENTRY_DIR, "index.html"))).toBe(true);
+    expect(isAllowedRestrictedTreeFile(join(HARNESS_ENTRY_DIR, "README.md"))).toBe(true);
+
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "harness", "reui-scheduling", "fixture.svg"))).toBe(false);
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "components", "reui", "gantt", "icon.png"))).toBe(false);
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "harness", "styles.css"))).toBe(false);
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "components", "reui", "gantt", "data.json"))).toBe(false);
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "harness", "module.wasm"))).toBe(false);
+    // .html/.md is allowed ONLY directly inside the harness entry dir, not one level up and not a
+    // subdirectory of it - a prefix check here would let an asset hide one folder deeper.
+    expect(isAllowedRestrictedTreeFile(join(srcDir, "harness", "index.html"))).toBe(false);
+    expect(isAllowedRestrictedTreeFile(join(HARNESS_ENTRY_DIR, "nested", "index.html"))).toBe(false);
+  });
+
+  it("finds no non-source asset in the real restricted trees today", () => {
+    const offenders = findNonSourceRestrictedTreeAssets(RESTRICTED_ASSET_SCAN_DIRS);
+    expect(offenders, [
+      "A non-source file survives under a restricted dev-only/vendored tree. Dev-only/vendored",
+      "dirs may contain only scanned source; put assets elsewhere, or extend",
+      "forbid-dev-only-modules.ts if the asset genuinely has to live here. Found:",
+      ...offenders.map((path) => `  ${path}`),
+    ].join("\n")).toEqual([]);
   });
 });
 
