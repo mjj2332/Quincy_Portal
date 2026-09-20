@@ -200,9 +200,21 @@ const UTILITY_EXACT = new Set([
  *
  * `group-` and `peer-` are deliberately absent — their real forms (`group-hover:…`) carry a `:`,
  * which the punctuation test already catches, so listing them here would only re-open the hole.
+ *
+ * #219 PR A fix (dr-219a LOW #7): `p[xytblr]?-`/`m[xytblr]?-` covered every PHYSICAL padding/margin
+ * side (`px-`, `pt-`, `pl-`, …) but missed Tailwind's LOGICAL-property forms — `ps-`/`pe-`
+ * (padding-inline-start/end) and `ms-`/`me-` (margin-inline-start/end) — which this RTL-aware
+ * codebase uses pervasively (20 occurrences in `gantt-view.tsx` alone, 4 in `gantt-bar.tsx` as of
+ * this fix) precisely BECAUSE they are the logical-property equivalent of `px-`/`mx-`+side, not a
+ * BEM name. A DOM test asserting `ps-3`/`pe-3` (dr-219a LOW #7's resize-grip padding-reservation
+ * fix, `gantt-low-fixes.dom.test.tsx`) was misclassified as a Quincy class name by this same gap.
+ * No real Quincy class in this repo begins `ps-`/`pe-`/`ms-`/`me-` followed by a non-numeric
+ * suffix (checked: `grep -rn 'className="[a-z-]*\b(ps|pe|ms|me)-[a-z]'` across `src/`, excluding
+ * the numeric-scale form, returned nothing) — unlike `filter`/`filter-chips` above, adding `s`/`e`
+ * here does not risk swallowing one.
  */
 const UTILITY_PREFIX =
-  /^(?:min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
+  /^(?:min-|max-|w-|h-|p[xytblrse]?-|m[xytblrse]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
 
 /**
  * A Tailwind utility carries punctuation a Quincy BEM/state name never does, or a well-known
@@ -662,6 +674,12 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ["sr-only", true],
     ["flex", true],
     ["text-foreground", true],
+    // #219 PR A fix (dr-219a LOW #7): the logical-property padding/margin forms - see
+    // UTILITY_PREFIX's own comment for why `p[xytblr]?-`/`m[xytblr]?-` alone missed these.
+    ["ps-3", true],
+    ["pe-3", true],
+    ["ms-2", true],
+    ["me-2", true],
   ])("isUtilityClass(%j) === %s", (token, expected) => {
     expect(isUtilityClass(token)).toBe(expected);
   });
