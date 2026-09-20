@@ -51,6 +51,15 @@
  * their own hairline in an inline style set two lines below the removed class (`diamond.style.border`
  * / `barEl.style.outline`), so dropping the shadow loses no edge definition. The resize-status chip
  * a few lines down never carried a shadow and is unchanged.
+ *
+ * #219 PR A fix (Sol review, sol1 item 4), documentation-only, no behavior change here: this
+ * file's own day-grid pointer snap (`computeProposal`'s `snapMin`, below) rounds the proposed
+ * instant to the nearer of the two surrounding ABSOLUTE zoned midnights and is deliberately left
+ * as-is. `gantt-lib.tsx`'s `computeGanttKeyboardProposal` no longer does this for the KEYBOARD
+ * path — see that file's header for why a day-unit keyboard nudge shifts the moved/resized edge
+ * by a zoned civil day instead, preserving its own wall time. The two paths intentionally land
+ * differently for a timed (non-midnight-aligned) bar; only day-ALIGNED bars are guaranteed to
+ * agree.
  */
 
 import { useCallback, useEffect } from "react"

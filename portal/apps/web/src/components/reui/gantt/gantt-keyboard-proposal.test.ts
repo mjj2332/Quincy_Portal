@@ -171,3 +171,84 @@ describe("computeGanttKeyboardProposal — day-or-more step (step >= 1440) acros
     expect(zonedStartOfDay(r.start, SYDNEY).getTime()).toBe(r.start.getTime());
   });
 });
+
+// ---------------------------------------------------------------------------
+// #219 PR A fix item 4 (sol1) — day-unit keyboard nudge must shift the moving
+// edge by a zoned civil day, preserving its wall time exactly (14:00 stays
+// 14:00), never wrapping through `zonedStartOfDay`. A timed subject whose
+// start and end sit on OPPOSITE sides of the 02:00-03:00 transition gap must
+// have each edge shifted independently - NOT end = start + elapsed ms, which
+// silently changes the end's wall time whenever the destination day's DST
+// transition falls between the two wall-clock times. Upstream POINTER
+// snapping is untouched by this fix (it still snaps to absolute midnight via
+// its own path in gantt-dnd.tsx) - this is a documented, deliberate keyboard-
+// only divergence; see gantt-lib.tsx's header and computeGanttKeyboardProposal
+// doc comment.
+// ---------------------------------------------------------------------------
+describe("computeGanttKeyboardProposal — day-unit nudge preserves wall time exactly (sol1 item 4)", () => {
+  it("timed resize-end across the spring-forward day (2026-10-04) preserves the edge's wall time, no midnight wrap", () => {
+    const start = sydney(2026, 9, 3, 14, 0);
+    const end = sydney(2026, 9, 4, 14, 0); // 1-day span, timed (not midnight-aligned)
+    const grown = computeGanttKeyboardProposal({ start, end, allDay: false }, "resize-end", 1, 24 * 60, SYDNEY);
+    expect(grown).not.toBeNull();
+    expect(grown!.end.getTime()).toBe(sydney(2026, 9, 5, 14, 0).getTime());
+    // NOT wrapped to zoned midnight - the old (buggy) behavior.
+    expect(zonedStartOfDay(grown!.end, SYDNEY).getTime()).not.toBe(grown!.end.getTime());
+  });
+
+  it("timed resize-start across the fall-back day (2026-04-05) preserves the edge's wall time, no midnight wrap", () => {
+    const start = sydney(2026, 3, 4, 14, 0);
+    const end = sydney(2026, 3, 6, 14, 0); // 2-day span, timed
+    const grown = computeGanttKeyboardProposal({ start, end, allDay: false }, "resize-start", -1, 24 * 60, SYDNEY);
+    expect(grown).not.toBeNull();
+    expect(grown!.start.getTime()).toBe(sydney(2026, 3, 3, 14, 0).getTime());
+    expect(zonedStartOfDay(grown!.start, SYDNEY).getTime()).not.toBe(grown!.start.getTime());
+  });
+
+  it("timed move whose start and end straddle the spring-forward gap shifts each edge independently, NOT end = start + elapsed ms", () => {
+    // 01:30 -> 03:30 Oct 3 (2h nominal span). Moved +1 civil day lands ON the
+    // 23-hour transition day: the 02:00-03:00 gap sits strictly between the
+    // two wall times, so the real elapsed time between them shrinks to 1h.
+    const start = sydney(2026, 9, 3, 1, 30);
+    const end = sydney(2026, 9, 3, 3, 30);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, 24 * 60, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 9, 4, 1, 30).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 9, 4, 3, 30).getTime());
+    // The real duration shrank from 2h to 1h - proof the end was re-derived
+    // from its OWN wall time, not carried forward as the original elapsed ms.
+    expect(r.end.getTime() - r.start.getTime()).toBe(60 * 60 * 1000);
+  });
+
+  it("timed move whose start and end straddle the fall-back gap shifts each edge independently, NOT end = start + elapsed ms", () => {
+    // 01:30 -> 03:30 Apr 4 (2h nominal span). Moved +1 civil day lands ON the
+    // 25-hour transition day: the repeated 02:00-03:00 hour sits between the
+    // two wall times, so the real elapsed time between them grows to 3h.
+    const start = sydney(2026, 3, 4, 1, 30);
+    const end = sydney(2026, 3, 4, 3, 30);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, 24 * 60, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 3, 5, 1, 30).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 3, 5, 3, 30).getTime());
+    expect(r.end.getTime() - r.start.getTime()).toBe(3 * 60 * 60 * 1000);
+  });
+
+  it("minute-mode (sub-day) move steps by real minutes across the repeated 02:00-03:00 hour on the fall-back day, first fold to second fold", () => {
+    // Australia/Sydney resolves an ambiguous local time to its LATER (standard
+    // time) occurrence; the earlier (daylight) occurrence of the same wall
+    // clock is exactly one real hour before it. Minute-mode uses raw ms
+    // arithmetic (no zoned rounding), so stepping 60 real minutes from the
+    // first fold must land exactly on the second fold's instant.
+    const secondFoldMs = sydney(2026, 3, 5, 2, 30).getTime();
+    const firstFoldMs = secondFoldMs - 60 * 60 * 1000;
+    const start = new Date(firstFoldMs);
+    const end = new Date(firstFoldMs + 30 * 60000);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, 60, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(secondFoldMs);
+    expect(r.end.getTime()).toBe(firstFoldMs + 30 * 60000 + 60 * 60000);
+  });
+});

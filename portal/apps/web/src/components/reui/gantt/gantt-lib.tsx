@@ -41,6 +41,19 @@
  * for `useGantt`/`useGanttViewConfig`/`GanttInstance` — `gantt.tsx` importing anything back from
  * `gantt-dnd.tsx` would be a cycle. This file has no dependents that could cycle back, so both
  * `gantt-dnd.tsx`'s `canResize` and `gantt.tsx`'s `nudgeEvent` import from here instead.
+ *
+ * #219 PR A fix (Sol review, sol1 item 4) — `computeGanttKeyboardProposal`'s day-unit
+ * (`step >= 1440`) branches wrapped every moved/resized edge in `zonedStartOfDay`, and the timed
+ * MOVE branch derived the new end from the new start plus the ORIGINAL elapsed milliseconds. Both
+ * are wrong for a timed (non-midnight-aligned) subject: a 14:00 resize edge landed on 00:00, and a
+ * subject whose start/end straddle a DST transition's wall-clock gap changed the end's time of
+ * day. Fixed: every day-unit edge now shifts by zoned `addDays` alone, preserving its OWN wall
+ * time exactly, with start and end of a timed move shifted INDEPENDENTLY (never end = start +
+ * elapsed ms). The pre-existing day-ALIGNED move branch (both edges already at zoned midnight, or
+ * `allDay`) is unchanged — it already preserved the civil-day span correctly. This is a
+ * KEYBOARD-ONLY fix: the pointer drag's own day-snap path in `gantt-dnd.tsx` (`beginGesture`,
+ * around its `snapMin`/`maxStartMin` logic) still snaps to absolute zoned midnight and is
+ * deliberately left untouched by this change — see `gantt-dnd.tsx`'s own header for that path.
  */
 
 import { expandRecurrence } from "@/components/reui/gantt/gantt-recurrence"
@@ -763,22 +776,17 @@ function computeGanttKeyboardProposal(
     // a milestone is an instant: it has no edges to resize
     if (milestone) return null
     if (action === "resize-start") {
+      // Quincy fix (#219 PR A, sol1 item 4): shift the moving edge by a zoned
+      // civil day, preserving ITS OWN wall time exactly (14:00 stays 14:00) -
+      // never `zonedStartOfDay`, which silently snapped every day-unit resize
+      // to midnight regardless of the edge's actual time of day. The bound
+      // mirrors this: one civil day short of the FIXED edge's own wall time,
+      // via `addDays`, not a midnight snap of it either.
       const newStartMs = dayMode
-        ? zonedStartOfDay(
-            addDays(toZoned(subject.start, timeZone), direction),
-            timeZone
-          ).getTime()
+        ? addDays(toZoned(subject.start, timeZone), direction).getTime()
         : subject.start.getTime() + direction * step * 60000
-      // Minimum length = one step; on day grids that is the LAST zoned
-      // midnight before the end (raw 1440-minute arithmetic lands off the
-      // midnight grid across DST) - mirrors gantt-dnd.tsx's maxStartMin.
       const maxStartMs = dayMode
-        ? zonedStartOfDay(
-            isZonedMidnight(subject.end, timeZone)
-              ? addDays(toZoned(subject.end, timeZone), -1)
-              : subject.end,
-            timeZone
-          ).getTime()
+        ? addDays(toZoned(subject.end, timeZone), -1).getTime()
         : subject.end.getTime() - step * 60000
       if (newStartMs > maxStartMs) return null
       return {
@@ -787,20 +795,12 @@ function computeGanttKeyboardProposal(
         allDay: subject.allDay,
       }
     }
-    // resize-end
+    // resize-end - mirrors resize-start above.
     const newEndMs = dayMode
-      ? zonedStartOfDay(
-          addDays(toZoned(subject.end, timeZone), direction),
-          timeZone
-        ).getTime()
+      ? addDays(toZoned(subject.end, timeZone), direction).getTime()
       : subject.end.getTime() + direction * step * 60000
-    // Mirror of the resize-start bound: the FIRST zoned midnight after the
-    // start on day grids, plain snap arithmetic otherwise.
     const minEndMs = dayMode
-      ? zonedStartOfDay(
-          addDays(toZoned(subject.start, timeZone), 1),
-          timeZone
-        ).getTime()
+      ? addDays(toZoned(subject.start, timeZone), 1).getTime()
       : subject.start.getTime() + step * 60000
     if (newEndMs < minEndMs) return null
     return {
@@ -853,14 +853,21 @@ function computeGanttKeyboardProposal(
       }
     }
     // A timed (non-midnight-aligned) subject at a day-or-more scale keeps
-    // its wall-clock time of day across the move, and its exact ms
-    // duration - the same two invariants the pointer drag's own move
-    // branch keeps for a sub-day span.
+    // EACH edge's own wall-clock time of day across the move - start and end
+    // are shifted INDEPENDENTLY via zoned `addDays`, never end = start +
+    // elapsed ms. Quincy fix (#219 PR A, sol1 item 4): the old elapsed-ms
+    // shortcut was only correct when the transition day's DST gap did not
+    // fall between the two wall times; when it did (e.g. 01:30-03:30 moved
+    // onto a day whose 02:00-03:00 hour is skipped or repeated) it silently
+    // changed the end's wall time. This intentionally means the real
+    // (millisecond) duration can change across a transition - the WALL-CLOCK
+    // span is what a day-unit keyboard nudge preserves, mirroring how a
+    // day-aligned subject already preserves its civil-day span above.
     const newStart = addDays(toZoned(subject.start, timeZone), direction)
-    const durationMs = subject.end.getTime() - subject.start.getTime()
+    const newEnd = addDays(toZoned(subject.end, timeZone), direction)
     return {
       start: new Date(newStart.getTime()),
-      end: new Date(newStart.getTime() + durationMs),
+      end: new Date(newEnd.getTime()),
       allDay: subject.allDay,
     }
   }
