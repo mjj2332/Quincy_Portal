@@ -1239,7 +1239,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         if (item.boardRevision > response.boardRevision) return item;
         return { ...item, priority: response.priority, boardRevision: response.boardRevision };
       });
-      updateProjects(applyConfirmed);
+      // The prefix fan-out below already covers the exact click-time entry (it matches on
+      // `currentUserId` alone), so a separate exact-key write here would just be a redundant second
+      // pass over the same entry.
       updateAllProjectScopes(applyConfirmed);
       // Mark the patched SIBLINGS stale without refetching them now (`refetchType: "none"`) -- a
       // same-`boardRevision` race then self-heals the next time that entry is actually observed
