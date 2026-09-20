@@ -60,6 +60,15 @@
  * by a zoned civil day instead, preserving its own wall time. The two paths intentionally land
  * differently for a timed (non-midnight-aligned) bar; only day-ALIGNED bars are guaranteed to
  * agree.
+ *
+ * #219 PR A fix (dr-219a HIGH #1 / luna-219a #9): `onPointerUp`'s release used to announce only an
+ * ACCEPTED drop. It now announces a REFUSED one too (overlap-policy reject, an enforced
+ * `canDropEvent` veto, or `onEventUpdate` returning `false`), through a new `announceBlocked`
+ * helper that reuses `gantt-i18n.tsx`'s `changeBlockedLocked`/`Invalid`/`Rejected` labels (renamed
+ * in the same fix from `keyboardNudge*`, since both input paths now share them). Every reachable
+ * pointer refusal announces "rejected" — see this file's own `announceBlocked` doc comment and
+ * `gantt-dnd-refusal-announce.dom.test.tsx`'s header for why "locked"/"invalid" are wired but
+ * currently unreachable from a pointer gesture.
  */
 
 import { useCallback, useEffect } from "react"
@@ -888,6 +897,22 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     scheduleAutoScroll()
   }
 
+  // #219 PR A fix (dr-219a HIGH #1 / luna-219a #9): a refused pointer drop used to release
+  // silently - only an ACCEPTED drop wrote to the announcer below. The keyboard path
+  // (`gantt-bar.tsx`'s `stepAdjust`/commit handling) already announces one of the three
+  // `changeBlocked*` reasons (renamed from `keyboardNudge*` in this same fix - see
+  // `gantt-i18n.tsx`'s header) on an identical refusal; this gives the pointer release the same
+  // voice, reusing the labels rather than inventing pointer-only text.
+  const announceBlocked = (reason: "locked" | "invalid" | "rejected") => {
+    if (!announcer) return
+    announcer.textContent =
+      reason === "locked"
+        ? settings.i18n.labels.changeBlockedLocked
+        : reason === "invalid"
+          ? settings.i18n.labels.changeBlockedInvalid
+          : settings.i18n.labels.changeBlockedRejected
+  }
+
   const onPointerUp = (e: PointerEvent) => {
     if (e.pointerId !== pointerId) return
     cleanup()
@@ -916,12 +941,22 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     // make this structurally unreachable; this is the defensive last line, checked against the
     // OWNER TAG rather than re-deriving "is a session active" here.
     if (drag.source !== "pointer") return
-    // the node refuses concurrency: revert instead of committing an overlap
-    if (overlapRejected) return
+    // the node refuses concurrency: revert instead of committing an overlap. #219 PR A fix
+    // (dr-219a HIGH #1): announces "rejected" - the same bucket `nudgeEvent`'s identical overlap
+    // refusal collapses to (`gantt.tsx`'s `proposeNudge`) - so a screen-reader user learns the
+    // drop did not happen instead of silently seeing the bar snap back.
+    if (overlapRejected) {
+      announceBlocked("rejected")
+      return
+    }
     // enforceCanDrop makes the advisory verdict binding: a release whose
     // last canDropEvent answer was false reverts exactly like "reject" -
-    // the red ghost becomes a promise instead of a suggestion
-    if (settings.enforceCanDrop && !drag.valid) return
+    // the red ghost becomes a promise instead of a suggestion. #219 PR A fix (dr-219a HIGH #1):
+    // same "rejected" announcement as the keyboard path's own enforced canDropEvent veto.
+    if (settings.enforceCanDrop && !drag.valid) {
+      announceBlocked("rejected")
+      return
+    }
     const unchanged =
       drag.proposedStart.getTime() === occurrence.start.getTime() &&
       drag.proposedEnd.getTime() === occurrence.end.getTime() &&
@@ -947,6 +982,12 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
         drag.proposedAllDay,
         settings.locale
       )}`
+    } else if (!accepted) {
+      // #219 PR A fix (dr-219a HIGH #1): onEventUpdate itself refused (applyProposedUpdate
+      // returned null) - the one refusal source that DOES call the consumer's callback before
+      // reverting. Same "rejected" bucket; onEventUpdate has no richer shape to prefer a more
+      // specific reason from (it returns `false | GanttEventUpdateResult`, never a reason).
+      announceBlocked("rejected")
     }
   }
 

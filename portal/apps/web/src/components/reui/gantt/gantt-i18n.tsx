@@ -28,7 +28,7 @@
  * This file: locale strings and `date-fns` `Locale` plumbing for the Gantt's date formatting. No
  * icons used.
  *
- * #219 stage 2 (PR A) edit, additive: added three `labels` — `keyboardNudgeLocked`,
+ * #219 stage 2 (PR A) edit, additive: added three `labels` — originally `keyboardNudgeLocked`,
  * `keyboardNudgeInvalid`, `keyboardNudgeRejected` — the short reasons `gantt-bar.tsx`'s keyboard
  * move/resize announces through the gantt root's live region on a failed nudge (the success case
  * reuses the existing `functions.formatEventTime`, unchanged).
@@ -42,6 +42,16 @@
  * retarget) reuses the existing `keyboardNudgeLocked`/`keyboardNudgeInvalid`/
  * `keyboardNudgeRejected` above unchanged — the same three reasons `nudgeEvent`'s single commit
  * already announces, on the SAME gate (`proposeNudge`, shared by both).
+ *
+ * #219 PR A fix (dr-219a HIGH #1 / luna-219a #9), rename only — string VALUES unchanged:
+ * `keyboardNudgeLocked`/`Invalid`/`Rejected` are renamed to `changeBlockedLocked`/`Invalid`/
+ * `Rejected`. `gantt-dnd.tsx`'s pointer release (`onPointerUp`) previously announced only an
+ * ACCEPTED drop; a drop refused by the overlap policy, an enforced `canDropEvent`, or
+ * `onEventUpdate` released silently, while the keyboard path already announced one of these three
+ * reasons. The pointer path now announces refusals too, through the same three labels — which
+ * therefore read as keyboard-only under their old names and are renamed to name the mechanism
+ * (a blocked change), not the input device. Every reference in both `gantt-bar.tsx` (keyboard) and
+ * `gantt-dnd.tsx` (pointer) was updated to the new names.
  */
 
 import type {
@@ -94,12 +104,15 @@ interface GanttI18nConfig {
     planned: (rangeLabel: string) => string
     /** Read to screen readers on a zero-duration (milestone) bar. */
     milestone: string
-    /** Live-region reason on a keyboard nudge blocked by readOnly / draggable / a locked resize edge. */
-    keyboardNudgeLocked: string
-    /** Live-region reason on a keyboard nudge that would invert or zero out the range. */
-    keyboardNudgeInvalid: string
-    /** Live-region reason on a keyboard nudge blocked by the overlap policy, canDropEvent, or onEventUpdate. */
-    keyboardNudgeRejected: string
+    /** #219 PR A fix (dr-219a HIGH #1): renamed from keyboardNudgeLocked (string unchanged) — a
+     * pointer OR keyboard change blocked by readOnly / draggable / a locked resize edge. */
+    changeBlockedLocked: string
+    /** #219 PR A fix (dr-219a HIGH #1): renamed from keyboardNudgeInvalid (string unchanged) — a
+     * pointer OR keyboard change that would invert or zero out the range. */
+    changeBlockedInvalid: string
+    /** #219 PR A fix (dr-219a HIGH #1): renamed from keyboardNudgeRejected (string unchanged) — a
+     * pointer OR keyboard change blocked by the overlap policy, canDropEvent, or onEventUpdate. */
+    changeBlockedRejected: string
     /** #219 PR A (Adjust mode) — visually-hidden `aria-describedby` text while adjusting; also prefixed onto the entry announcement. */
     adjustInstructions: string
     /** #219 PR A (Adjust mode) — names the three retarget-able parts of a bar. */
@@ -195,9 +208,9 @@ const DEFAULT_LABELS: GanttI18nConfig["labels"] = {
   continues: "continues",
   planned: (rangeLabel) => `Planned ${rangeLabel}`,
   milestone: "milestone",
-  keyboardNudgeLocked: "That can't be changed.",
-  keyboardNudgeInvalid: "That change isn't possible.",
-  keyboardNudgeRejected: "That change was rejected.",
+  changeBlockedLocked: "That can't be changed.",
+  changeBlockedInvalid: "That change isn't possible.",
+  changeBlockedRejected: "That change was rejected.",
   adjustInstructions:
     "Adjust mode. Use the arrow keys to move by one step, Shift plus an arrow key for a larger step, M, S, or E to target the whole bar, the start, or the end, Enter or Space to commit, and Escape to cancel.",
   adjustTargetLabels: {

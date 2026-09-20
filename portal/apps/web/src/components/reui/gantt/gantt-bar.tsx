@@ -122,9 +122,11 @@
  *   behaviour" per the spec.
  * - `step`/`retarget`/`commit`/`cancel` (while already adjusting) call the five `GanttInternals`
  *   Adjust methods (`gantt.tsx`) directly; a refused step reuses the EXISTING
- *   `keyboardNudgeLocked`/`Invalid`/`Rejected` announcements unchanged (same `proposeNudge` gate
- *   `nudgeEvent` uses), and a refused retarget announces the new `adjustTargetLocked` instead
- *   (a different failure shape: the target itself is unavailable, not a step within it).
+ *   `changeBlockedLocked`/`Invalid`/`Rejected` announcements unchanged (same `proposeNudge` gate
+ *   `nudgeEvent` uses; renamed from `keyboardNudge*` in the #219 PR A dr-219a HIGH #1 fix once
+ *   `gantt-dnd.tsx`'s pointer release started announcing through the same labels), and a refused
+ *   retarget announces the new `adjustTargetLocked` instead (a different failure shape: the target
+ *   itself is unavailable, not a step within it).
  * - `role="application"`, `data-adjusting`, and `aria-describedby` (a visually-hidden `sr-only`
  *   span holding `i18n.labels.adjustInstructions`) are set only while THIS bar is the one
  *   adjusting. The bar itself never renders the moving/resizing PREVIEW - `stepAdjust` drives
@@ -749,11 +751,11 @@ function GanttBar<TData = unknown>({
             )
           )
         } else if (result.reason === "locked") {
-          announce(settings.i18n.labels.keyboardNudgeLocked)
+          announce(settings.i18n.labels.changeBlockedLocked)
         } else if (result.reason === "invalid") {
-          announce(settings.i18n.labels.keyboardNudgeInvalid)
+          announce(settings.i18n.labels.changeBlockedInvalid)
         } else if (result.reason === "rejected") {
-          announce(settings.i18n.labels.keyboardNudgeRejected)
+          announce(settings.i18n.labels.changeBlockedRejected)
         }
         // Quincy fix (#219 PR A, Sol re-review round 2, LOW): `result.noChange` (a post-clamp
         // proposal identical to the current preview) sets no `reason` and `applied: false` -
@@ -787,7 +789,7 @@ function GanttBar<TData = unknown>({
       } else if (result.noChange) {
         announce(settings.i18n.labels.adjustNoChange)
       } else {
-        announce(settings.i18n.labels.keyboardNudgeRejected)
+        announce(settings.i18n.labels.changeBlockedRejected)
       }
     },
     className: cn(
