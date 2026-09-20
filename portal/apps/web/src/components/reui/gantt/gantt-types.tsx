@@ -29,6 +29,14 @@
  * no icons, no `"use client"`, no `cn` — every rewrite above is inapplicable here; this header
  * exists so every one of the 9 files documents its own provenance rather than leaving one silently
  * unexplained.
+ *
+ * #219 stage 2 (PR A) edit: added `GanttEvent.resizableEdges?: { start?: boolean; end?: boolean }`,
+ * additive beside the existing `resizable` flag (owner decision on #215 — a project bar's shoot/
+ * start edge is fixed, only the deadline/end edge drags). An omitted edge stays resizable;
+ * `resizable: false` still disables both regardless of `resizableEdges`. See `gantt-dnd.tsx`'s
+ * `canResize` and `gantt-bar.tsx`'s per-edge grip rendering, both edited in the same stage.
+ * `GanttProposedUpdate.source` below already admitted `"keyboard"` before this stage — unused until
+ * `gantt-dnd.tsx`'s `nudgeEvent` (also #219 stage 2) emits it.
  */
 
 type GanttBarId = string
@@ -120,6 +128,11 @@ interface GanttEvent<TData = unknown> {
   readOnly?: boolean
   draggable?: boolean
   resizable?: boolean
+  /**
+   * Per-edge override, additive: an omitted edge stays resizable.
+   * `resizable: false` wins over this regardless of what it says.
+   */
+  resizableEdges?: { start?: boolean; end?: boolean }
   /** Feeds the default getEventPriority; higher orders and packs first. */
   priority?: number
   /** Completion 0-100, not 0-1. */

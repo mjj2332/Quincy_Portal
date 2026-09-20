@@ -28,6 +28,14 @@
  * This file: the pointer-gesture state machine for drag-to-move and drag-to-resize (no dnd-kit —
  * this registry item hand-rolls its own gesture tracking, unlike `reui/kanban.tsx`). No icons
  * used.
+ *
+ * #219 stage 2 (PR A) edit, additive: `useGanttGestures`'s inline `canResize` callback was
+ * extracted to a top-level, React-free `canResize(segment, edge?, interactionsResizeEnabled?)` so
+ * the per-edge veto (owner decision on #215 — a project bar's shoot/start edge is fixed, only the
+ * deadline/end edge drags) is unit-testable without a hook. `beginResize` now passes its `edge`
+ * through to the extraction, so a locked edge is refused even if `beginResize` is called directly,
+ * not only when the (now edge-aware) grip fails to render — see `gantt-bar.tsx`'s per-edge grip
+ * split.
  */
 
 import { useCallback, useEffect } from "react"
@@ -934,6 +942,32 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   }
 }
 
+/**
+ * Whether this occurrence may be resized: with no `edge`, "is ANY edge resizable" — the same
+ * question the pre-#219-stage-2 inline callback answered, kept exactly for callers that do not
+ * care which edge (`interactionsResizeEnabled` defaults `true` for the same reason: a caller that
+ * has already gated on `interactions.resize` itself, or does not have it in scope, gets the old
+ * unconditional behaviour). With an `edge`, ALSO requires `event.resizableEdges?.[edge] !== false`
+ * (owner decision on #215 — a project bar's shoot/start edge is fixed, only the deadline/end edge
+ * drags). `resizableEdges` is additive: an omitted edge stays resizable, and `resizable: false`
+ * still wins over it regardless of edge. A milestone (zero-duration occurrence) has no edges either
+ * way. Pure and React-free — `useGanttGestures.canResize` below is the reactive wrapper every call
+ * site actually uses.
+ */
+function canResize<TData>(
+  segment: GanttSegment<TData>,
+  edge?: "start" | "end",
+  interactionsResizeEnabled = true
+): boolean {
+  if (!interactionsResizeEnabled) return false
+  const event = segment.occurrence.event
+  if (event.readOnly) return false
+  if (event.resizable === false) return false
+  if (edge && event.resizableEdges?.[edge] === false) return false
+  // a milestone is an instant: it has no edges to resize
+  return segment.occurrence.end.getTime() > segment.occurrence.start.getTime()
+}
+
 /** Per-bar / per-row pointer gesture wiring. */
 function useGanttGestures<TData = unknown>() {
   const instance = useGantt<TData>()
@@ -968,17 +1002,10 @@ function useGanttGestures<TData = unknown>() {
     [instance, canDrag, customMoveOverlay, viewConfig.scheduleMode]
   )
 
-  const canResize = useCallback(
-    (segment: GanttSegment<TData>) => {
+  const canResizeSegment = useCallback(
+    (segment: GanttSegment<TData>, edge?: "start" | "end") => {
       const { interactions } = instance.getState()
-      const event = segment.occurrence.event
-      return (
-        interactions.resize &&
-        !event.readOnly &&
-        event.resizable !== false &&
-        // a milestone is an instant: it has no edges to resize
-        segment.occurrence.end.getTime() > segment.occurrence.start.getTime()
-      )
+      return canResize(segment, edge, interactions.resize)
     },
     [instance]
   )
@@ -989,7 +1016,7 @@ function useGanttGestures<TData = unknown>() {
       segment: GanttSegment<TData>,
       edge: "start" | "end"
     ) => {
-      if (e.button !== 0 || !canResize(segment)) return
+      if (e.button !== 0 || !canResizeSegment(segment, edge)) return
       e.stopPropagation()
       e.preventDefault()
       beginGesture({
@@ -1002,7 +1029,7 @@ function useGanttGestures<TData = unknown>() {
         scheduleMode: viewConfig.scheduleMode,
       })
     },
-    [instance, canResize, customResizeOverlay, viewConfig.scheduleMode]
+    [instance, canResizeSegment, customResizeOverlay, viewConfig.scheduleMode]
   )
 
   const beginCreate = useCallback(
@@ -1019,11 +1046,18 @@ function useGanttGestures<TData = unknown>() {
     [instance]
   )
 
-  return { beginMove, beginResize, beginCreate, canDrag, canResize }
+  return {
+    beginMove,
+    beginResize,
+    beginCreate,
+    canDrag,
+    canResize: canResizeSegment,
+  }
 }
 
 export {
   cancelActiveGanttGestures,
+  canResize,
   GANTT_ACTIVATION,
   markGestureEnd,
   useGanttGestures,

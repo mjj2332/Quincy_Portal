@@ -54,6 +54,16 @@ const FIXTURE_EVENTS: GanttEvent[] = [
     resourceId: "shoot-auckland",
     progress: 100,
   },
+  {
+    // #219 stage 2, step 1: stands in for a project bar — owner decision on #215, the shoot
+    // (start) edge is fixed and draws no grip; only the deadline (end) edge resizes.
+    id: "project-bar-start-locked",
+    title: "Project Bar (start locked — #215)",
+    start: daysFromNow(1),
+    end: daysFromNow(6),
+    resourceId: "shoot-wellington",
+    resizableEdges: { start: false },
+  },
 ];
 
 export default function GanttPreview() {

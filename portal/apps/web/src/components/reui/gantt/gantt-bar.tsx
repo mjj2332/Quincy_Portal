@@ -29,6 +29,18 @@
  * indicators, and the context menu. Two `IconPlaceholder`s resolved by `add`, matching each
  * placeholder's own `lucide=` prop (verified against the unprocessed registry JSON): `RepeatIcon`
  * (recurrence indicator) and `CheckIcon` (completion indicator).
+ *
+ * #219 stage 2 (PR A) edit: the single `showResize`-gated grip pair became two independently-gated
+ * grips, each checked against `gantt-dnd.tsx`'s edge-aware `canResize(segment, edge)` (owner
+ * decision on #215 — a project bar's shoot/start edge is fixed, only the deadline/end edge drags).
+ * Also added a `data-testid` on each grip (`gantt-resize-handle-start` / `-end`), additive: nothing
+ * Quincy-owned composes this deep inside the vendor's own render tree for a DOM test to hook a
+ * `data-testid` onto from the outside (unlike `<GanttBar>` itself, whose consumer props already
+ * reach the outer `<button>`), so `test-seam.guard.test.ts` Guard F's own suggested fix — "add a
+ * data-testid to the Quincy component that composes the vendor primitive" — has no Quincy
+ * component to add it to at this granularity. A minimal additive `data-testid` here is the honest
+ * hook; it is not `data-slot`, so Guard F (which governs `[data-slot=…]` selectors specifically)
+ * does not apply to it either way.
  */
 
 import {
@@ -270,13 +282,18 @@ function GanttBar<TData = unknown>({
   )
   const rowTitle = rowTitleProp ?? fallbackRowTitle
 
-  const showResize = gestures.canResize(segment)
-  const resizeHandles = showResize && (
+  // Each grip is gated on ITS OWN edge, not "does this bar resize at all":
+  // a start-locked bar (owner decision on #215 — a project bar's shoot/start
+  // edge is fixed) draws no start grip while its end grip still works.
+  const canResizeStart = segment.isStart && gestures.canResize(segment, "start")
+  const canResizeEnd = segment.isEnd && gestures.canResize(segment, "end")
+  const resizeHandles = (canResizeStart || canResizeEnd) && (
     <>
-      {segment.isStart && (
+      {canResizeStart && (
         <span
           data-slot="gantt-resize-handle"
           data-edge="start"
+          data-testid="gantt-resize-handle-start"
           // grip hugs the start edge (justify-start + tight inset) so the
           // indicator reads as "resize this end", not a centered pill.
           // pointer-coarse keeps it visible on touch, where hover never fires
@@ -289,10 +306,11 @@ function GanttBar<TData = unknown>({
           />
         </span>
       )}
-      {segment.isEnd && (
+      {canResizeEnd && (
         <span
           data-slot="gantt-resize-handle"
           data-edge="end"
+          data-testid="gantt-resize-handle-end"
           // grip hugs the end edge (justify-end + tight inset) so the
           // indicator reads as "resize this end", not a centered pill.
           // pointer-coarse keeps it visible on touch, where hover never fires
