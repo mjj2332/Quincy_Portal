@@ -21,7 +21,7 @@
  * Diffed against the sandbox's own `src/components/vendor-219/<name>.tsx` output, every line
  * differs only in one of the three ways above — WITH ONE EXCEPTION, forced by typecheck rather
  * than chosen: this repo's `tsconfig.base.json` sets `noUncheckedIndexedAccess: true`, which the
- * sandbox's own `tsconfig.app.json` does not. Twelve array indexings the vendor code treats as
+ * sandbox's own `tsconfig.app.json` does not. Fourteen array indexings the vendor code treats as
  * always in-bounds — each already guarded by the surrounding logic (`.length` comparisons,
  * `while` loops that pad an array to a given index, a `.every`/`a.length === b.length` pairing,
  * or a ternary's own length check) — therefore typecheck in the sandbox and fail here. Every one

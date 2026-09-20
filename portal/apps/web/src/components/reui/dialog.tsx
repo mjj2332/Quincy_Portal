@@ -8,7 +8,7 @@ import { XIcon } from "lucide-react"
 /**
  * Dialog primitive — base-nova's `dialog`, fetched via `npx shadcn@latest add dialog` into a
  * sandbox (`tmp/ReUI-Test-1`) for #219 (stage 1 of the Gantt vendor, PR A), registry version
- * matching `@base-ui/react` 1.7.0 in `portal/package.json`. One mechanical edit: `cn` imported
+ * matching `@base-ui/react` 1.7.0 in `portal/package.json`. Two mechanical edits: `cn` imported
  * from `@/lib/utils` instead of the registry's raw `"cn"` package (see `reui/checkbox.tsx`'s
  * header for why that package must never be installed), and `@/components/ui/button` repointed
  * at `@/components/reui/button`, the Quincy copy actually on disk (same reasoning as

@@ -15,7 +15,7 @@
  * matched via a substring of the event title) via a plain title-text query — role/name, not a
  * vendored `data-slot`.
  */
-import { act, type ReactNode } from "react";
+import { act, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gantt, useGantt, useGanttSelector } from "@/components/reui/gantt/gantt";
@@ -34,11 +34,14 @@ async function render(value: ReactNode) {
   });
 }
 
-async function keydown(el: HTMLElement, init: KeyboardEventInit) {
+/** Returns the dispatched native event so a caller can inspect `defaultPrevented` afterward. */
+async function keydown(el: HTMLElement, init: KeyboardEventInit): Promise<KeyboardEvent> {
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
   await act(async () => {
-    el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+    el.dispatchEvent(event);
     await Promise.resolve();
   });
+  return event;
 }
 
 /** Focusing a bar opens the tooltip's own focus-driven state — wrap it so React sees the update. */
@@ -70,7 +73,14 @@ const START = new Date("2026-03-02T09:00:00.000Z");
 const END = new Date("2026-03-02T10:00:00.000Z"); // 1 hour
 
 /** Reproduces gantt-view.tsx's own `<div key={segment.occurrence.key}><GanttBar .../></div>`. */
-function KeyedBarHost({ eventId }: { eventId: string }) {
+function KeyedBarHost({
+  eventId,
+  onKeyDown,
+}: {
+  eventId: string;
+  /** Forwarded straight to `<GanttBar>` to exercise its consumer `onKeyDown` composition. */
+  onKeyDown?: (e: ReactKeyboardEvent<HTMLButtonElement>) => void;
+}) {
   const instance = useGantt();
   const occurrence = useGanttSelector(
     () => instance.api.getOccurrences().find((occ) => occ.eventId === eventId) ?? null,
@@ -86,7 +96,7 @@ function KeyedBarHost({ eventId }: { eventId: string }) {
   };
   return (
     <div key={occurrence.key}>
-      <GanttBar segment={segment} />
+      <GanttBar segment={segment} onKeyDown={onKeyDown} />
     </div>
   );
 }
@@ -256,17 +266,42 @@ describe("GanttBar keyboard move/resize (#219 stage 2)", () => {
     expect(updated!.end.getTime()).toBe(END.getTime() - 15 * 60000);
   });
 
-  it("a chord that is not ours (plain ArrowRight, no Alt) is left alone — no nudge, no preventDefault-only side effect", async () => {
+  it("a chord that is not ours (plain ArrowRight, no Alt) is left alone: not prevented, not nudged, and the consumer's own onKeyDown still fires", async () => {
     const onEventsChange = vi.fn();
+    const onKeyDown = vi.fn();
     const event: GanttEvent = { id: "kb-plain-arrow", title: "Plain Arrow", start: START, end: END };
     await render(
       <Gantt events={[event]} onEventsChange={onEventsChange} date={START} timeZone="UTC">
-        <KeyedBarHost eventId="kb-plain-arrow" />
+        <KeyedBarHost eventId="kb-plain-arrow" onKeyDown={onKeyDown} />
       </Gantt>,
     );
     const bar = findBarByTitle("Plain Arrow");
     await focusBar(bar);
-    await keydown(bar, { key: "ArrowRight" });
+    const nativeEvent = await keydown(bar, { key: "ArrowRight" });
     expect(onEventsChange).not.toHaveBeenCalled();
+    // #219 PR A fix (Sol review, sol1 item 9): a chord that is not ours must leave
+    // `defaultPrevented` false (not just "no nudge committed") ...
+    expect(nativeEvent.defaultPrevented).toBe(false);
+    // ... and gantt-bar.tsx's mergeProps composition (never replacement) of a consumer's own
+    // onKeyDown must still run, exactly once, with that same un-prevented event.
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+    expect((onKeyDown.mock.calls[0]![0] as ReactKeyboardEvent).defaultPrevented).toBe(false);
+  });
+
+  it("a chord that IS ours still composes the consumer's onKeyDown (never replaces it), on an event it prevented", async () => {
+    const onEventsChange = vi.fn();
+    const onKeyDown = vi.fn();
+    const event: GanttEvent = { id: "kb-composed", title: "Composed", start: START, end: END };
+    await render(
+      <Gantt events={[event]} onEventsChange={onEventsChange} date={START} timeZone="UTC">
+        <KeyedBarHost eventId="kb-composed" onKeyDown={onKeyDown} />
+      </Gantt>,
+    );
+    const bar = findBarByTitle("Composed");
+    await focusBar(bar);
+    const nativeEvent = await keydown(bar, { key: "ArrowRight", altKey: true });
+    expect(onEventsChange).toHaveBeenCalledTimes(1);
+    expect(nativeEvent.defaultPrevented).toBe(true);
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
   });
 });
