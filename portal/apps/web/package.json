@@ -9,6 +9,7 @@
     "test": "vitest run --config vitest.config.ts && vitest run --config vitest.dom.config.ts"
   },
   "devDependencies": {
+    "@babel/parser": "7.29.8",
     "happy-dom": "20.11.1"
   }
 }
