@@ -722,7 +722,23 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const refreshKey = dashboardKeyStringRef.current;
     void projectsQuery.refetch().then((result) => {
       const settling = movementSettlePendingRef.current;
-      if (result.isError || !result.data) {
+      // ABA fix (diagnosed via instrumentation, ~24/24 repro runs): `result` is
+      // `QueryObserver#fetch()`'s own resolved value, which reads `this.#currentResult` AFTER the
+      // underlying fetch settles -- the OBSERVER's CURRENT result for whatever key is active THEN,
+      // not necessarily `refreshKey`. If the committed search goes A -> B -> A while this refetch
+      // (issued for A, `refreshKey`) is still in flight, `result` can by then be back on A too
+      // (`dashboardKeyStringRef.current === refreshKey` below would pass) while still carrying B's
+      // rows, because the observer's own current result was computed while ITS current query was
+      // still B -- `result.isPlaceholderData` is false in that case (B's data is real, not a
+      // placeholder), so the old key-string + isPlaceholderData guard alone let it through. Trusting
+      // `result`'s PAYLOAD at all, for either branch, is the vulnerability -- query identity, not
+      // payload shape, is what actually distinguishes refreshKey's own outcome. Read provenance
+      // from the cache entry for `refreshKey` itself instead: `queryClient.getQueryState` returns
+      // that key's own persisted status/data, which is what the real underlying fetch (the one this
+      // promise settling proves already ran) actually wrote, regardless of what the observer's
+      // `result` currently shows.
+      const refreshState = queryClient?.getQueryState<ProjectSummary[]>(JSON.parse(refreshKey) as readonly unknown[]);
+      if (refreshState?.status === "error") {
         if (settling) {
           const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
           setRecoveryReason(message);
@@ -733,19 +749,29 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         }
         return;
       }
+      if (refreshState?.status !== "success" || !refreshState.data) {
+        // Not (yet) a confirmed outcome for refreshKey -- no cache entry, or still pending/fetching.
+        // In practice this should not happen (the underlying fetch settling is what resolved this
+        // promise in the first place, and it writes refreshKey's own cache entry inline before
+        // settling), but if it ever does, do nothing harmful: this is neither a confirmed success
+        // (nothing to accept) nor a confirmed error (no reason to show the recovery/error state for
+        // a fetch that, for all this closure knows, never actually failed) -- only re-arm the queued
+        // refresh so a future pass gets another chance, same as the old "unusable result" branch did.
+        if (interactionBlockedRef.current) queuedRefreshRef.current = true;
+        return;
+      }
       if (interactionBlockedRef.current) {
         queuedRefreshRef.current = true;
         return;
       }
       if (queryRuntime?.principalTerminal) return;
-      // The committed search moved on while this refetch was in flight, or the observer's current
-      // result is itself a placeholder (`keepPreviousData` serving the prior key's rows while ITS
-      // OWN fetch is still pending) -- either way this is not this refreshKey's own confirmed
-      // result. Refuse rather than stamp it under refreshKey: the primary accept effect (above)
+      // The committed search moved on while this refetch was in flight -- refreshKey's own confirmed
+      // result still exists in the cache (accepted above via `refreshState`), but it is no longer
+      // the ACTIVE key: refuse to stamp it under refreshKey. The primary accept effect (above)
       // already owns accepting the current key's own data once it's real, under its own (current,
       // non-stale) closure.
-      if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData) return;
-      acceptDashboardProjects(result.data, result.dataUpdatedAt);
+      if (dashboardKeyStringRef.current !== refreshKey) return;
+      acceptDashboardProjects(refreshState.data, refreshState.dataUpdatedAt);
       // Keep this release outside acceptDashboardProjects; its acceptedQueryUpdatedAtRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
       if (settling) {
         movementSettlePendingRef.current = false;
@@ -763,7 +789,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         queuedRefreshRef.current = true;
       }
     });
-  }, [acceptDashboardProjects, effectiveKanbanSort, interactionBlocked, projectsQuery.refetch, queryRuntime]);
+  }, [acceptDashboardProjects, effectiveKanbanSort, interactionBlocked, projectsQuery.refetch, queryClient, queryRuntime]);
 
   useEffect(() => {
     if (!queryRuntime) return;

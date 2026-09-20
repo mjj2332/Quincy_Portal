@@ -565,6 +565,19 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
   // `host`/`queryClient`/`runtime` -- the file's own top-level `beforeEach` recreates all three before
   // every `it`, including every `it.each` iteration below -- so no state carries between hop counts.
   async function runQueuedRefreshRaceScenario(hopCount: number) {
+    // #230 fix-verification (test-first, item 1). Without this, every `Date.now()` call this
+    // scenario's several fetches/accepts produce can coincidentally land in the SAME real
+    // millisecond -- a fast, synchronous test routinely completes well inside 1ms of wall-clock
+    // time. `acceptedQueryUpdatedAtRef`'s own (key, updatedAt) dedupe (Dashboard.tsx ~:656) then
+    // swallows the corrupted accept this sweep exists to catch as a silent no-op: the test would
+    // pass not because the fix held, but because the write it is supposed to catch never visibly
+    // happened at all (same failure shape as this file's own test (m), which pins `Date.now` for
+    // exactly this reason). A monotonically-incrementing spy guarantees every `dataUpdatedAt` this
+    // scenario produces -- A's own real accepts and B's/the corrupted accept's alike -- is
+    // distinct, so the dedupe can never mask what this sweep is checking for.
+    let dateNowCounter = 0;
+    const dateNowSpy = vi.spyOn(Date, "now").mockImplementation(() => 1_700_000_000_000 + (dateNowCounter += 1));
+    try {
     let alphaCalls = 0;
     let resolveStaleAlphaRefetch!: (value: unknown) => void;
     let resolveBeta!: (value: unknown) => void;
@@ -725,6 +738,9 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     // outstanding self-heal before this read, for every hop count in the sweep).
     const alphaSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]');
     return { observedSelections, alphaSelectValue: alphaSelect?.value };
+    } finally {
+      dateNowSpy.mockRestore();
+    }
   }
 
   // Swept, not calibrated: EVERY hop count from 0 to 16 inclusive, generously bracketing the
