@@ -703,6 +703,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useEffect(() => {
     if (interactionBlocked || !queuedRefreshRef.current) return;
     queuedRefreshRef.current = false;
+    // Sol review round 2, item 2: snapshot the key this refetch is FOR, same as item 1's
+    // `currentKeyAtConfirm` above -- `QueryObserver#fetch()`'s own `.then()` reads
+    // `this.#currentResult` AFTER the underlying fetch settles, which is the observer's CURRENT
+    // result for whatever key is active THEN, not necessarily this one. This closure's own
+    // `acceptDashboardProjects`/`replaceAcceptedProjects` are bound to dashboardKeyString as of
+    // THIS render (the key below), so accepting a result for a since-changed key would stamp it
+    // under this stale one.
+    const refreshKey = dashboardKeyStringRef.current;
     void projectsQuery.refetch().then((result) => {
       const settling = movementSettlePendingRef.current;
       if (result.isError || !result.data) {
@@ -721,6 +729,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         return;
       }
       if (queryRuntime?.principalTerminal) return;
+      // The committed search moved on while this refetch was in flight, or the observer's current
+      // result is itself a placeholder (`keepPreviousData` serving the prior key's rows while ITS
+      // OWN fetch is still pending) -- either way this is not this refreshKey's own confirmed
+      // result. Refuse rather than stamp it under refreshKey: the primary accept effect (above)
+      // already owns accepting the current key's own data once it's real, under its own (current,
+      // non-stale) closure.
+      if (dashboardKeyStringRef.current !== refreshKey || result.isPlaceholderData) return;
       acceptDashboardProjects(result.data, result.dataUpdatedAt);
       // Keep this release outside acceptDashboardProjects; its acceptedQueryUpdatedAtRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
       if (settling) {

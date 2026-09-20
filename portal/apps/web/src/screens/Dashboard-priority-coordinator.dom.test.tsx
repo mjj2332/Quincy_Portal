@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
@@ -15,7 +15,12 @@ vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ can: (capabili
 vi.mock("../lib/stages", () => ({ useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", active: true }], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({
-  ProjectKanbanBoard2: ({ projects, onPriorityChange }: { projects: Array<{ id: string; priority: number | null }>; onPriorityChange: (project: { id: string; priority: number | null }, priority: number | null) => void }) => <select aria-label="Priority" value={projects[0]?.priority ?? ""} onChange={(event) => onPriorityChange(projects[0]!, Number(event.target.value))}><option value="1">1</option><option value="2">2</option></select>,
+  // `<option value="3">` exists only so a value the (l) test's Beta fixture carries (priority 3,
+  // never legitimately reachable through this mocked board's own UI) is even representable as a
+  // DOM selection -- without it, an unmatched `value` prop leaves every `<option>`'s `selected`
+  // untouched and a real <select> falls back to displaying its first option, silently confounding
+  // that test's "was the wrong value ever selected" check with this fixture's own limits.
+  ProjectKanbanBoard2: ({ projects, onPriorityChange }: { projects: Array<{ id: string; priority: number | null }>; onPriorityChange: (project: { id: string; priority: number | null }, priority: number | null) => void }) => <select aria-label="Priority" value={projects[0]?.priority ?? ""} onChange={(event) => onPriorityChange(projects[0]!, Number(event.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>,
 }));
 
 const project = { id: "project-1", street: "1 Priority Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
@@ -29,6 +34,16 @@ const storage = new Map<string, string>();
 
 async function flush() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+}
+
+// Drains microtask hops only (a settled promise's own `.then()` chain, and any react-query
+// internals chained off it) without the macrotask `setTimeout(0)` hop that `flush()` uses to let
+// react-query's scheduler notify subscribers and commit a re-render. Used to let a raw fetch
+// promise's resolution reach the query cache (`Query#fetch()`'s own `setData` runs inline, off
+// the settled promise, with no `setTimeout` in between) while deliberately holding back the
+// *next* render/effect pass that would otherwise consume it first.
+async function microflush(hops = 25) {
+  await act(async () => { for (let i = 0; i < hops; i += 1) await Promise.resolve(); });
 }
 
 beforeEach(() => {
@@ -498,5 +513,192 @@ describe("the sibling predicate uses the key ACTIVE at confirmation, not the key
     });
     expect(queryClient.getQueryState(keyB)?.fetchStatus).toBe("idle");
     expect(queryClient.getQueryData(keyB)).toBeDefined();
+  });
+});
+
+// #230 Sol review round 2, item 2 (MEDIUM). The queued-refresh effect's own `projectsQuery.refetch()`
+// (Dashboard.tsx ~:706) accepts whatever `QueryObserverResult` its `.then()` receives with no key or
+// placeholder check at all. `QueryObserver#fetch()`'s own `.then()` reads `this.#currentResult`
+// AFTER the underlying fetch settles -- if the committed search changed while this refetch was
+// pending, that is the OBSERVER's CURRENT (possibly placeholder) result for whatever key is active
+// NOW, not necessarily the key this refetch was issued for. Dashboard's own `.then()` handler is a
+// stale closure bound to `acceptDashboardProjects` from the render that issued it -- accepting
+// unconditionally stamps that newer result under the STALE key.
+//
+// Investigated (and worth recording): `@tanstack/query-core`'s `QueryObserver#removeObserver`
+// cancels+reverts an abandoned query's own in-flight fetch (`#abortSignalConsumed` is true here --
+// `useDashboardProjects`'s `queryFn` passes `{ signal }` to `apiGet`, which reads the getter) the
+// MOMENT Dashboard's single observer switches away from it -- so in the common case (nothing else
+// watching the old key), the stale refetch settles via that revert path almost immediately, with
+// `isPlaceholderData: true` and the OLD key's own last-known content (tautologically correct when
+// later re-observed under that same key -- `keepPreviousData` is a pure passthrough). To exercise
+// the OTHER half of this bug -- a stale refetch that settles with the NEW key's own REAL, DIFFERENT
+// data, per this comment's own "possibly placeholder data" wording -- this suite keeps a SECOND
+// observer subscribed to key A (`KeepAliveObserver`) so `removeObserver` never sees a zero count and
+// never cancels it, letting the stale refetch stay genuinely in flight until the test resolves it.
+describe("the queued-refresh effect's own refetch does not bypass the key/placeholder guard (#230 Sol review round 2, item 2)", () => {
+  const alphaProject = { id: "proj-alpha", street: "1 Alpha Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const betaProject = { id: "proj-beta", street: "9 Beta Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 3, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const qLessProject = { id: "proj-q", street: "0 Unfiltered Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const keyA = dashboardProjectsKey("admin-1", "admin", 0, false, "alpha");
+  const keyB = dashboardProjectsKey("admin-1", "admin", 0, false, "beta");
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+
+  function KeepAliveObserver({ queryKey }: { queryKey: readonly unknown[] }) {
+    // `enabled: false` so this component's own subscription never itself issues a fetch --
+    // `QueryObserver#onSubscribe` calls `addObserver` unconditionally, before checking `enabled`, so
+    // merely mounting this keeps the target query's observer count above zero.
+    useQuery({ queryKey: queryKey as unknown[], queryFn: () => Promise.resolve([]), enabled: false });
+    return null;
+  }
+
+  it("(l) a queued refresh (issued for A, after a confirmed priority save) that settles AFTER the committed search has moved on to B, with B's own real data already in, must not stamp B's rows as accepted under A's key", async () => {
+    let alphaCalls = 0;
+    let resolveStaleAlphaRefetch!: (value: unknown) => void;
+    let resolveBeta!: (value: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.includes("q=alpha")) {
+        alphaCalls += 1;
+        if (alphaCalls === 1) return Promise.resolve({ projects: [alphaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [alphaProject.id] } } });
+        // The queued-refresh effect's OWN refetch (issued after the priority save clears
+        // `pendingOrdering`) -- held open so the committed search can move on to B while it's
+        // still pending. `KeepAliveObserver` (mounted below) keeps this from being silently
+        // cancelled+reverted the moment Dashboard's own observer leaves key A for key B.
+        return new Promise((resolve) => { resolveStaleAlphaRefetch = resolve; });
+      }
+      if (path.includes("q=beta")) return new Promise((resolve) => { resolveBeta = resolve; });
+      return Promise.resolve({ projects: [qLessProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [qLessProject.id] } } });
+    });
+    apiPostMock.mockReset().mockResolvedValue({ priority: 2, boardRevision: 2 });
+
+    window.history.replaceState(null, "", "/");
+    await act(async () => {
+      root.render(
+        <ProjectQueryRuntimeProvider runtime={runtime}>
+          <QueryClientProvider client={queryClient}>
+            <Dashboard currentUserId="admin-1" role="admin" />
+            <KeepAliveObserver queryKey={keyA} />
+          </QueryClientProvider>
+        </ProjectQueryRuntimeProvider>,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull());
+    await flush();
+
+    // Commit search A.
+    act(() => {
+      locationStore().replace("/?q=alpha");
+      syncDashboardSearchDraftFromLocation("alpha", "admin-1");
+    });
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(keyA)).toBeDefined());
+
+    // Click priority on the alpha project. The POST resolves immediately, but `pendingOrdering` is
+    // still populated when `queueDashboardRefresh()` runs inside `setProjectPriority`'s `try` block,
+    // so that call only sets the `queuedRefreshRef` flag -- the queued-refresh EFFECT itself issues
+    // the actual `refetch()` once `finally` clears `pendingOrdering` a tick later. That refetch is
+    // this test's SECOND `q=alpha` call, held open above.
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+    await act(async () => {
+      select.value = "2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    });
+    expect(alphaCalls).toBe(2); // the queued-refresh effect's own refetch is in flight, held open
+
+    // Commit search B while that refetch is still pending.
+    act(() => {
+      locationStore().replace("/?q=beta");
+      syncDashboardSearchDraftFromLocation("beta", "admin-1");
+    });
+    await flush();
+
+    // Let B's own fetch resolve for real, but only drain MICROtasks here, not the macrotask hop
+    // `flush()` uses. `Query#fetch()` writes the resolved data into the cache inline, off the
+    // settled promise -- no `setTimeout` involved -- but react-query's scheduler notifies
+    // subscribers (and so React re-renders and B's own accept effect runs) via a `setTimeout(0)`.
+    // Holding that back keeps B's own (correctly-keyed) accept from running yet, so it can't
+    // consume `acceptedQueryUpdatedAtRef`'s dedupe slot for B's `dataUpdatedAt` before the stale
+    // alpha refetch (below) gets a chance to -- which would otherwise make `acceptDashboardProjects`
+    // silently no-op the very call this test exists to catch, for a reason unrelated to the fix.
+    await microflush();
+    await act(async () => {
+      resolveBeta({ projects: [betaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [betaProject.id] } } });
+      await Promise.resolve();
+    });
+    await microflush();
+    expect(queryClient.getQueryData(keyB)).toEqual(expect.arrayContaining([expect.objectContaining({ id: "proj-beta" })]));
+
+    // NOW resolve the stale alpha refetch -- with alpha's OWN CONFIRMED content (priority 2), the
+    // way a real server re-queried for alpha would answer AFTER the priority save, not the original
+    // pre-mutation payload (that would regress key A's cache via this fetch's own ordinary
+    // `Query#setData`, a confound unrelated to this bug). `KeepAliveObserver` has kept key A's own
+    // observer count above zero this whole time, so `Query#fetch()` never went through the
+    // cancel+revert path; `QueryObserver#fetch()`'s own `.then()` reads `this.#currentResult`
+    // (recomputed via `updateResult()`) once this settles -- `#currentQuery` is already B's (the
+    // observer's `setOptions()` already ran, synchronously, when the component re-rendered for the
+    // search change above), and B's cache now holds real, non-placeholder data (just written above,
+    // still un-notified) -- so this resolves with B's REAL result regardless of what this response
+    // itself carries. Dashboard's own `.then()` handler here is the STALE closure bound to the
+    // render that issued this refetch (still at key A). Still microtask-only: B's own accept effect
+    // must not run before this does.
+    const confirmedAlphaProject = { ...alphaProject, priority: 2, boardRevision: 2 };
+    await act(async () => {
+      resolveStaleAlphaRefetch({ projects: [confirmedAlphaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [confirmedAlphaProject.id] } } });
+      await Promise.resolve();
+    });
+    await microflush();
+
+    // Only now let the scheduler notify and React catch up -- both B's own (possibly-deduped)
+    // accept effect and any render this settled stale refetch triggered.
+    await flush();
+
+    // Return to search A -- `acceptedProjects.key === dashboardKeyString` matches again, and (if
+    // the stale accept above wrongly fired) the WRONG (Beta, priority 3) row renders under the Alpha
+    // search instead of Alpha's own confirmed priority (2). The PRIMARY accept effect (Dashboard.tsx
+    // ~:687) self-heals this a commit later, the moment it processes key A's own real, still-
+    // unconsumed `dataUpdatedAt` (guaranteed to differ from whatever the stale accept just consumed)
+    // -- so a bare post-settle read of the rendered value would never see the wrong one land at all,
+    // even with the bug present.
+    //
+    // React-DOM's controlled `<select>` never writes `select.value` directly, on mount OR update --
+    // both paths (`ReactDOMSelect`'s wrapper) set each `<option>`'s own `.selected` PROPERTY to match
+    // the desired value. Instrumenting `HTMLSelectElement.prototype.value`'s setter (tried first,
+    // empirically) catches nothing, ever, matching value or not -- the correct low-level hook is
+    // `HTMLOptionElement.prototype.selected`'s setter, which fires on every commit that changes which
+    // option is selected, regardless of whether the element itself was freshly mounted.
+    const originalSelectedDescriptor = Object.getOwnPropertyDescriptor(HTMLOptionElement.prototype, "selected")!;
+    const observedSelections: string[] = [];
+    Object.defineProperty(HTMLOptionElement.prototype, "selected", {
+      configurable: true,
+      get() { return originalSelectedDescriptor.get!.call(this); },
+      set(v: boolean) {
+        if (v) observedSelections.push(this.value);
+        originalSelectedDescriptor.set!.call(this, v);
+      },
+    });
+    try {
+      act(() => {
+        locationStore().replace("/?q=alpha");
+        syncDashboardSearchDraftFromLocation("alpha", "admin-1");
+      });
+      await flush();
+    } finally {
+      Object.defineProperty(HTMLOptionElement.prototype, "selected", originalSelectedDescriptor);
+    }
+
+    // Beta's priority (3) must never have been selected while displaying the alpha search, even
+    // fleetingly, on any commit before the self-heal lands.
+    expect(observedSelections).not.toContain("3");
+
+    // The mocked Board only ever renders `projects[0]`'s priority; Beta's is 3, Alpha's own
+    // (confirmed) priority is 2 -- the settled state, after any self-heal, must land on Alpha's own.
+    const alphaSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]');
+    expect(alphaSelect?.value).toBe("2");
   });
 });
