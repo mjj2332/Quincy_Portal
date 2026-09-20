@@ -416,6 +416,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
   }, [dashboardKey, queryClient]);
 
+  // #230: the CONFIRMED response only, never the optimistic write or the rollback -- those stay
+  // EXACT-KEY (`updateProjects` above), so an unconfirmed value never lands in a cache entry nobody
+  // is looking at. `queueDashboardRefresh` (below) refetches only the ACTIVE observer's own key, and
+  // `invalidateProjectSurfaces(..., producer: "dashboard")` deliberately skips the in-tab Dashboard
+  // scan -- so without this, a q-less entry loaded before the search (or any other scope's entry)
+  // keeps the stale value and shows it the moment the search is cleared or the scope changes back.
+  // `setQueriesData` on the principal-scoped prefix (precedent: `removeProjectFromDashboardQueries`,
+  // `lib/dashboard-projects.ts` ~:128-136) only touches entries that ALREADY EXIST in the cache --
+  // it must never manufacture an empty entry for a scope nobody has loaded yet.
+  const updateAllProjectScopes = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
+    queryClient?.setQueriesData<ProjectSummary[]>({ queryKey: ["dashboard-projects", currentUserId] }, (current) => current ? update(current) : current);
+  }, [currentUserId, queryClient]);
+
   const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey, descriptor?: FocusDescriptor) => {
     if (focusRestoreRef.current) return;
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1114,7 +1127,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
-      updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item));
+      const applyConfirmed = (current: ProjectSummary[]) => current.map((item) => item.id === project.id ? { ...item, priority: response.priority, boardRevision: response.boardRevision } : item);
+      updateProjects(applyConfirmed);
+      updateAllProjectScopes(applyConfirmed);
       queueDashboardRefresh();
       if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId: project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: false, gantt: false, producer: "dashboard" });
     } catch (reason) {
