@@ -3414,7 +3414,7 @@ a branch is actually reachable at the DOM layer (instrument and read the values 
 the way test (m)'s `Date.now` collision was confirmed above) before spending a sweep's worth of effort
 trying to catch it there.
 
-## Tailwind v4 preflight makes a bare `border`/`border-b` paint near-black — this repo ships no compat rule for it (#219, 2026-09-20)
+## Tailwind v4 preflight makes a bare `border`/`border-b` paint near-black — fixed at the cause in PR B, after two rounds of fixing it at the call site (#219, 2026-09-20)
 
 `gantt-nav.tsx`'s toolbar and `gantt-view.tsx`'s tree/timeline splitter both shipped a bare
 `border-b`/`border` with no colour utility beside it, and both painted near-black instead of the
@@ -3427,13 +3427,47 @@ every surface. Contrast with the sibling shadcn convention: some registries ship
 does not have one** — `styles/tokens/base.css` has no such rule — so every bare `border*` class
 anywhere in the app is silently exposed to this hazard, not only inside the Gantt.
 
-This is a repo-wide defect class, currently pinned by a detector scoped to nine files
-(`gantt-skin.guard.test.ts` Detector 6, added alongside the two fixes above) that only watches the
-vendored Gantt tree. Nothing scans `components/quincy/` or the rest of `components/reui/` for the
-same bare-border shape. A future author reaching for `border-b` anywhere else in the app should
-pair it with a colour token (`border-border`, or whatever role the surface calls for) on sight —
-Tailwind's own reset will not tell them anything is wrong; the element will simply render with a
-border, just the wrong one.
+**PR B fixed the cause, and that is the actual lesson here.** PR A answered this twice at the call
+site — two hand-applied `border-border` fixes plus `gantt-skin.guard.test.ts` Detector 6, a detector
+scoped to nine files that only ever watched the vendored Gantt tree while the paragraph above
+correctly described the hazard as repo-wide. PR B then vendored `@reui/event-calendar` and found
+**zero occurrences of `border-border` across all 13 files and roughly 48 bare `border*` classes** —
+every hairline in a month grid, a time grid, a resource grid and an agenda list. At that scale the
+call-site fix stopped being a fix and became a tax: 48 more edits inside a vendored tree, 48 more
+lines for a future re-vendor to replay, and still nothing protecting the rest of the app.
+
+So `styles/tokens/base.css` now carries the one line that was missing all along:
+
+```css
+@layer base {
+  *, *::before, *::after { border-color: var(--border); }
+}
+```
+
+Three things about it are load-bearing:
+
+- **It must be inside `@layer base`.** Unlayered — the way the `:focus-visible` rule directly above
+  it in the same file deliberately is — it would beat `@layer utilities` and override every
+  intentional border colour in the app. Layered, utilities still win, which is the entire point. It
+  lands after preflight's own `layer(base)` import in source order, so within that one layer it
+  beats `currentColor`.
+- **`--border` is a role token, so the rule is surface-aware for free.** `inverse.css` re-scopes it
+  for `[data-surface="inverse"]` (greige-500, which reads on ink) and restores it for a nested
+  `[data-surface="default"]` panel. A bare border inside the Lightbox gets the ink hairline without
+  anyone writing a variant.
+- **It was verified in a real browser, not reasoned about.** Four probes: a bare `border-b` on paper
+  paints `#cfc7b6` while the element's own `color` is near-black (so it no longer follows
+  `currentColor`); `border-b border-primary` still paints `#0a0a0a` (so utilities still win);
+  the same bare class inside `[data-surface="inverse"]` paints `#6d6657`; and inside a nested
+  `[data-surface="default"]` it returns to `#cfc7b6`. A cascade argument that has not been measured
+  is a guess — layer order is exactly the kind of claim that reads correct and renders wrong.
+
+**Detector 6 was deleted in the same commit, on purpose.** A guard whose premise has been removed
+does not become a harmless extra check — left passing, it goes on asserting a hazard that no longer
+exists, and teaches the next reader to keep paying a cost that has been retired. The general rule:
+when you fix a defect class at its cause, delete the detector that pinned it at the call site, in
+the same commit, and say so where the detector used to live. Reinstating it now would require
+deleting the compat rule first.
 
 ## `outline-none` + `focus-visible:ring-*` still adds a second focus indicator — the fourth and fifth time (#219, 2026-09-20)
 
