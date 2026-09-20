@@ -416,16 +416,19 @@ describe("dr3-219a MEDIUM #1: the INSIDE ghost title's truncating element is a C
     expect(flexBox!.className).toMatch(/\bflex\b/);
 
     // Test-seam guard A (issue #50) forbids selecting an element by CSS class, so this walks the
-    // tag structure instead of reaching for `.truncate` directly: at HEAD the flex box has no
-    // element child at all (the title is its only, bare text node), so this returns null and the
-    // fallback below reads the bug's own home, `flexBox` itself.
+    // tag structure instead of reaching for `.truncate` directly: BEFORE the fix, the flex box had
+    // no element child at all (the title was its only, bare text node), so this would have
+    // returned null and the fallback would read the bug's own home, `flexBox` itself - HEAD's own
+    // shape (below) always has the inner span, so the fallback is a regression guard, not the path
+    // this assertion actually exercises today.
     const truncateEl = flexBox!.querySelector("span") ?? flexBox;
     expect(truncateEl!.textContent).toBe("A Title Far Too Long To Fit This Narrow Ghost Box");
-    // The bug: at HEAD the SAME element carries both `flex`/`inset-0` AND `truncate` - a
-    // `display:flex` container's own `text-overflow` never applies to its anonymous box, so the
-    // class does nothing and the text clips mid-glyph with no ellipsis instead. The truncating
-    // element must be a DIFFERENT node from the flex/positioning box - a child of it, exactly the
-    // way `gantt-bar.tsx:532`'s resting-bar label already does it.
+    // The bug this guards against: the SAME element carrying both `flex`/`inset-0` AND `truncate` -
+    // a `display:flex` container's own `text-overflow` never applies to its anonymous box, so the
+    // class does nothing and the text clips mid-glyph with no ellipsis instead. HEAD fixed this by
+    // moving `truncate` onto a non-flex CHILD span of the flex/positioning box, exactly the way
+    // `gantt-bar.tsx:532`'s resting-bar label already does it - these assertions prove that shape
+    // holds, not that the bug is present.
     expect(truncateEl).not.toBe(flexBox);
     expect(truncateEl!.className).toContain("truncate");
     expect(truncateEl!.className).not.toMatch(/\bflex\b/);

@@ -1,26 +1,27 @@
 /**
- * #219 PR A fix (dr2-219a LOW #5) — the now-line's comet-tail gradient fades below a legible
- * floor.
+ * #219 PR A fix (dr2-219a LOW #5, then dr3-219a LOW #2) — the now-line's comet-tail gradient faded
+ * below a legible floor; HEAD's actual shipped value is documented in full at the third `it()`
+ * below, which is the one this suite's own real assertions are pinned to (Sol round-7 LOW: this
+ * header used to stop at the SUPERSEDED `/45` value and never mention the later `/50` fix).
  *
- * `GanttNowLine` (`gantt-view.tsx`) painted `from-border-strong/80 via-border-strong/45
+ * `GanttNowLine` (`gantt-view.tsx`) originally painted `from-border-strong/80 via-border-strong/45
  * to-border-strong/15` — a bg-linear-to-b comet tail down the full height of the grid body. The
  * design reviewer measured the composited pixel at 72 near the top (the `/80` stop) and 207 near
  * the bottom (the `/15` floor) against a ~250 canvas — roughly 1.4:1, well under any legible
  * threshold. Harmless on the reviewer's own 3-row screenshot; on a grid with more rows the line
  * fades to invisible well before the bottom.
  *
- * Fix, and the value chosen: raise the floor stop from `/15` to `/45` — the SAME alpha the
- * existing `via` (midpoint) stop already uses, so the tail still visibly tapers from `/80` at the
- * cap down to `/45` by the midpoint, then holds there for the rest of its height instead of
- * continuing to fade past legibility. `--border-strong` (`--ink-900`, `#0a0a0a`) composited at 45%
- * over the grid's own canvas token (`--bg-canvas` -> `--paper-050`, `#faf8f2`) computes to a WCAG
- * contrast ratio of ~3.1:1 against that canvas — at or above the 3:1 floor WCAG 1.4.11 sets for a
- * non-text graphical object that conveys information (this is exactly that: a today marker with no
- * text alternative visible on the grid itself). `/15` computed to ~1.4:1, matching the reviewer's
- * measurement. `/45` was chosen over inventing a new arbitrary value because it is already present
- * in this exact class list, in this exact gradient — no new token or magic number, and the
- * three-stop shape (`/80` -> `/45` -> `/45`) still reads as "solid cap, then a held tail" rather
- * than a flat bar the full height.
+ * dr2-219a LOW #5 raised the floor stop from `/15` to `/45` — the SAME alpha the existing `via`
+ * (midpoint) stop already used — computing to ~3.1:1 against the grid's own canvas token
+ * (`--bg-canvas`), at or above the 3:1 floor WCAG 1.4.11 sets for a non-text graphical object that
+ * conveys information. That fix was justified against bare CANVAS, though, and the line does not
+ * sit on bare canvas for its full height: the current day's own column paints a `bg-primary/5`
+ * tint underneath it (`data-today`, a different, painted-first element). dr3-219a LOW #2 measured
+ * the `/45` floor at only ~2.90:1 against that shaded column — under the 3:1 floor the superseded
+ * comment above claimed — and raised BOTH stops to `/50`, ~3.58:1 against the shaded today column,
+ * real margin against the background the line actually sits on. HEAD ships `/50`, justified
+ * against the today column, not `/45` against canvas — see the third `it()` below for the full
+ * reasoning and the real-screenshot-derived margin behind the hard `>= 50` floor it asserts.
  *
  * This suite runs happy-dom with no CSS pipeline (`vitest.dom.config.ts` loads no stylesheet), so
  * there is no `getComputedStyle` to ask — same approach `gantt-bar-completed-hue.dom.test.tsx`

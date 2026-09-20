@@ -14,12 +14,14 @@
  * OTHER branch, where `unit.label` rendered as a bare text node directly inside the flex cell.
  *
  * This test asserts STRUCTURE — that the truncating element is not the flex container itself — not
- * merely that a `truncate` class exists somewhere, since a class-only check would pass at HEAD (the
- * flex container itself carries the class). Test-seam guard A (issue #50) forbids a DOM test from
- * selecting an element by CSS class, so this walks the tag structure (`dayCell.querySelector("span")`,
- * a tag selector, falling back to the flex cell itself when it has no element child — HEAD's shape,
- * where the bug lives) instead of `querySelector(".truncate")`, the same discovery path c74971ad
- * already established for the ghost-title version of this same test.
+ * merely that a `truncate` class exists somewhere, since a class-only check would have passed
+ * BEFORE the fix (the flex container itself carried the class then). Test-seam guard A (issue #50)
+ * forbids a DOM test from selecting an element by CSS class, so this walks the tag structure
+ * (`dayCell.querySelector("span")`, a tag selector, falling back to the flex cell itself when it
+ * has no element child — the pre-fix shape, where the bug lived) instead of
+ * `querySelector(".truncate")`, the same discovery path c74971ad already established for the
+ * ghost-title version of this same test. HEAD always has the inner span (below), so the fallback
+ * is a regression guard here too, not the path these assertions exercise today.
  *
  * Real `<GanttView>` render, same infrastructure `gantt-adjust-ghost-marker.dom.test.tsx` and
  * `gantt-low-fixes.dom.test.tsx` already use (see either file's own `getAnimations` polyfill note —
@@ -102,14 +104,17 @@ describe("follow-up to 0c8432aa (#219 dr3-219a MEDIUM #1): the day/unit axis hea
     expect(dayCell!.textContent).not.toBe("");
 
     // Walk the tag structure instead of reaching for `.truncate` directly (test-seam guard A):
-    // at HEAD the label is a bare text node with no element wrapper, so this finds nothing and the
-    // fallback reads the bug's own home, the flex cell itself.
+    // BEFORE the fix, the label was a bare text node with no element wrapper, so this would find
+    // nothing and the fallback would read the bug's own home, the flex cell itself - HEAD always
+    // wraps the label in a span (below), so the fallback is a regression guard, not the path this
+    // assertion actually exercises today.
     const labelEl = dayCell!.querySelector("span") ?? dayCell!;
 
-    // The bug: at HEAD the SAME element carries both `flex` (a flex CONTAINER) and `truncate` —
-    // `text-overflow` never applies to a `display:flex` box's own anonymous item, so the class does
-    // nothing. The truncating element must be a DIFFERENT node from the flex cell — a non-flex
-    // child of it, exactly the way `gantt-bar.tsx:532` and 0c8432aa's ghost-title fix already do it.
+    // The bug this guards against: the SAME element carrying both `flex` (a flex CONTAINER) and
+    // `truncate` — `text-overflow` never applies to a `display:flex` box's own anonymous item, so
+    // the class did nothing. HEAD fixed this by moving `truncate` onto a non-flex child span of the
+    // flex cell, exactly the way `gantt-bar.tsx:532` and 0c8432aa's ghost-title fix already do it -
+    // these assertions prove that shape holds, not that the bug is present.
     expect(labelEl).not.toBe(dayCell);
     expect(labelEl.className).toContain("truncate");
     expect(labelEl.className).not.toMatch(/\bflex\b/);
