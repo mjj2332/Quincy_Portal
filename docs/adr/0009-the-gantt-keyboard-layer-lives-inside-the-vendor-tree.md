@@ -29,15 +29,19 @@ excluded:
 | `gantt.tsx` | +962 / −13 |
 | `gantt-dnd.tsx` | +227 / −99 |
 | `gantt-view.tsx` | +380 / −37 |
-| `gantt-lib.tsx` | +447 / −0 (new file — the pure keyboard/overlap math has no vendor original) |
+| `gantt-lib.tsx` | +447 / −0 |
 | `gantt-types.tsx` | +170 / −5 |
 | `gantt-i18n.tsx` | +85 / −1 |
 | `gantt-nav.tsx` | +8 / −2 |
 | `gantt-recurrence.tsx` | untouched |
 
-Roughly 2,960 net added lines across eight of the nine files. `gantt-lib.tsx` did not exist in the
-registry item at all — see below for why the new proposal math lives in a tenth-file-shaped new
-module inside the vendored directory rather than in `components/quincy/`.
+Roughly 2,960 net added lines across eight of the nine files. `gantt-lib.tsx` DID exist in the
+registry item — 735 lines at the vendor-verbatim commit (`git show 4bb46296:…/gantt-lib.tsx | wc
+-l`) — it is not a tenth, Quincy-only file; every one of its +447 lines is a pure ADDITION with
+zero deletions, meaning the new keyboard/overlap math was appended beside the vendor's own
+exports rather than replacing or restructuring anything already there. See below for why that
+math lives here (inside the vendored file it shares a cycle-avoidance constraint with) rather than
+in `components/quincy/`.
 
 ## Why it lives in the vendor tree rather than a Quincy wrapper
 
@@ -56,8 +60,9 @@ them rather than add a genuinely separate capability beside them.
   not wrapping it.
 - **The segment/occurrence model.** `computeGanttKeyboardProposal` needs the same day-grid snap,
   RTL axis and zoned-civil-day semantics `gantt-dnd.tsx`'s pointer `computeProposal` already
-  encodes, so it was extracted to `gantt-lib.tsx` (the one genuinely new file) specifically so
-  both `gantt.tsx`'s `nudgeEvent` and the eventual pointer path could share it without a cross-file
+  encodes, so it was extracted to `gantt-lib.tsx` (the file with the largest share of pure
+  additions, zero deletions) specifically so both `gantt.tsx`'s `nudgeEvent` and the eventual
+  pointer path could share it without a cross-file
   cycle (`gantt-dnd.tsx` already imports from `gantt.tsx` for `useGantt`/`GanttInstance`, so the
   reverse import was not available). A wrapper outside the tree would need its own copy of that
   geometry — the exact "re-implement" half of the tradeoff.
