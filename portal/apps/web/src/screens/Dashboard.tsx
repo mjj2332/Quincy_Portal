@@ -430,7 +430,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useLayoutEffect(() => () => releaseDashboardView(dashboardViewOwnerRef.current), []);
   // Priority is deliberately the only Dashboard path that still writes this query cache.
   const updateProjects = useCallback((update: (current: ProjectSummary[]) => ProjectSummary[]) => {
-    queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => update(current ?? []));
+    // A confirm or rollback against a click-time key whose entry has since been evicted (gc, or a
+    // principal/scope change) must not manufacture one -- react-query treats an updater that
+    // returns `undefined` as "leave this entry alone" (no write, no create).
+    queryClient?.setQueryData<ProjectSummary[]>(dashboardKey, (current) => current === undefined ? undefined : update(current));
   }, [dashboardKey, queryClient]);
 
   // #230: the CONFIRMED response only, never the optimistic write or the rollback -- those stay

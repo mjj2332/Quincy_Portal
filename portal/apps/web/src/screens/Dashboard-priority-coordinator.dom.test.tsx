@@ -890,3 +890,71 @@ describe("acceptedQueryUpdatedAtRef dedupes by key AND updatedAt, not updatedAt 
     expect(betaSelect?.value).toBe("3");
   });
 });
+
+// #230, item 1. `updateProjects` (Dashboard.tsx) used to do `update(current ?? [])`, so a confirm
+// or rollback against the CLICK-time key -- once that key's own cache entry is gone (evicted while
+// the POST was in flight, e.g. a `gcTime` expiry on a now-inactive sibling) -- manufactured an
+// empty `[]` entry there. That contradicts this branch's own rule for the prefix fan-out
+// (`updateAllProjectScopes`, Dashboard.tsx above: "must never manufacture an empty entry for a
+// scope nobody has loaded yet") and would render as an empty list the moment that key became
+// active again.
+describe("updateProjects never manufactures an entry for a key removed while a save is in flight (#230)", () => {
+  const originKey = dashboardProjectsKey("admin-1", "admin", 0, false);
+  const searchedKey = dashboardProjectsKey("admin-1", "admin", 0, false, "moved");
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+  });
+
+  function deferredPost() {
+    let settle!: (value: { priority: number; boardRevision: number }) => void;
+    let fail!: (reason: unknown) => void;
+    apiPostMock.mockReset().mockImplementation(() => new Promise((resolve, reject) => { settle = resolve; fail = reject; }));
+    return { settle: (value: { priority: number; boardRevision: number }) => settle(value), fail: (reason: unknown) => fail(reason) };
+  }
+
+  // Click while unfiltered (origin = `originKey`), then move the committed search on while the
+  // POST is still pending -- same shape as test (k) above -- so the origin key is no longer the
+  // ACTIVE one by the time the POST settles, and can be evicted out from under it.
+  async function clickPriorityThenEvictOrigin() {
+    window.history.replaceState(null, "", "/");
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await vi.waitFor(() => expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull());
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(originKey)).toBeDefined());
+
+    const post = deferredPost();
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+    await act(async () => {
+      select.value = "2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    });
+
+    act(() => {
+      locationStore().replace("/?q=moved");
+      syncDashboardSearchDraftFromLocation("moved", "admin-1");
+    });
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(searchedKey)).toBeDefined());
+
+    // Evict the origin entry outright -- a `gcTime` expiry on a now-inactive sibling does the same.
+    act(() => { queryClient.removeQueries({ queryKey: originKey, exact: true }); });
+    expect(queryClient.getQueryState(originKey)).toBeUndefined();
+
+    return post;
+  }
+
+  it("(a) the POST rejects -- no entry exists for the origin key afterwards", async () => {
+    const post = await clickPriorityThenEvictOrigin();
+    await act(async () => { post.fail(new Error("Offline")); await flush(); });
+    expect(queryClient.getQueryState(originKey)).toBeUndefined();
+  });
+
+  it("(b) the POST resolves -- no entry exists for the origin key afterwards", async () => {
+    const post = await clickPriorityThenEvictOrigin();
+    await act(async () => { post.settle({ priority: 2, boardRevision: 2 }); await flush(); });
+    expect(queryClient.getQueryState(originKey)).toBeUndefined();
+  });
+});
