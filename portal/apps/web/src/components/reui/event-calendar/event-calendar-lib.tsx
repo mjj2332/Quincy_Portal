@@ -47,6 +47,13 @@
  *    `noUncheckedIndexedAccess: true`, which the registry does not compile under. 1 site:
  *    the lane-packing `lanes[lane]` writes hoisted into a local. No runtime behaviour
  *    changed.
+ *
+ * 2. 2026-09-21, #219 PR B, stage 3 — ADDED `elapsedMinutesAtWallClockHour` (exported). Converts
+ *    a wall-clock hour setting into elapsed minutes from a given day's zoned midnight. Pure
+ *    addition: nothing existing changed. It exists because the two grid views were computing
+ *    `Math.min(endHour * 60, getDayTotalMinutes(...))`, which compares a wall-clock bound against
+ *    an elapsed length — see this file's own note above that `getDayTotalMinutes` "is right and
+ *    its callers were the ones needing fixes". Its callers are now fixed.
  */
 import { expandRecurrence } from "@/components/reui/event-calendar/event-calendar-recurrence"
 import type {
@@ -66,6 +73,7 @@ import {
   differenceInCalendarDays,
   differenceInMinutes,
   format,
+  setHours,
   startOfDay,
   startOfMonth,
   startOfWeek,
@@ -98,6 +106,43 @@ function getDayTotalMinutes(dayStart: Date, timeZone: string): number {
     timeZone
   )
   return differenceInMinutes(next, dayStart)
+}
+
+/**
+ * Elapsed minutes from a day's zoned midnight to that day's WALL-CLOCK `hour`.
+ *
+ * QUINCY ADDITION (#219 PR B stage 3). On an ordinary day this is just `hour * 60`, which is what
+ * the views used to compute inline. On a DST transition day it is not, and the difference is the
+ * entire bug it was added to fix:
+ *
+ *   - `hour` is a wall-clock LABEL — "the 17:00 gridline", "the end of the day".
+ *   - Every minute quantity the views position blocks with is ELAPSED time since zoned midnight:
+ *     `segmentOccurrence` computes `differenceInMinutes(segStart, cursor)`, not a clock reading.
+ *
+ * Mixing the two silently drops content. `Math.min(endHour * 60, getDayTotalMinutes(...))` — the
+ * expression this replaces — reads as a safety clamp but compares a wall-clock bound against an
+ * elapsed length, so on Sydney's 25-hour autumn day it evaluated to 1440 while the day genuinely
+ * runs to 1500, and a 23:15 event (elapsed start 1455) failed `startMin < boundsEndMin` and never
+ * rendered at all. The same clamp also capped the drop target and blanked the now-indicator for
+ * that hour. Reproduced in a browser before the fix: 5 chips on a 24-hour day, 5 on the 23-hour
+ * day, 4 on the 25-hour day, from one identical fixture.
+ *
+ * `hour >= 24` means the end of the day, which is the NEXT zoned midnight — 1380 or 1500 minutes
+ * on a transition day, never 1440. Below 24 the hour is resolved as a real wall-clock time in the
+ * zone, so a non-default `dayStartHour` / `dayEndHour` is converted correctly too rather than only
+ * the 0/24 default being right.
+ */
+function elapsedMinutesAtWallClockHour(
+  dayStart: Date,
+  hour: number,
+  timeZone: string
+): number {
+  const midnight = zonedStartOfDay(dayStart, timeZone)
+  const target =
+    hour >= 24
+      ? zonedStartOfDay(addDays(toZoned(midnight, timeZone), 1), timeZone)
+      : setHours(midnight, hour)
+  return differenceInMinutes(target, midnight)
 }
 
 function snapMinutes(minutes: number, snap: number): number {
@@ -697,6 +742,7 @@ function resolveOffDay(
 export {
   buildEventIndex,
   defaultEventOrder,
+  elapsedMinutesAtWallClockHour,
   eventsOverlap,
   flattenResources,
   getDayKey,

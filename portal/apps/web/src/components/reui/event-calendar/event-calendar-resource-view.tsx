@@ -37,7 +37,12 @@
  *
  * THIS FILE: the resource view — one time axis, one column per leaf resource, with drag, resize and drag-create across columns.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 3 — BEHAVIOUR CHANGE, DST correctness. Same one-line bounds fix
+ *    as `event-calendar-time-grid.tsx` entry 2, which carries the full explanation; this view had
+ *    an identical copy of the defect. `getDayTotalMinutes` is no longer imported here (the time
+ *    grid still needs it for its public render callback; this view never exposed one).
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
@@ -62,7 +67,7 @@ import {
 import {
   flattenResources,
   getDayKey,
-  getDayTotalMinutes,
+  elapsedMinutesAtWallClockHour,
   packTimedSegments,
   resolveOffDay,
   snapMinutes,
@@ -528,9 +533,9 @@ function EventCalendarResourceColumn({
 
   const timeZone = settings.timeZone
   const dayStart = zonedStartOfDay(day, timeZone)
-  const totalMinutes = getDayTotalMinutes(day, timeZone)
-  const boundsStartMin = startHour * 60
-  const boundsEndMin = Math.min(endHour * 60, totalMinutes)
+  // QUINCY (#219 PR B stage 3): elapsed bounds — see the twin comment in event-calendar-time-grid.
+  const boundsStartMin = elapsedMinutesAtWallClockHour(day, startHour, timeZone)
+  const boundsEndMin = elapsedMinutesAtWallClockHour(day, endHour, timeZone)
   const boundsMinutes = Math.max(60, boundsEndMin - boundsStartMin)
 
   // Filter this resource's timed segments and repack per column.

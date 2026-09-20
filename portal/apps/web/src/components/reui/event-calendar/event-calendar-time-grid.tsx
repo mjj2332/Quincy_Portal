@@ -50,6 +50,16 @@
  *    `days[colStart]`/`days[colEnd]` asserted non-null since both were set from a valid
  *    index while iterating `days`, and the drag-ghost's `days[dragGhost.colStart] ??
  *    days[0]` fallback given a defined `firstDay` local. No runtime behaviour changed.
+ *
+ * 2. 2026-09-21, #219 PR B, stage 3 — BEHAVIOUR CHANGE, DST correctness. `boundsStartMin` /
+ *    `boundsEndMin` now come from `elapsedMinutesAtWallClockHour` instead of `startHour * 60` /
+ *    `Math.min(endHour * 60, getDayTotalMinutes(...))`, and the now-indicator's own bound check
+ *    was changed the same way. The old form hid every event in the last hour of a 25-hour day,
+ *    made that hour an impossible drop target, and blanked the now-line there. `totalMinutes` is
+ *    still computed: it is part of the public `renderDayColumnBackground` payload.
+ *    Cover: `event-calendar-dst.test.ts`. Known consequence, deliberately not fixed here: the
+ *    shared hour gutter now visibly disagrees with a transition day's column by one hour-height
+ *    (it agreed before only because the extra hour was being discarded). See the follow-up issue.
  */
 import {
   useEffect,
@@ -81,6 +91,7 @@ import {
 } from "@/components/reui/event-calendar/event-calendar-event"
 import {
   getDayKey,
+  elapsedMinutesAtWallClockHour,
   getDayTotalMinutes,
   getRangeKey,
   packTimedSegments,
@@ -1009,9 +1020,16 @@ function EventCalendarDayColumn({
   const timeZone = settings.timeZone
   const dayStart = zonedStartOfDay(day, timeZone)
   const dayEnd = addDays(toZoned(dayStart, timeZone), 1)
+  // Kept: part of the public `renderDayColumnBackground` callback payload, so it stays a real
+  // day length (1380 / 1440 / 1500) even though the bounds below no longer clamp against it.
   const totalMinutes = getDayTotalMinutes(day, timeZone)
-  const boundsStartMin = startHour * 60
-  const boundsEndMin = Math.min(endHour * 60, totalMinutes)
+  // QUINCY (#219 PR B stage 3): both bounds are ELAPSED minutes from this day's zoned midnight,
+  // resolved from the wall-clock hour settings. Was `startHour * 60` / `Math.min(endHour * 60,
+  // getDayTotalMinutes(...))`, which compared a wall-clock bound against an elapsed length and so
+  // clamped Sydney's 25-hour day to 1440 — hiding everything in its last hour. See
+  // `elapsedMinutesAtWallClockHour`'s comment in event-calendar-lib.tsx.
+  const boundsStartMin = elapsedMinutesAtWallClockHour(day, startHour, timeZone)
+  const boundsEndMin = elapsedMinutesAtWallClockHour(day, endHour, timeZone)
   const boundsMinutes = Math.max(60, boundsEndMin - boundsStartMin)
 
   // Minute window of a proposal intersecting THIS day, or null
@@ -1357,8 +1375,13 @@ function EventCalendarNowIndicator({
 
   const dayStart = zonedStartOfDay(now, timeZone)
   const minutes = differenceInMinutes(now, dayStart)
-  if (minutes < startHour * 60 || minutes > endHour * 60) return null
-  const top = minutes / 60 - startHour
+  // QUINCY (#219 PR B stage 3): elapsed bounds, matching the grid's own. The wall-clock form this
+  // replaces blanked the now-line for the last hour of a 25-hour day — the same defect as the
+  // grid's bounds clamp, at a second site.
+  const boundsStartMin = elapsedMinutesAtWallClockHour(dayStart, startHour, timeZone)
+  const boundsEndMin = elapsedMinutesAtWallClockHour(dayStart, endHour, timeZone)
+  if (minutes < boundsStartMin || minutes > boundsEndMin) return null
+  const top = (minutes - boundsStartMin) / 60
 
   if (viewConfig.renderNowIndicator) {
     return (
