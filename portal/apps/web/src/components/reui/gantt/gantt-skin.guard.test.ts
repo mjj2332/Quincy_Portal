@@ -60,11 +60,14 @@
  * guard's silence on those five files for a clean bill of health.
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 
 const ganttDir = dirname(fileURLToPath(import.meta.url));
+// components/reui/gantt -> components/reui -> components -> src
+const srcDir = join(ganttDir, "..", "..", "..");
+const relSrc = (file: string) => relative(srcDir, file).split(sep).join("/");
 
 /** The nine vendored files, verbatim per #219 stage 1's header comment — no test siblings. */
 const VENDORED_FILES = [
@@ -245,9 +248,12 @@ const PALETTE_PREFIXES = "bg|text|border|ring|from|via|to|fill|stroke|outline|ac
 // Scaled palette utility (`bg-slate-500`) or a bare black/white paint utility (`bg-black`,
 // `text-white`) — NOT `bg-background`/`text-white-space-…`-shaped tokens, which this prefix/suffix
 // pairing cannot produce, and NOT `var(--color-blue-500)` (a CSS custom-property VALUE, not a
-// Tailwind class), which is how `gantt-bar.tsx`'s unused, unrendered `GANTT_COLORS` preset array
-// spells its ten Tailwind-core swatches — data for a colour-picker UI nothing here renders, not a
-// class on any element, so it is deliberately out of this detector's reach.
+// Tailwind class), which is how `gantt-bar.tsx`'s `GANTT_COLORS` preset array spells its ten
+// Tailwind-core swatches — data for a colour-picker UI nothing here renders TODAY, not a class on
+// any element, so it is structurally out of this detector's reach. That premise ("unused,
+// unrendered") is exactly as durable as the fact that nothing imports `GANTT_COLORS` — see the
+// self-limiting detector below, which fails the day a consumer appears, rather than leaving this
+// carve-out to silently wave through ten chromatic hues in a monochrome-brand app forever.
 const NON_TOKEN_PALETTE = new RegExp(`\\b(?:${PALETTE_PREFIXES})-(?:(?:${PALETTE_NAMES})-\\d{2,3}|black|white)\\b`);
 
 function findNonTokenPalette(files: Map<string, string>): string[] {
@@ -282,6 +288,82 @@ describe("guard: no non-token Tailwind palette class", () => {
       "semantic token. The brand is monochrome (styles/tokens/colors.css) — replace it with the",
       "Quincy role that already covers this ground (bg-background, text-foreground, bg-muted,",
       "border-border, ring-ring, the inline --gantt-event-color, …). Found in:",
+      ...offenders.map((name) => `  ${name}`),
+    ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 4a — GANTT_COLORS has no non-test consumer (#219 PR A standards review item 5)
+// ---------------------------------------------------------------------------
+/**
+ * Detector 4's own carve-out above exists on the premise that `GANTT_COLORS`
+ * (`gantt-bar.tsx`'s ten `var(--color-<hue>-500)` presets) is unused and unrendered — data for a
+ * colour-picker UI nothing here renders. That premise expires the moment any non-test file imports
+ * it: ten chromatic Tailwind hues in a monochrome-brand app, wired to something that actually
+ * paints, is exactly the class of defect Detector 4 exists to catch, and `var(--color-…)` VALUES
+ * are invisible to a regex built to read Tailwind CLASS NAMES. Rather than leave the carve-out to
+ * trust that forever, this scans every non-test `.ts`/`.tsx` file under `src/` (not only the nine
+ * vendored Gantt files) for a reference to the name `GANTT_COLORS`, excluding `gantt-bar.tsx`
+ * itself (the definition site, not a consumer). The day #220 or anything else wires a consumer,
+ * this fails — the fix at that point is to give the consumer real Quincy tokens, not to widen this
+ * detector.
+ */
+const GANTT_COLORS_REFERENCE = /\bGANTT_COLORS\b/;
+const ganttBarPath = join(ganttDir, "gantt-bar.tsx");
+
+function findGanttColorsConsumers(files: Map<string, string>): string[] {
+  const offenders: string[] = [];
+  for (const [name, text] of files) if (GANTT_COLORS_REFERENCE.test(text)) offenders.push(name);
+  return offenders.sort();
+}
+
+/** Every non-test `.ts`/`.tsx` file under `src/`, `gantt-bar.tsx` itself excluded. */
+function nonTestSourceFiles(): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!/\.tsx?$/.test(entry.name) || entry.name.includes(".test.")) continue;
+      if (full === ganttBarPath) continue;
+      out.set(relSrc(full), stripComments(readFileSync(full, "utf8")));
+    }
+  };
+  walk(srcDir);
+  return out;
+}
+
+describe("guard: GANTT_COLORS has no non-test consumer", () => {
+  it("self-test: the real detector fires on a planted import, not on an unrelated identifier or a comment naming it", () => {
+    const planted = new Map([
+      [
+        "fixture-consumer.tsx",
+        stripComments('import { GANTT_COLORS } from "@/components/reui/gantt/gantt-bar";'),
+      ],
+      [
+        "fixture-clean.tsx",
+        stripComments(
+          '// GANTT_COLORS mentioned only in a comment\nimport { GanttBar } from "@/components/reui/gantt/gantt-bar";'
+        ),
+      ],
+      ["fixture-unrelated.tsx", stripComments('const GANTT_COLOR = "var(--gantt-event-color)";')],
+    ]);
+    expect(findGanttColorsConsumers(planted)).toEqual(["fixture-consumer.tsx"]);
+  });
+
+  it("has no non-test consumer anywhere under src/ — the Detector 4 carve-out above still holds", () => {
+    const offenders = findGanttColorsConsumers(nonTestSourceFiles());
+    expect(offenders, [
+      "GANTT_COLORS now has a non-test consumer. Detector 4's carve-out for `var(--color-…-500)`",
+      "values (this file, above) is premised on GANTT_COLORS being unused and unrendered — that is",
+      "no longer true. Wire the new consumer to real Quincy tokens (the brand is monochrome —",
+      "styles/tokens/colors.css) instead of the ten chromatic Tailwind hues GANTT_COLORS carries,",
+      "or widen Detector 4 itself with a stated reason if a chromatic palette is now a real product",
+      "decision. Found in:",
       ...offenders.map((name) => `  ${name}`),
     ].join("\n")).toEqual([]);
   });

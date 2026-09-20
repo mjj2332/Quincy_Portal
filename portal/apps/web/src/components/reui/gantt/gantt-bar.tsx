@@ -316,8 +316,13 @@ function buildGanttBarKeyShortcuts(
  */
 
 /**
- * Effective Tailwind palette presets for bar colors; every entry works on
- * light and dark surfaces through the bar's alpha background + accent border.
+ * Effective Tailwind palette presets for bar colors, vendor default — UNUSED and UNRENDERED in
+ * this app (`gantt-skin.guard.test.ts` asserts it has no non-test consumer). #219 PR A fix (item
+ * 5b): the vendor's original claim here, "every entry works on light and dark surfaces," does not
+ * hold in this app — the Portal has no Tailwind dark mode (`gantt-skin.guard.test.ts` Detector 1
+ * asserts that directly); inversion is `styles/tokens/inverse.css`'s `[data-surface="inverse"]`
+ * scope, a different mechanism these ten hardcoded `var(--color-<hue>-500)` values do not
+ * participate in either way.
  */
 const GANTT_COLORS: Array<{ name: string; value: string }> = [
   { name: "Blue", value: "var(--color-blue-500)" },
