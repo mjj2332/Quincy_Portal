@@ -54,6 +54,16 @@
  * KEYBOARD-ONLY fix: the pointer drag's own day-snap path in `gantt-dnd.tsx` (`beginGesture`,
  * around its `snapMin`/`maxStartMin` logic) still snaps to absolute zoned midnight and is
  * deliberately left untouched by this change — see `gantt-dnd.tsx`'s own header for that path.
+ *
+ * #219 PR A (Adjust mode) addition — `computeGanttKeyboardProposal`'s `step` now also admits a
+ * WHOLE MULTIPLE of a civil day (e.g. `10080` = 7 days), for Shift+Arrow's "larger unit" in Adjust
+ * mode (`gantt.tsx`'s `stepAdjust`, sized by the new `resolveAdjustLargerStepMinutes` below). Every
+ * day-unit "new position" edge (`addDays(..., direction)`) now shifts by `direction * dayUnits`
+ * instead of a bare `direction` — `dayUnits = step / (24 * 60)`, always a whole number at both call
+ * sites (1 today, 7 for the larger unit). The MINIMUM-duration bounds (`addDays(..., -1)` /
+ * `addDays(..., 1)` in the two resize branches) stay literal single-day regardless of `dayUnits` —
+ * they express "at least one day long," not "one step," so a 7-day step resizing toward inversion
+ * still refuses only once the range would drop under one full day, not under seven.
  */
 
 import { expandRecurrence } from "@/components/reui/gantt/gantt-recurrence"
@@ -773,19 +783,25 @@ function computeGanttKeyboardProposal(
 ): GanttKeyboardProposal | null {
   const milestone = subject.end.getTime() === subject.start.getTime()
   const dayMode = step >= 24 * 60
+  // #219 PR A (Adjust mode): step may be a WHOLE MULTIPLE of a civil day (Shift+Arrow's larger
+  // unit, e.g. 10080 = 7 days) - see this function's own header. Always a whole number at both
+  // call sites; Math.round only guards against float drift, never rounds a genuine fraction.
+  const dayUnits = dayMode ? Math.round(step / (24 * 60)) : 0
+  const dayStep = direction * dayUnits
 
   if (action !== "move") {
     // a milestone is an instant: it has no edges to resize
     if (milestone) return null
     if (action === "resize-start") {
-      // Quincy fix (#219 PR A, sol1 item 4): shift the moving edge by a zoned
-      // civil day, preserving ITS OWN wall time exactly (14:00 stays 14:00) -
-      // never `zonedStartOfDay`, which silently snapped every day-unit resize
-      // to midnight regardless of the edge's actual time of day. The bound
-      // mirrors this: one civil day short of the FIXED edge's own wall time,
-      // via `addDays`, not a midnight snap of it either.
+      // Quincy fix (#219 PR A, sol1 item 4): shift the moving edge by zoned civil
+      // day(s), preserving ITS OWN wall time exactly (14:00 stays 14:00) - never
+      // `zonedStartOfDay`, which silently snapped every day-unit resize to
+      // midnight regardless of the edge's actual time of day. The bound is a
+      // fixed SINGLE day short of the FIXED edge's own wall time (the minimum
+      // valid duration is one day, regardless of how big THIS step is), via
+      // `addDays`, not a midnight snap of it either.
       const newStartMs = dayMode
-        ? addDays(toZoned(subject.start, timeZone), direction).getTime()
+        ? addDays(toZoned(subject.start, timeZone), dayStep).getTime()
         : subject.start.getTime() + direction * step * 60000
       const maxStartMs = dayMode
         ? addDays(toZoned(subject.end, timeZone), -1).getTime()
@@ -799,7 +815,7 @@ function computeGanttKeyboardProposal(
     }
     // resize-end - mirrors resize-start above.
     const newEndMs = dayMode
-      ? addDays(toZoned(subject.end, timeZone), direction).getTime()
+      ? addDays(toZoned(subject.end, timeZone), dayStep).getTime()
       : subject.end.getTime() + direction * step * 60000
     const minEndMs = dayMode
       ? addDays(toZoned(subject.start, timeZone), 1).getTime()
@@ -815,7 +831,7 @@ function computeGanttKeyboardProposal(
   // move
   if (milestone) {
     const newMs = dayMode
-      ? addDays(toZoned(subject.start, timeZone), direction).getTime()
+      ? addDays(toZoned(subject.start, timeZone), dayStep).getTime()
       : subject.start.getTime() + direction * step * 60000
     return {
       start: new Date(newMs),
@@ -840,7 +856,7 @@ function computeGanttKeyboardProposal(
         1
       )
       const newStartZoned = zonedStartOfDay(
-        addDays(toZoned(subject.start, timeZone), direction),
+        addDays(toZoned(subject.start, timeZone), dayStep),
         timeZone
       )
       const newStart = new Date(newStartZoned.getTime())
@@ -865,8 +881,8 @@ function computeGanttKeyboardProposal(
     // (millisecond) duration can change across a transition - the WALL-CLOCK
     // span is what a day-unit keyboard nudge preserves, mirroring how a
     // day-aligned subject already preserves its civil-day span above.
-    const newStart = addDays(toZoned(subject.start, timeZone), direction)
-    const newEnd = addDays(toZoned(subject.end, timeZone), direction)
+    const newStart = addDays(toZoned(subject.start, timeZone), dayStep)
+    const newEnd = addDays(toZoned(subject.end, timeZone), dayStep)
     return {
       start: new Date(newStart.getTime()),
       end: new Date(newEnd.getTime()),
@@ -881,6 +897,22 @@ function computeGanttKeyboardProposal(
     end: new Date(newStartMs + durationMs),
     allDay: subject.allDay,
   }
+}
+
+/**
+ * #219 PR A (Adjust mode) — Shift+Arrow's "larger unit" step, in minutes, for
+ * `computeGanttKeyboardProposal` above. Owner decision: if the view's normal keyboard step
+ * (`baseStepMinutes` - `gantt.tsx`'s `scale === "day" ? snapDuration : 24 * 60`) is already a civil
+ * day or more (week/month/quarter/year scales, or the day scale with a whole-day snap), the larger
+ * unit is 7 civil days. If the normal step is SUB-day (the day scale with `snapDuration < 1440`),
+ * the larger unit is 1 hour when that snap is under an hour, otherwise 1 civil day - one rung up
+ * from "a few minutes" without jumping straight to a week. Pure and table-tested; the DST-crossing
+ * behaviour itself is `computeGanttKeyboardProposal`'s (zoned `addDays`, wall-time preserving) -
+ * this function only sizes the step.
+ */
+function resolveAdjustLargerStepMinutes(baseStepMinutes: number): number {
+  if (baseStepMinutes >= 24 * 60) return 7 * 24 * 60
+  return baseStepMinutes < 60 ? 60 : 24 * 60
 }
 
 /**
@@ -996,6 +1028,7 @@ export {
   packTimedSegments,
   rangesIntersect,
   reorderResources,
+  resolveAdjustLargerStepMinutes,
   resolveEventBaseline,
   resolveOffDay,
   resolveOverlapPolicy,

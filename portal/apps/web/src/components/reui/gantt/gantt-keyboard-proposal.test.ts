@@ -13,6 +13,7 @@ import { TZDate } from "@date-fns/tz";
 import { differenceInCalendarDays } from "date-fns";
 import {
   computeGanttKeyboardProposal,
+  resolveAdjustLargerStepMinutes,
   toZoned,
   zonedStartOfDay,
 } from "@/components/reui/gantt/gantt-lib";
@@ -250,5 +251,122 @@ describe("computeGanttKeyboardProposal — day-unit nudge preserves wall time ex
     const r = result!;
     expect(r.start.getTime()).toBe(secondFoldMs);
     expect(r.end.getTime()).toBe(firstFoldMs + 30 * 60000 + 60 * 60000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #219 PR A (Adjust mode) — Shift+Arrow's "larger unit". Decision: a civil-day-or-more base step
+// (week/month/quarter/year, or the day scale at a whole-day snap) takes a 7-civil-day larger step;
+// a sub-day base step takes 1 hour when the snap is under an hour, otherwise 1 civil day.
+// ---------------------------------------------------------------------------
+describe("resolveAdjustLargerStepMinutes — pure step-size table", () => {
+  it.each([
+    // [baseStepMinutes, expected larger step]
+    [15, 60], // day scale, 15-min snap -> 1 hour
+    [30, 60], // day scale, 30-min snap -> 1 hour
+    [59, 60], // just under an hour -> 1 hour
+    [60, 24 * 60], // exactly an hour -> 1 civil day (not "1 more hour")
+    [90, 24 * 60], // day scale, 90-min snap -> 1 civil day
+    [24 * 60 - 1, 24 * 60], // just under a day -> 1 civil day
+    [24 * 60, 7 * 24 * 60], // day scale, whole-day snap -> 7 civil days
+    [7 * 24 * 60, 7 * 24 * 60], // week scale -> 7 civil days
+    [30 * 24 * 60, 7 * 24 * 60], // month scale -> 7 civil days
+    [365 * 24 * 60, 7 * 24 * 60], // year scale -> 7 civil days
+  ])("base step %i minutes -> larger step %i minutes", (base, expected) => {
+    expect(resolveAdjustLargerStepMinutes(base)).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #219 PR A (Adjust mode) — the 7-civil-day larger step through
+// computeGanttKeyboardProposal itself (step = 10080), across both Australia/Sydney DST dates.
+// Mirrors the existing single-civil-day (sol1 item 4) tests above, at 7x the step.
+// ---------------------------------------------------------------------------
+describe("computeGanttKeyboardProposal — 7-civil-day step (Adjust mode Shift+Arrow) across Australia/Sydney DST", () => {
+  const SEVEN_DAYS = 7 * 24 * 60;
+
+  it("day-aligned move by 7 civil days across the spring-forward week stays midnight-to-midnight, span unchanged", () => {
+    const start = sydney(2026, 9, 1); // Oct 1 2026 00:00 Sydney
+    const end = sydney(2026, 9, 2); // 1-day span
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, SEVEN_DAYS, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 9, 8).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 9, 9).getTime());
+    expect(zonedStartOfDay(r.start, SYDNEY).getTime()).toBe(r.start.getTime());
+    expect(differenceInCalendarDays(toZoned(r.end, SYDNEY), toZoned(r.start, SYDNEY))).toBe(1);
+  });
+
+  it("day-aligned move by 7 civil days across the fall-back week stays midnight-to-midnight, span unchanged", () => {
+    const start = sydney(2026, 3, 1);
+    const end = sydney(2026, 3, 2);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, SEVEN_DAYS, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 3, 8).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 3, 9).getTime());
+    expect(zonedStartOfDay(r.start, SYDNEY).getTime()).toBe(r.start.getTime());
+  });
+
+  it("a timed bar moved 7 civil days across the spring-forward transition keeps its wall-clock time and exact duration", () => {
+    const start = sydney(2026, 9, 1, 14, 0);
+    const end = sydney(2026, 9, 1, 15, 0);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, SEVEN_DAYS, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 9, 8, 14, 0).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 9, 8, 15, 0).getTime());
+    expect(r.end.getTime() - r.start.getTime()).toBe(end.getTime() - start.getTime());
+  });
+
+  it("a timed bar moved 7 civil days across the fall-back transition keeps its wall-clock time and exact duration", () => {
+    const start = sydney(2026, 3, 1, 14, 0);
+    const end = sydney(2026, 3, 1, 15, 0);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, SEVEN_DAYS, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 3, 8, 14, 0).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 3, 8, 15, 0).getTime());
+    expect(r.end.getTime() - r.start.getTime()).toBe(end.getTime() - start.getTime());
+  });
+
+  it("resize-end by 7 civil days across the spring-forward week, minimum duration stays ONE day (not seven)", () => {
+    const start = sydney(2026, 9, 1);
+    const end = sydney(2026, 9, 2); // 1-day span, the minimum
+    // Shrinking by 7 days would invert far past a single day - still null, same bound as the
+    // 1-day step, proving the minimum-duration bound does not scale with the step size.
+    expect(
+      computeGanttKeyboardProposal({ start, end, allDay: false }, "resize-end", -1, SEVEN_DAYS, SYDNEY),
+    ).toBeNull();
+    const grown = computeGanttKeyboardProposal({ start, end, allDay: false }, "resize-end", 1, SEVEN_DAYS, SYDNEY);
+    expect(grown).not.toBeNull();
+    expect(grown!.end.getTime()).toBe(sydney(2026, 9, 9).getTime());
+  });
+
+  it("resize-start by 7 civil days across the fall-back week, minimum duration stays ONE day (not seven)", () => {
+    const start = sydney(2026, 3, 1);
+    const end = sydney(2026, 3, 2);
+    expect(
+      computeGanttKeyboardProposal({ start, end, allDay: false }, "resize-start", 1, SEVEN_DAYS, SYDNEY),
+    ).toBeNull();
+    const grown = computeGanttKeyboardProposal({ start, end, allDay: false }, "resize-start", -1, SEVEN_DAYS, SYDNEY);
+    expect(grown).not.toBeNull();
+    expect(grown!.start.getTime()).toBe(sydney(2026, 2, 25).getTime());
+  });
+
+  it("a timed move whose start and end straddle the spring-forward gap, 7 days later, shifts each edge independently and the real duration shrinks exactly as the single-day case does", () => {
+    // Sep 27 (a normal 24h day) + 7 civil days lands ON Oct 4, the 23-hour spring-forward day -
+    // same gap-straddling shape as the existing single-day test above, at 7x the step. The wall
+    // clock lands identically (01:30 -> 03:30); the real elapsed time shrinks the same way (2h
+    // nominal -> 1h real) because the 02:00-03:00 gap sits between the two wall times on the
+    // LANDING day, regardless of how many civil days the step crossed to get there.
+    const start = sydney(2026, 8, 27, 1, 30); // Sep 27 2026, one week before the transition day
+    const end = sydney(2026, 8, 27, 3, 30);
+    const result = computeGanttKeyboardProposal({ start, end, allDay: false }, "move", 1, SEVEN_DAYS, SYDNEY);
+    expect(result).not.toBeNull();
+    const r = result!;
+    expect(r.start.getTime()).toBe(sydney(2026, 9, 4, 1, 30).getTime());
+    expect(r.end.getTime()).toBe(sydney(2026, 9, 4, 3, 30).getTime());
+    expect(r.end.getTime() - r.start.getTime()).toBe(60 * 60 * 1000);
   });
 });
