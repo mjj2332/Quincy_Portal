@@ -346,6 +346,10 @@ function GanttBar<TData = unknown>({
     { calendar: instance }
   )
   const adjusting = adjustTarget !== null
+  // #219 PR A fix (Sol re-review round 2, HIGH #3): set right before every LOCAL cancel/commit
+  // call below, consumed by the owner-death effect further down - see that effect's own comment.
+  const localTeardownRef = useRef(false)
+  const wasAdjustingRef = useRef(adjusting)
 
   // Finds the ONE shared live region the same way gantt-dnd.tsx's beginGesture already does for a
   // pointer drag - reused, not one per bar.
@@ -385,6 +389,7 @@ function GanttBar<TData = unknown>({
       if (ev.target instanceof Node && barRef.current?.contains(ev.target)) {
         return
       }
+      localTeardownRef.current = true
       instance.internals.cancelAdjust()
       announce(settings.i18n.labels.adjustCancelled)
     }
@@ -395,6 +400,30 @@ function GanttBar<TData = unknown>({
     // render's values, which is what we want the NEXT pointerdown to see too; re-running the effect
     // on every render (by adding them) would thrash the listener for no behavioral gain.
   }, [adjusting, instance, occurrence.key])
+
+  // #219 PR A fix (Sol re-review round 2, HIGH #3): every cancel/commit path ABOVE runs inside
+  // this bar's own handlers and already announces inline - set right before each one's own
+  // `cancelAdjust`/`commitAdjust` call. But the session's OWNER can die with none of them ever
+  // running: the owning event deleted or replaced from outside, or the view's date/scale changing
+  // mid-session (`gantt.tsx`'s `killAdjustSessionIfOrphaned`, called from both `setOptions` and
+  // `setField`). That store-level teardown flips `adjusting` true -> false on this bar's next
+  // render with no local handler in the loop, so the cancellation announcement has to happen
+  // here instead. Gated on `localTeardownRef` so it fires exactly once and never re-announces
+  // "cancelled" over a cancel/commit branch's OWN just-set message - the same stale-overwrite
+  // race the blur handler above is already written to avoid.
+  useEffect(() => {
+    const wasAdjusting = wasAdjustingRef.current
+    wasAdjustingRef.current = adjusting
+    if (!wasAdjusting || adjusting) return
+    if (localTeardownRef.current) {
+      localTeardownRef.current = false
+      return
+    }
+    announce(settings.i18n.labels.adjustCancelled)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- same reasoning as the
+    // pointerdown-elsewhere effect above: `announce`/`settings` close over this render's values
+    // on purpose.
+  }, [adjusting])
 
   // Hover-only range tooltip. Focus opens are ignored (the known button+
   // tooltip flash: clicking a bar opens a dialog, focus returns, and a
@@ -527,6 +556,7 @@ function GanttBar<TData = unknown>({
             // race stepAdjust for state.drag - cancel first, same as the document pointerdown-
             // elsewhere handler above (both re-read live state, not the `adjusting` closure).
             if (instance.getState().adjust?.occurrence.key === occurrence.key) {
+              localTeardownRef.current = true
               instance.internals.cancelAdjust()
               announce(settings.i18n.labels.adjustCancelled)
             }
@@ -551,6 +581,7 @@ function GanttBar<TData = unknown>({
           onPointerDown={(e) => {
             instance.internals.clearKeyboardFocus()
             if (instance.getState().adjust?.occurrence.key === occurrence.key) {
+              localTeardownRef.current = true
               instance.internals.cancelAdjust()
               announce(settings.i18n.labels.adjustCancelled)
             }
@@ -612,6 +643,7 @@ function GanttBar<TData = unknown>({
       // stepAdjust for state.drag - cancel first (re-reads live state; see the grips above and
       // this file's header for why not the `adjusting` closure).
       if (instance.getState().adjust?.occurrence.key === occurrence.key) {
+        localTeardownRef.current = true
         instance.internals.cancelAdjust()
         announce(settings.i18n.labels.adjustCancelled)
       }
@@ -633,6 +665,7 @@ function GanttBar<TData = unknown>({
     onBlur: () => {
       const live = instance.getState().adjust
       if (live?.occurrence.key !== occurrence.key) return
+      localTeardownRef.current = true
       instance.internals.cancelAdjust()
       announce(settings.i18n.labels.adjustCancelled)
     },
@@ -673,6 +706,7 @@ function GanttBar<TData = unknown>({
       e.preventDefault()
 
       if (match.type === "cancel") {
+        localTeardownRef.current = true
         instance.internals.cancelAdjust()
         announce(settings.i18n.labels.adjustCancelled)
         return
@@ -723,6 +757,7 @@ function GanttBar<TData = unknown>({
       // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #2): the same view-scheduleMode
       // pass-through `stepAdjust` above already needs - `commitAdjust` now re-validates the overlap
       // policy against the CURRENT resource, which needs it too.
+      localTeardownRef.current = true
       const result = instance.internals.commitAdjust(viewConfig.scheduleMode)
       if (result.committed) {
         // A committed START change (move, or a start-edge resize - whichever target actually moved

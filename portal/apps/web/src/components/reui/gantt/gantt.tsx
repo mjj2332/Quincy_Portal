@@ -600,6 +600,35 @@ function createGanttStore<TData>(
     emitRangeIfChanged()
   }
 
+  /**
+   * #219 PR A fix (Sol re-review round 2, HIGH #3): an Adjust session is bound to the event it
+   * started on (`internal.adjust.occurrence.event`, a snapshot as of `beginAdjust`/last
+   * retarget). If that event is deleted, or replaced with a new object under the same id
+   * (`events` update from ANY source - a controlled prop, an uncontrolled `api.*` mutator, or a
+   * consumer's own `onEventUpdate` racing this session), or the view's date/scale changes, the
+   * session's captured `entry`/`preview` no longer describes anything real. Left alone, it can
+   * write over the newer external state on the next Enter, or - since nothing ever cleared
+   * `internal.adjust` - resurrect `role="application"`/`data-adjusting` on a bar that later
+   * remounts under the same occurrence key (e.g. an undone edit reverts the event to the exact
+   * start the session was keyed on). `drag` (the session's keyboard-owned ghost preview) dies
+   * with it, atomically, so a render never shows one without the other. Returns whether a session
+   * was actually torn down, so callers only pay for an extra `notify()` when one was.
+   */
+  const killAdjustSessionIfOrphaned = (
+    nextEvents: GanttEvent<TData>[],
+    dateOrScaleChanged: boolean
+  ): boolean => {
+    const session = internal.adjust
+    if (!session) return false
+    const stillPresent = nextEvents.find((event) => event.id === session.eventId)
+    const orphaned =
+      !stillPresent || stillPresent !== session.occurrence.event || dateOrScaleChanged
+    if (!orphaned) return false
+    internal.adjust = null
+    internal.drag = null
+    return true
+  }
+
   const getState = (): GanttState<TData> => {
     if (snapshot) return snapshot
     const scale = options.scale ?? internal.scale
@@ -697,6 +726,13 @@ function createGanttStore<TData>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(internal as any)[key] = value
       invalidate()
+      // #219 PR A fix (Sol re-review round 2, HIGH #3): uncontrolled `events`/`date`/`scale`
+      // never flow back through `setOptions` (that only re-runs on a prop change, and these
+      // are internal state) - this is the one place an uncontrolled mutation actually lands,
+      // so it is where an active Adjust session's owner-death check has to live for that mode.
+      if (key === "events" || key === "date" || key === "scale") {
+        killAdjustSessionIfOrphaned(internal.events, key === "date" || key === "scale")
+      }
     }
     const callbacks: Record<ControlledKey, ((v: never) => void) | undefined> = {
       scale: settings.onScaleChange as never,
@@ -1484,6 +1520,17 @@ function createGanttStore<TData>(
           changed = true
           break
         }
+      }
+      // #219 PR A fix (Sol re-review round 2, HIGH #3): controlled `events`/`date`/`scale` land
+      // here on every render that changes them - the one place a controlled owner-death has to
+      // be caught (the uncontrolled equivalent lives in `setField`, which this mode never runs).
+      if (
+        killAdjustSessionIfOrphaned(
+          next.events ?? internal.events,
+          prev.date?.getTime() !== next.date?.getTime() || prev.scale !== next.scale
+        )
+      ) {
+        changed = true
       }
       let settingsChanged = false
       for (const key of SETTINGS_KEYS) {
