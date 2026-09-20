@@ -50,6 +50,15 @@
  *    `offsets[col]`/`hiddenBarKeysByCol[col]` asserted non-null since `col` always indexes
  *    a same-length array derived from `week`, and the drag-ghost's `week[ghostPos.col] ??
  *    week[0]` fallback given the same defined `firstDay`. No runtime behaviour changed.
+ * 2. 2026-09-21, #240 — the drag-ghost selector carries `drag.keyboard` (and compares it, and
+ *    `kind`, in its equality check: an M / S / E retarget changes the kind and nothing else), and
+ *    the in-grid MOVE ghost renders the event's content when it is set. A pointer move shows an
+ *    empty placeholder because a cursor-following carry shows the content; a keyboard move has
+ *    no carry. Pointer behaviour is unchanged. See `event-calendar-dnd.tsx` entry 6.
+ * 3. 2026-09-21, #240 — BEHAVIOUR CHANGE. The +N more popover closed on ANY drag; it now ignores a
+ *    keyboard one (`!state.drag.keyboard`). A pointer drag carries the chip away, so closing was
+ *    right; a keyboard session's chip is the focused thing being adjusted, and closing unmounted
+ *    it mid-session. A re-vendor WILL restore the one-line selector — re-apply this.
  */
 import {
   useCallback,
@@ -453,6 +462,7 @@ function EventCalendarMonthWeek({
     | (Pick<
         EventCalendarDragState,
         | "kind"
+        | "keyboard"
         | "valid"
         | "occurrence"
         | "proposedStart"
@@ -489,6 +499,8 @@ function EventCalendarMonthWeek({
       if (endCol < startCol) return null
       return {
         kind: drag.kind,
+        // QUINCY (#240): a keyboard move has no cursor carry, so its ghost shows content
+        keyboard: drag.keyboard === true,
         valid: drag.valid,
         occurrence: drag.occurrence,
         proposedStart: drag.proposedStart,
@@ -510,6 +522,7 @@ function EventCalendarMonthWeek({
           a.colSpan === b.colSpan &&
           a.valid === b.valid &&
           a.kind === b.kind &&
+          a.keyboard === b.keyboard &&
           a.proposedAllDay === b.proposedAllDay &&
           a.proposedStart.getTime() === b.proposedStart.getTime() &&
           a.proposedEnd.getTime() === b.proposedEnd.getTime()),
@@ -662,7 +675,7 @@ function EventCalendarMonthWeek({
                   } as CSSProperties
                 }
               >
-                {dragGhost.kind !== "move" && (
+                {(dragGhost.kind !== "move" || dragGhost.keyboard) && (
                   <EventCalendarEvent
                     preview
                     segment={{
@@ -1188,8 +1201,10 @@ function EventCalendarMoreIndicator({
 
   // Grabbing a chip from this list starts a drag; close the popover so it does
   // not sit over the drop target while the event is carried to another day.
+  // QUINCY (#240): a KEYBOARD session is not a carry. Its chip is the thing being adjusted and
+  // holds focus; closing the popover would unmount it mid-session.
   const isDragging = useEventCalendarSelector<unknown, boolean>(
-    (state) => state.drag !== null
+    (state) => state.drag !== null && !state.drag.keyboard
   )
   useEffect(() => {
     if (isDragging) setOpen(false)

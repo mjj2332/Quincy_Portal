@@ -55,6 +55,11 @@
  *    it either way.
  * 3. 2026-09-21 (#219 PR B): the chip applies `viewConfig.eventClassName?.(occurrence)`, before
  *    `classNames.event` so a blanket override still wins.
+ * 4. 2026-09-21, #240 — the chip opens the keyboard Adjust session. ADDED: an `isAdjusting`
+ *    selector, `data-ec-event-id` (how the session finds this event's chip after a commit
+ *    re-renders it elsewhere), `data-adjusting`, `aria-keyshortcuts="Space"`, and an `onKeyDown`
+ *    that hands Space to `beginKeyboardAdjust` with the SAME move / resize-edge gates the grips
+ *    use. Enter and click are untouched. Previews and agenda rows never open a session.
  */
 import {
   createContext,
@@ -74,6 +79,7 @@ import {
   useEventCalendarGestures,
   wasRecentDrag,
 } from "@/components/reui/event-calendar/event-calendar-dnd"
+import { matchAdjustKey } from "@/components/reui/event-calendar/event-calendar-keyboard"
 import {
   spansMultipleDays,
   toZoned,
@@ -244,12 +250,26 @@ function EventCalendarEvent<TData = unknown>({
   // (the drag key matches, which would dim the clone itself).
   const isSelected = preview ? false : isSelectedRaw
   const isDragging = preview ? false : isDraggingRaw
+  // QUINCY (#240): a keyboard Adjust session previews through the same drag state
+  const isAdjusting = useEventCalendarSelector<TData, boolean>(
+    (state) =>
+      !preview &&
+      state.drag?.keyboard === true &&
+      state.drag.occurrence.key === occurrence.key,
+    { calendar: instance }
+  )
 
   const isBar =
     occurrence.allDay || spansMultipleDays(occurrence, settings.timeZone)
   const inTimeGrid =
     view === "week" || view === "day" || view === "days" || view === "resource"
   const interactive = view !== "agenda" && !preview
+  // QUINCY (#240): the same gates the pointer path uses; drives `aria-keyshortcuts` and Space
+  const adjustable =
+    interactive &&
+    (gestures.canDrag(segment) ||
+      gestures.canResizeEdge(segment, "start") ||
+      gestures.canResizeEdge(segment, "end"))
   const timedBlock = inTimeGrid && !isBar
   const horizontalBar = isBar && !inTimeGrid
   // >= compactEventMinutes renders the stacked (title over time) layout, where
@@ -527,6 +547,20 @@ function EventCalendarEvent<TData = unknown>({
     "aria-pressed": interactive ? isSelected : undefined,
     "aria-hidden": preview || undefined,
     tabIndex: preview ? -1 : undefined,
+    // QUINCY (#240): how the Adjust session finds this event's chip again after a commit moves
+    // it to another cell or column (a different element). Vendored-tree-only, per Detector 9.
+    "data-ec-event-id": String(event.id),
+    "data-adjusting": isAdjusting || undefined,
+    "aria-keyshortcuts": adjustable ? "Space" : undefined,
+    onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+      // QUINCY (#240): Space opens the keyboard Adjust session (the Gantt's grammar, ADR 0009).
+      // Everything after that is read on `window` by the session itself, because the view may
+      // follow the move and unmount this chip. An event nothing can adjust leaves Space alone,
+      // so it keeps its native activate.
+      if (!adjustable || isAdjusting || e.target !== e.currentTarget) return
+      if (matchAdjustKey(e, false, false)?.type !== "enter") return
+      if (gestures.beginAdjust(segment, e.currentTarget)) e.preventDefault()
+    },
     style: {
       "--ec-event-color": event.color ?? "var(--color-primary)",
     } as CSSProperties,

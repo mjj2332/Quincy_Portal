@@ -37,7 +37,12 @@
  *
  * THIS FILE: the label and format table — every user-visible string and date format the tree emits, overridable per key.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #240 — ADDED the `labels.adjust` table (type and English defaults): everything
+ *    the keyboard Adjust session announces, including `showing` (the view followed the proposal)
+ *    and `secondPass` / `endsSecondPass` (which pass of a DST repeated hour an end sits in).
+ *    Additive; no existing key changed.
  */
 import type {
   CalendarView,
@@ -71,6 +76,36 @@ interface EventCalendarI18nConfig {
     dropNotAllowed: string
     /** Aria-label suffix on chip segments that continue past the cell. */
     continues: string
+    /**
+     * QUINCY (#240): the keyboard Adjust session's live-region copy. `position` is the proposal
+     * already formatted ("Mon, Sep 21, 9:15 - 10:15 AM", plus resource / repeated-hour suffixes).
+     */
+    adjust: {
+      started: (title: string, target: string, position: string) => string
+      targets: { move: string; start: string; end: string }
+      committed: (title: string, position: string) => string
+      unchanged: string
+      cancelled: string
+      /** That key means nothing for this target in this view. */
+      refusedAxis: string
+      /** The step would leave the day's bounds or the resource list. */
+      refusedBounds: string
+      refusedMinDuration: string
+      /** M / S / E asked for a target this event does not allow. */
+      refusedTarget: (target: string) => string
+      /** Enter on a proposal `canDropEvent` rejects. */
+      refusedInvalid: (position: string) => string
+      /** `onEventUpdate` returned false. */
+      rejected: string
+      /** The event changed or disappeared underneath the session. */
+      interrupted: string
+      /** Appended to the step that made the view follow the proposal to another range. */
+      showing: (range: string) => string
+      /** Appended when the proposal starts in a DST repeated hour's second pass. */
+      secondPass: string
+      /** Appended when only the proposal's END is in the second pass, so the clock reads end-before-start. */
+      endsSecondPass: string
+    }
     /** Agenda label for the first day of a multi-day event. */
     timeFrom: (time: string) => string
     /** Agenda label for the last day of a multi-day event. */
@@ -174,6 +209,24 @@ const DEFAULT_LABELS: EventCalendarI18nConfig["labels"] = {
   goToDate: "Go to date",
   dropNotAllowed: "Can't place here",
   continues: "continues",
+  adjust: {
+    started: (title, target, position) =>
+      `${title}. Adjusting ${target}. ${position}. Arrow keys to change, M S E to switch between move, start and end, Enter to confirm, Escape to cancel.`,
+    targets: { move: "position", start: "start", end: "end" },
+    committed: (title, position) => `${title} set to ${position}.`,
+    unchanged: "No change made.",
+    cancelled: "Adjustment cancelled.",
+    refusedAxis: "That direction does nothing here.",
+    refusedBounds: "Can't go further.",
+    refusedMinDuration: "Can't make it shorter.",
+    refusedTarget: (target) => `The ${target} of this event can't be changed.`,
+    refusedInvalid: (position) => `Can't place at ${position}.`,
+    rejected: "Change not accepted.",
+    interrupted: "Adjustment ended: the event changed.",
+    showing: (range) => `Now showing ${range}.`,
+    secondPass: "second pass of the repeated hour",
+    endsSecondPass: "ends in the second pass of the repeated hour",
+  },
   timeFrom: (time) => `From ${time}`,
   timeUntil: (time) => `Until ${time}`,
   viewShortcuts: {

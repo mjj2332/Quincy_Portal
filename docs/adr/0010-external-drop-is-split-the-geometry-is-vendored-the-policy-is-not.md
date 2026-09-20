@@ -102,6 +102,33 @@ way the column paints it, so:
 
 The decision itself is unchanged: geometry inside the tree, policy outside it.
 
+### Addendum — #240 (2026-09-21)
+
+#240 gave the calendar a keyboard path for MOVING and RESIZING existing events, and split it the
+way this ADR split external drop:
+
+- **The pure half is its own file**, `event-calendar-keyboard.ts` (Quincy-authored, not vendored):
+  the key matcher and the proposal calculator. No DOM, no store, no private binding. The Gantt
+  keeps its matcher in `gantt-lib.tsx`; the calendar's is separate because it carries four
+  geometries' worth of movement rules where the Gantt has one axis.
+- **The private half is inside the vendored file**, `beginKeyboardAdjust` in
+  `event-calendar-dnd.tsx`, for ADR 0009's reason and this ADR's decisive one: it must join the
+  module-level gesture-cancel registry. `event-calendar-dnd.tsx` entry 6 is the re-vendor
+  instruction.
+- **The attribute contract is seven.** The chip authors `data-ec-event-id`, which the session
+  uses to find an event's chip again after a commit re-renders it as a different element. The
+  session also READS `data-ec-wall-start` / `data-ec-wall-end`. Detector 9 still holds: all of
+  this is inside the tree.
+- **The grammar is the Gantt's, by owner decision** (ADR 0009): Space enters, M / S / E retarget,
+  Enter or Space commits, Escape cancels. A vertical time-grid step is ELAPSED time, so the
+  repeated hour's second pass — which #241 left unreachable by pointer — is reachable by
+  keyboard. The agenda opts out: its rows are read-only by the vendor's own design.
+
+The "Keyboard-initiated drop" bullet below is therefore half-answered: there IS a keyboard path
+into the calendar now, but it adjusts events that already exist. Cell/slot navigation, keyboard
+create, and a keyboard path for an unscheduled-tray drop are still open, and whether the last one
+reuses `EventCalendarExternalDropTarget` is still undecided.
+
 ## What enforces this
 
 Prose does not. `event-calendar-skin.guard.test.ts` Detector 9 scans every non-test file under
@@ -119,6 +146,6 @@ at this ADR.
   `internals.setSlotDraft`, so the user sees the vendor's dashed slot box, not a Quincy-styled
   ghost of the item being dragged. That was a deliberate choice to avoid duplicating the carry-clone
   DOM, and a real consumer may want more. Revisit with a consumer in front of you, not before.
-- **Keyboard-initiated drop.** There is no keyboard path into the calendar at all yet; see the
-  calendar keyboard operability issue, #240. Whether it reuses
-  `EventCalendarExternalDropTarget` is that issue's call, not this one's.
+- **Keyboard-initiated drop.** #240 added a keyboard path for adjusting existing events only (see
+  its addendum above); nothing yet lets a keyboard drop a tray item. Whether that
+  reuses `EventCalendarExternalDropTarget` is its follow-up issue's call, not this ADR's.

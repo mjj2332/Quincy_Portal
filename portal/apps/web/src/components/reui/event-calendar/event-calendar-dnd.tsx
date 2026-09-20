@@ -83,6 +83,18 @@
  *    scaling linearly across the day's elapsed length. Every caller still receives elapsed
  *    minutes; a column without the attributes is read as before. Identity on a 24-hour day.
  *    Cover: `event-calendar-dst-week.dom.test.tsx`.
+ * 6. 2026-09-21, #240 — ADDED the keyboard Adjust session: `beginKeyboardAdjust` and
+ *    `REFOCUS_FRAMES`, under their own banner comment. Upstream declares `source: "keyboard"` and
+ *    never emits it; this does. It is HERE rather than beside the pure movement model
+ *    (`event-calendar-keyboard.ts`, Quincy-authored, not vendored) because it needs this
+ *    module's private gesture-cancel registry, the announcer and `internals.setDrag`. It previews
+ *    through the SAME `state.drag` the pointer path uses, with `keyboard: true`, and commits
+ *    through the same `applyProposedUpdate`. The vendor's abort-on-last-chip-unmount is answered
+ *    by `onCalendarTeardown` (a followed view into an empty range unmounts every chip while the
+ *    calendar lives). TWO upstream lines changed, both of which a re-vendor will revert: the
+ *    `date-fns` import gained `differenceInMinutes` and `format`, and the drag hook's returned
+ *    object gained `beginAdjust` (its gated wrapper around `beginKeyboardAdjust`).
+ *    Cover: `event-calendar-keyboard.test.ts`, `event-calendar-keyboard-adjust.dom.test.tsx`.
  */
 import { useCallback, useEffect, useMemo } from "react"
 import {
@@ -91,9 +103,20 @@ import {
   type EventCalendarInstance,
 } from "@/components/reui/event-calendar/event-calendar"
 import {
+  computeKeyboardProposal,
+  matchAdjustKey,
+  type AdjustGeometry,
+  type AdjustTarget,
+  type AdjustWindow,
+} from "@/components/reui/event-calendar/event-calendar-keyboard"
+import {
   elapsedMinutesAtWallClock,
+  flattenResources,
+  getDayKey,
   snapMinutes,
+  spansMultipleDays,
   toZoned,
+  wallClockMinutesAtElapsed,
   zonedStartOfDay,
 } from "@/components/reui/event-calendar/event-calendar-lib"
 import type {
@@ -101,7 +124,13 @@ import type {
   EventCalendarProposedUpdate,
   EventCalendarSegment,
 } from "@/components/reui/event-calendar/event-calendar-types"
-import { addDays, addMinutes, differenceInCalendarDays } from "date-fns"
+import {
+  addDays,
+  addMinutes,
+  differenceInCalendarDays,
+  differenceInMinutes,
+  format,
+} from "date-fns"
 
 /**
  * Activation policy (dnd-kit parity where proven):
@@ -1368,6 +1397,384 @@ function useEventCalendarExternalDrop<TData = unknown, TPayload = unknown>() {
   return { begin }
 }
 
+
+/* -------------------------------------------------------------------------------------------------
+ * QUINCY (#240) — the keyboard Adjust session.
+ *
+ * The movement model is pure and lives in `event-calendar-keyboard.ts`. THIS half is here, inside
+ * the vendored gesture module, for the reason ADR 0010 gives for external drop: gesture lifecycle
+ * is module-level singleton state and `activeGestureCancels` is not exported, so a session
+ * registered from outside could outlive its calendar as a stranded window listener.
+ *
+ * Shape, and why:
+ *   - It previews through `internals.setDrag` — the SAME state the pointer path writes — so the
+ *     month grid, the time grid, its all-day row and the resource view all draw their existing
+ *     ghost. No view gained a second preview.
+ *   - Keys are read on `window` (capture), not on the chip. "The view follows" means the chip the
+ *     session started on can unmount mid-session (a move into next week); a listener on it would
+ *     die with it. Focus goes back to the event's chip when the session ends.
+ *   - It never mutates during the session. Enter commits through `applyProposedUpdate`, the one
+ *     validation funnel, as `source: "keyboard"` — the value upstream declares and never emits.
+ *   - Escape, Tab, a pointer press, window blur, the event changing underneath it, a view switch
+ *     and calendar teardown all end it without committing.
+ * ------------------------------------------------------------------------------------------------ */
+
+interface BeginKeyboardAdjustConfig<TData> {
+  instance: EventCalendarInstance<TData>
+  segment: EventCalendarSegment<TData>
+  /** The focused chip. */
+  origin: HTMLElement
+  /** What this event allows, resolved by the caller from the same gates the pointer path uses. */
+  allowed: Record<AdjustTarget, boolean>
+}
+
+const ADJUST_DRAG_KIND = {
+  move: "move",
+  start: "resize-start",
+  end: "resize-end",
+} as const
+
+/** How many frames a finished session waits for its event's chip to be back in the DOM. */
+const REFOCUS_FRAMES = 12
+
+/** Returns false — and claims nothing — when this chip has nothing a keyboard could adjust. */
+function beginKeyboardAdjust<TData>(
+  config: BeginKeyboardAdjustConfig<TData>
+): boolean {
+  const { instance, segment, origin, allowed } = config
+  const { settings, internals, api } = instance
+  const timeZone = settings.timeZone
+  const labels = settings.i18n.labels.adjust
+  const occurrence = segment.occurrence
+  const began = instance.getState()
+  const view = began.view
+  if (view === "agenda") return false
+
+  const isBar =
+    occurrence.allDay || spansMultipleDays(occurrence, timeZone)
+  const geometry: AdjustGeometry =
+    view === "month"
+      ? "month"
+      : view === "resource"
+        ? "resource"
+        : isBar
+          ? "day-bar"
+          : "time"
+  // An edge exists where the pointer path draws a grip: on a timed block in a time grid, and on
+  // a bar anywhere. A timed chip in the month grid has none.
+  const hasEdges = isBar || geometry === "time" || geometry === "resource"
+  const can: Record<AdjustTarget, boolean> = {
+    move: allowed.move,
+    start: allowed.start && hasEdges,
+    end: allowed.end && hasEdges,
+  }
+  const firstTarget = (["move", "end", "start"] as const).find((t) => can[t])
+  if (!firstTarget) return false
+
+  // cancel any pointer gesture in flight: one preview, one owner
+  for (const cancelOther of [...activeGestureCancels]) cancelOther()
+
+  const root =
+    origin.closest<HTMLElement>("[data-slot=event-calendar]") ??
+    internals.getRootEl()
+  const announcer =
+    root?.querySelector<HTMLElement>("[data-slot=event-calendar-announcer]") ??
+    null
+  const announce = (text: string) => {
+    if (announcer) announcer.textContent = text
+  }
+  const rtl = getComputedStyle(origin).direction === "rtl"
+  // The day's wall-clock bounds, read off the column the chip sits in — the same published
+  // contract `collectSurface` reads. A month chip (or one portaled into the "+N more" popover)
+  // has no column and needs no bounds.
+  const dayBoundHours = {
+    startHour: Number(origin.closest<HTMLElement>("[data-ec-wall-start]")?.dataset.ecWallStart ?? 0) / 60,
+    endHour: Number(origin.closest<HTMLElement>("[data-ec-wall-end]")?.dataset.ecWallEnd ?? 1440) / 60,
+  }
+  const resources = flattenResources(settings.resources)
+    .filter(({ resource }) => !resource.children?.length)
+    .map(({ resource }) => resource)
+
+  const originDate = began.date
+  const owner = {
+    start: occurrence.event.start.getTime(),
+    end: occurrence.event.end.getTime(),
+    resourceId: occurrence.event.resourceId,
+  }
+  let target: AdjustTarget = firstTarget
+  let current: AdjustWindow = {
+    start: occurrence.start,
+    end: occurrence.end,
+    allDay: occurrence.allDay,
+    resourceId: occurrence.event.resourceId,
+  }
+  let valid = true
+  let followed = false
+
+  const describe = (w: AdjustWindow): string => {
+    const start = toZoned(w.start, timeZone)
+    const last = toZoned(
+      new Date(Math.max(w.end.getTime() - 1, w.start.getTime())),
+      timeZone
+    )
+    const opts = { locale: settings.locale }
+    const dayFormat = settings.i18n.formats.dayAria
+    const parts = [format(start, dayFormat, opts)]
+    if (w.allDay) {
+      if (getDayKey(start, timeZone) !== getDayKey(last, timeZone)) {
+        parts[0] += ` - ${format(last, dayFormat, opts)}`
+      }
+      parts.push(settings.i18n.labels.allDay)
+    } else {
+      parts.push(
+        settings.i18n.functions.formatEventTime(
+          start,
+          toZoned(w.end, timeZone),
+          false,
+          opts
+        )
+      )
+      // The clock reads the same in both passes of a repeated hour; only this says which.
+      // A range straddling the passes reads as an end before its start, so its end is named.
+      const inSecondPass = (instant: Date): boolean => {
+        const day = zonedStartOfDay(instant, timeZone)
+        const elapsed = differenceInMinutes(instant, day)
+        const wallMin = wallClockMinutesAtElapsed(day, elapsed, timeZone)
+        return elapsedMinutesAtWallClock(day, wallMin, timeZone) < elapsed
+      }
+      if (inSecondPass(w.start)) parts.push(labels.secondPass)
+      else if (inSecondPass(w.end)) parts.push(labels.endsSecondPass)
+    }
+    if (geometry === "resource" && w.resourceId !== undefined) {
+      const title = resources.find((r) => r.id === w.resourceId)?.title
+      if (title) parts.push(title)
+    }
+    return parts.join(", ")
+  }
+
+  const toUpdate = (w: AdjustWindow): EventCalendarProposedUpdate<TData> => ({
+    event: occurrence.event,
+    occurrence,
+    start: w.start,
+    end: w.end,
+    allDay: w.allDay,
+    resourceId: w.resourceId,
+    source: "keyboard",
+  })
+
+  /** Returns the title of the range the view turned to, when this preview had to follow. */
+  const preview = (): string | null => {
+    valid = settings.canDropEvent ? settings.canDropEvent(toUpdate(current)) : true
+    internals.setDrag({
+      kind: ADJUST_DRAG_KIND[target],
+      occurrence,
+      proposedStart: current.start,
+      proposedEnd: current.end,
+      proposedAllDay: current.allDay,
+      proposedDayGranular: geometry === "month" || geometry === "day-bar" || current.allDay,
+      proposedResourceId: current.resourceId,
+      valid,
+      keyboard: true,
+    })
+    // The view follows the edge being moved, so the ghost never leaves the screen.
+    const focusInstant =
+      target === "end" ? new Date(current.end.getTime() - 1) : current.start
+    const { visibleRange } = instance.getState()
+    let turnedTo: string | null = null
+    if (focusInstant < visibleRange.start || focusInstant >= visibleRange.end) {
+      followed = true
+      api.goTo(focusInstant)
+      turnedTo = settings.i18n.functions.formatTitle(view, {
+        date: toZoned(focusInstant, timeZone),
+        activeRange: api.getActiveRange(),
+        visibleRange: instance.getState().visibleRange,
+        locale: settings.locale,
+      })
+    }
+    requestAnimationFrame(() => {
+      if (finished) return
+      root
+        ?.querySelector<HTMLElement>("[data-slot=event-calendar-drag-ghost]")
+        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+    })
+    return turnedTo
+  }
+
+  let finished = false
+  let unsubscribe: (() => void) | null = null
+  const finish = (message: string, restoreView: boolean) => {
+    if (finished) return
+    finished = true
+    activeGestureCancels.delete(onCalendarTeardown)
+    window.removeEventListener("keydown", onKeyDown, true)
+    window.removeEventListener("pointerdown", onPointerDown, true)
+    window.removeEventListener("blur", onBlur)
+    unsubscribe?.()
+    internals.setDrag(null)
+    if (restoreView && followed) api.goTo(originDate)
+    announce(message)
+  }
+  /**
+   * After the commit/cancel re-render: the event's chip may be a different element now. It may
+   * also not exist yet — cancelling a followed view navigates back, and the origin range is not
+   * in the DOM one frame later — so this waits for the chip, for a bounded number of frames.
+   */
+  const refocus = (framesLeft = REFOCUS_FRAMES) => {
+    requestAnimationFrame(() => {
+      const scope = internals.getRootEl() ?? root
+      if (!scope?.isConnected) return
+      const id = String(occurrence.event.id)
+      const chips = [
+        ...scope.querySelectorAll<HTMLElement>("[data-ec-event-id]"),
+      ].filter((el) => el.dataset.ecEventId === id && !el.dataset.preview)
+      // the origin chip may live OUTSIDE the root: the +N more popover is portalled
+      const chip =
+        (origin.isConnected ? origin : undefined) ??
+        chips.find((el) => el === origin) ??
+        chips[0]
+      if (!chip) {
+        if (framesLeft > 1) refocus(framesLeft - 1)
+        return
+      }
+      // the user moved focus somewhere real while we waited: leave it there
+      const active = document.activeElement
+      if (
+        active &&
+        active !== document.body &&
+        active !== origin &&
+        !scope.contains(active)
+      ) {
+        return
+      }
+      // preventScroll + an explicit nearest-scroll: a bare focus() lets the browser scroll every
+      // ancestor to centre the chip, which is the jump 7609cf80 removed from the month view
+      chip.focus({ preventScroll: true })
+      chip.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+    })
+  }
+  const cancel = () => finish(labels.cancelled, true)
+  /**
+   * What the calendar's own abort reaches. The vendor aborts every gesture when the LAST chip
+   * unmounts, reading that as "the calendar is gone" — true for a pointer drag, whose chip stays
+   * mounted under the pointer, and false here: following a move into a week with no events
+   * unmounts every chip while the calendar is very much alive. So this asks the question
+   * directly. On a real unmount React has already detached the root ref by the time passive
+   * effect cleanups run, so the root is null or disconnected exactly when it should be.
+   */
+  const onCalendarTeardown = () => {
+    if (internals.getRootEl()?.isConnected) return
+    finish(labels.cancelled, false)
+  }
+
+  const commit = () => {
+    const unchanged =
+      current.start.getTime() === occurrence.start.getTime() &&
+      current.end.getTime() === occurrence.end.getTime() &&
+      current.resourceId === occurrence.event.resourceId
+    if (unchanged) {
+      finish(labels.unchanged, true)
+      refocus()
+      return
+    }
+    if (!valid) {
+      announce(labels.refusedInvalid(describe(current)))
+      return
+    }
+    // stop watching the store first: the commit below is OUR change to the event
+    unsubscribe?.()
+    unsubscribe = null
+    const accepted = internals.applyProposedUpdate(toUpdate(current))
+    if (accepted) {
+      finish(labels.committed(occurrence.event.title, describe(current)), false)
+    } else {
+      finish(labels.rejected, true)
+    }
+    refocus()
+  }
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const action = matchAdjustKey(e, true, rtl)
+    if (!action) return
+    if (action.type === "leave") {
+      // Tab is not consumed: focus moves on, and the session does not follow it
+      cancel()
+      return
+    }
+    e.preventDefault()
+    // a surrounding popover or dialog must not also act on Escape / Enter
+    e.stopPropagation()
+    if (action.type === "cancel") {
+      cancel()
+      refocus()
+    } else if (action.type === "commit") {
+      commit()
+    } else if (action.type === "retarget") {
+      if (!can[action.target]) {
+        announce(labels.refusedTarget(labels.targets[action.target]))
+        return
+      }
+      target = action.target
+      preview()
+      announce(`${labels.targets[target]}. ${describe(current)}`)
+    } else if (action.type !== "enter" && action.type !== "swallow") {
+      const proposal = computeKeyboardProposal(current, action, {
+        geometry,
+        target,
+        timeZone,
+        snapDuration: settings.snapDuration,
+        ...dayBoundHours,
+        weekStartsOn: settings.weekStartsOn,
+        resourceIds: resources.map((r) => r.id),
+      })
+      if (!proposal.ok) {
+        announce(
+          proposal.reason === "axis"
+            ? labels.refusedAxis
+            : proposal.reason === "bounds"
+              ? labels.refusedBounds
+              : labels.refusedMinDuration
+        )
+        return
+      }
+      current = proposal.window
+      const turnedTo = preview()
+      const position = valid
+        ? describe(current)
+        : labels.refusedInvalid(describe(current))
+      announce(turnedTo ? `${position}. ${labels.showing(turnedTo)}` : position)
+    }
+  }
+  const onPointerDown = () => cancel()
+  const onBlur = () => cancel()
+
+  // A session is bound to the event as it was when it began. If that event is edited or removed
+  // by anything else, or the view is switched, the proposal is about something that no longer
+  // exists: end it rather than commit it.
+  unsubscribe = instance.subscribe(() => {
+    const state = instance.getState()
+    const live = api.getEvent(occurrence.event.id)
+    if (
+      state.view !== view ||
+      !live ||
+      live.start.getTime() !== owner.start ||
+      live.end.getTime() !== owner.end ||
+      live.resourceId !== owner.resourceId
+    ) {
+      finish(labels.interrupted, true)
+    }
+  })
+
+  activeGestureCancels.add(onCalendarTeardown)
+  window.addEventListener("keydown", onKeyDown, true)
+  window.addEventListener("pointerdown", onPointerDown, true)
+  window.addEventListener("blur", onBlur)
+  preview()
+  announce(
+    labels.started(occurrence.event.title, labels.targets[target], describe(current))
+  )
+  return true
+}
+
 /** Per-chip / per-surface pointer gesture wiring. */
 function useEventCalendarGestures<TData = unknown>() {
   const instance = useEventCalendar<TData>()
@@ -1493,7 +1900,35 @@ function useEventCalendarGestures<TData = unknown>() {
     [instance, ui]
   )
 
-  return { beginMove, beginResize, beginCreate, canDrag, canResize, canResizeEdge }
+  /**
+   * QUINCY (#240): open a keyboard Adjust session on a focused chip. Gated by the SAME predicates
+   * the pointer path uses, so a chip the mouse cannot move the keyboard cannot either. Returns
+   * false when nothing is adjustable, so the caller leaves the key to the browser.
+   */
+  const beginAdjust = useCallback(
+    (segment: EventCalendarSegment<TData>, origin: HTMLElement) =>
+      beginKeyboardAdjust({
+        instance,
+        segment,
+        origin,
+        allowed: {
+          move: canDrag(segment),
+          start: canResizeEdge(segment, "start"),
+          end: canResizeEdge(segment, "end"),
+        },
+      }),
+    [instance, canDrag, canResizeEdge]
+  )
+
+  return {
+    beginMove,
+    beginResize,
+    beginCreate,
+    beginAdjust,
+    canDrag,
+    canResize,
+    canResizeEdge,
+  }
 }
 
 export type {
