@@ -7,6 +7,7 @@ import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import { __resetDashboardSearchStoreForTest, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 import { locationStore } from "../lib/router";
+import { ApiError } from "../lib/api";
 
 const apiGetMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
@@ -700,5 +701,117 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     // (confirmed) priority is 2 -- the settled state, after any self-heal, must land on Alpha's own.
     const alphaSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]');
     expect(alphaSelect?.value).toBe("2");
+  });
+});
+
+// #230 Sol review round 2, item 3 (MEDIUM). `acceptedQueryUpdatedAtRef` (Dashboard.tsx ~:382)
+// dedupes `acceptDashboardProjects` calls by `dataUpdatedAt` ALONE, a bare millisecond timestamp.
+// Two different keys' results can carry the identical millisecond (system clock resolution, or two
+// fetches racing to resolve in the same tick) -- a genuinely new key's own first-ever result is then
+// silently deduped away, and `acceptedProjects` never picks up that key at all.
+describe("acceptedQueryUpdatedAtRef dedupes by key AND updatedAt, not updatedAt alone (#230 Sol review round 2, item 3)", () => {
+  const alphaProject = { id: "proj-alpha", street: "1 Alpha Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const betaProject = { id: "proj-beta", street: "9 Beta Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 3, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const qLessProject = { id: "proj-q", street: "0 Unfiltered Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: 1, boardPosition: 0, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null };
+  const keyB = dashboardProjectsKey("admin-1", "admin", 0, false, "beta");
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    __resetDashboardSearchStoreForTest();
+    vi.restoreAllMocks();
+  });
+
+  it("(m) key A's accept and key B's first-ever accept resolve with the identical millisecond dataUpdatedAt -- B's rows are still accepted, surviving a later cache eviction + failed refetch the way an accepted key always does", async () => {
+    // A direct `Date.now` spy, not `vi.useFakeTimers`/`setSystemTime` -- those set an OFFSET from
+    // the real clock, not an absolute freeze, and this test's own `await`s and `vi.waitFor` polling
+    // below take enough real wall-clock time (tens of ms, observed) to drift two re-pinned
+    // `setSystemTime` calls apart by the time each fetch's `Query#dispatch` actually reads it. A
+    // direct spy is the one way to GUARANTEE the collision this test exists to exercise, rather than
+    // race for it. `Query#dispatch`'s own `dataUpdatedAt: dataUpdatedAt ?? Date.now()` is the exact
+    // call this pins -- `flush()`/`microflush()`'s real `setTimeout` is untouched.
+    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+
+    let betaCalls = 0;
+    let rejectSecondBeta!: (reason: unknown) => void;
+    apiGetMock.mockReset().mockImplementation((path: string) => {
+      if (path.includes("q=alpha")) return Promise.resolve({ projects: [alphaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [alphaProject.id] } } });
+      if (path.includes("q=beta")) {
+        betaCalls += 1;
+        if (betaCalls === 1) return Promise.resolve({ projects: [betaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [betaProject.id] } } });
+        // The forced re-fetch below, after key B's cache entry is evicted -- rejecting it is what
+        // makes `queryProjects` (not just the accepted snapshot) go empty for B, the same mechanism
+        // test (i) uses: a key with no accepted snapshot AND no cached data of its own shows the
+        // error state, not stale rows.
+        return new Promise((_resolve, reject) => { rejectSecondBeta = reject; });
+      }
+      return Promise.resolve({ projects: [qLessProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [qLessProject.id] } } });
+    });
+
+    window.history.replaceState(null, "", "/");
+    await act(async () => {
+      root.render(
+        <ProjectQueryRuntimeProvider runtime={runtime}>
+          <QueryClientProvider client={queryClient}>
+            <Dashboard currentUserId="admin-1" role="admin" />
+          </QueryClientProvider>
+        </ProjectQueryRuntimeProvider>,
+      );
+      await Promise.resolve();
+    });
+    await flush();
+
+    // Commit search A -- its accept stamps `acceptedQueryUpdatedAtRef.current` with this frozen
+    // millisecond (buggy: a bare number; fixed: `{ key: A, updatedAt: <the millisecond> }`).
+    act(() => {
+      locationStore().replace("/?q=alpha");
+      syncDashboardSearchDraftFromLocation("alpha", "admin-1");
+    });
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(dashboardProjectsKey("admin-1", "admin", 0, false, "alpha"))).toBeDefined());
+
+    // Commit search B -- a BRAND NEW key, never fetched before. Its first-ever fetch ALSO resolves
+    // at the identical frozen millisecond. Buggy: `acceptedQueryUpdatedAtRef.current` already equals
+    // that millisecond (from A, above) -- `acceptDashboardProjects` dedupes this call away and
+    // `acceptedProjects` never becomes key B's. Fixed: different key, same millisecond -- accepted.
+    act(() => {
+      locationStore().replace("/?q=beta");
+      syncDashboardSearchDraftFromLocation("beta", "admin-1");
+    });
+    await flush();
+    await vi.waitFor(() => expect(queryClient.getQueryData(keyB)).toBeDefined());
+    expect(betaCalls).toBe(1);
+
+    // Evict key B's cache entry entirely (a legitimate, public `queryClient` operation -- the same
+    // thing a `gcTime` expiry does in production) and force a fresh fetch for it. With no cached
+    // data of its own left, `queryProjects` for B goes back to `undefined` until this fetch settles
+    // -- exactly test (i)'s "first-ever fetch, still pending" shape, engineered deliberately rather
+    // than waited for, so the failure this test provokes is B's OWN accepted-snapshot resilience,
+    // not a fresh race.
+    await act(async () => {
+      // Not awaited -- `resetQueries()`'s own promise resolves only once the refetch it triggers
+      // SETTLES, and this test holds that refetch open deliberately (below).
+      void queryClient.resetQueries({ queryKey: keyB, exact: true });
+      await flush();
+    });
+    expect(betaCalls).toBe(2);
+
+    // A 400 `ApiError`, not a bare `Error` -- `projectQueryRetry` (`lib/project-data.ts`) retries any
+    // non-`ApiError`/non-4xx failure up to twice with a real backoff delay this test's short,
+    // fake-Date-only `flush()` never reaches; a 4xx `ApiError` outside 408/429 is the one class
+    // `projectQueryRetry` never retries, so the query settles to `status: "error"` deterministically.
+    await act(async () => {
+      rejectSecondBeta(new ApiError("Offline", 400));
+      await flush();
+    });
+
+    // Fixed: B was accepted above, so its accepted snapshot survives this cache eviction + failed
+    // refetch the same way #232 documents Dashboard rendering an accepted snapshot, not the cache --
+    // Beta's own (accepted) row still renders, no error. Buggy: B was NEVER accepted (deduped away
+    // by the colliding millisecond), so once its own cache is ALSO gone, nothing is left to fall
+    // back on -- the error state shows instead, exactly as an un-accepted, data-less key does in
+    // test (i).
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const betaSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]');
+    expect(betaSelect?.value).toBe("3");
   });
 });
