@@ -3193,3 +3193,49 @@ progressively smarter. The one exception worth keeping a local copy for is genui
 NOT-yet-authoritative state — the DRAFT here, which is real user input the authoritative source
 does not have yet — and even that copy needs exactly one function that reconciles it against the
 authoritative source on every change, not one adoption path per call site.
+
+## A cache key that omits one of the query's inputs patches an entry nobody is looking at (#230)
+
+`Dashboard.tsx`'s `dashboardKey` (~:291, feeding `updateProjects`'s `setQueryData` writes) was built
+from `currentUserId`/`role`/`authorizationEpoch`/`viewingArchived` only — no `q` — while the
+`useDashboardProjects` query it was meant to coordinate with (~:289) is keyed WITH the committed
+search (`committedQuery`, the fifth argument `dashboardProjectsKey` has carried since #217). At
+`/?q=smith`, `setProjectPriority`'s optimistic write, its confirmed write, and its failure rollback
+all landed in the q-LESS cache entry — the one entry `useDashboardProjects` was NOT reading — so the
+optimistic star never showed, the confirmed value waited for an unrelated refetch to arrive by
+coincidence, and a failed save rolled back an entry nobody was looking at. The fix is one line: pass
+`committedQuery` as `dashboardKey`'s own fifth argument, so it is the SAME key the read side already
+uses — not a second, parallel "scope identity" computed differently for reads and writes.
+
+**The rule for sibling entries a mutation's write has to reach, once the exact key is fixed.** A
+resource can have more than one cache entry alive at once for genuinely different reasons (here: the
+current search's entry, plus a q-less entry left over from before the Staff member searched) — a
+mutation against ONE entry has to decide, explicitly, what happens to the others:
+- **The OPTIMISTIC write and its ROLLBACK stay EXACT-KEY.** An unconfirmed value must never land in
+  an entry nobody is currently looking at — if the write reaches a scope that isn't rendering right
+  now, whoever DOES look at that scope later sees a value the server never actually returned.
+- **The CONFIRMED response, once the server has actually agreed to it, fans out to every EXISTING
+  sibling entry** (here, `queryClient.setQueriesData` on the `["dashboard-projects", currentUserId]`
+  prefix — precedent: `removeProjectFromDashboardQueries`, `lib/dashboard-projects.ts` ~:128-136).
+  Without this, a value confirmed while searched only updates the searched entry; clearing the
+  search a moment later shows the STALE q-less entry until its own refetch happens to land, because
+  `queueDashboardRefresh()` only refetches the currently-ACTIVE observer's key and
+  `invalidateProjectSurfaces(..., producer: "dashboard")` deliberately skips the in-tab Dashboard
+  scan — neither of those touches an inactive sibling entry on its own.
+- **The fan-out must never CREATE an entry that didn't already exist.** `setQueriesData` only
+  updates queries already present in the cache by construction (it iterates `findAll`'s matches, not
+  every key that could theoretically match) — a Staff member who deep-links straight into a search
+  and never had an unfiltered load must not get a phantom q-less entry manufactured for them.
+
+**A DOM test cannot observe an optimistic cache write while a mutation is pending, in this
+component, and that is not this bug.** `Dashboard.tsx` renders the `acceptedProjects` SNAPSHOT
+(~:370), not the query cache directly, and the effect that would refresh that snapshot from a fresh
+`queryProjects` explicitly defers while `interactionBlocked` is true (~:354, which includes
+`pendingOrdering.size > 0`) — for the ENTIRE duration of a priority mutation, searched or not, on
+`main` today, independent of this fix. A rendered `<select>`/star control genuinely cannot show "2"
+while its own POST is still in flight; the correct assertion for "did the optimistic/confirmed/
+rollback write land in the right place" is `queryClient.getQueryData` on the exact key directly, not
+the rendered control — proven empirically here (a temporary render/tick trace showed the control
+stuck at the old value through every tick of even a FAST-resolving POST, with a refetch already
+fired by the first tick) before trusting it, rather than assumed from reading the effect once. Filed
+separately as its own issue; not touched by this fix.
