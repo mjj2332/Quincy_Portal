@@ -649,23 +649,26 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
     // render that issued this refetch (still at key A). Still microtask-only: B's own accept effect
     // must not run before this does.
     const confirmedAlphaProject = { ...alphaProject, priority: 2, boardRevision: 2 };
-    await act(async () => {
-      resolveStaleAlphaRefetch({ projects: [confirmedAlphaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [confirmedAlphaProject.id] } } });
-      await Promise.resolve();
-    });
-    await microflush();
 
-    // Only now let the scheduler notify and React catch up -- both B's own (possibly-deduped)
-    // accept effect and any render this settled stale refetch triggered.
-    await flush();
-
-    // Return to search A -- `acceptedProjects.key === dashboardKeyString` matches again, and (if
-    // the stale accept above wrongly fired) the WRONG (Beta, priority 3) row renders under the Alpha
-    // search instead of Alpha's own confirmed priority (2). The PRIMARY accept effect (Dashboard.tsx
-    // ~:687) self-heals this a commit later, the moment it processes key A's own real, still-
-    // unconsumed `dataUpdatedAt` (guaranteed to differ from whatever the stale accept just consumed)
-    // -- so a bare post-settle read of the rendered value would never see the wrong one land at all,
-    // even with the bug present.
+    // Sol review round 3, item 1. Both the corrupted `.then()` above (a guard-less accept would fire
+    // here) AND B's own legitimate primary accept effect resolve through plain microtask chains, not
+    // react-query's `setTimeout(0)` notify scheduler: `useQuery`'s `useSyncExternalStore` re-reads a
+    // FRESH cache snapshot on every render, for ANY reason, not only when its own subscribe callback
+    // fires -- so the very re-render the corrupted accept's own `setAcceptedProjects` triggers already
+    // observes B's real (already-cached, un-notified) data, and B's primary accept effect self-heals
+    // `acceptedProjects` back to key B as a passive effect off THAT SAME render. Measured empirically
+    // (hop-by-hop instrumentation, #230 round 3): the corrupted accept itself lands within ~4
+    // microtask hops of resolving this promise; B's self-heal follows within ~9-10. Both happen
+    // inside ONE continuous flush -- `act()` fully drains all pending work, including every
+    // subsequent effect, before its own call resolves, so there is no external "pause partway
+    // through" available from a SEPARATE, later `act()`/`microflush()` call: by the time any later
+    // call is reached, both the corruption and its self-heal have already happened, and this test
+    // would pass even with the guard above removed (this is exactly what round 3 review caught).
+    //
+    // The only way to observe the transient corrupted `{key:A, rows:B}` snapshot is to return to
+    // search A from INSIDE this same, still-open `act()` call, timed to land after the corrupted
+    // accept but before B's self-heal -- both the probe installation and the return to A happen here,
+    // not in a later block.
     //
     // React-DOM's controlled `<select>` never writes `select.value` directly, on mount OR update --
     // both paths (`ReactDOMSelect`'s wrapper) set each `<option>`'s own `.selected` PROPERTY to match
@@ -684,18 +687,30 @@ describe("the queued-refresh effect's own refetch does not bypass the key/placeh
       },
     });
     try {
-      act(() => {
+      await act(async () => {
+        resolveStaleAlphaRefetch({ projects: [confirmedAlphaProject], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [confirmedAlphaProject.id] } } });
+        // 6 hops: comfortably inside the measured window (corrupted accept by ~4, B's self-heal not
+        // until ~9-10) -- see the comment above for how this was calibrated and why a fixed hop count,
+        // rather than a `flush()`/`microflush()` call boundary, is the only way to land inside it.
+        for (let hop = 0; hop < 6; hop += 1) await Promise.resolve();
         locationStore().replace("/?q=alpha");
         syncDashboardSearchDraftFromLocation("alpha", "admin-1");
       });
-      await flush();
     } finally {
       Object.defineProperty(HTMLOptionElement.prototype, "selected", originalSelectedDescriptor);
     }
 
     // Beta's priority (3) must never have been selected while displaying the alpha search, even
-    // fleetingly, on any commit before the self-heal lands.
+    // fleetingly, on any commit before the self-heal lands. A positive check too, not only a
+    // negative one: the probe must have observed the legitimate "2" selection somewhere in this same
+    // window -- otherwise a future change to how React writes controlled <select> selections could
+    // make the "never '3'" assertion pass vacuously, by the probe observing nothing at all.
+    expect(observedSelections).toContain("2");
     expect(observedSelections).not.toContain("3");
+
+    // Let anything still outstanding (a macrotask-scheduled react-query notification, if any) settle
+    // before the final read.
+    await flush();
 
     // The mocked Board only ever renders `projects[0]`'s priority; Beta's is 3, Alpha's own
     // (confirmed) priority is 2 -- the settled state, after any self-heal, must land on Alpha's own.
