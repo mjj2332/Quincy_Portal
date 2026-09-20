@@ -348,32 +348,110 @@ describe("guard: no `outline-none` paired with a `focus-visible:ring-*` class", 
 // file (unlike Detector 5 above, which is deliberately file-level for a different reason — see
 // that detector's own header). "Element" here means one `cn(…)` call's full balanced-paren body
 // (so a colour on a LATER string argument to the same `cn()`, or on a later branch of an
-// exhaustive ternary/`&&` chain within it, still counts — `gantt-view.tsx`'s tree/timeline
-// scrollbar rail splits `border-t` and `border-t-border` across two string args to ONE `cn()`,
-// same as Detector 5's splitter case), or one bare `className="…"` string literal on its own.
+// exhaustive ternary within it, still counts — `gantt-view.tsx`'s tree/timeline scrollbar rail
+// carries its bare token and its colour together in ONE always-present string, same "same
+// element" idea), or one bare `className="…"` string literal on its own.
+//
+// #219 PR A fix (dr-219a r6 MEDIUM #3b): "the same `cn()` call" is not by itself a strong enough
+// guarantee — a colour reachable only through `condition && "…"` is not GUARANTEED alongside a
+// bare border that sits in an unconditional string argument, because when `condition` is false
+// at runtime neither the colour NOR whatever else that same string carries ever renders, and
+// nothing forces the bare border to disappear along with it. `cn("border-t", condition &&
+// "border-t-border")` used to read as clean (the whole `cn()` body contains the text
+// `border-t-border` somewhere), but the FALSE branch renders exactly the bare `border-t` this
+// detector exists to catch. `argSegments`/`extractClassUnits` below track which `cn()` ARGUMENT
+// each token came from and whether that argument is GUARANTEED to render (a plain string/template
+// literal always does; an `EXPR && "…"` argument might not; an exhaustive `EXPR ? "A" : "B"`
+// ternary always renders exactly one of its two branches, so it counts as guaranteed only where
+// BOTH branches independently already carry a colour — otherwise picking the uncoloured branch is
+// exactly as unsafe as the `&&` case). A bare border INSIDE a non-guaranteed argument is still
+// safe if that SAME argument also carries its own colour (present together or absent together,
+// `condition && "border-t border-t-border"`).
 //
 // A bare `border-0` needs no colour (zero width paints nothing regardless of colour) and is
 // excluded. A colour is anything `border(-side)?-` followed by a real token/value: a 2+ letter
 // name (`primary`, `destructive`, `border`, `transparent`, …), a parenthesised CSS custom
 // property (`border-(--gantt-event-color)`), or a bracketed arbitrary value. Explicitly NOT a
 // colour: a single-letter SIDE code standing alone (`border-b` must not satisfy its own check —
-// "b" is not a colour), or a `border-style` keyword (`dashed`/`solid`/`dotted`/`double`/`hidden`/
-// `none` describe the LINE, not its paint).
+// "b" is not a colour), a `border-style` keyword (`dashed`/`solid`/`dotted`/`double`/`hidden`/
+// `none` describe the LINE, not its paint), or (dr-219a r6 MEDIUM #3a) a `border-layout` keyword
+// (`collapse`/`separate`, Tailwind's TABLE-layout utilities — `border-collapse`/`border-separate`
+// describe cell-border MERGING, not paint) — a bare `border` sharing an element with only
+// `border-collapse` alongside it used to read as "already coloured" the same way a real token
+// name (`primary`) does, because the old check was "2+ letters that aren't a style word," and
+// "collapse" is exactly that.
 const BARE_BORDER = /(?<![\w.-])border(-[xytrbsle])?(-\d+)?\b(?!-)/g;
 const BORDER_STYLE_WORDS = "solid|dashed|dotted|double|hidden|none";
+const BORDER_LAYOUT_WORDS = "collapse|separate";
 const BORDER_COLOR = new RegExp(
-  `(?<![\\w.-])border(-[xytrbsle])?-(?:(?!(?:${BORDER_STYLE_WORDS})\\b)[a-z]{2,}|\\(--[\\w-]+\\)|\\[[^\\]]+\\])`
+  `(?<![\\w.-])border(-[xytrbsle])?-(?:(?!(?:${BORDER_STYLE_WORDS}|${BORDER_LAYOUT_WORDS})\\b)[a-z]{2,}|\\(--[\\w-]+\\)|\\[[^\\]]+\\])`
 );
 
-/** Extracts one "element's" worth of class text per unit: every `className="…"` literal's
- * string content, and every `cn(…)` call's full balanced-paren body (handles nested parens from
- * arbitrary values like `border-(--gantt-event-color)` inside the call — they net to zero, so a
- * naive depth counter still lands on the real closing paren). */
-function extractClassChunks(text: string): string[] {
-  const chunks: string[] = [];
+type ClassSegment = { text: string; guaranteed: boolean };
+
+/** Splits a `cn(...)` call's BODY text into its top-level, comma-separated arguments — respecting
+ * nested parens/brackets/braces and quoted strings, so a comma inside an arbitrary value like
+ * `border-(--gantt-event-color)` (or inside a nested bracket) never splits one argument in two. */
+function splitTopLevelArgs(body: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]!;
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      args.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  args.push(body.slice(start));
+  return args.map((a) => a.trim()).filter(Boolean);
+}
+
+const STRING_LITERAL = /^(["'`])[\s\S]*\1$/;
+const AND_GATED = /&&\s*(["'`][\s\S]*?["'`])\s*$/;
+const TERNARY = /^[^?]*\?\s*(["'`][\s\S]*?["'`])\s*:\s*(["'`][\s\S]*?["'`])\s*$/;
+
+/** One `cn()` ARGUMENT's contribution, split into segments this detector can reason about — see
+ * the detector's own header comment (dr-219a r6 MEDIUM #3b) for why "guaranteed" matters. */
+function argSegments(arg: string): ClassSegment[] {
+  const ternary = TERNARY.exec(arg);
+  if (ternary) {
+    const [, branch1, branch2] = ternary;
+    const bothColored = BORDER_COLOR.test(branch1!) && BORDER_COLOR.test(branch2!);
+    return [
+      { text: branch1!, guaranteed: bothColored },
+      { text: branch2!, guaranteed: bothColored },
+    ];
+  }
+  const andGated = AND_GATED.exec(arg);
+  if (andGated) return [{ text: andGated[1]!, guaranteed: false }];
+  if (STRING_LITERAL.test(arg)) return [{ text: arg, guaranteed: true }];
+  // An unrecognised shape (a bare identifier, a nested cn() call, a computed expression …)
+  // carries no string-literal TEXT for BARE_BORDER/BORDER_COLOR to match anyway - treating it as
+  // guaranteed is harmless, since there is nothing here for either regex to find.
+  return [{ text: arg, guaranteed: true }];
+}
+
+/** Extracts one "element's" worth of class SEGMENTS per unit: every `className="…"` literal's
+ * string content (a single guaranteed segment - a plain string has no conditional branches), and
+ * every `cn(…)` call's arguments, each split into its own guarantee-tagged segment(s) — see
+ * `argSegments`. Handles nested parens from arbitrary values like `border-(--gantt-event-color)`
+ * inside the call (they net to zero, so a naive depth counter still lands on the real closing
+ * paren). */
+function extractClassUnits(text: string): ClassSegment[][] {
+  const units: ClassSegment[][] = [];
   const literalRe = /className="([^"]*)"/g;
   let m: RegExpExecArray | null;
-  while ((m = literalRe.exec(text))) chunks.push(m[1] ?? "");
+  while ((m = literalRe.exec(text))) units.push([{ text: m[1] ?? "", guaranteed: true }]);
   const cnStart = /\bcn\(/g;
   while ((m = cnStart.exec(text))) {
     let depth = 1;
@@ -384,18 +462,51 @@ function extractClassChunks(text: string): string[] {
       else if (text[i] === ")") depth--;
       i++;
     }
-    chunks.push(text.slice(start, i - 1));
+    units.push(splitTopLevelArgs(text.slice(start, i - 1)).flatMap(argSegments));
   }
-  return chunks;
+  return units;
+}
+
+/**
+ * Is a border colour GUARANTEED to render somewhere on this element, whichever runtime path is
+ * taken? Two ways to earn that:
+ *
+ *  1. Any GUARANTEED segment (an unconditional string/template literal, or a ternary whose two
+ *     branches both independently carry a colour) already carries one.
+ *  2. Two or more DIFFERENT `EXPR && "…"` conditional segments each independently carry a colour.
+ *     A single lone `&&` conditional cannot be assumed exhaustive - the real bug this fix closes
+ *     (dr-219a r6 MEDIUM #3b) is exactly that: ONE `condition && "border-t-border"` is not a
+ *     guarantee, because `condition` can be false with nothing to fall back to. But `gantt-
+ *     view.tsx`'s real drag-ghost DOES this safely with three: `!ghost.valid && "border-
+ *     destructive …"`, `ghost.valid && ghost.kind === "move" && "border-(--gantt-event-color)…"`,
+ *     `ghost.valid && ghost.kind !== "move" && "…border-(--gantt-event-color)…"` - `ghost.valid`
+ *     and `ghost.kind === "move"` between them cover every reachable state, so exactly one of the
+ *     three always fires. This guard cannot prove that exhaustiveness from syntax alone (it is not
+ *     a control-flow analyser), so it uses the same signal the file's own header already named
+ *     before this fix - "a later branch of an exhaustive … `&&` chain" - as a count-based proxy:
+ *     MULTIPLE independent conditional colours reads as a deliberate multi-branch dispatch, one
+ *     lone conditional colour does not.
+ */
+function guaranteedColorPresent(segments: ClassSegment[]): boolean {
+  if (segments.some((s) => s.guaranteed && BORDER_COLOR.test(s.text))) return true;
+  const conditionalColored = segments.filter((s) => !s.guaranteed && BORDER_COLOR.test(s.text));
+  return conditionalColored.length >= 2;
 }
 
 function findBareBorderClasses(files: Map<string, string>): Record<string, string[]> {
   const found: Record<string, string[]> = {};
   for (const [name, text] of files) {
     const offenders: string[] = [];
-    for (const chunk of extractClassChunks(text)) {
-      const bare = [...chunk.matchAll(BARE_BORDER)].map((mm) => mm[0]).filter((tok) => !/-0$/.test(tok));
-      if (bare.length > 0 && !BORDER_COLOR.test(chunk)) offenders.push(...bare);
+    for (const segments of extractClassUnits(text)) {
+      const colorGuaranteed = guaranteedColorPresent(segments);
+      for (const segment of segments) {
+        const bare = [...segment.text.matchAll(BARE_BORDER)].map((mm) => mm[0]).filter((tok) => !/-0$/.test(tok));
+        if (bare.length === 0) continue;
+        const safe = segment.guaranteed
+          ? colorGuaranteed
+          : colorGuaranteed || BORDER_COLOR.test(segment.text);
+        if (!safe) offenders.push(...bare);
+      }
     }
     if (offenders.length > 0) found[name] = offenders;
   }
@@ -406,17 +517,35 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
   it("self-test: the real detector fires on a bare border/border-b/border-t with no colour on the SAME element (same className, or a later cn() arg/branch), not when a colour, border-0, a style keyword, or an unrelated element's colour is present, and not on a comment naming the trap", () => {
     const planted = new Map([
       ["fixture-bare-literal.tsx", stripComments('className="flex h-8 border-b"')],
-      // NOT an offender: the colour lands on a LATER string argument to the SAME cn() call - the
-      // real `gantt-view.tsx` tree/timeline scrollbar rail does exactly this (border-t in one
-      // string, border-t-border in the next), same "same element, later arg" rule as Detector 5's
-      // splitter case.
+      // OFFENDER (dr-219a r6 MEDIUM #3b): the colour lands ONLY behind `condition && "…"` - when
+      // `condition` is false at runtime, NEITHER "bg-background" NOR "border-t-border" ever
+      // renders, leaving the unconditional "h-4 border-t" alone on the element: exactly the bare
+      // border this detector exists to catch. A `condition && "…"` segment is not the same
+      // guarantee as a second UNCONDITIONAL string argument to the same `cn()` call (Detector 5's
+      // splitter case, and the real `gantt-view.tsx` scrollbar rail's own single literal
+      // `"bg-background border-t-border … border-t"`, where the bare token and its colour sit
+      // together in ONE always-present string) - the colour there can never be absent when the
+      // border is present, because nothing gates it.
       [
-        "fixture-bare-paired-in-later-cn-arg.tsx",
+        "fixture-bare-only-in-conditional-arg.tsx",
         stripComments('cn("h-4 border-t", condition && "bg-background border-t-border")'),
+      ],
+      // NOT an offender: the SAME conditional segment carries its own bare token AND its own
+      // colour together - present together or absent together, so the false branch leaves no
+      // bare border behind either.
+      [
+        "fixture-bare-self-paired-in-conditional-arg.tsx",
+        stripComments('cn("h-4", condition && "border-t border-t-border")'),
       ],
       [
         "fixture-bare-exhaustive-branch.tsx",
         stripComments('cn("border border-dashed", valid ? "border-(--gantt-event-color)/50" : "border-destructive")'),
+      ],
+      // OFFENDER: an EXHAUSTIVE ternary only rescues the guaranteed bare border if EVERY branch
+      // carries a colour - here only one branch does, so the OTHER branch leaves it bare.
+      [
+        "fixture-ternary-only-one-branch-colored.tsx",
+        stripComments('cn("border border-dashed", valid ? "border-(--gantt-event-color)/50" : "opacity-50")'),
       ],
       ["fixture-colored-literal.tsx", stripComments('className="border border-(--gantt-event-color)/60"')],
       ["fixture-primary-paired.tsx", stripComments('className="border-primary border-2"')],
@@ -425,6 +554,15 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
       [
         "fixture-style-keyword-not-a-colour.tsx",
         stripComments('cn("border border-dashed")'),
+      ],
+      // OFFENDER (dr-219a r6 MEDIUM #3a): `border-collapse` is a Tailwind TABLE-LAYOUT utility
+      // (`border-collapse`/`border-separate`), not a colour - "collapse" happened to satisfy the
+      // old bare `[a-z]{2,}` colour test the same way a real token name (`primary`, `destructive`)
+      // does, so a bare `border` sharing an element with only `border-collapse` alongside it read
+      // as "already coloured" when it is not.
+      [
+        "fixture-table-layout-utility-is-not-a-colour.tsx",
+        stripComments('className="border border-collapse"'),
       ],
       [
         "fixture-unrelated-element-does-not-excuse-it.tsx",
@@ -439,7 +577,10 @@ describe("guard: no bare `border`-style class without an accompanying `border-<t
     ]);
     expect(findBareBorderClasses(planted)).toEqual({
       "fixture-bare-literal.tsx": ["border-b"],
+      "fixture-bare-only-in-conditional-arg.tsx": ["border-t"],
+      "fixture-ternary-only-one-branch-colored.tsx": ["border"],
       "fixture-style-keyword-not-a-colour.tsx": ["border"],
+      "fixture-table-layout-utility-is-not-a-colour.tsx": ["border"],
       "fixture-unrelated-element-does-not-excuse-it.tsx": ["border-b"],
     });
   });
