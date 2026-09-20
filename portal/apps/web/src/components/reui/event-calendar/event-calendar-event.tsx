@@ -41,7 +41,18 @@
  *     default palette, and not Quincy's monochrome brand. Nothing in this tree consumes it.
  *     `event-calendar-skin.guard.test.ts` keeps it that way.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 3 — each of the four resize grips is now gated on its OWN edge
+ *    via `gestures.canResizeEdge`, backing `CalendarEvent.resizableEdges`. `showResize` still
+ *    covers the whole-event vetoes.
+ * 2. 2026-09-21, #219 PR B, stage 3 — added `data-testid="event-calendar-resize-handle-<edge>"`
+ *    beside the vendor's own `data-slot` on those grips. Guard F (`test-seam.guard.test.ts`,
+ *    issue #92) forbids a DOM test from selecting a `data-slot` only a `components/reui/` file
+ *    authors, and there is no Quincy component composing this deep inside the vendor's render
+ *    tree to hang a hook on instead — so the testid goes here, exactly as PR A did in
+ *    `gantt-bar.tsx`. Minimal and additive; it is not a `data-slot`, so Guard F does not govern
+ *    it either way.
  */
 import {
   createContext,
@@ -420,12 +431,17 @@ function EventCalendarEvent<TData = unknown>({
       )}
     />
   )
+  // QUINCY (#219 PR B stage 3): each grip is gated on its OWN edge. `showResize` still covers the
+  // whole-event cases (interactions.resize, readOnly, resizable: false); `canResizeEdge` narrows
+  // it per edge so a locked edge draws no grip. The gesture entry refuses it as well — see
+  // `beginResize` in event-calendar-dnd.tsx.
   const resizeHandles = showResize && (
     <>
-      {timedBlock && segment.isStart && (
+      {timedBlock && segment.isStart && gestures.canResizeEdge(segment, "start") && (
         <span
           data-slot="event-calendar-resize-handle"
           data-edge="start"
+          data-testid="event-calendar-resize-handle-start"
           className={cn(
             "absolute inset-x-1 top-0 flex h-1.5 cursor-ns-resize items-center justify-center opacity-0 transition-opacity duration-150 group-hover/ec-event:opacity-100",
             viewConfig.classNames?.resizeHandle
@@ -435,10 +451,11 @@ function EventCalendarEvent<TData = unknown>({
           {grip}
         </span>
       )}
-      {timedBlock && segment.isEnd && (
+      {timedBlock && segment.isEnd && gestures.canResizeEdge(segment, "end") && (
         <span
           data-slot="event-calendar-resize-handle"
           data-edge="end"
+          data-testid="event-calendar-resize-handle-end"
           className={cn(
             "absolute inset-x-1 bottom-0 flex h-1.5 cursor-ns-resize items-center justify-center opacity-0 transition-opacity duration-150 group-hover/ec-event:opacity-100",
             viewConfig.classNames?.resizeHandle
@@ -448,10 +465,11 @@ function EventCalendarEvent<TData = unknown>({
           {grip}
         </span>
       )}
-      {(horizontalBar || (isBar && inTimeGrid)) && segment.isStart && (
+      {(horizontalBar || (isBar && inTimeGrid)) && segment.isStart && gestures.canResizeEdge(segment, "start") && (
         <span
           data-slot="event-calendar-resize-handle"
           data-edge="start"
+          data-testid="event-calendar-resize-handle-start"
           className={cn(
             "absolute inset-y-0 start-0 flex w-2 cursor-ew-resize items-center justify-center opacity-0 transition-opacity duration-150 group-hover/ec-event:opacity-100",
             viewConfig.classNames?.resizeHandle
@@ -461,10 +479,11 @@ function EventCalendarEvent<TData = unknown>({
           {grip}
         </span>
       )}
-      {(horizontalBar || (isBar && inTimeGrid)) && segment.isEnd && (
+      {(horizontalBar || (isBar && inTimeGrid)) && segment.isEnd && gestures.canResizeEdge(segment, "end") && (
         <span
           data-slot="event-calendar-resize-handle"
           data-edge="end"
+          data-testid="event-calendar-resize-handle-end"
           className={cn(
             "absolute inset-y-0 end-0 flex w-2 cursor-ew-resize items-center justify-center opacity-0 transition-opacity duration-150 group-hover/ec-event:opacity-100",
             viewConfig.classNames?.resizeHandle

@@ -48,7 +48,16 @@
  *   - `computeProposal` is a CLOSURE inside `beginGesture`, not a module-level function, so it
  *     cannot be called or reused from outside even in principle.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 3 — ADDED `canResizeEdge(segment, edge)` and enforced it in
+ *    `beginResize`, backing `CalendarEvent.resizableEdges`. `canResize` keeps its original
+ *    meaning and signature so the public gestures object is unchanged; `canResizeEdge` is an
+ *    additional key on it. A locked edge is refused at the gesture entry, not merely ungripped,
+ *    so calling `gestures.beginResize` directly cannot bypass the lock — and the refusal still
+ *    broadcasts through `onDragBlocked` like any other. Cover:
+ *    `event-calendar-resize-edges.dom.test.tsx`, which fails on 4 of its 8 cases if the per-edge
+ *    check is removed.
  */
 import { useCallback, useEffect, useMemo } from "react"
 import {
@@ -1038,6 +1047,19 @@ function useEventCalendarGestures<TData = unknown>() {
     [instance]
   )
 
+  /**
+   * QUINCY (#219 PR B stage 3): per-edge gate layered over `canResize`. `canResize` keeps its
+   * original meaning ("is resizing available for this event at all") so the public gestures
+   * object's shape is unchanged; this narrows it to one edge.
+   */
+  const canResizeEdge = useCallback(
+    (segment: EventCalendarSegment<TData>, edge: "start" | "end") => {
+      if (!canResize(segment)) return false
+      return segment.occurrence.event.resizableEdges?.[edge] !== false
+    },
+    [canResize]
+  )
+
   const beginMove = useCallback(
     (e: React.PointerEvent, segment: EventCalendarSegment<TData>) => {
       if (e.button !== 0) return
@@ -1065,7 +1087,11 @@ function useEventCalendarGestures<TData = unknown>() {
       edge: "start" | "end"
     ) => {
       if (e.button !== 0) return
-      if (!canResize(segment)) {
+      // QUINCY (#219 PR B stage 3): per-edge, not just per-event. A locked edge is refused here
+      // as well as ungripped in event-calendar-event.tsx, so calling this directly cannot bypass
+      // the lock. Refusal still broadcasts through onDragBlocked, exactly as a whole-event
+      // refusal does — a locked edge is a real refusal the consumer may want to explain.
+      if (!canResizeEdge(segment, edge)) {
         e.stopPropagation()
         beginBlockedGesture(instance, e.nativeEvent, segment, "resize")
         return
@@ -1081,7 +1107,7 @@ function useEventCalendarGestures<TData = unknown>() {
         ui,
       })
     },
-    [instance, canResize, ui]
+    [instance, canResizeEdge, ui]
   )
 
   const beginCreate = useCallback(
@@ -1101,7 +1127,7 @@ function useEventCalendarGestures<TData = unknown>() {
     [instance, ui]
   )
 
-  return { beginMove, beginResize, beginCreate, canDrag, canResize }
+  return { beginMove, beginResize, beginCreate, canDrag, canResize, canResizeEdge }
 }
 
 export {

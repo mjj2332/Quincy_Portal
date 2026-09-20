@@ -41,7 +41,14 @@
  *     `data-past` is derived from the clock alone. Past is NOT done — a Quincy consumer supplies
  *     completion through the event's generic `data` payload, never by reading `data-past`.
  *
- * Quincy edits since vendoring: none yet.
+ * Quincy edits since vendoring:
+ *
+ * 1. 2026-09-21, #219 PR B, stage 3 — ADDED `CalendarEvent.resizableEdges?: { start?, end? }`.
+ *    Upstream resize is all-or-nothing (`resizable: false` kills both edges); Quincy needs the
+ *    locked-start shape the Gantt already has (#215: the shoot date is fixed, only the deadline
+ *    drags), spelled identically on both trees. Additive and optional — an omitted object behaves
+ *    exactly as before. Enforced in two places, see `event-calendar-dnd.tsx` entry 1 and
+ *    `event-calendar-event.tsx` entry 1.
  */
 type EventCalendarEventId = string
 
@@ -102,6 +109,18 @@ interface CalendarEvent<TData = unknown> {
   /** Per-event overrides; defaults come from interactions.drag / .resize. */
   draggable?: boolean
   resizable?: boolean
+  /**
+   * QUINCY ADDITION (#219 PR B stage 3). Per-EDGE resize lock. Upstream is all-or-nothing:
+   * `resizable: false` disables both edges and there is no way to say "this end moves, that one
+   * does not". Quincy needs the locked-start shape the Gantt already has (#215: a shoot date is
+   * fixed, only the deadline drags), so the same contract is spelled the same way here.
+   *
+   * An omitted edge, an omitted object, or `true` means that edge resizes. `false` locks it: no
+   * grip is drawn AND `beginResize` refuses the gesture, because hiding a handle is not
+   * enforcement — a consumer calling `gestures.beginResize` directly must be refused too.
+   * `readOnly` and `resizable: false` still override both edges.
+   */
+  resizableEdges?: { start?: boolean; end?: boolean }
   /** Packing prominence; feeds getEventPriority ordering. */
   priority?: number
   /** Verbatim stacking override; replaces the computed 10 + column. */
