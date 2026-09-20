@@ -59,6 +59,15 @@
  *    neighbour was invisible to it). It now queries the UNION of the event's own current span and
  *    the proposed range — `gantt-dnd.tsx`'s pointer gesture engine received the identical fix.
  *
+ * #219 PR A fix (Sol review, sol1 item 6): `GanttInternals` gained `claimKeyboardFocus`/
+ * `consumeKeyboardFocus`/`clearKeyboardFocus`, replacing `gantt-bar.tsx`'s module-level
+ * `pendingKeyboardFocusEventId` — a variable shared by EVERY `<Gantt>` instance in the process,
+ * so two instances rendering the same event id could steal focus from each other. The token now
+ * lives in THIS store's own closure (`createGanttStore`), keyed on event id AND the exact target
+ * occurrence key (not id alone), and self-clears if a commit unrelated to the claim (one this
+ * store's own `notify()` count shows happened AFTER the claim) passes without anything consuming
+ * it — see `notify()`'s own comment for the mechanics.
+ *
  * #219 PR A fix (Sol review, sol1 item 7): `applyProposedUpdate` (used by both `nudgeEvent` here and
  * `gantt-dnd.tsx`'s pointer release) now returns the ACCEPTED `{ start, end, allDay }` instead of a
  * bare `boolean`, and `nudgeEvent`'s result carries those same fields. `gantt-bar.tsx`'s success
@@ -372,6 +381,33 @@ interface GanttInternals<TData = unknown> {
   didAnchorSlide(): boolean
   /** View reports the visible-center instant (or null) for the nav title. */
   setViewportCenter(date: Date | null): void
+  /**
+   * Quincy addition (#219 PR A, Sol review, sol1 item 6): the keyboard focus hand-off's pending
+   * token, scoped to THIS Gantt instance (was a module-level variable shared by every `<Gantt>` in
+   * the process - two instances rendering the SAME event id could steal focus from each other).
+   * See `gantt-bar.tsx`'s header for why a move/resize-start nudge needs a hand-off at all.
+   */
+  claimKeyboardFocus(token: GanttPendingKeyboardFocus): void
+  /**
+   * True (and clears the token) iff it matches BOTH `eventId` and `key` - a mount for a different
+   * event, or the right event under the WRONG key, never consumes (and never clears) a token that
+   * is not its own.
+   */
+  consumeKeyboardFocus(eventId: GanttBarId, key: string): boolean
+  /**
+   * Unconditional clear - the start of the NEXT nudge and a pointer interaction both call this, so
+   * a token nothing ever consumed (the target never mounted, or a controlled consumer dropped/
+   * delayed the change) cannot later steal focus from an unrelated mount. Also self-clears
+   * automatically: it survives at most one store commit after the one that claimed it (see
+   * `notify()`) before being dropped as stale on its own.
+   */
+  clearKeyboardFocus(): void
+}
+
+/** See `GanttInternals.claimKeyboardFocus`. */
+interface GanttPendingKeyboardFocus {
+  eventId: GanttBarId
+  targetKey: string
 }
 
 interface GanttInstance<TData = unknown> {
@@ -478,11 +514,29 @@ function createGanttStore<TData>(
   /** Whether the last anchor change came from an extendRange window slide. */
   let lastAnchorChangeWasSlide = false
 
+  // Quincy addition (#219 PR A, Sol review, sol1 item 6): this instance's keyboard focus hand-off
+  // token - see `GanttInternals.claimKeyboardFocus`'s doc comment. `notifyCount` gives it a bounded
+  // lifetime with no timers: `claimKeyboardFocus` is always called AFTER the nudge's OWN commit has
+  // already gone through `notify()` once (the bar calls it once `nudgeEvent` has returned), so the
+  // token records the notifyCount AT claim time; if a genuinely LATER commit (one unrelated to this
+  // nudge) passes without anything consuming the token, it is dropped at the START of that notify -
+  // "clear it if the next committed render does not produce the target."
+  let pendingKeyboardFocus: GanttPendingKeyboardFocus | null = null
+  let pendingKeyboardFocusClaimedAtNotifyCount = 0
+  let notifyCount = 0
+
   const invalidate = () => {
     snapshot = null
   }
 
   const notify = () => {
+    notifyCount++
+    if (
+      pendingKeyboardFocus &&
+      notifyCount > pendingKeyboardFocusClaimedAtNotifyCount + 1
+    ) {
+      pendingKeyboardFocus = null
+    }
     listeners.forEach((listener) => listener())
     emitRangeIfChanged()
   }
@@ -983,6 +1037,24 @@ function createGanttStore<TData>(
     },
     didAnchorSlide() {
       return lastAnchorChangeWasSlide
+    },
+    claimKeyboardFocus(token) {
+      pendingKeyboardFocus = token
+      pendingKeyboardFocusClaimedAtNotifyCount = notifyCount
+    },
+    consumeKeyboardFocus(eventId, key) {
+      if (
+        pendingKeyboardFocus &&
+        pendingKeyboardFocus.eventId === eventId &&
+        pendingKeyboardFocus.targetKey === key
+      ) {
+        pendingKeyboardFocus = null
+        return true
+      }
+      return false
+    },
+    clearKeyboardFocus() {
+      pendingKeyboardFocus = null
     },
   }
 

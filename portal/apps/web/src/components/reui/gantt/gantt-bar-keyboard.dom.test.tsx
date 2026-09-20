@@ -15,10 +15,18 @@
  * matched via a substring of the event title) via a plain title-text query — role/name, not a
  * vendored `data-slot`.
  */
-import { act, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import {
+  act,
+  StrictMode,
+  useEffect,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Gantt, useGantt, useGanttSelector } from "@/components/reui/gantt/gantt";
+import { Gantt, useGantt, useGanttSelector, type GanttInternals } from "@/components/reui/gantt/gantt";
 import { GanttBar } from "@/components/reui/gantt/gantt-bar";
 import type { GanttEvent, GanttOccurrence, GanttSegment } from "@/components/reui/gantt/gantt-types";
 
@@ -76,10 +84,13 @@ const END = new Date("2026-03-02T10:00:00.000Z"); // 1 hour
 function KeyedBarHost({
   eventId,
   onKeyDown,
+  barRef,
 }: {
   eventId: string;
   /** Forwarded straight to `<GanttBar>` to exercise its consumer `onKeyDown` composition. */
   onKeyDown?: (e: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  /** Forwarded straight to `<GanttBar>` to exercise its consumer `ref` composition (sol1 item 6). */
+  barRef?: Ref<HTMLButtonElement>;
 }) {
   const instance = useGantt();
   const occurrence = useGanttSelector(
@@ -96,7 +107,7 @@ function KeyedBarHost({
   };
   return (
     <div key={occurrence.key}>
-      <GanttBar segment={segment} onKeyDown={onKeyDown} />
+      <GanttBar segment={segment} onKeyDown={onKeyDown} ref={barRef} />
     </div>
   );
 }
@@ -112,30 +123,40 @@ function announcerText(): string | null {
 }
 
 describe("GanttBar keyboard move/resize (#219 stage 2)", () => {
-  it("Alt+ArrowRight moves the bar later, keeps focus on it, and announces the new range", async () => {
-    const onEventsChange = vi.fn();
-    const event: GanttEvent = { id: "kb-move", title: "Keyboard Move", start: START, end: END };
-    await render(
-      <Gantt events={[event]} onEventsChange={onEventsChange} date={START} timeZone="UTC">
-        <KeyedBarHost eventId="kb-move" />
-      </Gantt>,
-    );
+  it("Alt+ArrowRight moves the bar later, disconnects the OLD node, and hands focus to its replacement (sol1 item 6 - rewrite of the vacuous remount test)", async () => {
+    // #219 PR A fix (Sol review, sol1 item 6): the ORIGINAL version of this test passed
+    // `onEventsChange={vi.fn()}` with NOTHING feeding the result back into `events` - since
+    // `events` was still a defined (controlled) prop, gantt.tsx's setField never touched internal
+    // state either, so `occurrence.key` never actually changed and no remount ever happened. Every
+    // assertion below still passed anyway (the SAME node, never moved, trivially satisfies
+    // "a BUTTON containing the title" and "not document.body") - a vacuous pass. A REAL stateful
+    // controlled wrapper is required to prove the remount - and therefore the focus hand-off this
+    // fix concerns - actually happens.
+    function ControlledHost() {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "kb-move", title: "Keyboard Move", start: START, end: END },
+      ]);
+      return (
+        <Gantt events={events} onEventsChange={setEvents} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="kb-move" />
+        </Gantt>
+      );
+    }
+    await render(<ControlledHost />);
     const bar = findBarByTitle("Keyboard Move");
     await focusBar(bar);
     expect(document.activeElement).toBe(bar);
 
     await keydown(bar, { key: "ArrowRight", altKey: true });
 
-    expect(onEventsChange).toHaveBeenCalledTimes(1);
-    const [updated] = onEventsChange.mock.calls[0]![0] as GanttEvent[];
-    expect(updated!.start.getTime()).toBe(START.getTime() + 15 * 60000);
-    expect(updated!.end.getTime()).toBe(END.getTime() + 15 * 60000);
-
-    // The bar was remounted under a new occurrence key (its start changed) - the OLD `bar` node
-    // is gone; focus must be on the bar that replaced it, not dropped to <body>.
+    // The OLD node is genuinely gone - proof a remount actually happened, not just that some
+    // BUTTON somewhere still contains the title.
+    expect(bar.isConnected).toBe(false);
     expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).not.toBe(bar);
     expect(document.activeElement?.tagName).toBe("BUTTON");
     expect(document.activeElement?.textContent).toContain("Keyboard Move");
+    expect((document.activeElement as HTMLButtonElement).isConnected).toBe(true);
 
     expect(announcerText()).toContain("Keyboard Move");
   });
@@ -400,5 +421,180 @@ describe("GanttBar keyboard move/resize (#219 stage 2)", () => {
     expect(onEventsChange).toHaveBeenCalledTimes(1);
     expect(nativeEvent.defaultPrevented).toBe(true);
     expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  // #219 PR A fix (Sol review, sol1 item 6): the focus hand-off used to live in a MODULE-level
+  // `pendingKeyboardFocusEventId` shared by every <Gantt> instance in the process. The four tests
+  // below exercise the per-instance token that replaced it.
+
+  it("two Gantt instances with the SAME event id never steal focus from each other", async () => {
+    const eventA: GanttEvent = { id: "shared-id", title: "Instance A", start: START, end: END };
+    const eventB: GanttEvent = { id: "shared-id", title: "Instance B", start: START, end: END };
+    const internalsA: { current: GanttInternals | null } = { current: null };
+
+    function InstanceA() {
+      const instance = useGantt();
+      useEffect(() => {
+        internalsA.current = instance.internals;
+      });
+      return <KeyedBarHost eventId="shared-id" />;
+    }
+
+    const host2 = document.createElement("div");
+    document.body.appendChild(host2);
+    const root2 = createRoot(host2);
+    await act(async () => {
+      root!.render(
+        <Gantt events={[eventA]} date={START} timeZone="UTC">
+          <InstanceA />
+        </Gantt>,
+      );
+      root2.render(
+        <Gantt events={[eventB]} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="shared-id" />
+        </Gantt>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Claim a token on INSTANCE A's internals for the shared event id + occurrence key - as if A's
+    // own bar had just been nudged - while instance B's bar (same event id, identical occurrence
+    // key, since both events are identical) is about to remount for an UNRELATED reason.
+    const key = `shared-id::${START.toISOString()}`;
+    await act(async () => {
+      internalsA.current!.claimKeyboardFocus({ eventId: "shared-id", targetKey: key });
+    });
+
+    // Force instance B's bar to remount (a fresh key on the SAME occurrence) - under the old
+    // module-level flag this would have stolen focus from whatever B's user was doing, purely
+    // because the event id string happened to match A's.
+    await act(async () => {
+      root2.render(<div key="remount-b" />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root2.render(
+        <Gantt events={[eventB]} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="shared-id" />
+        </Gantt>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const barB = [...host2.querySelectorAll("button")].find((el) => el.textContent?.includes("Instance B"));
+    expect(barB).toBeTruthy();
+    expect(document.activeElement).not.toBe(barB);
+
+    await act(async () => {
+      root2.unmount();
+      await Promise.resolve();
+    });
+    host2.remove();
+  });
+
+  it("a stale claimed token (nothing ever mounts to consume it) does not steal focus from a LATER, unrelated mount of a bar for the same event id + key", async () => {
+    const event: GanttEvent = { id: "stale-ev", title: "Stale", start: START, end: END };
+    const internalsHolder: { current: GanttInternals | null } = { current: null };
+    const setMountedHolder: { current: ((v: boolean) => void) | null } = { current: null };
+
+    function Host({ mounted }: { mounted: boolean }) {
+      const instance = useGantt();
+      useEffect(() => {
+        internalsHolder.current = instance.internals;
+      });
+      if (!mounted) return null;
+      return <KeyedBarHost eventId="stale-ev" />;
+    }
+
+    function Wrapper() {
+      const [mounted, setMounted] = useState(false);
+      useEffect(() => {
+        setMountedHolder.current = setMounted;
+      }, []);
+      return (
+        <Gantt events={[event]} date={START} timeZone="UTC">
+          <Host mounted={mounted} />
+        </Gantt>
+      );
+    }
+
+    await render(<Wrapper />);
+    const internals = internalsHolder.current!;
+    const key = `stale-ev::${START.toISOString()}`;
+
+    // Claim a token as if a nudge had just fired for this event - but NOTHING is mounted to
+    // consume it (Host is not mounted yet).
+    await act(async () => {
+      internals.claimKeyboardFocus({ eventId: "stale-ev", targetKey: key });
+    });
+    // Two unrelated store commits pass without anything consuming the token - it must go stale
+    // ("clear it if the next committed render does not produce the target").
+    await act(async () => {
+      internals.setViewportCenter(new Date(START.getTime() + 1000));
+    });
+    await act(async () => {
+      internals.setViewportCenter(null);
+    });
+
+    // NOW mount the bar for the very first time - same event id AND the same occurrence key - a
+    // later, unrelated mount that happens to match.
+    await act(async () => {
+      setMountedHolder.current!(true);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const bar = findBarByTitle("Stale");
+    expect(document.activeElement).not.toBe(bar);
+  });
+
+  it("StrictMode's double-invoked effects still land focus on the replacement bar exactly once, with no error", async () => {
+    function ControlledHost() {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "kb-strict", title: "Strict Move", start: START, end: END },
+      ]);
+      return (
+        <StrictMode>
+          <Gantt events={events} onEventsChange={setEvents} date={START} timeZone="UTC">
+            <KeyedBarHost eventId="kb-strict" />
+          </Gantt>
+        </StrictMode>
+      );
+    }
+    await render(<ControlledHost />);
+    const bar = findBarByTitle("Strict Move");
+    await focusBar(bar);
+    await keydown(bar, { key: "ArrowRight", altKey: true });
+    expect(bar.isConnected).toBe(false);
+    expect(document.activeElement?.tagName).toBe("BUTTON");
+    expect(document.activeElement?.textContent).toContain("Strict Move");
+    expect((document.activeElement as HTMLButtonElement).isConnected).toBe(true);
+  });
+
+  it("a consumer-supplied ref on <GanttBar> still receives the DOM node (Base UI's mergeProps does not merge `ref` - it silently drops the internal one otherwise)", async () => {
+    const consumerRef = { current: null as HTMLButtonElement | null };
+    function ControlledHost() {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "kb-ref", title: "Ref Target", start: START, end: END },
+      ]);
+      return (
+        <Gantt events={events} onEventsChange={setEvents} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="kb-ref" barRef={consumerRef} />
+        </Gantt>
+      );
+    }
+    await render(<ControlledHost />);
+    const bar = findBarByTitle("Ref Target");
+    expect(consumerRef.current).toBe(bar);
+
+    // The internal hand-off must ALSO still work with a consumer ref attached - proof the two are
+    // merged, not that one silently wins over the other.
+    await focusBar(bar);
+    await keydown(bar, { key: "ArrowRight", altKey: true });
+    expect(bar.isConnected).toBe(false);
+    expect(consumerRef.current).not.toBeNull();
+    expect(consumerRef.current!.isConnected).toBe(true);
+    expect(document.activeElement).toBe(consumerRef.current);
   });
 });

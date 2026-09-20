@@ -67,6 +67,24 @@
  * `preventDefault`/`nudgeEvent` — see the `onKeyDown` handler's own comment at that gate for why
  * `nudgeEvent` alone cannot substitute for it (it has no notion of which edge THIS segment owns).
  *
+ * #219 PR A fix (Sol review, sol1 item 6), three parts:
+ * 1. The focus hand-off token moved to `instance.internals.claimKeyboardFocus`/
+ *    `consumeKeyboardFocus`/`clearKeyboardFocus` — see the module-level doc comment above (where
+ *    `pendingKeyboardFocusEventId` used to live) and `gantt.tsx`'s own header for the full
+ *    mechanics. `onKeyDown` clears any stale claim before processing a NEW chord; both
+ *    `onPointerDown` handlers (the bar's own move, and each resize grip's) clear it too — a pointer
+ *    interaction abandons whatever a previous keyboard nudge was waiting on.
+ * 2. `ref: consumerRef` is now destructured OUT of the incoming props (see that destructure's own
+ *    comment) and merged with `barRef` via `useRender`'s own `ref` parameter, instead of living in
+ *    `defaultProps.ref` where `mergeProps(defaultProps, props)` would silently drop it the moment a
+ *    consumer's JSX included a `ref` prop key at all (mergeProps does not treat `ref` specially -
+ *    rightmost wins, same as any other plain key).
+ * 3. The mount effect now checks the occurrence KEY too, not just the event id — closing a gap the
+ *    module-level version never had to worry about (it only ever compared ids): the same event id
+ *    rendered by two SEPARATE `<Gantt>` instances is now structurally impossible to confuse anyway
+ *    (fix 1's per-instance store), but a DIFFERENT occurrence of the SAME event under the same
+ *    instance is a real case the key check still guards.
+ *
  * #219 PR A fix (Sol review, sol1 item 7): the success announcement above reads
  * `result.start`/`result.end`/`result.allDay` — the range `nudgeEvent` itself just accepted —
  * instead of a follow-up `instance.api.getEvent(event.id)` call. That re-fetch read STALE data
@@ -192,13 +210,15 @@ function buildGanttBarKeyShortcuts(
 }
 
 /**
- * The event id whose bar should reclaim focus on its NEXT mount - see this file's header for why
- * a move / resize-start nudge needs this (the occurrence key it commits under changes, so React
- * remounts the bar and drops focus with no help from React). A single module-level slot is enough:
- * only one bar can be focused, and the flag is consumed (set back to `null`) the instant a mount
- * claims it.
+ * Quincy fix (#219 PR A, Sol review, sol1 item 6): the keyboard focus hand-off's pending token USED
+ * TO live in a module-level `pendingKeyboardFocusEventId` here - a single slot shared by EVERY
+ * `<Gantt>` instance in the process, so two instances rendering the same event id could steal focus
+ * from each other, and it held only the event id (not the exact target key), so an unrelated later
+ * mount for that id could consume a claim that was never meant for it. It now lives on the owning
+ * `<Gantt>` instance's own store (`gantt.tsx`'s `GanttInternals.claimKeyboardFocus`/
+ * `consumeKeyboardFocus`/`clearKeyboardFocus` - see that file's header for the storage/staleness
+ * mechanics), keyed on event id AND occurrence key together.
  */
-let pendingKeyboardFocusEventId: string | null = null
 
 /**
  * Effective Tailwind palette presets for bar colors; every entry works on
@@ -268,6 +288,13 @@ function GanttBar<TData = unknown>({
   children,
   labelOutside,
   rowTitle: rowTitleProp,
+  // Quincy fix (#219 PR A, Sol review, sol1 item 6): pulled out explicitly rather than left inside
+  // `...props` - `@base-ui/react/merge-props`'s `mergeProps` does NOT merge `ref` (rightmost prop
+  // wins like any other plain key), so `mergeProps(defaultProps, props)` below would silently
+  // overwrite this component's own `barRef` with a consumer-supplied one (or with `undefined`, if
+  // the consumer's JSX includes a `ref` prop key at all, even unset). Merged explicitly via
+  // `useRender`'s own `ref` parameter instead, which DOES merge (see the `useRender(...)` call).
+  ref: consumerRef,
   ...props
 }: GanttBarProps<TData>) {
   const instance = useGantt<TData>()
@@ -277,17 +304,17 @@ function GanttBar<TData = unknown>({
   const occurrence = segment.occurrence
   const event = occurrence.event
 
-  // Reclaims focus after a move / resize-start nudge remounts this bar under
-  // a new occurrence key - see this file's header for why. A resize-end
-  // nudge never sets `pendingKeyboardFocusEventId` (its key is stable, so
-  // this effect has nothing to do), and any OTHER bar's mount ignores an id
-  // that is not its own.
+  // Reclaims focus after a move / resize-start nudge remounts this bar under a new occurrence key
+  // - see this file's header for why. A resize-end nudge never claims a token (its key is stable,
+  // so this effect has nothing to do); any OTHER bar's mount (wrong event id, or the right id under
+  // a different key) leaves a real pending claim untouched - `consumeKeyboardFocus` only clears on
+  // an exact match.
   const barRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    if (pendingKeyboardFocusEventId !== event.id) return
-    pendingKeyboardFocusEventId = null
-    barRef.current?.focus({ preventScroll: true })
-  }, [event.id])
+    if (instance.internals.consumeKeyboardFocus(event.id, occurrence.key)) {
+      barRef.current?.focus({ preventScroll: true })
+    }
+  }, [instance, event.id, occurrence.key])
 
   const isSelected = useGanttSelector<TData, boolean>(
     (state) => state.selection.eventKeys.includes(occurrence.key),
@@ -431,7 +458,12 @@ function GanttBar<TData = unknown>({
           // indicator reads as "resize this end", not a centered pill.
           // pointer-coarse keeps it visible on touch, where hover never fires
           className="absolute inset-y-0 start-0.5 flex w-2 cursor-ew-resize items-center justify-start opacity-0 group-hover/gantt-bar-group:opacity-100 pointer-coarse:opacity-100"
-          onPointerDown={(e) => gestures.beginResize(e, segment, "start")}
+          onPointerDown={(e) => {
+            // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
+            // explicit clear triggers for a stale keyboard-focus claim.
+            instance.internals.clearKeyboardFocus()
+            gestures.beginResize(e, segment, "start")
+          }}
         >
           <span
             aria-hidden
@@ -448,7 +480,10 @@ function GanttBar<TData = unknown>({
           // indicator reads as "resize this end", not a centered pill.
           // pointer-coarse keeps it visible on touch, where hover never fires
           className="absolute inset-y-0 end-0.5 flex w-2 cursor-ew-resize items-center justify-end opacity-0 group-hover/gantt-bar-group:opacity-100 pointer-coarse:opacity-100"
-          onPointerDown={(e) => gestures.beginResize(e, segment, "end")}
+          onPointerDown={(e) => {
+            instance.internals.clearKeyboardFocus()
+            gestures.beginResize(e, segment, "end")
+          }}
         >
           <span
             aria-hidden
@@ -461,7 +496,8 @@ function GanttBar<TData = unknown>({
 
   const defaultProps = {
     type: "button" as const,
-    ref: barRef,
+    // ref is intentionally absent here - see the `ref: consumerRef` destructure above. It is
+    // merged with `barRef` via `useRender`'s own `ref` parameter below instead.
     "data-slot": "gantt-bar",
     "data-milestone": milestone || undefined,
     "data-all-day": occurrence.allDay || undefined,
@@ -491,6 +527,9 @@ function GanttBar<TData = unknown>({
     } as CSSProperties,
     onPointerDown: (e: React.PointerEvent) => {
       e.stopPropagation()
+      // Quincy fix (#219 PR A, Sol review, sol1 item 6): a pointer interaction is one of the
+      // explicit clear triggers for a stale keyboard-focus claim.
+      instance.internals.clearKeyboardFocus()
       gestures.beginMove(e, segment)
     },
     onClick: (e: React.MouseEvent) => {
@@ -519,6 +558,11 @@ function GanttBar<TData = unknown>({
       if (chord === "move" && !canMove) return
       if (chord === "resize-start" && !canResizeStart) return
       if (chord === "resize-end" && !canResizeEnd) return
+      // Quincy fix (#219 PR A, Sol review, sol1 item 6): clear any STALE claim from an earlier
+      // nudge before processing this one - "the next nudge" is one of the explicit clear triggers
+      // (see `gantt.tsx`'s `GanttInternals.clearKeyboardFocus`), independent of whether THIS nudge
+      // goes on to claim a new one below.
+      instance.internals.clearKeyboardFocus()
       // preventDefault only for a chord that is actually ours - Alt+Arrow
       // etc. otherwise falls through to whatever else is listening
       e.preventDefault()
@@ -536,11 +580,15 @@ function GanttBar<TData = unknown>({
         direction,
         viewConfig.scheduleMode
       )
-      // A move or resize-start commit changes this occurrence's key (see
-      // this file's header) - claim the hand-off BEFORE the remount so the
-      // next bar mounted for this event id reclaims focus.
+      // A move or resize-start commit changes this occurrence's key (see this file's header) -
+      // claim the hand-off with the EXACT target key (event id + the accepted new start - see
+      // `gantt-lib.tsx`'s `buildEventIndex` for the `${eventId}::${start.toISOString()}` format)
+      // so the next bar mounted for this event id reclaims focus, and ONLY that bar.
       if (result.applied && chord !== "resize-end") {
-        pendingKeyboardFocusEventId = event.id
+        instance.internals.claimKeyboardFocus({
+          eventId: event.id,
+          targetKey: `${event.id}::${result.start!.toISOString()}`,
+        })
       }
       const ganttRoot = e.currentTarget.closest<HTMLElement>(
         "[data-slot=gantt]"
@@ -646,6 +694,18 @@ function GanttBar<TData = unknown>({
     defaultTagName: "button",
     render,
     props: mergeProps<"button">(defaultProps, props),
+    // Quincy fix (#219 PR A, Sol review, sol1 item 6): `useRender`'s own `ref` PARAMETER (distinct
+    // from `props.ref`, which `mergeProps` above never sets - see the `ref: consumerRef` destructure
+    // higher up) is merged internally (via `@base-ui/utils/useMergedRefs`) with any `ref` on `render`
+    // itself, so passing an array here composes `barRef` (this component's own hand-off target) with
+    // whatever the CONSUMER passed as `<GanttBar ref={...}>` - both receive the node. Normalized to
+    // a flat array because `consumerRef` is itself typed to accept an array (mirroring `useRender`'s
+    // own `ref` prop), which `Array.isArray` narrows before spreading.
+    ref: consumerRef == null
+      ? [barRef]
+      : Array.isArray(consumerRef)
+        ? [barRef, ...consumerRef]
+        : [barRef, consumerRef],
   })
 
   // Consumer-owned right-click menu (headless): the primitive only wires the
