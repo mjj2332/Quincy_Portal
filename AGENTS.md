@@ -20,10 +20,12 @@ both, each blind to the other's answer, synthesized by the session before build 
 not a build-routing change. Keep your own context lean: fork or spawn rather than pasting full
 transcripts back and forth.
 
-Sol  owns diff review; Luna owns testing, including any Chrome/browser pass — Luna can
-drive a real authenticated Chrome unsandboxed when a task needs it. Full roster, invocation
-mechanics options live in
-`docs/subagents/Subagent-Orchestration.md`.
+Sol owns diff review. Luna owns testing, including the mechanical Chrome/browser pass — Luna can
+drive a real authenticated Chrome unsandboxed when a task needs it. **Every UI change gets a
+two-stage browser pass:** Luna measures, then **design-reviewer** (Opus) judges the screenshots
+against the prototype and audits Luna's table, blind to her verdicts until it has looked. The
+session verifies both reports against the screenshots. Full roster, the pass contract and
+invocation mechanics live in `docs/subagents/Subagent-Orchestration.md`.
 
 ## One codebase
 
@@ -133,6 +135,10 @@ Default canonical labels (needs-triage, needs-info, ready-for-agent, ready-for-h
 ### Domain docs
 
 Multi-context: root `CONTEXT-MAP.md` + one `CONTEXT.md` per workspace package under `portal/`. See `docs/agents/domain.md`.
+
+A UI browser pass is stage 1 of two: a Claude design reviewer reads its output next. Save every
+screenshot as a file in one folder, named per viewport and open state, and give every PASS/FAIL row
+its measurement and screenshot. See `docs/subagents/Subagent-Orchestration.md` §2a.
 
 ### TypeSafe verdicts
 

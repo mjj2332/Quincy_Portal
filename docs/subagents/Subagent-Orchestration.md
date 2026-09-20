@@ -15,8 +15,9 @@ mechanics of spawning them.
 | **The session** | runs in Claude Code| whichever Claude model the user started on: Sonnet, Opus, Fable, any | Orchestrates: plans, decomposes, delegates, synthesizes, at its own discretion |
 | **fast-worker** | `Agent` tool, `subagent_type: fast-worker` (`~/.claude/agents/fast-worker.md`) | Claude Sonnet 5 | **Default builder** — mechanical, well-specified work: boilerplate, tests, formatting, straightforward edits. Stops and reports back on anything ambiguous or design-level rather than guessing |
 | **deep-reasoner** | `Agent` tool, `subagent_type: deep-reasoner` (`~/.claude/agents/deep-reasoner.md`) | Claude Opus 5 | Reasoning-heavy phases: architecture decisions, hard debugging, algorithm design, tradeoff analysis. Returns a concise, actionable conclusion |
+| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5 | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots against the prototype as a designer, audits Luna's PASS/FAIL table. Read-only |
 | **Sol** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-sol`, always high effort | Diff reviewer |
-| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-luna`, always xhigh effort | Tester — QA execution, diagnosis, authoring/fixing test code, and any Chrome/browser pass |
+| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-luna`, always xhigh effort | Tester — QA execution, diagnosis, authoring/fixing test code, and the mechanical stage of every Chrome/browser pass ([§2a](#2a-the-browser-pass-two-stages)) |
 | **Codex (peer)** | `/codex:rescue --background` | shared Codex runtime | A second, independent-model-family opinion on high-stakes decisions — a peer worked in parallel with Opus/deep-reasoner, not a reviewer of their output |
 | **Terra** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-terra` | No default role — available as an on-request builder when the user asks for a Codex-driven build by name |
 | **Astra** | `codex exec` — [§3](codex-cli.md) | `gpt-6-astra` | No default role — available on request; pass `-m gpt-6-astra` explicitly, the account default doesn't reliably select it |
@@ -56,6 +57,26 @@ system prompts.
    never a gap to close by hand.
 
    **Say which session you used.** Name the tab or port in the final report, every time.
+
+## 2a. The browser pass: two stages
+
+Every UI change runs both stages, in order. Measurement and judgement are different skills, so
+they are different agents, and the second is blind to the first's verdicts until it has looked.
+
+1. **Luna measures** (Codex, `chrome-devtools-mcp`, [codex-cli.md](codex-cli.md)): each viewport
+   the ticket names, each open state (popover, menu, sheet), hit areas, gaps, overflow, tab order.
+   Her report contract: screenshots as files in one folder named per viewport and state, and a
+   PASS/FAIL table where every row carries the measurement and the screenshot that shows it.
+2. **design-reviewer judges** (Opus, `Agent` tool): given the prototype, Luna's screenshot
+   folder, her report and the diff range, it looks at every screenshot before reading her table,
+   writes designer's notes per screenshot (hierarchy, spacing, typography, colour, wrap, states,
+   fit with the rest of the Portal), maps each deviation to a token or a literal, then marks every
+   Luna row *agree*/*disagree* and lists what her table missed. It returns Ship / Fix first, ranked
+   defects, disagreements with evidence, and suggestions kept apart from defects.
+
+The session then gates both (§5): open the screenshots, confirm every disagreement one way or the
+other, and treat an unmeasured PASS as a FAIL. Defects go back through the fix loop and a fresh
+stage 1; suggestions go to the owner.
 
 ## 3. CLI mechanics
 
@@ -105,6 +126,9 @@ here directly:
 
 - **Read the security- and correctness-critical diff yourself** — auth checks, author-only guards,
   money, migrations, deletion.
+
+- **Open the browser-pass screenshots yourself** (§2a) — every Luna/design-reviewer disagreement
+  is settled by the image, and a PASS with no measurement beside it is a FAIL.
 
 - If an agent is spawned and a danger-mode task touched production, confirm it was genuinely passive —
   nothing created, edited, or deleted. If a YOLO-mode task touched production, confirm every

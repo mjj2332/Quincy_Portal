@@ -94,6 +94,11 @@ Chrome-use plugin when the task needs the owner's real logged-in browser and no 
 Computer-use (desktop, non-browser) is unaffected: native remains the only path. Tell the selected
 model the purpose, target environment, authentication state, and evidence to collect.
 
+A UI browser pass is stage 1 of two (`Subagent-Orchestration.md` §2a): the design-reviewer reads
+Luna's output next, so every brief states the report contract — screenshots saved as files in one
+folder, named per viewport and open state, and a PASS/FAIL table whose every row carries the
+measurement and the screenshot that shows it.
+
 The capabilities do not change task authorization. Follow `Subagent-Orchestration.md` for
 testing restrictions, and restate the applicable passive-only, local-dev, impersonation,
 authentication, and disclosure requirements in every browser/computer prompt. Every session is
