@@ -139,8 +139,10 @@ Multi-context: root `CONTEXT-MAP.md` + one `CONTEXT.md` per workspace package un
 A development tool for agents, never part of `portal/`. Get a typed **verdict** from TypeSafe for
 any narrow judgment over text you already hold whose outcomes you can name in advance — triaging
 review findings, sorting failing tests, routing a spec, grading or checking a batch of anything.
-Worth most on a pile, and always advice you verify. Questions, thresholds, key handling and what
-may be sent: `docs/agents/typesafe.md`.
+Worth most on a pile, and always advice you verify. The owner exports a working key as
+`TYPESAFE_API_KEY`, so the API is ready to call — read it from the environment at request time and
+keep the value itself out of files, logs and output. Questions, thresholds and what may be sent:
+`docs/agents/typesafe.md`.
 
 ## Codex only
 

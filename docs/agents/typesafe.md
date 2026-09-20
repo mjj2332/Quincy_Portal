@@ -58,8 +58,11 @@ Design a question for the case in front of you rather than bending it into one o
   `https://docs.typesafe.ai/llms.txt` (append `.md` to any page path for Markdown).
 - Ask every independent question about one piece of state in a single request; they run in
   parallel and cannot see each other's answers.
-- The key is `TYPESAFE_API_KEY` in the shell environment. Read it as `process.env` / `$TYPESAFE_API_KEY`
-  inside the request; it stays out of files, logs, and output.
+- **The key is already exported.** The owner sets `TYPESAFE_API_KEY` in the shell environment, and
+  every agent and subprocess launched from that shell inherits it — no setup step, no prompting for
+  it. Read it as `process.env.TYPESAFE_API_KEY` / `$TYPESAFE_API_KEY` inside the request itself, and
+  keep the value out of files, logs, output and commits. A missing variable means the shell did not
+  inherit it: say so rather than asking for the key.
 - Scripts and results live in the session scratchpad.
 
 ## What may be sent
