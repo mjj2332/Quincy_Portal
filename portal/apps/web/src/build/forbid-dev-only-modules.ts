@@ -59,8 +59,16 @@ import type { Plugin } from "vite";
  * - `src/components/reui/gantt/` — vendored, unwired ReUI Gantt primitives (#219 stage 1). Removed
  *   from this list by the slice that adopts the Gantt into the Dashboard (#220), which is exactly
  *   the point at which a real production consumer starts importing it on purpose.
+ * - `src/components/reui/event-calendar/` — vendored, unwired ReUI event-calendar primitives
+ *   (#219 PR B). Same deal, same removal condition: it comes off this list in the slice that gives
+ *   the calendar a real production consumer, NOT when the tree merely looks finished. Note that
+ *   FullCalendar remains the production calendar until then, so nothing is waiting on this entry.
  */
-export const RESTRICTED_MODULE_PREFIXES = ["src/harness/", "src/components/reui/gantt/"] as const;
+export const RESTRICTED_MODULE_PREFIXES = [
+  "src/harness/",
+  "src/components/reui/gantt/",
+  "src/components/reui/event-calendar/",
+] as const;
 
 /**
  * Strips the parts of a Rollup/Rolldown module id that are not part of the on-disk path: a leading
