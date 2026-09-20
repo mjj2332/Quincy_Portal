@@ -20,6 +20,22 @@
  * cancel/commit branch's own message (the same stale-overwrite race the file's header already
  * documents for blur).
  *
+ * Round 3 fix (Sol's round-3 review, HIGH #3): `killAdjustSessionIfOrphaned` used to compare
+ * `stillPresent !== session.occurrence.event` — OBJECT IDENTITY, not value. A controlled consumer
+ * produces a fresh `events` array (and fresh event objects) on every render as a matter of course,
+ * so a harmless clone — or a title/colour-only edit — orphaned the session even though nothing
+ * about the SCHEDULE changed. This file used to bless that as correct (the "controlled: replacing
+ * the events prop..." test below, now rewritten). The fix compares the tracked fields
+ * (`start`/`end`/`allDay`/`resourceId`/`recurrence`), snapshotted from `session.occurrence.event`
+ * at `beginAdjust` (never updated by a retarget — see `GanttAdjustState`'s own doc comment), against
+ * the CURRENT event with the same id: the session dies only when one of those actually differs, the
+ * event is gone, or the date/scale changed. The two "edge locks are checked" tests in
+ * `gantt-adjust-internals.dom.test.tsx` used to pass VACUOUSLY under the old identity check (their
+ * own `api.updateEvent(event.id, { draggable: false })` replaced the object reference and killed
+ * the session before `commitAdjust` ever reached the lock re-validation they claim to exercise) —
+ * both now assert Adjust is still active immediately before Enter, proving the lock check itself is
+ * what refuses the commit.
+ *
  * Store-level tests below use `gantt-adjust-internals.dom.test.tsx`'s own `setup`/`occurrenceOf`
  * pattern (uncontrolled `defaultEvents`, `internals`/`getState`/`api` grabbed via a probe). Bar-
  * level tests use `gantt-bar-adjust-keyboard.dom.test.tsx`'s own `KeyedBarHost` pattern (mirrors
@@ -273,7 +289,18 @@ describe("Adjust session dies with its owner — store level (Sol re-review roun
     expect(getState().adjust).toBeNull();
   });
 
-  it("controlled: replacing the events prop from the parent mid-session clears the session (store level, via a real controlled re-render)", async () => {
+  it("round 3, Sol HIGH #3: controlled — a harmless clone from the parent (same start/end/allDay/resourceId, different title) does NOT clear the session", async () => {
+    // This corrects a WRONG expectation this test used to bless (round 2): it asserted a
+    // controlled clone that only changed `title` cleared the session, because
+    // killAdjustSessionIfOrphaned used to compare OBJECT IDENTITY
+    // (`stillPresent !== session.occurrence.event`) — any new object reference for the same id
+    // orphaned the session, even one carrying IDENTICAL start/end/allDay/resourceId. That is wrong:
+    // a controlled consumer produces a fresh `events` array (and fresh event objects) on every
+    // render as a matter of course (`{...event, title: "..."}`, a Redux/Zustand selector, …) — none
+    // of that should cancel an in-progress keyboard Adjust session. The fix compares the tracked
+    // FIELDS (start/end/allDay/resourceId/recurrence), snapshotted from `session.occurrence.event`
+    // at `beginAdjust` — see `gantt.tsx`'s `killAdjustSessionIfOrphaned` for the real check, and the
+    // next test below for the genuine-change case this one is deliberately NOT testing.
     const event: GanttEvent = { id: "ctrl-own-1", title: "Ctrl Owned", start: START, end: END };
     const internalsRef: { current: GanttInternals | null } = { current: null };
     const getStateRef: {
@@ -295,10 +322,49 @@ describe("Adjust session dies with its owner — store level (Sol re-review roun
       internals.stepAdjust(1, "snap");
     });
     expect(getState().adjust).not.toBeNull();
+    const dragBeforeClone = getState().drag;
 
-    // The PARENT re-renders with a new events array carrying a replaced object for this id — the
-    // controlled-mode path (`setOptions`), never `setField`.
-    const replaced: GanttEvent = { ...event, title: "Ctrl Owned (edited)" };
+    // The PARENT re-renders with a new events array carrying a NEW object reference for this id —
+    // the controlled-mode path (`setOptions`), never `setField` — but every tracked field is
+    // unchanged.
+    const clone: GanttEvent = { ...event, title: "Ctrl Owned (edited)" };
+    await render(<ControlledHost events={[clone]} />);
+
+    const state = getState();
+    expect(state.adjust).not.toBeNull();
+    expect(state.adjust!.eventId).toBe(event.id);
+    expect(state.drag).toBe(dragBeforeClone);
+  });
+
+  it("controlled: a GENUINE timing/resource change from the parent still clears the session (store level, via a real controlled re-render)", async () => {
+    const event: GanttEvent = { id: "ctrl-own-2", title: "Ctrl Owned 2", start: START, end: END, resourceId: "r1" };
+    const internalsRef: { current: GanttInternals | null } = { current: null };
+    const getStateRef: {
+      current: (() => ReturnType<ReturnType<typeof useGantt>["getState"]>) | null;
+    } = { current: null };
+    function ControlledHost({ events }: { events: GanttEvent[] }) {
+      return (
+        <Gantt events={events} date={START} timeZone="UTC">
+          <InternalsProbe internalsRef={internalsRef} getStateRef={getStateRef} apiRef={{ current: null }} />
+        </Gantt>
+      );
+    }
+    await render(<ControlledHost events={[event]} />);
+    const internals = internalsRef.current!;
+    const getState = getStateRef.current!;
+    const occurrence = occurrenceOf(event);
+    await act(async () => {
+      internals.beginAdjust(event.id, occurrence, "move");
+      internals.stepAdjust(1, "snap");
+    });
+    expect(getState().adjust).not.toBeNull();
+
+    // A REAL timing change this time — the controlled-mode path (`setOptions`) must still catch it.
+    const replaced: GanttEvent = {
+      ...event,
+      start: new Date(START.getTime() + 3600000),
+      end: new Date(END.getTime() + 3600000),
+    };
     await render(<ControlledHost events={[replaced]} />);
 
     const state = getState();

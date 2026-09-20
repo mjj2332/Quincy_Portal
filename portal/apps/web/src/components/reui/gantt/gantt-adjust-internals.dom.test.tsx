@@ -466,6 +466,12 @@ describe("GanttInternals Adjust-mode methods (#219 PR A)", () => {
       await act(async () => {
         api.updateEvent(event.id, { draggable: false });
       });
+      // Round 3, Sol re-review: `draggable` is not one of the fields `killAdjustSessionIfOrphaned`
+      // snapshots (start/end/allDay/resourceId/recurrence — see gantt.tsx), so this patch must NOT
+      // have orphaned the session itself. Asserted explicitly so this test proves the LOCK
+      // re-validation below is what refuses the commit, not an identity-based teardown firing first
+      // (which is exactly what made this test pass vacuously before the round 3 fix).
+      expect(getState().adjust).not.toBeNull();
       const callsBeforeCommit = onEventsChange.mock.calls.length;
       let result: ReturnType<GanttInternals["commitAdjust"]>;
       await act(async () => {
@@ -492,6 +498,9 @@ describe("GanttInternals Adjust-mode methods (#219 PR A)", () => {
       await act(async () => {
         api.updateEvent(event.id, { draggable: false });
       });
+      // Round 3, Sol re-review: same reasoning as the test above - `draggable` is untracked by
+      // killAdjustSessionIfOrphaned, so the session must still be alive going into commitAdjust.
+      expect(getState().adjust).not.toBeNull();
       const callsBeforeCommit = onEventsChange.mock.calls.length;
       let result: ReturnType<GanttInternals["commitAdjust"]>;
       await act(async () => {

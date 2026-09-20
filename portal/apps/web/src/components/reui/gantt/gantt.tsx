@@ -633,6 +633,19 @@ function createGanttStore<TData>(
    * start the session was keyed on). `drag` (the session's keyboard-owned ghost preview) dies
    * with it, atomically, so a render never shows one without the other. Returns whether a session
    * was actually torn down, so callers only pay for an extra `notify()` when one was.
+   *
+   * Quincy fix (#219 PR A round 3, Sol HIGH #3): "replaced with a new object under the same id"
+   * used to be OBJECT IDENTITY (`stillPresent !== session.occurrence.event`) - any fresh object
+   * reference orphaned the session, even one carrying identical scheduling fields. A controlled
+   * consumer produces a fresh `events` array (and fresh event objects) on every render as a matter
+   * of course, so a harmless clone or a title/colour-only edit used to cancel an in-progress
+   * session for no reason. This now compares the fields that actually describe WHEN/WHERE/WHETHER
+   * the event is scheduled - `start`/`end`/`allDay`/`resourceId`/`recurrence` - snapshotted from
+   * `session.occurrence.event` AT `beginAdjust` (never updated by a retarget, see
+   * `GanttAdjustState`'s own doc comment) against the CURRENT event under the same id. The session
+   * dies only when the event is gone, one of those fields actually differs, or the date/scale
+   * changed - a controlled clone or a metadata-only edit (title, colour, `draggable`, …) leaves it
+   * alone.
    */
   const killAdjustSessionIfOrphaned = (
     nextEvents: GanttEvent<TData>[],
@@ -641,8 +654,15 @@ function createGanttStore<TData>(
     const session = internal.adjust
     if (!session) return false
     const stillPresent = nextEvents.find((event) => event.id === session.eventId)
-    const orphaned =
-      !stillPresent || stillPresent !== session.occurrence.event || dateOrScaleChanged
+    const owner = session.occurrence.event
+    const scheduleDrifted =
+      !stillPresent ||
+      stillPresent.start.getTime() !== owner.start.getTime() ||
+      stillPresent.end.getTime() !== owner.end.getTime() ||
+      (stillPresent.allDay ?? false) !== (owner.allDay ?? false) ||
+      stillPresent.resourceId !== owner.resourceId ||
+      !!stillPresent.recurrence !== !!owner.recurrence
+    const orphaned = scheduleDrifted || dateOrScaleChanged
     if (!orphaned) return false
     internal.adjust = null
     internal.drag = null
