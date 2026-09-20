@@ -1368,12 +1368,22 @@ function createGanttStore<TData>(
         )
         if (options.date !== undefined) {
           // controlled anchor: propose the slide; nothing changes until the
-          // parent adopts it
+          // parent adopts it - and THAT re-render lands through `setOptions`,
+          // which already calls `killAdjustSessionIfOrphaned` on a date change
+          // (see below), so no separate call is needed on this branch.
           settings.onDateChange?.(next)
           return false
         }
         internal.date = next
         lastAnchorChangeWasSlide = true
+        // Quincy fix (#219 PR A round 3, Sol HIGH #4a): this uncontrolled anchor slide never flows
+        // through `setOptions` (that only runs on a controlled prop change) or `setField` (this
+        // branch assigns `internal.date` directly, bypassing it) - it was a teardown bypass
+        // identical in kind to the ones `setField`/`setOptions` already close for a `goTo`/scale
+        // change. A PURE window grow (the `if (grow)` branch above) deliberately does NOT call this
+        // - it never moves the anchor, so an active session's occurrence/preview mapping is still
+        // valid.
+        killAdjustSessionIfOrphaned(internal.events, true)
         settings.onDateChange?.(next)
       }
       invalidate()
@@ -2561,6 +2571,25 @@ function Gantt<TData = unknown>({
   useEffect(() => {
     if (apiRef) apiRef.current = instance.api
   }, [apiRef, instance])
+
+  // Quincy fix (#219 PR A round 3, Sol HIGH #4b): a hoisted `calendar` (`useGanttState` called
+  // outside this component, adopted via the `calendar` prop above) outlives THIS component's own
+  // mount - unmounting this <Gantt> root does not touch the instance's store at all. Left alone,
+  // an active Adjust session's `internal.adjust`/`internal.drag` would survive the gap untouched,
+  // and a later remount's `GanttBar` would read them straight off `getState()` and resurrect
+  // `role="application"`/`data-adjusting`/the ghost with no Space ever pressed on the new mount -
+  // the same resurrection-on-remount hazard `killAdjustSessionIfOrphaned` already closes for a
+  // stale event object reappearing under the same id, just via the component lifecycle instead of
+  // a store mutation. `cancelAdjust()` is the existing no-announcement "discard and clear" path
+  // (Escape/blur/pointer-outside already use it) and is a safe no-op when no session is active, so
+  // this needs no session-aware guard of its own; it also runs (harmlessly) for a NON-hoisted
+  // instance, whose whole store is discarded with this render regardless.
+  useEffect(() => {
+    return () => {
+      instance.internals.cancelAdjust()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance])
 
   const defaultProps = {
     "data-slot": "gantt",

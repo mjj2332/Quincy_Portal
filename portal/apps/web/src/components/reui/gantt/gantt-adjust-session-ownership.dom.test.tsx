@@ -45,7 +45,14 @@
 import { act, useEffect, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Gantt, useGantt, useGanttSelector, type GanttApi, type GanttInternals } from "@/components/reui/gantt/gantt";
+import {
+  Gantt,
+  useGantt,
+  useGanttSelector,
+  useGanttState,
+  type GanttApi,
+  type GanttInternals,
+} from "@/components/reui/gantt/gantt";
 import { GanttBar } from "@/components/reui/gantt/gantt-bar";
 import type { GanttEvent, GanttOccurrence, GanttProposedUpdate, GanttSegment } from "@/components/reui/gantt/gantt-types";
 
@@ -219,6 +226,48 @@ describe("Adjust session dies with its owner — store level (Sol re-review roun
     await act(async () => {
       api.goTo(new Date(START.getTime() + 24 * 3600000));
     });
+    const state = getState();
+    expect(state.adjust).toBeNull();
+    expect(state.drag).toBeNull();
+  });
+
+  it("round 3, Sol HIGH #4a: extendRange sliding the anchor clears the session; growing the loaded window (anchor unchanged) does NOT", async () => {
+    // `internals.extendRange` grows `rangeWindow` by whole periods until `maxRangeWindow` (here 0,
+    // so the cap floors to 1 - see gantt.tsx's `Math.max(1, settings.maxRangeWindow ?? ...)`); once
+    // at capacity, it SLIDES the anchor date one period instead. Only the slide changes the anchor
+    // - see gantt.tsx's own `extendRange` for why a pure window grow must leave an active session
+    // alone (its occurrence/preview mapping is untouched).
+    const event: GanttEvent = { id: "own-extend", title: "Owned Extend", start: START, end: END };
+    const internalsRef: { current: GanttInternals | null } = { current: null };
+    const getStateRef: {
+      current: (() => ReturnType<ReturnType<typeof useGantt>["getState"]>) | null;
+    } = { current: null };
+    await render(
+      <Gantt defaultEvents={[event]} defaultDate={START} timeZone="UTC" maxRangeWindow={0}>
+        <InternalsProbe internalsRef={internalsRef} getStateRef={getStateRef} apiRef={{ current: null }} />
+      </Gantt>,
+    );
+    const internals = internalsRef.current!;
+    const getState = getStateRef.current!;
+    const occurrence = occurrenceOf(event);
+    await act(async () => {
+      internals.beginAdjust(event.id, occurrence, "move");
+      internals.stepAdjust(1, "snap");
+    });
+    expect(getState().adjust).not.toBeNull();
+
+    // First call GROWS the window (0 -> 1, the floor-1 cap) - the anchor does not move.
+    await act(async () => {
+      internals.extendRange("after");
+    });
+    expect(internals.didAnchorSlide()).toBe(false);
+    expect(getState().adjust).not.toBeNull();
+
+    // Second call is AT capacity - the anchor SLIDES instead, which must kill the session.
+    await act(async () => {
+      internals.extendRange("after");
+    });
+    expect(internals.didAnchorSlide()).toBe(true);
     const state = getState();
     expect(state.adjust).toBeNull();
     expect(state.drag).toBeNull();
@@ -565,5 +614,49 @@ describe("Adjust session dies with its owner — DOM level (role restore + annou
     // from the new owner-death effect reacting to the SAME true -> false `adjusting` transition.
     expect(announcerText(host)).toContain("Adjusted to");
     expect(announcerText(host)).not.toBe("Adjustment cancelled.");
+  });
+
+  it("round 3, Sol HIGH #4b: a hoisted calendar does not retain Adjust across <Gantt> unmount/remount", async () => {
+    // `useGanttState` called in a PARENT that outlives `<Gantt calendar={...}>` - the "hoisted"
+    // pattern `gantt.tsx`'s own `GanttProps.calendar` doc comment describes. `HoistedHost` itself
+    // never unmounts across the three `render()` calls below (only its `mounted` prop changes, and
+    // it is the SAME component instance both times), so React preserves the `useGanttState` store
+    // untouched - the store, not the `<Gantt>` root, is what "hoisted" means here.
+    const event: GanttEvent = { id: "hoisted-1", title: "Hoisted", start: START, end: END };
+    function HoistedHost({ mounted }: { mounted: boolean }) {
+      const calendar = useGanttState<unknown>({
+        defaultEvents: [event],
+        defaultDate: START,
+        timeZone: "UTC",
+      });
+      if (!mounted) return null;
+      return (
+        <Gantt calendar={calendar}>
+          <KeyedBarHost eventId={event.id} />
+        </Gantt>
+      );
+    }
+    await render(<HoistedHost mounted={true} />);
+    const bar = findBar(host, "Hoisted")!;
+    await focusBar(bar);
+    await keydown(bar, { key: " " });
+    await keydown(bar, { key: "ArrowRight" });
+    expect(bar.getAttribute("role")).toBe("application");
+    expect(bar.getAttribute("data-adjusting")).not.toBeNull();
+
+    // Unmount the <Gantt> ROOT — before the fix, nothing ever cleared the hoisted instance's
+    // `internal.adjust`/`internal.drag`, so it survived this gap untouched.
+    await render(<HoistedHost mounted={false} />);
+    expect(host.querySelector("button")).toBeNull();
+
+    // Remount with the SAME hoisted `calendar` instance (same store, same occurrence key). Before
+    // the fix, the stale session would resurrect `role="application"`/`data-adjusting`/the ghost
+    // on this fresh bar node with no Space ever pressed on this mount.
+    await render(<HoistedHost mounted={true} />);
+    const revived = findBar(host, "Hoisted")!;
+    expect(revived).toBeTruthy();
+    expect(revived.getAttribute("role")).not.toBe("application");
+    expect(revived.getAttribute("data-adjusting")).toBeNull();
+    expect(host.querySelector('[data-testid="gantt-drag-ghost"]')).toBeNull();
   });
 });
