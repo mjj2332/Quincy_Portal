@@ -44,6 +44,13 @@
  *    both live in `gantt-lib.tsx` / `gantt.tsx` for the same cycle-avoidance reason as (1); noted
  *    here because a reader following "where is the keyboard equivalent of `beginGesture`" would
  *    otherwise expect it in this file and not find it.
+ *
+ * #219 stage 3 (PR A) edit, style-only: dropped `shadow-lg` from the move-clone's two shapes
+ * (`createMoveOverlay`'s milestone diamond and bar rectangle) — the Portal has no elevation
+ * convention (`styles/tokens/spacing.css`: "almost no drop shadow"), and both shapes already carry
+ * their own hairline in an inline style set two lines below the removed class (`diamond.style.border`
+ * / `barEl.style.outline`), so dropping the shadow loses no edge definition. The resize-status chip
+ * a few lines down never carried a shadow and is unchanged.
  */
 
 import { useCallback, useEffect } from "react"
@@ -363,14 +370,14 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       barEl.style.width = `${barWidth}px`
       barEl.style.height = "100%"
       const diamond = document.createElement("span")
-      diamond.className = "rotate-45 rounded-[2px] shadow-lg"
+      diamond.className = "rotate-45 rounded-[2px]"
       diamond.style.width = "10px"
       diamond.style.height = "10px"
       diamond.style.background = `color-mix(in oklab, ${color} 80%, var(--color-background))`
       diamond.style.border = `1px solid ${color}`
       barEl.appendChild(diamond)
     } else {
-      barEl.className = "shrink-0 rounded-sm shadow-lg"
+      barEl.className = "shrink-0 rounded-sm"
       barEl.style.width = `${barWidth}px`
       barEl.style.height = "100%"
       barEl.style.background = `color-mix(in oklab, ${color} 22%, var(--color-background))`

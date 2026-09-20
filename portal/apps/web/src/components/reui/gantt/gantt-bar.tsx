@@ -61,6 +61,18 @@
  *    for the other two actions.) Recording the nudged event's id here and refocusing the matching
  *    bar in a `useEffect` on its NEXT mount is the smallest fix that stays inside this file, in the
  *    same spirit as `gantt-dnd.tsx`'s own module-level `lastGestureEndedAt` flag.
+ *
+ * #219 stage 3 (PR A) edit, additive: `data-completed` bars (progress === 100) get a reduced-
+ * emphasis fill — the outer shell's tint drops from `/20` (`/30` on hover) to `/10` (`/15` on
+ * hover), and the progress-fill child's own tint drops from `/40` (border `/65`) to `/20` (border
+ * `/35`) via `group-data-completed/gantt-bar-group:`. The label's `text-foreground` is left alone
+ * on purpose: lowering a translucent accent fill's own alpha can only move the composited
+ * background CLOSER to the light canvas underneath, which can only RAISE contrast against a fixed
+ * dark label — so this dimming is safe by construction, whereas swapping the label itself to
+ * `text-foreground-secondary` was checked and rejected (worst case, a dark stage colour like
+ * oxblood at the OLD pre-dim /20+/40 compounded fill measured ~3.2:1 for that lighter role, under
+ * the 4.5:1 floor — `text-foreground` measured ~7.2:1 in the same worst case). `data-past` is
+ * untouched: an overdue unfinished task must not read as de-emphasised.
  */
 
 import {
@@ -516,6 +528,10 @@ function GanttBar<TData = unknown>({
       // the unfilled remainder has to be legible on its own - at /12 a bar
       // with a progress fill read as a floating segment with no basement
       "bg-(--gantt-event-color)/20 hover:bg-(--gantt-event-color)/30",
+      // done: reduced emphasis, never reduced legibility - the label stays
+      // text-foreground (see this file's header), only the tint itself
+      // fades, which can only raise contrast against that fixed dark label
+      "data-completed:bg-(--gantt-event-color)/10 data-completed:hover:bg-(--gantt-event-color)/15",
       // move: hide the original (the smooth cursor clone represents it)
       "data-[drag-kind=move]:opacity-0",
       // resize: keep the original event exactly, just fade it to a soft
@@ -554,7 +570,13 @@ function GanttBar<TData = unknown>({
           <span
             aria-hidden
             data-slot="gantt-bar-progress"
-            className="pointer-events-none absolute inset-y-0 start-0 border-e border-(--gantt-event-color)/65 bg-(--gantt-event-color)/40 data-full:border-e-0"
+            className={cn(
+              "pointer-events-none absolute inset-y-0 start-0 border-e border-(--gantt-event-color)/65 bg-(--gantt-event-color)/40 data-full:border-e-0",
+              // done: same reduced-emphasis fill as the shell above, read off
+              // the ancestor's data-completed (this span carries no attribute
+              // of its own) via the shell's named group
+              "group-data-completed/gantt-bar-group:border-(--gantt-event-color)/35 group-data-completed/gantt-bar-group:bg-(--gantt-event-color)/20"
+            )}
             data-full={progress === 100 || undefined}
             style={{ width: `${progress}%` }}
           />

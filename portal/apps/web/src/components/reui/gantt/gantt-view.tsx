@@ -35,6 +35,14 @@
  * makes that a build failure rather than a bug report, and the dev-only harness at
  * `src/harness/reui-scheduling/` is the only thing that renders it, with local fixture data.
  *
+ * #219 stage 3 (PR A) edit, style-only: dropped `shadow-sm` from the floating zoom control
+ * (`data-slot="gantt-zoom"`) and `shadow-xs` from the offscreen edge chip
+ * (`data-slot="gantt-offscreen-chip"`) — the Portal has no elevation convention
+ * (`styles/tokens/spacing.css`: "almost no drop shadow"). Both already carry `border` unconditionally,
+ * so the hairline survives; neither's radius changed (the zoom control's `rounded-md` and the chip's
+ * `rounded-full` both already resolve through Quincy's own unlayered radius tokens — see
+ * `styles/tokens/reui.css` — so neither was a `rounded-lg|xl` violation of the square-card rule).
+ *
  * This file: the largest of the 9 (~4.4k lines) — row virtualization, the resource tree, row
  * expand/collapse, the timeline grid, and the scroll-synced header. Six `IconPlaceholder`
  * occurrences (two `PlusIcon`) resolved by `add`, matching each placeholder's own `lucide=` prop:
@@ -2776,7 +2784,7 @@ function GanttView({
                  pass: the control glides inward while a chip occupies its
                  band, because the chips' position IS their meaning and this
                  corner spot is merely a habit */
-              className="bg-background absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-md border shadow-sm transition-[inset-inline-end] duration-200"
+              className="bg-background absolute end-[calc(0.75rem+var(--gantt-zoom-shift,0px))] bottom-5 z-40 flex flex-col rounded-md border transition-[inset-inline-end] duration-200"
             >
               {/* aria-disabled instead of disabled: the not-allowed cursor
                   must still show at the zoom limits */}
@@ -4427,7 +4435,7 @@ function GanttOffscreenChips({
                   data-slot="gantt-offscreen-chip"
                   data-side={chip.side}
                   aria-label={settings.i18n.labels.jumpToBar(chip.label)}
-                  className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto absolute flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border shadow-xs"
+                  className="bg-background text-muted-foreground hover:text-foreground pointer-events-auto absolute flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border"
                   style={{
                     top: chip.top,
                     ...(chip.side === "start"
