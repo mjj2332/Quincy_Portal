@@ -136,10 +136,11 @@ Multi-context: root `CONTEXT-MAP.md` + one `CONTEXT.md` per workspace package un
 
 ### TypeSafe verdicts
 
-A development tool for agents, never part of `portal/`. Get a typed **verdict** from TypeSafe when
-triaging review findings (honest mistake vs. sabotage-only vs. test gap), triaging a failing or
-flaky test (missing wait vs. wrong final state), or routing a spec to fast-worker vs.
-deep-reasoner. Questions, thresholds, key handling and what may be sent: `docs/agents/typesafe.md`.
+A development tool for agents, never part of `portal/`. Get a typed **verdict** from TypeSafe for
+any narrow judgment over text you already hold whose outcomes you can name in advance — triaging
+review findings, sorting failing tests, routing a spec, grading or checking a batch of anything.
+Worth most on a pile, and always advice you verify. Questions, thresholds, key handling and what
+may be sent: `docs/agents/typesafe.md`.
 
 ## Codex only
 
