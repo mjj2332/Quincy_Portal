@@ -3265,17 +3265,21 @@ Three more bugs in this same fan-out/accept machinery, all one shape: something 
 "the current key" at one point in time and kept trusting it after the world moved on.
 
 - **The sibling fan-out's own predicate used the CLICK-time key, not the CONFIRMATION-time key.**
-  `setProjectPriority` computed `dashboardKey` once, at the top of the handler, from whatever search
-  was committed when the Staff member clicked — then used that same captured value inside
-  `queryClient.setQueriesData`'s predicate to decide which OTHER entry stays exempt from the
-  confirmed-value fan-out (~:222 rule above: the fan-out patches every sibling except the one the
-  optimistic/confirmed write already targeted directly). If the committed search changes while the
-  POST is still in flight, the predicate is now comparing against a key nobody is looking at anymore —
-  the ACTUALLY-active entry at confirmation time gets patched twice (once directly, once again by the
-  fan-out it should have been exempt from), while whatever WAS active at click time keeps a narrower
-  exemption than it should. Fix: read the key fresh at the point the confirmed response lands, not at
-  the point the click happened — the two are the same render only if nothing changed in between, and
-  the whole point of this bug class is that something did.
+  Corrected (Sol review round 3, item 2 — the original write-up here mis-described this): the
+  predicate (`isSiblingDashboardQuery`) is not what gates the confirmed-value fan-out at all — that
+  write (`updateProjects`/`updateAllProjectScopes`) is unconditional. The predicate only decides which
+  entries `cancelQueries`/`invalidateQueries` treat as "a sibling" of the entry the confirmed write
+  just targeted directly. `setProjectPriority` computed that key once, at the top of the handler, from
+  whatever search was committed when the Staff member clicked, then reused that same captured value
+  when the POST resolved. If the committed search changed while the POST was still in flight, the
+  predicate was comparing against a key nobody is looking at anymore: the entry ACTUALLY active at
+  confirmation time no longer matched the stale captured key, so the predicate wrongly treated it AS a
+  sibling — its in-flight fetch got cancelled and it got marked stale, even though it's the entry
+  `queueDashboardRefresh` owns and was about to refresh itself. Meanwhile the OLD origin key, now
+  genuinely inactive, still matched the stale captured key, so the predicate wrongly EXEMPTED it from
+  the cancel+invalidate every other inactive sibling gets. Fix: read the key fresh at the point the
+  confirmed response lands, not at the point the click happened — the two are the same render only if
+  nothing changed in between, and the whole point of this bug class is that something did.
 - **The queued-refresh effect's own `.then()` is a stale closure, exactly like the fan-out predicate
   above.** `queueDashboardRefresh()` (fired after a confirmed mutation settles while `interactionBlocked`
   was true) issues its OWN `projectsQuery.refetch()` from inside a `useEffect` closure bound to whatever
@@ -3323,3 +3327,25 @@ first:**
   consequence PERSISTS (the dedupe-poisoning chain above) rather than one where the very next normal
   render quietly fixes it, since a persisted consequence is asserted with an ordinary settled-DOM check
   while a merely-transient one is not.
+
+**Correction (Sol review round 3, item 1): the "self-heal needs a real macrotask" claim just above is
+wrong, and it is what let test (l) below stop discriminating.** `useQuery`'s `useSyncExternalStore`
+re-reads a FRESH cache snapshot on EVERY render, for ANY reason, not only when react-query's own
+`setTimeout(0)` notify fires — so the very re-render a wrong accept's own `setAcceptedProjects` causes
+already observes a sibling key's real, already-cached-but-un-notified data, and that sibling's OWN
+primary accept effect self-heals `acceptedProjects` back to its own key as a passive effect off THAT
+SAME render, no macrotask involved. Measured empirically (hop-by-hop instrumentation, one
+`await Promise.resolve()` logged per hop): a corrupted accept lands within ~4 microtask hops of the
+resolution that causes it; the correctly-keyed sibling's self-heal follows within ~9-10 — both inside
+ONE continuous flush. `act()` fully drains all pending work, including every subsequent effect, before
+its own call resolves, so there is no external "pause partway through" available from a SEPARATE,
+later `act()`/microtask-draining call, no matter how few hops it drains — by the time any later call is
+reached, both the corruption and its self-heal have already happened. Test (l) originally returned to
+search A in a separate `act()` call after resolving the stale refetch, on the theory that staying
+"microtask-only" (no `flush()`) would keep it ahead of the self-heal; empirically it did not, and the
+test passed even with its own guard deleted. The fix: return to A from INSIDE the SAME, still-open
+`act()` call that resolves the stale refetch, timed (a calibrated microtask-hop count, with margin
+measured on both sides) to land after the corrupted accept but before the sibling's self-heal — and
+assert the transient probe both DID see the corrupted value and DID see the eventual correct one,
+not just that it never saw the corrupted value, so a future change to how React writes controlled
+`<select>` selections can't make the assertion pass vacuously by observing nothing at all.
