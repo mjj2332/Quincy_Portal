@@ -77,10 +77,17 @@ function findDarkVariants(files: Map<string, string>): string[] {
 }
 
 describe("guard: no `dark:` variant", () => {
-  it("self-test: fires on a planted `dark:` class, not on `backdrop:` or prose", () => {
-    expect(DARK_VARIANT.test('className="dark:bg-slate-900"')).toBe(true);
-    expect(DARK_VARIANT.test('className="backdrop:bg-black/50"')).toBe(false);
-    expect(DARK_VARIANT.test("// the dark stage in TB8-09")).toBe(false);
+  // #219 PR A fix (Sol re-review round 2, LOW): through the real exported detector
+  // (`findDarkVariants`), not the raw regex in isolation — and through `stripComments`, the same
+  // preprocessing `readVendoredFiles` applies, so a `dark:` mentioned only in a comment (naming the
+  // trap, like this file's own header) is proven NOT to false-positive via the actual pipeline, not
+  // just by construction of the regex.
+  it("self-test: the real detector fires on a planted `dark:` class, not on `backdrop:`, prose, or a comment naming the trap", () => {
+    const planted = new Map([
+      ["fixture-dark.tsx", stripComments('/* mentions dark: mode only in a comment */ className="dark:bg-slate-900"')],
+      ["fixture-clean.tsx", stripComments('className="backdrop:bg-black/50" // the dark stage in TB8-09')],
+    ]);
+    expect(findDarkVariants(planted)).toEqual(["fixture-dark.tsx"]);
   });
 
   it("has no `dark:` variant in the nine vendored files", () => {
@@ -109,8 +116,11 @@ function findShadowClasses(files: Map<string, string>): Record<string, number> {
 }
 
 describe("guard: no `shadow-(xs|sm|md|lg|xl)` class outside the allowlist", () => {
-  it("self-test: fires on a planted `shadow-lg`, not on `shadow-none` or a `box-shadow` word", () => {
-    const planted = new Map([["fixture.tsx", stripComments('className="rounded-sm shadow-lg"')]]);
+  it("self-test: the real detector fires on a planted `shadow-lg`, not on `shadow-none`, a `box-shadow` word, or a comment naming the trap", () => {
+    // Sol's own `stripComments` only strips a WHOLE-LINE `//` comment (`^[ \t]*\/\/`), not a
+    // trailing one on a code line - the "not shadow-xl" trap-naming comment below is on its OWN
+    // line for that reason, matching what the real function actually strips.
+    const planted = new Map([["fixture.tsx", stripComments('className="rounded-sm shadow-lg"\n// not shadow-xl, just this comment')]]);
     expect(findShadowClasses(planted)).toEqual({ "fixture.tsx": 1 });
     expect(findShadowClasses(new Map([["f.tsx", 'className="shadow-none"']]))).toEqual({});
     expect(findShadowClasses(new Map([["f.tsx", "// no box-shadow needed here"]]))).toEqual({});
@@ -138,12 +148,15 @@ describe("guard: no `shadow-(xs|sm|md|lg|xl)` class outside the allowlist", () =
 // ---------------------------------------------------------------------------
 // Detector 3 — a hex or rgb()/rgba() colour literal
 // ---------------------------------------------------------------------------
-// Bracketed Tailwind arbitrary value (`[#fff]`) or a bare quoted hex string (an inline style
-// value, `"#0a0a0a"`) — NOT a bare `#219`-style issue reference in prose, which is neither
-// bracketed nor quoted and would otherwise false-positive on a 3-hex-digit read of the issue
-// number (comments are stripped before this runs, but a code-level reference like a variable
-// named after an issue could still collide with a naive `#[0-9a-f]{3,8}` scan).
-const HEX_LITERAL = /\[#[0-9a-fA-F]{3,8}\]|["'`]#[0-9a-fA-F]{3,8}["'`]/;
+// Bracketed Tailwind arbitrary value (`[#fff]`), the SAME bracketed form with an explicit
+// Tailwind v4 type hint (`[color:#fff]`, `bg-[background-color:#0a0a0a]`, … — #219 PR A fix, Sol
+// re-review round 2, LOW: the original regex required the `#` immediately after `[` and missed
+// this form), or a bare quoted hex string (an inline style value, `"#0a0a0a"`) — NOT a bare
+// `#219`-style issue reference in prose, which is neither bracketed nor quoted and would otherwise
+// false-positive on a 3-hex-digit read of the issue number (comments are stripped before this
+// runs, but a code-level reference like a variable named after an issue could still collide with a
+// naive `#[0-9a-f]{3,8}` scan).
+const HEX_LITERAL = /\[(?:[a-zA-Z-]+:)?#[0-9a-fA-F]{3,8}\]|["'`]#[0-9a-fA-F]{3,8}["'`]/;
 const RGB_LITERAL = /\brgba?\(/;
 
 function findColorLiterals(files: Map<string, string>): Record<string, string[]> {
@@ -158,12 +171,26 @@ function findColorLiterals(files: Map<string, string>): Record<string, string[]>
 }
 
 describe("guard: no hex or rgb()/rgba() colour literal", () => {
-  it("self-test: fires on a bracketed and a quoted hex, and on rgba(); not on an issue reference", () => {
-    expect(HEX_LITERAL.test('className="bg-[#0a0a0a]"')).toBe(true);
-    expect(HEX_LITERAL.test('style.background = "#0a0a0a"')).toBe(true);
-    expect(HEX_LITERAL.test("for #219 (PR A, stage 3 of 3)")).toBe(false);
-    expect(RGB_LITERAL.test('color-mix(in oklab, rgba(0,0,0,.4) 20%, transparent)')).toBe(true);
-    expect(RGB_LITERAL.test("owner decision on #215/#219")).toBe(false);
+  // #219 PR A fix (Sol re-review round 2, LOW): through the real exported detector
+  // (`findColorLiterals`), including the `bg-[color:#fff]`-style typed arbitrary value the
+  // original regex missed (required `#` immediately after `[`), and through `stripComments`.
+  it("self-test: the real detector fires on a bracketed hex, a TYPED bracketed hex, a quoted hex, and rgba(); not on an issue reference or a comment naming the trap", () => {
+    const planted = new Map([
+      ["fixture-hex-bracket.tsx", stripComments('className="bg-[#0a0a0a]"')],
+      ["fixture-hex-typed.tsx", stripComments('className="bg-[color:#fff]"')],
+      ["fixture-hex-typed-long.tsx", stripComments('className="bg-[background-color:#0a0a0a]"')],
+      ["fixture-hex-quoted.tsx", stripComments('style.background = "#0a0a0a"')],
+      ["fixture-rgb.tsx", stripComments("color-mix(in oklab, rgba(0,0,0,.4) 20%, transparent)")],
+      ["fixture-clean.tsx", stripComments('// bg-[#0a0a0a] mentioned only in a comment, for #219 (PR A, stage 3 of 3), owner decision on #215/#219')],
+    ]);
+    const found = findColorLiterals(planted);
+    expect(found).toEqual({
+      "fixture-hex-bracket.tsx": ["hex"],
+      "fixture-hex-typed.tsx": ["hex"],
+      "fixture-hex-typed-long.tsx": ["hex"],
+      "fixture-hex-quoted.tsx": ["hex"],
+      "fixture-rgb.tsx": ["rgb()"],
+    });
   });
 
   it("has no hex or rgb()/rgba() literal in the nine vendored files", () => {
@@ -199,13 +226,22 @@ function findNonTokenPalette(files: Map<string, string>): string[] {
 }
 
 describe("guard: no non-token Tailwind palette class", () => {
-  it("self-test: fires on a scaled palette class and on bare black/white paint, not on a Quincy role", () => {
-    expect(NON_TOKEN_PALETTE.test('className="bg-slate-500"')).toBe(true);
-    expect(NON_TOKEN_PALETTE.test('className="text-gray-400"')).toBe(true);
-    expect(NON_TOKEN_PALETTE.test('className="bg-black/40"')).toBe(true);
-    expect(NON_TOKEN_PALETTE.test('className="text-white"')).toBe(true);
-    expect(NON_TOKEN_PALETTE.test('className="bg-background text-foreground border-border"')).toBe(false);
-    expect(NON_TOKEN_PALETTE.test('value: "var(--color-blue-500)"')).toBe(false);
+  // #219 PR A fix (Sol re-review round 2, LOW): through the real exported detector
+  // (`findNonTokenPalette`) and `stripComments`, not the raw regex in isolation.
+  it("self-test: the real detector fires on a scaled palette class and on bare black/white paint, not on a Quincy role, a CSS custom-property value, or a comment naming the trap", () => {
+    const planted = new Map([
+      ["fixture-slate.tsx", stripComments('className="bg-slate-500"')],
+      ["fixture-gray.tsx", stripComments('className="text-gray-400"')],
+      ["fixture-black.tsx", stripComments('className="bg-black/40"')],
+      ["fixture-white.tsx", stripComments('className="text-white"')],
+      // Trap-naming comment on its OWN line - a trailing same-line `//` is NOT what
+      // `stripComments` strips (see the shadow self-test above for the same note).
+      ["fixture-clean.tsx", stripComments('className="bg-background text-foreground border-border"\n// not bg-slate-500, that is just a comment')],
+      ["fixture-var.tsx", stripComments('value: "var(--color-blue-500)"')],
+    ]);
+    expect(findNonTokenPalette(planted)).toEqual(
+      ["fixture-black.tsx", "fixture-gray.tsx", "fixture-slate.tsx", "fixture-white.tsx"].sort()
+    );
   });
 
   it("has no non-token palette class in the nine vendored files", () => {
