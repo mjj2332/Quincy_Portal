@@ -39,10 +39,25 @@
  * (the move-clone's two shapes in `gantt-dnd.tsx`, the floating zoom control and the offscreen edge
  * chip in `gantt-view.tsx`) was removed in the #219 stage 3 re-skin commit in favour of the hairline
  * each of those surfaces already carries (a `border` class, or an inline `border`/`outline` style).
- * A `shadow-*` class shipping through `TooltipContent`/`PopoverContent`/`ContextMenuContent` (the
- * Portal's own already-reskinned overlay primitives, `components/reui/tooltip.tsx` /
- * `popover.tsx` / `context-menu.tsx`) is out of scope for this guard — it scans only the nine files
- * below, and none of those three own a shadow class inline; they inherit it from the primitive.
+ *
+ * This guard scans ONLY the nine files below — it says nothing about the other vendored primitives
+ * the Gantt renders through (`TooltipContent`, `PopoverContent`, `ContextMenuContent`,
+ * `DropdownMenuContent`, `SwitchPrimitive`). That is NOT "checked and found clean" — it is not
+ * checked at all, and as of #219 PR A standards review item 4 those files are known to carry the
+ * same four classes of violation this guard exists to catch, unfixed:
+ *
+ *   - `components/reui/context-menu.tsx` — 1 `dark:` variant, 2 `shadow-*` classes (`shadow-md`,
+ *     `shadow-lg`).
+ *   - `components/reui/dropdown-menu.tsx` — 1 `dark:` variant, 2 `shadow-*` classes (`shadow-md`,
+ *     `shadow-lg`), same shape as `context-menu.tsx` (shared origin).
+ *   - `components/reui/switch.tsx` — 5 `dark:` variants across its two `className` sites (the
+ *     root's `data-[size=…]` block and the thumb).
+ *   - `components/reui/dialog.tsx:48` and `components/reui/alert-dialog.tsx:43` — one bare
+ *     `bg-black/10` (the overlay scrim) each.
+ *
+ * Re-skinning them is a separate change, deliberately not folded into this one — see the #219 PR A
+ * standards review for the filed count. This paragraph exists so a reader does not mistake this
+ * guard's silence on those five files for a clean bill of health.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
