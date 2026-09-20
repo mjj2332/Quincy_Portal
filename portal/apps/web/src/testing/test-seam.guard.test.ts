@@ -201,20 +201,51 @@ const UTILITY_EXACT = new Set([
  * `group-` and `peer-` are deliberately absent — their real forms (`group-hover:…`) carry a `:`,
  * which the punctuation test already catches, so listing them here would only re-open the hole.
  *
- * #219 PR A fix (dr-219a LOW #7): `p[xytblr]?-`/`m[xytblr]?-` covered every PHYSICAL padding/margin
- * side (`px-`, `pt-`, `pl-`, …) but missed Tailwind's LOGICAL-property forms — `ps-`/`pe-`
- * (padding-inline-start/end) and `ms-`/`me-` (margin-inline-start/end) — which this RTL-aware
- * codebase uses pervasively (20 occurrences in `gantt-view.tsx` alone, 4 in `gantt-bar.tsx` as of
- * this fix) precisely BECAUSE they are the logical-property equivalent of `px-`/`mx-`+side, not a
- * BEM name. A DOM test asserting `ps-3`/`pe-3` (dr-219a LOW #7's resize-grip padding-reservation
- * fix, `gantt-low-fixes.dom.test.tsx`) was misclassified as a Quincy class name by this same gap.
- * No real Quincy class in this repo begins `ps-`/`pe-`/`ms-`/`me-` followed by a non-numeric
- * suffix (checked: `grep -rn 'className="[a-z-]*\b(ps|pe|ms|me)-[a-z]'` across `src/`, excluding
- * the numeric-scale form, returned nothing) — unlike `filter`/`filter-chips` above, adding `s`/`e`
- * here does not risk swallowing one.
+ * `p[xytblr]?-`/`m[xytblr]?-` cover every PHYSICAL padding/margin side (`px-`, `pt-`, `pl-`, …) —
+ * bare prefixes, same as every other family below. Tailwind's LOGICAL-property forms (`ps-`/`pe-`,
+ * `ms-`/`me-`) are handled separately, by `isLogicalSpacingUtility` below — see its own comment
+ * for why a bare prefix match is the wrong shape for those specifically.
  */
 const UTILITY_PREFIX =
-  /^(?:min-|max-|w-|h-|p[xytblrse]?-|m[xytblrse]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
+  /^(?:min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
+
+/**
+ * The Tailwind SCALE a spacing utility's value can take, as this repo actually uses it: the
+ * default numeric/fraction scale (`3`, `1.5`, `1/2`), an arbitrary bracket value (`[10px]`), the
+ * literal `px` step, or `auto`. Anything else is not a shape Tailwind itself generates.
+ */
+const SPACING_SCALE_VALUE = /^(?:\d+(?:\.\d+)?|\d+\/\d+|\[[^\]]+\]|px|auto)$/;
+
+/**
+ * Tailwind's LOGICAL-property padding/margin forms — `ps-`/`pe-` (padding-inline-start/end),
+ * `ms-`/`me-` (margin-inline-start/end), optionally negative for margin (`-ms-1.5`,
+ * `gantt-view.tsx`'s own row-drag grip) — this RTL-aware codebase uses pervasively (20
+ * occurrences in `gantt-view.tsx` alone, 4 in `gantt-bar.tsx`).
+ *
+ * #219 PR A fix (dr-219a r6 MEDIUM #2): dr-219a LOW #7's own fix widened `UTILITY_PREFIX`'s
+ * `p[xytblr]?-`/`m[xytblr]?-` groups to `p[xytblrse]?-`/`m[xytblrse]?-` so `ps-3`/`pe-3`/`ms-2`/
+ * `me-2` (that fix's own DOM-test assertions, `gantt-low-fixes.dom.test.tsx`) would classify as
+ * utilities. But `UTILITY_PREFIX` is a bare PREFIX match with no suffix validation, so the widened
+ * group accepted `ps-`/`pe-`/`ms-`/`me-` regardless of what followed: `ms-fraction` — a plausible
+ * Quincy BEM name (this file's own sibling, `gantt-view.tsx:564`, uses the phrase "ms-fraction bar
+ * geometry" in an ordinary comment) — matched `m[xytblrse]?-` exactly as readily as `ms-2` did,
+ * and would have slipped past guard C entirely. That fix's own grep check ("no real Quincy class
+ * in this repo begins ps-/pe-/ms-/me- TODAY") was true but not the point — the classifier itself
+ * must not depend on nothing having collided YET.
+ *
+ * Handled separately from `UTILITY_PREFIX`'s bare-prefix families: `ps-`/`pe-`/`ms-`/`me-` must be
+ * followed by an actual `SPACING_SCALE_VALUE`, not any suffix. The punctuation shortcut in
+ * `isUtilityClass` below already classifies every BRACKET/FRACTION Tailwind value
+ * (`ps-[10px]`, `ms-1/2`) as a utility regardless of prefix, so this only needs to cover the
+ * bare numeric/`px`/`auto` suffix and reject everything else — `ms-fraction` included.
+ */
+const LOGICAL_SPACING_PREFIX = /^-?(?:ps|pe|ms|me)-(.+)$/;
+
+export function isLogicalSpacingUtility(token: string): boolean {
+  const match = LOGICAL_SPACING_PREFIX.exec(token);
+  if (!match) return false;
+  return SPACING_SCALE_VALUE.test(match[1]!);
+}
 
 /**
  * A Tailwind utility carries punctuation a Quincy BEM/state name never does, or a well-known
@@ -222,7 +253,12 @@ const UTILITY_PREFIX =
  * WCAG 2.5.5 touch target, not styling trivia) and must survive; Quincy BEM names are the coupling.
  */
 export function isUtilityClass(token: string): boolean {
-  return /[[\]:/!]/.test(token) || UTILITY_EXACT.has(token) || UTILITY_PREFIX.test(token);
+  return (
+    /[[\]:/!]/.test(token) ||
+    UTILITY_EXACT.has(token) ||
+    UTILITY_PREFIX.test(token) ||
+    isLogicalSpacingUtility(token)
+  );
 }
 
 type Finding = { file: string; line: number; detail: string };
@@ -680,6 +716,12 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     ["pe-3", true],
     ["ms-2", true],
     ["me-2", true],
+    // #219 PR A fix (dr-219a r6 MEDIUM #2): dr-219a LOW #7's own fix above widened
+    // `p[xytblr]?-`/`m[xytblr]?-` to `p[xytblrse]?-`/`m[xytblrse]?-` - a bare PREFIX match, so it
+    // accepted `ps-`/`pe-`/`ms-`/`me-` regardless of what followed. `ms-fraction` is a plausible
+    // Quincy BEM name (this exact file's sibling, gantt-view.tsx:564, uses the phrase "ms-fraction
+    // bar geometry" in an ordinary comment) that would have slipped past guard C entirely.
+    ["ms-fraction", false],
   ])("isUtilityClass(%j) === %s", (token, expected) => {
     expect(isUtilityClass(token)).toBe(expected);
   });
