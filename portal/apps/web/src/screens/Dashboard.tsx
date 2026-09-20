@@ -288,16 +288,35 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity, committedQuery);
   const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, committedQuery);
-  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived);
+  // #230: widened to carry `committedQuery` as the fifth argument -- ONE q-aware key, not a second
+  // "scope identity" alongside it. `updateProjects`'s optimistic/confirmed/rollback writes
+  // (`setProjectPriority`'s only caller, below) `setQueryData` this exact key, so they now land in
+  // the SAME cache entry `useDashboardProjects` above actually reads while a search is active,
+  // instead of an unfiltered entry nobody is looking at. `acceptedProjects`/`boardOverlay`, both
+  // keyed off `dashboardKeyString` too (see their own state below), inherit the fix the same way: a
+  // committedQuery change now makes their stamped key stop matching, same as an archived-scope
+  // toggle already did, so `projects` (~:351) falls back to the fresh `queryProjects` for that key
+  // instead of painting the previous search's data (or a movement overlay computed against it)
+  // over the new one.
+  const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
-  // no-op (the store's own `principalId === id` guard) on every OTHER dashboardKeyString change
-  // (archived toggle, role/epoch untouched). Declared BEFORE the Calendar route-reconciliation
-  // effect below (React commits effects in hook-declaration order): on a fresh mount the store's
-  // `principalId` starts `""`, genuinely different from any real `currentUserId`, so this must run
-  // and settle first or a stale draft could still be showing when that effect's own canonicalising
-  // URL write lands. URL-authoritative committed query; the store holds draft/timer/owner only --
-  // there is no URL-search adoption left for either effect to race.
+  // no-op (the store's own `principalId === id` guard) on every render this effect reruns for.
+  // Declared BEFORE the Calendar route-reconciliation effect below (React commits effects in
+  // hook-declaration order): on a fresh mount the store's `principalId` starts `""`, genuinely
+  // different from any real `currentUserId`, so this must run and settle first or a stale draft
+  // could still be showing when that effect's own canonicalising URL write lands. URL-authoritative
+  // committed query; the store holds draft/timer/owner only -- there is no URL-search adoption left
+  // for either effect to race.
+  //
+  // #230: depends on `currentUserId` alone now, not `dashboardKeyString` -- `dashboardKey` just
+  // above was widened to carry `committedQuery`, so keeping it in this effect's deps would re-run
+  // `resetDashboardSearchForPrincipal` on every keystroke's committed-query change (the archived
+  // toggle and role/epoch changes already did this too, before #230, since they were also part of
+  // `dashboardKeyString`). The guard inside `resetDashboardSearchForPrincipal` makes every one of
+  // those a same-principal no-op regardless, but the ordering contract this comment documents only
+  // ever needed `currentUserId` to be current when this effect runs -- it never needed to re-fire on
+  // a scope or search change at all, only a principal change.
   //
   // #217 fix round 3, item 2 (Sol's whole-branch review): `PrincipalFreshnessBoundary` now ALSO
   // calls `resetDashboardSearchForPrincipal` on every principal change, at shell level -- it wraps
@@ -311,7 +330,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // than a race that could otherwise leave a stale draft showing momentarily.
   useEffect(() => {
     resetDashboardSearchForPrincipal(currentUserId);
-  }, [dashboardKeyString, currentUserId]);
+  }, [currentUserId]);
   const queryProjects = projectsQuery.data;
   const queryDataUpdatedAt = projectsQuery.dataUpdatedAt;
   const [acceptedProjects, setAcceptedProjects] = useState<{ key: string; projects: ProjectSummary[] }>();
