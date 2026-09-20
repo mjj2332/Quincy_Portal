@@ -370,7 +370,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
-  const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
   const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
   // The location this reconciliation effect itself last processed — not merely "is the location
   // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
@@ -493,10 +492,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       focusRestoreRef.current = next;
     }
   }, []);
-
-  useEffect(() => {
-    if ((view === "list" || view === "kanban") && !viewingArchived) lastNonCalendarViewRef.current = view;
-  }, [view, viewingArchived]);
 
   useEffect(() => {
     // Reconciles the route's EXPLICIT intent against local view state, including archive scope:
@@ -881,7 +876,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setCalendarSettle({ pending: false, recoveryReason: null });
     calendarFallbackLocationRef.current = false;
     setView("list");
-    lastNonCalendarViewRef.current = "list";
     try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
     // #217 fix round 8, Sol review, item 3 (MEDIUM). A bare `history.push("/")` dropped any
     // committed `q` the Calendar facet URL carried -- a Calendar mutation returning 401/403 while
@@ -926,7 +920,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const alreadyAtView = routeDashboardView === next;
     const shouldPushViewRoute = !alreadyAtView || currentDashboardRoute?.kind === "dashboard" && !routeDashboardView;
     setView(next);
-    lastNonCalendarViewRef.current = next;
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
     if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
@@ -951,7 +944,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const leavingCalendar = view === "calendar";
       if (leavingCalendar) setCalendarSettle({ pending: false, recoveryReason: null });
       setView("list");
-      lastNonCalendarViewRef.current = "list";
       try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
       calendarFallbackLocationRef.current = false;
       if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") {
