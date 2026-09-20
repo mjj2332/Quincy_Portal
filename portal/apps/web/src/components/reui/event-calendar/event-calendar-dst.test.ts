@@ -20,8 +20,11 @@
 import { describe, expect, it } from "vitest";
 import { TZDate } from "@date-fns/tz";
 import {
+  elapsedMinutesAtWallClock,
   elapsedMinutesAtWallClockHour,
   getDayTotalMinutes,
+  wallClockMinutesAtElapsed,
+  wallClockWindow,
 } from "@/components/reui/event-calendar/event-calendar-lib";
 
 const SYDNEY = "Australia/Sydney";
@@ -150,3 +153,115 @@ describe("the visibility filter the defect actually broke", () => {
     expect(boundsEndMin(day) - SLOT).toBe(1485);
   });
 });
+
+// #241 — the week view paints every column on ONE wall-clock axis so the shared hour gutter is
+// right for all seven days. Elapsed minutes stay the unit for data and gestures; these three
+// functions are the only crossing points. Sydney's autumn day repeats 02:00-03:00 (elapsed
+// 120-180 is the first pass, 180-240 the second); its spring day skips 02:00-03:00 (elapsed 120
+// is already 03:00). Every literal below is read off that clock by hand.
+describe("wallClockMinutesAtElapsed — where an elapsed minute sits on the 24-hour gutter (#241)", () => {
+  it("is the identity on an ordinary day", () => {
+    const day = midnight(NORMAL.y, NORMAL.m, NORMAL.d);
+    expect(wallClockMinutesAtElapsed(day, 0, SYDNEY)).toBe(0);
+    expect(wallClockMinutesAtElapsed(day, 1395, SYDNEY)).toBe(1395);
+    expect(wallClockMinutesAtElapsed(day, 1440, SYDNEY)).toBe(1440);
+  });
+
+  it("puts the 25-hour day's 23:15 event beside the 23:15 label, and its end at 24:00", () => {
+    const day = midnight(AUTUMN.y, AUTUMN.m, AUTUMN.d);
+    expect(wallClockMinutesAtElapsed(day, 90, SYDNEY)).toBe(90); // 01:30, before the repeat
+    expect(wallClockMinutesAtElapsed(day, 150, SYDNEY)).toBe(150); // first 02:30
+    expect(wallClockMinutesAtElapsed(day, 210, SYDNEY)).toBe(150); // second 02:30
+    expect(wallClockMinutesAtElapsed(day, 240, SYDNEY)).toBe(180); // 03:00
+    expect(wallClockMinutesAtElapsed(day, 1455, SYDNEY)).toBe(1395); // 23:15
+    expect(wallClockMinutesAtElapsed(day, 1500, SYDNEY)).toBe(1440); // next midnight
+  });
+
+  it("leaves the skipped hour empty on the 23-hour day", () => {
+    const day = midnight(SPRING.y, SPRING.m, SPRING.d);
+    expect(wallClockMinutesAtElapsed(day, 90, SYDNEY)).toBe(90); // 01:30
+    expect(wallClockMinutesAtElapsed(day, 120, SYDNEY)).toBe(180); // 03:00 — 02:xx never happens
+    expect(wallClockMinutesAtElapsed(day, 1335, SYDNEY)).toBe(1395); // 23:15
+    expect(wallClockMinutesAtElapsed(day, 1380, SYDNEY)).toBe(1440);
+  });
+});
+
+describe("elapsedMinutesAtWallClock — what instant a pointer on the gutter's axis means (#241)", () => {
+  it("is the identity on an ordinary day", () => {
+    const day = midnight(NORMAL.y, NORMAL.m, NORMAL.d);
+    expect(elapsedMinutesAtWallClock(day, 1395, SYDNEY)).toBe(1395);
+    expect(elapsedMinutesAtWallClock(day, 1440, SYDNEY)).toBe(1440);
+  });
+
+  it("resolves the repeated hour to its FIRST pass, and everything after it an hour later", () => {
+    const day = midnight(AUTUMN.y, AUTUMN.m, AUTUMN.d);
+    expect(elapsedMinutesAtWallClock(day, 90, SYDNEY)).toBe(90);
+    expect(elapsedMinutesAtWallClock(day, 150, SYDNEY)).toBe(150); // 02:30 -> the first one
+    expect(elapsedMinutesAtWallClock(day, 180, SYDNEY)).toBe(240); // 03:00
+    expect(elapsedMinutesAtWallClock(day, 1395, SYDNEY)).toBe(1455); // 23:15
+    expect(elapsedMinutesAtWallClock(day, 1440, SYDNEY)).toBe(1500);
+  });
+
+  it("resolves a pointer inside the skipped hour to the instant the gap closes", () => {
+    const day = midnight(SPRING.y, SPRING.m, SPRING.d);
+    expect(elapsedMinutesAtWallClock(day, 90, SYDNEY)).toBe(90);
+    expect(elapsedMinutesAtWallClock(day, 120, SYDNEY)).toBe(120); // 02:00 does not exist -> 03:00
+    expect(elapsedMinutesAtWallClock(day, 150, SYDNEY)).toBe(120); // nor does 02:30
+    expect(elapsedMinutesAtWallClock(day, 180, SYDNEY)).toBe(120); // 03:00 itself
+    expect(elapsedMinutesAtWallClock(day, 1020, SYDNEY)).toBe(960); // 17:00
+    expect(elapsedMinutesAtWallClock(day, 1440, SYDNEY)).toBe(1380);
+  });
+});
+
+describe("wallClockWindow — the painted extent of an elapsed window (#241)", () => {
+  it("paints the fixtures' transition-spanning events between their wall-clock labels", () => {
+    // 01:30 -> 03:30 on both days: three elapsed hours in autumn, one in spring, two on the axis.
+    expect(wallClockWindow(midnight(AUTUMN.y, AUTUMN.m, AUTUMN.d), 90, 270, SYDNEY)).toEqual([90, 210]);
+    expect(wallClockWindow(midnight(SPRING.y, SPRING.m, SPRING.d), 90, 150, SYDNEY)).toEqual([90, 210]);
+  });
+
+  it("never collapses a window the repeated hour folds back on itself", () => {
+    const day = midnight(AUTUMN.y, AUTUMN.m, AUTUMN.d);
+    // first 02:15 -> second 02:15: zero tall on the axis, so it keeps its elapsed length instead.
+    expect(wallClockWindow(day, 135, 195, SYDNEY)).toEqual([135, 195]);
+    // first 02:30 -> second 02:10 would be NEGATIVE on the axis.
+    expect(wallClockWindow(day, 150, 190, SYDNEY)).toEqual([150, 190]);
+  });
+});
+
+// Code review of #241. Not every zone changes its clocks at 02:00: Chile springs forward AT
+// midnight, so 2026-09-06 in America/Santiago has no 00:00-01:00 at all — the day's first instant
+// already reads 01:00. Offsets: -04:00 before, -03:00 after; 23-hour day.
+describe("a DST gap that swallows midnight itself (#241 review)", () => {
+  const SANTIAGO = "America/Santiago";
+  const day = new TZDate(2026, 8, 6, 12, 0, 0, 0, SANTIAGO);
+
+  it("puts the day's first minute at 01:00 on the axis, leaving the 12 AM slot empty", () => {
+    expect(getDayTotalMinutes(new Date("2026-09-06T04:00:00.000Z"), SANTIAGO)).toBe(1380);
+    expect(wallClockMinutesAtElapsed(day, 0, SANTIAGO)).toBe(60);
+    expect(wallClockMinutesAtElapsed(day, 60, SANTIAGO)).toBe(120);
+    expect(wallClockMinutesAtElapsed(day, 1380, SANTIAGO)).toBe(1440);
+    // 01:00-02:00 is one hour tall beside the 1 AM label, not two hours from the top.
+    expect(wallClockWindow(day, 0, 60, SANTIAGO)).toEqual([60, 120]);
+  });
+
+  it("resolves a pointer anywhere in the missing first hour to the day's first instant", () => {
+    expect(elapsedMinutesAtWallClock(day, 0, SANTIAGO)).toBe(0);
+    expect(elapsedMinutesAtWallClock(day, 30, SANTIAGO)).toBe(0);
+    expect(elapsedMinutesAtWallClock(day, 60, SANTIAGO)).toBe(0);
+    expect(elapsedMinutesAtWallClock(day, 120, SANTIAGO)).toBe(60);
+  });
+});
+
+describe("a day bound set ON the repeated hour (#241 review)", () => {
+  it("means the hour's first pass, the same answer a pointer there gets", () => {
+    // dayStartHour = 2 on Sydney's 25-hour day: the column's top edge is the 2 AM label, and the
+    // first 02:00 is elapsed 120. 180 (the second pass) would hide the whole first pass under a
+    // slot the gutter still shows.
+    expect(elapsedMinutesAtWallClockHour(midnight(AUTUMN.y, AUTUMN.m, AUTUMN.d), 2, SYDNEY)).toBe(120);
+    expect(elapsedMinutesAtWallClockHour(midnight(AUTUMN.y, AUTUMN.m, AUTUMN.d), 3, SYDNEY)).toBe(240);
+    // dayStartHour = 2 on the 23-hour day: 02:00 never happens, the gap closes at elapsed 120.
+    expect(elapsedMinutesAtWallClockHour(midnight(SPRING.y, SPRING.m, SPRING.d), 2, SYDNEY)).toBe(120);
+  });
+});
+

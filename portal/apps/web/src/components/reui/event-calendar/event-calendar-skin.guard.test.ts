@@ -51,7 +51,7 @@
  *     goes red, the fix is real Quincy tokens for whatever imported it, never a widened detector.
  *   - Detector 9 pins an architectural decision, not a class name: the external-drop adapter's
  *     whole justification (`event-calendar-dnd.tsx`'s own banner comment, ~line 1028) is that the
- *     vendor's `data-ec-day` / `-bounds-start` / `-bounds-end` / `-resource` attribute contract is
+ *     vendor's `data-ec-day` / `-bounds-start` / `-bounds-end` / `-wall-start` / `-wall-end` / `-resource` attribute contract is
  *     read ONLY from inside this directory. A consumer outside it reading those attributes directly
  *     would bypass the adapter and couple itself to vendor internals the next re-vendor is free to
  *     rename.
@@ -633,7 +633,7 @@ describe("guard: no rounded-lg/rounded-xl/rounded-2xl (or larger) anywhere in th
 /**
  * Pins an architectural decision, not a class name. The external-drop adapter's whole
  * justification (`event-calendar-dnd.tsx`'s own banner comment, ~line 1028) is that the vendor's
- * `data-ec-day` / `-bounds-start` / `-bounds-end` / `-resource` attribute contract is read ONLY
+ * `data-ec-day` / `-bounds-start` / `-bounds-end` / `-wall-start` / `-wall-end` / `-resource` attribute contract is read ONLY
  * from inside this directory — a consumer outside it reading those attributes directly would
  * bypass the adapter and couple itself to vendor internals a re-vendor is free to rename. This
  * scans every non-test `.ts`/`.tsx` file under `src/` OUTSIDE

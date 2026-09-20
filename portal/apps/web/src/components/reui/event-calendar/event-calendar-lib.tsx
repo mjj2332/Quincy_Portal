@@ -54,6 +54,15 @@
  *    `Math.min(endHour * 60, getDayTotalMinutes(...))`, which compares a wall-clock bound against
  *    an elapsed length — see this file's own note above that `getDayTotalMinutes` "is right and
  *    its callers were the ones needing fixes". Its callers are now fixed.
+ *
+ * 3. 2026-09-21, #241 — ADDED `wallClockMinutesAtElapsed`, `elapsedMinutesAtWallClock` and
+ *    `wallClockWindow` (all exported): the crossing points between ELAPSED minutes and the time
+ *    grid's wall-clock paint axis. `elapsedMinutesAtWallClockHour` (entry 2) now DELEGATES to
+ *    `elapsedMinutesAtWallClock` so a bound and a pointer resolve a clock position identically —
+ *    it used `setHours`, which put an hour ON the repeat at its second pass. One change to
+ *    vendor code: `packTimedSegments` takes an optional `windowOf` accessor so a transition day
+ *    can be packed by painted window; omitted, it behaves exactly as vendored. `setHours` is no
+ *    longer imported. Cover: `event-calendar-dst.test.ts`, incl. a zone whose gap is AT midnight.
  */
 import { expandRecurrence } from "@/components/reui/event-calendar/event-calendar-recurrence"
 import type {
@@ -68,12 +77,12 @@ import type {
 import { TZDate } from "@date-fns/tz"
 import {
   addDays,
+  addMinutes,
   addMonths,
   addWeeks,
   differenceInCalendarDays,
   differenceInMinutes,
   format,
-  setHours,
   startOfDay,
   startOfMonth,
   startOfWeek,
@@ -137,12 +146,89 @@ function elapsedMinutesAtWallClockHour(
   hour: number,
   timeZone: string
 ): number {
+  // QUINCY (#241): one resolution for a wall-clock position, shared with the pointer path. Was
+  // `setHours(midnight, hour)`, which on a 25-hour day resolved an hour ON the repeat to its
+  // SECOND pass — so `dayStartHour: 2` hid the whole first pass under a slot the gutter showed.
+  return elapsedMinutesAtWallClock(dayStart, Math.min(hour, 24) * 60, timeZone)
+}
+
+/**
+ * QUINCY ADDITION (#241). The time grid paints every day column on ONE wall-clock axis — the same
+ * 24 labels the shared hour gutter carries — so a week containing a DST transition day lines up
+ * (the Google/Apple Calendar model: the skipped hour is an empty slot, the repeated hour's two
+ * passes share one slot). ELAPSED minutes remain the unit for segments, bounds, gestures and
+ * proposals; the three functions below (and `elapsedMinutesAtWallClockHour` above, which
+ * delegates to the second) are the only crossing points, used at paint time and at pointer time. On an ordinary day all three are the identity.
+ *
+ * Wall-clock minutes (0..1440) on the gutter's axis for an elapsed minute of `dayStart`'s day.
+ */
+function wallClockMinutesAtElapsed(
+  dayStart: Date,
+  elapsedMin: number,
+  timeZone: string
+): number {
   const midnight = zonedStartOfDay(dayStart, timeZone)
-  const target =
-    hour >= 24
-      ? zonedStartOfDay(addDays(toZoned(midnight, timeZone), 1), timeZone)
-      : setHours(midnight, hour)
-  return differenceInMinutes(target, midnight)
+  const total = getDayTotalMinutes(midnight, timeZone)
+  if (total === 1440) return elapsedMin
+  // The next midnight reads 00:00 on the clock; on this axis it is the bottom edge.
+  if (elapsedMin >= total) return 1440 + (elapsedMin - total)
+  // Strictly below: elapsed 0 is NOT wall-clock 0 where the gap swallows midnight (Santiago).
+  if (elapsedMin < 0) return elapsedMin
+  const at = toZoned(addMinutes(midnight, elapsedMin), timeZone)
+  return at.getHours() * 60 + at.getMinutes() + (elapsedMin % 1)
+}
+
+/** Elapsed minute at which the day's clock first disagrees with elapsed time (the transition). */
+function transitionElapsedMinute(
+  midnight: Date,
+  total: number,
+  timeZone: string
+): number {
+  let lo = 0
+  let hi = total
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (wallClockMinutesAtElapsed(midnight, mid, timeZone) !== mid) hi = mid
+    else lo = mid + 1
+  }
+  return lo
+}
+
+/**
+ * Inverse of `wallClockMinutesAtElapsed` (QUINCY, #241): the elapsed minute a position on the
+ * wall-clock axis means. Two positions have no single answer and are decided here, once: a time
+ * inside the REPEATED hour means its first pass, and a time inside the SKIPPED hour means the
+ * instant the gap closes (02:30 on Sydney's spring day is 03:00).
+ */
+function elapsedMinutesAtWallClock(
+  dayStart: Date,
+  wallMin: number,
+  timeZone: string
+): number {
+  const midnight = zonedStartOfDay(dayStart, timeZone)
+  const total = getDayTotalMinutes(midnight, timeZone)
+  if (total === 1440) return wallMin
+  const transition = transitionElapsedMinute(midnight, total, timeZone)
+  if (wallMin < transition) return wallMin
+  // Past the transition the clock runs `total - 1440` behind elapsed time (ahead, in spring).
+  return Math.max(transition, wallMin + (total - 1440))
+}
+
+/**
+ * The painted [start, end] on the wall-clock axis for an elapsed window (QUINCY, #241). A window
+ * the repeated hour folds back on itself (first 02:15 -> second 02:15) would be zero or negative
+ * tall; it keeps its elapsed length from its painted start instead of vanishing.
+ */
+function wallClockWindow(
+  dayStart: Date,
+  startMin: number,
+  endMin: number,
+  timeZone: string
+): [number, number] {
+  const start = wallClockMinutesAtElapsed(dayStart, startMin, timeZone)
+  const end = wallClockMinutesAtElapsed(dayStart, endMin, timeZone)
+  if (endMin > startMin && end <= start) return [start, start + (endMin - startMin)]
+  return [start, end]
 }
 
 function snapMinutes(minutes: number, snap: number): number {
@@ -359,7 +445,10 @@ interface PackedPosition {
  * z resolution happens at render: event.zIndex verbatim, else 10 + column.
  */
 function packTimedSegments<TData>(
-  segments: EventCalendarSegment<TData>[]
+  segments: EventCalendarSegment<TData>[],
+  // QUINCY (#241): the window to pack by, when it is not the segment's own elapsed
+  // startMin/endMin — the time grid packs a DST transition day by PAINTED (wall-clock) window.
+  windowOf?: (segment: EventCalendarSegment<TData>) => [number, number]
 ): void {
   if (segments.length === 0) return
 
@@ -371,8 +460,10 @@ function packTimedSegments<TData>(
 
   const items: Working[] = segments
     .map((seg) => {
-      const startMin = seg.startMin ?? 0
-      const endMin = seg.endMin ?? startMin
+      const [startMin, endMin] = windowOf?.(seg) ?? [
+        seg.startMin ?? 0,
+        seg.endMin ?? seg.startMin ?? 0,
+      ]
       return {
         seg,
         startMin,
@@ -742,6 +833,7 @@ function resolveOffDay(
 export {
   buildEventIndex,
   defaultEventOrder,
+  elapsedMinutesAtWallClock,
   elapsedMinutesAtWallClockHour,
   eventsOverlap,
   flattenResources,
@@ -760,6 +852,8 @@ export {
   spansMultipleDays,
   stepDate,
   toZoned,
+  wallClockMinutesAtElapsed,
+  wallClockWindow,
   zonedStartOfDay,
 }
 export type {

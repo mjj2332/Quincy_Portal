@@ -3588,6 +3588,20 @@ renders a fixed 24 labels while stretching to the tallest column. Losing an hour
 than losing alignment, so the trade is right, but it is a trade and the residual misalignment is
 tracked separately as #241.
 
+**Resolved (#241, 2026-09-21).** Owner decision: keep the gutter shared and PAINT every column on
+its wall-clock axis (the Google/Apple Calendar model) — data, bounds and gestures stay in elapsed
+minutes, and one object (`wallClockColumn`) converts at paint time and pointer time. The skipped
+hour is an empty slot; the repeated hour's two passes share one slot, packed side by side, and a
+pointer there means the first pass. Browser-measured at 64px/hour: gutter and all seven columns
+1536px on both transition weeks, the 23:15 probe at 1488px on the 25-hour day.
+
+Two things worth keeping from it. A shared axis can only be right if every column is drawn in the
+AXIS's unit — the unit a thing is stored in and the unit it is drawn in are separate decisions.
+And happy-dom (20.x) silently discards any `calc()` containing a `var()` assigned through
+`el.style`, which is how React's client renderer writes styles: a live-rendered element shows no
+such height or top at all. Assert that geometry on `renderToStaticMarkup` output, where the
+`style` attribute is a string no CSS parser has touched.
+
 ## A typed config key can be silently dropped by a runtime allow-list (#219, 2026-09-21)
 
 `@reui/event-calendar` resolves its view configuration through `VIEW_CONFIG_KEYS`, an explicit

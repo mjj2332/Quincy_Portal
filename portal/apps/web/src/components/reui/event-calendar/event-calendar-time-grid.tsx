@@ -38,8 +38,10 @@
  * THIS FILE: the shared week / day / N-days engine — hour gutter, minute-positioned event blocks with overlap packing, the all-day row, drag ghosts, and the now indicator. `EventCalendarWeekView` / `DayView` / `DaysView` are thin wrappers over it.
  *
  *   - Minute offsets in this file are ELAPSED minutes from zoned midnight, not wall-clock
- *     minutes. On a DST transition day those diverge by an hour, and the gutter's own slot list
- *     is built from wall-clock hour counts. See `event-calendar-dst.test.ts`.
+ *     minutes. On a DST transition day those diverge by an hour. PAINTING is wall-clock (#241,
+ *     entry 4): `wallClockColumn` is where a day column converts; the now-indicator and the
+ *     gutter, which are not columns, call the lib's conversions directly. See
+ *     `event-calendar-dst.test.ts` and `event-calendar-dst-week.dom.test.tsx`.
  *
  * Quincy edits since vendoring:
  *
@@ -61,6 +63,7 @@
  *    shared hour gutter now visibly disagrees with a transition day's column by one hour-height
  *    (it agreed before only because the extra hour was being discarded). Tracked as #241, which
  *    carries the measured numbers and the shared-vs-per-column decision that has to precede a fix.
+ *    RESOLVED by entry 4.
  *
  * 3. 2026-09-21, #219 PR B, stage 4 — the now-indicator's three `destructive` fills became
  *    `border-strong` (`/50` on the faint cross-column hairline, solid on today's segment and
@@ -69,6 +72,30 @@
  *    tinted today column — under WCAG 1.4.11's 3:1. Mechanised: the skin guard forbids
  *    `destructive` inside `EventCalendarNowIndicator`'s body specifically, not file-wide, because
  *    `destructive` is correct elsewhere in this file.
+ *
+ * 4. 2026-09-21, #241 — BEHAVIOUR CHANGE, DST. Owner decision: the hour gutter stays SHARED and
+ *    every day column is painted on its WALL-CLOCK axis (the Google/Apple Calendar model), so a
+ *    column is `endHour - startHour` hour-heights tall on every day. On a 23-hour day the skipped
+ *    hour is an empty slot; on a 25-hour day the repeated hour's two passes share one slot and
+ *    are packed side by side. Known cost, accepted: position alone cannot tell the two passes
+ *    apart, a pointer in the repeated hour means its FIRST pass, and a window spanning a
+ *    transition is painted between its clock labels, not at its elapsed length.
+ *    Applies to EVERY view built on this grid — week, day and N-days. The day view used to show
+ *    a visible skip/repeat in its own labels; it now reads like any other day, for one model.
+ *    Sites: ADDED `wallClockColumn` (exported; the resource view uses it too); the column's
+ *    height, block / drag-ghost / slot-draft styles, `slotFromPointer` and transition-day
+ *    repacking go through it; the now-indicator's `top` calls `wallClockMinutesAtElapsed`
+ *    directly; the column publishes `data-ec-wall-start` /
+ *    `-end` for `event-calendar-dnd.tsx`; the gutter resolves each slot as a wall-clock time and
+ *    formats its default label on a DST-free carrier (was `addMinutes(midnight, slot)` on
+ *    `days[0]`, which repeated or skipped a label for all seven columns whenever the first day
+ *    was the transition day). `renderTimeGutterSlot`'s `hour`/`minute` are the slot's clock
+ *    reading as before; its `time` is that reading resolved on `days[0]`, so for a slot inside
+ *    a skipped hour it is the instant the gap closes (the same instant as the next slot's).
+ *    `renderDayColumnBackground`'s payload is unchanged and still ELAPSED — its doc comment in
+ *    event-calendar.tsx now says how to convert. Bounds, segments, ghosts and proposals are
+ *    still ELAPSED minutes.
+ *    Cover: `event-calendar-dst-week.dom.test.tsx`, `event-calendar-dst.test.ts`.
  */
 import {
   useEffect,
@@ -100,12 +127,15 @@ import {
 } from "@/components/reui/event-calendar/event-calendar-event"
 import {
   getDayKey,
+  elapsedMinutesAtWallClock,
   elapsedMinutesAtWallClockHour,
   getDayTotalMinutes,
   getRangeKey,
   packTimedSegments,
   resolveOffDay,
   snapMinutes,
+  wallClockMinutesAtElapsed,
+  wallClockWindow,
   toZoned,
   zonedStartOfDay,
 } from "@/components/reui/event-calendar/event-calendar-lib"
@@ -118,6 +148,7 @@ import type {
 } from "@/components/reui/event-calendar/event-calendar-types"
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
+import { TZDate } from "@date-fns/tz"
 import { addDays, addMinutes, differenceInMinutes, format } from "date-fns"
 
 import { cn } from "@/lib/utils"
@@ -921,6 +952,7 @@ function EventCalendarTimeGutter({
   const settings = useEventCalendarSettings()
   const viewConfig = useEventCalendarViewConfig()
   const referenceDay = days[0] ?? new Date()
+  const referenceMidnight = zonedStartOfDay(referenceDay, settings.timeZone)
   const labelFormat =
     interval % 60 === 0
       ? settings.i18n.formats.timeGutter
@@ -934,10 +966,18 @@ function EventCalendarTimeGutter({
       )}
     >
       {slots.map((minutes) => {
+        // QUINCY (#241): `minutes` is a WALL-CLOCK slot (startHour*60 .. endHour*60), so it is
+        // resolved as one. Was `addMinutes(midnight, minutes)` — an ELAPSED offset — which, when
+        // `days[0]` is a transition day, labelled every column "1 AM, 2 AM, 2 AM, 3 AM" (autumn)
+        // or skipped 2 AM (spring).
         const time = addMinutes(
-          zonedStartOfDay(referenceDay, settings.timeZone),
-          minutes
+          referenceMidnight,
+          elapsedMinutesAtWallClock(referenceMidnight, minutes, settings.timeZone)
         )
+        // The default label is the slot's own clock reading, formatted on a DST-free carrier:
+        // `time` cannot say "2 AM" on a day where 02:00 never happens, and the gutter is shared
+        // with six days on which it does.
+        const labelTime = new TZDate(2000, 0, 1, Math.floor(minutes / 60), minutes % 60, "UTC")
         // Always consult renderTimeGutterSlot (a consumer may label the first
         // slot); only the DEFAULT label is suppressed at the day-start edge.
         const label =
@@ -947,7 +987,7 @@ function EventCalendarTimeGutter({
             minute: minutes % 60,
           }) ??
           (minutes > startHour * 60
-            ? format(time, labelFormat, { locale: settings.locale })
+            ? format(labelTime, labelFormat, { locale: settings.locale })
             : null)
         return (
           <div
@@ -995,6 +1035,61 @@ function minuteBlockStyle(
   }
 }
 
+/**
+ * QUINCY (#241): one day column's geometry on the gutter's WALL-CLOCK axis. A column is
+ * `endHour - startHour` hour-heights tall on every day, a DST transition day included, so the
+ * shared hour gutter is right for all of them. Bounds, segments, ghosts and proposals stay in
+ * ELAPSED minutes; this is where a column crosses between the two units — painting out, pointer
+ * in — and the resource view's twin column uses the same object. See `wallClockMinutesAtElapsed`
+ * in event-calendar-lib.tsx for the model and its two decided ambiguities.
+ */
+function wallClockColumn(
+  day: Date,
+  startHour: number,
+  endHour: number,
+  timeZone: string
+) {
+  const wallStartMin = startHour * 60
+  const wallEndMin = Math.max(wallStartMin + 60, endHour * 60)
+  const wallMinutes = wallEndMin - wallStartMin
+  /** Painted [start, end] in wall-clock minutes for an elapsed window. */
+  const paintedWindow = (startMin: number, endMin: number) =>
+    wallClockWindow(day, startMin, endMin, timeZone)
+  const isTransitionDay = getDayTotalMinutes(day, timeZone) !== 1440
+  return {
+    wallStartMin,
+    wallEndMin,
+    /** Column height, in hour-heights. */
+    hours: wallMinutes / 60,
+    /**
+     * `packTimedSegments`' window accessor for this day. The shared index packs by ELAPSED
+     * minutes, but on a transition day the repeated hour's two passes are back to back in time
+     * and on top of each other on the axis, so that day is packed by painted window instead.
+     * Undefined on an ordinary day, where the two agree.
+     */
+    packWindowOf: isTransitionDay
+      ? (segment: EventCalendarSegment): [number, number] =>
+          paintedWindow(
+            segment.startMin ?? 0,
+            segment.endMin ?? segment.startMin ?? 0
+          )
+      : undefined,
+    /** top/height for an ELAPSED window. */
+    blockStyle(startMin: number, endMin: number): CSSProperties {
+      const [from, to] = paintedWindow(startMin, endMin)
+      return minuteBlockStyle(from, to, wallStartMin)
+    },
+    /** The (unsnapped, unclamped) ELAPSED minute under a pointer `offsetPx` down the column. */
+    elapsedAtOffset(offsetPx: number, heightPx: number): number {
+      return elapsedMinutesAtWallClock(
+        day,
+        wallStartMin + offsetPx / (heightPx / wallMinutes),
+        timeZone
+      )
+    },
+  }
+}
+
 function EventCalendarDayColumn({
   day,
   startHour,
@@ -1039,7 +1134,11 @@ function EventCalendarDayColumn({
   // `elapsedMinutesAtWallClockHour`'s comment in event-calendar-lib.tsx.
   const boundsStartMin = elapsedMinutesAtWallClockHour(day, startHour, timeZone)
   const boundsEndMin = elapsedMinutesAtWallClockHour(day, endHour, timeZone)
-  const boundsMinutes = Math.max(60, boundsEndMin - boundsStartMin)
+  // QUINCY (#241): painted on the gutter's wall-clock axis — see `wallClockColumn`.
+  const wallColumn = useMemo(
+    () => wallClockColumn(day, startHour, endHour, timeZone),
+    [day, startHour, endHour, timeZone]
+  )
 
   // Minute window of a proposal intersecting THIS day, or null
   const windowFor = (start: Date, end: Date): [number, number] | null => {
@@ -1143,19 +1242,21 @@ function EventCalendarDayColumn({
       const endMin = Math.min(segment.endMin ?? startMin, boundsEndMin)
       return endMin > boundsStartMin && startMin < boundsEndMin
     })
-    if (visible.length === segments.timed.length) return segments.timed
+    // QUINCY (#241): a transition day is always repacked, by painted window — see
+    // `wallClockColumn`'s `packWindowOf`. The clones keep their own elapsed startMin/endMin.
+    if (!wallColumn.packWindowOf && visible.length === segments.timed.length)
+      return segments.timed
     const clones = visible.map(
       (segment) => ({ ...segment }) as EventCalendarSegment
     )
-    packTimedSegments(clones)
+    packTimedSegments(clones, wallColumn.packWindowOf)
     return clones
-  }, [segments.timed, boundsStartMin, boundsEndMin])
+  }, [segments.timed, boundsStartMin, boundsEndMin, wallColumn])
 
   const slotFromPointer = (e: React.MouseEvent): { date: Date; end: Date } => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const pxPerMinute = rect.height / boundsMinutes
     const minutes = snapMinutes(
-      boundsStartMin + (e.clientY - rect.top) / pxPerMinute,
+      wallColumn.elapsedAtOffset(e.clientY - rect.top, rect.height),
       settings.snapDuration
     )
     const clamped = Math.min(
@@ -1176,6 +1277,8 @@ function EventCalendarDayColumn({
       data-ec-day={dayStart.getTime()}
       data-ec-bounds-start={boundsStartMin}
       data-ec-bounds-end={boundsEndMin}
+      data-ec-wall-start={wallColumn.wallStartMin}
+      data-ec-wall-end={wallColumn.wallEndMin}
       role="group"
       aria-label={format(
         toZoned(day, timeZone),
@@ -1192,7 +1295,7 @@ function EventCalendarDayColumn({
         viewConfig.classNames?.dayColumn
       )}
       style={{
-        height: `calc(var(--ec-hour-height) * ${boundsMinutes / 60})`,
+        height: `calc(var(--ec-hour-height) * ${wallColumn.hours})`,
         backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60} - var(--ec-slot-line-width, 1px)), var(--ec-slot-line-color, var(--color-border)) calc(var(--ec-hour-height) * ${interval / 60}))`,
       }}
       onPointerDown={(e) => {
@@ -1238,7 +1341,7 @@ function EventCalendarDayColumn({
             className="absolute z-(--ec-z) min-h-(--ec-event-min-h,1.5rem) px-0.5 hover:z-40"
             style={
               {
-                ...minuteBlockStyle(startMin, endMin, boundsStartMin),
+                ...wallColumn.blockStyle(startMin, endMin),
                 left: `calc(${EVENT_TRACK_WIDTH} * ${column / columnCount})`,
                 width: `calc(${EVENT_TRACK_WIDTH} * ${span / columnCount})`,
                 "--ec-z": zIndex,
@@ -1284,11 +1387,7 @@ function EventCalendarDayColumn({
           )}
           style={
             {
-              ...minuteBlockStyle(
-                dragGhost.window[0],
-                dragGhost.window[1],
-                boundsStartMin
-              ),
+              ...wallColumn.blockStyle(dragGhost.window[0], dragGhost.window[1]),
               "--ec-event-color": dragGhost.color ?? "var(--color-primary)",
             } as CSSProperties
           }
@@ -1333,11 +1432,7 @@ function EventCalendarDayColumn({
             "pointer-events-none absolute inset-x-0.5 z-40 overflow-hidden",
             viewConfig.classNames?.slotDraft
           )}
-          style={minuteBlockStyle(
-            draftWindow[0],
-            draftWindow[1],
-            boundsStartMin
-          )}
+          style={wallColumn.blockStyle(draftWindow[0], draftWindow[1])}
         >
           {/* Live range readout while dragging, the way Outlook and Google
               Calendar do it: the entire point of the gesture is to pick a
@@ -1390,7 +1485,10 @@ function EventCalendarNowIndicator({
   const boundsStartMin = elapsedMinutesAtWallClockHour(dayStart, startHour, timeZone)
   const boundsEndMin = elapsedMinutesAtWallClockHour(dayStart, endHour, timeZone)
   if (minutes < boundsStartMin || minutes > boundsEndMin) return null
-  const top = (minutes - boundsStartMin) / 60
+  // QUINCY (#241): in bounds by ELAPSED time, positioned by WALL CLOCK like every block.
+  const top =
+    (wallClockMinutesAtElapsed(dayStart, minutes, timeZone) - startHour * 60) /
+    60
 
   if (viewConfig.renderNowIndicator) {
     return (
@@ -1459,6 +1557,7 @@ export {
   EventCalendarTimeGutter,
   EventCalendarWeekView,
   minuteBlockStyle,
+  wallClockColumn,
   useNow,
 }
 export type { EventCalendarTimeGridProps }

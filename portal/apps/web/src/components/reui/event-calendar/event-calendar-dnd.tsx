@@ -76,6 +76,13 @@
  *    refused target and never cleared, and had no consumer), and a TOUCH scroll off a drag
  *    source now tears down instead of cancelling — a gesture that never activated is a scroll,
  *    not a cancelled drag, per this file's own documented `onCancel` contract.
+ *
+ * 5. 2026-09-21, #241 — BEHAVIOUR CHANGE, DST. `pointerMinutes` takes `timeZone` and, for a
+ *    column that publishes `data-ec-wall-start` / `data-ec-wall-end` (both grid views now do),
+ *    reads the pixel as a WALL-CLOCK time and resolves it to the elapsed minute, instead of
+ *    scaling linearly across the day's elapsed length. Every caller still receives elapsed
+ *    minutes; a column without the attributes is read as before. Identity on a 24-hour day.
+ *    Cover: `event-calendar-dst-week.dom.test.tsx`.
  */
 import { useCallback, useEffect, useMemo } from "react"
 import {
@@ -84,6 +91,7 @@ import {
   type EventCalendarInstance,
 } from "@/components/reui/event-calendar/event-calendar"
 import {
+  elapsedMinutesAtWallClock,
   snapMinutes,
   toZoned,
   zonedStartOfDay,
@@ -117,6 +125,13 @@ interface TimeColumnRect {
   rect: DOMRect
   boundsStartMin: number
   boundsEndMin: number
+  /**
+   * QUINCY (#241): the WALL-CLOCK minutes the column's top and bottom edges stand for, published
+   * by a column painted on the gutter's wall-clock axis (`data-ec-wall-start` / `-end`).
+   * Undefined for a column that does not publish them, which is read as elapsed-linear.
+   */
+  wallStartMin?: number
+  wallEndMin?: number
   resourceId?: string
 }
 
@@ -238,6 +253,14 @@ function collectSurface(
           rect: el.getBoundingClientRect(),
           boundsStartMin: Number(el.dataset.ecBoundsStart),
           boundsEndMin: Number(el.dataset.ecBoundsEnd),
+          wallStartMin:
+            el.dataset.ecWallStart !== undefined
+              ? Number(el.dataset.ecWallStart)
+              : undefined,
+          wallEndMin:
+            el.dataset.ecWallEnd !== undefined
+              ? Number(el.dataset.ecWallEnd)
+              : undefined,
           resourceId: el.dataset.ecResource,
         })
       } else {
@@ -298,12 +321,25 @@ function findCell(
 function pointerMinutes(
   surface: Surface,
   col: TimeColumnRect,
-  clientY: number
+  clientY: number,
+  timeZone: string
 ): number {
   const scrollDelta = surface.scrollTop - surface.viewportStartScrollTop
+  const y = clientY - col.rect.top + scrollDelta
+  // QUINCY (#241): a column painted on the wall-clock axis is `wallEnd - wallStart` minutes tall
+  // whatever the day's real length, so the pixel is read as a clock time first and only then
+  // resolved to the ELAPSED minute every caller works in. Identity on an ordinary day.
+  if (col.wallStartMin !== undefined && col.wallEndMin !== undefined) {
+    const pxPerMinute =
+      col.rect.height / Math.max(1, col.wallEndMin - col.wallStartMin)
+    return elapsedMinutesAtWallClock(
+      col.day,
+      col.wallStartMin + y / pxPerMinute,
+      timeZone
+    )
+  }
   const boundsMinutes = col.boundsEndMin - col.boundsStartMin
   const pxPerMinute = col.rect.height / Math.max(1, boundsMinutes)
-  const y = clientY - col.rect.top + scrollDelta
   return col.boundsStartMin + y / pxPerMinute
 }
 
@@ -537,7 +573,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
               addDays(colDayStart, 1).getTime()
             ) - segStartMs
           grabOffsetMin =
-            pointerMinutes(surface, col, startY) -
+            pointerMinutes(surface, col, startY, timeZone) -
             (segStartMs - colDayStart.getTime()) / 60000
         }
       }
@@ -571,12 +607,12 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       if (!col) return null
       if (createAnchorMin === null) {
         createAnchorMin = snapMinutes(
-          pointerMinutes(surface, col, startY),
+          pointerMinutes(surface, col, startY, timeZone),
           snap
         )
       }
       const anchorMin = createAnchorMin
-      const curMin = snapMinutes(pointerMinutes(surface, col, e.clientY), snap)
+      const curMin = snapMinutes(pointerMinutes(surface, col, e.clientY, timeZone), snap)
       const lo = Math.max(col.boundsStartMin, Math.min(anchorMin, curMin))
       const hi = Math.min(
         col.boundsEndMin,
@@ -669,7 +705,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     const col = findColumn(surface, e.clientX)
     if (!col) return null
     const dayStart = zonedStartOfDay(col.day, timeZone)
-    const rawMin = pointerMinutes(surface, col, e.clientY)
+    const rawMin = pointerMinutes(surface, col, e.clientY, timeZone)
 
     if (kind === "move") {
       const newStartMin = snapMinutes(rawMin - grabOffsetMin, snap)
@@ -1140,7 +1176,7 @@ function resolveExternalDropTarget<TData>(
   const col = findColumn(surface, clientX)
   if (!col) return null
 
-  const raw = pointerMinutes(surface, col, clientY)
+  const raw = pointerMinutes(surface, col, clientY, timeZone)
   // Clamp so a drop cannot start past the end of the day, then snap — same order the move gesture
   // uses. `boundsEndMin` is ELAPSED minutes and is 1380/1500 on a DST transition day, never a flat
   // 1440; see `elapsedMinutesAtWallClockHour` in event-calendar-lib.tsx.
