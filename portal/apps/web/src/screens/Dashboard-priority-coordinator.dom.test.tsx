@@ -866,6 +866,19 @@ describe("acceptedQueryUpdatedAtRef dedupes by key AND updatedAt, not updatedAt 
       await flush();
     });
 
+    // `flush()`'s single `setTimeout(0)` hop can end before the 400 rejection's own re-render
+    // lands -- react-query's `notifyManager` batches the query-cache notification and React's
+    // commit onto that same macrotask, but a rejection settling via `queryFn`'s own throw is one
+    // more microtask hop removed from a resolved value, occasionally enough to still be mid-flight
+    // when `flush()` returns. Without this, the assertions below can observe the Board still
+    // showing its loading skeleton (`select[aria-label="Priority"]` not yet mounted, `[role="alert"]`
+    // not yet either) instead of either of the two states this test actually distinguishes between.
+    // Wait for either terminal state -- the error alert (buggy) or the Priority control reappearing
+    // (fixed) -- before asserting on which one it is.
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]') ?? host.querySelector('select[aria-label="Priority"]')).not.toBeNull();
+    });
+
     // Fixed: B was accepted above, so its accepted snapshot survives this cache eviction + failed
     // refetch the same way #232 documents Dashboard rendering an accepted snapshot, not the cache --
     // Beta's own (accepted) row still renders, no error. Buggy: B was NEVER accepted (deduped away
