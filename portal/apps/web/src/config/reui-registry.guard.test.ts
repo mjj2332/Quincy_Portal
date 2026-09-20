@@ -5,7 +5,7 @@
  * `https://proxy.collectui.pro/api/r/reui/{style}/{name}.json`. ReUI's own documentation and its
  * MCP server both advertise a different canonical URL — `https://reui.io/r/{style}/{name}.json`
  * — for the same registry. The owner deliberately chose the proxy instead of the vendor's
- * documented URL (see the "ReUI component registry" section of the root `CLAUDE.md`). An agent
+ * documented URL (see the "ReUI component registry" section of the root `AGENTS.md`). An agent
  * that diffs this repo against ReUI's docs will read our URL as a defect and silently "correct"
  * it back to `reui.io`, quietly changing where component source is fetched from on every future
  * `shadcn add`. That correction must fail CI instead of shipping.
@@ -52,7 +52,7 @@ describe("guard: the ReUI registry never points at reui.io's documented (non-pro
         "components.json references `reui.io/r/`, ReUI's documented canonical registry URL.",
         "This repo deliberately routes the @reui registry through a proxy",
         `(${REUI_PROXY_URL}) instead — see the "ReUI component registry" section of the root`,
-        "CLAUDE.md. Do not 'correct' this back to reui.io; revert the change.",
+        "AGENTS.md. Do not 'correct' this back to reui.io; revert the change.",
       ].join("\n"),
     ).toBe(false);
   });

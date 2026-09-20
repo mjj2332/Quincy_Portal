@@ -68,7 +68,7 @@ import type {
  * prop — which is the whole reason `reui/sidebar.tsx` converts the vendor's Radix `asChild` to Base
  * UI's `useRender`. `lib/routing-transport.guard.test.ts` makes this a build failure, not a bug
  * report — and note that it matches CALL SYNTAX in any file, comments included, so the paragraph
- * above deliberately names those APIs without writing them as calls. See CLAUDE.md and
+ * above deliberately names those APIs without writing them as calls. See AGENTS.md and
  * `docs/lessons.md:1368-1380`.
  *
  * ## Collapsed children are a click-opened menu, not a hover flyout (#122)
@@ -423,7 +423,7 @@ export function NavigationRail({ navigation, user, variant = "expanded", showBel
             `quincy/menu.tsx` — Quincy-owned Base UI, the app's shared dropdown, and the same
             primitive the retired Topbar used for its own account menu. Deliberately NOT the vendor
             `dropdown-menu` the reference imports: that component is not in `components/reui/`, and
-            CLAUDE.md keeps `quincy/menu.tsx` as the app's menu rather than restoring a registry
+            AGENTS.md keeps `quincy/menu.tsx` as the app's menu rather than restoring a registry
             equivalent. `side="right"` because the rail is on the left edge, so a panel below or
             left of the trigger would open off-canvas; `sideOffset={8}` clears the footer's own
             padding. In `sheet`, `side="top"` instead: the root Menu's own collision avoidance

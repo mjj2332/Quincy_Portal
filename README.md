@@ -14,8 +14,7 @@ client delivery, with role-based access for admin, photographers, and editors.
 | **`test-data/`** | Local-only test fixtures (media is large and gitignored — see [test-data/README.md](test-data/README.md)). |
 | **`chats/`** | Early design-conversation transcript (archival). |
 
-`CLAUDE.md` is the guide for coding agents; `AGENTS.md` is a symlink to it, so non-Claude
-agents read the same file.
+`AGENTS.md` is the guide for coding agents.
 
 ## Working on the production app
 
@@ -39,12 +38,9 @@ argument that could point it at another environment.
 Local app/auth secrets go in `portal/workers/app/.dev.vars`; background-provider secrets such as
 `AUTOHDR_API_KEY` go in `portal/workers/background/.dev.vars` (both are gitignored). See the
 adjacent `.dev.vars.example` files, [docs/Guides/Google-OAuth-Setup.md](docs/Guides/Google-OAuth-Setup.md) for
-sign-in, and [CLAUDE.md](CLAUDE.md) for the full build/verify/deploy workflow and conventions.
+sign-in, and [AGENTS.md](AGENTS.md) for the workflow and conventions.
 Provision the production AutoHDR key from `portal/workers/background/` with
 `npx wrangler secret put AUTOHDR_API_KEY`; never place it in `wrangler.jsonc`.
-
-Deploys go out in dependency order (**background → webhook-ingress → app**) via
-`wrangler deploy`.
 
 ## Design system & brand
 

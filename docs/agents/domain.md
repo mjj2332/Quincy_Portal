@@ -38,7 +38,7 @@ This repo's contexts are the npm workspace packages under `portal/`, not a `src/
         └── docs/adr/
 ```
 
-`docs/archive/` is historical and explicitly not authoritative (see root `CLAUDE.md`), so it is not a context — don't create a `CONTEXT.md` there and don't mine it for domain vocabulary.
+`docs/archive/` is historical and explicitly not authoritative (see root `AGENTS.md`), so it is not a context — don't create a `CONTEXT.md` there and don't mine it for domain vocabulary.
 
 ## Use the glossary's vocabulary
 

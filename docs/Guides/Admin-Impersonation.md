@@ -45,7 +45,7 @@ existing project access.
 
 - **Bypasses author-only checks.** Acting as X, you can edit/delete X's own annotations, comments,
   and notice-board posts even though a normal Admin session cannot — deliberate, not a bug (see the
-  caveat on this rule in `CLAUDE.md`). It does **not** extend to records owned by anyone other than
+  caveat on this rule in `AGENTS.md`). It does **not** extend to records owned by anyone other than
   the user you're acting as.
 - **Cannot reach another Admin.** The plugin's permission map grants only `impersonate`, never
   `impersonate-admins` — enforced by better-auth itself, independent of the UI.
