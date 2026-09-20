@@ -306,13 +306,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // renders it in the meantime.
   const dashboardKey = dashboardProjectsKey(currentUserId, role, authorizationEpoch, viewingArchived, committedQuery);
   const dashboardKeyString = JSON.stringify(dashboardKey);
-  // #230 Sol review round 2, item 1: `setProjectPriority`'s sibling predicate (below, ~:1153) needs
-  // the key ACTIVE at CONFIRMATION time, not the one its own closure captured at click time --
-  // `setProjectPriority` is a plain function recreated every render, so the instance a click actually
-  // reaches is whichever render was current when the click landed. Updated on every render; read
-  // only AFTER the POST resolves.
-  const dashboardKeyStringRef = useRef(dashboardKeyString);
-  dashboardKeyStringRef.current = dashboardKeyString;
+  // #230: `setProjectPriority`'s sibling predicate needs the key ACTIVE at CONFIRMATION time, not
+  // the one its own closure captured at click time -- `setProjectPriority` is a plain function
+  // recreated every render, so the instance a click actually reaches is whichever render was
+  // current when the click landed. Updated on every render; read only AFTER the POST resolves.
+  // Holds the TUPLE, not just its JSON string -- `queryClient.getQueryState` takes a real query
+  // key, and deriving the string from the tuple (`JSON.stringify(dashboardKeyRef.current)`) where
+  // a string is actually needed is one less round-trip than storing the string and `JSON.parse`ing
+  // it back into a key later.
+  const dashboardKeyRef = useRef(dashboardKey);
+  dashboardKeyRef.current = dashboardKey;
   // #217: resets the shared search store when the principal this scope belongs to changes -- a
   // no-op (the store's own `principalId === id` guard) on every render this effect reruns for.
   // Declared BEFORE the Calendar route-reconciliation effect below (React commits effects in
@@ -723,25 +726,28 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // `acceptDashboardProjects`/`replaceAcceptedProjects` are bound to dashboardKeyString as of
     // THIS render (the key below), so accepting a result for a since-changed key would stamp it
     // under this stale one.
-    const refreshKey = dashboardKeyStringRef.current;
+    // Snapshot the tuple and its string together, from the same ref read -- `getQueryState` below
+    // takes the tuple directly (no `JSON.parse`, no cast), and the string is what the later
+    // identity check compares against.
+    const refreshKeyTuple = dashboardKeyRef.current;
+    const refreshKey = JSON.stringify(refreshKeyTuple);
     void projectsQuery.refetch().then((result) => {
       const settling = movementSettlePendingRef.current;
-      // ABA fix (diagnosed via instrumentation, ~24/24 repro runs): `result` is
-      // `QueryObserver#fetch()`'s own resolved value, which reads `this.#currentResult` AFTER the
-      // underlying fetch settles -- the OBSERVER's CURRENT result for whatever key is active THEN,
-      // not necessarily `refreshKey`. If the committed search goes A -> B -> A while this refetch
-      // (issued for A, `refreshKey`) is still in flight, `result` can by then be back on A too
-      // (`dashboardKeyStringRef.current === refreshKey` below would pass) while still carrying B's
-      // rows, because the observer's own current result was computed while ITS current query was
-      // still B -- `result.isPlaceholderData` is false in that case (B's data is real, not a
-      // placeholder), so the old key-string + isPlaceholderData guard alone let it through. Trusting
-      // `result`'s PAYLOAD at all, for either branch, is the vulnerability -- query identity, not
-      // payload shape, is what actually distinguishes refreshKey's own outcome. Read provenance
-      // from the cache entry for `refreshKey` itself instead: `queryClient.getQueryState` returns
-      // that key's own persisted status/data, which is what the real underlying fetch (the one this
-      // promise settling proves already ran) actually wrote, regardless of what the observer's
-      // `result` currently shows.
-      const refreshState = queryClient?.getQueryState<ProjectSummary[]>(JSON.parse(refreshKey) as readonly unknown[]);
+      // ABA fix (diagnosed via instrumentation): `result` is `QueryObserver#fetch()`'s own resolved
+      // value, which reads `this.#currentResult` AFTER the underlying fetch settles -- the
+      // OBSERVER's CURRENT result for whatever key is active THEN, not necessarily `refreshKey`. If
+      // the committed search goes A -> B -> A while this refetch (issued for A, `refreshKey`) is
+      // still in flight, `result` can by then be back on A too (the identity check below would
+      // pass) while still carrying B's rows, because the observer's own current result was computed
+      // while ITS current query was still B -- `result.isPlaceholderData` is false in that case (B's
+      // data is real, not a placeholder), so a key-string + isPlaceholderData guard alone would let
+      // it through. Trusting `result`'s PAYLOAD at all, for either branch, is the vulnerability --
+      // query identity, not payload shape, is what actually distinguishes refreshKey's own outcome.
+      // Read provenance from the cache entry for `refreshKey` itself instead: `queryClient.getQueryState`
+      // returns that key's own persisted status/data, which is what the real underlying fetch (the
+      // one this promise settling proves already ran) actually wrote, regardless of what the
+      // observer's `result` currently shows.
+      const refreshState = queryClient?.getQueryState<ProjectSummary[]>(refreshKeyTuple);
       if (refreshState?.status === "error") {
         if (settling) {
           const message = "The move was saved, but the latest Board could not be loaded. Refresh to continue.";
@@ -776,7 +782,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // the ACTIVE key: refuse to stamp it under refreshKey. The primary accept effect (above)
       // already owns accepting the current key's own data once it's real, under its own (current,
       // non-stale) closure.
-      if (dashboardKeyStringRef.current !== refreshKey) return;
+      if (JSON.stringify(dashboardKeyRef.current) !== refreshKey) return;
       acceptDashboardProjects(refreshState.data, refreshState.dataUpdatedAt);
       // Keep this release outside acceptDashboardProjects; its acceptedQueryUpdatedAtRef/dataUpdatedAt dedupe guard could otherwise strand movementSettlePending.
       if (settling) {
@@ -1214,16 +1220,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // own refresh is owned by `queueDashboardRefresh` below and must never be cancelled or
       // invalidated here.
       //
-      // Sol review round 2, item 1: snapshot `dashboardKeyStringRef.current` HERE, immediately after
-      // the POST resolves, not `dashboardKeyString` from this closure's own render (the CLICK-time
-      // key). If the committed search (or archived scope) changed while the POST was in flight, the
+      // Snapshot `dashboardKeyRef.current` HERE, immediately after the POST resolves, not
+      // `dashboardKeyString` from this closure's own render (the CLICK-time key). If the committed
+      // search (or archived scope) changed while the POST was in flight, the
       // NEWLY active key must be excluded from cancel/invalidate below -- it's the entry
       // `queueDashboardRefresh` is about to refresh, and cancelling its in-flight fetch or marking it
       // stale with no refetch regresses whatever it's showing. The origin key, now inactive, is just
       // another sibling once it's no longer the active one: it still gets the fan-out patch (via the
       // prefix write below, unconditional on this predicate), has its own late fetch cancelled, and
       // is marked stale, same as any other sibling.
-      const currentKeyAtConfirm = dashboardKeyStringRef.current;
+      const currentKeyAtConfirm = JSON.stringify(dashboardKeyRef.current);
       const isSiblingDashboardQuery = isDashboardProjectsQueryFor(currentUserId, currentKeyAtConfirm);
       // (A) cancel every sibling's in-flight fetch FIRST -- its late result, once cancelled, can no
       // longer overwrite the fan-out write that follows.
