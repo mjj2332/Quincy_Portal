@@ -129,7 +129,12 @@ export default function GanttPreview() {
         <ul>
           <li>Enter on a focused bar — open the event.</li>
           <li>Space on a focused, non-recurring, adjustable bar — enter Adjust mode.</li>
-          <li>Arrow — step the current target by one snap unit (Shift+Arrow — one larger unit).</li>
+          <li>
+            Arrow — step the current target by one snap unit. Shift+Arrow — a larger step: 7 civil
+            days if the current step is already a civil day or more (week/month/quarter/year, or
+            the day scale at a whole-day snap); otherwise 1 hour if the snap is under an hour, else
+            1 civil day. (Owner decision — the rule follows the keyboard STEP, not the scale name.)
+          </li>
           <li>M / S / E — target the whole bar / start edge / end edge.</li>
           <li>Enter or Space — commit and exit. Escape, blur, or a click elsewhere — cancel and exit.</li>
         </ul>
