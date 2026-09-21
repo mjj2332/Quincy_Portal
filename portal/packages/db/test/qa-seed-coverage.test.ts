@@ -14,9 +14,14 @@ import {
   type ChecklistScheduleDto,
 } from "@quincy/shared";
 import { stageColors } from "../../../apps/web/src/lib/stage-colors";
-import { buildQaFixtureDataset, densitySingleStageRowCount, resolveDstTransitions, type QaFixtureDataset, type StageKey } from "../qa-seed/dataset";
+import { anchorReferenceInstantMs, buildQaFixtureDataset, crossCheckDstTransition, densitySingleStageRowCount, resolveDstTransitions, type QaFixtureDataset, type StageKey } from "../qa-seed/dataset";
 
 const ANCHOR = "2026-09-21";
+// Coverage here is about the dataset's SHAPE (row counts, states, hues), not occurrence status —
+// that is `qa-seed-occurrence-status.test.ts`'s job (build spec item 4). Any fixed, safe-integer
+// instant is fine as `appliedAtMs`; the anchor's own reference instant keeps these tests' fixtures
+// consistent with what an apply run the same week as its anchor would actually produce.
+const APPLIED_AT_MS = anchorReferenceInstantMs(ANCHOR);
 
 function matchedRows(dataset: QaFixtureDataset, completed: boolean): number {
   const visible = dataset.subtasks.filter((s) => completed || !s.done).length;
@@ -28,7 +33,7 @@ function subtasksByProjectKey(dataset: QaFixtureDataset, key: string) {
 }
 
 describe("coverage 1: pagination cannot silently stop paginating", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
   const paginationNotDone = subtasksByProjectKey(dataset, "pagination").filter((s) => !s.done).length;
 
   it("has more not-done rows than 2x the imported child page limit", () => {
@@ -41,7 +46,7 @@ describe("coverage 1: pagination cannot silently stop paginating", () => {
 });
 
 describe("coverage 2: the draw cap trips for density, and un-trips for a single stage", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["density"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["density"], appliedAtMs: APPLIED_AT_MS });
 
   it("density alone exceeds PRODUCTION_GANTT_DRAW_CAP", () => {
     expect(matchedRows(dataset, false)).toBeGreaterThan(PRODUCTION_GANTT_DRAW_CAP);
@@ -53,7 +58,7 @@ describe("coverage 2: the draw cap trips for density, and un-trips for a single 
 });
 
 describe("coverage 3: core tier never trips the draw cap, at either completed toggle", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
 
   it("completed=0 stays under the cap with headroom for hand-made local rows", () => {
     expect(matchedRows(dataset, false) + 50).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
@@ -65,7 +70,7 @@ describe("coverage 3: core tier never trips the draw cap, at either completed to
 });
 
 describe("coverage 4: every hue in stage-colors.ts renders", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs: APPLIED_AT_MS });
   const usedStageKeys = new Set(dataset.projects.map((p) => p.stageKey));
   // `editing` is a presentation-only transport key (`stage-move.ts`), never a real
   // `pipeline_stages` row — no seed can produce it, so it is excluded from the expected set.
@@ -86,7 +91,7 @@ describe("coverage 4: every hue in stage-colors.ts renders", () => {
 });
 
 describe("coverage 5: progress boundaries exist", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
   function totals(key: string) {
     const rows = subtasksByProjectKey(dataset, key);
     return { total: rows.length, completed: rows.filter((r) => r.done).length };
@@ -112,7 +117,7 @@ describe("coverage 5: progress boundaries exist", () => {
 });
 
 describe("coverage 6: schedule-state census — the strongest test", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
   const dtos: ChecklistScheduleDto[] = dataset.subtasks.map((s) => serializeChecklistSchedule(s.storage));
 
   it("zero rows serialize to invalid", () => {
@@ -145,7 +150,7 @@ describe("coverage 6: schedule-state census — the strongest test", () => {
 
 describe("coverage 7: DST canary — recomputed via Intl, not trusted as literals", () => {
   const dst = resolveDstTransitions(ANCHOR);
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
   const edgeRows = subtasksByProjectKey(dataset, "schedule-edges");
 
   it("the fold canary pair share one localCivil, sit exactly one hour apart, and cover fold 0 and 1", () => {
@@ -189,7 +194,7 @@ describe("coverage 7: DST canary — recomputed via Intl, not trusted as literal
 });
 
 describe("coverage 8: anchor freshness — the dataset can never drift entirely off-screen", () => {
-  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"] });
+  const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
 
   function daysBetween(a: string, b: string): number {
     return Math.round((Date.UTC(...(a.split("-").map(Number) as [number, number, number])) - Date.UTC(...(b.split("-").map(Number) as [number, number, number]))) / 86_400_000);
@@ -205,5 +210,37 @@ describe("coverage 8: anchor freshness — the dataset can never drift entirely 
     const deadlineDates = dataset.projects.map((p) => p.deadline?.localCivil.slice(0, 10)).filter((d): d is string => Boolean(d));
     expect(deadlineDates.length).toBeGreaterThan(0);
     for (const date of deadlineDates) expect(Math.abs(daysBetween(date, ANCHOR))).toBeLessThanOrEqual(45);
+  });
+});
+
+describe("coverage 9: the DST cross-check table actually catches a regressed computed date (Sol round 1 fix item 5)", () => {
+  // The old shape looked the COMPUTED date up in the table and only compared `kind` — a scanner
+  // that drifted to a date the table has no entry for (an off-by-one, a skipped transition) found
+  // no entry (`.find` returned `undefined`) and threw NOTHING. `2026-10-11` is deliberately one
+  // week after the table's real `2026-10-04` spring entry — a plausible off-by-one-week drift a
+  // regressed scanner could produce — and is absent from the table entirely.
+  const WRONG_COMPUTED_SPRING_DATE = "2026-10-11";
+  const REAL_SPRING_DATE = "2026-10-04"; // KNOWN_SYDNEY_TRANSITIONS' actual entry for this anchor's next spring transition
+
+  it("a correct computed date passes silently", () => {
+    expect(() => crossCheckDstTransition(ANCHOR, "spring", REAL_SPRING_DATE)).not.toThrow();
+  });
+
+  it("a wrong computed date — absent from the table entirely — throws (the exact gap the old `.find`-by-computed-date shape missed)", () => {
+    expect(() => crossCheckDstTransition(ANCHOR, "spring", WRONG_COMPUTED_SPRING_DATE)).toThrow(/disagrees with the committed cross-check table/);
+  });
+
+  it("a wrong computed date that happens to collide with a REAL entry of the wrong kind also throws", () => {
+    // 2026-04-05 is a real `fall` entry — feeding it in as a `spring` result must still be rejected.
+    expect(() => crossCheckDstTransition(ANCHOR, "spring", "2026-04-05")).toThrow(/disagrees with the committed cross-check table/);
+  });
+
+  it("an anchor past the table's own coverage throws a clear 'extend the table' error rather than silently trusting Intl alone", () => {
+    expect(() => crossCheckDstTransition("2028-06-01", "fall", "2029-04-01")).toThrow(/extend the table/);
+  });
+
+  it("resolveDstTransitions itself still returns the correct, cross-checked pair for a real anchor", () => {
+    const dst = resolveDstTransitions(ANCHOR);
+    expect(dst.spring).toBe(REAL_SPRING_DATE);
   });
 });

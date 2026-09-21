@@ -18,12 +18,38 @@ npm run db:migrate:local                    # prerequisite — see "known gap" b
 npm run db:qa:apply                         # core tier, anchor = this Monday (Sydney)
 npm run db:qa:apply -- --tier=core,density  # + the draw-cap tier (opt-in, see below)
 npm run db:qa:apply -- --anchor=2026-09-21  # reproduce a specific browser-pass report
-npm run db:qa:verify                        # assert the applied DB still matches the generator
-npm run db:qa:teardown                      # remove every fixture row, leave everything else untouched
+npm run db:qa:verify                        # assert the applied DB still matches the RECORDED run exactly
+npm run db:qa:teardown                      # remove every fixture row AND every app-written row that
+                                             # references one, leave everything else untouched
 ```
 
-Every `apply` tears down any previously-applied fixture first, so re-running is always safe and a
-changed `--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows.
+Every `apply` tears down any previously-applied fixture first, so re-running is safe and a changed
+`--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows — **as long
+as `verify`/`teardown` succeed**; if a browser pass leaves the DB in a shape teardown's own
+post-condition checks or its rot-proof sweep (below) don't like, both fail loudly rather than
+silently leaving orphaned rows for the next `apply` to inherit.
+
+`verify` checks the CURRENTLY APPLIED run — the exact anchor/tier/apply-instant recorded in
+`__quincy_local_fixture_runs` when you last ran `apply`, never `Date.now()` and never a value you
+pass it (`--anchor`/`--tier` on `verify` are an ASSERTION against that recorded run, not a new value
+to recompute against — a mismatch fails immediately, before anything is recomputed). It diffs the
+exact id set AND a per-column content fingerprint, including `project_members`, for every table the
+generator owns. **`verify` is expected to fail after a browser pass has mutated a fixture row** (a
+stage drag, a schedule edit, a membership change) — that is its job, not a bug; `apply` resets to the
+generator's own state.
+
+`teardown` does not merely delete the rows the generator itself inserted. The fixture exists so the
+app can be exercised against it (drag-to-reschedule, checklist edits, comments, deadline saves), and
+every one of those actions makes the APP write rows this fixture never does directly — `audit_log`,
+`notification_outbox`, `notification_delivery_ledger`, `jobs`, comments and their
+mentions/read-markers, activity events, notifications. `teardown` deletes all of it, children-first,
+still keyed only by registered fixture ids (never a `LIKE`/street match), then runs a **rot-proof
+sweep**: it introspects the live schema itself (`sqlite_master`, `PRAGMA table_info`,
+`PRAGMA foreign_key_list`) for every table with a `project_id` column or an FK to
+`projects`/`project_subtasks`/`collections`, plus the two no-FK exceptions it has to know by name
+(`audit_log.target_id`, `notification_outbox.project_id`), and fails loudly — naming the offending
+table — if anything still references a torn-down id. A table a future migration adds is swept
+automatically the first time `teardown` runs against it, not the first time it silently leaks a row.
 
 ## What each core-tier project proves
 

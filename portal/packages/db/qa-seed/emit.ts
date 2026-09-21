@@ -8,7 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { BOOTSTRAP_ADMIN_ID, buildQaFixtureDataset, resolveAnchor, type QaTier } from "./dataset";
-import { buildApplyPlan, buildTeardownStatements, type FixtureEntity } from "./sql";
+import { buildApplyPlan, buildTeardownStatements, buildVerificationManifest, type FixtureEntity } from "./sql";
 
 function readFlag(argv: string[], name: string): string | undefined {
   const prefix = `--${name}=`;
@@ -28,6 +28,14 @@ function parseIdList(value: string | undefined): string[] {
   return value.split(",").map((v) => v.trim()).filter(Boolean);
 }
 
+function readRequiredAppliedAtMs(argv: string[], mode: string): number {
+  const raw = readFlag(argv, "applied-at-ms");
+  if (!raw) throw new Error(`--applied-at-ms is required for \`${mode}\`.`);
+  const appliedAtMs = Number(raw);
+  if (!Number.isSafeInteger(appliedAtMs)) throw new Error("--applied-at-ms must be a safe integer.");
+  return appliedAtMs;
+}
+
 function printJson(value: unknown): void {
   process.stdout.write(JSON.stringify(value));
 }
@@ -36,34 +44,29 @@ function modePlan(argv: string[]): void {
   const anchor = resolveAnchor(readFlag(argv, "anchor"));
   const tiers = parseTiers(readFlag(argv, "tier"));
   const defaultEditorIds = parseIdList(readFlag(argv, "default-editor-ids"));
-  const appliedAtMsRaw = readFlag(argv, "applied-at-ms");
-  if (!appliedAtMsRaw) throw new Error("--applied-at-ms is required for `plan`.");
-  const appliedAtMs = Number(appliedAtMsRaw);
-  if (!Number.isSafeInteger(appliedAtMs)) throw new Error("--applied-at-ms must be a safe integer.");
+  const appliedAtMs = readRequiredAppliedAtMs(argv, "plan");
 
-  const dataset = buildQaFixtureDataset({ anchor, tiers, defaultEditorIds });
+  const dataset = buildQaFixtureDataset({ anchor, tiers, appliedAtMs, defaultEditorIds });
   const plan = buildApplyPlan(dataset, { runId: randomUUID(), appliedAtMs, createdBy: BOOTSTRAP_ADMIN_ID });
   printJson(plan);
 }
 
+/**
+ * `manifest` is the ONLY mode `db:qa:verify` calls (item 2 — verify must actually verify). Unlike
+ * `plan`, `--applied-at-ms` here is never `Date.now()` — `cli.mjs` passes the RECORDED run's own
+ * `applied_at` from `__quincy_local_fixture_runs`, so the recomputed dataset (including deadline
+ * occurrence status, the one apply-time-dependent field — item 4) is byte-identical to what that
+ * run actually inserted, not to "if you applied again right now".
+ */
 function modeManifest(argv: string[]): void {
   const anchor = resolveAnchor(readFlag(argv, "anchor"));
   const tiers = parseTiers(readFlag(argv, "tier"));
   const defaultEditorIds = parseIdList(readFlag(argv, "default-editor-ids"));
-  const dataset = buildQaFixtureDataset({ anchor, tiers, defaultEditorIds });
-  printJson({
-    anchor: dataset.anchor,
-    tiers: dataset.tiers,
-    projectIds: dataset.projects.map((p) => p.id),
-    subtaskIds: dataset.subtasks.map((s) => s.id),
-    collectionIds: dataset.collections.map((c) => c.id),
-    deadlineOccurrenceIds: dataset.deadlineOccurrences.map((o) => o.id),
-    memberIds: dataset.members.map((m) => m.id),
-    summary: {
-      projects: dataset.projects.length, subtasks: dataset.subtasks.length, collections: dataset.collections.length,
-      deadlineOccurrences: dataset.deadlineOccurrences.length, members: dataset.members.length,
-    },
-  });
+  const appliedAtMs = readRequiredAppliedAtMs(argv, "manifest");
+
+  const dataset = buildQaFixtureDataset({ anchor, tiers, appliedAtMs, defaultEditorIds });
+  const manifest = buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID });
+  printJson(manifest);
 }
 
 function modeTeardownPlan(argv: string[]): void {

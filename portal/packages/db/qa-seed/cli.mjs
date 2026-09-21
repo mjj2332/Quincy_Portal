@@ -92,7 +92,10 @@ export function parseArguments(argv) {
       continue;
     }
     if (bare === "--tier") {
-      if (command !== "apply") throw new Error(`\`--tier\` only applies to \`apply\`, not \`${command}\`.`);
+      // `verify` accepts `--tier` too (item 6) — after item 2, it is an ASSERTION against the
+      // recorded run's own tier, not a new value to recompute against; `teardown` still refuses it
+      // outright (teardown removes whatever is registered, regardless of tier).
+      if (command !== "apply" && command !== "verify") throw new Error(`\`--tier\` only applies to \`apply\` or \`verify\`, not \`${command}\`.`);
       const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
       if (!value) throw new Error("`--tier` needs a value.");
       const tiers = value.split(",").map((t) => t.trim()).filter(Boolean);
@@ -198,6 +201,107 @@ function readRegistry(options) {
   return { entities: entityRows.map((r) => ({ id: r.id, kind: r.kind })), runIds: runRows.map((r) => r.id) };
 }
 
+// ---------------------------------------------------------------------------
+// Rot-proof sweep (build spec item 1) — run AFTER teardown's own deletes, against ids captured
+// BEFORE teardown emptied the registry. Introspects the live schema itself
+// (`sqlite_master`/`PRAGMA table_info`/`PRAGMA foreign_key_list`) rather than a hand list, so a
+// table added by a future migration that carries a `project_id` column or an FK to
+// `projects`/`project_subtasks`/`collections` is swept automatically the first time this runs
+// against it, not the first time it silently leaks a fixture row. `audit_log` and
+// `notification_delivery_ledger`-via-`notification_outbox` (in practice: plain
+// `notification_outbox.project_id`, which the generic column scan below already finds) are named
+// explicitly in the build spec because `audit_log.target_id` has no FK at all — introspection alone
+// can never discover it — so it is swept by name, the same way `sql.ts`'s teardown deletes it.
+// ---------------------------------------------------------------------------
+
+const SWEEP_IGNORED_TABLES = new Set([
+  "__quincy_local_capability", "__quincy_local_fixture_runs", "__quincy_local_fixture_entities",
+  "project_board_order_0037_rollback", // the migration's own historical snapshot, not the live board contract
+]);
+const SAFE_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function assertSafeIdentifier(name, describe) {
+  if (!SAFE_IDENTIFIER_RE.test(String(name))) {
+    throw new Error(`Refusing to interpolate a non-identifier-shaped ${describe} discovered via schema introspection: ${JSON.stringify(name)}`);
+  }
+  return name;
+}
+
+/** Every table (other than the ignored/capability ones) with a plain `project_id` column, or —
+ * failing that — an FK to `projects`, `project_subtasks`, or `collections`, paired with the
+ * registry id-kind its matching column should be checked against. */
+function discoverSweepTargets(options) {
+  // `sqlite_%` is SQLite's own reserved prefix; `_cf_%` is wrangler/Miniflare's local D1 bookkeeping
+  // (e.g. `_cf_METADATA`) — real, not app schema, and `PRAGMA table_info` on it comes back
+  // `SQLITE_AUTH: not authorized` rather than a normal result, discovered by running this against a
+  // real local D1 (a `sqlite_%`-only filter let it through and crashed the sweep outright).
+  const tableRows = queryRows(options, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\';");
+  const targets = [];
+  for (const row of tableRows) {
+    const table = assertSafeIdentifier(row.name, "table name");
+    if (SWEEP_IGNORED_TABLES.has(table)) continue;
+    const columns = queryRows(options, `PRAGMA table_info(${table});`).map((c) => c.name);
+    if (columns.includes("project_id")) {
+      targets.push({ table, column: "project_id", registryKind: "project" });
+      continue;
+    }
+    const fks = queryRows(options, `PRAGMA foreign_key_list(${table});`);
+    const fkTo = (parent) => fks.find((fk) => fk.table === parent);
+    const projectsFk = fkTo("projects");
+    const subtaskFk = fkTo("project_subtasks");
+    const collectionFk = fkTo("collections");
+    if (projectsFk) targets.push({ table, column: assertSafeIdentifier(projectsFk.from, "FK column"), registryKind: "project" });
+    else if (subtaskFk) targets.push({ table, column: assertSafeIdentifier(subtaskFk.from, "FK column"), registryKind: "subtask" });
+    else if (collectionFk) targets.push({ table, column: assertSafeIdentifier(collectionFk.from, "FK column"), registryKind: "collection" });
+  }
+  return targets;
+}
+
+function countMatchesChunked(options, table, column, ids) {
+  let total = 0;
+  for (const group of chunk(ids, 400)) {
+    if (group.length === 0) continue;
+    const idList = group.map((id) => `'${id}'`).join(", ");
+    const row = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} IN (${idList});`);
+    total += Number(row?.n ?? 0);
+  }
+  return total;
+}
+
+function countTypedMatchesChunked(options, table, typeColumn, typeValue, idColumn, ids) {
+  let total = 0;
+  for (const group of chunk(ids, 400)) {
+    if (group.length === 0) continue;
+    const idList = group.map((id) => `'${id}'`).join(", ");
+    const row = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE ${typeColumn} = '${typeValue}' AND ${idColumn} IN (${idList});`);
+    total += Number(row?.n ?? 0);
+  }
+  return total;
+}
+
+/** `registeredByKind` must be captured BEFORE teardown's own deletes ran — by the time this
+ * function is called the registry itself is already empty. Fails loudly, naming every offending
+ * table, rather than passing silently on "found nothing to check". */
+function sweepForOrphans(options, registeredByKind) {
+  const failures = [];
+  for (const { table, column, registryKind } of discoverSweepTargets(options)) {
+    const ids = registeredByKind[registryKind] ?? [];
+    if (ids.length === 0) continue;
+    const n = countMatchesChunked(options, table, column, ids);
+    if (n > 0) failures.push(`${table}.${column}: ${n} row(s) still reference a torn-down ${registryKind} id`);
+  }
+  // `audit_log` has no FK at all (`target_id` is untyped text) — PRAGMA foreign_key_list can never
+  // discover it, so it is checked by name against both target types the app actually writes.
+  const projectIds = registeredByKind.project ?? [];
+  const subtaskIds = registeredByKind.subtask ?? [];
+  let auditOrphans = 0;
+  if (projectIds.length > 0) auditOrphans += countTypedMatchesChunked(options, "audit_log", "target_type", "project", "target_id", projectIds);
+  if (subtaskIds.length > 0) auditOrphans += countTypedMatchesChunked(options, "audit_log", "target_type", "project_subtask", "target_id", subtaskIds);
+  if (auditOrphans > 0) failures.push(`audit_log.target_id: ${auditOrphans} row(s) still reference a torn-down project/project_subtask id`);
+
+  if (failures.length > 0) throw new Error(`Rot-proof sweep found orphaned rows after teardown:\n  - ${failures.join("\n  - ")}`);
+}
+
 function teardown(options) {
   const registry = readRegistry(options);
   if (registry.entities.length === 0 && registry.runIds.length === 0) {
@@ -205,6 +309,9 @@ function teardown(options) {
     return;
   }
   console.log(`==> Tearing down ${registry.entities.length} registered fixture rows across ${registry.runIds.length} run(s)`);
+  const registeredByKind = { project: [], subtask: [], collection: [], deadline_occurrence: [], member: [] };
+  for (const entity of registry.entities) (registeredByKind[entity.kind] ??= []).push(entity.id);
+
   const { statements } = runEmit("teardown-plan", [`--entities=${JSON.stringify(registry.entities)}`, `--run-ids=${JSON.stringify(registry.runIds)}`]);
   applyStatements(options, statements, "teardown");
 
@@ -217,7 +324,10 @@ function teardown(options) {
         `${remainingProjects?.n} sentinel-tagged projects remain.`,
     );
   }
-  console.log("==> Teardown verified: zero registered fixture rows, zero sentinel-tagged projects remain.");
+
+  console.log("==> Running the rot-proof sweep (schema introspection, not a hand list)");
+  sweepForOrphans(options, registeredByKind);
+  console.log("==> Teardown verified: zero registered fixture rows, zero sentinel-tagged projects remain, sweep clean.");
 }
 
 // ---------------------------------------------------------------------------
@@ -253,40 +363,128 @@ function apply(options) {
 }
 
 // ---------------------------------------------------------------------------
-// Verify — read-only. Recomputes the expected shape from the same generator and diffs it against
-// what is actually in the database; never writes.
+// Verify — read-only, never writes (build spec item 2). Recomputes the dataset for the CURRENTLY
+// APPLIED run's own recorded anchor/tier/applied-at (`__quincy_local_fixture_runs`) — not
+// `Date.now()`, not whatever `--anchor`/`--tier` the caller passes — and diffs it against the
+// database: exact id sets AND a per-column content fingerprint for every generator-owned table,
+// including `project_members` (the old version silently skipped it). A `--anchor`/`--tier` the
+// caller passes is an ASSERTION against the recorded run, not a new value to recompute against —
+// mutating a fixture project's stage/priority/deadline, a subtask's schedule, or deleting a
+// membership now makes this fail, and it is EXPECTED to fail after a browser pass has edited
+// fixture rows: that is its job. Re-`apply` resets to the generator's own state.
 // ---------------------------------------------------------------------------
+
+const VERIFY_DIFF_TABLES = [
+  { label: "projects", table: "projects", registryKind: "project", manifestKey: "projects" },
+  { label: "project_subtasks", table: "project_subtasks", registryKind: "subtask", manifestKey: "subtasks" },
+  { label: "collections", table: "collections", registryKind: "collection", manifestKey: "collections" },
+  { label: "project_deadline_occurrences", table: "project_deadline_occurrences", registryKind: "deadline_occurrence", manifestKey: "deadlineOccurrences" },
+  { label: "project_members", table: "project_members", registryKind: "member", manifestKey: "members" },
+];
+const VERIFY_MAX_REPORTED_IDS = 10;
+
+/** The generator-owned column set for a table is read off the manifest's OWN expected rows (any
+ * one of them) rather than hand-listed here a second time — the two can never drift apart. */
+function fingerprintColumnsOf(expectedRows) {
+  const anyId = Object.keys(expectedRows)[0];
+  return anyId ? Object.keys(expectedRows[anyId]) : [];
+}
+
+function fetchActualFingerprintRows(options, table, registryKind, columns) {
+  if (columns.length === 0) return {};
+  const columnList = columns.map((c) => assertSafeIdentifier(c, "fingerprint column")).join(", ");
+  const rows = queryRows(
+    options,
+    `SELECT ${columnList} FROM ${table} WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = '${registryKind}');`,
+  );
+  return Object.fromEntries(rows.map((row) => [row.id, row]));
+}
+
+/** `??` (nullish, not `||`) so a real `0` never collapses into `""` before the string compare. */
+function fingerprintValuesEqual(expected, actual) {
+  return String(expected ?? "") === String(actual ?? "");
+}
+
+function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
+  const expectedIds = expectedTable.ids;
+  const expectedIdSet = new Set(expectedIds);
+  const actualIdSet = new Set(Object.keys(actualRowsById));
+
+  const missing = expectedIds.filter((id) => !actualIdSet.has(id));
+  if (missing.length > 0) {
+    failures.push(`${label}: ${missing.length} expected id(s) missing from the database, e.g. ${missing.slice(0, VERIFY_MAX_REPORTED_IDS).join(", ")}`);
+  }
+  const unexpected = [...actualIdSet].filter((id) => !expectedIdSet.has(id));
+  if (unexpected.length > 0) {
+    failures.push(`${label}: ${unexpected.length} unexpected registered id(s) found, e.g. ${unexpected.slice(0, VERIFY_MAX_REPORTED_IDS).join(", ")}`);
+  }
+
+  const rowMismatches = [];
+  for (const id of expectedIds) {
+    const actualRow = actualRowsById[id];
+    if (!actualRow) continue; // already reported as missing above
+    const expectedRow = expectedTable.rows[id];
+    const differingColumns = Object.keys(expectedRow).filter((column) => !fingerprintValuesEqual(expectedRow[column], actualRow[column]));
+    if (differingColumns.length > 0) rowMismatches.push(`${id} (${differingColumns.join(", ")})`);
+  }
+  if (rowMismatches.length > 0) {
+    failures.push(`${label}: ${rowMismatches.length} row(s) differ from the generator, e.g. ${rowMismatches.slice(0, VERIFY_MAX_REPORTED_IDS).join("; ")}`);
+  }
+}
 
 function verify(options) {
   const runs = queryRows(options, "SELECT id, tier, anchor, applied_at FROM __quincy_local_fixture_runs ORDER BY applied_at DESC;");
   if (runs.length === 0) throw new Error("No QA fixture run is registered. Run `npm run db:qa:apply` first.");
-  const latest = runs[0];
-  const tier = options.tier ?? latest.tier;
-  const anchor = options.anchor ?? latest.anchor;
+  if (runs.length > 1) {
+    throw new Error(
+      `Expected exactly one registered QA fixture run — every \`apply\` tears down before re-applying — found ${runs.length}. ` +
+        "The database is in an inconsistent state; run `npm run db:qa:teardown` and re-apply.",
+    );
+  }
+  const run = runs[0];
 
-  const manifestArgs = [`--anchor=${anchor}`, `--tier=${tier}`];
+  if (options.anchor !== undefined && options.anchor !== run.anchor) {
+    throw new Error(
+      `--anchor=${options.anchor} does not match the applied run's own anchor (${run.anchor}). ` +
+        "`verify` checks the CURRENTLY APPLIED run, not a hypothetical one — re-apply with that anchor first if that's what you want to check.",
+    );
+  }
+  const recordedTierSet = [...new Set(String(run.tier).split(","))].sort();
+  if (options.tier !== undefined) {
+    const requestedTierSet = [...new Set(options.tier.split(","))].sort();
+    if (JSON.stringify(requestedTierSet) !== JSON.stringify(recordedTierSet)) {
+      throw new Error(
+        `--tier=${options.tier} does not match the applied run's own tier (${run.tier}). ` +
+          "`verify` checks the CURRENTLY APPLIED run, not a hypothetical one — re-apply with that tier first if that's what you want to check.",
+      );
+    }
+  }
+
+  // Recomputed against the RECORDED run's own anchor/tier/applied-at — never the caller's values,
+  // never `Date.now()` — so occurrence status (the one apply-time-dependent field, item 4) is
+  // reproduced exactly as this run actually inserted it, not as a fresh apply would today.
+  const defaultEditorIds = queryRows(options, DEFAULT_EDITOR_QUERY).map((r) => r.id);
+  const manifestArgs = [`--anchor=${run.anchor}`, `--tier=${run.tier}`, `--applied-at-ms=${run.applied_at}`];
+  if (defaultEditorIds.length > 0) manifestArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
   const manifest = runEmit("manifest", manifestArgs);
 
   const failures = [];
-  const checks = [
-    ["projects", manifest.projectIds.length],
-    ["project_subtasks", manifest.subtaskIds.length],
-    ["collections", manifest.collectionIds.length],
-    ["project_deadline_occurrences", manifest.deadlineOccurrenceIds.length],
-  ];
-  for (const [table, expected] of checks) {
-    const actual = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = '${table === "projects" ? "project" : table === "project_subtasks" ? "subtask" : table === "collections" ? "collection" : "deadline_occurrence"}');`);
-    if (Number(actual?.n) !== expected) failures.push(`${table}: expected ${expected}, found ${actual?.n}`);
+  for (const { label, table, registryKind, manifestKey } of VERIFY_DIFF_TABLES) {
+    const expectedTable = manifest[manifestKey];
+    const columns = fingerprintColumnsOf(expectedTable.rows);
+    const actualRowsById = fetchActualFingerprintRows(options, table, registryKind, columns);
+    diffFingerprintTable(label, expectedTable, actualRowsById, failures);
   }
-
-  const sentinel = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = 'project') AND notes NOT LIKE 'QA-FIXTURE-v1%';`);
-  if (Number(sentinel?.n) !== 0) failures.push(`${sentinel?.n} registered projects are missing the QA-FIXTURE-v1 sentinel in notes`);
 
   const fkViolations = queryRows(options, "PRAGMA foreign_key_check;");
   if (fkViolations.length > 0) failures.push(`${fkViolations.length} foreign_key_check violation(s)`);
 
   if (failures.length > 0) throw new Error(`Verify failed:\n  - ${failures.join("\n  - ")}`);
-  console.log(`==> Verified: run ${latest.id} (anchor=${anchor}, tier=${tier}) matches the database. ${manifest.summary.projects} projects, ${manifest.summary.subtasks} subtasks, ${manifest.summary.collections} collections, ${manifest.summary.deadlineOccurrences} deadline occurrences.`);
+  console.log(
+    `==> Verified: run ${run.id} (anchor=${run.anchor}, tier=${run.tier}) matches the database exactly — id sets and content fingerprints ` +
+      `for ${manifest.summary.projects} projects, ${manifest.summary.subtasks} subtasks, ${manifest.summary.collections} collections, ` +
+      `${manifest.summary.deadlineOccurrences} deadline occurrences, ${manifest.summary.members} members.`,
+  );
 }
 
 async function main() {

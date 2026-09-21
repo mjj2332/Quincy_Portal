@@ -16,7 +16,7 @@
  * checked against `ALLOWED_TEXT_RE` and rejected outright if it contains anything else — the
  * charset is restrictive enough that there is no quoting hazard left, not merely an escaped one.
  */
-import type { QaFixtureDataset } from "./dataset";
+import type { QaFixtureDataset, QaTier } from "./dataset";
 
 export const CAPABILITY_KEY = "scheduling-fixtures";
 export const CAPABILITY_TABLE = "__quincy_local_capability";
@@ -248,8 +248,112 @@ export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string;
 }
 
 // ---------------------------------------------------------------------------
+// Verification snapshot (build spec item 2 — `db:qa:verify` must actually verify). The same values
+// `buildApplyPlan`'s row-builders above insert, but as raw JS values keyed by DB column name
+// instead of SQL literal strings, so `cli.mjs`'s `verify` can fetch an actual row by id and diff it
+// field-by-field. Deliberately excludes `board_position`: `projectInsertStatement` computes it as a
+// live subquery against sibling rows in the same stage AT INSERT TIME, so it is never a value the
+// dataset alone determines and nothing here can pretend to a fixed expectation for it.
+// ---------------------------------------------------------------------------
+
+export type FingerprintRow = Record<string, string | number | null>;
+
+function projectFingerprintRow(project: QaFixtureDataset["projects"][number]): FingerprintRow {
+  const deadline = project.deadline;
+  return {
+    id: project.id, street: project.street, suburb: project.suburb, postcode: null, agency_name: project.agencyName,
+    agent_name: null, agent_email: null, agent_phone: null, agency_id: null, agent_id: null,
+    shoot_date: project.shootDate, time_window: null, stage_key: project.stageKey, board_revision: project.boardRevision,
+    order_no: null, order_id: null, invoice_amount: null, payment_status: null, notes: project.notes,
+    production_notes: null, raw_folder_link: null, raw_folder_path: null, cover_asset_id: null, archived_at: null, archived_by: null,
+    deadline_local_civil: deadline ? deadline.localCivil : null, deadline_zone: deadline ? "Australia/Sydney" : null,
+    deadline_utc_offset_minutes: deadline ? deadline.utcOffsetMinutes : null, deadline_fold: deadline ? deadline.fold : null,
+    deadline_at: deadline ? deadline.epochMs : null, deadline_reminder_offsets_json: deadline ? JSON.stringify(deadline.offsetsMinutes) : null,
+    deadline_version: deadline ? 1 : 0, priority: project.priority, created_at: project.createdAtMs, updated_at: project.updatedAtMs,
+  };
+}
+
+function collectionFingerprintRow(collection: QaFixtureDataset["collections"][number]): FingerprintRow {
+  return {
+    id: collection.id, project_id: collection.projectId, kind: collection.kind, status: "empty", expected_count: null,
+    received_count: 0, created_at: collection.createdAtMs, updated_at: collection.updatedAtMs,
+  };
+}
+
+function subtaskFingerprintRow(subtask: QaFixtureDataset["subtasks"][number], createdBy: string): FingerprintRow {
+  const s = subtask.storage;
+  return {
+    id: subtask.id, project_id: subtask.projectId, title: subtask.title, done: subtask.done ? 1 : 0, position: (subtask.index + 1) * 1024,
+    assignee_id: null, assignment_version: 0, due_date: s.dueDate,
+    schedule_start_kind: s.scheduleStartKind, schedule_start_civil: s.scheduleStartCivil, schedule_start_at: s.scheduleStartAt,
+    schedule_start_utc_offset_minutes: s.scheduleStartUtcOffsetMinutes, schedule_start_fold: s.scheduleStartFold,
+    schedule_end_kind: s.scheduleEndKind, schedule_end_at: s.scheduleEndAt, schedule_end_utc_offset_minutes: s.scheduleEndUtcOffsetMinutes,
+    schedule_end_fold: s.scheduleEndFold, schedule_zone: s.scheduleZone, schedule_version: s.scheduleVersion,
+    created_by: createdBy, created_at: subtask.createdAtMs, updated_at: subtask.updatedAtMs,
+  };
+}
+
+/** `status`/`terminal_reason` ARE included (unlike `board_position`): once `appliedAtMs` is the
+ * RECORDED run's own `applied_at` (item 4's resolution — `cli.mjs`'s `verify` recomputes the
+ * manifest with that exact value), occurrence status becomes fully deterministic again, so it is
+ * verifiable rather than excluded. */
+function occurrenceFingerprintRow(row: QaFixtureDataset["deadlineOccurrences"][number], createdBy: string): FingerprintRow {
+  return {
+    id: row.id, project_id: row.projectId, schedule_version: row.scheduleVersion, kind: row.kind, reminder_offset_minutes: row.reminderOffsetMinutes,
+    fire_at: row.fireAt, deadline_at: row.deadlineAt, deadline_local_civil: row.deadlineLocalCivil, deadline_zone: "Australia/Sydney",
+    deadline_utc_offset_minutes: row.deadlineUtcOffsetMinutes, deadline_fold: row.deadlineFold, status: row.status, terminal_reason: row.terminalReason,
+    fired_at: null, created_by: createdBy, created_at: row.createdAtMs, updated_at: row.updatedAtMs,
+  };
+}
+
+function memberFingerprintRow(row: QaFixtureDataset["members"][number]): FingerprintRow {
+  return { id: row.id, project_id: row.projectId, user_id: row.userId, role_on_project: "editor", created_at: row.createdAtMs };
+}
+
+export type FingerprintTable = { ids: string[]; rows: Record<string, FingerprintRow> };
+export type VerificationManifest = {
+  anchor: string; tiers: QaTier[];
+  projects: FingerprintTable; subtasks: FingerprintTable; collections: FingerprintTable;
+  deadlineOccurrences: FingerprintTable; members: FingerprintTable;
+  summary: { projects: number; subtasks: number; collections: number; deadlineOccurrences: number; members: number };
+};
+
+function toFingerprintTable<T extends { id: string }>(rows: readonly T[], build: (row: T) => FingerprintRow): FingerprintTable {
+  return { ids: rows.map((r) => r.id), rows: Object.fromEntries(rows.map((r) => [r.id, build(r)])) };
+}
+
+/** The recomputed source of truth `db:qa:verify` diffs the live database against — exact id sets
+ * AND per-row content, for every generator-owned table including `project_members` (the build spec
+ * calls this table out by name; the old `verify` never checked it at all). */
+export function buildVerificationManifest(dataset: QaFixtureDataset, opts: { createdBy: string }): VerificationManifest {
+  return {
+    anchor: dataset.anchor, tiers: dataset.tiers,
+    projects: toFingerprintTable(dataset.projects, projectFingerprintRow),
+    subtasks: toFingerprintTable(dataset.subtasks, (s) => subtaskFingerprintRow(s, opts.createdBy)),
+    collections: toFingerprintTable(dataset.collections, collectionFingerprintRow),
+    deadlineOccurrences: toFingerprintTable(dataset.deadlineOccurrences, (o) => occurrenceFingerprintRow(o, opts.createdBy)),
+    members: toFingerprintTable(dataset.members, memberFingerprintRow),
+    summary: {
+      projects: dataset.projects.length, subtasks: dataset.subtasks.length, collections: dataset.collections.length,
+      deadlineOccurrences: dataset.deadlineOccurrences.length, members: dataset.members.length,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Teardown — by registered id only, children first. See `docs/lessons.md` on D1's FK-cascade
 // disagreement between local and remote: every delete here is explicit, never relying on cascade.
+//
+// The dataset generator itself (`sql.ts`'s own `buildApplyPlan`) only ever INSERTs into five
+// tables: `projects`, `collections`, `project_subtasks`, `project_deadline_occurrences`,
+// `project_members`. But the fixture exists so the APP can be exercised against it (#221's
+// drag-to-reschedule, checklist edits, comments) — and the app's own write paths put rows into
+// many more tables that carry a `project_id` column or reference one of the five generator-owned
+// tables, none of which the generator itself ever registers an id for (the app mints its own ids).
+// Teardown must still find and remove every one of those rows, keyed only by the REGISTERED
+// project/subtask ids (never LIKE/street), because leaving them behind either orphans them (no FK
+// at all: `notification_outbox`, `audit_log`) or makes the project delete fail outright (`jobs` and
+// the AutoHDR claim tables are NO ACTION / restrict FKs to `projects.id`).
 // ---------------------------------------------------------------------------
 
 /** Deletion order matters: `project_deadline_occurrences`/`project_members`/`project_subtasks`/
@@ -264,11 +368,66 @@ const TEARDOWN_TABLE_ORDER: Array<{ kind: FixtureEntityKind; table: string }> = 
   { kind: "project", table: "projects" },
 ];
 
-/** Every table this dataset ever writes a row to, in teardown (children-first) order. Exported so
- * `qa-seed-teardown.test.ts` can assert, against the live `schema.ts`, that every OTHER table
- * carrying a `projects.id` FK or a plain `project_id` column is provably never written by this
- * dataset — the schema-inventory test the build spec asks for. */
-export const TEARDOWN_TABLES = TEARDOWN_TABLE_ORDER.map((entry) => entry.table);
+/** Every OTHER project-scoped table the running app can write against a fixture project, in
+ * children-first teardown order, deleted by `project_id IN (<registered project ids>)` — a plain
+ * column match, never a subquery, because every one of these carries its own `project_id` column
+ * (confirmed against `schema.ts`, not memory: `packages/db/test/qa-seed-teardown.test.ts`'s
+ * `tablesWithProjectIdColumn` scan). Order encodes the real FK graph among them (children before
+ * the tables they reference), not registration order:
+ *  - `autohdr_path_claims`/`autohdr_fetch_claims`/`raw_reconciliation_claims` reference
+ *    `autohdr_output_mappings`/`autohdr_handoffs`/`jobs` — deleted first.
+ *  - `autohdr_output_mappings` references `autohdr_handoffs` — deleted next.
+ *  - `autohdr_handoffs` references `jobs` — deleted before `jobs`.
+ *  - `jobs` itself is a NO ACTION FK to `projects.id` (the trap the build spec calls out by name);
+ *    everything that references a `jobs` row is gone by the time this runs.
+ *  - `document_uploads`/`external_edited_upload_sessions` also reference `collections.id`, so both
+ *    run before the registered-id `collections` delete below.
+ */
+const PROJECT_ID_TEARDOWN_ORDER: readonly string[] = [
+  "autohdr_path_claims",
+  "autohdr_fetch_claims",
+  "raw_reconciliation_claims",
+  "autohdr_output_mappings",
+  "autohdr_scaffold_claims",
+  "autohdr_handoffs",
+  "jobs",
+  "editor_folder_mappings",
+  "publishes",
+  "client_links",
+  "document_uploads",
+  "download_selection_tickets",
+  "external_edited_upload_sessions",
+  "project_comment_read_markers",
+  "project_comments",
+  "project_activity_events",
+  "notifications",
+];
+
+/** The three traps that do not have a plain `project_id` column to filter on directly, so each
+ * needs its own subquery/typed-target shape instead of `PROJECT_ID_TEARDOWN_ORDER`'s uniform
+ * `WHERE project_id IN (...)`:
+ *  - `notification_delivery_ledger` has an `ON DELETE restrict` FK to `notification_outbox.id`
+ *    (no `project_id` of its own) — deleted first, via the outbox rows' `project_id`.
+ *  - `notification_outbox.project_id` has no FK at all — deleted next.
+ *  - `project_comment_mentions` has no `project_id`, only a cascade FK to `project_comments.id`.
+ *  - `audit_log` has no FK at all; targets are typed (`target_type`/`target_id`), so fixture rows
+ *    are `target_type IN ('project', 'project_subtask')` with `target_id` in the matching id set.
+ */
+const SPECIAL_CASE_TEARDOWN_TABLES: readonly string[] = ["notification_delivery_ledger", "notification_outbox", "project_comment_mentions", "audit_log"];
+
+/** Every table this dataset's own generated SQL, or the app writing against a fixture project it
+ * created, can ever put a row into — in full children-first teardown order. Exported so
+ * `qa-seed-teardown.test.ts` can assert, against the live `schema.ts`, that every table carrying a
+ * plain `project_id` column is present here (no "the generator doesn't write it" exemption — the
+ * app does), and so `cli.mjs`'s teardown step can assert a non-empty DELETE landed against each. */
+export const TEARDOWN_TABLES: readonly string[] = [
+  "notification_delivery_ledger",
+  "notification_outbox",
+  "project_comment_mentions",
+  ...PROJECT_ID_TEARDOWN_ORDER,
+  "audit_log",
+  ...TEARDOWN_TABLE_ORDER.map((entry) => entry.table),
+];
 
 const TEARDOWN_CHUNK_SIZE = 400;
 
@@ -276,6 +435,56 @@ function chunk<T>(values: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
   return chunks;
+}
+
+function idList(ids: readonly string[], describe: string): string {
+  return ids.map((id) => sqlId(id, describe)).join(", ");
+}
+
+/** `DELETE FROM <table> WHERE project_id IN (<registered project ids>) AND <capability>` — the
+ * shape every table in `PROJECT_ID_TEARDOWN_ORDER` shares. Emits nothing when there are no
+ * registered project ids, same as every other teardown helper here. */
+function deleteByProjectIdStatements(table: string, projectIds: readonly string[]): string[] {
+  return chunk(projectIds, TEARDOWN_CHUNK_SIZE).map(
+    (group) => `DELETE FROM ${table} WHERE project_id IN (${idList(group, "project id")}) AND ${CAPABILITY_PREDICATE};`,
+  );
+}
+
+/** `notification_delivery_ledger` has no `project_id` of its own — only `outbox_id`, restrict-FK'd
+ * to `notification_outbox.id` — so fixture ledger rows are found via the outbox rows' own
+ * `project_id`. Must run before `notification_outbox`'s own delete. */
+function deleteNotificationDeliveryLedgerStatements(projectIds: readonly string[]): string[] {
+  return chunk(projectIds, TEARDOWN_CHUNK_SIZE).map(
+    (group) =>
+      `DELETE FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id IN (${idList(group, "project id")})) AND ${CAPABILITY_PREDICATE};`,
+  );
+}
+
+/** `project_comment_mentions` has no `project_id` of its own — only a cascade FK to
+ * `project_comments.id` — so fixture mention rows are found via the comment rows' own
+ * `project_id`. Must run before `project_comments`'s own delete. */
+function deleteCommentMentionsStatements(projectIds: readonly string[]): string[] {
+  return chunk(projectIds, TEARDOWN_CHUNK_SIZE).map(
+    (group) =>
+      `DELETE FROM project_comment_mentions WHERE comment_id IN (SELECT id FROM project_comments WHERE project_id IN (${idList(group, "project id")})) AND ${CAPABILITY_PREDICATE};`,
+  );
+}
+
+/** `audit_log` has no FK at all — targets are typed (`target_type`/`target_id`) — so fixture rows
+ * are found by typed target against BOTH the registered project ids (`target_type = 'project'`)
+ * and the registered subtask ids (`target_type = 'project_subtask'`); every write path that audits
+ * against a fixture row uses one of exactly these two target types
+ * (`workers/app/src/lib/project-deadline.ts`, `project-subtasks.ts`, `project-members.ts`,
+ * `project-comments.ts`, `routes/projects.ts`). */
+function deleteAuditLogStatements(projectIds: readonly string[], subtaskIds: readonly string[]): string[] {
+  const statements: string[] = [];
+  for (const group of chunk(projectIds, TEARDOWN_CHUNK_SIZE)) {
+    statements.push(`DELETE FROM audit_log WHERE target_type = 'project' AND target_id IN (${idList(group, "project id")}) AND ${CAPABILITY_PREDICATE};`);
+  }
+  for (const group of chunk(subtaskIds, TEARDOWN_CHUNK_SIZE)) {
+    statements.push(`DELETE FROM audit_log WHERE target_type = 'project_subtask' AND target_id IN (${idList(group, "subtask id")}) AND ${CAPABILITY_PREDICATE};`);
+  }
+  return statements;
 }
 
 export function buildTeardownStatements(entities: readonly FixtureEntity[], runIds: readonly string[]): string[] {
@@ -286,23 +495,53 @@ export function buildTeardownStatements(entities: readonly FixtureEntity[], runI
     list.push(entity.id);
     byKind.set(entity.kind, list);
   }
+  const projectIds = byKind.get("project") ?? [];
+  const subtaskIds = byKind.get("subtask") ?? [];
+
   const statements: string[] = [];
+
+  // App-written rows with no registry id of their own, deleted by project (and, for audit_log,
+  // subtask) id — children first, before the registered-id deletes below reach `projects` itself.
+  statements.push(...deleteNotificationDeliveryLedgerStatements(projectIds));
+  statements.push(...deleteByProjectIdStatements("notification_outbox", projectIds));
+  statements.push(...deleteCommentMentionsStatements(projectIds));
+  for (const table of PROJECT_ID_TEARDOWN_ORDER) statements.push(...deleteByProjectIdStatements(table, projectIds));
+  statements.push(...deleteAuditLogStatements(projectIds, subtaskIds));
+
+  // Registered-id deletes — the rows the generator's own INSERTs created.
   for (const { kind, table } of TEARDOWN_TABLE_ORDER) {
     const ids = byKind.get(kind) ?? [];
     for (const group of chunk(ids, TEARDOWN_CHUNK_SIZE)) {
-      const idList = group.map((id) => sqlId(id, `${kind} id`)).join(", ");
-      statements.push(`DELETE FROM ${table} WHERE id IN (${idList}) AND ${CAPABILITY_PREDICATE};`);
+      const idsSql = group.map((id) => sqlId(id, `${kind} id`)).join(", ");
+      statements.push(`DELETE FROM ${table} WHERE id IN (${idsSql}) AND ${CAPABILITY_PREDICATE};`);
     }
   }
   for (const group of chunk(entities.map((e) => e.id), TEARDOWN_CHUNK_SIZE)) {
-    const idList = group.map((id) => sqlId(id, "entity id")).join(", ");
-    statements.push(`DELETE FROM ${FIXTURE_ENTITIES_TABLE} WHERE id IN (${idList}) AND ${CAPABILITY_PREDICATE};`);
+    const idsSql = group.map((id) => sqlId(id, "entity id")).join(", ");
+    statements.push(`DELETE FROM ${FIXTURE_ENTITIES_TABLE} WHERE id IN (${idsSql}) AND ${CAPABILITY_PREDICATE};`);
   }
   for (const group of chunk([...runIds], TEARDOWN_CHUNK_SIZE)) {
-    const idList = group.map((id) => sqlId(id, "run id")).join(", ");
-    statements.push(`DELETE FROM ${FIXTURE_RUNS_TABLE} WHERE id IN (${idList}) AND ${CAPABILITY_PREDICATE};`);
+    const idsSql = group.map((id) => sqlId(id, "run id")).join(", ");
+    statements.push(`DELETE FROM ${FIXTURE_RUNS_TABLE} WHERE id IN (${idsSql}) AND ${CAPABILITY_PREDICATE};`);
   }
   return statements;
 }
 
+// ---------------------------------------------------------------------------
+// Rot-proof sweep — introspection, not a hand list. After teardown, `cli.mjs` walks
+// `sqlite_master`/`pragma_table_info`/`pragma_foreign_key_list` itself (not this module — it would
+// need a live DB connection this pure module never touches) for every table with a `project_id`
+// column or an FK to `projects`/`project_subtasks`/`collections`, plus the two named-target
+// exceptions (`audit_log.target_id`, `notification_outbox.project_id`), and asserts zero rows
+// reference any previously-registered id. `SWEEP_SPECIAL_CASE_TABLES` and
+// `SWEEP_EXCLUDED_TABLES` are exported so that logic (in `cli.mjs`) and this module's own test
+// stay in the same place conceptually, even though the SQL introspection itself has to live where
+// the database connection lives.
+// ---------------------------------------------------------------------------
+
+/** Never swept: the migration's own historical rollback snapshot, not the live board contract —
+ * the build spec calls this out explicitly (Decision 4). */
+export const SWEEP_EXCLUDED_TABLES: readonly string[] = ["project_board_order_0037_rollback"];
+
+export { SPECIAL_CASE_TEARDOWN_TABLES, PROJECT_ID_TEARDOWN_ORDER };
 export { sqlId, sqlText, sqlNullableText, sqlInt, sqlNullableInt, sqlBool, ALLOWED_TEXT_RE, UUID_RE };
