@@ -295,7 +295,19 @@ function buildProjectBar(project: GanttProjectRowDto, color: string): RowBuildRe
   // fix-220-sol1 #4: `checklist.total` is the project's full checklist count (not just this page's
   // downloaded `children.rows.length`, which may still be a truncated first page) — the one field
   // that is always the complete denominator regardless of child pagination state.
-  const progress = project.checklist.total > 0 ? Math.round((project.checklist.completed / project.checklist.total) * 100) : undefined;
+  //
+  // fix-220-sol2 #6: `Math.round` alone reports 100 for a genuinely INCOMPLETE project —
+  // `Math.round((199 / 200) * 100)` is `100` — which then renders the completed styling and the
+  // done checkmark (`renderGanttEventContent` in `ProductionGantt.tsx`, `progress === 100`) on a
+  // project that still has work outstanding. `100` is now emitted only when every row is actually
+  // done; every other ratio is rounded normally and then capped at `99`, so "nearly done" and
+  // "actually done" can never collide on the one value the UI treats as a completion signal.
+  const progress =
+    project.checklist.total > 0
+      ? project.checklist.completed === project.checklist.total
+        ? 100
+        : Math.min(99, Math.round((project.checklist.completed / project.checklist.total) * 100))
+      : undefined;
   const event: ProductionGanttEvent<ProductionGanttRowData> = {
     id: `project-bar:${project.id}`,
     title: project.street,

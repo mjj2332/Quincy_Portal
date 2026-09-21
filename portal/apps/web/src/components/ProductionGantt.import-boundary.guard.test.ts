@@ -33,18 +33,22 @@ function productionGanttSource(): string {
  * actually resolve a module through: a static `import ... from "..."` / `export ... from "..."`
  * (the original `\bfrom\s+["']...["']` pattern — an `export`/`export type` form already contains
  * the literal text `from "..."`, so that ONE pattern already covered it), a bare SIDE-EFFECT import
- * with no binding (`import "...";` — no `from` keyword at all), a dynamic `import(...)`, and a
- * CommonJS `require(...)` (fix-220-sol1 #6: the guard's own finding was that only the `from` form
- * was recognised — verified against this file's own git history before writing this, the other
- * three genuinely had no matching pattern here at all, so a forbidden module reached ONLY through
- * one of them would have passed this guard silently). Each pattern is independent and every match
- * is collected, rather than reusing a single AST walk (`harness-reachability.guard.test.ts`'s own
+ * with no binding (`import "...";` — no `from` keyword at all), a dynamic `import(...)`, a CommonJS
+ * `require(...)` (fix-220-sol1 #6: the guard's own finding was that only the `from` form was
+ * recognised), `import.meta.glob(...)` / `import.meta.globEager(...)`, and `new URL("...",
+ * import.meta.url)` (fix-220-sol2 #7: round 2's report claimed all three of THESE were added with
+ * "5 self-tests, one per new form" in the pass that landed fix-220-sol1 #6 — they were not; that
+ * pass added exactly the four forms above it, and neither `import.meta.glob`/`globEager` nor `new
+ * URL(..., import.meta.url)` had a matching pattern here at all until THIS fix, verified against
+ * this file's own git history before writing it). Each pattern is independent and every match is
+ * collected, rather than reusing a single AST walk (`harness-reachability.guard.test.ts`'s own
  * `extractSpecifiers`) — that walker is NOT exported from its file (this repo's own house pattern,
  * per THIS file's original header, is to duplicate the small amount of matching logic a guard needs
  * rather than import between sibling guard test files), and this guard scans exactly one known,
  * small, hand-authored source file rather than the whole tree, where a full parser's extra
- * correctness has far less to buy. Every one of the four forms below is locked in by its own
- * self-test.
+ * correctness has far less to buy. Every one of the six forms below is locked in by its own
+ * self-test (`import.meta.glob`'s single-literal and array-of-literals shapes, and `globEager`,
+ * share one pattern and are each exercised by their own test below it).
  */
 function importSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
@@ -58,11 +62,28 @@ function importSpecifiers(source: string): string[] {
     /\bimport\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
     // A CommonJS `require(...)`, literal or no-substitution-template argument.
     /\brequire\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
+    // fix-220-sol2 #7: `new URL("...", import.meta.url)` — Vite's special-cased asset/worker URL
+    // form (`new Worker(new URL(...))` included, since this pattern matches the inner `new URL(...)`
+    // regardless of what wraps it). A `import.meta.glob` reaching a restricted module isn't the only
+    // way around a text-based guard like this one; this form is the other one this repo's own
+    // `harness-reachability.guard.test.ts` already treats as a real module-loading path.
+    /\bnew\s+URL\s*\(\s*["'`]([^"'`]+)["'`]\s*,\s*import\s*\.\s*meta\s*\.\s*url\s*\)/g,
   ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
       const specifier = match[1];
       if (specifier) specifiers.push(specifier);
+    }
+  }
+  // fix-220-sol2 #7: `import.meta.glob(...)` / `import.meta.globEager(...)` — the call's own
+  // argument can be a single string literal OR an array of them (`import.meta.glob(["a", "b"])`),
+  // so unlike every pattern above (which captures exactly one specifier per match), every quoted
+  // literal found INSIDE the call's own parens is pulled out, not just the first.
+  const globCallPattern = /\bimport\s*\.\s*meta\s*\.\s*glob(?:Eager)?\s*\(([^)]*)\)/g;
+  for (const call of source.matchAll(globCallPattern)) {
+    const args = call[1] ?? "";
+    for (const literal of args.matchAll(/["'`]([^"'`]+)["'`]/g)) {
+      if (literal[1]) specifiers.push(literal[1]);
     }
   }
   return specifiers;
@@ -122,11 +143,48 @@ describe("guard: ProductionGantt.tsx never imports a scheduling-mutation module"
     expect(importSpecifiers('export * from "../lib/scheduling-undo";')).toEqual(["../lib/scheduling-undo"]);
   });
 
+  // fix-220-sol2 #7: round 2's report claimed these three forms were already added, with "5
+  // self-tests, one per new form" — they were not (see `importSpecifiers`' own docblock). These
+  // self-tests plant each one for real, the same way the fix-220-sol1 #6 block above does for its
+  // own four forms: each assertion would fail (return `[]`, missing the offender) against the
+  // pre-fix extractor.
+  it("extracts import.meta.glob with a single string-literal pattern", () => {
+    expect(importSpecifiers('const modules = import.meta.glob("../lib/scheduling-policy*");')).toEqual(["../lib/scheduling-policy*"]);
+  });
+
+  it("extracts import.meta.glob with an array of string-literal patterns", () => {
+    expect(importSpecifiers('const modules = import.meta.glob(["../lib/scheduling-policy", "../lib/scheduling-undo"]);')).toEqual([
+      "../lib/scheduling-policy",
+      "../lib/scheduling-undo",
+    ]);
+  });
+
+  it("extracts import.meta.globEager with a single string-literal pattern", () => {
+    expect(importSpecifiers('const modules = import.meta.globEager("../lib/scheduling-undo");')).toEqual(["../lib/scheduling-undo"]);
+  });
+
+  it("extracts new URL(\"...\", import.meta.url), bare and wrapped in new Worker(...)", () => {
+    expect(importSpecifiers('const url = new URL("../lib/scheduling-policy", import.meta.url);')).toEqual(["../lib/scheduling-policy"]);
+    expect(importSpecifiers('const w = new Worker(new URL("../lib/scheduling-undo", import.meta.url));')).toEqual(["../lib/scheduling-undo"]);
+  });
+
   it("every one of the four forms above is caught by the forbidden-import check end to end, not just by the extractor in isolation", () => {
     expect(findForbiddenSchedulingImports(importSpecifiers('import "../lib/scheduling-undo";'))).toEqual(["../lib/scheduling-undo"]);
     expect(findForbiddenSchedulingImports(importSpecifiers('void import("../lib/scheduling-policy");'))).toEqual(["../lib/scheduling-policy"]);
     expect(findForbiddenSchedulingImports(importSpecifiers('const x = require("../lib/use-scheduling-commands");'))).toEqual(["../lib/use-scheduling-commands"]);
     expect(findForbiddenSchedulingImports(importSpecifiers('export { doThing } from "../lib/scheduling-policy";'))).toEqual(["../lib/scheduling-policy"]);
+  });
+
+  it("every one of the three fix-220-sol2 #7 forms above is caught by the forbidden-import check end to end too", () => {
+    expect(findForbiddenSchedulingImports(importSpecifiers('const modules = import.meta.glob("../lib/scheduling-policy*");'))).toEqual([
+      "../lib/scheduling-policy*",
+    ]);
+    expect(findForbiddenSchedulingImports(importSpecifiers('const modules = import.meta.globEager("../lib/scheduling-undo");'))).toEqual([
+      "../lib/scheduling-undo",
+    ]);
+    expect(findForbiddenSchedulingImports(importSpecifiers('const url = new URL("../lib/use-scheduling-commands", import.meta.url);'))).toEqual([
+      "../lib/use-scheduling-commands",
+    ]);
   });
 
   it("ProductionGantt.tsx imports nothing from lib/use-scheduling-commands, lib/scheduling-policy*, or lib/scheduling-undo", () => {

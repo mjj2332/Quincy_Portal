@@ -345,6 +345,24 @@ const EMPTY_FILTERS: Omit<ProductionGanttFilters, "q"> = { editorIds: [], stageK
 const MAX_CONCURRENT_CHILD_CHAINS = 4;
 
 /**
+ * fix-220-sol2 — redesign decision (read before patching item by item, per that report's own
+ * request): this lifecycle (seed a chain -> walk it -> react to a generation change -> reconcile /
+ * start / retire chains under a concurrency cap) is kept in its current four-part shape rather than
+ * rewritten wholesale. The five bugs sol2 found in it (#1-#5) are five independent, localized
+ * correctness bugs — a signature missing a field, a controller map with no ownership check, an
+ * effect gated behind the very cap it needs to relieve, a state update that lags a render by one
+ * effect, and a capacity counter that double-charges a like-for-like replacement — not evidence
+ * that the seed/walk/react/reconcile SEPARATION ITSELF is wrong. Those four responsibilities are
+ * still genuinely different jobs, and collapsing them into one bigger effect or a reducer would not
+ * remove any of the five bugs — it would relocate the same five invariants (ownership,
+ * generation-scoping, cap accounting, reconcile-before-gate, StrictMode-safe cleanup) into one
+ * larger piece of code with a larger blast radius to review, against a file whose surrounding
+ * documentation is already this dense precisely because each invariant has already been fought for
+ * once before. The five fixes below are targeted patches to the exact functions/effects sol2 named,
+ * each tagged with its own finding number.
+ */
+
+/**
  * Per-project child-pagination state (fix-220-sol1 #2). `complete` is set ONLY on actually merging a
  * page whose `nextCursor` is `null` — never inferred from "an entry exists" the way the old
  * `childOverrides` override did, so a failed continuation can never present a truncated project as
@@ -370,6 +388,15 @@ type GanttChildPageState = {
    * re-walk forever.
    */
   seedSignature: string;
+  /**
+   * fix-220-sol2 #4: the `generationKey` (below, `ProductionGantt`'s own `useMemo`) this entry was
+   * seeded under, captured verbatim at seed time and carried forward unchanged through every later
+   * page merge — never recomputed from the current render. Every READ of `childState` filters
+   * through this against the render's own `generationKey` (`liveChildState`, below) rather than
+   * relying on the generation-reset effect to have already cleared the map by the time this
+   * particular render runs. See that effect's own comment for the race this closes.
+   */
+  generationKey: string;
 };
 
 /**
@@ -384,10 +411,44 @@ type GanttChildPageState = {
  * own truncation point, which can move without any row's content changing). Two embedded pages with
  * identical row content and the same `nextCursor` always produce the identical string — the required
  * "an identical refetch costs nothing" case.
+ *
+ * **fix-220-sol2 #1 adds `children.total`.** The finding's own text described `children.total` as
+ * "absent from the DTO" — checked against the source before writing this fix and that premise does
+ * not hold: `GanttProjectRowDto["children"].total` (`packages/shared/src/production-gantt.ts:199`)
+ * is present, `.strict()`-schema-validated, and is sourced server-side from its own always-fresh,
+ * always-one-row COUNT query (`workers/app/src/routes/production-gantt.ts`'s
+ * `GanttChildPageTotalSqlRow`/`productionGanttChildPageTotalSql`, fix-218-r4 #2's own docblock: "the
+ * project's true visible-row total instead of falling back to 0") — never a stale or page-scoped
+ * count. Since it is genuinely available and live, folding it into the signature is a strict
+ * improvement: it now catches an add/delete ANYWHERE in a project's checklist (page one or not) that
+ * changes the project's total row count, which the row-content fields above alone could not.
+ *
+ * **The residual gap sol2's finding actually described is NOT closed by this, and there is no
+ * complete client-side fix for it** (sol2's own assessment, matching what's implemented here): a
+ * title/done/position/assignee/schedule EDIT to a row that already lives only in a merged
+ * CONTINUATION page (page 2+) changes none of `children.nextCursor`, `children.total`, or any page-one
+ * row's fields — nothing this signature reads — so it produces no seed-signature mismatch and the
+ * stale copy of that row stays cached until the identity/filter tuple itself changes (a full
+ * generation reset, which re-walks everything from scratch) or the user reloads. A `retry` does not
+ * help either: it RESUMES from the existing cursor forward, it never revisits rows already behind
+ * that cursor. The only complete fix is server-side — a per-project child-collection revision counter
+ * that bumps on every visible mutation, included here in place of (not alongside) hand-picked row
+ * fields — which is Sol's own proposal and is out of scope for this slice.
+ *
+ * **Considered and declined: force a full re-walk from page one on every project-list refetch**
+ * (ignoring seed-signature equality entirely, poll-driven every `staleTime`/`refetchInterval` tick —
+ * `production-gantt-query.ts`'s `refetchInterval: 30_000`). That WOULD also catch a page-2+ content
+ * edit, but at the cost of re-fetching every remaining page of every tracked truncated project's
+ * checklist every 30 seconds forever, whether or not anything actually changed on those pages — for a
+ * project with several hundred checklist rows spread over many pages, that is a standing, unbounded
+ * background cost paid on a fixed timer rather than in response to an actual edit. Declined as
+ * disproportionate to what it buys; the honest answer is that this residual gap needs the server-side
+ * revision, not a client-side polling tax.
  */
 function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"]): string {
   return JSON.stringify([
     children.nextCursor,
+    children.total,
     children.rows.map((row) => [row.id, row.done, row.position, row.title, row.assignee?.id ?? null, row.schedule.version]),
   ]);
 }
@@ -419,6 +480,16 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const childControllersRef = useRef<Map<string, AbortController>>(new Map());
   const [childState, setChildState] = useState<Record<string, GanttChildPageState>>({});
 
+  // fix-220-sol2 #4: this effect is CLEANUP (stop in-flight requests, free memory), not the thing
+  // that makes a generation change safe to render. It runs after the render that already saw the
+  // new `generationKey`, so relying on it alone to have cleared `childState` in time was exactly
+  // sol2 #4's bug: if the new key's project list happened to share a project id with the OLD
+  // generation's still-present `childState` entry, that first render could apply the previous
+  // (possibly more privileged) generation's cached child rows to the new identity/filters before
+  // this effect ever runs. The actual correctness fix is `liveChildState` below, which filters
+  // every read of `childState` by the entry's OWN stored `generationKey` synchronously during
+  // render — this effect only needs to (eventually) reclaim the abandoned entries and abort their
+  // requests, which is exactly what it still does.
   useEffect(() => {
     if (previousGenerationKeyRef.current === generationKey) return;
     previousGenerationKeyRef.current = generationKey;
@@ -433,6 +504,23 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   }, [generationKey]);
 
   /**
+   * fix-220-sol2 #4: `childState` filtered down to entries whose OWN stored `generationKey` matches
+   * this render's `generationKey` — computed synchronously here, in the render body, not in an
+   * effect. Every downstream reader (`effectiveProjects`, `childLoadRetryByProjectResourceId`,
+   * `retryProjectChildren`, and the reconciliation effect below) reads THIS, never the raw
+   * `childState`, so a stale entry from a just-superseded generation is invisible the very first
+   * render after `generationKey` changes — it never has to wait for the generation-reset effect
+   * above to actually run and clear it.
+   */
+  const liveChildState = useMemo(() => {
+    const filtered: Record<string, GanttChildPageState> = {};
+    for (const [projectId, state] of Object.entries(childState)) {
+      if (state.generationKey === generationKey) filtered[projectId] = state;
+    }
+    return filtered;
+  }, [childState, generationKey]);
+
+  /**
    * fix-220-sol1 #1 & #2: walks ONE project's remaining child pages, starting from `seedRows`/
    * `seedCursor` (the project's own fresh embedded page on first load, or wherever a previous
    * attempt's state left off on a retry — never restarted from scratch on retry, since the rows
@@ -440,20 +528,42 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
    * starts; every write below checks it against `generationRef.current` before touching state, so a
    * response that lands after this chain's generation was superseded is discarded rather than
    * writing into a newer generation's `childState` (fix-220-sol1 #1's "reject completions that
-   * belong to a superseded generation").
+   * belong to a superseded generation"). `generationKey` (fix-220-sol2 #4) is the CALLER's own
+   * current string key, stored verbatim into every write this chain makes so `liveChildState` below
+   * can filter it correctly without waiting for an effect.
    *
    * `seedSignature` (fix-220-sol1b) is recorded verbatim into every write this chain makes — it is
    * whatever the CALLER captured as "the embedded page this walk started from", never recomputed
    * here, so a chain that keeps merging continuation pages doesn't drift its own seed away from what
    * it was actually seeded against.
+   *
+   * **fix-220-sol2 #2 (controller ownership):** this function is now the ONE place that ever installs
+   * a controller into `childControllersRef` for a given `projectId`, and it unconditionally aborts
+   * whatever controller already occupies that slot before installing its own — a caller (a re-seed, a
+   * retry) no longer needs to abort-and-delete on its own behalf first, and no longer CAN leave a
+   * predecessor's controller registered under this project id by forgetting to. Every write this
+   * chain makes AFTER its first `await` additionally checks `childControllersRef.current.get(projectId)
+   * === controller` — "am I still this project's owner" — before touching `childState`, so a response
+   * that lands after a LATER same-generation call to this same function has already replaced this
+   * chain's controller (the two-events-in-one-tick race: this chain's `await` was already in flight
+   * when the replacement happened) is discarded instead of overwriting the replacement's fresher
+   * state. This is a different question from the existing `generation !== generationRef.current` /
+   * `controller.signal.aborted` checks just above it, which ask "was I told to stop"; this asks "does
+   * my own controller still own this slot" — the replacement above aborts the old controller, but an
+   * abort landing and a response resolving can race, so both checks are needed together.
    */
-  const loadProjectChildChain = useCallback((projectId: string, generation: number, seedRows: GanttChecklistRowDto[], seedCursor: string | null, seedSignature: string) => {
+  const loadProjectChildChain = useCallback((projectId: string, generation: number, generationKey: string, seedRows: GanttChecklistRowDto[], seedCursor: string | null, seedSignature: string) => {
     if (generation !== generationRef.current) return;
+    // fix-220-sol2 #2: install-time ownership transfer — abort whatever controller currently owns
+    // this project's slot (if any) before this chain claims it, so the loader itself is the single
+    // point of truth for "who owns this project's chain", regardless of what the caller did or
+    // forgot to do beforehand.
+    childControllersRef.current.get(projectId)?.abort();
     const controller = new AbortController();
     childControllersRef.current.set(projectId, controller);
     setChildState((current) => ({
       ...current,
-      [projectId]: { rows: seedRows, cursor: seedCursor, complete: seedCursor === null, loading: seedCursor !== null, error: null, seedSignature },
+      [projectId]: { rows: seedRows, cursor: seedCursor, complete: seedCursor === null, loading: seedCursor !== null, error: null, seedSignature, generationKey },
     }));
     if (seedCursor === null) {
       childControllersRef.current.delete(projectId);
@@ -472,14 +582,18 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
           // rejecting. Without this check that late, successful response would still pass the
           // generation guard and overwrite the freshly re-seeded state with stale data.
           if (generation !== generationRef.current || controller.signal.aborted) return;
+          // fix-220-sol2 #2: ownership check — see this function's own header for why this is a
+          // distinct question from the two checks just above.
+          if (childControllersRef.current.get(projectId) !== controller) return;
           rows = mergeGanttChildPage(rows, page);
           cursor = page.children.nextCursor;
           // fix-220-sol1 #2: `complete` flips to true ONLY here, on actually merging a page whose
           // own `nextCursor` is null — never inferred elsewhere from "a childState entry exists".
-          setChildState((current) => ({ ...current, [projectId]: { rows, cursor, complete: cursor === null, loading: cursor !== null, error: null, seedSignature } }));
+          setChildState((current) => ({ ...current, [projectId]: { rows, cursor, complete: cursor === null, loading: cursor !== null, error: null, seedSignature, generationKey } }));
         }
       } catch (error) {
         if (generation !== generationRef.current || controller.signal.aborted) return;
+        if (childControllersRef.current.get(projectId) !== controller) return;
         // An abort from THIS generation's own unmount/retry-supersession/re-seed is expected, not an
         // error to surface — a retry or re-seed starts its own fresh controller for the same project.
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -488,24 +602,27 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
         // surfaces it and its retry re-enters this same function from `cursor`, not from scratch.
         setChildState((current) => ({
           ...current,
-          [projectId]: { rows, cursor, complete: false, loading: false, error: error instanceof Error ? error : new Error("Failed to load the remaining checklist rows."), seedSignature },
+          [projectId]: { rows, cursor, complete: false, loading: false, error: error instanceof Error ? error : new Error("Failed to load the remaining checklist rows."), seedSignature, generationKey },
         }));
       } finally {
-        childControllersRef.current.delete(projectId);
+        // fix-220-sol2 #2: delete only if this chain's own controller still owns the slot — a
+        // successor chain that has already replaced it (installed its own controller under this
+        // same `projectId`) must not have ITS entry deleted by this, the predecessor's, `finally`.
+        if (childControllersRef.current.get(projectId) === controller) childControllersRef.current.delete(projectId);
       }
     })();
   }, []);
 
   const retryProjectChildren = useCallback(
     (project: GanttProjectRowDto) => {
-      const existing = childState[project.id];
+      const existing = liveChildState[project.id];
       // fix-220-sol1b: a retry RESUMES the interrupted chain, it never re-seeds — so it carries
       // forward the existing entry's own `seedSignature` unchanged (falling back to the project's
       // current embedded signature only in the defensive case where no entry exists yet at all).
       const seedSignature = existing?.seedSignature ?? computeEmbeddedChildSignature(project.children);
-      loadProjectChildChain(project.id, generationRef.current, existing?.rows ?? project.children.rows, existing?.cursor ?? project.children.nextCursor, seedSignature);
+      loadProjectChildChain(project.id, generationRef.current, generationKey, existing?.rows ?? project.children.rows, existing?.cursor ?? project.children.nextCursor, seedSignature);
     },
-    [childState, loadProjectChildChain],
+    [liveChildState, generationKey, loadProjectChildChain],
   );
 
   // Signature-stable per mount — `now` is unused inside the adapter today (see its own header);
@@ -515,14 +632,15 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const effectiveProjects = useMemo<GanttProjectRowDto[]>(
     () =>
       projects.map((project) => {
-        const state = childState[project.id];
+        // fix-220-sol2 #4: `liveChildState`, not raw `childState` — see that memo's own comment.
+        const state = liveChildState[project.id];
         if (!state) return project;
         // fix-220-sol1 #2: `truncated` is driven ONLY by `state.complete` — never by "a childState
         // entry exists", so a chain that stopped on an error still correctly reports `truncated:
         // true` (there IS more, it just failed to load) instead of silently reading as complete.
         return { ...project, children: { ...project.children, rows: state.rows, truncated: !state.complete, nextCursor: state.complete ? null : state.cursor } };
       }),
-    [projects, childState],
+    [projects, liveChildState],
   );
 
   const model = useMemo(() => buildProductionGanttModel(effectiveProjects, { now }), [effectiveProjects, now]);
@@ -551,8 +669,8 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   // project already visible on first paint), bounded to `MAX_CONCURRENT_CHILD_CHAINS` concurrent
   // chains and to projects `model.includedProjectIds` actually drew a resource/event for — a project
   // the adapter already excluded past the draw cap can never be shown regardless of how many of its
-  // children this fetches, so walking it is pure waste. An entry already in `childState` (loading,
-  // complete, OR errored) is left alone by the SECOND loop below; an errored chain only resumes via
+  // children this fetches, so walking it is pure waste. An entry already in `liveChildState` (loading,
+  // complete, OR errored) is left alone by the THIRD loop below; an errored chain only resumes via
   // the user's own explicit retry (`GanttChildLoadErrorBadge`), never automatically re-triggered by
   // this effect re-running.
   //
@@ -563,41 +681,86 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   // fresh pages, but without this loop an already-walked project's `childState` would keep overriding
   // them with what an earlier walk accumulated, forever (until `q`/filters/identity changed). This
   // loop re-seeds any TRACKED project (regardless of its current `truncated`) whose fresh embedded
-  // signature no longer matches the signature its state was seeded from: it aborts that project's own
-  // in-flight controller (if any — a chain already `complete` or `error`-stopped has none) and calls
-  // `loadProjectChildChain` again, which atomically both drops the stale entry and re-seeds it from
-  // the fresh page in the same `setChildState` write. Every OTHER project's chain is untouched. Shares
-  // `capacity` with the second loop so both together still respect the same concurrency bound.
+  // signature no longer matches the signature its state was seeded from — `loadProjectChildChain`
+  // itself now owns aborting the stale controller (fix-220-sol2 #2), so this loop only has to call it.
+  //
+  // **fix-220-sol2 #3 (reconcile before cap/inclusion gating):** this FIRST loop runs UNCONDITIONALLY
+  // — no `tooManyToDraw` check, no `capacity` check, no `model.includedProjectIds` check. The old
+  // shape gated the entire effect (this loop included) behind `tooManyToDraw`/capacity, which was a
+  // deadlock: cached expanded rows from an earlier walk can themselves be WHY the model is over the
+  // draw cap, and a fresh, smaller embedded page is exactly what would shrink them back under it — but
+  // that fresh page could never be applied, because the effect returned before this loop ever ran.
+  // Reconciling a tracked project's rows against its current, live embedded page is what keeps the
+  // model's cap/inclusion computation itself honest; it cannot be gated on that same computation's own
+  // output without a cycle. This is also why it needs no `capacity` budget (fix-220-sol2 #5): replacing
+  // an already-tracked chain with a re-seeded one is a like-for-like swap of `childControllersRef`'s
+  // existing entry for that project id, never a net-new entry, so it can never itself push
+  // `childControllersRef.current.size` past `MAX_CONCURRENT_CHILD_CHAINS` — that bound is enforced
+  // entirely by capacity-gating NEW chains in the third loop below, which is the only one of the three
+  // that ever adds a project id `childControllersRef` didn't already have an entry for.
+  //
+  // **SECOND loop (fix-220-sol2 #3): abort chains for projects that just became excluded.** A project
+  // no longer in `model.includedProjectIds` can never be drawn regardless of how many more children
+  // this fetches for it, so an in-flight chain for it is pure waste that also starves an INCLUDED
+  // truncated project of one of the `MAX_CONCURRENT_CHILD_CHAINS` slots. Its whole `liveChildState`
+  // entry is dropped, not just its controller — this is what actually relieves a cap deadlock caused by
+  // that project's own cached rows (see the first loop's comment): without dropping the rows too, the
+  // model's own row budget would keep counting them even after the chain fetching them stops. If the
+  // project becomes included again later, the THIRD loop below treats it as untracked and starts a
+  // fresh walk from its (still-fetched, TanStack-cached) embedded page — a full re-walk instead of a
+  // resume, a deliberate simplicity-over-micro-optimisation choice for what should be a rare
+  // inclusion/exclusion flap at the cap boundary, not steady-state behaviour.
   useEffect(() => {
-    if (tooManyToDraw) return;
     const generation = generationRef.current;
+    for (const project of projects) {
+      const state = liveChildState[project.id];
+      if (!state) continue;
+      const signature = embeddedChildSignatureByProjectId.get(project.id);
+      if (signature === undefined || signature === state.seedSignature) continue;
+      loadProjectChildChain(project.id, generation, generationKey, project.children.rows, project.children.nextCursor, signature);
+    }
+    for (const projectId of Object.keys(liveChildState)) {
+      if (model.includedProjectIds.has(projectId)) continue;
+      childControllersRef.current.get(projectId)?.abort();
+      childControllersRef.current.delete(projectId);
+      setChildState((current) => {
+        if (!(projectId in current)) return current;
+        const next = { ...current };
+        delete next[projectId];
+        return next;
+      });
+    }
+    // fix-220-sol2 #3: cap/inclusion gate ONLY the decision to start a brand-new walk below — never
+    // reconciliation above, which is what would relieve `tooManyToDraw` in the first place.
+    if (tooManyToDraw) return;
     let capacity = MAX_CONCURRENT_CHILD_CHAINS - childControllersRef.current.size;
     for (const project of projects) {
       if (capacity <= 0) break;
       if (!model.includedProjectIds.has(project.id)) continue;
-      const state = childState[project.id];
-      if (!state) continue;
-      const signature = embeddedChildSignatureByProjectId.get(project.id);
-      if (signature === undefined || signature === state.seedSignature) continue;
-      childControllersRef.current.get(project.id)?.abort();
-      childControllersRef.current.delete(project.id);
-      loadProjectChildChain(project.id, generation, project.children.rows, project.children.nextCursor, signature);
-      capacity -= 1;
-    }
-    for (const project of projects) {
-      if (capacity <= 0) break;
-      if (!model.includedProjectIds.has(project.id)) continue;
       if (!project.children.truncated) continue;
-      if (childState[project.id]) continue;
+      if (liveChildState[project.id]) continue;
       const signature = embeddedChildSignatureByProjectId.get(project.id) ?? computeEmbeddedChildSignature(project.children);
-      loadProjectChildChain(project.id, generation, project.children.rows, project.children.nextCursor, signature);
+      loadProjectChildChain(project.id, generation, generationKey, project.children.rows, project.children.nextCursor, signature);
       capacity -= 1;
     }
-  }, [projects, model.includedProjectIds, tooManyToDraw, childState, loadProjectChildChain, embeddedChildSignatureByProjectId]);
+  }, [projects, model.includedProjectIds, tooManyToDraw, liveChildState, generationKey, loadProjectChildChain, embeddedChildSignatureByProjectId]);
 
+  // fix-220-sol2 #5 (StrictMode-safe cleanup): the old cleanup aborted every controller but left them
+  // (and `childState`) in place. In production that is harmless — the component is truly gone — but
+  // under StrictMode's dev-only mount -> cleanup -> remount replay (`main.tsx:14`), the replay's
+  // SECOND mount reruns the reconciliation effect above with `childControllersRef` still full of dead
+  // (aborted, but not deleted) entries: `capacity` reads as already exhausted even though nothing is
+  // actually in flight, so no chain restarts, and `childState` still shows `loading: true` for entries
+  // whose async walk was aborted before it could ever write `loading: false` again — a project stuck
+  // "loading" forever in development. Clearing BOTH `childControllersRef` and `childState` here (the
+  // same full reset the generation-change effect above already does) lets the replay's second mount
+  // start completely clean: it re-seeds every truncated, included project from scratch, off
+  // TanStack's own already-cached query data (no network refetch needed for that part).
   useEffect(
     () => () => {
       for (const controller of childControllersRef.current.values()) controller.abort();
+      childControllersRef.current.clear();
+      setChildState({});
     },
     [],
   );
@@ -620,11 +783,12 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const childLoadRetryByProjectResourceId = useMemo(() => {
     const map = new Map<string, () => void>();
     for (const project of projects) {
-      const state = childState[project.id];
+      // fix-220-sol2 #4: `liveChildState`, not raw `childState` — see that memo's own comment.
+      const state = liveChildState[project.id];
       if (state?.error) map.set(`project:${project.id}`, () => retryProjectChildren(project));
     }
     return map;
-  }, [projects, childState, retryProjectChildren]);
+  }, [projects, liveChildState, retryProjectChildren]);
 
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (

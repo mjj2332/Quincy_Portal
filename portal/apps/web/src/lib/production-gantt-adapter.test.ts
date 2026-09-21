@@ -590,6 +590,22 @@ describe("fix-220-sol1 #4: progress mapping", () => {
     const [event] = eventsFor(model, `project:${project.id}`);
     expect(event!.progress).toBe(100);
   });
+
+  // fix-220-sol2 #6: Math.round((199 / 200) * 100) === 100 — a genuinely incomplete project must
+  // never report 100 (which the UI reads as "done": completed styling, a done checkmark).
+  it("199/200 (incomplete, rounds to 100 unmitigated) reports 99, not 100", () => {
+    const project = makeProject({ shootDateCivil: "2026-03-01", checklist: { completed: 199, total: 200 } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `project:${project.id}`);
+    expect(event!.progress).toBe(99);
+  });
+
+  it("200/200 (genuinely complete) reports exactly 100", () => {
+    const project = makeProject({ shootDateCivil: "2026-03-01", checklist: { completed: 200, total: 200 } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `project:${project.id}`);
+    expect(event!.progress).toBe(100);
+  });
 });
 
 // ---------------------------------------------------------------------------
