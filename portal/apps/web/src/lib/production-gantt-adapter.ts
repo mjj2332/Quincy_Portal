@@ -66,6 +66,10 @@ export interface ProductionGanttEvent<TData = unknown> {
   color?: string;
   readOnly?: boolean;
   resourceId?: string;
+  /** 0-100, matching `GanttEvent.progress` (`components/reui/gantt/gantt-types.tsx`) — never set to
+   * `undefined` explicitly (only omitted) so the "structural shape" unit test's exact-key check
+   * stays meaningful for an event with no progress to report (fix-220-sol1 #4). */
+  progress?: number;
   data?: TData;
 }
 
@@ -100,6 +104,14 @@ export interface ProductionGanttModel {
   attention: ProductionGanttAttention[];
   /** True when `projects` was truncated against `PRODUCTION_GANTT_DRAW_CAP` before building rows. */
   tooManyToDraw: boolean;
+  /**
+   * Ids of every project actually included in `resources`/`events` — i.e. within
+   * `PRODUCTION_GANTT_DRAW_CAP`'s row budget (fix-220-sol1 #3). A project excluded here contributed
+   * no resource/event and never will while `tooManyToDraw` stays true for this same `projects`
+   * input, so a caller eagerly paginating a truncated project's children should walk only the ids in
+   * this set — fetching more child pages for an excluded project produces rows nothing ever draws.
+   */
+  includedProjectIds: ReadonlySet<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +182,10 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string): RowBuildResu
         color,
         readOnly: true,
         resourceId,
+        // fix-220-sol1 #4: a task carries no partial-progress field, only `done` — map it to the
+        // binary 100/omitted `GanttEvent.progress` the renderer's done-check reads, rather than
+        // never populating it at all.
+        ...(row.done ? { progress: 100 } : {}),
         data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
       },
       attention: null,
@@ -195,6 +211,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string): RowBuildResu
       color,
       readOnly: true,
       resourceId,
+      ...(row.done ? { progress: 100 } : {}),
       data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
     },
     attention: null,
@@ -275,6 +292,10 @@ function buildProjectBar(project: GanttProjectRowDto, color: string): RowBuildRe
   // a zero-length diamond at the deadline plus an attention entry instead.
   const inverted = endDate.getTime() < startDate.getTime();
   const barStart = inverted ? endDate : startDate;
+  // fix-220-sol1 #4: `checklist.total` is the project's full checklist count (not just this page's
+  // downloaded `children.rows.length`, which may still be a truncated first page) — the one field
+  // that is always the complete denominator regardless of child pagination state.
+  const progress = project.checklist.total > 0 ? Math.round((project.checklist.completed / project.checklist.total) * 100) : undefined;
   const event: ProductionGanttEvent<ProductionGanttRowData> = {
     id: `project-bar:${project.id}`,
     title: project.street,
@@ -284,6 +305,7 @@ function buildProjectBar(project: GanttProjectRowDto, color: string): RowBuildRe
     color,
     readOnly: true,
     resourceId,
+    ...(progress !== undefined ? { progress } : {}),
     data: { kind: "project", dto: project, hollowStart, missingDeadline: false },
   };
   return {
@@ -317,6 +339,7 @@ export function buildProductionGanttModel(
   const resources: ProductionGanttResource[] = [];
   const events: ProductionGanttEvent<ProductionGanttRowData>[] = [];
   const attention: ProductionGanttAttention[] = [];
+  const includedProjectIds = new Set<string>();
   let rowBudget = 0;
   let tooManyToDraw = false;
 
@@ -328,6 +351,7 @@ export function buildProductionGanttModel(
       break;
     }
     rowBudget += rowCount;
+    includedProjectIds.add(project.id);
 
     const color = stageColorFor(project.stageKey);
     const projectResourceId = `project:${project.id}`;
@@ -348,5 +372,5 @@ export function buildProductionGanttModel(
     if (barResult.attention) attention.push(barResult.attention);
   }
 
-  return { resources, events, attention, tooManyToDraw };
+  return { resources, events, attention, tooManyToDraw, includedProjectIds };
 }

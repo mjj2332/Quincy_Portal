@@ -56,8 +56,19 @@
  * supplied at all, including one that returns `undefined` for that exact bar — `renderGanttEventContent`
  * below reproduces that one look itself, because there is no other way to keep it. Flagged here
  * rather than silently routed around, per the build spec's own request.
+ *
+ * fix-220-sol1 #4 extends the same reasoning to a SECOND casualty of `consumerOwnsContent`:
+ * `gantt-bar.tsx:1080`'s own 100%-done checkmark (`progress === 100 && !consumerOwnsContent &&
+ * !milestone`) is suppressed for exactly the same reason — the prop's mere presence, not what a
+ * given call returns — so `renderGanttEventContent` below now ALSO reproduces the done checkmark
+ * (plus the title/time-label content it would otherwise have deferred to `defaultContent` for) for
+ * any bar at `progress === 100`, and reproduces the selected-milestone ring the stock diamond gets
+ * (`isSelected && "ring-ring/50 ring-2"`) that the plain reproduction above used to drop. A bar that
+ * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
+ * the stock-fallthrough guarantee above for the common case.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CheckIcon } from "lucide-react";
 import type { GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
@@ -65,7 +76,13 @@ import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttResource, GanttScale } from "@/components/reui/gantt/gantt-types";
 import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
-import { fetchGanttChildPage, mergeGanttChildPage, useProductionGanttProjects, type ProductionGanttFilters } from "../lib/production-gantt-query";
+import {
+  fetchGanttChildPage,
+  mergeGanttChildPage,
+  productionGanttKey,
+  useProductionGanttProjects,
+  type ProductionGanttFilters,
+} from "../lib/production-gantt-query";
 import {
   buildProductionGanttModel,
   type ProductionGanttAttention,
@@ -88,6 +105,31 @@ export type ProductionGanttProps = {
 const GANTT_TIME_ZONE = "Australia/Sydney";
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
+
+/**
+ * fix-220-sol1 #3: the pure decision behind the panel's scroll-driven project pagination, exported
+ * so its edge cases (a purely horizontal scroll, the draw cap, no next page) are unit-testable
+ * directly — the effect that calls this only wires it to a real `scroll` event and a synchronous
+ * in-flight latch (`fetchingNextPageRef`), neither of which this function itself needs to know about.
+ *
+ * A target with no VERTICAL overflow at all (`scrollHeight === clientHeight`) reports
+ * `distanceToBottom === 0` — "at the bottom" — for every `scroll` event it fires, including a
+ * purely HORIZONTAL scroll from a scrollable descendant (the capturing listener this feeds receives
+ * `scroll` events from any scrollable descendant, not just the vertical one this gate tracks:
+ * `scroll` never bubbles, but the capture phase still walks every ancestor of the real target).
+ * Requiring actual vertical overflow first stops a horizontal scroll from ever reaching the
+ * distance check at all.
+ */
+export function shouldFetchNextProjectPage(
+  target: { scrollHeight: number; scrollTop: number; clientHeight: number },
+  opts: { tooManyToDraw: boolean; hasNextPage: boolean },
+): boolean {
+  if (opts.tooManyToDraw || !opts.hasNextPage) return false;
+  const hasVerticalOverflow = target.scrollHeight > target.clientHeight;
+  if (!hasVerticalOverflow) return false;
+  const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+  return distanceToBottom < NEAR_BOTTOM_THRESHOLD_PX;
+}
 
 const ATTENTION_TEXT: Record<ProductionGanttAttentionReason, string> = {
   unscheduled: "Unscheduled",
@@ -122,36 +164,83 @@ function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionRe
 }
 
 /**
+ * fix-220-sol1 #2 — a project whose remaining checklist pages failed to load: the row stays
+ * showing whatever rows it managed to accumulate (never silently marked complete, see
+ * `truncated`/`complete` in `ProductionGantt`'s own child-pagination state below), and this button
+ * both surfaces that fact and re-triggers the failed chain from where it left off. Never a silently
+ * swallowed error.
+ */
+function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button
+      type="button"
+      data-testid="gantt-children-retry"
+      className="shrink-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical-text underline"
+      onClick={(event) => {
+        // The row label sits inside the tree panel's own row-select affordance — stop this click
+        // from also being read as "select this row".
+        event.stopPropagation();
+        onRetry();
+      }}
+    >
+      Some tasks failed to load — Retry
+    </button>
+  );
+}
+
+/**
  * Tree-panel row label: project/task title, an attention badge when the adapter routed this row
- * to `attention` instead of a plotted event, and (project rows only) the first active editor's
- * avatar — reusing `InitialsAvatar` per the build spec rather than adding a dependency.
+ * to `attention` instead of a plotted event, (project rows only) the first active editor's avatar
+ * — reusing `InitialsAvatar` per the build spec rather than adding a dependency — and (project rows
+ * whose remaining checklist pages failed to load, fix-220-sol1 #2) a retry affordance.
  */
 function GanttResourceLabel({
   resource,
   attentionByResourceId,
   editorNameByProjectResourceId,
+  childLoadRetryByProjectResourceId,
 }: {
   resource: GanttResource;
   attentionByResourceId: Map<string, ProductionGanttAttention>;
   editorNameByProjectResourceId: Map<string, string>;
+  childLoadRetryByProjectResourceId: Map<string, () => void>;
 }) {
   const attention = attentionByResourceId.get(resource.id);
   const editorName = editorNameByProjectResourceId.get(resource.id);
+  const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="truncate">{resource.title}</span>
       {attention && <GanttRowAttentionBadge reason={attention.reason} />}
+      {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
       {editorName && <InitialsAvatar name={editorName} className="size-5 shrink-0" />}
     </span>
   );
 }
 
 /**
+ * A standalone `h:mm a`-shaped time label, Sydney-zoned, independent of the vendor's own
+ * `settings.i18n.functions.formatEventTime` — `GanttRenderEventProps` (this file's own import)
+ * carries no `settings`, only `occurrence`/`segment`/`isDragging`/`isSelected`
+ * (`gantt.tsx`'s own `GanttRenderEventProps` — checked before writing this), so a `renderEvent`
+ * callback structurally cannot reach the vendor's locale/format config to reproduce its exact
+ * string. This is deliberately NOT byte-identical to that string (no locale threading, no
+ * `date-fns` format-string parity) — it carries the same information (a Sydney wall-clock time),
+ * which is what fix-220-sol1 #4 asked restored, not pixel-for-pixel vendor parity that the API does
+ * not expose a way to achieve.
+ */
+function formatGanttEventTimeLabel(date: Date): string {
+  return new Intl.DateTimeFormat("en-AU", { timeZone: GANTT_TIME_ZONE, hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+/**
  * See this file's own header for the vendor contract this works around. Returns `undefined` — not
  * a reproduction — for any bar it does not customise, so `gantt-bar.tsx`'s own `??` fallthrough
  * renders its stock `defaultContent` (title, inline time label, recurring icon) exactly as if no
- * `renderEvent` had been passed at all. Only the two genuinely different cases get real content:
- * the hollow-start marker, and (unavoidably — see header) the milestone diamond.
+ * `renderEvent` had been passed at all. Three cases get real content instead: the hollow-start
+ * marker, a 100%-complete bar (fix-220-sol1 #4 — `consumerOwnsContent` suppresses the vendor's own
+ * done checkmark the same way it suppresses the milestone diamond, see header), and (unavoidably —
+ * see header) the milestone diamond.
  *
  * Deliberately lower-case, and CALLED directly below (`renderGanttEventContent(props)`), not
  * mounted via `<RenderGanttEventContent {...props} />`: this has no hooks of its own, so it is a
@@ -160,22 +249,12 @@ function GanttResourceLabel({
  * non-null value even when `X` internally returns `undefined`, since the `undefined` would become
  * that ELEMENT's child, not the return value `renderEvent`'s own `??` chain is checking.
  */
-function renderGanttEventContent({ occurrence }: GanttRenderEventProps<ProductionGanttRowData>) {
+function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRenderEventProps<ProductionGanttRowData>) {
   const milestone = occurrence.start.getTime() === occurrence.end.getTime();
   const data = occurrence.event.data;
   const hollowStart = data?.kind === "project" && data.hollowStart;
-  if (hollowStart) {
-    return (
-      <span className="flex min-w-0 items-center gap-1 truncate" title="No shoot date">
-        <span
-          aria-hidden="true"
-          data-testid="gantt-hollow-start"
-          className="size-2.5 shrink-0 rounded-[2px] border border-(--gantt-event-color) bg-transparent"
-        />
-        <span className="truncate font-medium">{occurrence.event.title}</span>
-      </span>
-    );
-  }
+  const done = occurrence.event.progress === 100;
+
   if (milestone) {
     // Same look as gantt-bar.tsx's own stock milestone diamond (:1043, `data-slot="gantt-bar-
     // milestone"`) — reproduced, not referenced, because `consumerOwnsContent` suppresses that
@@ -189,11 +268,53 @@ function renderGanttEventContent({ occurrence }: GanttRenderEventProps<Productio
       <span
         aria-hidden="true"
         data-testid="gantt-milestone-marker"
-        className="size-2.5 shrink-0 rotate-45 rounded-[2px] border border-(--gantt-event-color) bg-(--gantt-event-color)/80"
+        className={cn(
+          "size-2.5 shrink-0 rotate-45 rounded-[2px] border border-(--gantt-event-color) bg-(--gantt-event-color)/80",
+          // fix-220-sol1 #4: the stock diamond's own selected ring (gantt-bar.tsx:1046), also
+          // suppressed by `consumerOwnsContent` and never reproduced before this fix.
+          isSelected && "ring-ring/50 ring-2",
+        )}
       />
     );
   }
-  return undefined;
+
+  if (!hollowStart && !done) return undefined;
+
+  // fix-220-sol1 #4: only the FIRST segment of a (potentially view-boundary-split) bar carries the
+  // inline time label, matching gantt-bar.tsx's own `defaultContent` (`segment.isStart`) — an
+  // interior/trailing segment repeating it would read like a data bug.
+  const timeLabel = !occurrence.allDay && segment.isStart ? `${formatGanttEventTimeLabel(occurrence.start)} – ${formatGanttEventTimeLabel(occurrence.end)}` : undefined;
+
+  return (
+    <span className="flex min-w-0 items-center gap-1 truncate" title={hollowStart ? "No shoot date" : undefined}>
+      {hollowStart && (
+        <span
+          aria-hidden="true"
+          data-testid="gantt-hollow-start"
+          className="size-2.5 shrink-0 rounded-[2px] border border-(--gantt-event-color) bg-transparent"
+        />
+      )}
+      {/*
+       * fix-220-sol1 #4: `gantt-view.tsx`'s own "label outside" sibling (`data-slot="gantt-bar-
+       * label"`) renders this SAME title text next to the bar whenever the bar is too narrow for an
+       * inside label — a decision made from real layout metrics this `renderEvent` callback has no
+       * access to (checked against `GanttRenderEventProps` and the layout code that computes
+       * `placement` in `gantt-view.tsx` before writing this). Rather than guess, the bar itself
+       * carries that same fact as `data-label-outside` (gantt-bar.tsx:732, on the `group/gantt-bar-
+       * group` root this span is a descendant of), so this title is hidden via that ancestor
+       * attribute instead of never being rendered at all — a WIDE hollow/done bar (no outside
+       * label) still shows its own title, a NARROW one defers to the outside sibling and never
+       * shows both.
+       */}
+      <span className="truncate font-medium group-data-[label-outside]/gantt-bar-group:hidden">{occurrence.event.title}</span>
+      {timeLabel && (
+        <span className="text-muted-foreground hidden truncate @[8rem]:inline group-data-[label-outside]/gantt-bar-group:hidden">
+          {timeLabel}
+        </span>
+      )}
+      {done && <CheckIcon data-testid="gantt-done-mark" className="relative size-2.5 shrink-0 opacity-80" aria-hidden="true" />}
+    </span>
+  );
 }
 
 function GanttLegend({ stageLabelByKey }: { stageLabelByKey: Map<string, string> }) {
@@ -216,6 +337,30 @@ function GanttLegend({ stageLabelByKey }: { stageLabelByKey: Map<string, string>
 
 const EMPTY_FILTERS: Omit<ProductionGanttFilters, "q"> = { editorIds: [], stageKeys: [], delivered: false, completed: false };
 
+/**
+ * fix-220-sol1 #3: how many projects' remaining-child-page chains may be in flight at once. A
+ * truncated project with no cap here used to start its own unbounded fetch chain the instant it was
+ * seen — every truncated project on the very first paint, all at once.
+ */
+const MAX_CONCURRENT_CHILD_CHAINS = 4;
+
+/**
+ * Per-project child-pagination state (fix-220-sol1 #2). `complete` is set ONLY on actually merging a
+ * page whose `nextCursor` is `null` — never inferred from "an entry exists" the way the old
+ * `childOverrides` override did, so a failed continuation can never present a truncated project as
+ * complete. `error`, when set, is surfaced to the user (`GanttChildLoadErrorBadge`) with an explicit
+ * retry, not silently swallowed the way clearing a ref (no re-render) used to be.
+ */
+type GanttChildPageState = {
+  rows: GanttChecklistRowDto[];
+  /** The cursor to resume from. `null` while `complete`; otherwise always the cursor for the next
+   * page still owed, including while `error` is set (a retry resumes from here, not from scratch). */
+  cursor: string | null;
+  complete: boolean;
+  loading: boolean;
+  error: Error | null;
+};
+
 export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const { stages } = useStages();
   const stageLabelByKey = useMemo(() => new Map(stages.map((stage) => [stage.key, stage.label] as const)), [stages]);
@@ -224,71 +369,155 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
 
-  // S7: a project's embedded children stop at 100 (`GanttProjectRowDto.children.truncated`) — the
-  // tree defaults every group expanded (no `defaultCollapsedGroups`), so "wait for an expand
-  // event" would miss a project already visible on first paint. Instead: eagerly walk every
-  // truncated project's remaining child pages the moment it is seen, so a project with more than
-  // 100 checklist rows never silently shows only the first 100 (build spec's own MUST). Gated by
-  // `requestedChildrenRef`, a ref (not state) so the request-once check can never race a stale
-  // closure the way a `Set` held in `useState` would across two renders in quick succession.
-  const requestedChildrenRef = useRef<Set<string>>(new Set());
-  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
-  const [childOverrides, setChildOverrides] = useState<Record<string, GanttChecklistRowDto[]>>({});
+  /**
+   * fix-220-sol1 #1: everything below this line that accumulates ACROSS renders (per-project child
+   * rows, in-flight controllers, the "already seeded" check) is scoped to this GENERATION key — the
+   * exact same identity+role+authorizationEpoch+filters tuple that determines the underlying
+   * TanStack query key (`productionGanttKey`, reused verbatim rather than re-derived, so the two can
+   * never drift apart). A `q`/filter change or an identity change (principal, role, or
+   * authorizationEpoch — e.g. a re-auth) produces a new key here, and the effect below reacts to
+   * that change by aborting every in-flight child-page request and clearing all accumulated
+   * per-project state — a fresh walk restarts from each project's own fresh embedded first page,
+   * never splicing a superseded principal's or filter's rows into new data (the live-pagination
+   * convergence contract at `packages/shared/src/production-gantt.ts:149-165`: every accumulation
+   * must be a well-defined walk over ONE query's own pages, never mixed across two).
+   */
+  const generationKey = useMemo(() => JSON.stringify(productionGanttKey(identity, "active", filters)), [identity, filters]);
+  const generationRef = useRef(0);
+  const previousGenerationKeyRef = useRef(generationKey);
+  const childControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const [childState, setChildState] = useState<Record<string, GanttChildPageState>>({});
 
-  const loadRemainingChildren = useCallback((project: GanttProjectRowDto) => {
-    if (requestedChildrenRef.current.has(project.id)) return;
-    requestedChildrenRef.current.add(project.id);
+  useEffect(() => {
+    if (previousGenerationKeyRef.current === generationKey) return;
+    previousGenerationKeyRef.current = generationKey;
+    // Bumping the generation BEFORE aborting means an already-in-flight `then`/`catch` that somehow
+    // resolves despite the abort (fix-220-sol1 #1's own "reject completions that belong to a
+    // superseded generation") still finds `generationRef.current` moved on and discards itself, not
+    // just requests that are aborted in time.
+    generationRef.current += 1;
+    for (const controller of childControllersRef.current.values()) controller.abort();
+    childControllersRef.current.clear();
+    setChildState({});
+  }, [generationKey]);
+
+  /**
+   * fix-220-sol1 #1 & #2: walks ONE project's remaining child pages, starting from `seedRows`/
+   * `seedCursor` (the project's own fresh embedded page on first load, or wherever a previous
+   * attempt's state left off on a retry — never restarted from scratch on retry, since the rows
+   * already merged are still valid). `generation` is captured by the CALLER at the moment this chain
+   * starts; every write below checks it against `generationRef.current` before touching state, so a
+   * response that lands after this chain's generation was superseded is discarded rather than
+   * writing into a newer generation's `childState` (fix-220-sol1 #1's "reject completions that
+   * belong to a superseded generation").
+   */
+  const loadProjectChildChain = useCallback((projectId: string, generation: number, seedRows: GanttChecklistRowDto[], seedCursor: string | null) => {
+    if (generation !== generationRef.current) return;
     const controller = new AbortController();
-    abortControllersRef.current.set(project.id, controller);
+    childControllersRef.current.set(projectId, controller);
+    setChildState((current) => ({
+      ...current,
+      [projectId]: { rows: seedRows, cursor: seedCursor, complete: seedCursor === null, loading: seedCursor !== null, error: null },
+    }));
+    if (seedCursor === null) {
+      childControllersRef.current.delete(projectId);
+      return;
+    }
     void (async () => {
+      let rows = seedRows;
+      let cursor: string | null = seedCursor;
       try {
-        let rows: GanttChecklistRowDto[] = project.children.rows;
-        let cursor = project.children.nextCursor;
         while (cursor) {
-          const page = await fetchGanttChildPage(project.id, cursor, undefined, controller.signal);
+          const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal);
+          if (generation !== generationRef.current) return;
           rows = mergeGanttChildPage(rows, page);
           cursor = page.children.nextCursor;
-          setChildOverrides((current) => ({ ...current, [project.id]: rows }));
+          // fix-220-sol1 #2: `complete` flips to true ONLY here, on actually merging a page whose
+          // own `nextCursor` is null — never inferred elsewhere from "a childState entry exists".
+          setChildState((current) => ({ ...current, [projectId]: { rows, cursor, complete: cursor === null, loading: cursor !== null, error: null } }));
         }
       } catch (error) {
-        // An abort (unmount, or a fresh fetch superseding this one) is expected; anything else
-        // clears the "already requested" flag so the next render's effect can retry.
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          requestedChildrenRef.current.delete(project.id);
-        }
+        if (generation !== generationRef.current) return;
+        // An abort from THIS generation's own unmount/retry-supersession is expected, not an error
+        // to surface — a retry (below) starts its own fresh controller for the same project.
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        // fix-220-sol1 #2: the partial rows already merged stay visible (never discarded), but
+        // `complete` stays false and the error is SET, not swallowed — `GanttChildLoadErrorBadge`
+        // surfaces it and its retry re-enters this same function from `cursor`, not from scratch.
+        setChildState((current) => ({
+          ...current,
+          [projectId]: { rows, cursor, complete: false, loading: false, error: error instanceof Error ? error : new Error("Failed to load the remaining checklist rows.") },
+        }));
       } finally {
-        abortControllersRef.current.delete(project.id);
+        childControllersRef.current.delete(projectId);
       }
     })();
   }, []);
 
-  useEffect(() => {
-    for (const project of projects) {
-      if (project.children.truncated) loadRemainingChildren(project);
-    }
-  }, [projects, loadRemainingChildren]);
-
-  useEffect(
-    () => () => {
-      for (const controller of abortControllersRef.current.values()) controller.abort();
+  const retryProjectChildren = useCallback(
+    (project: GanttProjectRowDto) => {
+      const existing = childState[project.id];
+      loadProjectChildChain(project.id, generationRef.current, existing?.rows ?? project.children.rows, existing?.cursor ?? project.children.nextCursor);
     },
-    [],
-  );
-
-  const effectiveProjects = useMemo<GanttProjectRowDto[]>(
-    () =>
-      projects.map((project) => {
-        const override = childOverrides[project.id];
-        if (!override) return project;
-        return { ...project, children: { ...project.children, rows: override, truncated: false, nextCursor: null } };
-      }),
-    [projects, childOverrides],
+    [childState, loadProjectChildChain],
   );
 
   // Signature-stable per mount — `now` is unused inside the adapter today (see its own header);
   // recomputing it every render would just churn the memo below for nothing.
   const now = useMemo(() => new Date(), []);
+
+  const effectiveProjects = useMemo<GanttProjectRowDto[]>(
+    () =>
+      projects.map((project) => {
+        const state = childState[project.id];
+        if (!state) return project;
+        // fix-220-sol1 #2: `truncated` is driven ONLY by `state.complete` — never by "a childState
+        // entry exists", so a chain that stopped on an error still correctly reports `truncated:
+        // true` (there IS more, it just failed to load) instead of silently reading as complete.
+        return { ...project, children: { ...project.children, rows: state.rows, truncated: !state.complete, nextCursor: state.complete ? null : state.cursor } };
+      }),
+    [projects, childState],
+  );
+
   const model = useMemo(() => buildProductionGanttModel(effectiveProjects, { now }), [effectiveProjects, now]);
+
+  // fix-220-sol1 #3: the server's own `density.tooManyToDraw`, read off the FIRST page, is
+  // authoritative and known the instant page one lands — the adapter's own `model.tooManyToDraw`
+  // requires enough pages already downloaded and locally row-budgeted to notice the same fact, which
+  // can take thousands of downloaded rows (or never happen at all if pagination itself fails
+  // partway). Both are honoured: the server signal fires the notice immediately, the adapter's own
+  // cap remains the backstop against whatever this client has actually built a model for.
+  const firstPageDensity = query.data?.pages[0]?.density;
+  const tooManyToDraw = (firstPageDensity?.tooManyToDraw ?? false) || model.tooManyToDraw;
+
+  // fix-220-sol1 #3: eagerly walk each INCLUDED truncated project's remaining child pages (S7 — the
+  // tree defaults every group expanded, so "wait for an expand event" would miss a project already
+  // visible on first paint), bounded to `MAX_CONCURRENT_CHILD_CHAINS` concurrent chains and to
+  // projects `model.includedProjectIds` actually drew a resource/event for — a project the adapter
+  // already excluded past the draw cap can never be shown regardless of how many of its children
+  // this fetches, so walking it is pure waste. An entry already in `childState` (loading, complete,
+  // OR errored) is left alone here; an errored chain only resumes via the user's own explicit retry
+  // (`GanttChildLoadErrorBadge`), never automatically re-triggered by this effect re-running.
+  useEffect(() => {
+    if (tooManyToDraw) return;
+    const generation = generationRef.current;
+    let capacity = MAX_CONCURRENT_CHILD_CHAINS - childControllersRef.current.size;
+    for (const project of projects) {
+      if (capacity <= 0) break;
+      if (!model.includedProjectIds.has(project.id)) continue;
+      if (!project.children.truncated) continue;
+      if (childState[project.id]) continue;
+      loadProjectChildChain(project.id, generation, project.children.rows, project.children.nextCursor);
+      capacity -= 1;
+    }
+  }, [projects, model.includedProjectIds, tooManyToDraw, childState, loadProjectChildChain]);
+
+  useEffect(
+    () => () => {
+      for (const controller of childControllersRef.current.values()) controller.abort();
+    },
+    [],
+  );
 
   const attentionByResourceId = useMemo(() => {
     const map = new Map<string, ProductionGanttAttention>();
@@ -305,24 +534,30 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
     return map;
   }, [effectiveProjects]);
 
+  const childLoadRetryByProjectResourceId = useMemo(() => {
+    const map = new Map<string, () => void>();
+    for (const project of projects) {
+      const state = childState[project.id];
+      if (state?.error) map.set(`project:${project.id}`, () => retryProjectChildren(project));
+    }
+    return map;
+  }, [projects, childState, retryProjectChildren]);
+
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (
       <GanttResourceLabel
         resource={resource}
         attentionByResourceId={attentionByResourceId}
         editorNameByProjectResourceId={editorNameByProjectResourceId}
+        childLoadRetryByProjectResourceId={childLoadRetryByProjectResourceId}
       />
     ),
-    [attentionByResourceId, editorNameByProjectResourceId],
+    [attentionByResourceId, editorNameByProjectResourceId, childLoadRetryByProjectResourceId],
   );
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
   const renderEvent = useCallback((props: GanttRenderEventProps<ProductionGanttRowData>) => renderGanttEventContent(props), []);
-
-  // S7: draw-cap + "narrow your filter" — the adapter's own `tooManyToDraw` (pass A) is the single
-  // source; never silently truncate past it.
-  const tooManyToDraw = model.tooManyToDraw;
 
   // S7: project pages — fetch the next page as the panel nears its vertical end. A capturing
   // listener on the outer container (not the vendor's own internal scroll viewport, which this
@@ -331,21 +566,29 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   // from the root down through every ancestor of the actual target first, regardless of `bubbles`.
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hasNextPage = query.hasNextPage;
-  const isFetchingNextPage = query.isFetchingNextPage;
   const fetchNextPage = query.fetchNextPage;
+  // fix-220-sol1 #3: a SYNCHRONOUS in-flight latch — `query.isFetchingNextPage` is React state, only
+  // observable after a re-render commits, so a burst of scroll events arriving before that commit
+  // could each independently pass the "not already fetching" check and call `fetchNextPage()`
+  // several times over. This ref flips the instant the fetch starts, in the same tick as the event
+  // that triggered it.
+  const fetchingNextPageRef = useRef(false);
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     function handleScroll(event: Event) {
-      if (tooManyToDraw || !hasNextPage || isFetchingNextPage) return;
+      if (fetchingNextPageRef.current) return;
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
-      const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
-      if (distanceToBottom < NEAR_BOTTOM_THRESHOLD_PX) void fetchNextPage();
+      if (!shouldFetchNextProjectPage({ scrollHeight: target.scrollHeight, scrollTop: target.scrollTop, clientHeight: target.clientHeight }, { tooManyToDraw, hasNextPage })) return;
+      fetchingNextPageRef.current = true;
+      void fetchNextPage().finally(() => {
+        fetchingNextPageRef.current = false;
+      });
     }
     container.addEventListener("scroll", handleScroll, true);
     return () => container.removeEventListener("scroll", handleScroll, true);
-  }, [tooManyToDraw, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [tooManyToDraw, hasNextPage, fetchNextPage]);
 
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");

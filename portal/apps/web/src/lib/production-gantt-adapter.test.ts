@@ -519,6 +519,80 @@ describe("S5: PRODUCTION_GANTT_DRAW_CAP", () => {
 });
 
 // ---------------------------------------------------------------------------
+// fix-220-sol1 #3 — includedProjectIds tracks the draw-cap walk
+// ---------------------------------------------------------------------------
+
+describe("fix-220-sol1 #3: includedProjectIds", () => {
+  function makeChildlessProjects(count: number): GanttProjectRowDto[] {
+    return Array.from({ length: count }, () => makeProject({ shootDateCivil: "2026-01-01" }));
+  }
+
+  it("at exactly the cap, every project id is included", () => {
+    const projects = makeChildlessProjects(PRODUCTION_GANTT_DRAW_CAP);
+    const model = buildProductionGanttModel(projects, { now: NOW });
+    expect(model.includedProjectIds.size).toBe(PRODUCTION_GANTT_DRAW_CAP);
+    for (const project of projects) expect(model.includedProjectIds.has(project.id)).toBe(true);
+  });
+
+  it("one row past the cap: the tipping project and everything after it is excluded from includedProjectIds, matching resources", () => {
+    const projects = makeChildlessProjects(PRODUCTION_GANTT_DRAW_CAP + 1);
+    const model = buildProductionGanttModel(projects, { now: NOW });
+    expect(model.includedProjectIds.size).toBe(PRODUCTION_GANTT_DRAW_CAP);
+    const lastProject = projects[projects.length - 1]!;
+    expect(model.includedProjectIds.has(lastProject.id)).toBe(false);
+    // Every included id has a matching resource, and vice versa — the two never disagree.
+    expect([...model.includedProjectIds].sort()).toEqual(
+      model.resources.map((resource) => resource.id.replace(/^project:/, "")).sort(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fix-220-sol1 #4 — completion maps into GanttEvent.progress
+// ---------------------------------------------------------------------------
+
+describe("fix-220-sol1 #4: progress mapping", () => {
+  it("a done task's event carries progress: 100", () => {
+    const task = makeTask({ done: true, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) });
+    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `task:${task.id}`);
+    expect(event!.progress).toBe(100);
+  });
+
+  it("a not-done task's event carries no progress field at all", () => {
+    const task = makeTask({ done: false, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) });
+    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `task:${task.id}`);
+    expect(event).toBeDefined();
+    expect("progress" in event!).toBe(false);
+  });
+
+  it("a project's bar progress is checklist.completed / checklist.total, rounded to the nearest percent", () => {
+    const project = makeProject({ shootDateCivil: "2026-03-01", checklist: { completed: 1, total: 3 } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `project:${project.id}`);
+    expect(event!.progress).toBe(33); // 1/3 = 33.33...% rounds to 33
+  });
+
+  it("a project with checklist.total 0 carries no progress field", () => {
+    const project = makeProject({ shootDateCivil: "2026-03-01", checklist: { completed: 0, total: 0 } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `project:${project.id}`);
+    expect(event).toBeDefined();
+    expect("progress" in event!).toBe(false);
+  });
+
+  it("a fully-complete project's bar progress is exactly 100", () => {
+    const project = makeProject({ shootDateCivil: "2026-03-01", checklist: { completed: 4, total: 4 } });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    const [event] = eventsFor(model, `project:${project.id}`);
+    expect(event!.progress).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Type-level: this module's output must remain assignable to the real vendored Gantt types
 // without a cast (see production-gantt-adapter.ts's header for why it does not import them).
 // ---------------------------------------------------------------------------
