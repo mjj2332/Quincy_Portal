@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "@quincy/shared";
 import { parseArguments, wranglerArguments, DEFAULT_EDITOR_ELIGIBLE_ROLES } from "../qa-seed/cli.mjs";
@@ -64,6 +65,70 @@ describe("guard: the QA fixture runner cannot be pointed at production", () => {
   it("rejects --tier on teardown/verify and --anchor on teardown", () => {
     expect(() => parseArguments(["teardown", "--tier=core"])).toThrow(/--tier. only applies to .apply/);
     expect(() => parseArguments(["teardown", "--anchor=2026-09-21"])).toThrow(/--anchor. does not apply to .teardown/);
+  });
+
+  // A `--persist-to` value is never checked against FORBIDDEN_ARGUMENTS — it is consumed whole as
+  // the *value* of the flag before it, so a caller can smuggle `--remote` (or any other flag) past
+  // that check and into wrangler's argv, right after `--local`. These prove the smuggle is refused.
+  it.each([
+    ["apply", "--persist-to", "--remote"],
+    ["apply", "--persist-to=--remote"],
+    ["apply", "--persist-to", "--env=production"],
+    ["apply", "--persist-to="],
+  ])("refuses a --persist-to value that smuggles another flag: %j", (...argv) => {
+    expect(() => parseArguments(argv)).toThrow(/local-only/);
+  });
+
+  it("normalises an accepted --persist-to value to an absolute path", () => {
+    const options = parseArguments(["apply", "--persist-to", "scratch/state"]);
+    expect(options.persistTo).toBe(resolve(process.cwd(), "scratch/state"));
+    expect(options.persistTo.startsWith("/")).toBe(true);
+  });
+
+  it("refuses a malformed --anchor before any subprocess could be spawned", () => {
+    // Currently accepted by parseArguments verbatim: a trailing ` --remote` never reaches wrangler
+    // (only `emit.ts`, over argv, not a shell) but it is not a real calendar date either, and should
+    // be refused here rather than surfacing as an opaque failure out of a spawned subprocess.
+    expect(() => parseArguments(["apply", "--anchor=2026-09-21 --remote"])).toThrow(/valid YYYY-MM-DD/);
+    expect(() => parseArguments(["apply", "--anchor=2026-13-40"])).toThrow(/valid YYYY-MM-DD/);
+    expect(() => parseArguments(["apply", "--anchor=2026-02-30"])).toThrow(/valid YYYY-MM-DD/);
+    expect(() => parseArguments(["apply", "--anchor=not-a-date"])).toThrow(/valid YYYY-MM-DD/);
+  });
+
+  it("accepts a real calendar-date --anchor", () => {
+    expect(() => parseArguments(["apply", "--anchor=2026-09-21"])).not.toThrow();
+  });
+
+  it("refuses an unknown --tier", () => {
+    expect(() => parseArguments(["apply", "--tier=core,nonsense"])).toThrow(/Unknown tier/);
+    expect(() => parseArguments(["apply", "--tier=nonsense"])).toThrow(/Unknown tier/);
+  });
+
+  it("accepts known --tier values", () => {
+    expect(() => parseArguments(["apply", "--tier=core,density"])).not.toThrow();
+  });
+
+  // Property assertion: whatever a caller manages to get *accepted*, nothing beyond the fixed,
+  // known flags this file itself pins should ever start with `-` in the resulting wrangler argv —
+  // that is the shape a smuggled flag would need to reach wrangler.
+  const KNOWN_FIXED_FLAGS = new Set(["--local", "--config", "--persist-to", "--json", "--command", "--file"]);
+  const ACCEPTED_ARGV_TABLE = [
+    ["teardown"],
+    ["apply", "--persist-to", "/tmp/scratch"],
+    ["apply", "--persist-to", "scratch/state"],
+    ["apply", "--persist-to=scratch/state"],
+    ["apply", "--tier=core,density", "--anchor=2026-09-21"],
+    ["verify", "--anchor=2026-09-21"],
+  ];
+  it.each(ACCEPTED_ARGV_TABLE)("keeps every non-fixed argv element flag-shape-free: %j", (...argv) => {
+    const options = parseArguments(argv);
+    for (const subcommand of SUBCOMMANDS) {
+      const args = wranglerArguments(subcommand, options);
+      for (const element of args) {
+        if (KNOWN_FIXED_FLAGS.has(element)) continue;
+        expect(element.startsWith("-")).toBe(false);
+      }
+    }
   });
 });
 

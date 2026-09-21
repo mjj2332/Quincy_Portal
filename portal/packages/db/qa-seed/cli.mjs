@@ -14,7 +14,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DATABASE_NAME = "quincy-portal";
@@ -43,6 +43,22 @@ const COMMANDS = ["apply", "teardown", "verify"];
 /** Refused outright — each one can move the target off local storage. Same list `setup-local.mjs`
  * refuses, plus `--file`/`--command`, which this script never needs a caller to supply. */
 const FORBIDDEN_ARGUMENTS = ["--remote", "--env", "--config", "--database", "--preview", "--file", "--command"];
+/** Mirrors `QaTier` in `qa-seed/dataset.ts` — `--tier` never reaches a wrangler argv or a shell (it
+ * is only ever one element of an argv array handed to `npx tsx ./qa-seed/emit.ts`), but a malformed
+ * value should still be refused here, before any subprocess is spawned, rather than surfacing as an
+ * opaque failure out of `emit.ts`. */
+const KNOWN_TIERS = ["core", "density"];
+
+/** `--anchor` must be `YYYY-MM-DD` and denote a real calendar date (no `2026-02-30`, no trailing
+ * text such as `2026-09-21 --remote`). Sydney-calendar validity is re-checked downstream by
+ * `dataset.ts`'s `resolveAnchor`; this is the cheap, dependency-free gate that runs before any
+ * subprocess exists. */
+function isRealCalendarDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
 
 export function parseArguments(argv) {
   const command = argv[0];
@@ -62,14 +78,30 @@ export function parseArguments(argv) {
     }
     if (bare === "--persist-to") {
       const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
-      if (!value) throw new Error("`--persist-to` needs a directory.");
-      options.persistTo = value;
+      // An empty value or one starting with `-` is how a caller smuggles another flag (`--remote`,
+      // `--env=production`, ...) past this parser and into wrangler's argv, right after `--local`.
+      // Refused here, before any subprocess exists, same as the FORBIDDEN_ARGUMENTS check above.
+      if (!value || value.startsWith("-")) {
+        throw new Error(
+          `Refusing \`--persist-to ${JSON.stringify(value ?? "")}\`: this script is local-only, and ${CONFIG_PATH} carries the production D1 database_id. ` +
+            "Run wrangler directly if you genuinely mean to touch another environment.",
+        );
+      }
+      // Resolved to an absolute path so what reaches wrangler's argv can never be re-parsed as a flag.
+      options.persistTo = resolve(process.cwd(), value);
       continue;
     }
     if (bare === "--tier") {
       if (command !== "apply") throw new Error(`\`--tier\` only applies to \`apply\`, not \`${command}\`.`);
       const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
       if (!value) throw new Error("`--tier` needs a value.");
+      const tiers = value.split(",").map((t) => t.trim()).filter(Boolean);
+      if (tiers.length === 0) throw new Error("`--tier` needs a value.");
+      for (const tier of tiers) {
+        if (!KNOWN_TIERS.includes(tier)) {
+          throw new Error(`Unknown tier: ${JSON.stringify(tier)}. Expected a comma list drawn from ${KNOWN_TIERS.join(", ")}.`);
+        }
+      }
       options.tier = value;
       continue;
     }
@@ -77,6 +109,9 @@ export function parseArguments(argv) {
       if (command === "teardown") throw new Error("`--anchor` does not apply to `teardown` (teardown removes whatever is registered, regardless of anchor).");
       const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
       if (!value) throw new Error("`--anchor` needs a value.");
+      if (!isRealCalendarDate(value)) {
+        throw new Error(`--anchor must be a valid YYYY-MM-DD calendar date, got ${JSON.stringify(value)}.`);
+      }
       options.anchor = value;
       continue;
     }

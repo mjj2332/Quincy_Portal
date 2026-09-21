@@ -17,7 +17,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Kept in step with `src/board-schema-variant.ts`; asserted by the wiring guard. */
@@ -85,8 +85,17 @@ export function parseArguments(argv) {
     }
     if (bare === "--persist-to") {
       const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : argv[(index += 1)];
-      if (!value) throw new Error("`--persist-to` needs a directory.");
-      options.persistTo = value;
+      // An empty value or one starting with `-` is how a caller smuggles another flag (`--remote`,
+      // `--env=production`, ...) past this parser and into wrangler's argv, right after `--local`.
+      // Refused here, before any subprocess exists, same as the FORBIDDEN_ARGUMENTS check above.
+      if (!value || value.startsWith("-")) {
+        throw new Error(
+          `Refusing \`--persist-to ${JSON.stringify(value ?? "")}\`: this script is local-only, and ${CONFIG_PATH} carries the production D1 database_id. ` +
+            "Run wrangler directly if you genuinely mean to touch another environment.",
+        );
+      }
+      // Resolved to an absolute path so what reaches wrangler's argv can never be re-parsed as a flag.
+      options.persistTo = resolve(process.cwd(), value);
       continue;
     }
     throw new Error(`Unknown argument \`${argument}\`. Only \`--persist-to <directory>\` is accepted.`);
