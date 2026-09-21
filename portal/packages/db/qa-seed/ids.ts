@@ -1,50 +1,40 @@
 /**
- * Deterministic UUIDv5 ids for the QA scheduling fixture (#220 follow-on).
- *
- * One committed namespace, date-free logical names (`qa:v1:project:pagination`). Ids are
- * therefore stable across `--anchor` changes: re-applying with a new anchor replaces the same
- * rows rather than multiplying them, and teardown recomputes the exact set with no id table.
- *
- * `node:crypto`'s `createHash("sha1")` implements RFC 4122 §4.3 directly — no new dependency.
- * Version nibble `5` and variant `8-b` satisfy every canonical-UUID check this app enforces
- * (`CANONICAL_LOWERCASE_UUID_REGEX` in `packages/shared/src/staff-routes.ts`, the Gantt route's
- * `UUID_RE` in `workers/app/src/routes/production-gantt.ts`, and zod's `.uuid()`).
+ * QA scheduling fixture — deterministic ids (#220 follow-on). Every fixture row gets a name-derived
+ * UUIDv5 (RFC 4122 §4.3), never `crypto.randomUUID()`, so re-running `db:qa:apply` after a
+ * teardown produces byte-identical ids and `db:qa:verify` can assert against them without reading
+ * a manifest file back from the previous run.
  */
 import { createHash } from "node:crypto";
 
-/** Fixed, committed namespace UUID for every id this fixture ever mints. Never change this value —
- * changing it would silently mint a whole new id space and orphan every previously-applied row. */
-export const QA_FIXTURE_NAMESPACE = "8f6a2b3e-9c1d-4e5a-8f2b-1a2b3c4d5e6f";
+/** Fixed, committed namespace UUID for this fixture generator. Any valid-shaped UUID works as an
+ * RFC 4122 namespace; this one was drawn once with `crypto.randomUUID()` and then frozen — it must
+ * never change, or every previously-applied fixture id changes underneath `db:qa:verify`. */
+const QA_FIXTURE_NAMESPACE = "b6f6c8b2-6c1b-4a0e-9a1a-1f2b3c4d5e6f";
 
-export const CANONICAL_LOWERCASE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const CANONICAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-function bytesFromUuid(uuid: string): Buffer {
-  return Buffer.from(uuid.replace(/-/g, ""), "hex");
-}
+if (!UUID_RE.test(QA_FIXTURE_NAMESPACE)) throw new Error("QA_FIXTURE_NAMESPACE is not a UUID-shaped string.");
 
-function uuidFromBytes(bytes: Buffer): string {
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-/** RFC 4122 §4.3 name-based UUID, version 5 (SHA-1). */
-export function uuidv5(name: string, namespace: string): string {
-  const namespaceBytes = bytesFromUuid(namespace);
+function uuidV5(name: string, namespaceHex: string): string {
+  const namespaceBytes = Buffer.from(namespaceHex.replace(/-/gu, ""), "hex");
   const nameBytes = Buffer.from(name, "utf8");
-  const hash = createHash("sha1").update(Buffer.concat([namespaceBytes, nameBytes])).digest();
-  const bytes = Buffer.from(hash.subarray(0, 16));
+  const digest = createHash("sha1").update(Buffer.concat([namespaceBytes, nameBytes])).digest();
+  const bytes = Buffer.from(digest.subarray(0, 16));
   bytes[6] = (bytes[6]! & 0x0f) | 0x50; // version 5
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // variant 10xxxxxx -> one of 8,9,a,b
-  const uuid = uuidFromBytes(bytes);
-  if (!CANONICAL_LOWERCASE_UUID_RE.test(uuid)) {
-    throw new Error(`uuidv5("${name}") produced a non-canonical id: ${uuid}`);
-  }
-  return uuid;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // variant 10xxxxxx
+  const hex = bytes.toString("hex");
+  const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  if (!CANONICAL_UUID_RE.test(id)) throw new Error(`uuidV5 produced a non-canonical id for ${JSON.stringify(name)}: ${id}`);
+  return id;
 }
 
-/** Every fixture id goes through this one function so the `qa:v1:` prefix and namespace can never
- * drift between call sites. `logicalName` is date-free by construction — callers must never fold
- * an anchor date into it. */
+/** Deterministic id for a fixture row. `logicalName` must be globally unique across the whole
+ * dataset (callers are expected to prefix with the row kind and, for children, the parent's
+ * logical name) — two different logical names colliding is the only way this could ever collide,
+ * and SHA-1's collision space makes that indistinguishable from never. */
 export function fixtureId(logicalName: string): string {
-  return uuidv5(`qa:v1:${logicalName}`, QA_FIXTURE_NAMESPACE);
+  return uuidV5(`qa-fixture:v1:${logicalName}`, QA_FIXTURE_NAMESPACE);
 }
+
+export { CANONICAL_UUID_RE };

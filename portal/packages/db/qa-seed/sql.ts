@@ -104,7 +104,7 @@ const PROJECT_COLUMNS = [
   "id", "street", "suburb", "postcode", "agency_name", "agent_name", "agent_email", "agent_phone",
   "agency_id", "agent_id", "shoot_date", "time_window", "stage_key", "board_position", "board_revision",
   "order_no", "order_id", "invoice_amount", "payment_status", "notes", "production_notes", "raw_folder_link", "raw_folder_path",
-  "archived_at", "archived_by",
+  "cover_asset_id", "archived_at", "archived_by",
   "deadline_local_civil", "deadline_zone", "deadline_utc_offset_minutes", "deadline_fold", "deadline_at", "deadline_reminder_offsets_json", "deadline_version",
   "priority", "created_at", "updated_at",
 ];
@@ -134,7 +134,7 @@ function projectInsertStatement(dataset: QaFixtureDataset, project: QaFixtureDat
     "NULL", "NULL", "NULL", "NULL",
     sqlText(project.notes, "notes"),
     "NULL", "NULL", "NULL",
-    "NULL", "NULL",
+    "NULL", "NULL", "NULL",
     deadline ? sqlText(deadline.localCivil, "deadline local civil") : "NULL",
     deadline ? "'Australia/Sydney'" : "NULL",
     deadline ? sqlInt(deadline.utcOffsetMinutes, "deadline utc offset") : "NULL",
@@ -263,6 +263,12 @@ const TEARDOWN_TABLE_ORDER: Array<{ kind: FixtureEntityKind; table: string }> = 
   { kind: "collection", table: "collections" },
   { kind: "project", table: "projects" },
 ];
+
+/** Every table this dataset ever writes a row to, in teardown (children-first) order. Exported so
+ * `qa-seed-teardown.test.ts` can assert, against the live `schema.ts`, that every OTHER table
+ * carrying a `projects.id` FK or a plain `project_id` column is provably never written by this
+ * dataset — the schema-inventory test the build spec asks for. */
+export const TEARDOWN_TABLES = TEARDOWN_TABLE_ORDER.map((entry) => entry.table);
 
 const TEARDOWN_CHUNK_SIZE = 400;
 
