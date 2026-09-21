@@ -53,6 +53,13 @@ import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // principal opens the Calendar view, never on the sign-in screen or a
 // Photographer dashboard.
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
+// #220: same code-split shape as Calendar above — the vendored ReUI Gantt tree loads only when a
+// capable principal opens the Gantt view. `ProductionGantt.tsx` is the ONLY app file allowed to
+// import `components/reui/gantt/` (`harness-reachability.guard.test.ts`'s
+// `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`); this literal `import(...)` — not a variable, not a
+// template string — is what lets that guard's dynamic-import detector keep pinning this exact
+// site as the vendored tree's one production entry point.
+const ProductionGantt = lazy(() => import("../components/ProductionGantt").then((module) => ({ default: module.ProductionGantt })));
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
   clearDashboardSearch,
@@ -220,14 +227,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // A route's own explicit "calendar" gets the same capability check the stored preference
     // already gets below — otherwise a role without it landed here with `view` already "calendar"
     // and `calendarState` already `null` (that init is gated correctly), so no render branch
-    // matched anything until the reconciliation effect caught up.
-    if (routeDashboardView && (routeDashboardView !== "calendar" || canViewProductionCalendar)) return routeDashboardView;
+    // matched anything until the reconciliation effect caught up. #220: "gantt" is gated on the
+    // same capability (`isGanttView` above), so it gets the identical treatment.
+    if (routeDashboardView && ((routeDashboardView !== "calendar" && routeDashboardView !== "gantt") || canViewProductionCalendar)) return routeDashboardView;
     if (effectiveRouteCalendar && canViewProductionCalendar) return "calendar";
     const stored = initializeDashboardView({
       read: () => window.localStorage.getItem("quincy:dashboard:view"),
       write: (next) => window.localStorage.setItem("quincy:dashboard:view", next),
     });
-    return !canViewProductionCalendar && stored === "calendar" ? "kanban" : stored;
+    return !canViewProductionCalendar && (stored === "calendar" || stored === "gantt") ? "kanban" : stored;
   });
   // Captured once at mount, before any explicit List/Kanban selection can overwrite
   // localStorage — the value a fresh bare-route "/" load would show. Restoring TO this fixed
@@ -279,7 +287,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   useEffect(() => {
     if (canViewProductionCalendar) return;
     try {
-      if (window.localStorage.getItem("quincy:dashboard:view") === "calendar") {
+      // #220: "gantt" is stored-preference-repaired the same way "calendar" already was.
+      const stored = window.localStorage.getItem("quincy:dashboard:view");
+      if (stored === "calendar" || stored === "gantt") {
         window.localStorage.setItem("quincy:dashboard:view", "kanban");
       }
     } catch { /* Storage can be disabled. */ }
@@ -370,7 +380,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
-  const lastNonCalendarViewRef = useRef<"list" | "kanban">("list");
   const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
   // The location this reconciliation effect itself last processed — not merely "is the location
   // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
@@ -416,14 +425,21 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // loses the capability mid-session would still be shown Calendar content for one commit before
   // the reconciliation effect below moves `view` off it.
   const isCalendarView = view === "calendar" && !viewingArchived && calendarState !== null && canViewProductionCalendar;
+  // #220: Gantt is gated the same way Calendar is above (`canViewProductionCalendar` — Gantt reads
+  // the same production schedule, see `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`), minus
+  // the extra `calendarState !== null` clause Calendar alone needs (Gantt owns no comparable piece
+  // of Dashboard-level state — its `date`/`scale` are local to `ProductionGantt.tsx` itself).
+  const isGanttView = view === "gantt" && !viewingArchived && canViewProductionCalendar;
   // Published for the rail (#119), mirroring the branch selection above and below (List ~1092,
   // Kanban ~1106) instead of re-deriving `view`/`viewingArchived` a second time, so the two cannot
   // drift: Calendar only when `isCalendarView` itself is true (so a `view` of "calendar" with no
-  // `calendarState` yet is never claimed), List while archived or explicitly selected, Kanban only
-  // when neither of those apply, and "none" — no rail child should claim to be current — when
-  // `view` matches nothing that actually renders. `useLayoutEffect`, not `useEffect`, so the rail
-  // updates in the same paint as the screen; see `lib/dashboard-view-store.ts` for the owner rule.
+  // `calendarState` yet is never claimed), Gantt only when `isGanttView` is true likewise, List
+  // while archived or explicitly selected, Kanban only when neither of those apply, and "none" — no
+  // rail child should claim to be current — when `view` matches nothing that actually renders.
+  // `useLayoutEffect`, not `useEffect`, so the rail updates in the same paint as the screen; see
+  // `lib/dashboard-view-store.ts` for the owner rule.
   const renderedView: DashboardView | "none" = isCalendarView ? "calendar"
+    : isGanttView ? "gantt"
     : viewingArchived || view === "list" ? "list"
     : !viewingArchived && view === "kanban" ? "kanban"
     : "none";
@@ -495,10 +511,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, []);
 
   useEffect(() => {
-    if ((view === "list" || view === "kanban") && !viewingArchived) lastNonCalendarViewRef.current = view;
-  }, [view, viewingArchived]);
-
-  useEffect(() => {
     // Reconciles the route's EXPLICIT intent against local view state, including archive scope:
     // the rail keeps offering Kanban and Calendar while archived (see `lib/dashboard-view-store.ts`
     // for how it learns what actually rendered), so landing on one of those addresses is read as
@@ -514,14 +526,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // that produced it (a direct-mount caller that never re-renders it away, `Dashboard-calendar.
     // dom.test.tsx`'s own harness among them). Only the location itself is a fact about what the
     // Staff member is currently pointed at.
-    const explicitNonListLocation = routeDashboardView === "kanban" || routeDashboardView === "calendar" || locationHasCalendar;
+    // #220: "gantt" joins "kanban"/"calendar" here — the rail keeps offering Gantt while archived
+    // too (`lib/staff-navigation.ts`'s `DASHBOARD_CHILDREN` is not scope-gated), so an explicit
+    // `/?view=gantt` arrival must bounce out of archived exactly like the other two already do.
+    const explicitNonListLocation = routeDashboardView === "kanban" || routeDashboardView === "gantt" || routeDashboardView === "calendar" || locationHasCalendar;
     if (viewingArchived && explicitNonListLocation) {
       if (arrivedAtNewLocation) setProjectScope("active");
       return;
     }
     if (!canViewProductionCalendar) {
       calendarFallbackLocationRef.current = false;
-      if (view === "calendar") setView("list");
+      // #220: "gantt" is gated on this same capability (see `isGanttView` above) — a role that
+      // loses it mid-session while parked on Gantt gets bounced to List exactly like Calendar.
+      if (view === "calendar" || view === "gantt") setView("list");
       return;
     }
     if (routeDashboardView) {
@@ -881,7 +898,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setCalendarSettle({ pending: false, recoveryReason: null });
     calendarFallbackLocationRef.current = false;
     setView("list");
-    lastNonCalendarViewRef.current = "list";
     try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
     // #217 fix round 8, Sol review, item 3 (MEDIUM). A bare `history.push("/")` dropped any
     // committed `q` the Calendar facet URL carried -- a Calendar mutation returning 401/403 while
@@ -926,7 +942,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const alreadyAtView = routeDashboardView === next;
     const shouldPushViewRoute = !alreadyAtView || currentDashboardRoute?.kind === "dashboard" && !routeDashboardView;
     setView(next);
-    lastNonCalendarViewRef.current = next;
     try { window.localStorage.setItem("quincy:dashboard:view", next); } catch { /* Storage can be disabled by the browser. */ }
     if (shouldPushViewRoute) {
       setCalendarSettle({ pending: false, recoveryReason: null });
@@ -951,7 +966,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       const leavingCalendar = view === "calendar";
       if (leavingCalendar) setCalendarSettle({ pending: false, recoveryReason: null });
       setView("list");
-      lastNonCalendarViewRef.current = "list";
       try { window.localStorage.setItem("quincy:dashboard:view", "list"); } catch { /* Storage can be disabled by the browser. */ }
       calendarFallbackLocationRef.current = false;
       if (leavingCalendar || routeCalendar !== null || locationHasCalendar || routeDashboardView !== "list") {
@@ -1331,6 +1345,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <div className={SEGMENT_GROUP} aria-label="Dashboard view">
           <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" data-active={view === "list" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
           <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" data-active={view === "kanban" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          {/* #220: gated on the same `canViewProductionCalendar` capability Calendar uses — see
+              `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`, which gates the rail's own Gantt
+              child identically. */}
+          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "gantt" && "is-active")} type="button" data-focus-key="dashboard-view-gantt" data-active={view === "gantt" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("gantt")}>Gantt</button>}
           {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" data-active={view === "calendar" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
@@ -1404,7 +1422,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       )}
 
-      {boardUnavailableMessage && !viewingArchived && !isCalendarView && (
+      {boardUnavailableMessage && !viewingArchived && !isCalendarView && !isGanttView && (
         <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
       )}
 
@@ -1424,7 +1442,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </Suspense>
       )}
 
-      {!isCalendarView && isLoading && (
+      {/* #220: no accept/settle gate to wire — the surface is read-only (see
+          `ProductionGantt.tsx`'s own header), so there is no Calendar-style
+          `onAcceptGateChange`/`onSettleStateChange`/`onAccessLoss` for it to own. */}
+      {isGanttView && (
+        <Suspense fallback={<div className="empty" role="status">Loading gantt…</div>}>
+          <ProductionGantt identity={identity} q={committedQuery} />
+        </Suspense>
+      )}
+
+      {!isCalendarView && !isGanttView && isLoading && (
         <div role="status" className="relative border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
           <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${viewingArchived ? "archived " : ""}projects. Preparing the production desk.`}</span>
           {[0, 1, 2, 3, 4].map((row) => (
@@ -1437,21 +1464,21 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       )}
 
-      {!isCalendarView && !isLoading && error && (
+      {!isCalendarView && !isGanttView && !isLoading && error && (
         <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
           {error}
           <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
         </EmptyState>
       )}
 
-      {!isCalendarView && !isLoading && !error && projects.length === 0 && (
+      {!isCalendarView && !isGanttView && !isLoading && !error && projects.length === 0 && (
         <EmptyState title={searchActive ? "No matches." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
           {searchActive ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
           {!searchActive && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
         </EmptyState>
       )}
 
-      {!isCalendarView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "list") && (
+      {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "list") && (
         <div className="border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
           <div className={cn(PROW_GRID, "bg-secondary cursor-default")}>
             <div />
@@ -1465,7 +1492,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
       )}
 
-      {!isCalendarView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "kanban" && (
+      {!isCalendarView && !isGanttView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "kanban" && (
         <ProjectKanbanBoard2
           projects={projects}
           activeStages={activeStages}

@@ -374,9 +374,10 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(host.textContent).toContain("Archived projects");
     expect(host.textContent).toContain("9 Archived Street");
     // The Dashboard's own view control disappears while archived (it has nothing to switch
-    // between), but the rail's model does not know archive scope and keeps offering all three —
-    // so every destination stays reachable, and choosing one leaves archived scope.
-    expect(railChildLinks(host).map((link) => link.textContent?.trim())).toEqual(["List", "Kanban", "Calendar"]);
+    // between), but the rail's model does not know archive scope and keeps offering all four
+    // (#220 added Gantt between Kanban and Calendar) — so every destination stays reachable, and
+    // choosing one leaves archived scope.
+    expect(railChildLinks(host).map((link) => link.textContent?.trim())).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
     expect(activeRailChild(host)).toBe("List");
 
     await clickRailChild(host, "Kanban");

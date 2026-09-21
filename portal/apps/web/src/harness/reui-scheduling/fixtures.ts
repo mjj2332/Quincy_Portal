@@ -19,6 +19,7 @@
  */
 import { TZDate } from "@date-fns/tz";
 import { addDays, differenceInMinutes, format } from "date-fns";
+import { stageColors } from "@/lib/stage-colors";
 import type { GanttEvent, GanttResource, GanttScale } from "@/components/reui/gantt/gantt-types";
 // `event-calendar-types.tsx` exports all of these publicly (checked directly in that file before
 // writing this import) — no fallback import path was needed.
@@ -48,21 +49,19 @@ function sydneyTime(year: number, month: number, day: number, hour: number, minu
 }
 
 /**
- * The same semantic tokens `components/atoms.tsx`'s `stageColors` maps each stage to — never
- * invented ones — but HAND-COPIED, not imported: `stageColors` there is not exported, and
- * `atoms.tsx` pulls in `lib/stages.tsx` (React hooks, an API client, `useCapabilities`) that this
- * file's own header rules out ("Pure data + pure builder functions, no React"). #219 PR A
- * standards review item 11: exporting `stageColors` and importing it here was considered and
- * rejected on exactly that ground — not a clean one-line change, since it would drag that whole
- * dependency chain into a module `fixtures.test.ts` runs with no DOM. These four literals can
- * drift from `atoms.tsx`'s six-entry map silently; if that happens, this is the place to notice it
- * and re-copy, not a signal that either side is wrong.
+ * #220: now IMPORTED from `lib/stage-colors.ts` rather than hand-copied. That module holds only
+ * the six-entry map behind a **type-only** import of `ProjectStageKey` (see its own header) — zero
+ * runtime dependencies, so pulling its VALUES in here does not reintroduce the `lib/stages.tsx`
+ * (React/API-client) chain this file's own header rules out. The drift risk the previous revision
+ * of this comment recorded (#219 PR A standards review item 11, hand-copied and could silently
+ * diverge from `atoms.tsx`) is gone: this is now the same object `atoms.tsx`'s `StageDot` reads,
+ * just re-keyed to this file's own camelCase local names for the four stages its fixtures use.
  */
 const STAGE_COLORS = {
-  awaitingRaw: "var(--greige-400)",
-  rawReview: "var(--signal-caution)",
-  editing: "var(--signal-info)",
-  delivered: "var(--signal-positive)",
+  awaitingRaw: stageColors.awaiting_raw,
+  rawReview: stageColors.raw_review,
+  editing: stageColors.editing,
+  delivered: stageColors.delivered,
 } as const;
 
 const RESOURCES: GanttResource[] = [

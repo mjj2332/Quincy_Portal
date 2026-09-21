@@ -228,6 +228,7 @@ describe("shared staff route contract", () => {
           { kind: "dashboard", search },
           { kind: "dashboard", dashboardView: "list", search },
           { kind: "dashboard", dashboardView: "kanban", search },
+          { kind: "dashboard", dashboardView: "gantt", search },
         ];
         for (const route of routes) {
           const location = staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
@@ -301,6 +302,7 @@ describe("shared staff route contract", () => {
       expect(parseStaffLocation("/?q=++smith+++street++")).toEqual({ kind: "dashboard", search: "smith street" });
       expect(parseStaffLocation("/?view=list&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "list", search: "smith street" });
       expect(parseStaffLocation("/?view=kanban&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "kanban", search: "smith street" });
+      expect(parseStaffLocation("/?view=gantt&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "gantt", search: "smith street" });
       expect(parseStaffLocation("/?view=calendar&q=++smith+++street++")).toEqual({ kind: "dashboard", dashboardView: "calendar", search: "smith street" });
       const location = "/?view=calendar&date=2026-08-30&sub=month&layers=project&q=++smith+++street++";
       const parsed = parseStaffLocation(location);
@@ -313,6 +315,7 @@ describe("shared staff route contract", () => {
       expect(parseStaffLocation("/?q=+++")).toEqual({ kind: "dashboard" });
       expect(parseStaffLocation("/?view=list&q=+++")).toEqual({ kind: "dashboard", dashboardView: "list" });
       expect(parseStaffLocation("/?view=kanban&q=+++")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
+      expect(parseStaffLocation("/?view=gantt&q=+++")).toEqual({ kind: "dashboard", dashboardView: "gantt" });
       expect(parseStaffLocation("/?view=calendar&q=+++")).toEqual({ kind: "dashboard", dashboardView: "calendar" });
       const location = "/?view=calendar&date=2026-08-30&sub=month&layers=project&q=+++";
       const parsed = parseStaffLocation(location);
@@ -345,6 +348,7 @@ describe("shared staff route contract", () => {
           { kind: "dashboard", ...(search !== undefined ? { search } : {}) },
           { kind: "dashboard", dashboardView: "list", ...(search !== undefined ? { search } : {}) },
           { kind: "dashboard", dashboardView: "kanban", ...(search !== undefined ? { search } : {}) },
+          { kind: "dashboard", dashboardView: "gantt", ...(search !== undefined ? { search } : {}) },
           { kind: "dashboard", dashboardView: "calendar", ...(search !== undefined ? { search } : {}) },
         ];
         for (const route of routes) {

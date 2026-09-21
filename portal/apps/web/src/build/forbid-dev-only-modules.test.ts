@@ -79,9 +79,9 @@ describe("matchRestrictedModuleId", () => {
     expect(matchRestrictedModuleId(`${ROOT}/src/harness/reui-scheduling/main.tsx`, ROOT)).toBe("src/harness/");
   });
 
-  it("matches a module under src/components/reui/gantt/", () => {
-    expect(matchRestrictedModuleId(`${ROOT}/src/components/reui/gantt/gantt.tsx`, ROOT)).toBe(
-      "src/components/reui/gantt/",
+  it("matches a module under src/components/reui/event-calendar/", () => {
+    expect(matchRestrictedModuleId(`${ROOT}/src/components/reui/event-calendar/event-calendar.tsx`, ROOT)).toBe(
+      "src/components/reui/event-calendar/",
     );
   });
 
@@ -89,8 +89,11 @@ describe("matchRestrictedModuleId", () => {
     expect(matchRestrictedModuleId(`${ROOT}/src/screens/Dashboard.tsx`, ROOT)).toBeUndefined();
   });
 
+  // #220: repointed from a gantt/gantt-adjacent pair — gantt came OFF `RESTRICTED_MODULE_PREFIXES`
+  // in this slice (it has a real production consumer now), so the sibling-directory
+  // false-positive case is covered against the tree that is still on the list instead.
   it("does not match a sibling directory with a similar name (no prefix false-positive)", () => {
-    expect(matchRestrictedModuleId(`${ROOT}/src/components/reui/gantt-adjacent/foo.tsx`, ROOT)).toBeUndefined();
+    expect(matchRestrictedModuleId(`${ROOT}/src/components/reui/event-calendar-adjacent/foo.tsx`, ROOT)).toBeUndefined();
   });
 
   it("does not match a virtual id unrelated to this project's root", () => {
@@ -108,8 +111,8 @@ describe("matchRestrictedModuleId", () => {
   });
 
   it("matches through Vite's /@fs/ prefix", () => {
-    expect(matchRestrictedModuleId(`/@fs/${ROOT}/src/components/reui/gantt/gantt-bar.tsx`, ROOT)).toBe(
-      "src/components/reui/gantt/",
+    expect(matchRestrictedModuleId(`/@fs/${ROOT}/src/components/reui/event-calendar/event-calendar-grid.tsx`, ROOT)).toBe(
+      "src/components/reui/event-calendar/",
     );
   });
 
@@ -134,11 +137,11 @@ describe("RESTRICTED_MODULE_PREFIXES", () => {
   // Exact-array, not `toContain`: the point of this assertion is that a prefix cannot be added
   // (widening what is kept out of production) or removed (letting a vendored tree ship) without
   // the change being visible here and in this file's own doc block. Each entry is removed by the
-  // slice that gives that tree a real production consumer, never as a tidy-up.
-  it("is exactly the three documented prefixes", () => {
+  // slice that gives that tree a real production consumer, never as a tidy-up. #220 removed
+  // "src/components/reui/gantt/" — the Gantt's real production consumer landed in this slice.
+  it("is exactly the two documented prefixes", () => {
     expect(RESTRICTED_MODULE_PREFIXES).toEqual([
       "src/harness/",
-      "src/components/reui/gantt/",
       "src/components/reui/event-calendar/",
     ]);
   });
@@ -185,12 +188,12 @@ describe("checkForRestrictedModules", () => {
 
   it("calls error naming every offender when more than one restricted module is reachable", () => {
     const harnessOffender = `${ROOT}/src/harness/reui-scheduling/main.tsx`;
-    const ganttOffender = `${ROOT}/src/components/reui/gantt/gantt.tsx`;
-    const { context, error } = fakeContext([harnessOffender, ganttOffender]);
+    const eventCalendarOffender = `${ROOT}/src/components/reui/event-calendar/event-calendar.tsx`;
+    const { context, error } = fakeContext([harnessOffender, eventCalendarOffender]);
     expect(() => checkForRestrictedModules(context, ROOT)).toThrow();
     const message = error.mock.calls[0]?.[0] as string;
     expect(message).toContain(harnessOffender);
-    expect(message).toContain(ganttOffender);
+    expect(message).toContain(eventCalendarOffender);
   });
 
   it("reports 'no importers recorded' when the entry has none (rather than crashing)", () => {

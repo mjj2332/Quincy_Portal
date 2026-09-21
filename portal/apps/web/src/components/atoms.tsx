@@ -1,16 +1,8 @@
 import { type ProjectStageKey, useStages } from "../lib/stages";
-
-const stageColors: Record<ProjectStageKey, string> = {
-  awaiting_raw: "var(--greige-400)",
-  raw_review: "var(--signal-caution)",
-  editing_autohdr: "var(--signal-info)",
-  editing: "var(--signal-info)",
-  edited_review: "var(--signal-caution)",
-  delivered: "var(--signal-positive)",
-};
+import { stageColorFor } from "../lib/stage-colors";
 
 export function StageDot({ stageKey }: { stageKey: ProjectStageKey }) {
-  return <span aria-hidden="true" className="sdot" style={{ background: stageColors[stageKey] ?? stageColors.awaiting_raw }} />;
+  return <span aria-hidden="true" className="sdot" style={{ background: stageColorFor(stageKey) }} />;
 }
 
 export function StatusBadge({ stageKey }: { stageKey: ProjectStageKey }) {

@@ -9,15 +9,15 @@ const noCalendar: StaffNavigationCapabilities = { adminBackend: true, viewProduc
 const bareDashboard: StaffRoute = { kind: "dashboard" };
 const projectId = "11111111-1111-4111-8111-111111111111";
 
-function items(route: StaffRoute, remembered: "list" | "kanban" | "calendar" = "kanban", capabilities = all) {
+function items(route: StaffRoute, remembered: "list" | "kanban" | "gantt" | "calendar" = "kanban", capabilities = all) {
   return buildStaffNavigation(route, remembered, capabilities).groups.flatMap((group) => group.items);
 }
 
-function dashboardChildren(route: StaffRoute, remembered: "list" | "kanban" | "calendar" = "kanban", capabilities = all) {
+function dashboardChildren(route: StaffRoute, remembered: "list" | "kanban" | "gantt" | "calendar" = "kanban", capabilities = all) {
   return items(route, remembered, capabilities).find((item) => item.id === "dashboard")?.children ?? [];
 }
 
-function activeChildId(route: StaffRoute, remembered: "list" | "kanban" | "calendar" = "kanban", capabilities = all) {
+function activeChildId(route: StaffRoute, remembered: "list" | "kanban" | "gantt" | "calendar" = "kanban", capabilities = all) {
   return dashboardChildren(route, remembered, capabilities).find((child) => child.active)?.id ?? null;
 }
 
@@ -34,8 +34,8 @@ describe("the staff navigation model", () => {
       expect(items(bareDashboard).map((item) => item.id)).toEqual(["dashboard", "admin"]);
     });
 
-    it("orders the Dashboard children List, Kanban, Calendar — the shipped control's order", () => {
-      expect(dashboardChildren(bareDashboard).map((child) => child.id)).toEqual(["dashboard-list", "dashboard-kanban", "dashboard-calendar"]);
+    it("orders the Dashboard children List, Kanban, Gantt, Calendar — the shipped control's order (#220)", () => {
+      expect(dashboardChildren(bareDashboard).map((child) => child.id)).toEqual(["dashboard-list", "dashboard-kanban", "dashboard-gantt", "dashboard-calendar"]);
     });
 
     it("gives every item and child an icon, which the collapsed rail in #112 requires", () => {
@@ -45,13 +45,13 @@ describe("the staff navigation model", () => {
     });
 
     it("labels the children with the words already on the screen", () => {
-      expect(dashboardChildren(bareDashboard).map((child) => child.label)).toEqual(["List", "Kanban", "Calendar"]);
+      expect(dashboardChildren(bareDashboard).map((child) => child.label)).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
     });
   });
 
   describe("hrefs", () => {
     it("uses the addressable view routes, and a bare URL for Calendar", () => {
-      expect(dashboardChildren(bareDashboard).map((child) => child.href)).toEqual(["/?view=list", "/?view=kanban", "/?view=calendar"]);
+      expect(dashboardChildren(bareDashboard).map((child) => child.href)).toEqual(["/?view=list", "/?view=kanban", "/?view=gantt", "/?view=calendar"]);
     });
 
     it("points Dashboard itself at the root and Admin at /admin", () => {
@@ -60,7 +60,7 @@ describe("the staff navigation model", () => {
   });
 
   describe("capabilities", () => {
-    it("omits Calendar entirely without the capability — absent, not disabled", () => {
+    it("omits Calendar and Gantt entirely without the capability — absent, not disabled (#220: Gantt gates on the same capability as Calendar)", () => {
       expect(dashboardChildren(bareDashboard, "kanban", noCalendar).map((child) => child.id)).toEqual(["dashboard-list", "dashboard-kanban"]);
     });
 
@@ -73,7 +73,16 @@ describe("the staff navigation model", () => {
     it("resolves a bare / from the remembered view", () => {
       expect(activeChildId(bareDashboard, "list")).toBe("dashboard-list");
       expect(activeChildId(bareDashboard, "kanban")).toBe("dashboard-kanban");
+      expect(activeChildId(bareDashboard, "gantt")).toBe("dashboard-gantt");
       expect(activeChildId(bareDashboard, "calendar")).toBe("dashboard-calendar");
+    });
+
+    it("marks Gantt active on an explicit gantt route (#220)", () => {
+      expect(activeChildId({ kind: "dashboard", dashboardView: "gantt" }, "list")).toBe("dashboard-gantt");
+    });
+
+    it("coerces a remembered Gantt to Kanban when the capability is gone, same as Calendar (#220)", () => {
+      expect(activeChildId(bareDashboard, "gantt", noCalendar)).toBe("dashboard-kanban");
     });
 
     it("lets an explicit view route beat the remembered view", () => {
@@ -207,6 +216,29 @@ describe("an explicit Calendar location without the capability", () => {
     );
     const children = navigation.groups[0]!.items[0]!.children ?? [];
     expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Calendar"]);
+  });
+
+  // #220: Gantt gates on the same capability as Calendar, so it shares this same "mark a real
+  // child active instead of nothing" contract for an explicit but unviewable location.
+  it("marks a real child active instead of nothing, for an explicit Gantt route without the capability", () => {
+    const navigation = buildStaffNavigation(
+      { kind: "dashboard", dashboardView: "gantt" },
+      "kanban",
+      WITHOUT_CALENDAR,
+    );
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.map((child) => child.label)).toEqual(["List", "Kanban"]);
+    expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Kanban"]);
+  });
+
+  it("still honours an explicit Gantt location WITH the capability", () => {
+    const navigation = buildStaffNavigation(
+      { kind: "dashboard", dashboardView: "gantt" },
+      "list",
+      { adminBackend: true, viewProductionCalendar: true },
+    );
+    const children = navigation.groups[0]!.items[0]!.children ?? [];
+    expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Gantt"]);
   });
 });
 

@@ -69,8 +69,9 @@ describe("the bare Calendar intent", () => {
     expect(parseStaffLocation(location)).toEqual({ kind: "not-found" });
   });
 
-  it("leaves the List and Kanban spellings alone", () => {
+  it("leaves the List, Kanban and Gantt spellings alone", () => {
     expect(parseStaffLocation("/?view=list")).toEqual({ kind: "dashboard", dashboardView: "list" });
     expect(parseStaffLocation("/?view=kanban")).toEqual({ kind: "dashboard", dashboardView: "kanban" });
+    expect(parseStaffLocation("/?view=gantt")).toEqual({ kind: "dashboard", dashboardView: "gantt" });
   });
 });

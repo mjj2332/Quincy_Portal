@@ -108,7 +108,7 @@ describe("the navigation rail", () => {
         '[data-testid="navigation-rail-link"], [data-testid="navigation-rail-child-link"]',
       ),
     ].map((element) => element.getAttribute("href")!);
-    expect(destinations).toEqual(["/", "/?view=list", "/?view=kanban", "/?view=calendar", "/admin"]);
+    expect(destinations).toEqual(["/", "/?view=list", "/?view=kanban", "/?view=gantt", "/?view=calendar", "/admin"]);
 
     for (const href of destinations) {
       await renderAt("/");

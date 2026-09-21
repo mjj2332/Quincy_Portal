@@ -196,7 +196,7 @@ describe("NavigationRail", () => {
     await renderInProvider(navigationFor("/"));
 
     expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
-    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Calendar"]);
+    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
 
     // Every destination is an anchor with a real href — the rail cannot navigate through
     // `useNavigate`, which the read-only history makes a no-op.
@@ -396,11 +396,12 @@ describe("NavigationRail", () => {
     expect(linkTexts("navigation-rail-child-link")).toEqual([
       "List",
       "Kanban",
+      "Gantt",
       "Calendar",
       "Timeline",
     ]);
     expect(
-      testids("navigation-rail-child-link")[3]?.getAttribute("href"),
+      testids("navigation-rail-child-link")[4]?.getAttribute("href"),
     ).toBe("/?view=timeline");
   });
 
@@ -494,7 +495,7 @@ describe("NavigationRail variant — collapsed", () => {
         [...document.querySelectorAll('[data-testid="navigation-rail-child-link"]')].map(
           (el) => el.textContent?.trim(),
         ),
-      ).toEqual(["List", "Kanban", "Calendar"]);
+      ).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
     });
 
     it("gives the active child aria-current=\"page\" inside the open menu", async () => {
@@ -585,7 +586,7 @@ describe("NavigationRail variant — sheet", () => {
     await renderInProvider(navigationFor("/?view=kanban"), { variant: "sheet" });
     // Children are already showing — the model's `expandedItemId`, exactly like `expanded` — with
     // no click or hover needed, unlike `collapsed`.
-    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Calendar"]);
+    expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
   });
 
   it("does not expose a menu seam on its parent link — its children are always inline here", async () => {
