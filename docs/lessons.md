@@ -3693,56 +3693,49 @@ is all-or-nothing per component instance, not per render call — reproduce the 
 inside the override for every case you are not actually changing, rather than assuming the
 override can stay silent for the common path.
 
-## A test that hard-codes dates must pin `Date` to them — and "which tests do?" is measured, not read (2026-09-26)
+## A production guard checked once at the top proves nothing about the statement that runs last (#220 follow-on, 2026-09-21)
 
-`event-calendar-done-dim.dom.test.tsx` fixed `ANCHOR = 2026-09-21T02:00Z` and a done chip on
-2026-09-23 that it asserts is "future". The vendored ReUI calendar derives `data-past` from the real
-clock, not from the `date` it is given, so from 2026-09-23 the chip was past and `main` went red
-(`expected 'true' to be null`). The same is true of anything whose code reads the clock — vendored
-calendar/gantt, date-fns `isPast`/`isToday`, a schema `$defaultFn(() => new Date())`. A date
-literal in a fixture is a countdown (see TB8-04 above).
+Building the local QA scheduling fixture (`portal/packages/db/qa-seed/`), the obvious design was a
+single preflight check — "does this database look like local dev?" — before running a batch of
+generated INSERT/DELETE statements. That is not enough: an executor that continues past a failed
+statement, or a fixture statement copied out of the batch and run alone, never sees the preflight
+at all. The fix that actually holds is a **capability fence**: a local-only table
+(`__quincy_local_capability`, created only by `setup-local.mjs`, never a migration, never
+`seed/0001_seed.sql`) that every generated mutator statement — insert and teardown delete alike —
+references directly (`WHERE EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability =
+…)`). A statement missing that table fails with `no such table`, whether it runs as part of the
+batch, alone, or copied into an unrelated script. Verified directly: the exact generated SQL run
+against a migrated-and-seeded scratch database that never ran `setup-local.mjs` fails on its first
+statement with that error and leaves zero rows, not a subset.
 
-**Fix:** pin `Date` to the date the test already assumes, in a top-level `beforeEach`:
-`vi.useFakeTimers({ toFake: ["Date"], now: ANCHOR })`, and `vi.useRealTimers()` in `afterEach`
-(or `vi.setSystemTime(ANCHOR)` if the file already fakes timers). Fake only `Date` — faking every
-timer stalls React's scheduler and Testing Library's `waitFor`/`findBy`. Never loosen the
-assertion instead. If pinning makes a *different* test fail, it was passing on two clocks at once.
-`editor-folder-move.test.ts` handed the code `deps().now = FIXED_NOW` while the schema default
-stamped jobs with the real clock, so four move-twice tests passed only because the first move's
-queued `editor_sync` job looked hours stale. Production reads one clock; the fix was to model what
-production sees (mark that job `done` before the second move), not to pick a pin that keeps the
-accident green.
+Paired with that: the same fixture generates every checklist-schedule row through
+`normalizeChecklistSchedule` and round-trips it through `serializeChecklistSchedule` — the exact
+pure functions the real API calls — rather than hand-computing the resolved instant/offset/fold a
+timed row stores. A single wrong offset in a hand-written fixture does not raise an error; it
+silently serializes to `invalid` and the row disappears from every surface that reads it, which is
+indistinguishable from the bug the fixture exists to help catch. Running the same validator the API
+runs turns that into a build-time exception instead of a browser-pass mystery.
 
-**Detection — the shift matrix.** Reading 34 date-literal files does not tell you which ones read
-the clock; running them with the clock moved does. Add an uncommitted setup file and a config that
-`mergeConfig`s the package's own config with `setupFiles: [it]` and
-`define: { __CLOCK_SHIFT_TO__: JSON.stringify(process.env.CLOCK_SHIFT_TO ?? "") }` (`define`, not
-`process.env`, so it reaches workerd too). Name the config so it does NOT match
-`vitest(.*).config.ts`, or `ci-vitest-configs.guard` will demand it run in CI:
+The generalisation: **a guard checked once, before the write, is a guard for the FIRST statement,
+not for the batch.** If a mechanism generates many mutator statements, put the check in the
+statement itself (a referenced marker row, an `EXISTS` predicate) rather than only in the caller
+that assembles them — and if a mechanism generates rows a validator elsewhere in the codebase
+already knows how to reject, run that exact validator at generation time rather than re-deriving
+its rules by hand.
 
-```ts
-import { beforeEach, vi } from "vitest";
-import "@date-fns/tz"; // load Date subclasses BEFORE faking, or TZDate silently goes local-time
-declare const __CLOCK_SHIFT_TO__: string;
-const to = __CLOCK_SHIFT_TO__;
-const pin = () => vi.useFakeTimers({ toFake: ["Date"], now: new Date(to), shouldAdvanceTime: true, advanceTimeDelta: 1 });
-if (to) {
-  pin();
-  beforeEach(() => { if (!vi.isFakeTimers()) pin(); }); // survive a file's own useRealTimers()
-}
-```
+## `spawnSync`'s default `maxBuffer` fails silently as the child's own crash, not as a clear "buffer exceeded" (#220 follow-on, 2026-09-21)
 
-Run every config (web unit + DOM, shared, db, the three workers) unshifted, then at a date before
-the fixtures (`2026-09-20`), three months on, a year on, **and a control at the real current
-time**. A test that fails under a date shift but passes the control reads the real clock. Lessons
-from the first run:
+The same fixture's transport (`cli.mjs`) spawns a `tsx`-run generator and captures its JSON output
+via `child_process.spawnSync(..., { stdio: ["ignore", "pipe", "inherit"] })` with no explicit
+`maxBuffer`. The default (1 MiB) is far smaller than the ~3+ MB of SQL statements the fixture's
+opt-in density tier generates. Exceeding it does not surface as "maxBuffer exceeded" from the
+parent — it kills the child mid-write, and the child's own next `process.stdout.write()` call
+throws `Error: write EPIPE`, printed (via the inherited stderr) as if the *generator* had crashed.
+Nothing about that message points at the parent's `spawnSync` options at all; tracking it down
+meant reproducing the same generator invocation without going through the parent to see it succeed
+cleanly at 3.2 MB, which only made sense once `maxBuffer` was considered.
 
-- **Use `shouldAdvanceTime` for detection.** A frozen `Date` produced 11 false positives (9 web DOM
-  Dashboard/ProductionCalendar tests, 1 each in workers/app and workers/background — code expecting
-  time to pass between two reads): they failed in the frozen *control* too and passed with an
-  advancing clock. Frozen is right for the fix, wrong for the detector; a test whose code needs time
-  to pass may need `shouldAdvanceTime` in its fix too.
-- **Faking before `@date-fns/tz` loads** makes fake-timers' Date constructor return a plain Date,
-  so `TZDate` loses its prototype: 18 more web DOM false failures that looked like DST bugs.
-- **Tests that compare SQLite's clock with JS's** (`default-editors-backfill`) fail under any shift
-  by design — shifting only JS cannot pass them. Leave them unpinned.
+The generalisation: **when a subprocess you spawn to capture output can plausibly produce more than
+a few hundred KB, set `maxBuffer` explicitly and generously — do not wait to discover the default
+via an `EPIPE` that looks like the child's own bug.** The failure mode is maximally confusing
+specifically because the error surfaces from the wrong process.

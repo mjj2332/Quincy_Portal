@@ -78,6 +78,16 @@ The session then gates both (§5): open the screenshots, confirm every disagreem
 other, and treat an unmeasured PASS as a FAIL. Defects go back through the fix loop and a fresh
 stage 1; suggestions go to the owner.
 
+**Scheduling-surface passes (Production Gantt, checklist schedules, deadlines) name the QA fixture
+as a precondition.** The local tenant otherwise has only the ~6 hand-made rows from ordinary
+development, which cannot exercise pagination, the draw cap, the 199/200 progress boundary, all
+four stage hues, or any DST/fold row — see `docs/Guides/Local-QA-Fixtures.md`. Run `npm run
+db:qa:apply` (add `-- --tier=core,density` only for the draw-cap gap) before Luna's stage, and
+record the **anchor** and **tier** her report used (printed by the apply command, and readable
+again any time via `npm run db:qa:verify`) in both her report and design-reviewer's — a report
+without them cannot be reproduced bit-for-bit later, since the default anchor slides forward every
+Sydney week.
+
 ## 3. CLI mechanics
 
 Codex and Agy are **plain OS subprocesses spawned via `Bash`**, not the `Agent` tool — each with
