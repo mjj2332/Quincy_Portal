@@ -3692,3 +3692,50 @@ customize this at all" is cheaper to check than "did the consumer customize THIS
 is all-or-nothing per component instance, not per render call — reproduce the stock behaviour
 inside the override for every case you are not actually changing, rather than assuming the
 override can stay silent for the common path.
+
+## A production guard checked once at the top proves nothing about the statement that runs last (#220 follow-on, 2026-09-21)
+
+Building the local QA scheduling fixture (`portal/packages/db/qa-seed/`), the obvious design was a
+single preflight check — "does this database look like local dev?" — before running a batch of
+generated INSERT/DELETE statements. That is not enough: an executor that continues past a failed
+statement, or a fixture statement copied out of the batch and run alone, never sees the preflight
+at all. The fix that actually holds is a **capability fence**: a local-only table
+(`__quincy_local_capability`, created only by `setup-local.mjs`, never a migration, never
+`seed/0001_seed.sql`) that every generated mutator statement — insert and teardown delete alike —
+references directly (`WHERE EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability =
+…)`). A statement missing that table fails with `no such table`, whether it runs as part of the
+batch, alone, or copied into an unrelated script. Verified directly: the exact generated SQL run
+against a migrated-and-seeded scratch database that never ran `setup-local.mjs` fails on its first
+statement with that error and leaves zero rows, not a subset.
+
+Paired with that: the same fixture generates every checklist-schedule row through
+`normalizeChecklistSchedule` and round-trips it through `serializeChecklistSchedule` — the exact
+pure functions the real API calls — rather than hand-computing the resolved instant/offset/fold a
+timed row stores. A single wrong offset in a hand-written fixture does not raise an error; it
+silently serializes to `invalid` and the row disappears from every surface that reads it, which is
+indistinguishable from the bug the fixture exists to help catch. Running the same validator the API
+runs turns that into a build-time exception instead of a browser-pass mystery.
+
+The generalisation: **a guard checked once, before the write, is a guard for the FIRST statement,
+not for the batch.** If a mechanism generates many mutator statements, put the check in the
+statement itself (a referenced marker row, an `EXISTS` predicate) rather than only in the caller
+that assembles them — and if a mechanism generates rows a validator elsewhere in the codebase
+already knows how to reject, run that exact validator at generation time rather than re-deriving
+its rules by hand.
+
+## `spawnSync`'s default `maxBuffer` fails silently as the child's own crash, not as a clear "buffer exceeded" (#220 follow-on, 2026-09-21)
+
+The same fixture's transport (`cli.mjs`) spawns a `tsx`-run generator and captures its JSON output
+via `child_process.spawnSync(..., { stdio: ["ignore", "pipe", "inherit"] })` with no explicit
+`maxBuffer`. The default (1 MiB) is far smaller than the ~3+ MB of SQL statements the fixture's
+opt-in density tier generates. Exceeding it does not surface as "maxBuffer exceeded" from the
+parent — it kills the child mid-write, and the child's own next `process.stdout.write()` call
+throws `Error: write EPIPE`, printed (via the inherited stderr) as if the *generator* had crashed.
+Nothing about that message points at the parent's `spawnSync` options at all; tracking it down
+meant reproducing the same generator invocation without going through the parent to see it succeed
+cleanly at 3.2 MB, which only made sense once `maxBuffer` was considered.
+
+The generalisation: **when a subprocess you spawn to capture output can plausibly produce more than
+a few hundred KB, set `maxBuffer` explicitly and generously — do not wait to discover the default
+via an `EPIPE` that looks like the child's own bug.** The failure mode is maximally confusing
+specifically because the error surfaces from the wrong process.
