@@ -359,7 +359,38 @@ type GanttChildPageState = {
   complete: boolean;
   loading: boolean;
   error: Error | null;
+  /**
+   * fix-220-sol1b: `computeEmbeddedChildSignature` of the embedded page this entry was SEEDED from
+   * — fixed at seed time, carried forward unchanged through every later page merge. Compared against
+   * the project's CURRENT embedded signature every render (see the effect below) so a refetch under
+   * the SAME query key (a poll, another tab's checklist edit) that changes page one re-reconciles
+   * instead of this entry showing stale rows indefinitely. Deliberately NOT recomputed from `rows`
+   * itself: `rows` legitimately grows past the seed page as later continuation pages merge in, so
+   * comparing against that moving target would misread ordinary pagination progress as a change and
+   * re-walk forever.
+   */
+  seedSignature: string;
 };
+
+/**
+ * fix-220-sol1b: a project's own embedded-first-page fingerprint — cheap (bounded by
+ * `PRODUCTION_GANTT_CHILD_PAGE_LIMIT`, one page's worth of rows) and a pure function of what the DTO
+ * actually offers. `GanttChecklistRowDto` carries no single per-row `updatedAt`: the DTO's closest
+ * thing is `schedule.version`, which bumps on a reschedule but not on a plain title/done/position/
+ * assignee edit (`project_subtasks.updated_at`/`assignment_version` exist in the DB migration but are
+ * never serialised onto the wire — checked before writing this). So the signature is built from every
+ * field on the DTO a checklist edit can actually change (`done`, `position`, `title`, `assignee.id`,
+ * `schedule.version`), keyed by row id in page order, plus `children.nextCursor` (the embedded page's
+ * own truncation point, which can move without any row's content changing). Two embedded pages with
+ * identical row content and the same `nextCursor` always produce the identical string — the required
+ * "an identical refetch costs nothing" case.
+ */
+function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"]): string {
+  return JSON.stringify([
+    children.nextCursor,
+    children.rows.map((row) => [row.id, row.done, row.position, row.title, row.assignee?.id ?? null, row.schedule.version]),
+  ]);
+}
 
 export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const { stages } = useStages();
@@ -410,14 +441,19 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
    * response that lands after this chain's generation was superseded is discarded rather than
    * writing into a newer generation's `childState` (fix-220-sol1 #1's "reject completions that
    * belong to a superseded generation").
+   *
+   * `seedSignature` (fix-220-sol1b) is recorded verbatim into every write this chain makes — it is
+   * whatever the CALLER captured as "the embedded page this walk started from", never recomputed
+   * here, so a chain that keeps merging continuation pages doesn't drift its own seed away from what
+   * it was actually seeded against.
    */
-  const loadProjectChildChain = useCallback((projectId: string, generation: number, seedRows: GanttChecklistRowDto[], seedCursor: string | null) => {
+  const loadProjectChildChain = useCallback((projectId: string, generation: number, seedRows: GanttChecklistRowDto[], seedCursor: string | null, seedSignature: string) => {
     if (generation !== generationRef.current) return;
     const controller = new AbortController();
     childControllersRef.current.set(projectId, controller);
     setChildState((current) => ({
       ...current,
-      [projectId]: { rows: seedRows, cursor: seedCursor, complete: seedCursor === null, loading: seedCursor !== null, error: null },
+      [projectId]: { rows: seedRows, cursor: seedCursor, complete: seedCursor === null, loading: seedCursor !== null, error: null, seedSignature },
     }));
     if (seedCursor === null) {
       childControllersRef.current.delete(projectId);
@@ -429,24 +465,30 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
       try {
         while (cursor) {
           const page = await fetchGanttChildPage(projectId, cursor, undefined, controller.signal);
-          if (generation !== generationRef.current) return;
+          // fix-220-sol1b: `controller.signal.aborted` is checked alongside the generation guard —
+          // a same-generation re-seed (this file's own reconciliation effect below) aborts THIS
+          // controller without bumping `generationRef`, and a mocked/real fetch whose response had
+          // already landed before the abort call reaches it resolves successfully rather than
+          // rejecting. Without this check that late, successful response would still pass the
+          // generation guard and overwrite the freshly re-seeded state with stale data.
+          if (generation !== generationRef.current || controller.signal.aborted) return;
           rows = mergeGanttChildPage(rows, page);
           cursor = page.children.nextCursor;
           // fix-220-sol1 #2: `complete` flips to true ONLY here, on actually merging a page whose
           // own `nextCursor` is null — never inferred elsewhere from "a childState entry exists".
-          setChildState((current) => ({ ...current, [projectId]: { rows, cursor, complete: cursor === null, loading: cursor !== null, error: null } }));
+          setChildState((current) => ({ ...current, [projectId]: { rows, cursor, complete: cursor === null, loading: cursor !== null, error: null, seedSignature } }));
         }
       } catch (error) {
-        if (generation !== generationRef.current) return;
-        // An abort from THIS generation's own unmount/retry-supersession is expected, not an error
-        // to surface — a retry (below) starts its own fresh controller for the same project.
+        if (generation !== generationRef.current || controller.signal.aborted) return;
+        // An abort from THIS generation's own unmount/retry-supersession/re-seed is expected, not an
+        // error to surface — a retry or re-seed starts its own fresh controller for the same project.
         if (error instanceof DOMException && error.name === "AbortError") return;
         // fix-220-sol1 #2: the partial rows already merged stay visible (never discarded), but
         // `complete` stays false and the error is SET, not swallowed — `GanttChildLoadErrorBadge`
         // surfaces it and its retry re-enters this same function from `cursor`, not from scratch.
         setChildState((current) => ({
           ...current,
-          [projectId]: { rows, cursor, complete: false, loading: false, error: error instanceof Error ? error : new Error("Failed to load the remaining checklist rows.") },
+          [projectId]: { rows, cursor, complete: false, loading: false, error: error instanceof Error ? error : new Error("Failed to load the remaining checklist rows."), seedSignature },
         }));
       } finally {
         childControllersRef.current.delete(projectId);
@@ -457,7 +499,11 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const retryProjectChildren = useCallback(
     (project: GanttProjectRowDto) => {
       const existing = childState[project.id];
-      loadProjectChildChain(project.id, generationRef.current, existing?.rows ?? project.children.rows, existing?.cursor ?? project.children.nextCursor);
+      // fix-220-sol1b: a retry RESUMES the interrupted chain, it never re-seeds — so it carries
+      // forward the existing entry's own `seedSignature` unchanged (falling back to the project's
+      // current embedded signature only in the defensive case where no entry exists yet at all).
+      const seedSignature = existing?.seedSignature ?? computeEmbeddedChildSignature(project.children);
+      loadProjectChildChain(project.id, generationRef.current, existing?.rows ?? project.children.rows, existing?.cursor ?? project.children.nextCursor, seedSignature);
     },
     [childState, loadProjectChildChain],
   );
@@ -490,14 +536,38 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const firstPageDensity = query.data?.pages[0]?.density;
   const tooManyToDraw = (firstPageDensity?.tooManyToDraw ?? false) || model.tooManyToDraw;
 
-  // fix-220-sol1 #3: eagerly walk each INCLUDED truncated project's remaining child pages (S7 — the
-  // tree defaults every group expanded, so "wait for an expand event" would miss a project already
-  // visible on first paint), bounded to `MAX_CONCURRENT_CHILD_CHAINS` concurrent chains and to
-  // projects `model.includedProjectIds` actually drew a resource/event for — a project the adapter
-  // already excluded past the draw cap can never be shown regardless of how many of its children
-  // this fetches, so walking it is pure waste. An entry already in `childState` (loading, complete,
-  // OR errored) is left alone here; an errored chain only resumes via the user's own explicit retry
-  // (`GanttChildLoadErrorBadge`), never automatically re-triggered by this effect re-running.
+  // fix-220-sol1b: one signature per CURRENT project, memoized on `projects` alone (not `childState`)
+  // — recomputed only when the query's own data actually changes (a real fetch/refetch landing), not
+  // on every intermediate childState write a chain's own page-by-page merge makes. Cheap either way
+  // (bounded by one page's worth of rows per project), but this keeps it off the render path entirely.
+  const embeddedChildSignatureByProjectId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of projects) map.set(project.id, computeEmbeddedChildSignature(project.children));
+    return map;
+  }, [projects]);
+
+  // fix-220-sol1 #3 / fix-220-sol1b: eagerly walk each INCLUDED truncated project's remaining child
+  // pages (S7 — the tree defaults every group expanded, so "wait for an expand event" would miss a
+  // project already visible on first paint), bounded to `MAX_CONCURRENT_CHILD_CHAINS` concurrent
+  // chains and to projects `model.includedProjectIds` actually drew a resource/event for — a project
+  // the adapter already excluded past the draw cap can never be shown regardless of how many of its
+  // children this fetches, so walking it is pure waste. An entry already in `childState` (loading,
+  // complete, OR errored) is left alone by the SECOND loop below; an errored chain only resumes via
+  // the user's own explicit retry (`GanttChildLoadErrorBadge`), never automatically re-triggered by
+  // this effect re-running.
+  //
+  // fix-220-sol1b's own addition is the FIRST loop: generation scoping (fix-220-sol1 #1) only catches
+  // a query-KEY change. Under the SAME key, a poll or a mutation elsewhere invalidates the surface and
+  // the query re-walks from page one (the convergence contract at
+  // `packages/shared/src/production-gantt.ts:149-165`) — TanStack replaces `query.data` with those
+  // fresh pages, but without this loop an already-walked project's `childState` would keep overriding
+  // them with what an earlier walk accumulated, forever (until `q`/filters/identity changed). This
+  // loop re-seeds any TRACKED project (regardless of its current `truncated`) whose fresh embedded
+  // signature no longer matches the signature its state was seeded from: it aborts that project's own
+  // in-flight controller (if any — a chain already `complete` or `error`-stopped has none) and calls
+  // `loadProjectChildChain` again, which atomically both drops the stale entry and re-seeds it from
+  // the fresh page in the same `setChildState` write. Every OTHER project's chain is untouched. Shares
+  // `capacity` with the second loop so both together still respect the same concurrency bound.
   useEffect(() => {
     if (tooManyToDraw) return;
     const generation = generationRef.current;
@@ -505,12 +575,25 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
     for (const project of projects) {
       if (capacity <= 0) break;
       if (!model.includedProjectIds.has(project.id)) continue;
-      if (!project.children.truncated) continue;
-      if (childState[project.id]) continue;
-      loadProjectChildChain(project.id, generation, project.children.rows, project.children.nextCursor);
+      const state = childState[project.id];
+      if (!state) continue;
+      const signature = embeddedChildSignatureByProjectId.get(project.id);
+      if (signature === undefined || signature === state.seedSignature) continue;
+      childControllersRef.current.get(project.id)?.abort();
+      childControllersRef.current.delete(project.id);
+      loadProjectChildChain(project.id, generation, project.children.rows, project.children.nextCursor, signature);
       capacity -= 1;
     }
-  }, [projects, model.includedProjectIds, tooManyToDraw, childState, loadProjectChildChain]);
+    for (const project of projects) {
+      if (capacity <= 0) break;
+      if (!model.includedProjectIds.has(project.id)) continue;
+      if (!project.children.truncated) continue;
+      if (childState[project.id]) continue;
+      const signature = embeddedChildSignatureByProjectId.get(project.id) ?? computeEmbeddedChildSignature(project.children);
+      loadProjectChildChain(project.id, generation, project.children.rows, project.children.nextCursor, signature);
+      capacity -= 1;
+    }
+  }, [projects, model.includedProjectIds, tooManyToDraw, childState, loadProjectChildChain, embeddedChildSignatureByProjectId]);
 
   useEffect(
     () => () => {

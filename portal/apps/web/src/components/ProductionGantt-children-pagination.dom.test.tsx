@@ -244,4 +244,127 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(findByText(host, "Stale generation task two")).toBeUndefined();
     expect(host.querySelector('[data-testid="gantt-children-retry"]')).toBeNull();
   });
+
+  // fix-220-sol1b: generation scoping (fix-220-sol1 #1, tested above) only catches a query-KEY
+  // change. These three cases cover the companion defect — a refetch under the SAME query key (a
+  // poll, another tab's mutation) that changes a project's embedded first page — which the
+  // convergence contract at `packages/shared/src/production-gantt.ts:149-165` requires a fresh walk
+  // to eventually reflect.
+
+  it("re-reconciles an already-walked project when its embedded first page changes under the SAME query key (fix-220-sol1b #1)", async () => {
+    const page1Task = task("22222222-2222-4222-8222-000000000008", "Stale embedded task", 0);
+    const page2Task = task("22222222-2222-4222-8222-000000000009", "Stale continuation task", 1);
+    const freshTask = task("22222222-2222-4222-8222-00000000000a", "Fresh embedded task", 0);
+
+    let refetched = false;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("childrenOf=")) {
+        return Promise.resolve(childPageResponse([page2Task], 2, false, null));
+      }
+      if (refetched) {
+        return Promise.resolve(listResponse(projectRow({ rows: [freshTask], total: 1, truncated: false, nextCursor: null })));
+      }
+      return Promise.resolve(listResponse(projectRow({ rows: [page1Task], total: 2, truncated: true, nextCursor: "cursor-1" })));
+    });
+
+    await renderWithQuery("");
+    expect(findByText(host, "Stale embedded task")).toBeDefined();
+    expect(findByText(host, "Stale continuation task")).toBeDefined();
+
+    // Same identity, same filters, same query key — a poll or another tab's checklist edit, not a
+    // `q`/filter/identity change.
+    refetched = true;
+    await act(async () => {
+      await client.refetchQueries();
+    });
+    await settle();
+
+    expect(findByText(host, "Fresh embedded task")).toBeDefined();
+    expect(findByText(host, "Stale embedded task")).toBeUndefined();
+    expect(findByText(host, "Stale continuation task")).toBeUndefined();
+    expect(host.querySelector('[data-testid="gantt-children-retry"]')).toBeNull();
+  });
+
+  it("costs nothing on an identical refetch — no additional child-page fetch when the embedded first page is unchanged (fix-220-sol1b #2)", async () => {
+    let childRequestCount = 0;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("childrenOf=")) {
+        childRequestCount += 1;
+        return Promise.resolve(childPageResponse([task("22222222-2222-4222-8222-00000000000c", "Idempotent continuation task", 1)], 2, false, null));
+      }
+      // A fresh object every call (mirroring a real re-parsed response), same content every time.
+      return Promise.resolve(
+        listResponse(projectRow({ rows: [task("22222222-2222-4222-8222-00000000000b", "Idempotent embedded task", 0)], total: 2, truncated: true, nextCursor: "cursor-1" })),
+      );
+    });
+
+    await renderWithQuery("");
+    expect(findByText(host, "Idempotent embedded task")).toBeDefined();
+    expect(findByText(host, "Idempotent continuation task")).toBeDefined();
+    expect(childRequestCount).toBe(1);
+
+    await act(async () => {
+      await client.refetchQueries();
+    });
+    await settle();
+
+    // No re-walk: the identical embedded page must not cost a second child-page fetch.
+    expect(childRequestCount).toBe(1);
+    expect(findByText(host, "Idempotent embedded task")).toBeDefined();
+    expect(findByText(host, "Idempotent continuation task")).toBeDefined();
+  });
+
+  it("aborts an in-flight chain on re-seed and discards its late response, never letting it overwrite the fresh state (fix-220-sol1b #3)", async () => {
+    const page1Task = task("22222222-2222-4222-8222-00000000000d", "In-flight seed task", 0);
+    const staleContinuationTask = task("22222222-2222-4222-8222-00000000000e", "Stale continuation task", 1);
+    const freshTask = task("22222222-2222-4222-8222-00000000000f", "Reseeded fresh task", 0);
+
+    let refetched = false;
+    let childRequestCount = 0;
+    let resolveStaleChildPage: ((value: unknown) => void) | undefined;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("childrenOf=")) {
+        childRequestCount += 1;
+        if (childRequestCount === 1) {
+          // Never resolves on its own — held open so the reseed below races an in-flight chain.
+          return new Promise((resolve) => {
+            resolveStaleChildPage = resolve;
+          });
+        }
+        return Promise.resolve(childPageResponse([], 1, false, null));
+      }
+      if (refetched) {
+        return Promise.resolve(listResponse(projectRow({ rows: [freshTask], total: 1, truncated: false, nextCursor: null })));
+      }
+      return Promise.resolve(listResponse(projectRow({ rows: [page1Task], total: 2, truncated: true, nextCursor: "cursor-1" })));
+    });
+
+    await renderWithQuery("");
+    // The continuation for page one is still in flight — never resolved yet.
+    expect(findByText(host, "In-flight seed task")).toBeDefined();
+    expect(findByText(host, "Reseeded fresh task")).toBeUndefined();
+
+    refetched = true;
+    await act(async () => {
+      await client.refetchQueries();
+    });
+    await settle();
+
+    // The re-seed landed while the old chain was still in flight — it must win outright.
+    expect(findByText(host, "Reseeded fresh task")).toBeDefined();
+    expect(findByText(host, "In-flight seed task")).toBeUndefined();
+    expect(host.querySelector('[data-testid="gantt-children-retry"]')).toBeNull();
+
+    // Now let the OLD (aborted) chain's response land late.
+    await act(async () => {
+      resolveStaleChildPage?.(childPageResponse([staleContinuationTask], 2, false, null));
+      await Promise.resolve();
+    });
+    await settle();
+
+    // The stale response must never have written into the re-seeded state.
+    expect(findByText(host, "Stale continuation task")).toBeUndefined();
+    expect(findByText(host, "Reseeded fresh task")).toBeDefined();
+    expect(findByText(host, "In-flight seed task")).toBeUndefined();
+  });
 });
