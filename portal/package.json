@@ -16,7 +16,10 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "db:generate": "npm run generate -w @quincy/db",
-    "db:migrate:local": "npm run migrate:local -w @quincy/db"
+    "db:migrate:local": "npm run migrate:local -w @quincy/db",
+    "db:qa:apply": "npm run qa:apply -w @quincy/db --",
+    "db:qa:teardown": "npm run qa:teardown -w @quincy/db --",
+    "db:qa:verify": "npm run qa:verify -w @quincy/db --"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

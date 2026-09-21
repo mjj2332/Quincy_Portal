@@ -15,6 +15,9 @@
  * unless something checks it landed, and printing a row is not checking it.
  */
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Kept in step with `src/board-schema-variant.ts`; asserted by the wiring guard. */
@@ -32,6 +35,42 @@ export const LOCAL_FLAG_SQL = `UPDATE feature_flags SET enabled = 1, updated_at 
 
 /** Refused outright — each one can move the target off local storage. */
 const FORBIDDEN_ARGUMENTS = ["--remote", "--env", "--config", "--database", "--preview"];
+
+/**
+ * QA scheduling fixture capability fence (#220 follow-on, `qa-seed/`). Three local-only tables,
+ * created here — never in a migration, never in `seed/0001_seed.sql`, never in the Drizzle schema
+ * — and never dropped by this script. `qa-seed/sql.ts` makes every fixture mutator statement
+ * (insert AND teardown delete) require `EXISTS (SELECT 1 FROM __quincy_local_capability WHERE
+ * capability = 'scheduling-fixtures')`, so a fixture statement copied out and run against a
+ * database that never ran *this* local-only script — production included — dies with `no such
+ * table: __quincy_local_capability` instead of silently succeeding. A one-time preflight is not
+ * enough: this makes the check part of every statement, not just the first one.
+ *
+ * Honest limit, stated once here rather than re-litigated in the fixture docs: a privileged
+ * operator holding real production credentials could still create this table there by hand and
+ * bypass the fence deliberately. Nothing in this repository can stop that; what this fence does
+ * stop is every accidental path — a copied statement, a copied file, a `--remote` typo, a CI job —
+ * from reaching production with live effect.
+ */
+export const QA_FIXTURE_CAPABILITY_SQL = `
+CREATE TABLE IF NOT EXISTS __quincy_local_capability (
+  capability text PRIMARY KEY NOT NULL,
+  schema_version integer NOT NULL
+);
+CREATE TABLE IF NOT EXISTS __quincy_local_fixture_runs (
+  id text PRIMARY KEY NOT NULL,
+  tier text NOT NULL,
+  anchor text NOT NULL,
+  applied_at integer NOT NULL
+);
+CREATE TABLE IF NOT EXISTS __quincy_local_fixture_entities (
+  id text NOT NULL,
+  kind text NOT NULL,
+  run_id text NOT NULL,
+  PRIMARY KEY (id, kind)
+);
+INSERT OR IGNORE INTO __quincy_local_capability (capability, schema_version) VALUES ('scheduling-fixtures', 1);
+`.trim();
 
 export function parseArguments(argv) {
   const options = { persistTo: undefined };
@@ -93,6 +132,25 @@ export function assertSchemaMarkerPresent(row) {
   }
 }
 
+/** The QA fixture capability fence's own postcondition — applying SQL proves nothing unless
+ * something checks the row landed, same rationale as `assertFlagEnabled` above. */
+export function assertCapabilityInstalled(row) {
+  if (Number(row?.present) !== 1) {
+    throw new Error("__quincy_local_capability's 'scheduling-fixtures' row did not land. `npm run db:qa:apply` would refuse to run against this database.");
+  }
+}
+
+function runSqlFile(options, sql, label) {
+  const dir = mkdtempSync(join(tmpdir(), `quincy-setup-local-${label}-`));
+  const file = join(dir, `${label}.sql`);
+  try {
+    writeFileSync(file, sql, "utf8");
+    runWrangler(["execute"], options, ["--file", file]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
 
@@ -107,7 +165,11 @@ async function main() {
 
   assertFlagEnabled(queryScalar(options, `SELECT enabled FROM feature_flags WHERE key = '${BOARD_CONTRACT_FLAG}';`));
 
-  console.log(`==> Local D1 ready: ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable.`);
+  console.log("==> Installing the QA scheduling fixture capability fence (local-only)");
+  runSqlFile(options, QA_FIXTURE_CAPABILITY_SQL, "qa-fixture-capability");
+  assertCapabilityInstalled(queryScalar(options, "SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;"));
+
+  console.log(`==> Local D1 ready: ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
 }
 
 // Only when run as a command. The parsing and argument-building seams above are importable so
