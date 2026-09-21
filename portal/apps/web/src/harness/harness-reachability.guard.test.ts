@@ -532,31 +532,50 @@ describe("guard: nothing outside src/harness/ imports src/harness/", () => {
 const VENDOR_SCHEDULING_PREFIXES = ["components/reui/gantt/", "components/reui/event-calendar/"];
 const ALL_VENDOR_SCHEDULING_PREFIXES: readonly string[] = VENDOR_SCHEDULING_PREFIXES;
 
-type AllowedVendorSchedulingConsumer = { consumerPrefix: string; allowedVendorPrefixes: readonly string[] };
+/**
+ * `kind` is explicit, not inferred from the shape of `matchValue` (fix-220-sol1 #5): the comment
+ * beside the `components/ProductionGantt.tsx` entry below has always PROMISED an exact-file
+ * exemption, but until this fix every entry — exact or directory — was matched the same way,
+ * `file.path.startsWith(consumer.matchValue)`. `startsWith` treats an exact file path as just
+ * another prefix, so `components/ProductionGantt.tsx-helper.ts` (a real, if unlikely, sibling file
+ * name) would ALSO have matched `"components/ProductionGantt.tsx"` and silently inherited its
+ * `gantt/`-only grant — exactly the near-collision the comment claimed could not happen. `kind`
+ * forces each entry to say which matching rule it actually gets, and `consumerMatches` below
+ * enforces it: `"exact"` is `===`, `"prefix"` is `startsWith`, never blurred.
+ */
+type AllowedVendorSchedulingConsumer =
+  | { kind: "prefix"; matchValue: string; allowedVendorPrefixes: readonly string[] }
+  | { kind: "exact"; matchValue: string; allowedVendorPrefixes: readonly string[] };
+
+function consumerMatches(consumer: AllowedVendorSchedulingConsumer, path: string): boolean {
+  return consumer.kind === "exact" ? path === consumer.matchValue : path.startsWith(consumer.matchValue);
+}
 
 const ALLOWED_VENDOR_SCHEDULING_CONSUMERS: readonly AllowedVendorSchedulingConsumer[] = [
-  { consumerPrefix: "harness/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
-  { consumerPrefix: "components/reui/gantt/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
-  { consumerPrefix: "components/reui/event-calendar/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
-  // #220 — the production Gantt surface. An EXACT file path, not a directory prefix: this list is
-  // matched with `file.path.startsWith(consumerPrefix)` and gates BOTH vendored trees (see
-  // `VENDOR_SCHEDULING_PREFIXES` above), so a directory entry here would silently license every
-  // future file under it to import `event-calendar/` too, not just this one Gantt consumer. Scoped
-  // to `["components/reui/gantt/"]` alone, not `ALL_VENDOR_SCHEDULING_PREFIXES` — this file has no
+  { kind: "prefix", matchValue: "harness/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
+  { kind: "prefix", matchValue: "components/reui/gantt/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
+  { kind: "prefix", matchValue: "components/reui/event-calendar/", allowedVendorPrefixes: ALL_VENDOR_SCHEDULING_PREFIXES },
+  // #220 — the production Gantt surface. An EXACT file path, not a directory prefix (`kind:
+  // "exact"`, matched with `===`, never `startsWith` — fix-220-sol1 #5): this gates BOTH vendored
+  // trees (see `VENDOR_SCHEDULING_PREFIXES` above), so a directory-style prefix match here would
+  // silently license every future file whose PATH happens to start with this exact string —
+  // including a near-collision like `components/ProductionGantt.tsx-helper.ts` — to import
+  // `event-calendar/` too, not just this one Gantt consumer. Scoped to
+  // `["components/reui/gantt/"]` alone, not `ALL_VENDOR_SCHEDULING_PREFIXES` — this file has no
   // legitimate reason to import `event-calendar/`, and a bare (unscoped) allow-list entry would
   // have missed exactly that: this guard's own "Done when" proof plants
   // `import "@/components/reui/event-calendar/…"` inside this file and requires it STILL fails.
   // `screens/Dashboard.tsx` itself is NOT on this list — it reaches this file only through a
   // literal `lazy(() => import("../components/ProductionGantt"))`, never a direct import of
   // `components/reui/gantt/`, so it stays outside detector (ii) entirely, same as it always has.
-  { consumerPrefix: "components/ProductionGantt.tsx", allowedVendorPrefixes: ["components/reui/gantt/"] },
+  { kind: "exact", matchValue: "components/ProductionGantt.tsx", allowedVendorPrefixes: ["components/reui/gantt/"] },
 ];
 
 function findVendorSchedulingImportersOutsideAllowed(files: FileNode[]): string[] {
   return files
     .filter((file) => !file.isTest)
     .filter((file) => {
-      const allowedVendorPrefixes = ALLOWED_VENDOR_SCHEDULING_CONSUMERS.find((consumer) => file.path.startsWith(consumer.consumerPrefix))?.allowedVendorPrefixes ?? [];
+      const allowedVendorPrefixes = ALLOWED_VENDOR_SCHEDULING_CONSUMERS.find((consumer) => consumerMatches(consumer, file.path))?.allowedVendorPrefixes ?? [];
       return file.importTargets.some((target) => VENDOR_SCHEDULING_PREFIXES.some((vendorPrefix) => target.startsWith(vendorPrefix) && !allowedVendorPrefixes.includes(vendorPrefix)));
     })
     .map((file) => file.path)
@@ -598,6 +617,25 @@ describe("guard: no production consumer of components/reui/gantt or components/r
       { path: "components/ProductionGantt.tsx", isTest: false, importTargets: ["components/reui/gantt/gantt.tsx", "components/reui/event-calendar/event-calendar.tsx"], nonLiteralDynamicImportCount: 0 },
     ];
     expect(findVendorSchedulingImportersOutsideAllowed(gantAndEventCalendar)).toEqual(["components/ProductionGantt.tsx"]);
+  });
+
+  // fix-220-sol1 #5: the `components/ProductionGantt.tsx` allow-list entry promises an EXACT-file
+  // exemption, not a directory prefix — before this fix it was matched with the same
+  // `startsWith` rule as every directory entry, so a near-collision file whose path merely STARTS
+  // WITH that exact string also matched and silently inherited its `gantt/`-only grant. A
+  // plausible real name for such a file: a co-located helper module Vite/TypeScript would resolve
+  // as its own file, not the component itself.
+  it("a near-collision file whose path merely starts with the exact-file entry's string is NOT granted its allowance (fix-220-sol1 #5)", () => {
+    const nearCollision: FileNode[] = [
+      { path: "components/ProductionGantt.tsx-helper.ts", isTest: false, importTargets: ["components/reui/gantt/gantt.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(nearCollision)).toEqual(["components/ProductionGantt.tsx-helper.ts"]);
+
+    // The real exact-file entry still matches itself precisely, unaffected by the stricter check.
+    const exactFileItself: FileNode[] = [
+      { path: "components/ProductionGantt.tsx", isTest: false, importTargets: ["components/reui/gantt/gantt.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(exactFileItself)).toEqual([]);
   });
 
   // #220: renamed from "finds no real production consumer today" — that was #219 stage 1's own

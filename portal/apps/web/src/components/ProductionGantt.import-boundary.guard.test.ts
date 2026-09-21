@@ -28,13 +28,42 @@ function productionGanttSource(): string {
   return readFileSync(sourcePath, "utf8");
 }
 
-/** Every `from "..."` / `from '...'` import specifier in the given source text. */
+/**
+ * Every module-loading specifier in the given source text, across every form Vite/TypeScript
+ * actually resolve a module through: a static `import ... from "..."` / `export ... from "..."`
+ * (the original `\bfrom\s+["']...["']` pattern — an `export`/`export type` form already contains
+ * the literal text `from "..."`, so that ONE pattern already covered it), a bare SIDE-EFFECT import
+ * with no binding (`import "...";` — no `from` keyword at all), a dynamic `import(...)`, and a
+ * CommonJS `require(...)` (fix-220-sol1 #6: the guard's own finding was that only the `from` form
+ * was recognised — verified against this file's own git history before writing this, the other
+ * three genuinely had no matching pattern here at all, so a forbidden module reached ONLY through
+ * one of them would have passed this guard silently). Each pattern is independent and every match
+ * is collected, rather than reusing a single AST walk (`harness-reachability.guard.test.ts`'s own
+ * `extractSpecifiers`) — that walker is NOT exported from its file (this repo's own house pattern,
+ * per THIS file's original header, is to duplicate the small amount of matching logic a guard needs
+ * rather than import between sibling guard test files), and this guard scans exactly one known,
+ * small, hand-authored source file rather than the whole tree, where a full parser's extra
+ * correctness has far less to buy. Every one of the four forms below is locked in by its own
+ * self-test.
+ */
 function importSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
-  const pattern = /\bfrom\s+["']([^"']+)["']/g;
-  for (const match of source.matchAll(pattern)) {
-    const specifier = match[1];
-    if (specifier) specifiers.push(specifier);
+  const patterns = [
+    // `import ... from "..."`, `export ... from "..."`, `export * from "..."` — every one of these
+    // contains the literal text `from "..."` somewhere in the statement.
+    /\bfrom\s+["']([^"']+)["']/g,
+    // A bare side-effect import: `import "...";` — no binding, so no `from` keyword at all.
+    /\bimport\s+["']([^"']+)["']/g,
+    // A dynamic `import(...)`, literal or no-substitution-template argument.
+    /\bimport\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
+    // A CommonJS `require(...)`, literal or no-substitution-template argument.
+    /\brequire\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const specifier = match[1];
+      if (specifier) specifiers.push(specifier);
+    }
   }
   return specifiers;
 }
@@ -66,6 +95,38 @@ describe("guard: ProductionGantt.tsx never imports a scheduling-mutation module"
       "import { Gantt } from '@/components/reui/gantt/gantt';",
     ].join("\n");
     expect(importSpecifiers(source)).toEqual(["react", "../lib/dashboard-projects", "@/components/reui/gantt/gantt"]);
+  });
+
+  // fix-220-sol1 #6: the extractor used to recognise only the `from "..."` form — a bespoke regex
+  // whose comment promised nothing more. These four self-tests plant each of the OTHER real
+  // module-loading forms this guard must not blind itself to, per `docs/lessons.md`'s "a grep gate
+  // that cannot fail is not a gate": each one is a forbidden-fragment specifier, reachable only
+  // through that one form, and each assertion would fail (return `[]`, missing the offender) against
+  // the pre-fix extractor.
+  it("extracts a side-effect import with no binding (no `from` keyword at all)", () => {
+    expect(importSpecifiers('import "../lib/scheduling-undo";')).toEqual(["../lib/scheduling-undo"]);
+  });
+
+  it("extracts a dynamic import(), literal and no-substitution-template forms", () => {
+    expect(importSpecifiers('void import("../lib/scheduling-policy");')).toEqual(["../lib/scheduling-policy"]);
+    expect(importSpecifiers("void import(`../lib/scheduling-policy`);")).toEqual(["../lib/scheduling-policy"]);
+  });
+
+  it("extracts a CommonJS require(), literal and no-substitution-template forms", () => {
+    expect(importSpecifiers('const x = require("../lib/use-scheduling-commands");')).toEqual(["../lib/use-scheduling-commands"]);
+    expect(importSpecifiers("const x = require(`../lib/use-scheduling-commands`);")).toEqual(["../lib/use-scheduling-commands"]);
+  });
+
+  it("extracts an export ... from / export * from re-export form", () => {
+    expect(importSpecifiers('export { doThing } from "../lib/scheduling-policy";')).toEqual(["../lib/scheduling-policy"]);
+    expect(importSpecifiers('export * from "../lib/scheduling-undo";')).toEqual(["../lib/scheduling-undo"]);
+  });
+
+  it("every one of the four forms above is caught by the forbidden-import check end to end, not just by the extractor in isolation", () => {
+    expect(findForbiddenSchedulingImports(importSpecifiers('import "../lib/scheduling-undo";'))).toEqual(["../lib/scheduling-undo"]);
+    expect(findForbiddenSchedulingImports(importSpecifiers('void import("../lib/scheduling-policy");'))).toEqual(["../lib/scheduling-policy"]);
+    expect(findForbiddenSchedulingImports(importSpecifiers('const x = require("../lib/use-scheduling-commands");'))).toEqual(["../lib/use-scheduling-commands"]);
+    expect(findForbiddenSchedulingImports(importSpecifiers('export { doThing } from "../lib/scheduling-policy";'))).toEqual(["../lib/scheduling-policy"]);
   });
 
   it("ProductionGantt.tsx imports nothing from lib/use-scheduling-commands, lib/scheduling-policy*, or lib/scheduling-undo", () => {
