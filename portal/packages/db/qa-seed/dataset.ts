@@ -1,479 +1,436 @@
 /**
- * QA scheduling fixture — pure dataset builder (#220 follow-on). NEVER imports `node:child_process`
- * and never reaches an environment: this file, `sql.ts` and `ids.ts` build a fully-resolved,
- * in-memory dataset; `cli.mjs` is the only file allowed to spawn `wrangler`.
+ * QA scheduling fixture — the dataset (#220 follow-on, `harness/reui-scheduling/fixtures.ts`'s
+ * sibling for local D1 rather than the ReUI mock harness). Pure: no filesystem, no environment, no
+ * `Date.now()`/`unixepoch('now')` anywhere in the values it produces — everything is either a
+ * fixed literal or derived from an explicit `anchor` civil date, so two runs against the same
+ * anchor emit byte-identical statements (`qa-seed-wiring.guard.test.ts` and
+ * `qa-seed-coverage.test.ts` both depend on that).
  *
- * Validity by construction: every subtask schedule is produced by `normalizeChecklistSchedule`
- * (thrown on `ok === false`) and round-tripped through `serializeChecklistSchedule`, asserted to
- * match the state it was declared to be. Legacy rows bypass the normalizer by design (the real
- * legacy create path never calls it either — `lib/project-subtasks.ts`'s `legacyDueDateRequested`
- * branch stores the literal text directly) and are instead round-tripped through
- * `serializeChecklistSchedule` alone.
+ * Every subtask's `ChecklistScheduleStorage` is produced by `normalizeChecklistSchedule` (thrown on
+ * `ok: false`) and round-tripped through `serializeChecklistSchedule` to assert the state it claims
+ * to build — except the four deliberate `legacy_unresolved`/legacy `due_only` rows in the
+ * schedule-edges project, which bypass normalization on purpose (the legacy free-text `due_date`
+ * column was never normalized when the app itself wrote it) and are asserted the same way, directly
+ * against `serializeChecklistSchedule`.
  */
 import {
+  PROJECT_ASSIGNMENT_ELIGIBLE_ROLES,
+  PROJECT_DEADLINE_PRESETS,
+  STAGE_KEYS,
   deadlineFireAt,
   isSydneyCalendarDate,
   normalizeChecklistSchedule,
-  normalizeReminderOffsets,
-  PROJECT_DEADLINE_PRESETS,
-  PROJECT_DEADLINE_ZONE,
   resolveSydneyCivilMinute,
   serializeChecklistSchedule,
   shiftSydneyCalendarDate,
   sydneyCivilParts,
-  SYDNEY_TIME_ZONE,
-  type ChecklistScheduleDto,
   type ChecklistScheduleStorage,
   type InitialChecklistScheduleInput,
+  type StageKey,
 } from "@quincy/shared";
 import { fixtureId } from "./ids";
 
 export type QaTier = "core" | "density";
-export const QA_TIERS: readonly QaTier[] = ["core", "density"];
+export { type StageKey };
 
-/** Bootstrap admin, `packages/db/seed/0001_seed.sql`. Read-only: the generator never inserts,
- * updates or deletes this row. */
+/** The one user this fixture's rows are ever attributed to (`created_by`, `archived_by` is never
+ * set). Matches `seed/0001_seed.sql`'s bootstrap admin — every environment that has run the shared
+ * seed has this row, so every fixture-carrying database has a valid FK target. */
 export const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 
-const HOUR_MS = 3_600_000;
-
-export type StageKey = "awaiting_raw" | "raw_review" | "editing_autohdr" | "edited_review" | "delivered";
-
-export type FixtureProjectDeadline = {
-  localCivil: string;
-  utcOffsetMinutes: number;
-  fold: 0 | 1;
-  epochMs: number;
-  offsetsMinutes: number[];
-};
-
-export type FixtureProjectRow = {
-  id: string;
-  key: string;
-  tier: QaTier;
-  street: string;
-  suburb: string;
-  agencyName: string;
-  stageKey: StageKey;
-  priority: number | null;
-  shootDate: string | null;
-  createdAtMs: number;
-  updatedAtMs: number;
-  notes: string;
-  deadline: FixtureProjectDeadline | null;
-  services: string[];
-  boardRevision: number;
-};
-
-export type FixtureSubtaskRow = {
-  id: string;
-  projectId: string;
-  projectKey: string;
-  title: string;
-  done: boolean;
-  index: number;
-  createdAtMs: number;
-  updatedAtMs: number;
-  storage: ChecklistScheduleStorage;
-};
-
-export type FixtureDeadlineOccurrenceRow = {
-  id: string;
-  projectId: string;
-  scheduleVersion: number;
-  kind: "advance" | "due_now";
-  reminderOffsetMinutes: number;
-  fireAt: number;
-  deadlineAt: number;
-  deadlineLocalCivil: string;
-  deadlineUtcOffsetMinutes: number;
-  deadlineFold: 0 | 1;
-  status: "pending" | "skipped";
-  terminalReason: "elapsed_at_save" | null;
-  createdAtMs: number;
-  updatedAtMs: number;
-};
-
-export type FixtureCollectionRow = {
-  id: string;
-  projectId: string;
-  kind: string;
-  createdAtMs: number;
-  updatedAtMs: number;
-};
-
-export type FixtureMemberRow = {
-  id: string;
-  projectId: string;
-  userId: string;
-  createdAtMs: number;
-};
-
-export type QaFixtureDataset = {
-  anchor: string;
-  tiers: QaTier[];
-  dst: { spring: string; fall: string };
-  projects: FixtureProjectRow[];
-  subtasks: FixtureSubtaskRow[];
-  collections: FixtureCollectionRow[];
-  deadlineOccurrences: FixtureDeadlineOccurrenceRow[];
-  members: FixtureMemberRow[];
-};
+/** Re-exported so `cli.mjs`'s default-editor preflight query and
+ * `qa-seed-wiring.guard.test.ts` both check the identical predicate the shared package defines —
+ * neither one hand-copies the role list. */
+export const DEFAULT_EDITOR_ELIGIBLE_ROLES: readonly string[] = PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor;
 
 // ---------------------------------------------------------------------------
-// Date/anchor helpers — integer day offsets via `shiftSydneyCalendarDate`, never ms arithmetic.
+// Anchor + DST transitions
 // ---------------------------------------------------------------------------
 
-function mustShiftDate(date: string, deltaDays: number): string {
+function mustShift(date: string, deltaDays: number): string {
   const shifted = shiftSydneyCalendarDate(date, deltaDays);
-  if (!shifted.ok) throw new Error(`Could not shift ${date} by ${deltaDays} days: ${shifted.message}`);
+  if (!shifted.ok) throw new Error(`Could not shift ${date} by ${deltaDays} days: ${shifted.error.message}`);
   return shifted.value;
 }
 
-function pad(value: number, width: number): string {
-  return String(value).padStart(width, "0");
-}
-
-/** Monday of the current Sydney ISO week — the default anchor when `--anchor` is omitted. */
-export function currentSydneyMondayISO(now: Date = new Date()): string {
+/** Monday of the current Sydney ISO week, date-only (no time-of-day dependency beyond "which
+ * calendar day is it in Sydney right now"). Not memoised — callers pass an explicit `--anchor` in
+ * CI or for a reproducible run; this is only the zero-argument default for local interactive use. */
+function currentSydneyMondayIso(now: Date): string {
   const parts = sydneyCivilParts(now);
-  const dateISO = `${pad(parts.year, 4)}-${pad(parts.month, 2)}-${pad(parts.day, 2)}`;
-  const weekdayShort = new Intl.DateTimeFormat("en-US", { timeZone: SYDNEY_TIME_ZONE, weekday: "short" }).format(now);
+  const dateStr = `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Australia/Sydney", weekday: "short" }).format(now);
   const isoWeekdayByShortName: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
-  const isoWeekday = isoWeekdayByShortName[weekdayShort];
-  if (!isoWeekday) throw new Error(`Unrecognised Sydney weekday short name: ${weekdayShort}`);
-  return mustShiftDate(dateISO, -(isoWeekday - 1));
+  const isoWeekday = isoWeekdayByShortName[weekday];
+  if (!isoWeekday) throw new Error(`Unrecognised Sydney weekday formatting: ${weekday}`);
+  return mustShift(dateStr, -(isoWeekday - 1));
 }
 
-const ANCHOR_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-export function resolveAnchor(anchorArg: string | undefined, now: Date = new Date()): string {
-  if (anchorArg === undefined) return currentSydneyMondayISO(now);
-  if (!ANCHOR_RE.test(anchorArg) || !isSydneyCalendarDate(anchorArg)) {
-    throw new Error(`--anchor must be a real YYYY-MM-DD calendar date, got ${JSON.stringify(anchorArg)}.`);
-  }
+/** Validates and returns the anchor, or computes this week's Sydney Monday if omitted. */
+export function resolveAnchor(anchorArg: string | undefined): string {
+  if (anchorArg === undefined) return currentSydneyMondayIso(new Date());
+  if (!isSydneyCalendarDate(anchorArg)) throw new Error(`--anchor must be a valid YYYY-MM-DD calendar date, got ${JSON.stringify(anchorArg)}.`);
   return anchorArg;
 }
 
-/** A handful of verified Sydney AEST/AEDT transition dates, used only to cross-check the `Intl`-
- * computed transitions below — never trusted on their own past 2028. */
+/** A small committed cross-check, not the source of truth — the source of truth is the Intl scan
+ * below. Sydney/Melbourne DST: starts first Sunday in October, ends first Sunday in April. If the
+ * scan below ever disagrees with this table for a year present here, that is a real bug (a change
+ * to the underlying tzdata rules, or a defect in the scan), not something to silently trust either
+ * side on — `resolveDstTransitions` throws rather than picking one. */
 const KNOWN_SYDNEY_TRANSITIONS: ReadonlyArray<{ date: string; kind: "spring" | "fall" }> = [
-  { date: "2024-10-06", kind: "spring" },
-  { date: "2025-04-06", kind: "fall" },
-  { date: "2025-10-05", kind: "spring" },
-  { date: "2026-04-05", kind: "fall" },
-  { date: "2026-10-04", kind: "spring" },
-  { date: "2027-04-04", kind: "fall" },
-  { date: "2027-10-03", kind: "spring" },
-  { date: "2028-04-02", kind: "fall" },
+  { date: "2024-10-06", kind: "spring" }, { date: "2025-04-06", kind: "fall" },
+  { date: "2025-10-05", kind: "spring" }, { date: "2026-04-05", kind: "fall" },
+  { date: "2026-10-04", kind: "spring" }, { date: "2027-04-04", kind: "fall" },
+  { date: "2027-10-03", kind: "spring" }, { date: "2028-04-02", kind: "fall" },
 ];
 
-function sydneyNoonOffsetMinutes(dateISO: string): number {
-  const resolved = resolveSydneyCivilMinute(`${dateISO}T12:00`);
-  if (!resolved.ok) throw new Error(`Could not resolve the Sydney offset for ${dateISO} at noon: ${resolved.message}`);
+function sydneyNoonUtcOffsetMinutes(dateIso: string): number {
+  const resolved = resolveSydneyCivilMinute(`${dateIso}T12:00`);
+  if (!resolved.ok) throw new Error(`Could not resolve a noon offset for ${dateIso}: ${resolved.message}`);
   return resolved.value.utcOffsetMinutes;
 }
 
-function findNextSydneyTransition(anchorDateISO: string, kind: "spring" | "fall"): string {
-  let cursor = anchorDateISO;
-  let previousOffset = sydneyNoonOffsetMinutes(cursor);
+function findNextSydneyTransition(anchorDateIso: string, kind: "spring" | "fall"): string {
+  let cursor = anchorDateIso;
+  let previousOffset = sydneyNoonUtcOffsetMinutes(cursor);
   for (let step = 0; step < 400; step += 1) {
-    cursor = mustShiftDate(cursor, 1);
-    const offset = sydneyNoonOffsetMinutes(cursor);
+    cursor = mustShift(cursor, 1);
+    const offset = sydneyNoonUtcOffsetMinutes(cursor);
     if (kind === "spring" && offset > previousOffset) return cursor;
     if (kind === "fall" && offset < previousOffset) return cursor;
     previousOffset = offset;
   }
-  throw new Error(`No ${kind} transition found within 400 days after ${anchorDateISO}.`);
+  throw new Error(`No ${kind} DST transition found within 400 days of ${anchorDateIso}.`);
 }
 
-/** The first spring-forward and first fall-back strictly after `anchorDateISO`, computed from
- * `Intl` and cross-checked against `KNOWN_SYDNEY_TRANSITIONS` whenever the computed date is one of
- * the years that table covers. */
-export function resolveDstTransitions(anchorDateISO: string): { spring: string; fall: string } {
-  const spring = findNextSydneyTransition(anchorDateISO, "spring");
-  const fall = findNextSydneyTransition(anchorDateISO, "fall");
-  for (const [computedDate, kind] of [[spring, "spring"], [fall, "fall"]] as const) {
-    const known = KNOWN_SYDNEY_TRANSITIONS.find((entry) => entry.date === computedDate);
-    if (known && known.kind !== kind) {
-      throw new Error(`Computed ${kind} transition ${computedDate} disagrees with the committed transition table (expected ${known.kind}).`);
-    }
+/** The next spring-forward and fall-back transition strictly after `anchor`, computed via `Intl`
+ * (through `resolveSydneyCivilMinute`) rather than trusted from `KNOWN_SYDNEY_TRANSITIONS` — that
+ * table is only a cross-check, thrown on disagreement. */
+export function resolveDstTransitions(anchor: string): { spring: string; fall: string } {
+  const spring = findNextSydneyTransition(anchor, "spring");
+  const fall = findNextSydneyTransition(anchor, "fall");
+  for (const [computed, kind] of [[spring, "spring"], [fall, "fall"]] as const) {
+    const known = KNOWN_SYDNEY_TRANSITIONS.find((t) => t.date === computed);
+    if (known && known.kind !== kind) throw new Error(`Computed ${kind} transition ${computed} disagrees with the committed cross-check table (which says ${known.kind}).`);
   }
   return { spring, fall };
 }
 
 // ---------------------------------------------------------------------------
-// Schedule construction — validity by construction (Decision 2).
+// Schedule construction helpers
 // ---------------------------------------------------------------------------
 
-function normalizedStorage(input: InitialChecklistScheduleInput, version: number, expectedState: ChecklistScheduleDto["state"], describe: string): ChecklistScheduleStorage {
+function normalizedSchedule(input: InitialChecklistScheduleInput, version: number, expectedState: "unscheduled" | "due_only" | "range"): ChecklistScheduleStorage {
   const result = normalizeChecklistSchedule(input, version);
-  if (!result.ok) throw new Error(`normalizeChecklistSchedule rejected ${describe}: ${result.error.message}`);
+  if (!result.ok) throw new Error(`normalizeChecklistSchedule rejected ${JSON.stringify(input)} (v${version}): ${result.error.message}`);
   const storage: ChecklistScheduleStorage = { ...result.value };
   const dto = serializeChecklistSchedule(storage);
-  if (dto.state !== expectedState) throw new Error(`${describe}: expected state "${expectedState}" but serializeChecklistSchedule produced "${dto.state}".`);
+  if (dto.state !== expectedState) throw new Error(`Round-trip mismatch building ${JSON.stringify(input)}: expected ${expectedState}, got ${dto.state}.`);
   return storage;
 }
 
-function legacyStorage(dueDate: string, expectedState: ChecklistScheduleDto["state"], describe: string): ChecklistScheduleStorage {
-  const storage: ChecklistScheduleStorage = {
-    dueDate,
-    scheduleStartKind: null, scheduleStartCivil: null, scheduleStartAt: null, scheduleStartUtcOffsetMinutes: null, scheduleStartFold: null,
-    scheduleEndKind: null, scheduleEndAt: null, scheduleEndUtcOffsetMinutes: null, scheduleEndFold: null,
-    scheduleZone: null, scheduleVersion: 0,
-  };
+const EMPTY_SCHEDULE_FIELDS = {
+  scheduleStartKind: null, scheduleStartCivil: null, scheduleStartAt: null, scheduleStartUtcOffsetMinutes: null, scheduleStartFold: null,
+  scheduleEndKind: null, scheduleEndAt: null, scheduleEndUtcOffsetMinutes: null, scheduleEndFold: null, scheduleZone: null,
+} as const;
+
+function legacySchedule(dueDate: string, expectedState: "due_only" | "legacy_unresolved"): ChecklistScheduleStorage {
+  const storage: ChecklistScheduleStorage = { dueDate, ...EMPTY_SCHEDULE_FIELDS, scheduleVersion: 0 };
   const dto = serializeChecklistSchedule(storage);
-  if (dto.state !== expectedState) throw new Error(`${describe}: expected state "${expectedState}" but serializeChecklistSchedule produced "${dto.state}".`);
+  if (dto.state !== expectedState) throw new Error(`Legacy round-trip mismatch for ${JSON.stringify(dueDate)}: expected ${expectedState}, got ${dto.state}.`);
   return storage;
 }
 
-const UNSCHEDULED_V0 = normalizedStorage({ state: "unscheduled" }, 0, "unscheduled", "bulk unscheduled row");
+const UNSCHEDULED_V0 = normalizedSchedule({ state: "unscheduled" }, 0, "unscheduled");
 
-/** The 17-row schedule-edge matrix (main spec "Dataset": Opus §3.3 rows 1-16, merged with Codex's
- * matrix rows 8/9/13). Every non-legacy row goes through `normalizeChecklistSchedule`; legacy rows
- * bypass it exactly like the app's own legacy create branch does. */
-function scheduleEdgeRows(anchor: string, dst: { spring: string; fall: string }): Array<{ title: string; storage: ChecklistScheduleStorage; done: boolean }> {
-  const plus = (days: number) => mustShiftDate(anchor, days);
-  const rows: Array<{ title: string; storage: ChecklistScheduleStorage; done: boolean }> = [
-    { title: "Unscheduled (cleared, v1)", storage: normalizedStorage({ state: "unscheduled" }, 1, "unscheduled", "R1 unscheduled v1"), done: false },
-    { title: "Unscheduled (new, v0)", storage: normalizedStorage({ state: "unscheduled" }, 0, "unscheduled", "R2 unscheduled v0"), done: false },
-    { title: "Due date milestone", storage: normalizedStorage({ state: "due_only", end: { kind: "date", localCivil: plus(10) } }, 1, "due_only", "R3 due date"), done: true },
-    { title: "Due timed milestone", storage: normalizedStorage({ state: "due_only", end: { kind: "timed", localCivil: `${plus(10)}T14:00` } }, 1, "due_only", "R4 due timed"), done: false },
-    { title: "All-day range", storage: normalizedStorage({ state: "range", start: { kind: "date", localCivil: plus(5) }, end: { kind: "date", localCivil: plus(8) } }, 1, "range", "R5 all-day range"), done: true },
-    { title: "Timed range", storage: normalizedStorage({ state: "range", start: { kind: "timed", localCivil: `${plus(5)}T09:00` }, end: { kind: "timed", localCivil: `${plus(5)}T17:00` } }, 1, "range", "R6 timed range"), done: false },
-    { title: "Spring-forward day range (23h bar)", storage: normalizedStorage({ state: "range", start: { kind: "date", localCivil: dst.spring }, end: { kind: "date", localCivil: dst.spring } }, 1, "range", "R7 spring range"), done: false },
-    { title: "Fall-back day range (25h bar)", storage: normalizedStorage({ state: "range", start: { kind: "date", localCivil: dst.fall }, end: { kind: "date", localCivil: dst.fall } }, 1, "range", "R8 fall range"), done: true },
-    { title: "Timed range across the gap (tight)", storage: normalizedStorage({ state: "range", start: { kind: "timed", localCivil: `${dst.spring}T01:30` }, end: { kind: "timed", localCivil: `${dst.spring}T03:30` } }, 1, "range", "R9 gap tight range"), done: false },
-    { title: "Timed range across the gap (overnight)", storage: normalizedStorage({ state: "range", start: { kind: "timed", localCivil: `${mustShiftDate(dst.spring, -1)}T22:00` }, end: { kind: "timed", localCivil: `${dst.spring}T06:00` } }, 1, "range", "R10 gap overnight range"), done: false },
-    { title: "Timed range across the fold", storage: normalizedStorage({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T03:30` } }, 1, "range", "R11 fold range"), done: false },
-    { title: "Fold canary — earlier", storage: normalizedStorage({ state: "due_only", end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "earlier" } }, 1, "due_only", "R12 fold earlier"), done: false },
-    { title: "Fold canary — later", storage: normalizedStorage({ state: "due_only", end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "later" } }, 1, "due_only", "R13 fold later"), done: false },
-    { title: "Legacy due date (stored, valid)", storage: legacyStorage(plus(40), "due_only", "R14 legacy valid"), done: false },
-    { title: "Legacy due date (invalid literal)", storage: legacyStorage("next Tuesday", "legacy_unresolved", "R15 legacy invalid literal"), done: false },
-    { title: "Legacy due date (repeated local time)", storage: legacyStorage(`${dst.fall}T02:30`, "legacy_unresolved", "R16 legacy repeated"), done: false },
-    { title: "Legacy due date (nonexistent local time)", storage: legacyStorage(`${dst.spring}T02:30`, "legacy_unresolved", "R17 legacy nonexistent"), done: false },
-  ];
-  return rows;
+// ---------------------------------------------------------------------------
+// Row shapes
+// ---------------------------------------------------------------------------
+
+export type FixtureDeadline = { localCivil: string; utcOffsetMinutes: number; fold: 0 | 1; epochMs: number; offsetsMinutes: readonly number[] };
+
+export type FixtureProjectRow = {
+  id: string; key: string; street: string; suburb: string; agencyName: string; stageKey: StageKey;
+  priority: number | null; shootDate: string | null; boardRevision: number; notes: string;
+  deadline: FixtureDeadline | null; services: readonly string[]; createdAtMs: number; updatedAtMs: number;
+};
+
+export type FixtureSubtaskRow = {
+  id: string; projectId: string; projectKey: string; title: string; done: boolean; index: number;
+  storage: ChecklistScheduleStorage; createdAtMs: number; updatedAtMs: number;
+};
+
+export type FixtureCollectionRow = { id: string; projectId: string; kind: string; createdAtMs: number; updatedAtMs: number };
+export type FixtureOccurrenceRow = {
+  id: string; projectId: string; scheduleVersion: number; kind: "advance" | "due_now"; reminderOffsetMinutes: number;
+  fireAt: number; deadlineAt: number; deadlineLocalCivil: string; deadlineUtcOffsetMinutes: number; deadlineFold: 0 | 1;
+  status: "pending" | "skipped"; terminalReason: "elapsed_at_save" | null; createdAtMs: number; updatedAtMs: number;
+};
+export type FixtureMemberRow = { id: string; projectId: string; userId: string; createdAtMs: number };
+
+export type QaFixtureDataset = {
+  anchor: string; tiers: QaTier[]; projects: FixtureProjectRow[]; subtasks: FixtureSubtaskRow[];
+  collections: FixtureCollectionRow[]; deadlineOccurrences: FixtureOccurrenceRow[]; members: FixtureMemberRow[];
+};
+
+// ---------------------------------------------------------------------------
+// Timing — every instant is anchor-relative, never Date.now(). `referenceInstantMs` (anchor's own
+// 09:00 Sydney instant) stands in for "now" when classifying a deadline occurrence as pending vs.
+// already-elapsed (mirrors `project-deadline.ts:~228`'s `fireAt <= now` check without ever reading
+// the real clock) — accurate for any apply that runs the same week as its anchor, which every real
+// run does, since a stale anchor is rejected nowhere but is always freshly resolved by default.
+// ---------------------------------------------------------------------------
+
+function anchorReferenceInstantMs(anchor: string): number {
+  const resolved = resolveSydneyCivilMinute(`${anchor}T09:00`);
+  if (!resolved.ok) throw new Error(`Could not resolve the anchor reference instant: ${resolved.message}`);
+  return resolved.value.epochMs;
+}
+
+function projectCreatedAtMs(base: number, index: number): number {
+  // Spaced an hour apart, always strictly before the anchor reference instant — a project cannot
+  // have been created in the future relative to "now".
+  return base - (200 - index) * 3_600_000;
 }
 
 // ---------------------------------------------------------------------------
 // Deadlines
 // ---------------------------------------------------------------------------
 
-function buildDeadline(localCivil: string): FixtureProjectDeadline {
+function buildDeadline(localCivil: string): FixtureDeadline {
   const resolved = resolveSydneyCivilMinute(localCivil);
-  if (!resolved.ok) throw new Error(`Could not resolve deadline civil time ${localCivil}: ${resolved.message}`);
-  const offsetsMinutes = normalizeReminderOffsets([...PROJECT_DEADLINE_PRESETS]);
-  return { localCivil, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, epochMs: resolved.value.epochMs, offsetsMinutes };
+  if (!resolved.ok) throw new Error(`Could not resolve deadline ${localCivil}: ${resolved.message}`);
+  return { localCivil, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, epochMs: resolved.value.epochMs, offsetsMinutes: PROJECT_DEADLINE_PRESETS };
 }
 
-/** `referenceInstantMs` stands in for "now" without ever calling `Date.now()` (Decision 6) — the
- * anchor's own 09:00 Sydney instant, which is always within the same week a real apply runs in. */
-function deadlineOccurrencesFor(project: FixtureProjectRow, referenceInstantMs: number): FixtureDeadlineOccurrenceRow[] {
-  if (!project.deadline) return [];
-  const deadline = project.deadline;
-  const rows: FixtureDeadlineOccurrenceRow[] = [];
-  for (const offset of deadline.offsetsMinutes) {
-    const fireAt = deadlineFireAt(deadline.epochMs, offset);
+function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, referenceInstantMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
+  const rows: FixtureOccurrenceRow[] = [];
+  const push = (kind: "advance" | "due_now", offsetMinutes: number) => {
+    const fireAt = deadlineFireAt(deadline.epochMs, offsetMinutes);
     const pending = fireAt > referenceInstantMs;
     rows.push({
-      id: fixtureId(`occurrence:${project.key}:advance:${offset}`),
-      projectId: project.id, scheduleVersion: 1, kind: "advance", reminderOffsetMinutes: offset, fireAt,
-      deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      status: pending ? "pending" : "skipped", terminalReason: pending ? null : "elapsed_at_save",
-      createdAtMs: project.createdAtMs, updatedAtMs: project.createdAtMs,
+      id: fixtureId(`occurrence:${projectId}:${kind}:${offsetMinutes}`), projectId, scheduleVersion: 1, kind, reminderOffsetMinutes: offsetMinutes,
+      fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
+      status: pending ? "pending" : "skipped", terminalReason: pending ? null : "elapsed_at_save", createdAtMs, updatedAtMs: createdAtMs,
     });
-  }
-  const dueNowPending = deadline.epochMs > referenceInstantMs;
-  rows.push({
-    id: fixtureId(`occurrence:${project.key}:due_now`),
-    projectId: project.id, scheduleVersion: 1, kind: "due_now", reminderOffsetMinutes: 0, fireAt: deadline.epochMs,
-    deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-    status: dueNowPending ? "pending" : "skipped", terminalReason: dueNowPending ? null : "elapsed_at_save",
-    createdAtMs: project.createdAtMs, updatedAtMs: project.createdAtMs,
-  });
+  };
+  for (const offset of deadline.offsetsMinutes) push("advance", offset);
+  push("due_now", 0);
   return rows;
 }
 
 // ---------------------------------------------------------------------------
-// Bulk (non-edge-case) subtasks
+// Bulk (board-shape) subtasks — deliberately plain: every schedule-state variety lives in the
+// schedule-edges project below, so these can stay cheap to build at fixture scale (up to 260 rows).
 // ---------------------------------------------------------------------------
 
-function bulkSubtasks(project: FixtureProjectRow, total: number, doneCount: number): FixtureSubtaskRow[] {
-  if (doneCount > total) throw new Error(`${project.key}: doneCount (${doneCount}) exceeds total (${total}).`);
+function bulkSubtasks(projectId: string, projectKey: string, total: number, doneCount: number, baseCreatedAtMs: number): FixtureSubtaskRow[] {
+  if (doneCount > total) throw new Error(`doneCount (${doneCount}) cannot exceed total (${total}) for ${projectKey}.`);
   const rows: FixtureSubtaskRow[] = [];
   for (let index = 0; index < total; index += 1) {
     const done = index < doneCount;
-    const createdAtMs = project.createdAtMs + index * 1_000;
+    const createdAtMs = baseCreatedAtMs + index * 1_000;
     rows.push({
-      id: fixtureId(`subtask:${project.key}:${pad(index, 4)}`),
-      projectId: project.id, projectKey: project.key, title: `${project.street} · item ${pad(index + 1, 4)}`,
-      done, index, createdAtMs, updatedAtMs: done ? createdAtMs + 61_000 : createdAtMs, storage: UNSCHEDULED_V0,
+      id: fixtureId(`subtask:${projectKey}:${index}`), projectId, projectKey,
+      title: `QA fixture subtask ${String(index + 1).padStart(3, "0")}/${total}`,
+      done, index, storage: UNSCHEDULED_V0, createdAtMs, updatedAtMs: done ? createdAtMs + 61_000 : createdAtMs,
     });
   }
   return rows;
 }
 
 // ---------------------------------------------------------------------------
-// Project assembly
+// The schedule-edges project — every state/endpoint-kind/legacy-reason combination the checklist
+// schedule contract supports, per `checklist-schedule.ts` and the DST canary requirement.
 // ---------------------------------------------------------------------------
 
-type ProjectSpecCore = {
-  key: string;
-  title: string;
-  stageKey: StageKey;
-  priority: number | null;
-  shootDate: string | null;
-  deadlineLocalCivil: string | null;
-};
+type ScheduleEdgeRow = { titleSuffix: string; storage: ChecklistScheduleStorage; done?: boolean };
 
-function projectRow(spec: ProjectSpecCore, anchor: string, index: number, referenceInstantMs: number, tier: QaTier): FixtureProjectRow {
-  const createdAtMs = referenceInstantMs - (400 - index) * HOUR_MS;
-  return {
-    id: fixtureId(`project:${spec.key}`),
-    key: spec.key,
-    tier,
-    street: `QA FIXTURE · ${spec.title}`,
-    suburb: tier === "density" ? "QA Density" : "QA Fixtures",
-    agencyName: "QA Fixture — synthetic data",
-    stageKey: spec.stageKey,
-    priority: spec.priority,
-    shootDate: spec.shootDate,
-    createdAtMs,
-    updatedAtMs: createdAtMs,
-    notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=${tier} · key=${spec.key}`,
-    deadline: spec.deadlineLocalCivil ? buildDeadline(spec.deadlineLocalCivil) : null,
-    services: ["raw"],
-    boardRevision: spec.stageKey === "awaiting_raw" ? 0 : 1,
-  };
-}
-
-function collectionsFor(project: FixtureProjectRow): FixtureCollectionRow[] {
-  return project.services.map((kind) => ({
-    id: fixtureId(`collection:${project.key}:${kind}`),
-    projectId: project.id, kind, createdAtMs: project.createdAtMs, updatedAtMs: project.createdAtMs,
-  }));
-}
-
-function membersFor(project: FixtureProjectRow, defaultEditorIds: readonly string[]): FixtureMemberRow[] {
-  return defaultEditorIds.map((userId) => ({
-    id: fixtureId(`member:${project.key}:${userId}`), projectId: project.id, userId, createdAtMs: project.createdAtMs,
-  }));
-}
-
-// ---------------------------------------------------------------------------
-// Tier builders
-// ---------------------------------------------------------------------------
-
-function buildCoreTier(anchor: string, dst: { spring: string; fall: string }, referenceInstantMs: number): { projects: FixtureProjectRow[]; subtasks: FixtureSubtaskRow[] } {
-  const specs: ProjectSpecCore[] = [
-    { key: "pagination", title: "Pagination 260", stageKey: "awaiting_raw", priority: 1, shootDate: mustShiftDate(anchor, 3), deadlineLocalCivil: `${mustShiftDate(anchor, 20)}T17:00` },
-    { key: "near-complete", title: "Near-complete 199 of 200", stageKey: "raw_review", priority: 2, shootDate: mustShiftDate(anchor, 4), deadlineLocalCivil: `${mustShiftDate(anchor, 21)}T17:00` },
-    { key: "complete", title: "Complete 40 of 40", stageKey: "edited_review", priority: 3, shootDate: mustShiftDate(anchor, 5), deadlineLocalCivil: `${mustShiftDate(anchor, 22)}T17:00` },
-    { key: "zero", title: "Zero progress", stageKey: "editing_autohdr", priority: 4, shootDate: mustShiftDate(anchor, 6), deadlineLocalCivil: `${mustShiftDate(anchor, 23)}T17:00` },
-    { key: "delivered", title: "Delivered", stageKey: "delivered", priority: 5, shootDate: mustShiftDate(anchor, -2), deadlineLocalCivil: null },
-    { key: "schedule-edges", title: "Schedule edges", stageKey: "raw_review", priority: null, shootDate: mustShiftDate(anchor, 7), deadlineLocalCivil: `${mustShiftDate(anchor, 24)}T17:00` },
-    { key: "no-deadline", title: "No deadline no shoot date", stageKey: "awaiting_raw", priority: null, shootDate: null, deadlineLocalCivil: null },
-    { key: "hollow-start", title: "Hollow start", stageKey: "editing_autohdr", priority: null, shootDate: null, deadlineLocalCivil: `${mustShiftDate(anchor, 25)}T17:00` },
-    { key: "deadline-before-start", title: "Deadline before start", stageKey: "edited_review", priority: null, shootDate: mustShiftDate(anchor, 10), deadlineLocalCivil: `${mustShiftDate(anchor, 2)}T09:00` },
-    { key: "invalid-shoot-date", title: "Invalid shoot date", stageKey: "raw_review", priority: null, shootDate: "2026-02-30", deadlineLocalCivil: `${mustShiftDate(anchor, 26)}T17:00` },
+function buildScheduleEdgeRows(anchor: string, dst: { spring: string; fall: string }): ScheduleEdgeRow[] {
+  const plus = (n: number) => mustShift(anchor, n);
+  const dayBefore = (date: string) => mustShift(date, -1);
+  return [
+    { titleSuffix: "unscheduled (cleared, v1)", storage: normalizedSchedule({ state: "unscheduled" }, 1, "unscheduled") },
+    { titleSuffix: "unscheduled (new, v0)", storage: UNSCHEDULED_V0 },
+    { titleSuffix: "due date milestone", storage: normalizedSchedule({ state: "due_only", end: { kind: "date", localCivil: plus(10) } }, 1, "due_only"), done: true },
+    { titleSuffix: "due timed milestone", storage: normalizedSchedule({ state: "due_only", end: { kind: "timed", localCivil: `${plus(10)}T14:00` } }, 1, "due_only") },
+    { titleSuffix: "all-day range", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: plus(5) }, end: { kind: "date", localCivil: plus(8) } }, 1, "range"), done: true },
+    { titleSuffix: "timed range", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${plus(5)}T09:00` }, end: { kind: "timed", localCivil: `${plus(5)}T17:00` } }, 1, "range") },
+    { titleSuffix: "spring-forward day range (23h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.spring }, end: { kind: "date", localCivil: dst.spring } }, 1, "range") },
+    { titleSuffix: "fall-back day range (25h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.fall }, end: { kind: "date", localCivil: dst.fall } }, 1, "range"), done: true },
+    { titleSuffix: "timed range across the gap (tight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.spring}T01:30` }, end: { kind: "timed", localCivil: `${dst.spring}T03:30` } }, 1, "range") },
+    { titleSuffix: "timed range across the gap (overnight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dayBefore(dst.spring)}T22:00` }, end: { kind: "timed", localCivil: `${dst.spring}T06:00` } }, 1, "range") },
+    { titleSuffix: "timed range across the fold", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T03:30` } }, 1, "range") },
+    { titleSuffix: "Fold canary — earlier", storage: normalizedSchedule({ state: "due_only", end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "earlier" } }, 1, "due_only") },
+    { titleSuffix: "Fold canary — later", storage: normalizedSchedule({ state: "due_only", end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "later" } }, 1, "due_only") },
+    { titleSuffix: "legacy due date (stored, valid)", storage: legacySchedule(plus(40), "due_only") },
+    { titleSuffix: "legacy due date (invalid literal)", storage: legacySchedule("next Tuesday", "legacy_unresolved") },
+    { titleSuffix: "legacy due date (repeated local time)", storage: legacySchedule(`${dst.fall}T02:30`, "legacy_unresolved") },
+    { titleSuffix: "legacy due date (nonexistent local time)", storage: legacySchedule(`${dst.spring}T02:30`, "legacy_unresolved") },
   ];
-  const projects = specs.map((spec, index) => projectRow(spec, anchor, index, referenceInstantMs, "core"));
-  const byKey = Object.fromEntries(projects.map((p) => [p.key, p] as const));
+}
 
-  const subtasks: FixtureSubtaskRow[] = [
-    ...bulkSubtasks(byKey.pagination!, 260, 0),
-    ...bulkSubtasks(byKey["near-complete"]!, 200, 199),
-    ...bulkSubtasks(byKey.complete!, 40, 40),
-    ...bulkSubtasks(byKey.zero!, 12, 0),
-    ...bulkSubtasks(byKey.delivered!, 6, 3),
-    ...bulkSubtasks(byKey["no-deadline"]!, 5, 0),
-    ...bulkSubtasks(byKey["hollow-start"]!, 5, 1),
-    ...bulkSubtasks(byKey["deadline-before-start"]!, 5, 0),
-    ...bulkSubtasks(byKey["invalid-shoot-date"]!, 5, 0),
-  ];
+// ---------------------------------------------------------------------------
+// Core tier — P01-P10
+// ---------------------------------------------------------------------------
 
-  const edgeProject = byKey["schedule-edges"]!;
-  const edgeRows = scheduleEdgeRows(anchor, dst);
-  edgeRows.forEach((row, index) => {
-    const createdAtMs = edgeProject.createdAtMs + index * 1_000;
-    subtasks.push({
-      id: fixtureId(`subtask:schedule-edges:${pad(index, 4)}`),
-      projectId: edgeProject.id, projectKey: edgeProject.key, title: `${edgeProject.street} · ${row.title}`,
-      done: row.done, index, createdAtMs, updatedAtMs: row.done ? createdAtMs + 61_000 : createdAtMs, storage: row.storage,
+type ProjectBuild = { project: FixtureProjectRow; subtasks: FixtureSubtaskRow[] };
+
+function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild[] {
+  const dst = resolveDstTransitions(anchor);
+  const builds: ProjectBuild[] = [];
+  let projectIndex = 0;
+
+  function project(key: string, street: string, stageKey: StageKey, opts: {
+    priority?: number; shootDate?: string | null; deadlineLocalCivil?: string; deadlineBeforeStart?: boolean;
+  } = {}): { project: FixtureProjectRow; createdAtMs: number } {
+    const createdAtMs = projectCreatedAtMs(referenceInstantMs, projectIndex);
+    projectIndex += 1;
+    const deadline = opts.deadlineLocalCivil !== undefined ? buildDeadline(opts.deadlineLocalCivil) : null;
+    const row: FixtureProjectRow = {
+      id: fixtureId(`project:${key}`), key, street: `QA FIXTURE · ${street}`, suburb: "QA Fixtures",
+      agencyName: "QA Fixture — synthetic data", stageKey, priority: opts.priority ?? null,
+      shootDate: opts.shootDate === undefined ? null : opts.shootDate, boardRevision: stageKey === "awaiting_raw" ? 0 : 1,
+      notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=core · key=${key}`, deadline, services: ["raw"],
+      createdAtMs, updatedAtMs: createdAtMs,
+    };
+    return { project: row, createdAtMs };
+  }
+
+  // P01 — pagination: far more not-done rows than 2x the child page limit.
+  {
+    const { project: p, createdAtMs } = project("pagination", "Pagination 260", "awaiting_raw", { priority: 1, shootDate: mustShift(anchor, 3) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 260, 0, createdAtMs) });
+  }
+  // P02 — near-complete: completed === total - 1.
+  {
+    const { project: p, createdAtMs } = project("near-complete", "Near-complete 199 of 200", "raw_review", { priority: 2, shootDate: mustShift(anchor, 6) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 200, 199, createdAtMs) });
+  }
+  // P03 — complete: completed === total > 0.
+  {
+    const { project: p, createdAtMs } = project("complete", "Complete 40 of 40", "edited_review", { priority: 3, shootDate: mustShift(anchor, -4) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 40, 40, createdAtMs) });
+  }
+  // P04 — zero: completed === 0 && total > 0.
+  {
+    const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 12, 0, createdAtMs) });
+  }
+  // P05 — delivered: the app's own deadline UPDATE predicate excludes stage_key = 'delivered', so
+  // a delivered project never carries a deadline through the normal app flow — this one doesn't either.
+  {
+    const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 6, 3, createdAtMs) });
+  }
+  // P06 — schedule-edges: the full checklist-schedule state/endpoint/legacy-reason/DST census.
+  {
+    const { project: p, createdAtMs } = project("schedule-edges", "Schedule edges", "raw_review", { shootDate: mustShift(anchor, 2) });
+    const edgeRows = buildScheduleEdgeRows(anchor, dst);
+    const subtasks: FixtureSubtaskRow[] = edgeRows.map((row, index) => {
+      const rowCreatedAtMs = createdAtMs + index * 1_000;
+      return {
+        id: fixtureId(`subtask:schedule-edges:${index}`), projectId: p.id, projectKey: p.key,
+        title: `QA fixture — ${row.titleSuffix}`, done: Boolean(row.done), index, storage: row.storage,
+        createdAtMs: rowCreatedAtMs, updatedAtMs: row.done ? rowCreatedAtMs + 61_000 : rowCreatedAtMs,
+      };
     });
-  });
+    builds.push({ project: p, subtasks });
+  }
+  // P07 — no deadline, no shoot date.
+  {
+    const { project: p, createdAtMs } = project("no-deadline-no-shoot", "No deadline no shoot", "awaiting_raw", { shootDate: null });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
+  }
+  // P08 — hollow start (no shoot date) with a deadline.
+  {
+    const { project: p, createdAtMs } = project("hollow-start", "Hollow start", "editing_autohdr", { shootDate: null, deadlineLocalCivil: `${mustShift(anchor, 14)}T17:00` });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 1, createdAtMs) });
+  }
+  // P09 — deadline strictly before the shoot-date start.
+  {
+    const { project: p, createdAtMs } = project("deadline-before-start", "Deadline before start", "edited_review", { shootDate: mustShift(anchor, 10), deadlineLocalCivil: `${mustShift(anchor, 2)}T09:00` });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
+  }
+  // P10 — invalid shoot_date literal (2026 is not a leap year, so Feb 30 is always out of range).
+  {
+    const { project: p, createdAtMs } = project("invalid-shoot-date", "Invalid shoot date", "raw_review", { shootDate: "2026-02-30" });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
+  }
 
-  return { projects, subtasks };
+  return builds;
 }
 
-const DENSITY_STAGES: StageKey[] = ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review", "delivered"];
+// ---------------------------------------------------------------------------
+// Density tier — enough rows that `matchedRows` (projects + visible children, mirroring
+// `production-gantt.ts`'s `density_candidates`) exceeds `PRODUCTION_GANTT_DRAW_CAP`, while a
+// single-stage filter brings it back under the cap.
+// ---------------------------------------------------------------------------
+
 const DENSITY_PROJECT_COUNT = 30;
 const DENSITY_SUBTASKS_PER_PROJECT = 70;
 
-function buildDensityTier(anchor: string, referenceInstantMs: number): { projects: FixtureProjectRow[]; subtasks: FixtureSubtaskRow[] } {
-  const projects: FixtureProjectRow[] = [];
-  const subtasks: FixtureSubtaskRow[] = [];
-  for (let index = 0; index < DENSITY_PROJECT_COUNT; index += 1) {
-    const stageKey = DENSITY_STAGES[index % DENSITY_STAGES.length]!;
-    const key = `density-${pad(index + 1, 2)}`;
-    const spec: ProjectSpecCore = {
-      key, title: `Density ${pad(index + 1, 2)}`, stageKey, priority: null,
-      shootDate: mustShiftDate(anchor, index % 14), deadlineLocalCivil: `${mustShiftDate(anchor, 30 + (index % 14))}T17:00`,
+function buildDensityTier(anchor: string, referenceInstantMs: number): ProjectBuild[] {
+  const builds: ProjectBuild[] = [];
+  const densityBase = referenceInstantMs - 400 * 3_600_000; // strictly earlier than every core-tier createdAt
+  for (let i = 0; i < DENSITY_PROJECT_COUNT; i += 1) {
+    const key = `density-${String(i + 1).padStart(2, "0")}`;
+    const stageKey = STAGE_KEYS[i % STAGE_KEYS.length]!;
+    const createdAtMs = densityBase - (DENSITY_PROJECT_COUNT - i) * 3_600_000;
+    const project: FixtureProjectRow = {
+      id: fixtureId(`project:${key}`), key, street: `QA FIXTURE · Density ${String(i + 1).padStart(2, "0")}`, suburb: "QA Density",
+      agencyName: "QA Fixture — synthetic data", stageKey, priority: null, shootDate: null,
+      boardRevision: stageKey === "awaiting_raw" ? 0 : 1, notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=density · key=${key}`,
+      deadline: null, services: ["raw"], createdAtMs, updatedAtMs: createdAtMs,
     };
-    const project = projectRow(spec, anchor, 1000 + index, referenceInstantMs, "density");
-    projects.push(project);
-    subtasks.push(...bulkSubtasks(project, DENSITY_SUBTASKS_PER_PROJECT, 0));
+    builds.push({ project, subtasks: bulkSubtasks(project.id, key, DENSITY_SUBTASKS_PER_PROJECT, 0, createdAtMs) });
   }
-  return { projects, subtasks };
+  return builds;
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
-export type BuildQaFixtureDatasetOptions = {
-  anchor: string;
-  tiers: QaTier[];
-  defaultEditorIds?: readonly string[];
-};
-
-export function buildQaFixtureDataset(options: BuildQaFixtureDatasetOptions): QaFixtureDataset {
-  const anchor = options.anchor;
-  if (!ANCHOR_RE.test(anchor) || !isSydneyCalendarDate(anchor)) throw new Error(`Invalid anchor: ${JSON.stringify(anchor)}`);
-  const tiers = [...new Set(options.tiers)];
-  if (tiers.length === 0) throw new Error("At least one tier is required.");
-  for (const tier of tiers) if (!QA_TIERS.includes(tier)) throw new Error(`Unknown tier: ${tier}`);
-
-  const dst = resolveDstTransitions(anchor);
-  const referenceResolved = resolveSydneyCivilMinute(`${anchor}T09:00`);
-  if (!referenceResolved.ok) throw new Error(`Could not resolve the anchor reference instant: ${referenceResolved.message}`);
-  const referenceInstantMs = referenceResolved.value.epochMs;
-
-  const projects: FixtureProjectRow[] = [];
-  const subtasks: FixtureSubtaskRow[] = [];
-  if (tiers.includes("core")) {
-    const core = buildCoreTier(anchor, dst, referenceInstantMs);
-    projects.push(...core.projects);
-    subtasks.push(...core.subtasks);
-  }
-  if (tiers.includes("density")) {
-    const density = buildDensityTier(anchor, referenceInstantMs);
-    projects.push(...density.projects);
-    subtasks.push(...density.subtasks);
-  }
-
-  const defaultEditorIds = [...new Set(options.defaultEditorIds ?? [])].sort();
-  const collections = projects.flatMap(collectionsFor);
-  const deadlineOccurrences = projects.flatMap((project) => deadlineOccurrencesFor(project, referenceInstantMs));
-  const members = projects.flatMap((project) => membersFor(project, defaultEditorIds));
-
-  return { anchor, tiers, dst, projects, subtasks, collections, deadlineOccurrences, members };
-}
-
-/** Density's own not-done checklist rows for a single stage — used by the coverage test to prove
- * a single-stage filter drops the density tier back under `PRODUCTION_GANTT_DRAW_CAP`. */
+/** The row count a single-stage filter over the density tier alone leaves — pure arithmetic, no
+ * need to build the full dataset to check it against `PRODUCTION_GANTT_DRAW_CAP`. */
 export function densitySingleStageRowCount(): number {
-  const projectsInOneStage = Math.ceil(DENSITY_PROJECT_COUNT / DENSITY_STAGES.length);
-  return projectsInOneStage * (1 + DENSITY_SUBTASKS_PER_PROJECT);
+  const projectsPerStage = DENSITY_PROJECT_COUNT / STAGE_KEYS.length;
+  return projectsPerStage * (1 + DENSITY_SUBTASKS_PER_PROJECT);
+}
+
+// ---------------------------------------------------------------------------
+// Assembly
+// ---------------------------------------------------------------------------
+
+export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly QaTier[]; defaultEditorIds?: readonly string[] }): QaFixtureDataset {
+  const anchor = options.anchor;
+  if (!isSydneyCalendarDate(anchor)) throw new Error(`buildQaFixtureDataset: anchor must be a valid calendar date, got ${JSON.stringify(anchor)}.`);
+  const tiers = [...new Set(options.tiers)];
+  if (tiers.length === 0) throw new Error("buildQaFixtureDataset: at least one tier is required.");
+  const referenceInstantMs = anchorReferenceInstantMs(anchor);
+
+  const builds: ProjectBuild[] = [];
+  if (tiers.includes("core")) builds.push(...buildCoreTier(anchor, referenceInstantMs));
+  if (tiers.includes("density")) builds.push(...buildDensityTier(anchor, referenceInstantMs));
+
+  const projects = builds.map((b) => b.project);
+  const subtasks = builds.flatMap((b) => b.subtasks);
+
+  const collections: FixtureCollectionRow[] = builds.flatMap((b) =>
+    b.project.services.map((kind) => ({
+      id: fixtureId(`collection:${b.project.key}:${kind}`), projectId: b.project.id, kind,
+      createdAtMs: b.project.createdAtMs, updatedAtMs: b.project.createdAtMs,
+    })),
+  );
+
+  const deadlineOccurrences: FixtureOccurrenceRow[] = builds.flatMap((b) =>
+    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.deadline, referenceInstantMs, b.project.createdAtMs) : [],
+  );
+
+  const defaultEditorIds = [...new Set(options.defaultEditorIds ?? [])];
+  const members: FixtureMemberRow[] = builds.flatMap((b) =>
+    defaultEditorIds.map((userId) => ({
+      id: fixtureId(`member:${b.project.key}:${userId}`), projectId: b.project.id, userId, createdAtMs: b.project.createdAtMs,
+    })),
+  );
+
+  return { anchor, tiers, projects, subtasks, collections, deadlineOccurrences, members };
 }

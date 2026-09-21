@@ -1,22 +1,17 @@
 /**
- * QA scheduling fixture — guarded local-only runner (#220 follow-on). Clones the shape of
- * `../setup-local.mjs`: a hard-coded database name and config path, unconditional `--local`, a
- * `FORBIDDEN_ARGUMENTS` list rejected in both `--flag value` and `--flag=value` form, and no
- * argument passthrough (an unrecognised flag throws before anything is spawned).
+ * QA scheduling fixture — transport (#220 follow-on). The only file in `qa-seed/` allowed to spawn
+ * a subprocess, touch the network, or read `process.env`. Everything it spawns is either `wrangler
+ * d1 execute --local ...` against a caller-pinned database name and config, or `npx tsx ./emit.ts`
+ * (pure, no side effects of its own — see `emit.ts`'s header). Mirrors `setup-local.mjs`'s own
+ * shape and the same two load-bearing properties: `--local` is hard-coded, never taken from a
+ * caller, and every step asserts its postcondition rather than trusting that applying SQL worked.
  *
- * **This file never builds fixture SQL.** It reads argv, runs a handful of fixed preflight/
- * postcondition queries (the same shape `setup-local.mjs` already uses for its own board-flag
- * check), and spawns `npx tsx ./emit.ts <mode> …` to get JSON statements — `dataset.ts`/`sql.ts`
- * (imported only by `emit.ts`, run only under `tsx`) are the only files that construct the
- * ~thousands of fixture INSERT/DELETE statements. The split is deliberate: the half that can reach
- * an environment (this file) cannot construct SQL, and the half that constructs SQL cannot reach
- * an environment.
- *
- * Generated SQL is written to a **temporary** file under `os.tmpdir()` and unlinked in `finally` —
- * never a committed `.sql` file in this directory (a guard test asserts that).
+ * Usage:
+ *   node ./qa-seed/cli.mjs apply [--tier=core,density] [--anchor=YYYY-MM-DD] [--persist-to DIR]
+ *   node ./qa-seed/cli.mjs teardown [--persist-to DIR]
+ *   node ./qa-seed/cli.mjs verify [--tier=core,density] [--anchor=YYYY-MM-DD] [--persist-to DIR]
  */
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,30 +19,40 @@ import { fileURLToPath } from "node:url";
 
 const DATABASE_NAME = "quincy-portal";
 const CONFIG_PATH = "../../workers/app/wrangler.jsonc";
-/** cwd for every wrangler spawn: `packages/db/`, one level above this file, so `CONFIG_PATH`
- * resolves exactly like `setup-local.mjs`'s own (identical string, identical cwd). */
-const packageDirectory = fileURLToPath(new URL("../", import.meta.url));
-const qaSeedDirectory = fileURLToPath(new URL("./", import.meta.url));
-
+const packageDirectory = fileURLToPath(new URL("../", import.meta.url)); // packages/db/ — same cwd setup-local.mjs uses
 const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
-/** Kept in step with `packages/shared/src/project-members.ts`'s `PROJECT_ASSIGNMENT_ELIGIBLE_
- * ROLES.editor`; asserted equal to it by the wiring guard so this literal can never silently
- * drift from the source of truth `default-editors.ts` reads at runtime. */
-export const DEFAULT_EDITOR_ELIGIBLE_ROLES = ["editor", "external_editor", "admin"];
+const CAPABILITY_KEY = "scheduling-fixtures";
+const STATEMENTS_PER_FILE = 300;
+/** `spawnSync`'s default `maxBuffer` (1 MiB) is smaller than the density tier's JSON plan
+ * (~3.2 MB at time of writing) — exceeding it kills the child mid-write, which surfaces as an
+ * opaque `EPIPE` from the child's own `process.stdout.write`, not as a clear "buffer exceeded"
+ * error. Set generously above any tier this generator is expected to produce. */
+const MAX_SUBPROCESS_BUFFER_BYTES = 1024 * 1024 * 200;
 
-const COMMANDS = new Set(["apply", "teardown", "verify"]);
-/** Refused outright — each one can move the target off local storage, or (for `--file`/
- * `--command`) let a caller substitute arbitrary SQL for the generated fixture SQL. */
+/** Kept in exact step with `PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor` in `@quincy/shared`;
+ * `qa-seed-wiring.guard.test.ts` cross-checks this literal against that source of truth so the two
+ * cannot silently drift — this file cannot import the TS package directly (see `emit.ts`'s header:
+ * node's built-in TS stripping cannot resolve `@quincy/shared`'s workspace exports). */
+export const DEFAULT_EDITOR_ELIGIBLE_ROLES = ["editor", "external_editor", "admin"];
+/** Same predicate as `packages/db/src/default-editors.ts`'s `effectiveDefaultEditorSql` (#135) —
+ * inlined literals instead of bound params because this goes through `wrangler d1 execute
+ * --command`, not a prepared statement, but the WHERE clause and `ORDER BY id` determinism match. */
+const DEFAULT_EDITOR_QUERY = `SELECT id FROM user WHERE default_editor = 1 AND active = 1 AND role IN (${DEFAULT_EDITOR_ELIGIBLE_ROLES.map((r) => `'${r}'`).join(", ")}) ORDER BY id;`;
+
+const COMMANDS = ["apply", "teardown", "verify"];
+/** Refused outright — each one can move the target off local storage. Same list `setup-local.mjs`
+ * refuses, plus `--file`/`--command`, which this script never needs a caller to supply. */
 const FORBIDDEN_ARGUMENTS = ["--remote", "--env", "--config", "--database", "--preview", "--file", "--command"];
 
 export function parseArguments(argv) {
-  if (argv.length === 0 || !COMMANDS.has(argv[0])) {
-    throw new Error(`First argument must be one of apply, teardown, verify. Got ${JSON.stringify(argv[0] ?? null)}.`);
-  }
   const command = argv[0];
+  if (!COMMANDS.includes(command)) {
+    throw new Error(`The first argument must be one of apply, teardown, verify, got ${JSON.stringify(command)}.`);
+  }
   const options = { command, tier: undefined, anchor: undefined, persistTo: undefined };
-  for (let index = 1; index < argv.length; index += 1) {
-    const argument = argv[index];
+  const rest = argv.slice(1);
+  for (let index = 0; index < rest.length; index += 1) {
+    const argument = rest[index];
     const bare = argument.split("=")[0];
     if (FORBIDDEN_ARGUMENTS.includes(bare)) {
       throw new Error(
@@ -55,31 +60,33 @@ export function parseArguments(argv) {
           "Run wrangler directly if you genuinely mean to touch another environment.",
       );
     }
-    if (bare === "--tier") {
-      if (!argument.includes("=")) throw new Error("`--tier` needs `=<core|core,density>`.");
-      options.tier = argument.slice(argument.indexOf("=") + 1);
-      continue;
-    }
-    if (bare === "--anchor") {
-      if (!argument.includes("=")) throw new Error("`--anchor` needs `=<YYYY-MM-DD>`.");
-      options.anchor = argument.slice(argument.indexOf("=") + 1);
-      continue;
-    }
     if (bare === "--persist-to") {
-      const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : argv[(index += 1)];
+      const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
       if (!value) throw new Error("`--persist-to` needs a directory.");
       options.persistTo = value;
       continue;
     }
-    throw new Error(`Unknown argument \`${argument}\`. Only \`--tier\`, \`--anchor\` and \`--persist-to <directory>\` are accepted.`);
+    if (bare === "--tier") {
+      if (command !== "apply") throw new Error(`\`--tier\` only applies to \`apply\`, not \`${command}\`.`);
+      const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
+      if (!value) throw new Error("`--tier` needs a value.");
+      options.tier = value;
+      continue;
+    }
+    if (bare === "--anchor") {
+      if (command === "teardown") throw new Error("`--anchor` does not apply to `teardown` (teardown removes whatever is registered, regardless of anchor).");
+      const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : rest[(index += 1)];
+      if (!value) throw new Error("`--anchor` needs a value.");
+      options.anchor = value;
+      continue;
+    }
+    throw new Error(`Unknown argument \`${argument}\`. Only --tier, --anchor and --persist-to are accepted.`);
   }
-  if (command !== "apply" && options.tier !== undefined) throw new Error("`--tier` only applies to `apply`.");
-  if (command === "teardown" && options.anchor !== undefined) throw new Error("`--anchor` does not apply to `teardown`; it tears down every registered fixture row regardless of anchor.");
   return options;
 }
 
-/** Every wrangler invocation this script can construct. `--local` is present unconditionally and
- * is never derived from any input — mirrors `setup-local.mjs:wranglerArguments`. */
+/** Every wrangler invocation this script makes. `--local` is present unconditionally — never taken
+ * from a caller, never conditional on anything a caller controls. */
 export function wranglerArguments(subcommand, options) {
   const persist = options.persistTo ? ["--persist-to", options.persistTo] : [];
   return ["wrangler", "d1", ...subcommand, DATABASE_NAME, "--local", "--config", CONFIG_PATH, ...persist];
@@ -87,7 +94,7 @@ export function wranglerArguments(subcommand, options) {
 
 function runWrangler(subcommand, options, extra = []) {
   const args = [...wranglerArguments(subcommand, options), ...extra];
-  const result = spawnSync("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
+  const result = spawnSync("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: MAX_SUBPROCESS_BUFFER_BYTES });
   if (result.status !== 0) throw new Error(`\`npx ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.`);
   return result.stdout ?? "";
 }
@@ -102,16 +109,10 @@ function queryScalar(options, sql) {
   return queryRows(options, sql).at(0);
 }
 
-function runStatementFile(options, statements, label) {
-  if (statements.length === 0) return;
-  const dir = mkdtempSync(join(tmpdir(), "quincy-qa-seed-"));
-  const file = join(dir, `${label}.sql`);
-  try {
-    writeFileSync(file, statements.join("\n"), "utf8");
-    runWrangler(["execute"], options, ["--file", file]);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+function runEmit(mode, args) {
+  const result = spawnSync("npx", ["tsx", "./qa-seed/emit.ts", mode, ...args], { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: MAX_SUBPROCESS_BUFFER_BYTES });
+  if (result.status !== 0) throw new Error(`\`npx tsx ./qa-seed/emit.ts ${mode} ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.`);
+  return JSON.parse(result.stdout);
 }
 
 function chunk(values, size) {
@@ -120,142 +121,145 @@ function chunk(values, size) {
   return chunks;
 }
 
-function runTsx(args) {
-  const result = spawnSync("npx", ["tsx", "./emit.ts", ...args], { cwd: qaSeedDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`\`npx tsx ./emit.ts ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.`);
-  return JSON.parse(result.stdout);
+function applyStatements(options, statements, label) {
+  if (statements.length === 0) return;
+  const dir = mkdtempSync(join(tmpdir(), `quincy-qa-seed-${label}-`));
+  try {
+    chunk(statements, STATEMENTS_PER_FILE).forEach((group, index) => {
+      const file = join(dir, `${label}-${index}.sql`);
+      writeFileSync(file, group.join("\n"), "utf8");
+      runWrangler(["execute"], options, ["--file", file]);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Preflight / postcondition — fixed, non-dataset-shaped queries only (same rationale as
-// `setup-local.mjs`'s own `LOCAL_FLAG_SQL`: these are simple, caller-independent, and never touch
-// the generated fixture SQL).
+// Preflight — every command needs the capability fence; `apply` also needs a usable pipeline.
 // ---------------------------------------------------------------------------
 
 function assertCapabilityPresent(options) {
-  const row = queryScalar(options, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__quincy_local_capability') AS present;");
+  const row = queryScalar(options, `SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = '${CAPABILITY_KEY}') AS present;`);
   if (Number(row?.present) !== 1) {
-    throw new Error("`__quincy_local_capability` is missing. Run `npm run db:migrate:local` (which now creates it) against this database first.");
-  }
-  const capabilityRow = queryScalar(options, "SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;");
-  if (Number(capabilityRow?.present) !== 1) {
-    throw new Error("The local capability row for `scheduling-fixtures` is missing. Re-run `npm run db:migrate:local`.");
+    throw new Error("The QA fixture capability fence is not installed on this database. Run `npm run db:migrate:local` first (see setup-local.mjs).");
   }
 }
 
-function assertPrerequisites(options) {
+function assertApplyPrerequisites(options) {
   const stages = queryScalar(options, "SELECT COUNT(*) AS n FROM pipeline_stages WHERE active = 1;");
-  if (Number(stages?.n) !== 5) {
-    throw new Error(`Expected 5 active pipeline_stages, found ${JSON.stringify(stages?.n)}. This local D1 is missing \`seed/0001_seed.sql\` — apply it yourself with a --local --persist-to wrangler command before running this fixture (setup-local.mjs does not apply it; see docs/Guides/Local-QA-Fixtures.md).`);
-  }
+  if (Number(stages?.n) !== 5) throw new Error(`Expected 5 active pipeline_stages, found ${stages?.n}. Run the shared seed (\`seed/0001_seed.sql\`) first.`);
   const admin = queryScalar(options, `SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}';`);
-  if (admin === undefined || Number(admin.active) !== 1) {
-    throw new Error("The bootstrap admin user is missing or inactive. This local D1 is missing `seed/0001_seed.sql` — apply it yourself before running this fixture.");
-  }
-}
-
-function queryDefaultEditorIds(options) {
-  const roles = DEFAULT_EDITOR_ELIGIBLE_ROLES.map((role) => `'${role}'`).join(", ");
-  const rows = queryRows(options, `SELECT id FROM user WHERE default_editor = 1 AND active = 1 AND role IN (${roles}) ORDER BY id;`);
-  return rows.map((row) => row.id);
-}
-
-function queryRegisteredEntities(options) {
-  const entities = queryRows(options, "SELECT id, kind FROM __quincy_local_fixture_entities ORDER BY kind, id;");
-  const runIds = queryRows(options, "SELECT id FROM __quincy_local_fixture_runs ORDER BY id;").map((row) => row.id);
-  return { entities, runIds };
+  if (Number(admin?.active) !== 1) throw new Error("The bootstrap admin (seed/0001_seed.sql) is missing or inactive. Run the shared seed first.");
 }
 
 // ---------------------------------------------------------------------------
-// Commands
+// Teardown-first — every `apply` begins here too, so re-running never doubles up.
 // ---------------------------------------------------------------------------
 
-function teardownExisting(options) {
-  const { entities, runIds } = queryRegisteredEntities(options);
-  if (entities.length === 0 && runIds.length === 0) {
-    console.log("==> No registered fixture rows to tear down.");
-    return { entities, runIds };
+function readRegistry(options) {
+  const entityRows = queryRows(options, "SELECT id, kind FROM __quincy_local_fixture_entities;");
+  const runRows = queryRows(options, "SELECT id FROM __quincy_local_fixture_runs;");
+  return { entities: entityRows.map((r) => ({ id: r.id, kind: r.kind })), runIds: runRows.map((r) => r.id) };
+}
+
+function teardown(options) {
+  const registry = readRegistry(options);
+  if (registry.entities.length === 0 && registry.runIds.length === 0) {
+    console.log("==> No registered QA fixture rows found — nothing to tear down.");
+    return;
   }
-  console.log(`==> Tearing down ${entities.length} previously-registered fixture row(s) across ${runIds.length} run(s)`);
-  const { statements } = runTsx(["teardown-plan", `--entities=${JSON.stringify(entities)}`, `--run-ids=${JSON.stringify(runIds)}`]);
-  for (const [index, group] of chunk(statements, 400).entries()) runStatementFile(options, group, `teardown-${index}`);
-  const remaining = queryScalar(options, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities;");
-  if (Number(remaining?.n) !== 0) throw new Error(`Teardown left ${remaining?.n} registered entities behind — aborting rather than guessing why.`);
-  return { entities, runIds };
-}
+  console.log(`==> Tearing down ${registry.entities.length} registered fixture rows across ${registry.runIds.length} run(s)`);
+  const { statements } = runEmit("teardown-plan", [`--entities=${JSON.stringify(registry.entities)}`, `--run-ids=${JSON.stringify(registry.runIds)}`]);
+  applyStatements(options, statements, "teardown");
 
-function commandTeardown(options) {
-  const started = Date.now();
-  teardownExisting(options);
-  console.log(`==> Teardown complete in ${Date.now() - started}ms`);
-}
-
-function commandApply(options) {
-  const started = Date.now();
-  assertCapabilityPresent(options);
-  assertPrerequisites(options);
-  teardownExisting(options);
-
-  const defaultEditorIds = queryDefaultEditorIds(options);
-  const tierArg = options.tier ?? "core";
-  const anchorArgs = options.anchor ? [`--anchor=${options.anchor}`] : [];
-  const plan = runTsx([
-    "plan",
-    `--tier=${tierArg}`,
-    ...anchorArgs,
-    `--default-editor-ids=${defaultEditorIds.join(",")}`,
-    `--applied-at-ms=${Date.now()}`,
-  ]);
-
-  console.log(`==> Applying anchor=${plan.anchor} tiers=${plan.tiers.join(",")} — ${plan.summary.projects} projects, ${plan.summary.subtasks} subtasks`);
-  for (const [index, group] of chunk(plan.statements, 400).entries()) runStatementFile(options, group, `apply-${index}`);
-
-  const projectIds = plan.entities.filter((e) => e.kind === "project").map((e) => e.id);
-  const projectCount = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE id IN (${projectIds.map((id) => `'${id}'`).join(",")});`);
-  if (Number(projectCount?.n) !== plan.summary.projects) {
-    throw new Error(`Postcondition failed: expected ${plan.summary.projects} fixture projects, found ${projectCount?.n}.`);
+  const remainingEntities = queryScalar(options, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities;");
+  const remainingRuns = queryScalar(options, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_runs;");
+  const remainingProjects = queryScalar(options, "SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1%';");
+  if (Number(remainingEntities?.n) !== 0 || Number(remainingRuns?.n) !== 0 || Number(remainingProjects?.n) !== 0) {
+    throw new Error(
+      `Teardown did not reach zero: ${remainingEntities?.n} registered entities, ${remainingRuns?.n} runs, ` +
+        `${remainingProjects?.n} sentinel-tagged projects remain.`,
+    );
   }
-  const unmarked = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE id IN (${projectIds.map((id) => `'${id}'`).join(",")}) AND notes NOT LIKE 'QA-FIXTURE-v1%';`);
-  if (Number(unmarked?.n) !== 0) throw new Error(`Postcondition failed: ${unmarked?.n} fixture project(s) are missing the QA-FIXTURE-v1 sentinel.`);
-
-  console.log(`==> Apply complete in ${Date.now() - started}ms: ${plan.summary.projects} projects, ${plan.summary.subtasks} subtasks, ${plan.summary.collections} collections, ${plan.summary.deadlineOccurrences} deadline occurrences, ${plan.summary.members} default-editor memberships.`);
+  console.log("==> Teardown verified: zero registered fixture rows, zero sentinel-tagged projects remain.");
 }
 
-function commandVerify(options) {
-  const started = Date.now();
-  assertCapabilityPresent(options);
-  const runRows = queryRows(options, "SELECT anchor, tier FROM __quincy_local_fixture_runs ORDER BY applied_at DESC LIMIT 1;");
-  const latest = runRows.at(0);
-  if (!latest) throw new Error("No fixture run is registered — nothing to verify. Run `apply` first.");
-  const anchor = options.anchor ?? latest.anchor;
+// ---------------------------------------------------------------------------
+// Apply
+// ---------------------------------------------------------------------------
+
+function apply(options) {
+  assertApplyPrerequisites(options);
+  teardown(options);
+
+  const defaultEditorIds = queryRows(options, DEFAULT_EDITOR_QUERY).map((r) => r.id);
+  const planArgs = [`--applied-at-ms=${Date.now()}`];
+  if (options.tier) planArgs.push(`--tier=${options.tier}`);
+  if (options.anchor) planArgs.push(`--anchor=${options.anchor}`);
+  if (defaultEditorIds.length > 0) planArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
+
+  console.log("==> Building the fixture dataset");
+  const plan = runEmit("plan", planArgs);
+  console.log(`==> Applying ${plan.statements.length} statements (anchor=${plan.anchor}, tiers=${plan.tiers.join(",")})`);
+  applyStatements(options, plan.statements, "apply");
+
+  const registered = queryScalar(options, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities WHERE run_id = '${plan.runId}';`);
+  if (Number(registered?.n) !== plan.entities.length) {
+    throw new Error(`Expected ${plan.entities.length} registered entities for run ${plan.runId}, found ${registered?.n}.`);
+  }
+  const sentinelProjects = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1 · anchor=${plan.anchor} · tier=%';`);
+  if (Number(sentinelProjects?.n) !== plan.summary.projects) {
+    throw new Error(`Expected ${plan.summary.projects} sentinel-tagged projects, found ${sentinelProjects?.n}.`);
+  }
+
+  console.log(`==> Applied: ${plan.summary.projects} projects, ${plan.summary.subtasks} subtasks, ${plan.summary.collections} collections, ${plan.summary.deadlineOccurrences} deadline occurrences, ${plan.summary.members} members.`);
+  console.log(`==> Run id: ${plan.runId}`);
+}
+
+// ---------------------------------------------------------------------------
+// Verify — read-only. Recomputes the expected shape from the same generator and diffs it against
+// what is actually in the database; never writes.
+// ---------------------------------------------------------------------------
+
+function verify(options) {
+  const runs = queryRows(options, "SELECT id, tier, anchor, applied_at FROM __quincy_local_fixture_runs ORDER BY applied_at DESC;");
+  if (runs.length === 0) throw new Error("No QA fixture run is registered. Run `npm run db:qa:apply` first.");
+  const latest = runs[0];
   const tier = options.tier ?? latest.tier;
-  const manifest = runTsx(["manifest", `--anchor=${anchor}`, `--tier=${tier}`]);
+  const anchor = options.anchor ?? latest.anchor;
 
+  const manifestArgs = [`--anchor=${anchor}`, `--tier=${tier}`];
+  const manifest = runEmit("manifest", manifestArgs);
+
+  const failures = [];
   const checks = [
-    ["projects", manifest.projectIds],
-    ["project_subtasks", manifest.subtaskIds],
-    ["collections", manifest.collectionIds],
-    ["project_deadline_occurrences", manifest.deadlineOccurrenceIds],
+    ["projects", manifest.projectIds.length],
+    ["project_subtasks", manifest.subtaskIds.length],
+    ["collections", manifest.collectionIds.length],
+    ["project_deadline_occurrences", manifest.deadlineOccurrenceIds.length],
   ];
-  for (const [table, ids] of checks) {
-    if (ids.length === 0) continue;
-    const row = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE id IN (${ids.map((id) => `'${id}'`).join(",")});`);
-    if (Number(row?.n) !== ids.length) throw new Error(`verify: ${table} has ${row?.n} of the expected ${ids.length} fixture rows.`);
+  for (const [table, expected] of checks) {
+    const actual = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = '${table === "projects" ? "project" : table === "project_subtasks" ? "subtask" : table === "collections" ? "collection" : "deadline_occurrence"}');`);
+    if (Number(actual?.n) !== expected) failures.push(`${table}: expected ${expected}, found ${actual?.n}`);
   }
-  const sentinel = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE id IN (${manifest.projectIds.map((id) => `'${id}'`).join(",")}) AND notes NOT LIKE 'QA-FIXTURE-v1%';`);
-  if (Number(sentinel?.n) !== 0) throw new Error(`verify: ${sentinel?.n} fixture project(s) are missing the sentinel.`);
-  const fkCheck = queryRows(options, "PRAGMA foreign_key_check;");
-  if (fkCheck.length !== 0) throw new Error(`verify: PRAGMA foreign_key_check reported ${fkCheck.length} violation(s).`);
 
-  console.log(`==> Verify complete in ${Date.now() - started}ms: anchor=${anchor} tier=${tier}, ${manifest.summary.projects} projects, ${manifest.summary.subtasks} subtasks all present and sentinel-marked.`);
+  const sentinel = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = 'project') AND notes NOT LIKE 'QA-FIXTURE-v1%';`);
+  if (Number(sentinel?.n) !== 0) failures.push(`${sentinel?.n} registered projects are missing the QA-FIXTURE-v1 sentinel in notes`);
+
+  const fkViolations = queryRows(options, "PRAGMA foreign_key_check;");
+  if (fkViolations.length > 0) failures.push(`${fkViolations.length} foreign_key_check violation(s)`);
+
+  if (failures.length > 0) throw new Error(`Verify failed:\n  - ${failures.join("\n  - ")}`);
+  console.log(`==> Verified: run ${latest.id} (anchor=${anchor}, tier=${tier}) matches the database. ${manifest.summary.projects} projects, ${manifest.summary.subtasks} subtasks, ${manifest.summary.collections} collections, ${manifest.summary.deadlineOccurrences} deadline occurrences.`);
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  if (options.command === "apply") return commandApply(options);
-  if (options.command === "teardown") return commandTeardown(options);
-  if (options.command === "verify") return commandVerify(options);
-  throw new Error(`Unreachable command: ${options.command}`);
+  assertCapabilityPresent(options);
+  if (options.command === "apply") return apply(options);
+  if (options.command === "teardown") return teardown(options);
+  return verify(options);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
