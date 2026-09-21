@@ -3,8 +3,11 @@
  * sibling for local D1 rather than the ReUI mock harness). Pure: no filesystem, no environment, no
  * `Date.now()`/`unixepoch('now')` anywhere in the values it produces — everything is either a
  * fixed literal or derived from an explicit `anchor` civil date, so two runs against the same
- * anchor emit byte-identical statements (`qa-seed-wiring.guard.test.ts` and
- * `qa-seed-coverage.test.ts` both depend on that).
+ * `anchor` AND `appliedAtMs` emit byte-identical statements (`qa-seed-wiring.guard.test.ts` and
+ * `qa-seed-coverage.test.ts` both depend on that). `appliedAtMs` (the real apply instant) is
+ * consumed in exactly one place — classifying a deadline occurrence's `status` — so it is the one
+ * input capable of making two applies at the same anchor differ; see the comment above
+ * `anchorReferenceInstantMs` below.
  *
  * Every subtask's `ChecklistScheduleStorage` is produced by `normalizeChecklistSchedule` (thrown on
  * `ok: false`) and round-tripped through `serializeChecklistSchedule` to assert the state it claims
@@ -104,16 +107,46 @@ function findNextSydneyTransition(anchorDateIso: string, kind: "spring" | "fall"
   throw new Error(`No ${kind} DST transition found within 400 days of ${anchorDateIso}.`);
 }
 
+/** The committed table's own next transition of `kind` strictly after `anchor`, or `null` if the
+ * table simply does not cover that far — distinct from "no entry found", which the old
+ * implementation conflated with "nothing to check". */
+function nextKnownSydneyTransition(anchor: string, kind: "spring" | "fall"): string | null {
+  const candidates = KNOWN_SYDNEY_TRANSITIONS.filter((t) => t.kind === kind && t.date > anchor).map((t) => t.date).sort();
+  return candidates[0] ?? null;
+}
+
+/** Cross-checks one computed transition against the committed table. Exported (not inlined into
+ * `resolveDstTransitions`) so a test can inject a deliberately wrong `computedDate` directly,
+ * without needing to fake `Intl` itself.
+ *
+ * The old shape looked the *computed* date up in the table and only compared `kind` — a scanner
+ * that regressed to a date absent from the table (an off-by-one, a skipped year) found no entry and
+ * silently threw nothing. Correct shape: for an anchor the table actually covers (there exists a
+ * known transition of this `kind` strictly after it), the computed date MUST equal that table
+ * entry, full stop; for an anchor past the table's coverage, throw a clear "extend the table" error
+ * instead of trusting `Intl` alone with no cross-check at all. */
+export function crossCheckDstTransition(anchor: string, kind: "spring" | "fall", computedDate: string): void {
+  const expected = nextKnownSydneyTransition(anchor, kind);
+  if (expected === null) {
+    throw new Error(
+      `No committed ${kind} transition in KNOWN_SYDNEY_TRANSITIONS falls strictly after anchor ${anchor} — extend the table in dataset.ts rather than trusting Intl alone for this anchor.`,
+    );
+  }
+  if (expected !== computedDate) {
+    throw new Error(
+      `Computed ${kind} transition ${computedDate} disagrees with the committed cross-check table's next ${kind} transition after ${anchor} (expected ${expected}).`,
+    );
+  }
+}
+
 /** The next spring-forward and fall-back transition strictly after `anchor`, computed via `Intl`
  * (through `resolveSydneyCivilMinute`) rather than trusted from `KNOWN_SYDNEY_TRANSITIONS` — that
- * table is only a cross-check, thrown on disagreement. */
+ * table is only a cross-check, thrown on disagreement (or on falling outside its coverage). */
 export function resolveDstTransitions(anchor: string): { spring: string; fall: string } {
   const spring = findNextSydneyTransition(anchor, "spring");
   const fall = findNextSydneyTransition(anchor, "fall");
-  for (const [computed, kind] of [[spring, "spring"], [fall, "fall"]] as const) {
-    const known = KNOWN_SYDNEY_TRANSITIONS.find((t) => t.date === computed);
-    if (known && known.kind !== kind) throw new Error(`Computed ${kind} transition ${computed} disagrees with the committed cross-check table (which says ${known.kind}).`);
-  }
+  crossCheckDstTransition(anchor, "spring", spring);
+  crossCheckDstTransition(anchor, "fall", fall);
   return { spring, fall };
 }
 
@@ -175,11 +208,21 @@ export type QaFixtureDataset = {
 };
 
 // ---------------------------------------------------------------------------
-// Timing — every instant is anchor-relative, never Date.now(). `referenceInstantMs` (anchor's own
-// 09:00 Sydney instant) stands in for "now" when classifying a deadline occurrence as pending vs.
-// already-elapsed (mirrors `project-deadline.ts:~228`'s `fireAt <= now` check without ever reading
-// the real clock) — accurate for any apply that runs the same week as its anchor, which every real
-// run does, since a stale anchor is rejected nowhere but is always freshly resolved by default.
+// Timing — every DATE is anchor-relative, never Date.now(); `anchorReferenceInstantMs` (anchor's
+// own 09:00 Sydney instant) is only ever used to synthesize plausible, deterministic
+// `created_at`/`updated_at` spacing, so two applies at the same anchor but different real times
+// still emit byte-identical statements.
+//
+// Deadline OCCURRENCE STATUS is the one deliberately time-dependent field (build spec item 4): the
+// real save path (`project-deadline.ts:226-230`) classifies each *advance* reminder as `pending` vs
+// `skipped` against the actual instant the schedule was saved (`now`), not against the deadline's
+// own anchor-derived date — classifying against a fixed anchor time-of-day instead left a fixture
+// occurrence `pending` in a state the app itself would already have written `skipped` for whenever
+// `apply` runs later in the day/week than the anchor's own 09:00. This mirrors that check against
+// the REAL apply instant (`cli.mjs`'s own `--applied-at-ms`, already threaded to `emit.ts`), while
+// every DATE stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
+// unconditionally inserted `pending` regardless of elapsed time in the real app — mirrored exactly
+// the same way below, not run through the elapsed check at all.
 // ---------------------------------------------------------------------------
 
 function anchorReferenceInstantMs(anchor: string): number {
@@ -187,6 +230,8 @@ function anchorReferenceInstantMs(anchor: string): number {
   if (!resolved.ok) throw new Error(`Could not resolve the anchor reference instant: ${resolved.message}`);
   return resolved.value.epochMs;
 }
+
+export { anchorReferenceInstantMs };
 
 function projectCreatedAtMs(base: number, index: number): number {
   // Spaced an hour apart, always strictly before the anchor reference instant — a project cannot
@@ -204,19 +249,31 @@ function buildDeadline(localCivil: string): FixtureDeadline {
   return { localCivil, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, epochMs: resolved.value.epochMs, offsetsMinutes: PROJECT_DEADLINE_PRESETS };
 }
 
-function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, referenceInstantMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
+/** `appliedAtMs` is the real apply instant (`--applied-at-ms`), used ONLY to classify `advance`
+ * occurrences pending-vs-skipped — matching `project-deadline.ts:226-230`'s `fireAt <= now` check
+ * exactly. `due_now` (line 231) is unconditionally `pending`, matching the same source: it is never
+ * run through the elapsed check at all, so it does not take `appliedAtMs` into account either. */
+function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, appliedAtMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
   const rows: FixtureOccurrenceRow[] = [];
-  const push = (kind: "advance" | "due_now", offsetMinutes: number) => {
+  const pushAdvance = (offsetMinutes: number) => {
     const fireAt = deadlineFireAt(deadline.epochMs, offsetMinutes);
-    const pending = fireAt > referenceInstantMs;
+    const pending = fireAt > appliedAtMs;
     rows.push({
-      id: fixtureId(`occurrence:${projectId}:${kind}:${offsetMinutes}`), projectId, scheduleVersion: 1, kind, reminderOffsetMinutes: offsetMinutes,
+      id: fixtureId(`occurrence:${projectId}:advance:${offsetMinutes}`), projectId, scheduleVersion: 1, kind: "advance", reminderOffsetMinutes: offsetMinutes,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
       status: pending ? "pending" : "skipped", terminalReason: pending ? null : "elapsed_at_save", createdAtMs, updatedAtMs: createdAtMs,
     });
   };
-  for (const offset of deadline.offsetsMinutes) push("advance", offset);
-  push("due_now", 0);
+  const pushDueNow = () => {
+    const fireAt = deadlineFireAt(deadline.epochMs, 0);
+    rows.push({
+      id: fixtureId(`occurrence:${projectId}:due_now:0`), projectId, scheduleVersion: 1, kind: "due_now", reminderOffsetMinutes: 0,
+      fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
+      status: "pending", terminalReason: null, createdAtMs, updatedAtMs: createdAtMs,
+    });
+  };
+  for (const offset of deadline.offsetsMinutes) pushAdvance(offset);
+  pushDueNow();
   return rows;
 }
 
@@ -400,12 +457,14 @@ export function densitySingleStageRowCount(): number {
 // Assembly
 // ---------------------------------------------------------------------------
 
-export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly QaTier[]; defaultEditorIds?: readonly string[] }): QaFixtureDataset {
+export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly QaTier[]; appliedAtMs: number; defaultEditorIds?: readonly string[] }): QaFixtureDataset {
   const anchor = options.anchor;
   if (!isSydneyCalendarDate(anchor)) throw new Error(`buildQaFixtureDataset: anchor must be a valid calendar date, got ${JSON.stringify(anchor)}.`);
   const tiers = [...new Set(options.tiers)];
   if (tiers.length === 0) throw new Error("buildQaFixtureDataset: at least one tier is required.");
+  if (!Number.isSafeInteger(options.appliedAtMs)) throw new Error(`buildQaFixtureDataset: appliedAtMs must be a safe integer, got ${options.appliedAtMs}.`);
   const referenceInstantMs = anchorReferenceInstantMs(anchor);
+  const appliedAtMs = options.appliedAtMs;
 
   const builds: ProjectBuild[] = [];
   if (tiers.includes("core")) builds.push(...buildCoreTier(anchor, referenceInstantMs));
@@ -421,8 +480,11 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
     })),
   );
 
+  // Occurrence STATUS (pending vs. skipped) is classified against the real apply instant, not the
+  // anchor's fixed 09:00 — see the header comment above `anchorReferenceInstantMs`. Every DATE
+  // above (createdAt/updatedAt spacing) still comes from `referenceInstantMs`.
   const deadlineOccurrences: FixtureOccurrenceRow[] = builds.flatMap((b) =>
-    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.deadline, referenceInstantMs, b.project.createdAtMs) : [],
+    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.deadline, appliedAtMs, b.project.createdAtMs) : [],
   );
 
   const defaultEditorIds = [...new Set(options.defaultEditorIds ?? [])];
