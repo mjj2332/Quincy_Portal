@@ -7,6 +7,7 @@
  * only file in this directory allowed to spawn `wrangler`.
  */
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { BOOTSTRAP_ADMIN_ID, buildQaFixtureDataset, resolveAnchor, type QaTier } from "./dataset";
 import { buildApplyPlan, buildTeardownStatements, buildVerificationManifest, type FixtureEntity } from "./sql";
 
@@ -36,19 +37,15 @@ function readRequiredAppliedAtMs(argv: string[], mode: string): number {
   return appliedAtMs;
 }
 
-function printJson(value: unknown): void {
-  process.stdout.write(JSON.stringify(value));
-}
 
-function modePlan(argv: string[]): void {
+function modePlan(argv: string[]): unknown {
   const anchor = resolveAnchor(readFlag(argv, "anchor"));
   const tiers = parseTiers(readFlag(argv, "tier"));
   const defaultEditorIds = parseIdList(readFlag(argv, "default-editor-ids"));
   const appliedAtMs = readRequiredAppliedAtMs(argv, "plan");
 
   const dataset = buildQaFixtureDataset({ anchor, tiers, appliedAtMs, defaultEditorIds });
-  const plan = buildApplyPlan(dataset, { runId: randomUUID(), appliedAtMs, createdBy: BOOTSTRAP_ADMIN_ID });
-  printJson(plan);
+  return buildApplyPlan(dataset, { runId: randomUUID(), appliedAtMs, createdBy: BOOTSTRAP_ADMIN_ID });
 }
 
 /**
@@ -58,33 +55,38 @@ function modePlan(argv: string[]): void {
  * occurrence status, the one apply-time-dependent field — item 4) is byte-identical to what that
  * run actually inserted, not to "if you applied again right now".
  */
-function modeManifest(argv: string[]): void {
+function modeManifest(argv: string[]): unknown {
   const anchor = resolveAnchor(readFlag(argv, "anchor"));
   const tiers = parseTiers(readFlag(argv, "tier"));
   const defaultEditorIds = parseIdList(readFlag(argv, "default-editor-ids"));
   const appliedAtMs = readRequiredAppliedAtMs(argv, "manifest");
 
   const dataset = buildQaFixtureDataset({ anchor, tiers, appliedAtMs, defaultEditorIds });
-  const manifest = buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID });
-  printJson(manifest);
+  return buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID });
 }
 
-function modeTeardownPlan(argv: string[]): void {
+function modeTeardownPlan(argv: string[]): unknown {
   const entitiesRaw = readFlag(argv, "entities");
   const runIdsRaw = readFlag(argv, "run-ids");
   if (!entitiesRaw) throw new Error("--entities=<json> is required for `teardown-plan`.");
   const entities = JSON.parse(entitiesRaw) as FixtureEntity[];
   const runIds = runIdsRaw ? (JSON.parse(runIdsRaw) as string[]) : [];
-  const statements = buildTeardownStatements(entities, runIds);
-  printJson({ statements });
+  return { statements: buildTeardownStatements(entities, runIds) };
 }
 
-function main(): void {
-  const [, , mode, ...rest] = process.argv;
+/** Exported so the qa-seed integration tests' `node:sqlite` executor produces its plans through
+ * this exact dispatch — the same argv strings `cli.mjs` passes — rather than a re-implementation. */
+export function emitMode(mode: string | undefined, rest: string[]): unknown {
   if (mode === "plan") return modePlan(rest);
   if (mode === "manifest") return modeManifest(rest);
   if (mode === "teardown-plan") return modeTeardownPlan(rest);
   throw new Error(`Unknown emit.ts mode: ${JSON.stringify(mode)}. Expected plan | manifest | teardown-plan.`);
 }
 
-main();
+function main(): void {
+  const [, , mode, ...rest] = process.argv;
+  process.stdout.write(JSON.stringify(emitMode(mode, rest)));
+}
+
+// Only when run as a script (`cli.mjs` spawns it under tsx) — importing it runs nothing.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
