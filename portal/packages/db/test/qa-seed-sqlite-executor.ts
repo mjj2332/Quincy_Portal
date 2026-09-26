@@ -13,6 +13,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { QA_FIXTURE_CAPABILITY_SQL } from "../setup-local.mjs";
 import { emitMode } from "../qa-seed/emit";
+import { INTROSPECT_FOREIGN_KEYS_SQL, INTROSPECT_TABLES_SQL } from "../qa-seed/cli.mjs";
+import { buildTeardownGraph, buildTeardownPlan, type IntrospectedForeignKey, type IntrospectedTable } from "../qa-seed/teardown-graph";
 
 export type Row = Record<string, unknown>;
 type Statement = { all: (...values: unknown[]) => Row[]; get: (...values: unknown[]) => Row | undefined; run: (...values: unknown[]) => unknown };
@@ -63,4 +65,13 @@ export function sqliteExecutor(db: SqliteDatabase): FixtureExecutor {
     },
     emit: (mode, args) => JSON.parse(JSON.stringify(emitMode(mode, args))),
   };
+}
+
+/** The teardown plan `cli.mjs` would build for this database: its own introspection SQL, run here,
+ * through `teardown-graph.ts`'s own graph + plan builders. */
+export function liveTeardownPlan(db: SqliteDatabase, runIds: readonly string[] = []) {
+  const tables = db.prepare(INTROSPECT_TABLES_SQL).all().map((row) => ({ ...row })) as unknown as IntrospectedTable[];
+  const foreignKeys = db.prepare(INTROSPECT_FOREIGN_KEYS_SQL).all().map((row) => ({ ...row })) as unknown as IntrospectedForeignKey[];
+  const graph = buildTeardownGraph(tables, foreignKeys);
+  return { tables, foreignKeys, graph, plan: buildTeardownPlan(graph, runIds) };
 }

@@ -49,7 +49,10 @@ const FORBIDDEN_ARGUMENTS = ["--remote", "--env", "--config", "--database", "--p
  * `__quincy_local_fixture_run_records` and `__quincy_local_fixture_board_positions` record what an
  * `apply` actually USED and WROTE (the default-editor set it read, the live `board_position` each
  * project landed on), so `db:qa:verify` compares against the run itself rather than recomputing from
- * today's state. `CREATE TABLE IF NOT EXISTS` means re-running this script upgrades a database that
+ * today's state. `__quincy_local_fixture_closure` is the graph teardown's capture of every row it is
+ * about to delete (`qa-seed/teardown-graph.ts`) — recorded BEFORE anything is deleted, so the
+ * post-teardown sweep can prove every captured id is gone. `CREATE TABLE IF NOT EXISTS` means
+ * re-running this script upgrades a database that
  * predates them; the fixture CLI refuses to run until it has been.
  *
  * Honest limit, stated once here rather than re-litigated in the fixture docs: a privileged
@@ -84,6 +87,13 @@ CREATE TABLE IF NOT EXISTS __quincy_local_fixture_board_positions (
   run_id text NOT NULL,
   board_position real NOT NULL
 );
+CREATE TABLE IF NOT EXISTS __quincy_local_fixture_closure (
+  table_name text NOT NULL,
+  row_id integer NOT NULL,
+  entity_id text,
+  PRIMARY KEY (table_name, row_id)
+);
+CREATE INDEX IF NOT EXISTS __quincy_local_fixture_closure_entity ON __quincy_local_fixture_closure (table_name, entity_id);
 INSERT OR IGNORE INTO __quincy_local_capability (capability, schema_version) VALUES ('scheduling-fixtures', 1);
 `.trim();
 

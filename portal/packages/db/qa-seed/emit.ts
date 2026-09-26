@@ -9,7 +9,8 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { BOOTSTRAP_ADMIN_ID, buildQaFixtureDataset, resolveAnchor, type QaTier } from "./dataset";
-import { buildApplyPlan, buildTeardownStatements, buildVerificationManifest, type FixtureEntity } from "./sql";
+import { buildApplyPlan, buildVerificationManifest } from "./sql";
+import { buildTeardownGraph, buildTeardownPlan, edgesIntoProjects, type IntrospectedForeignKey, type IntrospectedTable } from "./teardown-graph";
 
 function readFlag(argv: string[], name: string): string | undefined {
   const prefix = `--${name}=`;
@@ -70,13 +71,16 @@ function modeManifest(argv: string[]): unknown {
   return buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID, boardPositions });
 }
 
+/** `teardown-plan` gets the LIVE schema, as `cli.mjs` introspected it — never a table list of its
+ * own (`teardown-graph.ts`). */
 function modeTeardownPlan(argv: string[]): unknown {
-  const entitiesRaw = readFlag(argv, "entities");
+  const tablesRaw = readFlag(argv, "tables");
+  const foreignKeysRaw = readFlag(argv, "foreign-keys");
   const runIdsRaw = readFlag(argv, "run-ids");
-  if (!entitiesRaw) throw new Error("--entities=<json> is required for `teardown-plan`.");
-  const entities = JSON.parse(entitiesRaw) as FixtureEntity[];
+  if (!tablesRaw || !foreignKeysRaw) throw new Error("--tables=<json> and --foreign-keys=<json> (the live schema introspection) are required for `teardown-plan`.");
+  const graph = buildTeardownGraph(JSON.parse(tablesRaw) as IntrospectedTable[], JSON.parse(foreignKeysRaw) as IntrospectedForeignKey[]);
   const runIds = runIdsRaw ? (JSON.parse(runIdsRaw) as string[]) : [];
-  return { statements: buildTeardownStatements(entities, runIds) };
+  return { ...buildTeardownPlan(graph, runIds), edgesIntoProjects: edgesIntoProjects(graph) };
 }
 
 /** Exported so the qa-seed integration tests' `node:sqlite` executor produces its plans through
