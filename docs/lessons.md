@@ -3739,3 +3739,26 @@ The generalisation: **when a subprocess you spawn to capture output can plausibl
 a few hundred KB, set `maxBuffer` explicitly and generously — do not wait to discover the default
 via an `EPIPE` that looks like the child's own bug.** The failure mode is maximally confusing
 specifically because the error surfaces from the wrong process.
+
+## Local D1 caps a compound SELECT at 5 terms, and `wrangler --json` puts the error on stdout (#220 follow-on, 2026-09-26)
+
+The QA fixture's graph-driven teardown built its post-delete checks as one `UNION ALL` of per-table
+`COUNT(*)`s, 40 terms per statement. Every `node:sqlite` test passed. The first real run against a
+scratch `--persist-to` local D1 deleted the fixture and then failed on that check: local D1 runs
+SQLite with `SQLITE_LIMIT_COMPOUND_SELECT` lowered to **5** (measured: a 5-term `UNION ALL` runs, a
+6-term one fails `too many terms in compound SELECT: SQLITE_ERROR`), where stock SQLite allows 500.
+
+It took longer to find than it should have. With `--json`, wrangler reports a D1 error as
+`{"error":{"text":...}}` on **stdout**, not stderr. `qa-seed/cli.mjs` captured stdout, saw the
+non-zero exit and threw "exited with 1", so the SQLite error never reached the terminal.
+`runWrangler` now includes it ("D1 reported: ...").
+
+The fix was a multi-row `VALUES` of scalar subqueries
+(`SELECT column1 AS label, column2 AS n FROM (VALUES ('t', (SELECT COUNT(*) ...)), ...)`), which is
+not subject to the compound limit (local D1 accepted 120 rows). The qa-seed test executor now sets
+`db.limits.compoundSelect = 5` (`LOCAL_D1_LIMITS` in `test/qa-seed-sqlite-executor.ts`), so this
+class of failure shows up in `npm test`, not only in a real run.
+
+The generalisation: **a `node:sqlite` (or any stock-SQLite) test executor is not local D1.** Mirror
+every D1 limit you have measured into the test database, and run a new statement shape once through
+real `wrangler d1 execute --local --persist-to <scratch>` before trusting it.
