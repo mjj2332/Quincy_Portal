@@ -26,7 +26,7 @@ npm run db:qa:teardown                      # remove every fixture row AND every
 Every `apply` tears down any previously-applied fixture first, so re-running is safe and a changed
 `--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows — **as long
 as `verify`/`teardown` succeed**; if a browser pass leaves the DB in a shape teardown's own
-post-condition checks or its rot-proof sweep (below) don't like, both fail loudly rather than
+post-condition checks or its sweep (below) don't like, both fail loudly rather than
 silently leaving orphaned rows for the next `apply` to inherit.
 
 `verify` checks the CURRENTLY APPLIED run — the exact anchor/tier/apply-instant recorded in
@@ -34,7 +34,13 @@ silently leaving orphaned rows for the next `apply` to inherit.
 pass it (`--anchor`/`--tier` on `verify` are an ASSERTION against that recorded run, not a new value
 to recompute against — a mismatch fails immediately, before anything is recomputed). It diffs the
 exact id set AND a per-column content fingerprint, including `project_members`, for every table the
-generator owns. **`verify` is expected to fail after a browser pass has mutated a fixture row** (a
+generator owns. Comparison is exact and type-aware: NULL is not `''`, and `1` is not `"1"`.
+`projects.board_position` is compared against the value apply actually wrote, which apply records in
+`__quincy_local_fixture_board_positions`. Memberships are compared against the default-editor set
+apply used, which it records in `__quincy_local_fixture_run_records`, never against today's `user`
+table. Disabling a default editor after apply therefore changes nothing, and a removed or app-added
+membership fails, naming `project_members`. A run applied before these records existed makes
+`verify` fail with "Re-apply" rather than fall back to today's editors. **`verify` is expected to fail after a browser pass has mutated a fixture row** (a
 stage drag, a schedule edit, a membership change) — that is its job, not a bug; `apply` resets to the
 generator's own state.
 
@@ -42,14 +48,84 @@ generator's own state.
 app can be exercised against it (drag-to-reschedule, checklist edits, comments, deadline saves), and
 every one of those actions makes the APP write rows this fixture never does directly — `audit_log`,
 `notification_outbox`, `notification_delivery_ledger`, `jobs`, comments and their
-mentions/read-markers, activity events, notifications. `teardown` deletes all of it, children-first,
-still keyed only by registered fixture ids (never a `LIKE`/street match), then runs a **rot-proof
-sweep**: it introspects the live schema itself (`sqlite_master`, `PRAGMA table_info`,
-`PRAGMA foreign_key_list`) for every table with a `project_id` column or an FK to
-`projects`/`project_subtasks`/`collections`, plus the two no-FK exceptions it has to know by name
-(`audit_log.target_id`, `notification_outbox.project_id`), and fails loudly — naming the offending
-table — if anything still references a torn-down id. A table a future migration adds is swept
-automatically the first time `teardown` runs against it, not the first time it silently leaks a row.
+mentions/read-markers, activity events, assets and renditions, AutoHDR handoffs and
+`edited_source_claims`, project members. Twice a hand-maintained teardown table list missed some of
+these, so **teardown no longer has a table list. It is derived from the live schema every time it
+runs** (`qa-seed/teardown-graph.ts`, driven by `qa-seed/cli.mjs`):
+
+1. **Introspect the foreign-key graph** from the live local DB — every table (from
+   `pragma_table_list`, skipping `sqlite_*`, wrangler's `_cf_*`, `d1_migrations`, the reserved
+   `__quincy_local_*` tables and `project_board_order_0037_rollback`, which is a migration rollback
+   snapshot and excluded *by name*), its columns and every FK (`pragma_table_info`,
+   `pragma_foreign_key_list`). Every introspected identifier is checked against `SAFE_IDENTIFIER_RE`
+   before it is interpolated.
+2. **Capture the whole descendant closure before deleting anything.** Starting from the registered
+   fixture rows, rounds of `INSERT OR IGNORE` into `__quincy_local_fixture_closure` (table, rowid, id)
+   follow every FK edge plus the no-FK list below, until a round adds nothing — so any depth and any
+   self-reference (the `assets` version chain, for instance) is covered and terminates.
+3. **Refuse over-capture.** If the closure reaches a `projects` row that is not a registered fixture
+   project (a non-fixture project whose `cover_asset_id` points at a fixture asset, say), teardown
+   aborts before deleting anything and names the project.
+4. **Delete in reverse topological order** of the FK edges, one `DELETE` per table. `audit_log` rows
+   go if their `target_id` is *any* captured id, whatever the `target_type`.
+5. **Sweep.** Every captured row must be gone, and no FK column or no-FK column may still hold a
+   captured id. Anything left fails loudly, naming the table and column, and the registry is left in
+   place for inspection. Only a clean sweep empties the registry.
+
+Every statement — each capture `INSERT` and each `DELETE` — still carries the
+`__quincy_local_capability` predicate.
+
+### The one hand-written list: id columns without an FK
+
+Some columns hold an entity id with no FK constraint, so the graph cannot see them. They are listed
+in `NO_FK_ID_COLUMNS` in `qa-seed/teardown-graph.ts`, each with the source evidence for what it
+points at:
+
+| Column | Points at |
+|---|---|
+| `audit_log.target_id` | any captured id (polymorphic on `target_type`) |
+| `project_activity_events.source_id` | any captured id (polymorphic on `source_kind`) |
+| `notification_outbox.project_id` | `projects` |
+| `notification_outbox.recipient_membership_cycle_id` | `project_members` |
+| `notification_outbox.actor_id`, `.recipient_id` | `user` |
+| `notification_delivery_ledger.recipient_id` | `user` |
+| `project_activity_events.actor_id` | `user` |
+| `rendition_dlq_events.asset_id` | `assets` |
+| `projects.cover_asset_id` | `assets` |
+| `project_comment_read_markers.last_read_comment_id` | `project_comments` |
+| `document_uploads.pdf_asset_id`, `.preview_asset_id`, `.pdf_supersedes_asset_id`, `.preview_supersedes_asset_id` | `assets` |
+| `document_uploads.completion_audit_id` | `audit_log` |
+| `assets.supersedes_asset_id`, `.replaced_by_asset_id`, `.source_raw_asset_id` | `assets` |
+| `assets.autohdr_handoff_id` | `autohdr_handoffs` |
+| `external_edited_upload_sessions.asset_id` | `assets` |
+| `external_edited_upload_sessions.membership_cycle_id` | `project_members` |
+| `notice_board_read_markers.last_read_post_id` | `notice_board_posts` |
+
+`test/qa-seed-no-fk-columns.guard.test.ts` keeps this list honest. It scans
+`packages/db/src/schema.ts` for every `*_id` column without `.references()` and fails unless the
+column is either in `NO_FK_ID_COLUMNS` or in its own `NOT_ENTITY_REFERENCES` allowlist, which gives a
+reason for each entry (an OAuth provider's account id, a Dropbox folder id, an R2 multipart-upload
+id, and so on). **A
+migration that adds an unreferenced id column turns that test red** until someone decides which list
+it belongs in. The planner also refuses at run time if a listed column is missing from the live
+schema or has since gained a real FK.
+
+### What teardown still cannot handle
+
+It fails loudly on all of these rather than guessing:
+
+- A composite FK, or an FK that targets a column other than `id`.
+- A `WITHOUT ROWID` table, or a table with a column that shadows `rowid`.
+- A self-referencing FK declared `ON DELETE RESTRICT`. SQLite checks RESTRICT row by row, so a single
+  `DELETE` of a captured chain can fail under it. `NO ACTION`, `CASCADE` and `SET NULL`
+  self-references are fine; `test/qa-seed-teardown-graph.test.ts` proves both halves.
+- An FK cycle between different tables.
+- Over-capture into a non-fixture project (step 3).
+
+And it only covers D1. It does **not** remove anything outside the database: R2 objects uploaded
+against a fixture asset, queue messages already in flight, or a fixture id that appears only inside a
+JSON/text column (`audit_log.meta_json`, a notification payload). Those are not followed, because
+nothing in the schema says they are references.
 
 ## What each core-tier project proves
 
