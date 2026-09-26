@@ -3734,11 +3734,12 @@ the fixtures (`2026-09-20`), three months on, a year on, **and a control at the 
 time**. A test that fails under a date shift but passes the control reads the real clock. Lessons
 from the first run:
 
-- **Use `shouldAdvanceTime` for detection.** A frozen `Date` produced 13 false positives in web DOM
-  alone (react-query staleness, lease/claim timing): they failed in the frozen *control* too and
-  passed with an advancing clock. Frozen is right for the fix, wrong for the detector. A test that
-  measures elapsed time or drives react-query staleness may need `shouldAdvanceTime` in its fix too.
+- **Use `shouldAdvanceTime` for detection.** A frozen `Date` produced 11 false positives (9 web DOM
+  Dashboard/ProductionCalendar tests, 1 each in workers/app and workers/background — code expecting
+  time to pass between two reads): they failed in the frozen *control* too and passed with an
+  advancing clock. Frozen is right for the fix, wrong for the detector; a test whose code needs time
+  to pass may need `shouldAdvanceTime` in its fix too.
 - **Faking before `@date-fns/tz` loads** makes fake-timers' Date constructor return a plain Date,
-  so `TZDate` loses its prototype: 17 more false failures that looked like DST bugs.
+  so `TZDate` loses its prototype: 18 more web DOM false failures that looked like DST bugs.
 - **Tests that compare SQLite's clock with JS's** (`default-editors-backfill`) fail under any shift
   by design — shifting only JS cannot pass them. Leave them unpinned.
