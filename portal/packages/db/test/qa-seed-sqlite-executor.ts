@@ -9,6 +9,12 @@
  * Local D1 always enforces foreign keys; `node:sqlite`'s `DatabaseSync` does too by default, and
  * `freshFixtureDatabase` asserts it, because a RESTRICT/NO ACTION trap that cannot fire here would
  * make every teardown assertion built on it vacuous.
+ *
+ * Local D1 also runs SQLite with LOWERED limits, and a statement that is fine on stock SQLite can fail
+ * there: `SQLITE_LIMIT_COMPOUND_SELECT` is 5 on local D1 (measured: a 5-term `UNION ALL` runs, a
+ * 6-term one fails "too many terms in compound SELECT"), against stock SQLite's 500. `openMemoryDatabase`
+ * applies every limit measured so far (`LOCAL_D1_LIMITS`), so a statement shape local D1 rejects fails
+ * here too instead of only in a real `--persist-to` run.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { QA_FIXTURE_CAPABILITY_SQL } from "../setup-local.mjs";
@@ -26,10 +32,19 @@ export type FixtureExecutor = {
   emit: (mode: string, args: string[]) => unknown;
 };
 
+/** SQLite limits local D1 lowers below stock SQLite's defaults, measured against a real local D1
+ * (`wrangler d1 execute --local --persist-to <scratch>`), not taken from documentation. */
+export const LOCAL_D1_LIMITS = { compoundSelect: 5 } as const;
+
 function openMemoryDatabase(): SqliteDatabase {
   const getBuiltinModule = (process as unknown as { getBuiltinModule: (name: string) => unknown }).getBuiltinModule;
-  const sqlite = getBuiltinModule("node:sqlite") as { DatabaseSync: new (filename: string) => SqliteDatabase };
-  return new sqlite.DatabaseSync(":memory:");
+  const sqlite = getBuiltinModule("node:sqlite") as { DatabaseSync: new (filename: string) => SqliteDatabase & { limits: Record<string, number> } };
+  const db = new sqlite.DatabaseSync(":memory:");
+  for (const [limit, value] of Object.entries(LOCAL_D1_LIMITS)) {
+    db.limits[limit] = value;
+    if (db.limits[limit] !== value) throw new Error(`node:sqlite did not apply local D1's ${limit} limit (${value}).`);
+  }
+  return db;
 }
 
 /** Every migration (in order), then `seed/0001_seed.sql`, then the local-only capability fence —

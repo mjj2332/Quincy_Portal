@@ -133,7 +133,13 @@ export function wranglerArguments(subcommand, options) {
 function runWrangler(subcommand, options, extra = []) {
   const args = [...wranglerArguments(subcommand, options), ...extra];
   const result = spawnSync("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: MAX_SUBPROCESS_BUFFER_BYTES });
-  if (result.status !== 0) throw new Error(`\`npx ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.`);
+  if (result.status !== 0) {
+    // With `--json`, wrangler reports a D1 error on STDOUT (`{"error":{"text":...}}`), not stderr, so
+    // without this the actual SQLite error never reaches the terminal.
+    const reported = /"text":\s*("(?:[^"\\]|\\.)*")/.exec(result.stdout ?? "")?.[1];
+    const detail = reported ? ` D1 reported: ${JSON.parse(reported)}` : "";
+    throw new Error(`\`npx ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.${detail}`);
+  }
   return result.stdout ?? "";
 }
 

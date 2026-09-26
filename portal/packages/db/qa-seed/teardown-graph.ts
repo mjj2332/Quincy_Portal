@@ -255,6 +255,15 @@ export type TeardownPlan = {
 
 const SWEEP_QUERY_CHUNK = 40;
 
+/** One `(label, n)` row per count, as ONE statement WITHOUT a compound SELECT. Local D1 caps
+ * `SQLITE_LIMIT_COMPOUND_SELECT` at 5 (a 6-term `UNION ALL` fails "too many terms in compound
+ * SELECT"), so a `UNION ALL` of per-table counts breaks on the real transport. A multi-row `VALUES`
+ * is not subject to that limit (measured on local D1 with 120 rows), and its scalar subqueries keep
+ * the result shape the caller reads. */
+function countRowsQuery(counts: readonly { label: string; countSql: string }[]): string {
+  return `SELECT column1 AS label, column2 AS n FROM (VALUES\n${counts.map(({ label, countSql }) => `('${label}', (${countSql}))`).join(",\n")}\n);`;
+}
+
 function chunk<T>(values: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
@@ -294,9 +303,12 @@ export function buildTeardownPlan(graph: TeardownGraph, runIds: readonly string[
   const deleteStatements = graph.deleteOrder.map((table) => `DELETE FROM ${table} WHERE ${capturedRowPredicate(table, hasId.has(table))} AND ${CAPABILITY_PREDICATE};`);
 
   const remainingQueries = chunk(graph.deleteOrder, SWEEP_QUERY_CHUNK).map((tables) =>
-    `${tables.map((table) => `SELECT '${table}' AS label, COUNT(*) AS n FROM ${table} WHERE ${capturedRowPredicate(table, hasId.has(table))}`).join("\nUNION ALL\n")};`);
+    countRowsQuery(tables.map((table) => ({ label: table, countSql: `SELECT COUNT(*) FROM ${table} WHERE ${capturedRowPredicate(table, hasId.has(table))}` }))));
   const sweepQueries = chunk(graph.edges, SWEEP_QUERY_CHUNK).map((edges) =>
-    `${edges.map((edge) => `SELECT '${edge.child}.${edge.column} -> ${edge.parent === "*" ? "any captured id" : `${edge.parent}.id`}' AS label, COUNT(*) AS n FROM ${edge.child} WHERE ${edge.column} IN (${capturedIdsOf(edge.parent)})`).join("\nUNION ALL\n")};`);
+    countRowsQuery(edges.map((edge) => ({
+      label: `${edge.child}.${edge.column} -> ${edge.parent === "*" ? "any captured id" : `${edge.parent}.id`}`,
+      countSql: `SELECT COUNT(*) FROM ${edge.child} WHERE ${edge.column} IN (${capturedIdsOf(edge.parent)})`,
+    }))));
 
   const runIdList = runIds.map((id) => sqlId(id, "run id")).join(", ");
   const registryStatements = [
