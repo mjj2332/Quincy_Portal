@@ -143,8 +143,23 @@ function queryRows(options, sql) {
   return payload.at(-1)?.results ?? [];
 }
 
-function queryScalar(options, sql) {
-  return queryRows(options, sql).at(0);
+/**
+ * The transport seam. Every command below talks to the database ONLY through an executor —
+ * `query(sql)` returns result rows, `run(statements, label)` applies mutator statements, `emit(mode,
+ * args)` runs the pure generator. `wranglerExecutor` is the only production implementation (always
+ * `--local`, see `wranglerArguments`); the qa-seed integration tests supply a `node:sqlite`-backed one
+ * over the real migrations, so the orchestration they exercise is this file's own code, not a copy.
+ */
+export function wranglerExecutor(options) {
+  return {
+    query: (sql) => queryRows(options, sql),
+    run: (statements, label) => applyStatements(options, statements, label),
+    emit: (mode, args) => runEmit(mode, args),
+  };
+}
+
+function queryScalar(executor, sql) {
+  return executor.query(sql).at(0);
 }
 
 function runEmit(mode, args) {
@@ -177,17 +192,17 @@ function applyStatements(options, statements, label) {
 // Preflight — every command needs the capability fence; `apply` also needs a usable pipeline.
 // ---------------------------------------------------------------------------
 
-function assertCapabilityPresent(options) {
-  const row = queryScalar(options, `SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = '${CAPABILITY_KEY}') AS present;`);
+export function assertCapabilityPresent(executor) {
+  const row = queryScalar(executor, `SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = '${CAPABILITY_KEY}') AS present;`);
   if (Number(row?.present) !== 1) {
     throw new Error("The QA fixture capability fence is not installed on this database. Run `npm run db:migrate:local` first (see setup-local.mjs).");
   }
 }
 
-function assertApplyPrerequisites(options) {
-  const stages = queryScalar(options, "SELECT COUNT(*) AS n FROM pipeline_stages WHERE active = 1;");
+function assertApplyPrerequisites(executor) {
+  const stages = queryScalar(executor, "SELECT COUNT(*) AS n FROM pipeline_stages WHERE active = 1;");
   if (Number(stages?.n) !== 5) throw new Error(`Expected 5 active pipeline_stages, found ${stages?.n}. Run the shared seed (\`seed/0001_seed.sql\`) first.`);
-  const admin = queryScalar(options, `SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}';`);
+  const admin = queryScalar(executor, `SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}';`);
   if (Number(admin?.active) !== 1) throw new Error("The bootstrap admin (seed/0001_seed.sql) is missing or inactive. Run the shared seed first.");
 }
 
@@ -195,9 +210,9 @@ function assertApplyPrerequisites(options) {
 // Teardown-first — every `apply` begins here too, so re-running never doubles up.
 // ---------------------------------------------------------------------------
 
-function readRegistry(options) {
-  const entityRows = queryRows(options, "SELECT id, kind FROM __quincy_local_fixture_entities;");
-  const runRows = queryRows(options, "SELECT id FROM __quincy_local_fixture_runs;");
+function readRegistry(executor) {
+  const entityRows = executor.query("SELECT id, kind FROM __quincy_local_fixture_entities;");
+  const runRows = executor.query("SELECT id FROM __quincy_local_fixture_runs;");
   return { entities: entityRows.map((r) => ({ id: r.id, kind: r.kind })), runIds: runRows.map((r) => r.id) };
 }
 
@@ -230,22 +245,22 @@ function assertSafeIdentifier(name, describe) {
 /** Every table (other than the ignored/capability ones) with a plain `project_id` column, or —
  * failing that — an FK to `projects`, `project_subtasks`, or `collections`, paired with the
  * registry id-kind its matching column should be checked against. */
-function discoverSweepTargets(options) {
+function discoverSweepTargets(executor) {
   // `sqlite_%` is SQLite's own reserved prefix; `_cf_%` is wrangler/Miniflare's local D1 bookkeeping
   // (e.g. `_cf_METADATA`) — real, not app schema, and `PRAGMA table_info` on it comes back
   // `SQLITE_AUTH: not authorized` rather than a normal result, discovered by running this against a
   // real local D1 (a `sqlite_%`-only filter let it through and crashed the sweep outright).
-  const tableRows = queryRows(options, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\';");
+  const tableRows = executor.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\';");
   const targets = [];
   for (const row of tableRows) {
     const table = assertSafeIdentifier(row.name, "table name");
     if (SWEEP_IGNORED_TABLES.has(table)) continue;
-    const columns = queryRows(options, `PRAGMA table_info(${table});`).map((c) => c.name);
+    const columns = executor.query(`PRAGMA table_info(${table});`).map((c) => c.name);
     if (columns.includes("project_id")) {
       targets.push({ table, column: "project_id", registryKind: "project" });
       continue;
     }
-    const fks = queryRows(options, `PRAGMA foreign_key_list(${table});`);
+    const fks = executor.query(`PRAGMA foreign_key_list(${table});`);
     const fkTo = (parent) => fks.find((fk) => fk.table === parent);
     const projectsFk = fkTo("projects");
     const subtaskFk = fkTo("project_subtasks");
@@ -257,23 +272,23 @@ function discoverSweepTargets(options) {
   return targets;
 }
 
-function countMatchesChunked(options, table, column, ids) {
+function countMatchesChunked(executor, table, column, ids) {
   let total = 0;
   for (const group of chunk(ids, 400)) {
     if (group.length === 0) continue;
     const idList = group.map((id) => `'${id}'`).join(", ");
-    const row = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} IN (${idList});`);
+    const row = queryScalar(executor, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} IN (${idList});`);
     total += Number(row?.n ?? 0);
   }
   return total;
 }
 
-function countTypedMatchesChunked(options, table, typeColumn, typeValue, idColumn, ids) {
+function countTypedMatchesChunked(executor, table, typeColumn, typeValue, idColumn, ids) {
   let total = 0;
   for (const group of chunk(ids, 400)) {
     if (group.length === 0) continue;
     const idList = group.map((id) => `'${id}'`).join(", ");
-    const row = queryScalar(options, `SELECT COUNT(*) AS n FROM ${table} WHERE ${typeColumn} = '${typeValue}' AND ${idColumn} IN (${idList});`);
+    const row = queryScalar(executor, `SELECT COUNT(*) AS n FROM ${table} WHERE ${typeColumn} = '${typeValue}' AND ${idColumn} IN (${idList});`);
     total += Number(row?.n ?? 0);
   }
   return total;
@@ -282,12 +297,12 @@ function countTypedMatchesChunked(options, table, typeColumn, typeValue, idColum
 /** `registeredByKind` must be captured BEFORE teardown's own deletes ran — by the time this
  * function is called the registry itself is already empty. Fails loudly, naming every offending
  * table, rather than passing silently on "found nothing to check". */
-function sweepForOrphans(options, registeredByKind) {
+function sweepForOrphans(executor, registeredByKind) {
   const failures = [];
-  for (const { table, column, registryKind } of discoverSweepTargets(options)) {
+  for (const { table, column, registryKind } of discoverSweepTargets(executor)) {
     const ids = registeredByKind[registryKind] ?? [];
     if (ids.length === 0) continue;
-    const n = countMatchesChunked(options, table, column, ids);
+    const n = countMatchesChunked(executor, table, column, ids);
     if (n > 0) failures.push(`${table}.${column}: ${n} row(s) still reference a torn-down ${registryKind} id`);
   }
   // `audit_log` has no FK at all (`target_id` is untyped text) — PRAGMA foreign_key_list can never
@@ -295,15 +310,15 @@ function sweepForOrphans(options, registeredByKind) {
   const projectIds = registeredByKind.project ?? [];
   const subtaskIds = registeredByKind.subtask ?? [];
   let auditOrphans = 0;
-  if (projectIds.length > 0) auditOrphans += countTypedMatchesChunked(options, "audit_log", "target_type", "project", "target_id", projectIds);
-  if (subtaskIds.length > 0) auditOrphans += countTypedMatchesChunked(options, "audit_log", "target_type", "project_subtask", "target_id", subtaskIds);
+  if (projectIds.length > 0) auditOrphans += countTypedMatchesChunked(executor, "audit_log", "target_type", "project", "target_id", projectIds);
+  if (subtaskIds.length > 0) auditOrphans += countTypedMatchesChunked(executor, "audit_log", "target_type", "project_subtask", "target_id", subtaskIds);
   if (auditOrphans > 0) failures.push(`audit_log.target_id: ${auditOrphans} row(s) still reference a torn-down project/project_subtask id`);
 
   if (failures.length > 0) throw new Error(`Rot-proof sweep found orphaned rows after teardown:\n  - ${failures.join("\n  - ")}`);
 }
 
-function teardown(options) {
-  const registry = readRegistry(options);
+export function teardown(executor) {
+  const registry = readRegistry(executor);
   if (registry.entities.length === 0 && registry.runIds.length === 0) {
     console.log("==> No registered QA fixture rows found — nothing to tear down.");
     return;
@@ -312,12 +327,12 @@ function teardown(options) {
   const registeredByKind = { project: [], subtask: [], collection: [], deadline_occurrence: [], member: [] };
   for (const entity of registry.entities) (registeredByKind[entity.kind] ??= []).push(entity.id);
 
-  const { statements } = runEmit("teardown-plan", [`--entities=${JSON.stringify(registry.entities)}`, `--run-ids=${JSON.stringify(registry.runIds)}`]);
-  applyStatements(options, statements, "teardown");
+  const { statements } = executor.emit("teardown-plan", [`--entities=${JSON.stringify(registry.entities)}`, `--run-ids=${JSON.stringify(registry.runIds)}`]);
+  executor.run(statements, "teardown");
 
-  const remainingEntities = queryScalar(options, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities;");
-  const remainingRuns = queryScalar(options, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_runs;");
-  const remainingProjects = queryScalar(options, "SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1%';");
+  const remainingEntities = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities;");
+  const remainingRuns = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_runs;");
+  const remainingProjects = queryScalar(executor, "SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1%';");
   if (Number(remainingEntities?.n) !== 0 || Number(remainingRuns?.n) !== 0 || Number(remainingProjects?.n) !== 0) {
     throw new Error(
       `Teardown did not reach zero: ${remainingEntities?.n} registered entities, ${remainingRuns?.n} runs, ` +
@@ -326,7 +341,7 @@ function teardown(options) {
   }
 
   console.log("==> Running the rot-proof sweep (schema introspection, not a hand list)");
-  sweepForOrphans(options, registeredByKind);
+  sweepForOrphans(executor, registeredByKind);
   console.log("==> Teardown verified: zero registered fixture rows, zero sentinel-tagged projects remain, sweep clean.");
 }
 
@@ -334,26 +349,26 @@ function teardown(options) {
 // Apply
 // ---------------------------------------------------------------------------
 
-function apply(options) {
-  assertApplyPrerequisites(options);
-  teardown(options);
+export function apply(executor, options) {
+  assertApplyPrerequisites(executor);
+  teardown(executor);
 
-  const defaultEditorIds = queryRows(options, DEFAULT_EDITOR_QUERY).map((r) => r.id);
+  const defaultEditorIds = executor.query(DEFAULT_EDITOR_QUERY).map((r) => r.id);
   const planArgs = [`--applied-at-ms=${Date.now()}`];
   if (options.tier) planArgs.push(`--tier=${options.tier}`);
   if (options.anchor) planArgs.push(`--anchor=${options.anchor}`);
   if (defaultEditorIds.length > 0) planArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
 
   console.log("==> Building the fixture dataset");
-  const plan = runEmit("plan", planArgs);
+  const plan = executor.emit("plan", planArgs);
   console.log(`==> Applying ${plan.statements.length} statements (anchor=${plan.anchor}, tiers=${plan.tiers.join(",")})`);
-  applyStatements(options, plan.statements, "apply");
+  executor.run(plan.statements, "apply");
 
-  const registered = queryScalar(options, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities WHERE run_id = '${plan.runId}';`);
+  const registered = queryScalar(executor, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities WHERE run_id = '${plan.runId}';`);
   if (Number(registered?.n) !== plan.entities.length) {
     throw new Error(`Expected ${plan.entities.length} registered entities for run ${plan.runId}, found ${registered?.n}.`);
   }
-  const sentinelProjects = queryScalar(options, `SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1 · anchor=${plan.anchor} · tier=%';`);
+  const sentinelProjects = queryScalar(executor, `SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1 · anchor=${plan.anchor} · tier=%';`);
   if (Number(sentinelProjects?.n) !== plan.summary.projects) {
     throw new Error(`Expected ${plan.summary.projects} sentinel-tagged projects, found ${sentinelProjects?.n}.`);
   }
@@ -390,11 +405,10 @@ function fingerprintColumnsOf(expectedRows) {
   return anyId ? Object.keys(expectedRows[anyId]) : [];
 }
 
-function fetchActualFingerprintRows(options, table, registryKind, columns) {
+function fetchActualFingerprintRows(executor, table, registryKind, columns) {
   if (columns.length === 0) return {};
   const columnList = columns.map((c) => assertSafeIdentifier(c, "fingerprint column")).join(", ");
-  const rows = queryRows(
-    options,
+  const rows = executor.query(
     `SELECT ${columnList} FROM ${table} WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = '${registryKind}');`,
   );
   return Object.fromEntries(rows.map((row) => [row.id, row]));
@@ -432,8 +446,8 @@ function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
   }
 }
 
-function verify(options) {
-  const runs = queryRows(options, "SELECT id, tier, anchor, applied_at FROM __quincy_local_fixture_runs ORDER BY applied_at DESC;");
+export function verify(executor, options) {
+  const runs = executor.query("SELECT id, tier, anchor, applied_at FROM __quincy_local_fixture_runs ORDER BY applied_at DESC;");
   if (runs.length === 0) throw new Error("No QA fixture run is registered. Run `npm run db:qa:apply` first.");
   if (runs.length > 1) {
     throw new Error(
@@ -463,20 +477,20 @@ function verify(options) {
   // Recomputed against the RECORDED run's own anchor/tier/applied-at — never the caller's values,
   // never `Date.now()` — so occurrence status (the one apply-time-dependent field, item 4) is
   // reproduced exactly as this run actually inserted it, not as a fresh apply would today.
-  const defaultEditorIds = queryRows(options, DEFAULT_EDITOR_QUERY).map((r) => r.id);
+  const defaultEditorIds = executor.query(DEFAULT_EDITOR_QUERY).map((r) => r.id);
   const manifestArgs = [`--anchor=${run.anchor}`, `--tier=${run.tier}`, `--applied-at-ms=${run.applied_at}`];
   if (defaultEditorIds.length > 0) manifestArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
-  const manifest = runEmit("manifest", manifestArgs);
+  const manifest = executor.emit("manifest", manifestArgs);
 
   const failures = [];
   for (const { label, table, registryKind, manifestKey } of VERIFY_DIFF_TABLES) {
     const expectedTable = manifest[manifestKey];
     const columns = fingerprintColumnsOf(expectedTable.rows);
-    const actualRowsById = fetchActualFingerprintRows(options, table, registryKind, columns);
+    const actualRowsById = fetchActualFingerprintRows(executor, table, registryKind, columns);
     diffFingerprintTable(label, expectedTable, actualRowsById, failures);
   }
 
-  const fkViolations = queryRows(options, "PRAGMA foreign_key_check;");
+  const fkViolations = executor.query("PRAGMA foreign_key_check;");
   if (fkViolations.length > 0) failures.push(`${fkViolations.length} foreign_key_check violation(s)`);
 
   if (failures.length > 0) throw new Error(`Verify failed:\n  - ${failures.join("\n  - ")}`);
@@ -489,10 +503,11 @@ function verify(options) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  assertCapabilityPresent(options);
-  if (options.command === "apply") return apply(options);
-  if (options.command === "teardown") return teardown(options);
-  return verify(options);
+  const executor = wranglerExecutor(options);
+  assertCapabilityPresent(executor);
+  if (options.command === "apply") return apply(executor, options);
+  if (options.command === "teardown") return teardown(executor);
+  return verify(executor, options);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
