@@ -6,7 +6,7 @@ Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-13.
 sandbox, output read back from a file. It is not the `Agent` tool.
 
 ```bash
-codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "..."
+codex exec --sandbox read-only -m gpt-6-sol -c model_reasoning_effort=high "..."
 ```
 
 
@@ -31,7 +31,7 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 
 ```bash
 { cat "$SCRATCH/wp-x-prompt.md"; cat "$SCRATCH/wp-x-reference-a.md"; cat "$SCRATCH/wp-x-reference-b.md"; } \
-  | codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high \
+  | codex exec --sandbox read-only -m gpt-6-sol -c model_reasoning_effort=high \
     --output-last-message "$SCRATCH/wp-x-report.md" \
   > "$SCRATCH/wp-x-run.log" 2>&1
 ```
@@ -65,7 +65,7 @@ from any run that might hit the credit wall.
 
 ```bash
 cat "$SCRATCH/wp-x-fix.md" | codex exec resume <session-id> \
-  -m gpt-5.6-luna -c model_reasoning_effort=xhigh -c 'sandbox_mode="workspace-write"' \
+  -m gpt-6-luna -c model_reasoning_effort=xhigh -c 'sandbox_mode="workspace-write"' \
   --output-last-message "$SCRATCH/wp-x-fix-report.md" - > "$SCRATCH/wp-x-fix-run.log" 2>&1
 ```
 
