@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDb } from "@quincy/db";
 import { DropboxPathNotFoundError, DropboxRelocationConflictError, DropboxRelocationRefusedError, type DropboxEntry, type DropboxFolder } from "../src/dropbox/client";
@@ -30,6 +30,13 @@ beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
 /** The fixed clock every test's `deps()` uses; job/upload timestamps are set relative to this,
  * not the real wall clock, so "in flight" / "stale" / "recent" all mean what each test intends. */
 const FIXED_NOW = new Date("2026-10-02T00:00:00.000Z");
+
+// Tests stamp leases and rows with `Date.now()` (an expired claim is `Date.now() - 1000`, and the
+// schema default stamps jobs) while the code under test reads `deps().now`, which is FIXED_NOW.
+// Production reads one clock, so the tests must too: make `Date` BE FIXED_NOW. Fake only `Date`:
+// the Dropbox stubs and D1 calls still need real timers.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: FIXED_NOW }); });
+afterEach(() => { vi.useRealTimers(); });
 
 function folder(path: string, id: string): DropboxFolder {
   return { ".tag": "folder", id, name: path.split("/").at(-1)!, path_lower: path.toLowerCase(), path_display: path };
@@ -129,6 +136,15 @@ async function insertJob(input: { projectId: string; kind: string; status: strin
   await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, input.kind, input.status, input.projectId, now, input.updatedAt).run();
   return id;
+}
+
+/** A committed move queues an `editor_sync` resync, and while that job is in flight the next move
+ * correctly defers (`findBlockingJob`). Tests that move twice model the production sequence: the
+ * resync finishes, then the next move proceeds. They used to pass only because the job was stamped
+ * with the real clock, hours before FIXED_NOW, so it read as stale — not because it had finished. */
+async function finishQueuedEditorResync(projectId: string): Promise<void> {
+  const result = await database.DB.prepare("UPDATE jobs SET status = 'done' WHERE project_id = ? AND kind = 'editor_sync' AND status = 'queued'").bind(projectId).run();
+  expect(result.meta.changes).toBe(1);
 }
 
 describe("Editor folder move: derived happy path", () => {
@@ -523,6 +539,7 @@ describe("Editor folder move: rescheduling and archival", () => {
     await database.DB.prepare("UPDATE projects SET shoot_date = '2027-01-15' WHERE id = ?").bind(projectId).run();
     const toB = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2027-01-15" }, mapping, moveDependencies());
     expect(toB).toMatchObject({ status: "moved", from: rootA, to: rootB });
+    await finishQueuedEditorResync(projectId);
     const atB = await getEditorFolderMapping(db, projectId);
     await database.DB.prepare("UPDATE projects SET shoot_date = '2026-10-02' WHERE id = ?").bind(projectId).run();
     const toA = await attemptEditorFolderMove(env as never, db, { id: projectId, shootDate: "2026-10-02" }, atB!, moveDependencies());
@@ -625,6 +642,7 @@ describe("Editor folder move: orphan-upload watches (#195)", () => {
     const { projectId, mapping } = await setup();
     const first = mapping.rootPath;
     await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    await finishQueuedEditorResync(projectId);
     const second = (await getEditorFolderMapping(db, projectId))!.rootPath;
     expect(await reschedule(projectId, "2027-02-20", mapping.projectFolderName, mapping.rootFolderId!)).toMatchObject({ status: "moved" });
     expect((await watchRows(mapping.id)).map((row) => [row.move_revision, row.old_path])).toEqual([[1, first], [2, second]]);
@@ -634,6 +652,7 @@ describe("Editor folder move: orphan-upload watches (#195)", () => {
     const { projectId, mapping } = await setup();
     const home = mapping.rootPath;
     await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    await finishQueuedEditorResync(projectId);
     const away = (await getEditorFolderMapping(db, projectId))!.rootPath;
     expect(await reschedule(projectId, "2026-10-02", mapping.projectFolderName, mapping.rootFolderId!)).toMatchObject({ status: "moved", to: home });
     // The live root is not an orphan; only the root it just left is watched.
@@ -740,6 +759,7 @@ describe("Editor folder move: orphan-upload watches (#195)", () => {
     const { projectId, mapping } = await setup();
     const home = mapping.rootPath;
     await reschedule(projectId, "2027-01-15", mapping.projectFolderName, mapping.rootFolderId!);
+    await finishQueuedEditorResync(projectId);
     await database.DB.prepare("UPDATE editor_folder_orphan_watches SET status = 'found', found_at = 1, found_detail = ? WHERE mapping_id = ?").bind(`${home}/late.jpg`, mapping.id).run();
     expect(await reschedule(projectId, "2026-10-02", mapping.projectFolderName, mapping.rootFolderId!)).toMatchObject({ status: "moved", to: home });
     expect((await watchRows(mapping.id)).map((row) => [row.move_revision, row.status])).toEqual([[1, "found"], [2, "watching"]]);
