@@ -3692,3 +3692,53 @@ customize this at all" is cheaper to check than "did the consumer customize THIS
 is all-or-nothing per component instance, not per render call — reproduce the stock behaviour
 inside the override for every case you are not actually changing, rather than assuming the
 override can stay silent for the common path.
+
+## A test that hard-codes dates must pin `Date` to them — and "which tests do?" is measured, not read (2026-09-26)
+
+`event-calendar-done-dim.dom.test.tsx` fixed `ANCHOR = 2026-09-21T02:00Z` and a done chip on
+2026-09-23 that it asserts is "future". The vendored ReUI calendar derives `data-past` from the real
+clock, not from the `date` it is given, so from 2026-09-23 the chip was past and `main` went red
+(`expected 'true' to be null`). The same is true of anything whose code reads the clock — vendored
+calendar/gantt, date-fns `isPast`/`isToday`, a schema `$defaultFn(() => new Date())`. A date
+literal in a fixture is a countdown (see TB8-04 above).
+
+**Fix:** pin `Date` to the date the test already assumes, in a top-level `beforeEach`:
+`vi.useFakeTimers({ toFake: ["Date"], now: ANCHOR })`, and `vi.useRealTimers()` in `afterEach`
+(or `vi.setSystemTime(ANCHOR)` if the file already fakes timers). Fake only `Date` — faking every
+timer stalls React's scheduler and Testing Library's `waitFor`/`findBy`. Never loosen the
+assertion instead. If pinning makes a *different* test fail, the test was passing on an
+inconsistent clock (e.g. injected `deps.now()` for comparisons, real clock for row stamps) — that is
+a finding, not something to pin around.
+
+**Detection — the shift matrix.** Reading 34 date-literal files does not tell you which ones read
+the clock; running them with the clock moved does. Add an uncommitted setup file and a config that
+`mergeConfig`s the package's own config with `setupFiles: [it]` and
+`define: { __CLOCK_SHIFT_TO__: JSON.stringify(process.env.CLOCK_SHIFT_TO ?? "") }` (`define`, not
+`process.env`, so it reaches workerd too). Name the config so it does NOT match
+`vitest(.*).config.ts`, or `ci-vitest-configs.guard` will demand it run in CI:
+
+```ts
+import { beforeEach, vi } from "vitest";
+import "@date-fns/tz"; // load Date subclasses BEFORE faking, or TZDate silently goes local-time
+declare const __CLOCK_SHIFT_TO__: string;
+const to = __CLOCK_SHIFT_TO__;
+const pin = () => vi.useFakeTimers({ toFake: ["Date"], now: new Date(to), shouldAdvanceTime: true, advanceTimeDelta: 1 });
+if (to) {
+  pin();
+  beforeEach(() => { if (!vi.isFakeTimers()) pin(); }); // survive a file's own useRealTimers()
+}
+```
+
+Run every config (web unit + DOM, shared, db, the three workers) unshifted, then at a date before
+the fixtures (`2026-09-20`), three months on, a year on, **and a control at the real current
+time**. A test that fails under a date shift but passes the control reads the real clock. Lessons
+from the first run:
+
+- **Use `shouldAdvanceTime` for detection.** A frozen `Date` produced 13 false positives in web DOM
+  alone (react-query staleness, lease/claim timing): they failed in the frozen *control* too and
+  passed with an advancing clock. Frozen is right for the fix, wrong for the detector. A test that
+  measures elapsed time or drives react-query staleness may need `shouldAdvanceTime` in its fix too.
+- **Faking before `@date-fns/tz` loads** makes fake-timers' Date constructor return a plain Date,
+  so `TZDate` loses its prototype: 17 more false failures that looked like DST bugs.
+- **Tests that compare SQLite's clock with JS's** (`default-editors-backfill`) fail under any shift
+  by design — shifting only JS cannot pass them. Leave them unpinned.
