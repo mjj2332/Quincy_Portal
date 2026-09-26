@@ -192,10 +192,22 @@ function applyStatements(options, statements, label) {
 // Preflight — every command needs the capability fence; `apply` also needs a usable pipeline.
 // ---------------------------------------------------------------------------
 
+/** Every reserved table this CLI reads or writes. `setup-local.mjs` is the only thing that creates
+ * them (`CREATE TABLE IF NOT EXISTS`, so re-running it upgrades an older local database). */
+const RESERVED_TABLES = [
+  "__quincy_local_capability", "__quincy_local_fixture_runs", "__quincy_local_fixture_entities",
+  "__quincy_local_fixture_run_records", "__quincy_local_fixture_board_positions",
+];
+
 export function assertCapabilityPresent(executor) {
   const row = queryScalar(executor, `SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = '${CAPABILITY_KEY}') AS present;`);
   if (Number(row?.present) !== 1) {
     throw new Error("The QA fixture capability fence is not installed on this database. Run `npm run db:migrate:local` first (see setup-local.mjs).");
+  }
+  const present = new Set(executor.query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${RESERVED_TABLES.map((t) => `'${t}'`).join(", ")});`).map((r) => r.name));
+  const missing = RESERVED_TABLES.filter((table) => !present.has(table));
+  if (missing.length > 0) {
+    throw new Error(`This local database predates ${missing.join(", ")}. Re-run \`npm run db:migrate:local\` (it only adds the missing local-only tables) and try again.`);
   }
 }
 
@@ -234,6 +246,9 @@ const SWEEP_IGNORED_TABLES = new Set([
   "project_board_order_0037_rollback", // the migration's own historical snapshot, not the live board contract
 ]);
 const SAFE_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Same canonical-UUID shape `sql.ts`'s `UUID_RE` enforces on every id it inlines;
+ * `qa-seed-wiring.guard.test.ts` cross-checks the two literals. */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 function assertSafeIdentifier(name, describe) {
   if (!SAFE_IDENTIFIER_RE.test(String(name))) {
@@ -368,6 +383,12 @@ export function apply(executor, options) {
   if (Number(registered?.n) !== plan.entities.length) {
     throw new Error(`Expected ${plan.entities.length} registered entities for run ${plan.runId}, found ${registered?.n}.`);
   }
+  const record = queryScalar(executor, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_run_records WHERE run_id = '${plan.runId}';`);
+  if (Number(record?.n) !== 1) throw new Error(`Expected exactly one recorded default-editor set for run ${plan.runId}, found ${record?.n}.`);
+  const positions = queryScalar(executor, `SELECT COUNT(*) AS n FROM __quincy_local_fixture_board_positions WHERE run_id = '${plan.runId}';`);
+  if (Number(positions?.n) !== plan.summary.projects) {
+    throw new Error(`Expected ${plan.summary.projects} recorded board positions for run ${plan.runId}, found ${positions?.n}.`);
+  }
   const sentinelProjects = queryScalar(executor, `SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1 · anchor=${plan.anchor} · tier=%';`);
   if (Number(sentinelProjects?.n) !== plan.summary.projects) {
     throw new Error(`Expected ${plan.summary.projects} sentinel-tagged projects, found ${sentinelProjects?.n}.`);
@@ -389,34 +410,47 @@ export function apply(executor, options) {
 // fixture rows: that is its job. Re-`apply` resets to the generator's own state.
 // ---------------------------------------------------------------------------
 
+/** `scope: "registry"` diffs the rows whose ids apply registered. `project_members` is instead
+ * scoped to EVERY membership on a fixture project (`scope: "fixture-projects"`), so a membership the
+ * app added after apply is reported as unexpected, not silently ignored for lacking a registry row —
+ * memberships are verified present/absent exactly (Sol round 2, finding 6). */
 const VERIFY_DIFF_TABLES = [
-  { label: "projects", table: "projects", registryKind: "project", manifestKey: "projects" },
-  { label: "project_subtasks", table: "project_subtasks", registryKind: "subtask", manifestKey: "subtasks" },
-  { label: "collections", table: "collections", registryKind: "collection", manifestKey: "collections" },
-  { label: "project_deadline_occurrences", table: "project_deadline_occurrences", registryKind: "deadline_occurrence", manifestKey: "deadlineOccurrences" },
-  { label: "project_members", table: "project_members", registryKind: "member", manifestKey: "members" },
+  { label: "projects", table: "projects", registryKind: "project", manifestKey: "projects", scope: "registry" },
+  { label: "project_subtasks", table: "project_subtasks", registryKind: "subtask", manifestKey: "subtasks", scope: "registry" },
+  { label: "collections", table: "collections", registryKind: "collection", manifestKey: "collections", scope: "registry" },
+  { label: "project_deadline_occurrences", table: "project_deadline_occurrences", registryKind: "deadline_occurrence", manifestKey: "deadlineOccurrences", scope: "registry" },
+  { label: "project_members", table: "project_members", registryKind: "member", manifestKey: "members", scope: "fixture-projects" },
 ];
 const VERIFY_MAX_REPORTED_IDS = 10;
 
 /** The generator-owned column set for a table is read off the manifest's OWN expected rows (any
- * one of them) rather than hand-listed here a second time — the two can never drift apart. */
+ * one of them) rather than hand-listed here a second time — the two can never drift apart. `id` is
+ * always included: with zero expected rows (e.g. a run that recorded no default editors) the actual
+ * rows must STILL be fetched, or an unexpected row would be invisible — the old early `return {}`
+ * here is how a disabled sole default editor made the membership check vanish (finding 6). */
 function fingerprintColumnsOf(expectedRows) {
   const anyId = Object.keys(expectedRows)[0];
-  return anyId ? Object.keys(expectedRows[anyId]) : [];
+  const columns = anyId ? Object.keys(expectedRows[anyId]) : [];
+  return columns.includes("id") ? columns : ["id", ...columns];
 }
 
-function fetchActualFingerprintRows(executor, table, registryKind, columns) {
-  if (columns.length === 0) return {};
+function fetchActualFingerprintRows(executor, table, registryKind, columns, scope) {
   const columnList = columns.map((c) => assertSafeIdentifier(c, "fingerprint column")).join(", ");
-  const rows = executor.query(
-    `SELECT ${columnList} FROM ${table} WHERE id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = '${registryKind}');`,
-  );
+  const where = scope === "fixture-projects"
+    ? "project_id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = 'project')"
+    : `id IN (SELECT id FROM __quincy_local_fixture_entities WHERE kind = '${registryKind}')`;
+  const rows = executor.query(`SELECT ${columnList} FROM ${table} WHERE ${where};`);
   return Object.fromEntries(rows.map((row) => [row.id, row]));
 }
 
-/** `??` (nullish, not `||`) so a real `0` never collapses into `""` before the string compare. */
-function fingerprintValuesEqual(expected, actual) {
-  return String(expected ?? "") === String(actual ?? "");
+/** Exact, type-aware equality (finding 4): NULL is not `''`, `1` is not `"1"`, and a column the
+ * database row does not have at all (`undefined`) matches nothing — not even an expected NULL.
+ * No `String()` coercion anywhere. */
+export function fingerprintValuesEqual(expected, actual) {
+  if (actual === undefined || expected === undefined) return false;
+  if (expected === null || actual === null) return expected === null && actual === null;
+  if (typeof expected !== typeof actual) return false;
+  return expected === actual;
 }
 
 function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
@@ -430,7 +464,7 @@ function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
   }
   const unexpected = [...actualIdSet].filter((id) => !expectedIdSet.has(id));
   if (unexpected.length > 0) {
-    failures.push(`${label}: ${unexpected.length} unexpected registered id(s) found, e.g. ${unexpected.slice(0, VERIFY_MAX_REPORTED_IDS).join(", ")}`);
+    failures.push(`${label}: ${unexpected.length} unexpected id(s) found, e.g. ${unexpected.slice(0, VERIFY_MAX_REPORTED_IDS).join(", ")}`);
   }
 
   const rowMismatches = [];
@@ -444,6 +478,30 @@ function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
   if (rowMismatches.length > 0) {
     failures.push(`${label}: ${rowMismatches.length} row(s) differ from the generator, e.g. ${rowMismatches.slice(0, VERIFY_MAX_REPORTED_IDS).join("; ")}`);
   }
+}
+
+/** What `apply` recorded about this run (`setup-local.mjs`'s run-record and board-position tables).
+ * A run with no record — applied by a fixture version that predates recording — fails loudly: the
+ * only other source for the editor set is today's `user` table, and falling back to it is exactly
+ * the bug this replaces (finding 6). */
+function readRunRecord(executor, runId) {
+  if (!UUID_RE.test(String(runId))) throw new Error(`Refusing a non-canonical run id from the registry: ${JSON.stringify(runId)}`);
+  const record = queryScalar(executor, `SELECT default_editor_ids FROM __quincy_local_fixture_run_records WHERE run_id = '${runId}';`);
+  if (!record) {
+    throw new Error(`Run ${runId} has no recorded default-editor set (it was applied before apply recorded one). Re-apply the fixture: \`npm run db:qa:apply\`.`);
+  }
+  const defaultEditorIds = String(record.default_editor_ids).split(",").filter(Boolean);
+  for (const id of defaultEditorIds) {
+    if (!UUID_RE.test(id)) throw new Error(`Recorded default-editor id is not a canonical UUID: ${JSON.stringify(id)}`);
+  }
+  const positionRows = executor.query(
+    `SELECT e.id AS project_id, b.board_position AS board_position FROM __quincy_local_fixture_entities e LEFT JOIN __quincy_local_fixture_board_positions b ON b.project_id = e.id AND b.run_id = '${runId}' WHERE e.kind = 'project' AND e.run_id = '${runId}';`,
+  );
+  const unrecorded = positionRows.filter((row) => typeof row.board_position !== "number").map((row) => row.project_id);
+  if (unrecorded.length > 0) {
+    throw new Error(`Run ${runId} has no recorded board_position for ${unrecorded.length} project(s), e.g. ${unrecorded.slice(0, VERIFY_MAX_REPORTED_IDS).join(", ")}. Re-apply the fixture: \`npm run db:qa:apply\`.`);
+  }
+  return { defaultEditorIds, boardPositions: Object.fromEntries(positionRows.map((row) => [row.project_id, row.board_position])) };
 }
 
 export function verify(executor, options) {
@@ -476,17 +534,19 @@ export function verify(executor, options) {
 
   // Recomputed against the RECORDED run's own anchor/tier/applied-at — never the caller's values,
   // never `Date.now()` — so occurrence status (the one apply-time-dependent field, item 4) is
-  // reproduced exactly as this run actually inserted it, not as a fresh apply would today.
-  const defaultEditorIds = executor.query(DEFAULT_EDITOR_QUERY).map((r) => r.id);
-  const manifestArgs = [`--anchor=${run.anchor}`, `--tier=${run.tier}`, `--applied-at-ms=${run.applied_at}`];
+  // reproduced exactly as this run actually inserted it, not as a fresh apply would today. The
+  // default-editor set and every project's board_position are likewise the values THIS run recorded
+  // (findings 5 and 6) — never today's editors, never a column left out of the comparison.
+  const { defaultEditorIds, boardPositions } = readRunRecord(executor, run.id);
+  const manifestArgs = [`--anchor=${run.anchor}`, `--tier=${run.tier}`, `--applied-at-ms=${run.applied_at}`, `--board-positions=${JSON.stringify(boardPositions)}`];
   if (defaultEditorIds.length > 0) manifestArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
   const manifest = executor.emit("manifest", manifestArgs);
 
   const failures = [];
-  for (const { label, table, registryKind, manifestKey } of VERIFY_DIFF_TABLES) {
+  for (const { label, table, registryKind, manifestKey, scope } of VERIFY_DIFF_TABLES) {
     const expectedTable = manifest[manifestKey];
     const columns = fingerprintColumnsOf(expectedTable.rows);
-    const actualRowsById = fetchActualFingerprintRows(executor, table, registryKind, columns);
+    const actualRowsById = fetchActualFingerprintRows(executor, table, registryKind, columns, scope);
     diffFingerprintTable(label, expectedTable, actualRowsById, failures);
   }
 

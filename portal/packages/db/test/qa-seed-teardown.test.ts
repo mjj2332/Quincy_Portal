@@ -48,7 +48,7 @@ const APPLIED_AT_MS = anchorReferenceInstantMs(ANCHOR);
 // A non-empty defaultEditorIds so project_members rows actually exist to check below — an empty
 // list would make "never writes project_members" trivially true for the wrong reason.
 const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs: APPLIED_AT_MS, defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
-const plan = buildApplyPlan(dataset, { runId: "22222222-2222-5222-8222-222222222222", appliedAtMs: 1_700_000_000_000, createdBy: "6b851dc8-14cf-4f90-bd29-ce6c27f86385" });
+const plan = buildApplyPlan(dataset, { runId: "22222222-2222-5222-8222-222222222222", appliedAtMs: 1_700_000_000_000, createdBy: "6b851dc8-14cf-4f90-bd29-ce6c27f86385", defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
 
 function tablesWrittenByPlan(statements: readonly string[]): Set<string> {
   const written = new Set<string>();

@@ -46,6 +46,12 @@ const FORBIDDEN_ARGUMENTS = ["--remote", "--env", "--config", "--database", "--p
  * table: __quincy_local_capability` instead of silently succeeding. A one-time preflight is not
  * enough: this makes the check part of every statement, not just the first one.
  *
+ * `__quincy_local_fixture_run_records` and `__quincy_local_fixture_board_positions` record what an
+ * `apply` actually USED and WROTE (the default-editor set it read, the live `board_position` each
+ * project landed on), so `db:qa:verify` compares against the run itself rather than recomputing from
+ * today's state. `CREATE TABLE IF NOT EXISTS` means re-running this script upgrades a database that
+ * predates them; the fixture CLI refuses to run until it has been.
+ *
  * Honest limit, stated once here rather than re-litigated in the fixture docs: a privileged
  * operator holding real production credentials could still create this table there by hand and
  * bypass the fence deliberately. Nothing in this repository can stop that; what this fence does
@@ -68,6 +74,15 @@ CREATE TABLE IF NOT EXISTS __quincy_local_fixture_entities (
   kind text NOT NULL,
   run_id text NOT NULL,
   PRIMARY KEY (id, kind)
+);
+CREATE TABLE IF NOT EXISTS __quincy_local_fixture_run_records (
+  run_id text PRIMARY KEY NOT NULL,
+  default_editor_ids text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS __quincy_local_fixture_board_positions (
+  project_id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  board_position real NOT NULL
 );
 INSERT OR IGNORE INTO __quincy_local_capability (capability, schema_version) VALUES ('scheduling-fixtures', 1);
 `.trim();
