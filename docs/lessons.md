@@ -3706,9 +3706,12 @@ literal in a fixture is a countdown (see TB8-04 above).
 `vi.useFakeTimers({ toFake: ["Date"], now: ANCHOR })`, and `vi.useRealTimers()` in `afterEach`
 (or `vi.setSystemTime(ANCHOR)` if the file already fakes timers). Fake only `Date` — faking every
 timer stalls React's scheduler and Testing Library's `waitFor`/`findBy`. Never loosen the
-assertion instead. If pinning makes a *different* test fail, the test was passing on an
-inconsistent clock (e.g. injected `deps.now()` for comparisons, real clock for row stamps) — that is
-a finding, not something to pin around.
+assertion instead. If pinning makes a *different* test fail, it was passing on two clocks at once.
+`editor-folder-move.test.ts` handed the code `deps().now = FIXED_NOW` while the schema default
+stamped jobs with the real clock, so four move-twice tests passed only because the first move's
+queued `editor_sync` job looked hours stale. Production reads one clock; the fix was to model what
+production sees (mark that job `done` before the second move), not to pick a pin that keeps the
+accident green.
 
 **Detection — the shift matrix.** Reading 34 date-literal files does not tell you which ones read
 the clock; running them with the clock moved does. Add an uncommitted setup file and a config that
