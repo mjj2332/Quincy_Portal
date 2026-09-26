@@ -22,6 +22,12 @@ export const CAPABILITY_KEY = "scheduling-fixtures";
 export const CAPABILITY_TABLE = "__quincy_local_capability";
 export const FIXTURE_RUNS_TABLE = "__quincy_local_fixture_runs";
 export const FIXTURE_ENTITIES_TABLE = "__quincy_local_fixture_entities";
+/** What an apply USED (the default-editor set it read) — `verify` checks memberships against this,
+ * never against today's editors (Sol round 2, finding 6). */
+export const FIXTURE_RUN_RECORDS_TABLE = "__quincy_local_fixture_run_records";
+/** What an apply WROTE for the one live-computed column, `projects.board_position` — `verify`
+ * compares against this rather than excluding the column (Sol round 2, finding 5). */
+export const FIXTURE_BOARD_POSITIONS_TABLE = "__quincy_local_fixture_board_positions";
 
 export const CAPABILITY_PREDICATE = `EXISTS (SELECT 1 FROM ${CAPABILITY_TABLE} WHERE capability = '${CAPABILITY_KEY}')`;
 
@@ -77,6 +83,25 @@ export function fixtureRunInsertStatement(runId: string, anchor: string, tiers: 
     ["id", "tier", "anchor", "applied_at"],
     [sqlId(runId, "run id"), sqlText(tiers.join(","), "tier list"), sqlText(anchor, "anchor"), sqlInt(appliedAtMs, "applied_at")],
   );
+}
+
+/** Default-editor ids are stored as a sorted comma list (`''` = none — a recorded empty set, which
+ * is different from "not recorded"). Every id is canonical-UUID-validated before it is inlined. */
+export function fixtureRunRecordStatement(runId: string, defaultEditorIds: readonly string[]): string {
+  const ids = [...new Set(defaultEditorIds)].sort();
+  for (const id of ids) sqlId(id, "default editor id");
+  return guardedInsert(
+    FIXTURE_RUN_RECORDS_TABLE,
+    ["run_id", "default_editor_ids"],
+    [sqlId(runId, "run id"), sqlText(ids.join(","), "default editor id list")],
+  );
+}
+
+/** Copies the `board_position` the project insert just computed into the run's record. Emitted
+ * directly after each project insert, in the same batch, so the recorded value is exactly what
+ * apply wrote — not a later re-read. */
+function boardPositionRecordStatement(runId: string, projectId: string): string {
+  return `INSERT INTO ${FIXTURE_BOARD_POSITIONS_TABLE} (project_id, run_id, board_position)\nSELECT id, ${sqlId(runId, "run id")}, board_position FROM projects\nWHERE id = ${sqlId(projectId, "project id")} AND ${CAPABILITY_PREDICATE};`;
 }
 
 export function entityRegistrationStatements(entities: readonly FixtureEntity[], runId: string): string[] {
@@ -220,7 +245,7 @@ function memberInsertStatement(row: QaFixtureDataset["members"][number]): string
   );
 }
 
-export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string; appliedAtMs: number; createdBy: string }): ApplyPlan {
+export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string; appliedAtMs: number; createdBy: string; defaultEditorIds: readonly string[] }): ApplyPlan {
   if (!UUID_RE.test(opts.runId)) throw new Error(`runId must be a canonical lowercase UUID: ${JSON.stringify(opts.runId)}`);
   const entities: FixtureEntity[] = [
     ...dataset.projects.map((p) => ({ kind: "project" as const, id: p.id })),
@@ -231,8 +256,9 @@ export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string;
   ];
   const statements: string[] = [
     fixtureRunInsertStatement(opts.runId, dataset.anchor, dataset.tiers, opts.appliedAtMs),
+    fixtureRunRecordStatement(opts.runId, opts.defaultEditorIds),
     ...entityRegistrationStatements(entities, opts.runId),
-    ...dataset.projects.map((project) => projectInsertStatement(dataset, project)),
+    ...dataset.projects.flatMap((project) => [projectInsertStatement(dataset, project), boardPositionRecordStatement(opts.runId, project.id)]),
     ...dataset.collections.map((collection) => collectionInsertStatement(collection)),
     ...dataset.subtasks.map((subtask) => subtaskInsertStatement(subtask, opts.createdBy)),
     ...dataset.deadlineOccurrences.map((row) => occurrenceInsertStatement(row, opts.createdBy)),
@@ -251,19 +277,22 @@ export function buildApplyPlan(dataset: QaFixtureDataset, opts: { runId: string;
 // Verification snapshot (build spec item 2 — `db:qa:verify` must actually verify). The same values
 // `buildApplyPlan`'s row-builders above insert, but as raw JS values keyed by DB column name
 // instead of SQL literal strings, so `cli.mjs`'s `verify` can fetch an actual row by id and diff it
-// field-by-field. Deliberately excludes `board_position`: `projectInsertStatement` computes it as a
-// live subquery against sibling rows in the same stage AT INSERT TIME, so it is never a value the
-// dataset alone determines and nothing here can pretend to a fixed expectation for it.
+// field-by-field. `board_position` is the one column the dataset alone cannot determine —
+// `projectInsertStatement` computes it as a live subquery against sibling rows AT INSERT TIME — so
+// its expectation is the value apply RECORDED right after each insert
+// (`FIXTURE_BOARD_POSITIONS_TABLE`), passed in by `cli.mjs`'s `verify`, never excluded.
 // ---------------------------------------------------------------------------
 
 export type FingerprintRow = Record<string, string | number | null>;
 
-function projectFingerprintRow(project: QaFixtureDataset["projects"][number]): FingerprintRow {
+function projectFingerprintRow(project: QaFixtureDataset["projects"][number], boardPositions: Readonly<Record<string, number>>): FingerprintRow {
   const deadline = project.deadline;
+  const boardPosition = boardPositions[project.id];
+  if (typeof boardPosition !== "number") throw new Error(`No recorded board_position for fixture project ${project.id} — re-apply the fixture.`);
   return {
     id: project.id, street: project.street, suburb: project.suburb, postcode: null, agency_name: project.agencyName,
     agent_name: null, agent_email: null, agent_phone: null, agency_id: null, agent_id: null,
-    shoot_date: project.shootDate, time_window: null, stage_key: project.stageKey, board_revision: project.boardRevision,
+    shoot_date: project.shootDate, time_window: null, stage_key: project.stageKey, board_position: boardPosition, board_revision: project.boardRevision,
     order_no: null, order_id: null, invoice_amount: null, payment_status: null, notes: project.notes,
     production_notes: null, raw_folder_link: null, raw_folder_path: null, cover_asset_id: null, archived_at: null, archived_by: null,
     deadline_local_civil: deadline ? deadline.localCivil : null, deadline_zone: deadline ? "Australia/Sydney" : null,
@@ -325,10 +354,10 @@ function toFingerprintTable<T extends { id: string }>(rows: readonly T[], build:
 /** The recomputed source of truth `db:qa:verify` diffs the live database against — exact id sets
  * AND per-row content, for every generator-owned table including `project_members` (the build spec
  * calls this table out by name; the old `verify` never checked it at all). */
-export function buildVerificationManifest(dataset: QaFixtureDataset, opts: { createdBy: string }): VerificationManifest {
+export function buildVerificationManifest(dataset: QaFixtureDataset, opts: { createdBy: string; boardPositions: Readonly<Record<string, number>> }): VerificationManifest {
   return {
     anchor: dataset.anchor, tiers: dataset.tiers,
-    projects: toFingerprintTable(dataset.projects, projectFingerprintRow),
+    projects: toFingerprintTable(dataset.projects, (project) => projectFingerprintRow(project, opts.boardPositions)),
     subtasks: toFingerprintTable(dataset.subtasks, (s) => subtaskFingerprintRow(s, opts.createdBy)),
     collections: toFingerprintTable(dataset.collections, collectionFingerprintRow),
     deadlineOccurrences: toFingerprintTable(dataset.deadlineOccurrences, (o) => occurrenceFingerprintRow(o, opts.createdBy)),
@@ -522,6 +551,8 @@ export function buildTeardownStatements(entities: readonly FixtureEntity[], runI
   }
   for (const group of chunk([...runIds], TEARDOWN_CHUNK_SIZE)) {
     const idsSql = group.map((id) => sqlId(id, "run id")).join(", ");
+    statements.push(`DELETE FROM ${FIXTURE_BOARD_POSITIONS_TABLE} WHERE run_id IN (${idsSql}) AND ${CAPABILITY_PREDICATE};`);
+    statements.push(`DELETE FROM ${FIXTURE_RUN_RECORDS_TABLE} WHERE run_id IN (${idsSql}) AND ${CAPABILITY_PREDICATE};`);
     statements.push(`DELETE FROM ${FIXTURE_RUNS_TABLE} WHERE id IN (${idsSql}) AND ${CAPABILITY_PREDICATE};`);
   }
   return statements;

@@ -45,11 +45,13 @@ function modePlan(argv: string[]): unknown {
   const appliedAtMs = readRequiredAppliedAtMs(argv, "plan");
 
   const dataset = buildQaFixtureDataset({ anchor, tiers, appliedAtMs, defaultEditorIds });
-  return buildApplyPlan(dataset, { runId: randomUUID(), appliedAtMs, createdBy: BOOTSTRAP_ADMIN_ID });
+  return buildApplyPlan(dataset, { runId: randomUUID(), appliedAtMs, createdBy: BOOTSTRAP_ADMIN_ID, defaultEditorIds });
 }
 
 /**
- * `manifest` is the ONLY mode `db:qa:verify` calls (item 2 — verify must actually verify). Unlike
+ * `manifest` is the ONLY mode `db:qa:verify` calls (item 2 — verify must actually verify).
+ * `--default-editor-ids` and `--board-positions` are the RUN's recorded values
+ * (`FIXTURE_RUN_RECORDS_TABLE`/`FIXTURE_BOARD_POSITIONS_TABLE`), never today's state. Unlike
  * `plan`, `--applied-at-ms` here is never `Date.now()` — `cli.mjs` passes the RECORDED run's own
  * `applied_at` from `__quincy_local_fixture_runs`, so the recomputed dataset (including deadline
  * occurrence status, the one apply-time-dependent field — item 4) is byte-identical to what that
@@ -60,9 +62,12 @@ function modeManifest(argv: string[]): unknown {
   const tiers = parseTiers(readFlag(argv, "tier"));
   const defaultEditorIds = parseIdList(readFlag(argv, "default-editor-ids"));
   const appliedAtMs = readRequiredAppliedAtMs(argv, "manifest");
+  const boardPositionsRaw = readFlag(argv, "board-positions");
+  if (!boardPositionsRaw) throw new Error("--board-positions=<json> (the run's recorded board_position per project) is required for `manifest`.");
+  const boardPositions = JSON.parse(boardPositionsRaw) as Record<string, number>;
 
   const dataset = buildQaFixtureDataset({ anchor, tiers, appliedAtMs, defaultEditorIds });
-  return buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID });
+  return buildVerificationManifest(dataset, { createdBy: BOOTSTRAP_ADMIN_ID, boardPositions });
 }
 
 function modeTeardownPlan(argv: string[]): unknown {

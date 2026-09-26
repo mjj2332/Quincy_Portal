@@ -12,10 +12,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "@quincy/shared";
-import { parseArguments, wranglerArguments, DEFAULT_EDITOR_ELIGIBLE_ROLES } from "../qa-seed/cli.mjs";
+import { parseArguments, wranglerArguments, DEFAULT_EDITOR_ELIGIBLE_ROLES, UUID_RE as CLI_UUID_RE } from "../qa-seed/cli.mjs";
 import { QA_FIXTURE_CAPABILITY_SQL } from "../setup-local.mjs";
 import { anchorReferenceInstantMs, buildQaFixtureDataset } from "../qa-seed/dataset";
-import { buildApplyPlan, buildTeardownStatements, CAPABILITY_PREDICATE, type FixtureEntity } from "../qa-seed/sql";
+import { buildApplyPlan, buildTeardownStatements, CAPABILITY_PREDICATE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_RUN_RECORDS_TABLE, UUID_RE, type FixtureEntity } from "../qa-seed/sql";
 
 const qaSeedDir = fileURLToPath(new URL("../qa-seed/", import.meta.url));
 const dbPackageDir = fileURLToPath(new URL("../", import.meta.url));
@@ -211,6 +211,8 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain("__quincy_local_capability");
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain("__quincy_local_fixture_runs");
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain("__quincy_local_fixture_entities");
+    expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_RUN_RECORDS_TABLE} (`);
+    expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_BOARD_POSITIONS_TABLE} (`);
   });
 
   // Extends the check above beyond "migrations + seed": the reserved `__quincy_local_` identifiers
@@ -265,9 +267,16 @@ describe("guard: the default-editor role predicate cannot drift from the shared 
   });
 });
 
+describe("guard: cli.mjs's id check cannot drift from sql.ts's", () => {
+  it("cli.mjs's UUID_RE is the same canonical-UUID pattern sql.ts inlines ids under", () => {
+    expect(CLI_UUID_RE.source).toBe(UUID_RE.source);
+    expect(CLI_UUID_RE.flags).toBe(UUID_RE.flags);
+  });
+});
+
 describe("guard: every generated mutator statement carries the capability predicate", () => {
   const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs: APPLIED_AT_MS, defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
-  const plan = buildApplyPlan(dataset, { runId: "11111111-1111-5111-8111-111111111111", appliedAtMs: 1_700_000_000_000, createdBy: "6b851dc8-14cf-4f90-bd29-ce6c27f86385" });
+  const plan = buildApplyPlan(dataset, { runId: "11111111-1111-5111-8111-111111111111", appliedAtMs: 1_700_000_000_000, createdBy: "6b851dc8-14cf-4f90-bd29-ce6c27f86385", defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
 
   it("produces at least one statement per row kind, so this test cannot pass vacuously", () => {
     expect(plan.statements.length).toBeGreaterThan(dataset.projects.length + dataset.subtasks.length);
