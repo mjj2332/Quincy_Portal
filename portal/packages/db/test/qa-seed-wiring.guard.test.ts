@@ -12,10 +12,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECT_ASSIGNMENT_ELIGIBLE_ROLES } from "@quincy/shared";
-import { parseArguments, wranglerArguments, DEFAULT_EDITOR_ELIGIBLE_ROLES, UUID_RE as CLI_UUID_RE } from "../qa-seed/cli.mjs";
+import { parseArguments, wranglerArguments, DEFAULT_EDITOR_ELIGIBLE_ROLES, SAFE_IDENTIFIER_RE as CLI_SAFE_IDENTIFIER_RE, UUID_RE as CLI_UUID_RE } from "../qa-seed/cli.mjs";
 import { QA_FIXTURE_CAPABILITY_SQL } from "../setup-local.mjs";
 import { anchorReferenceInstantMs, buildQaFixtureDataset } from "../qa-seed/dataset";
-import { buildApplyPlan, buildTeardownStatements, CAPABILITY_PREDICATE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_RUN_RECORDS_TABLE, UUID_RE, type FixtureEntity } from "../qa-seed/sql";
+import { buildApplyPlan, CAPABILITY_PREDICATE, FIXTURE_BOARD_POSITIONS_TABLE, FIXTURE_RUN_RECORDS_TABLE, UUID_RE } from "../qa-seed/sql";
+import { FIXTURE_CLOSURE_TABLE, SAFE_IDENTIFIER_RE } from "../qa-seed/teardown-graph";
+import { freshFixtureDatabase, liveTeardownPlan } from "./qa-seed-sqlite-executor";
 
 const qaSeedDir = fileURLToPath(new URL("../qa-seed/", import.meta.url));
 const dbPackageDir = fileURLToPath(new URL("../", import.meta.url));
@@ -213,6 +215,7 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain("__quincy_local_fixture_entities");
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_RUN_RECORDS_TABLE} (`);
     expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_BOARD_POSITIONS_TABLE} (`);
+    expect(QA_FIXTURE_CAPABILITY_SQL).toContain(`CREATE TABLE IF NOT EXISTS ${FIXTURE_CLOSURE_TABLE} (`);
   });
 
   // Extends the check above beyond "migrations + seed": the reserved `__quincy_local_` identifiers
@@ -272,6 +275,11 @@ describe("guard: cli.mjs's id check cannot drift from sql.ts's", () => {
     expect(CLI_UUID_RE.source).toBe(UUID_RE.source);
     expect(CLI_UUID_RE.flags).toBe(UUID_RE.flags);
   });
+
+  it("cli.mjs's SAFE_IDENTIFIER_RE is the same pattern teardown-graph.ts validates introspected identifiers under", () => {
+    expect(CLI_SAFE_IDENTIFIER_RE.source).toBe(SAFE_IDENTIFIER_RE.source);
+    expect(CLI_SAFE_IDENTIFIER_RE.flags).toBe(SAFE_IDENTIFIER_RE.flags);
+  });
 });
 
 describe("guard: every generated mutator statement carries the capability predicate", () => {
@@ -286,21 +294,25 @@ describe("guard: every generated mutator statement carries the capability predic
     for (const statement of plan.statements) expect(statement).toContain(CAPABILITY_PREDICATE);
   });
 
+  // The teardown plan is derived from the live FK graph (`teardown-graph.ts`); built here exactly as
+  // cli.mjs builds it — its own introspection SQL against a database made from the real migrations.
+  const liveDb = freshFixtureDatabase();
+  const teardownPlan = liveTeardownPlan(liveDb, [plan.runId]).plan;
+  liveDb.close();
+  const teardownMutators = [...teardownPlan.captureRootStatements, ...teardownPlan.captureRoundStatements, ...teardownPlan.deleteStatements, ...teardownPlan.registryStatements];
+
   it("guards every teardown statement", () => {
-    const entities: FixtureEntity[] = plan.entities;
-    const teardown = buildTeardownStatements(entities, [plan.runId]);
-    expect(teardown.length).toBeGreaterThan(0);
-    for (const statement of teardown) expect(statement).toContain(CAPABILITY_PREDICATE);
+    expect(teardownMutators.length).toBeGreaterThan(0);
+    for (const statement of teardownMutators) expect(statement).toContain(CAPABILITY_PREDICATE);
   });
 
   it("never touches project_board_order_0037_rollback", () => {
     for (const statement of plan.statements) expect(statement).not.toContain("project_board_order_0037_rollback");
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    for (const statement of teardown) expect(statement).not.toContain("project_board_order_0037_rollback");
+    for (const statement of teardownMutators) expect(statement).not.toContain("project_board_order_0037_rollback");
   });
 
   it("never emits a bare wrangler invocation string (no `wrangler d1 execute --remote`) anywhere in generated SQL", () => {
-    for (const statement of [...plan.statements, ...buildTeardownStatements(plan.entities, [plan.runId])]) {
+    for (const statement of [...plan.statements, ...teardownMutators, ...teardownPlan.sweepQueries, ...teardownPlan.remainingQueries]) {
       expect(statement).not.toContain("--remote");
     }
   });

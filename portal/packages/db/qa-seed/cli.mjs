@@ -196,7 +196,7 @@ function applyStatements(options, statements, label) {
  * them (`CREATE TABLE IF NOT EXISTS`, so re-running it upgrades an older local database). */
 const RESERVED_TABLES = [
   "__quincy_local_capability", "__quincy_local_fixture_runs", "__quincy_local_fixture_entities",
-  "__quincy_local_fixture_run_records", "__quincy_local_fixture_board_positions",
+  "__quincy_local_fixture_run_records", "__quincy_local_fixture_board_positions", "__quincy_local_fixture_closure",
 ];
 
 export function assertCapabilityPresent(executor) {
@@ -220,35 +220,30 @@ function assertApplyPrerequisites(executor) {
 
 // ---------------------------------------------------------------------------
 // Teardown-first — every `apply` begins here too, so re-running never doubles up.
+//
+// Graph-driven teardown (Sol round 2, findings 1-3). The live database's own FK graph — not a hand
+// list of tables — decides what a fixture's descendants are. This file only introspects and runs;
+// every statement comes from `teardown-graph.ts` (via `emit.ts teardown-plan`), which is pure.
+//
+//   1. Introspect: every table and its columns, every FK, in TWO queries using the table-valued
+//      `pragma_table_list` / `pragma_table_info` / `pragma_foreign_key_list` functions rather than one
+//      `PRAGMA ...(<t>)` per table (~120 wrangler spawns). `sqlite_%`, wrangler's `_cf_%` (whose
+//      `table_info` is `SQLITE_AUTH`-denied — the WHERE filter keeps the pragma from ever being
+//      evaluated for it), this fixture's reserved tables and D1's `d1_migrations` are filtered here;
+//      `teardown-graph.ts` excludes them again, plus `project_board_order_0037_rollback`, and
+//      validates every identifier before interpolating it.
+//   2. Capture the full descendant closure BEFORE deleting anything — roots from the registry, then
+//      one round of edge captures after another until a round adds nothing.
+//   3. Abort if the closure reached a `projects` row that is not a registered fixture project.
+//   4. Delete, children first. 5. Assert every captured row is gone and no column that can hold a
+//      captured id still does. 6. Only then empty the registry.
 // ---------------------------------------------------------------------------
 
-function readRegistry(executor) {
-  const entityRows = executor.query("SELECT id, kind FROM __quincy_local_fixture_entities;");
-  const runRows = executor.query("SELECT id FROM __quincy_local_fixture_runs;");
-  return { entities: entityRows.map((r) => ({ id: r.id, kind: r.kind })), runIds: runRows.map((r) => r.id) };
-}
-
-// ---------------------------------------------------------------------------
-// Rot-proof sweep (build spec item 1) — run AFTER teardown's own deletes, against ids captured
-// BEFORE teardown emptied the registry. Introspects the live schema itself
-// (`sqlite_master`/`PRAGMA table_info`/`PRAGMA foreign_key_list`) rather than a hand list, so a
-// table added by a future migration that carries a `project_id` column or an FK to
-// `projects`/`project_subtasks`/`collections` is swept automatically the first time this runs
-// against it, not the first time it silently leaks a fixture row. `audit_log` and
-// `notification_delivery_ledger`-via-`notification_outbox` (in practice: plain
-// `notification_outbox.project_id`, which the generic column scan below already finds) are named
-// explicitly in the build spec because `audit_log.target_id` has no FK at all — introspection alone
-// can never discover it — so it is swept by name, the same way `sql.ts`'s teardown deletes it.
-// ---------------------------------------------------------------------------
-
-const SWEEP_IGNORED_TABLES = new Set([
-  "__quincy_local_capability", "__quincy_local_fixture_runs", "__quincy_local_fixture_entities",
-  "project_board_order_0037_rollback", // the migration's own historical snapshot, not the live board contract
-]);
 const SAFE_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Same canonical-UUID shape `sql.ts`'s `UUID_RE` enforces on every id it inlines;
  * `qa-seed-wiring.guard.test.ts` cross-checks the two literals. */
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+export { SAFE_IDENTIFIER_RE };
 
 function assertSafeIdentifier(name, describe) {
   if (!SAFE_IDENTIFIER_RE.test(String(name))) {
@@ -257,79 +252,36 @@ function assertSafeIdentifier(name, describe) {
   return name;
 }
 
-/** Every table (other than the ignored/capability ones) with a plain `project_id` column, or —
- * failing that — an FK to `projects`, `project_subtasks`, or `collections`, paired with the
- * registry id-kind its matching column should be checked against. */
-function discoverSweepTargets(executor) {
-  // `sqlite_%` is SQLite's own reserved prefix; `_cf_%` is wrangler/Miniflare's local D1 bookkeeping
-  // (e.g. `_cf_METADATA`) — real, not app schema, and `PRAGMA table_info` on it comes back
-  // `SQLITE_AUTH: not authorized` rather than a normal result, discovered by running this against a
-  // real local D1 (a `sqlite_%`-only filter let it through and crashed the sweep outright).
-  const tableRows = executor.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\';");
-  const targets = [];
-  for (const row of tableRows) {
-    const table = assertSafeIdentifier(row.name, "table name");
-    if (SWEEP_IGNORED_TABLES.has(table)) continue;
-    const columns = executor.query(`PRAGMA table_info(${table});`).map((c) => c.name);
-    if (columns.includes("project_id")) {
-      targets.push({ table, column: "project_id", registryKind: "project" });
-      continue;
-    }
-    const fks = executor.query(`PRAGMA foreign_key_list(${table});`);
-    const fkTo = (parent) => fks.find((fk) => fk.table === parent);
-    const projectsFk = fkTo("projects");
-    const subtaskFk = fkTo("project_subtasks");
-    const collectionFk = fkTo("collections");
-    if (projectsFk) targets.push({ table, column: assertSafeIdentifier(projectsFk.from, "FK column"), registryKind: "project" });
-    else if (subtaskFk) targets.push({ table, column: assertSafeIdentifier(subtaskFk.from, "FK column"), registryKind: "subtask" });
-    else if (collectionFk) targets.push({ table, column: assertSafeIdentifier(collectionFk.from, "FK column"), registryKind: "collection" });
+const INTROSPECTION_TABLE_FILTER = (column) =>
+  `${column} NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND ${column} NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND ${column} NOT LIKE '\\_\\_quincy\\_local\\_%' ESCAPE '\\' AND ${column} != 'd1_migrations'`;
+
+export const INTROSPECT_TABLES_SQL =
+  "SELECT t.name AS name, t.wr AS without_rowid, (SELECT group_concat(c.name, ',') FROM pragma_table_info(t.name) c) AS columns " +
+  `FROM pragma_table_list t WHERE t.schema = 'main' AND t.type = 'table' AND ${INTROSPECTION_TABLE_FILTER("t.name")} ORDER BY t.name;`;
+
+export const INTROSPECT_FOREIGN_KEYS_SQL =
+  'SELECT m.name AS "table", f.id AS id, f.seq AS seq, f."from" AS "from", f."table" AS parent, f."to" AS "to", f.on_delete AS on_delete ' +
+  `FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f WHERE m.type = 'table' AND ${INTROSPECTION_TABLE_FILTER("m.name")} ORDER BY m.name, f.id, f.seq;`;
+
+/** A generous ceiling on fixed-point rounds: each round captures at least one more row or the loop
+ * stops, so hitting this means something is wrong, not that the fixture is deep. */
+const MAX_CAPTURE_ROUNDS = 256;
+
+function readRegistry(executor) {
+  const entityRows = executor.query("SELECT id, kind FROM __quincy_local_fixture_entities;");
+  const runRows = executor.query("SELECT id FROM __quincy_local_fixture_runs;");
+  for (const row of runRows) {
+    if (!UUID_RE.test(String(row.id))) throw new Error(`Refusing a non-canonical run id from the registry: ${JSON.stringify(row.id)}`);
   }
-  return targets;
+  return { entities: entityRows.map((r) => ({ id: r.id, kind: r.kind })), runIds: runRows.map((r) => r.id) };
 }
 
-function countMatchesChunked(executor, table, column, ids) {
-  let total = 0;
-  for (const group of chunk(ids, 400)) {
-    if (group.length === 0) continue;
-    const idList = group.map((id) => `'${id}'`).join(", ");
-    const row = queryScalar(executor, `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} IN (${idList});`);
-    total += Number(row?.n ?? 0);
-  }
-  return total;
+function closureCount(executor, plan) {
+  return Number(queryScalar(executor, plan.closureCountQuery)?.n ?? 0);
 }
 
-function countTypedMatchesChunked(executor, table, typeColumn, typeValue, idColumn, ids) {
-  let total = 0;
-  for (const group of chunk(ids, 400)) {
-    if (group.length === 0) continue;
-    const idList = group.map((id) => `'${id}'`).join(", ");
-    const row = queryScalar(executor, `SELECT COUNT(*) AS n FROM ${table} WHERE ${typeColumn} = '${typeValue}' AND ${idColumn} IN (${idList});`);
-    total += Number(row?.n ?? 0);
-  }
-  return total;
-}
-
-/** `registeredByKind` must be captured BEFORE teardown's own deletes ran — by the time this
- * function is called the registry itself is already empty. Fails loudly, naming every offending
- * table, rather than passing silently on "found nothing to check". */
-function sweepForOrphans(executor, registeredByKind) {
-  const failures = [];
-  for (const { table, column, registryKind } of discoverSweepTargets(executor)) {
-    const ids = registeredByKind[registryKind] ?? [];
-    if (ids.length === 0) continue;
-    const n = countMatchesChunked(executor, table, column, ids);
-    if (n > 0) failures.push(`${table}.${column}: ${n} row(s) still reference a torn-down ${registryKind} id`);
-  }
-  // `audit_log` has no FK at all (`target_id` is untyped text) — PRAGMA foreign_key_list can never
-  // discover it, so it is checked by name against both target types the app actually writes.
-  const projectIds = registeredByKind.project ?? [];
-  const subtaskIds = registeredByKind.subtask ?? [];
-  let auditOrphans = 0;
-  if (projectIds.length > 0) auditOrphans += countTypedMatchesChunked(executor, "audit_log", "target_type", "project", "target_id", projectIds);
-  if (subtaskIds.length > 0) auditOrphans += countTypedMatchesChunked(executor, "audit_log", "target_type", "project_subtask", "target_id", subtaskIds);
-  if (auditOrphans > 0) failures.push(`audit_log.target_id: ${auditOrphans} row(s) still reference a torn-down project/project_subtask id`);
-
-  if (failures.length > 0) throw new Error(`Rot-proof sweep found orphaned rows after teardown:\n  - ${failures.join("\n  - ")}`);
+function nonZeroCounts(executor, queries) {
+  return queries.flatMap((sql) => executor.query(sql)).filter((row) => Number(row.n) !== 0);
 }
 
 export function teardown(executor) {
@@ -339,25 +291,61 @@ export function teardown(executor) {
     return;
   }
   console.log(`==> Tearing down ${registry.entities.length} registered fixture rows across ${registry.runIds.length} run(s)`);
-  const registeredByKind = { project: [], subtask: [], collection: [], deadline_occurrence: [], member: [] };
-  for (const entity of registry.entities) (registeredByKind[entity.kind] ??= []).push(entity.id);
 
-  const { statements } = executor.emit("teardown-plan", [`--entities=${JSON.stringify(registry.entities)}`, `--run-ids=${JSON.stringify(registry.runIds)}`]);
-  executor.run(statements, "teardown");
+  console.log("==> Introspecting the live foreign-key graph");
+  const tables = executor.query(INTROSPECT_TABLES_SQL);
+  const foreignKeys = executor.query(INTROSPECT_FOREIGN_KEYS_SQL);
+  const plan = executor.emit("teardown-plan", [
+    `--tables=${JSON.stringify(tables)}`, `--foreign-keys=${JSON.stringify(foreignKeys)}`, `--run-ids=${JSON.stringify(registry.runIds)}`,
+  ]);
+  console.log(`==> Graph: ${tables.length} tables, ${foreignKeys.length} FK columns; ${plan.deleteOrder.length} tables reachable from the fixture roots`);
 
-  const remainingEntities = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities;");
-  const remainingRuns = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_runs;");
-  const remainingProjects = queryScalar(executor, "SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1%';");
-  if (Number(remainingEntities?.n) !== 0 || Number(remainingRuns?.n) !== 0 || Number(remainingProjects?.n) !== 0) {
+  // Capture the whole descendant closure before deleting anything.
+  executor.run(plan.captureRootStatements, "teardown-capture-roots");
+  let captured = closureCount(executor, plan);
+  let rounds = 0;
+  for (;;) {
+    rounds += 1;
+    if (rounds > MAX_CAPTURE_ROUNDS) throw new Error(`Closure capture did not reach a fixed point within ${MAX_CAPTURE_ROUNDS} rounds (${captured} rows so far). Nothing has been deleted.`);
+    executor.run(plan.captureRoundStatements, `teardown-capture-${rounds}`);
+    const next = closureCount(executor, plan);
+    if (next === captured) break;
+    captured = next;
+  }
+  const capturedByTable = executor.query(plan.capturedCountsQuery);
+  console.log(`==> Captured ${captured} rows in ${rounds} round(s): ${capturedByTable.map((r) => `${r.label}=${r.n}`).join(", ")}`);
+
+  const overCaptured = executor.query(plan.overCaptureQuery).map((r) => r.id);
+  if (overCaptured.length > 0) {
     throw new Error(
-      `Teardown did not reach zero: ${remainingEntities?.n} registered entities, ${remainingRuns?.n} runs, ` +
-        `${remainingProjects?.n} sentinel-tagged projects remain.`,
+      `Refusing to tear down: the closure reached ${overCaptured.length} project(s) that are NOT registered fixture projects ` +
+        `(${overCaptured.slice(0, 10).join(", ")}) — a non-fixture project references a fixture row through ${plan.edgesIntoProjects.join(" or ") || "an edge into projects"}. ` +
+        "Nothing has been deleted. Clear that reference by hand, then re-run teardown.",
     );
   }
 
-  console.log("==> Running the rot-proof sweep (schema introspection, not a hand list)");
-  sweepForOrphans(executor, registeredByKind);
-  console.log("==> Teardown verified: zero registered fixture rows, zero sentinel-tagged projects remain, sweep clean.");
+  executor.run(plan.deleteStatements, "teardown-delete");
+
+  const remaining = nonZeroCounts(executor, plan.remainingQueries);
+  if (remaining.length > 0) throw new Error(`Teardown left captured rows in place:\n  - ${remaining.map((r) => `${r.label}: ${r.n} row(s)`).join("\n  - ")}`);
+  console.log("==> Sweeping every column that can hold a captured id (FK edges + the no-FK list)");
+  const orphans = nonZeroCounts(executor, plan.sweepQueries);
+  if (orphans.length > 0) {
+    throw new Error(`Sweep found rows still referencing a torn-down fixture id after teardown (registry left in place for inspection):\n  - ${orphans.map((r) => `${r.label}: ${r.n} row(s)`).join("\n  - ")}`);
+  }
+
+  executor.run(plan.registryStatements, "teardown-registry");
+  const remainingEntities = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_entities;");
+  const remainingRuns = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_runs;");
+  const remainingClosure = queryScalar(executor, "SELECT COUNT(*) AS n FROM __quincy_local_fixture_closure;");
+  const remainingProjects = queryScalar(executor, "SELECT COUNT(*) AS n FROM projects WHERE notes LIKE 'QA-FIXTURE-v1%';");
+  if (Number(remainingEntities?.n) !== 0 || Number(remainingRuns?.n) !== 0 || Number(remainingClosure?.n) !== 0 || Number(remainingProjects?.n) !== 0) {
+    throw new Error(
+      `Teardown did not reach zero: ${remainingEntities?.n} registered entities, ${remainingRuns?.n} runs, ${remainingClosure?.n} closure rows, ` +
+        `${remainingProjects?.n} sentinel-tagged projects remain.`,
+    );
+  }
+  console.log(`==> Teardown verified: ${captured} captured rows deleted, zero registered fixture rows, zero sentinel-tagged projects, sweep clean.`);
 }
 
 // ---------------------------------------------------------------------------

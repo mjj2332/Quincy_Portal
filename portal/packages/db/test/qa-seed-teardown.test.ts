@@ -1,23 +1,23 @@
 /**
- * QA scheduling fixture — teardown schema inventory (#220 follow-on, Sol round 1 fix item 1). This
- * is the mirror image of `qa-seed-wiring.guard.test.ts`'s capability-predicate check: instead of
- * proving every generated mutator is guarded, this proves the *deletion manifest is complete* —
- * every drizzle table carrying a plain `project_id` column IS in `TEARDOWN_TABLES`, full stop.
+ * QA scheduling fixture — teardown coverage (#220 follow-on; Sol round 1 item 1, re-based onto the
+ * graph-driven teardown in Sol round 2). Teardown no longer carries a table list at all: its plan is
+ * derived from the LIVE foreign-key graph (`qa-seed/teardown-graph.ts`). These assertions are the
+ * round-1 manifest assertions carried over one-for-one onto that plan, built here exactly the way
+ * `cli.mjs` builds it — its own introspection SQL, run against a `node:sqlite` database made from the
+ * real migrations — so "is this table covered, in the right order" is a question about the real
+ * schema, not about a list someone remembered to update.
  *
- * The old version let a table off the hook if "the dataset generator itself never inserts a row
- * there" — but the fixture exists so the APP can be exercised against it (#221's drag-to-reschedule,
- * checklist edits, comments), and the app's own write paths reach `audit_log`, `notification_outbox`,
- * `notification_delivery_ledger`, `jobs`, comments/mentions/read-markers, activity events, and
- * notifications against a fixture project — none of which the generator's own SQL ever touches.
- * "The generator doesn't write it" is no longer an acceptable exemption from being in the manifest.
- * Hand lists rot; this reads `schema.ts` itself so a new project-scoped table added in a future
- * migration fails this test the first time it is added, not the first time teardown silently leaks
- * a row.
+ * One round-1 assertion is deliberately INVERTED, not dropped: `audit_log` used to be asserted to be
+ * deleted by typed target (`target_type IN ('project', 'project_subtask')`). That typing was Sol
+ * round 2's finding 2 — the app also audits comments, members, assets and more against fixture
+ * rows — so it is now asserted to match ANY captured id, whatever the target_type.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { anchorReferenceInstantMs, buildQaFixtureDataset } from "../qa-seed/dataset";
-import { buildApplyPlan, buildTeardownStatements, TEARDOWN_TABLES } from "../qa-seed/sql";
+import { buildApplyPlan, CAPABILITY_PREDICATE, FIXTURE_ENTITIES_TABLE } from "../qa-seed/sql";
+import { buildTeardownGraph, FIXTURE_CLOSURE_TABLE, GRAPH_EXCLUDED_TABLES } from "../qa-seed/teardown-graph";
+import { freshFixtureDatabase, liveTeardownPlan } from "./qa-seed-sqlite-executor";
 
 const schemaSource = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
 
@@ -44,11 +44,20 @@ function tablesWithProjectIdColumn(source: string): string[] {
 
 const ANCHOR = "2026-09-21";
 const APPLIED_AT_MS = anchorReferenceInstantMs(ANCHOR);
+const RUN_ID = "22222222-2222-5222-8222-222222222222";
 
 // A non-empty defaultEditorIds so project_members rows actually exist to check below — an empty
 // list would make "never writes project_members" trivially true for the wrong reason.
 const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs: APPLIED_AT_MS, defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
-const plan = buildApplyPlan(dataset, { runId: "22222222-2222-5222-8222-222222222222", appliedAtMs: 1_700_000_000_000, createdBy: "6b851dc8-14cf-4f90-bd29-ce6c27f86385", defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
+const plan = buildApplyPlan(dataset, { runId: RUN_ID, appliedAtMs: 1_700_000_000_000, createdBy: "6b851dc8-14cf-4f90-bd29-ce6c27f86385", defaultEditorIds: ["6b851dc8-14cf-4f90-bd29-ce6c27f86385"] });
+
+const db = freshFixtureDatabase();
+const live = liveTeardownPlan(db, [RUN_ID]);
+db.close();
+const teardownPlan = live.plan;
+const deleteOrder = teardownPlan.deleteOrder;
+const mutators = [...teardownPlan.captureRootStatements, ...teardownPlan.captureRoundStatements, ...teardownPlan.deleteStatements, ...teardownPlan.registryStatements];
+const allStatements = [...mutators, ...teardownPlan.remainingQueries, ...teardownPlan.sweepQueries, teardownPlan.closureCountQuery, teardownPlan.capturedCountsQuery, teardownPlan.overCaptureQuery];
 
 function tablesWrittenByPlan(statements: readonly string[]): Set<string> {
   const written = new Set<string>();
@@ -61,7 +70,15 @@ function tablesWrittenByPlan(statements: readonly string[]): Set<string> {
   return written;
 }
 
-describe("guard: the teardown manifest covers every table with a plain project_id column — no exemptions", () => {
+const deleteStatementFor = (table: string) => teardownPlan.deleteStatements.filter((s) => s.startsWith(`DELETE FROM ${table} `));
+const captureStatementsFor = (table: string) => teardownPlan.captureRoundStatements.filter((s) => s.includes(`\nSELECT '${table}', `));
+const before = (child: string, parent: string) => {
+  expect(deleteOrder.indexOf(child), `${child} is deleted`).toBeGreaterThanOrEqual(0);
+  expect(deleteOrder.indexOf(parent), `${parent} is deleted`).toBeGreaterThanOrEqual(0);
+  expect(deleteOrder.indexOf(child), `${child} before ${parent}`).toBeLessThan(deleteOrder.indexOf(parent));
+};
+
+describe("guard: the graph teardown covers every table with a plain project_id column — no exemptions", () => {
   const projectIdTables = tablesWithProjectIdColumn(schemaSource);
   const written = tablesWrittenByPlan(plan.statements);
 
@@ -69,38 +86,49 @@ describe("guard: the teardown manifest covers every table with a plain project_i
     expect(projectIdTables.length).toBeGreaterThan(15);
   });
 
-  it.each(projectIdTables)("%s is in the deletion manifest — 'the generator doesn't write it' is not an exemption", (table) => {
-    expect(TEARDOWN_TABLES).toContain(table);
+  it.each(projectIdTables)("%s is reachable from the fixture roots and in the delete order — 'the generator doesn't write it' is not an exemption", (table) => {
+    expect(deleteOrder).toContain(table);
   });
 
-  it("the five tables the generator's own SQL actually inserts into are all in the manifest too", () => {
-    for (const table of written) expect(TEARDOWN_TABLES).toContain(table);
+  it("the five tables the generator's own SQL actually inserts into are all in the delete order too", () => {
+    expect(written.size).toBe(5);
+    for (const table of written) expect(deleteOrder).toContain(table);
   });
 
   it("never touches project_board_order_0037_rollback — the migration's rollback snapshot, not the live board contract", () => {
+    expect(GRAPH_EXCLUDED_TABLES).toContain("project_board_order_0037_rollback");
     expect(written.has("project_board_order_0037_rollback")).toBe(false);
-    expect(TEARDOWN_TABLES).not.toContain("project_board_order_0037_rollback");
+    expect(live.tables.some((t) => t.name === "project_board_order_0037_rollback")).toBe(true); // it IS in the live schema…
+    expect(live.graph.involved).not.toContain("project_board_order_0037_rollback"); // …and still excluded
+    for (const statement of allStatements) expect(statement).not.toContain("project_board_order_0037_rollback");
+  });
+
+  it("stays excluded even if it had an FK edge into projects — excluded by name, not by happening to have no edges", () => {
+    const withEdge = [...live.foreignKeys, { table: "project_board_order_0037_rollback", id: 0, seq: 0, from: "project_id", parent: "projects", to: "id", on_delete: "CASCADE" }];
+    const tables = live.tables.map((t) => (t.name === "project_board_order_0037_rollback" && !t.columns.split(",").includes("project_id") ? { ...t, columns: `${t.columns},project_id` } : t));
+    const graph = buildTeardownGraph(tables, withEdge);
+    expect(graph.involved).not.toContain("project_board_order_0037_rollback");
+    expect(graph.deleteOrder).not.toContain("project_board_order_0037_rollback");
   });
 
   it("deletes projects itself, last of all", () => {
-    expect(TEARDOWN_TABLES.at(-1)).toBe("projects");
+    expect(deleteOrder.at(-1)).toBe("projects");
   });
 
-  it("produces at least one non-empty DELETE statement per table in the manifest, given a non-empty registered project set", () => {
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    for (const table of TEARDOWN_TABLES) {
-      expect(teardown.some((statement) => statement.includes(`DELETE FROM ${table} `) || statement.includes(`DELETE FROM ${table}\n`))).toBe(true);
-    }
+  it("produces exactly one DELETE statement per table in the delete order", () => {
+    for (const table of deleteOrder) expect(deleteStatementFor(table)).toHaveLength(1);
   });
 });
 
-describe("guard: the app-written surface (no registry id of its own) is torn down by project/subtask id, not by the generator's own inserts", () => {
+describe("guard: the app-written surface (no registry id of its own) is captured through the graph from registered ids", () => {
   const APP_WRITTEN_NOT_GENERATOR_WRITTEN = [
     "notification_delivery_ledger", "notification_outbox", "project_comment_mentions", "project_comment_read_markers",
     "project_comments", "project_activity_events", "notifications", "audit_log", "jobs",
     "autohdr_path_claims", "autohdr_fetch_claims", "raw_reconciliation_claims", "autohdr_output_mappings",
     "autohdr_scaffold_claims", "autohdr_handoffs", "editor_folder_mappings", "publishes", "client_links",
     "document_uploads", "download_selection_tickets", "external_edited_upload_sessions",
+    // Sol round 2: the three the round-1 hand list missed.
+    "edited_source_claims", "rendition_dlq_events", "assets",
   ];
 
   it("the generator's own plan never INSERTs into any of these — they are purely app-written", () => {
@@ -108,80 +136,86 @@ describe("guard: the app-written surface (no registry id of its own) is torn dow
     for (const table of APP_WRITTEN_NOT_GENERATOR_WRITTEN) expect(written.has(table)).toBe(false);
   });
 
-  it("every one of them is still in TEARDOWN_TABLES", () => {
-    for (const table of APP_WRITTEN_NOT_GENERATOR_WRITTEN) expect(TEARDOWN_TABLES).toContain(table);
+  it("every one of them is in the delete order", () => {
+    for (const table of APP_WRITTEN_NOT_GENERATOR_WRITTEN) expect(deleteOrder).toContain(table);
   });
 
-  it("every one of them gets a real DELETE statement keyed by registered project (or subtask) ids, given a non-empty registered set", () => {
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
+  it("every one of them has a capture statement and a DELETE keyed by the captured closure — never by LIKE/street", () => {
     for (const table of APP_WRITTEN_NOT_GENERATOR_WRITTEN) {
-      const statementsForTable = teardown.filter((s) => s.startsWith(`DELETE FROM ${table} `));
-      expect(statementsForTable.length).toBeGreaterThan(0);
-      // Keyed only by registered ids (never LIKE/street) — the combined text for this table must
-      // reference at least one real registered project id (or, for audit_log, a subtask id too).
-      const combined = statementsForTable.join("\n");
-      const referencesRegisteredProject = dataset.projects.some((project) => combined.includes(project.id));
-      const referencesRegisteredSubtask = table === "audit_log" && dataset.subtasks.some((subtask) => combined.includes(subtask.id));
-      expect(referencesRegisteredProject || referencesRegisteredSubtask).toBe(true);
+      expect(captureStatementsFor(table).length, `${table} captured`).toBeGreaterThan(0);
+      expect(deleteStatementFor(table)[0]).toContain(FIXTURE_CLOSURE_TABLE);
     }
+    for (const statement of mutators) {
+      expect(statement).not.toMatch(/\bLIKE\b/);
+      expect(statement).not.toContain("street");
+    }
+  });
+
+  it("the closure's roots are exactly the registered ids, by kind", () => {
+    const roots = teardownPlan.captureRootStatements.filter((s) => s.startsWith("INSERT"));
+    expect(roots).toHaveLength(5);
+    for (const statement of roots) expect(statement).toContain(`IN (SELECT id FROM ${FIXTURE_ENTITIES_TABLE} WHERE kind = '`);
   });
 });
 
-describe("guard: the three no-plain-FK traps are handled by name, not left to introspection alone", () => {
-  it("notification_delivery_ledger is deleted via the outbox rows' own project_id, before notification_outbox", () => {
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    const ledgerIndex = teardown.findIndex((s) => s.startsWith("DELETE FROM notification_delivery_ledger"));
-    const outboxIndex = teardown.findIndex((s) => s.startsWith("DELETE FROM notification_outbox"));
-    expect(ledgerIndex).toBeGreaterThanOrEqual(0);
-    expect(outboxIndex).toBeGreaterThanOrEqual(0);
-    expect(ledgerIndex).toBeLessThan(outboxIndex);
-    expect(teardown[ledgerIndex]).toContain("SELECT id FROM notification_outbox WHERE project_id IN");
+describe("guard: the no-plain-FK traps are ordered and captured by the graph, not by name", () => {
+  it("notification_delivery_ledger is captured via its outbox_id FK and deleted before notification_outbox", () => {
+    before("notification_delivery_ledger", "notification_outbox");
+    expect(captureStatementsFor("notification_delivery_ledger").some((s) => s.includes("notification_delivery_ledger.outbox_id IN (") && s.includes("table_name = 'notification_outbox'"))).toBe(true);
   });
 
-  it("project_comment_mentions is deleted via the comment rows' own project_id, before project_comments", () => {
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    const mentionsIndex = teardown.findIndex((s) => s.startsWith("DELETE FROM project_comment_mentions"));
-    const commentsIndex = teardown.findIndex((s) => s.startsWith("DELETE FROM project_comments "));
-    expect(mentionsIndex).toBeGreaterThanOrEqual(0);
-    expect(commentsIndex).toBeGreaterThanOrEqual(0);
-    expect(mentionsIndex).toBeLessThan(commentsIndex);
-    expect(teardown[mentionsIndex]).toContain("SELECT id FROM project_comments WHERE project_id IN");
+  it("notification_outbox (no FK at all) is captured via the no-FK list's project_id edge", () => {
+    expect(captureStatementsFor("notification_outbox").some((s) => s.includes("notification_outbox.project_id IN (") && s.includes("table_name = 'projects'"))).toBe(true);
   });
 
-  it("audit_log is deleted by typed target (target_type/target_id), scoped to both project and project_subtask targets", () => {
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    const auditStatements = teardown.filter((s) => s.startsWith("DELETE FROM audit_log"));
-    expect(auditStatements.some((s) => s.includes("target_type = 'project' "))).toBe(true);
-    expect(auditStatements.some((s) => s.includes("target_type = 'project_subtask' "))).toBe(true);
+  it("project_comment_mentions is captured via its comment_id FK and deleted before project_comments", () => {
+    before("project_comment_mentions", "project_comments");
+    expect(captureStatementsFor("project_comment_mentions").some((s) => s.includes("project_comment_mentions.comment_id IN (") && s.includes("table_name = 'project_comments'"))).toBe(true);
+  });
+
+  it("INVERTED from round 1: audit_log matches ANY captured id, whatever its target_type (Sol round 2, finding 2)", () => {
+    const audit = captureStatementsFor("audit_log");
+    expect(audit.some((s) => s.includes("audit_log.target_id IN (") && s.includes("WHERE entity_id IS NOT NULL)"))).toBe(true);
+    for (const statement of [...audit, ...deleteStatementFor("audit_log")]) expect(statement).not.toContain("target_type");
+  });
+
+  it("rendition_dlq_events (no FK) is captured via asset_id -> assets (Sol round 2, finding 3)", () => {
+    expect(captureStatementsFor("rendition_dlq_events").some((s) => s.includes("rendition_dlq_events.asset_id IN (") && s.includes("table_name = 'assets'"))).toBe(true);
+  });
+
+  it("edited_source_claims (RESTRICT to assets and autohdr_handoffs) is deleted before both (Sol round 2, finding 1)", () => {
+    before("edited_source_claims", "assets");
+    before("edited_source_claims", "autohdr_handoffs");
   });
 
   it("job-owning claim rows (autohdr_handoffs, autohdr_fetch_claims, raw_reconciliation_claims) are deleted before jobs", () => {
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    const jobsIndex = teardown.findIndex((s) => s.startsWith("DELETE FROM jobs "));
-    expect(jobsIndex).toBeGreaterThanOrEqual(0);
-    for (const claimTable of ["autohdr_handoffs", "autohdr_fetch_claims", "raw_reconciliation_claims"]) {
-      const claimIndex = teardown.findIndex((s) => s.startsWith(`DELETE FROM ${claimTable} `));
-      expect(claimIndex).toBeGreaterThanOrEqual(0);
-      expect(claimIndex).toBeLessThan(jobsIndex);
-    }
+    for (const claimTable of ["autohdr_handoffs", "autohdr_fetch_claims", "raw_reconciliation_claims"]) before(claimTable, "jobs");
   });
 
   it("deletes project_deadline_occurrences before projects (cascade FK, but explicit anyway)", () => {
-    expect(TEARDOWN_TABLES.indexOf("project_deadline_occurrences")).toBeLessThan(TEARDOWN_TABLES.indexOf("projects"));
+    before("project_deadline_occurrences", "projects");
   });
 
   it("document_uploads and external_edited_upload_sessions (both FK to collections too) are deleted before collections", () => {
-    for (const table of ["document_uploads", "external_edited_upload_sessions"]) {
-      expect(TEARDOWN_TABLES.indexOf(table)).toBeLessThan(TEARDOWN_TABLES.indexOf("collections"));
+    for (const table of ["document_uploads", "external_edited_upload_sessions"]) before(table, "collections");
+  });
+
+  it("every FK edge among involved tables is respected by the delete order (children first)", () => {
+    for (const edge of live.graph.edges) {
+      if (edge.kind !== "fk" || edge.child === edge.parent) continue;
+      before(edge.child, edge.parent);
     }
   });
 });
 
 describe("guard: every teardown statement still carries the capability predicate, even the new ones", () => {
-  it("every statement produced for a non-empty registered project set contains the capability predicate", async () => {
-    const { CAPABILITY_PREDICATE } = await import("../qa-seed/sql");
-    const teardown = buildTeardownStatements(plan.entities, [plan.runId]);
-    expect(teardown.length).toBeGreaterThan(0);
-    for (const statement of teardown) expect(statement).toContain(CAPABILITY_PREDICATE);
+  it("every mutator statement in the graph plan contains the capability predicate", () => {
+    expect(mutators.length).toBeGreaterThan(deleteOrder.length);
+    for (const statement of mutators) expect(statement).toContain(CAPABILITY_PREDICATE);
+  });
+
+  it("the only literal ids any teardown statement inlines are canonical-UUID run ids", () => {
+    const quotedUuids = mutators.flatMap((s) => [...s.matchAll(/'([0-9a-f]{8}-[0-9a-f-]{27})'/g)].map((m) => m[1]!));
+    expect(new Set(quotedUuids)).toEqual(new Set([RUN_ID]));
   });
 });
