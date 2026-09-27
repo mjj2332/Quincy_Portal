@@ -11,18 +11,26 @@
 import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dashboardSearchOf } from "@quincy/shared";
+import { adminProductionGanttResponseSchema, dashboardSearchOf, PRODUCTION_GANTT_ZONE } from "@quincy/shared";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest, commitDashboardSearchNow, DASHBOARD_SEARCH_DEBOUNCE_MS, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 import type { ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import type { ProductionGanttProps } from "../components/ProductionGantt";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const authRole = vi.hoisted(() => ({ value: "admin" as "admin" | "editor" | "photographer" | "external_editor" }));
 const ganttPropsState = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
+// #255: the one test that drives the real filter panel (Back/Forward through real toggles) flips
+// this to render the real `ProductionGantt` behind the same props-recording mock.
+const realGantt = vi.hoisted(() => ({ value: false }));
 
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiGet: (path: string) => apiGetMock(path) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authRole.value } } }) }));
@@ -33,18 +41,33 @@ vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div 
 // #220: the same "mock at the surface" boundary `Dashboard-calendar.dom.test.tsx` draws for
 // `ProductionCalendarSurface` — this suite owns Dashboard's routing/URL/rail contract, not the
 // Gantt surface's own rendering (`ProductionGantt-readonly.dom.test.tsx` owns that).
-vi.mock("../components/ProductionGantt", () => ({
-  ProductionGantt: (props: Record<string, unknown>) => {
-    ganttPropsState.value = props;
-    return <div data-testid="dashboard-gantt-surface" data-q={String(props.q ?? "")} />;
-  },
-}));
+vi.mock("../components/ProductionGantt", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/ProductionGantt")>();
+  return {
+    ProductionGantt: (props: ProductionGanttProps) => {
+      ganttPropsState.value = props as unknown as Record<string, unknown>;
+      if (realGantt.value) return <actual.ProductionGantt {...props} />;
+      return <div data-testid="dashboard-gantt-surface" data-q={String(props.q ?? "")} />;
+    },
+  };
+});
 
 function projectResponse() {
   return {
     projects: [{ id: "33333333-3333-4333-8333-333333333333", street: "3 Board Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null }],
     board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["33333333-3333-4333-8333-333333333333"] } },
   };
+}
+
+function ganttResponse() {
+  return adminProductionGanttResponseSchema.parse({
+    scope: "active",
+    zone: PRODUCTION_GANTT_ZONE,
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    projects: [],
+    page: { limit: 100, returned: 0, nextCursor: null },
+    density: { matchedProjects: 0, matchedRows: 0, drawCap: 2000, tooManyToDraw: false },
+  });
 }
 
 function DashboardRouteHarness() {
@@ -65,6 +88,7 @@ describe("Dashboard Gantt routing", () => {
   beforeEach(() => {
     authRole.value = "admin";
     ganttPropsState.value = null;
+    realGantt.value = false;
     apiGetMock.mockReset();
     apiGetMock.mockImplementation(() => Promise.resolve(projectResponse()));
     const storage = new Map<string, string>();
@@ -193,10 +217,6 @@ describe("Dashboard Gantt routing", () => {
     const changeFilters = async (next: ProductionGanttFacetFilters) => {
       await act(async () => { (ganttPropsState.value?.onFiltersChange as (next: ProductionGanttFacetFilters) => void)(next); await Promise.resolve(); });
     };
-    const popTo = async (location: string) => {
-      window.history.replaceState(null, "", location);
-      await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
-    };
 
     it("applies a cold deep link's filters on the first render", async () => {
       await renderAt("/?view=gantt&stages=raw_review&completed=1");
@@ -240,20 +260,92 @@ describe("Dashboard Gantt routing", () => {
     });
 
     it("restores the previous filter state on Back and the next one on Forward", async () => {
+      realGantt.value = true;
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.startsWith("/api/production-gantt") ? ganttResponse() : projectResponse()));
+      const settle = async () => {
+        for (let i = 0; i < 3; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+        }
+      };
+      const showCheckbox = (label: string) => {
+        const panel = host.querySelector<HTMLElement>('[aria-label="Gantt filters"]');
+        const fieldset = panel && [...panel.querySelectorAll("fieldset")].find((candidate) => candidate.querySelector("legend")?.textContent === "Show");
+        const input = fieldset && [...fieldset.querySelectorAll("label")].find((candidate) => candidate.textContent === label)?.querySelector("input");
+        if (!(input instanceof HTMLInputElement)) throw new Error(`no Show / ${label} checkbox`);
+        return input;
+      };
+      const listQueriesSince = (callIndex: number) => apiGetMock.mock.calls.slice(callIndex)
+        .map(([called]) => called)
+        .filter((called) => called.startsWith("/api/production-gantt?") && !called.includes("childrenOf="))
+        .map((path) => new URLSearchParams(path.slice(path.indexOf("?") + 1)));
+      const lastListQuery = () => {
+        const query = listQueriesSince(0).at(-1);
+        if (!query) throw new Error("no /api/production-gantt project-list request");
+        return query;
+      };
+      // The browser's own Back/Forward, awaited on the `popstate` it dispatches — not a synthetic
+      // `replaceState` + `PopStateEvent`, so a filter change that replaced instead of pushing
+      // leaves no entry to go back to and this fails.
+      const traverse = async (step: () => void) => {
+        callsBeforeTraversal = apiGetMock.mock.calls.length;
+        await act(async () => {
+          const popped = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("no popstate after history traversal")), 1000);
+            window.addEventListener("popstate", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
+          step();
+          await popped;
+        });
+        await settle();
+      };
+      let callsBeforeTraversal = 0;
+      const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
+        expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], ...expected });
+        expect(showCheckbox("Show delivered projects").checked).toBe(expected.delivered);
+        expect(showCheckbox("Show completed checklist items").checked).toBe(expected.completed);
+      };
+      // A filter push fetches its new key, so the latest project-list request is the new filters'.
+      const expectRequested = (expected: { delivered: boolean; completed: boolean }) => {
+        expect(lastListQuery().get("delivered")).toBe(expected.delivered ? "1" : null);
+        expect(lastListQuery().get("completed")).toBe(expected.completed ? "1" : null);
+      };
+      // A Back/Forward returns to a key fetched moments ago, which the Gantt query's
+      // `staleTime: 15_000` (`production-gantt-query.ts`) serves from cache with no request. So:
+      // any project-list request the traversal did make must be for the restored filters.
+      const expectRequestedSinceTraversal = (expected: { delivered: boolean; completed: boolean }) => {
+        for (const query of listQueriesSince(callsBeforeTraversal)) {
+          expect(query.get("delivered")).toBe(expected.delivered ? "1" : null);
+          expect(query.get("completed")).toBe(expected.completed ? "1" : null);
+        }
+      };
+
       await renderAt("/?view=gantt");
-      await changeFilters({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: false });
-      await changeFilters({ editorIds: [], stageKeys: ["raw_review"], delivered: true, completed: true });
-      expect(url()).toBe("/?view=gantt&stages=raw_review&completed=1&delivered=1");
-      expect(window.history.length).toBeGreaterThanOrEqual(3);
+      await settle();
+      expectApplied({ delivered: false, completed: false });
+      expectRequested({ delivered: false, completed: false });
 
-      await popTo("/?view=gantt&stages=raw_review");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: false });
+      await act(async () => { showCheckbox("Show delivered projects").click(); });
+      await settle();
+      expect(url()).toBe("/?view=gantt&delivered=1");
+      expectApplied({ delivered: true, completed: false });
+      expectRequested({ delivered: true, completed: false });
 
-      await popTo("/?view=gantt");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+      await act(async () => { showCheckbox("Show completed checklist items").click(); });
+      await settle();
+      expect(url()).toBe("/?view=gantt&completed=1&delivered=1");
+      expectApplied({ delivered: true, completed: true });
+      expectRequested({ delivered: true, completed: true });
 
-      await popTo("/?view=gantt&stages=raw_review&completed=1&delivered=1");
-      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: true, completed: true });
+      await traverse(() => window.history.back());
+      expect(url()).toBe("/?view=gantt&delivered=1");
+      expectApplied({ delivered: true, completed: false });
+      expectRequestedSinceTraversal({ delivered: true, completed: false });
+
+      await traverse(() => window.history.forward());
+      expect(url()).toBe("/?view=gantt&completed=1&delivered=1");
+      expectApplied({ delivered: true, completed: true });
+      expectRequestedSinceTraversal({ delivered: true, completed: true });
       expect(switcherButton("Gantt")?.getAttribute("data-active")).toBe("true");
     });
 
