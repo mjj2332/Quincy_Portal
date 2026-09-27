@@ -20,6 +20,7 @@
  * File-specific edits:
  * - `noUncheckedIndexedAccess`: the single-value label narrows `values[0]` into a local.
  * - RE-SKIN (`filters-skin.guard.test.ts`): six `dark:bg-input/30` classes stripped from the chip segments; `bg-background` kept.
+ * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
 import {
@@ -803,23 +804,28 @@ export function FilterRuleMenuItems({
        under five icon sets; no size class, because each style already sizes an
        unsized svg in a menu row; `aria-hidden`, the label IS the name. */
     <>
-      <DropdownMenuItem
-        disabled={locked}
-        onClick={() => actions.duplicateNode(ruleId)}
-      >
-        <CopyIcon aria-hidden="true" />
-        <span className={FILTER_MENU_LABEL_CLASS}>
-          {actions.labels.duplicate}
-        </span>
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        disabled={locked}
-        onClick={() => actions.negateRule(ruleId)}
-      >
-        {/* Two arrows swapping: negation flips to the declared inverse. */}
-        <ArrowLeftRightIcon aria-hidden="true" />
-        <span className={FILTER_MENU_LABEL_CLASS}>{actions.labels.negate}</span>
-      </DropdownMenuItem>
+      {/* QUINCY ADDITION (#255): `ruleMenu` on the root can hide these two. */}
+      {actions.ruleMenu.duplicate ? (
+        <DropdownMenuItem
+          disabled={locked}
+          onClick={() => actions.duplicateNode(ruleId)}
+        >
+          <CopyIcon aria-hidden="true" />
+          <span className={FILTER_MENU_LABEL_CLASS}>
+            {actions.labels.duplicate}
+          </span>
+        </DropdownMenuItem>
+      ) : null}
+      {actions.ruleMenu.negate ? (
+        <DropdownMenuItem
+          disabled={locked}
+          onClick={() => actions.negateRule(ruleId)}
+        >
+          {/* Two arrows swapping: negation flips to the declared inverse. */}
+          <ArrowLeftRightIcon aria-hidden="true" />
+          <span className={FILTER_MENU_LABEL_CLASS}>{actions.labels.negate}</span>
+        </DropdownMenuItem>
+      ) : null}
       {allowGrouping ? (
         <DropdownMenuItem
           disabled={locked}

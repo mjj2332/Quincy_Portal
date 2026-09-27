@@ -17,7 +17,8 @@
  * new production dependency — see `filters-builder.tsx`), `cascader-columns.tsx` (imported only by
  * `cascader-virtual.tsx`), and `filters-date.tsx` (nothing imports it).
  *
- * No file-specific edits.
+ * File-specific edits:
+ * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
 import type { FilterDraftAction } from "@/components/reui/filters/filters-draft"
@@ -61,6 +62,19 @@ import type {
  *  BOUNDARY - `disabled` and `readOnly` are enforced here, not at the call
  *  sites that draw the buttons, so a route added next month is refused by
  *  construction rather than by remembering. See `isFilterLocked`. */
+/**
+ * QUINCY ADDITION (#255): opt-outs for the rule menu's Duplicate and Negate rows
+ * (the chip kebab and the advanced builder's row menu). Upstream has no option
+ * for this; a consumer whose query cannot hold a repeated field or a negated
+ * rule would otherwise offer two rows its `onBeforeQueryChange` can only refuse.
+ */
+export interface FilterRuleMenuOptions {
+  /** Draw "Duplicate". Defaults to true. */
+  duplicate?: boolean
+  /** Draw "Negate". Defaults to true. */
+  negate?: boolean
+}
+
 export interface FilterActionsContextValue<V = unknown, O = unknown> {
   /** Normalized schema. Also on the state context, from the same memo. */
   index: FilterIndex<V, O>
@@ -89,6 +103,10 @@ export interface FilterActionsContextValue<V = unknown, O = unknown> {
    *  which is safe only because it is handed no setter: a consumer's handler
    *  has no route to the query at all. */
   convertToAdvanced: (() => void) | undefined
+
+  /** QUINCY ADDITION (#255): which optional per-rule rows the rule menu draws.
+   *  Both default to true (upstream behaviour). See `FilterRuleMenuOptions`. */
+  ruleMenu: Required<FilterRuleMenuOptions>
 
   /** Path shortening, published so BOTH chromes render the same path. */
   pathCollapse: FilterPathCollapse

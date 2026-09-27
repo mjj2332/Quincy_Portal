@@ -17,7 +17,8 @@
  * new production dependency — see `filters-builder.tsx`), `cascader-columns.tsx` (imported only by
  * `cascader-virtual.tsx`), and `filters-date.tsx` (nothing imports it).
  *
- * No file-specific edits.
+ * File-specific edits:
+ * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
 import { FiltersAdvanced } from "@/components/reui/filters/filters-advanced"
@@ -39,6 +40,7 @@ import {
   useFilterFocusStore,
   useFilterState,
   type FilterActionsContextValue,
+  type FilterRuleMenuOptions,
 } from "@/components/reui/filters/filters-context"
 import {
   filterDraftReducer,
@@ -238,6 +240,14 @@ export interface FiltersProps<V = unknown, O = unknown> {
   onConvertToAdvanced?: () => void
 
   /**
+   * QUINCY ADDITION (#255): hide the rule menu's Duplicate and/or Negate rows,
+   * e.g. `ruleMenu={{ duplicate: false, negate: false }}`. Omitted, both show,
+   * exactly as upstream. Hiding a row does not refuse the action: a consumer
+   * that cannot hold the result still vetoes it in `onBeforeQueryChange`.
+   */
+  ruleMenu?: FilterRuleMenuOptions
+
+  /**
    * Classes for the dropdown MENUS and the field PICKER panel, one prop each
    * rather than one per mount point. Merged after the default, so `w-*` wins.
    */
@@ -290,6 +300,7 @@ export function Filters<V = unknown, O = unknown>({
   readOnly = false,
   onBeforeQueryChange,
   onConvertToAdvanced,
+  ruleMenu: ruleMenuProp,
   menuClassName,
   fieldPickerClassName,
   pathCollapse = "none",
@@ -372,6 +383,14 @@ export function Filters<V = unknown, O = unknown>({
   )
 
   const ruleCount = React.useMemo(() => countFilterRules(query), [query])
+
+  // Primitives in the deps, not the object: call sites inline the literal.
+  const ruleMenuDuplicate = ruleMenuProp?.duplicate ?? true
+  const ruleMenuNegate = ruleMenuProp?.negate ?? true
+  const ruleMenu = React.useMemo(
+    () => ({ duplicate: ruleMenuDuplicate, negate: ruleMenuNegate }),
+    [ruleMenuDuplicate, ruleMenuNegate]
+  )
 
   /* --------------------------- latest-props ref --------------------------- */
 
@@ -872,6 +891,7 @@ export function Filters<V = unknown, O = unknown>({
       menuClassName,
       fieldPickerClassName,
       convertToAdvanced: onConvertToAdvanced,
+      ruleMenu,
       pathCollapse,
       maxPathSegments,
       resolveOperators,
@@ -918,6 +938,7 @@ export function Filters<V = unknown, O = unknown>({
       menuClassName,
       fieldPickerClassName,
       onConvertToAdvanced,
+      ruleMenu,
       pathCollapse,
       maxPathSegments,
       resolveOperators,
@@ -1217,6 +1238,7 @@ export {
   useFilterFocusStore,
   useFilterRender,
   useFilterSegmentFocus,
+  type FilterRuleMenuOptions,
 } from "@/components/reui/filters/filters-context"
 
 export {
