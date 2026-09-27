@@ -2,7 +2,7 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-// Five corrections to the vendor class string, each marked inline below.
+// Five corrections to the vendor class string, each marked inline below, and one export (6).
 //
 // 1. cva base: nova's bare `text-sm font-medium` is replaced by Quincy's button typography,
 //    ported verbatim from `ui/button.tsx`'s BASE comment. A `[font:…]` shorthand resets
@@ -46,6 +46,15 @@ import { cn } from "@/lib/utils"
 //
 //    The absence of the ring is guarded in `quincy/Button.dom.test.tsx` — re-fetching this
 //    component from the registry will reintroduce it.
+//
+// 6. `BUTTON_HEIGHT_CLASS` (#255): the height half of 3 is exported as one constant, so the ReUI
+//    filter chip (`reui/filters/filters-chip.tsx`, which must stand as tall as the buttons beside
+//    it) imports the contract instead of copying its literal. `size.default` renders the same
+//    classes it did before.
+
+/** Quincy's control height contract: 38px, 44px at <=721px (correction 3). */
+export const BUTTON_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
+
 const buttonVariants = cva(
   "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] uppercase tracking-[var(--tracking-wide)] whitespace-nowrap transition-all select-none active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
@@ -64,7 +73,7 @@ const buttonVariants = cva(
       },
       size: {
         default:
-          "min-h-[38px] max-[721px]:min-h-[44px] gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+          `${BUTTON_HEIGHT_CLASS} gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2`,
         xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",

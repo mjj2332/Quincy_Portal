@@ -21,7 +21,7 @@
  * - `noUncheckedIndexedAccess`: the single-value label narrows `values[0]` into a local.
  * - RE-SKIN (`filters-skin.guard.test.ts`): six `dark:bg-input/30` classes stripped from the chip segments; `bg-background` kept.
  * - RE-SKIN (#255 browser pass F): the operator and value segments' `hover:bg-accent` -> `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the segment label (left at foreground) vanished on hover; `bg-muted` is the `.button--secondary:hover` surface. Guarded by `filters-skin.guard.test.ts` Detector 9.
- * - QUINCY (#255 browser pass F): `CHIP_HEIGHT_CLASS` (`min-h-[38px] max-[721px]:min-h-[44px]`, `reui/button.tsx`'s `size.default` contract) on both chip roots and their kebab / remove button, so a chip matches the 38px / 44px Add filter and Clear buttons; upstream sized the chip by the `icon` kebab (32px).
+ * - QUINCY (#255 browser pass F): `CHIP_HEIGHT_CLASS` (`min-h-[38px] max-[721px]:min-h-[44px]`, `reui/button.tsx`'s `size.default` contract) on both chip roots and their kebab / remove button, so a chip matches the 38px / 44px Add filter and Clear buttons; upstream sized the chip by the `icon` kebab (32px). Since the #255 final review it is `reui/button.tsx`'s exported `BUTTON_HEIGHT_CLASS`, imported rather than a copied literal.
  * - QUINCY (#255 browser pass F): `SEGMENT_FOCUS_RADIUS_CLASS` (`focus-visible:rounded-(--radius-lg)!`) on the operator and value segments and the kebab / remove button, so a focused segment's global outline follows the chip's 14px radius instead of ButtonGroup's squared inner corners.
  * - RE-SKIN (#255 browser pass G): the finished operator segment's `text-muted-foreground` -> `text-foreground-secondary`. `--text-muted` measured 3.13:1 on the `hover:bg-muted` fill (3.36:1 at rest); `--text-secondary` is 8.09:1 / 8.66:1. The incomplete prompt stays `text-foreground`.
  * - QUINCY (#255 browser pass G): the value segment carries `VALUE_SEGMENT_LINE_CLASS` (`min-w-0 max-w-60 whitespace-nowrap`) and wraps its label in a `min-w-0 truncate` span; `valueWithIcon` adds `min-w-0` to its flex row and a `truncate` span around the text. A long value ellipsizes on one line instead of wrapping the chip to two.
@@ -73,7 +73,7 @@ import type {
 } from "@/components/reui/filters/filters-types"
 
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/reui/button"
+import { BUTTON_HEIGHT_CLASS, Button } from "@/components/reui/button"
 import {
   ButtonGroup,
   ButtonGroupText,
@@ -883,12 +883,13 @@ export interface FilterChipProps<V = unknown> {
   index: number
 }
 
-/* QUINCY (#255 browser pass F): the chip's height contract, the SAME classes
-   `reui/button.tsx` gives `size.default` (Quincy's touch-target contract:
-   38px, 44px at <=721px), so a chip stands as tall as the Add filter and Clear
-   buttons beside it. On the group it lifts the stretched text segments; the
-   kebab carries its own `size-*` height, so it takes the classes too. */
-const CHIP_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
+/* QUINCY (#255 browser pass F): the chip's height contract, imported from
+   `reui/button.tsx` (`BUTTON_HEIGHT_CLASS`, what `size.default` renders:
+   Quincy's touch-target contract, 38px, 44px at <=721px), so a chip stands as
+   tall as the Add filter and Clear buttons beside it. On the group it lifts the
+   stretched text segments; the kebab carries its own `size-*` height, so it
+   takes the classes too. */
+const CHIP_HEIGHT_CLASS = BUTTON_HEIGHT_CLASS
 
 /* QUINCY (#255 browser pass F): a focused segment's ring in the chip's radius.
    The global `:focus-visible` outline follows `border-radius`, and ButtonGroup
