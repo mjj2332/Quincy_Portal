@@ -67,7 +67,7 @@
  * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
  * the stock-fallthrough guarantee above for the common case.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
@@ -495,15 +495,28 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // target to the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus
   // without scrolling, then scroll it to the top — the trigger's scroll-margin-top clears the sticky
   // shell header. Default (instant) scroll behaviour: no animation for reduced-motion users.
+  //
+  // Focus is immediate; the SCROLL waits for the cleared filters to render. Browser pass F: scrolling
+  // inside the click handler measured the old, short empty-state page, so at 390×844 the trigger
+  // still ended 7px below the viewport with scrollY 0. The handler arms a flag; the layout effect
+  // below, keyed on the request filters, spends it after the render that carries the cleared filters
+  // (the loading slot in place of the empty state) has reached the DOM, and before it paints. No
+  // other filter change arms it, so the bar's own edits never scroll the page.
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const scrollToFiltersPendingRef = useRef(false);
   const clearFiltersFromEmptyState = useCallback(() => {
+    scrollToFiltersPendingRef.current = true;
     onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
-    const trigger = filtersTriggerRef.current;
-    trigger?.focus({ preventScroll: true });
-    trigger?.scrollIntoView({ block: "start" });
+    filtersTriggerRef.current?.focus({ preventScroll: true });
   }, [onFiltersChange]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
+
+  useLayoutEffect(() => {
+    if (!scrollToFiltersPendingRef.current) return;
+    scrollToFiltersPendingRef.current = false;
+    filtersTriggerRef.current?.scrollIntoView({ block: "start" });
+  }, [filters]);
 
   /**
    * fix-220-sol1 #1: everything below this line that accumulates ACROSS renders (per-project child

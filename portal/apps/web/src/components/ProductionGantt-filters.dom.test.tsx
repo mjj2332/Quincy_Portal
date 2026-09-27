@@ -477,6 +477,62 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       }
     });
 
+    it("scrolls the trigger only after the cleared filters have rendered, not from the click itself (browser pass F, 390x844)", async () => {
+      // A slow first page for the cleared filters, so the loading slot is what the scroll lands on.
+      apiGetMock.mockImplementation((path: string) => (path.includes("stages=delivered") ? Promise.resolve(emptyGanttResponse()) : new Promise(() => {})));
+      await render(deliveredStageOnly);
+      const button = clearButton(emptyState()!)!;
+      // Pass F: scrolling synchronously in the click handler measured the OLD layout (the short empty
+      // state), so at 390x844 the trigger ended 7px below the viewport. Record what the page says at
+      // the moment of the scroll.
+      const atScroll: { emptyState: boolean; loading: boolean; chips: string[] }[] = [];
+      const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {
+        atScroll.push({
+          emptyState: emptyState() !== null,
+          loading: host.querySelector('[data-testid="production-gantt-loading"]') !== null,
+          chips: chipNames(host),
+        });
+      });
+      try {
+        await act(async () => { button.click(); });
+        await settle();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        expect(atScroll).toEqual([{ emptyState: false, loading: true, chips: [] }]);
+      } finally {
+        scrollIntoView.mockRestore();
+      }
+    });
+
+    it("does not scroll for a filter change that did not come from the empty state's Clear filters", async () => {
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=") ? emptyGanttResponse() : ganttResponse()));
+      await render(deliveredStageOnly);
+      expect(emptyState()).not.toBeNull();
+      const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+      try {
+        // The bar's own Clear: same destination (default filters), different path.
+        const barClear = [...bar(host).querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.trim() === "Clear");
+        expect(barClear).toBeDefined();
+        await act(async () => { barClear!.click(); });
+        await settle();
+        expect(emptyState()).toBeNull();
+        expect(chipNames(host)).toEqual([]);
+        expect(scrollIntoView).not.toHaveBeenCalled();
+
+        // And an empty-state Clear leaves nothing armed: one scroll, then none for a later bar edit.
+        await addFilter(host, "Stage", ["Editing"]);
+        await settle();
+        const again = clearButton(emptyState()!)!;
+        await act(async () => { again.click(); });
+        await settle();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        await addFilter(host, "Stage", ["Editing"]);
+        await settle();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      } finally {
+        scrollIntoView.mockRestore();
+      }
+    });
+
     it("says there are no projects to schedule, with no Clear button, when the filters are default", async () => {
       apiGetMock.mockImplementation(() => Promise.resolve(emptyGanttResponse()));
       await render();
