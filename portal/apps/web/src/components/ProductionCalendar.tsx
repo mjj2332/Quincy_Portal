@@ -216,6 +216,9 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   // null→non-null transition only, so a fold retry on the *same* open dialog (which sets a new
   // `initialCivil`/`foldChoices` without closing) does not remount and re-seed it — matching
   // today's no-remount behavior — while a fresh open (or a reopen after close) does.
+  // Every retained dialog's key is namespaced (`move-dialog:`, `schedule-editor:`,
+  // `checklist-fold:`): the siblings' tokens all reach 1, and a shared key makes React duplicate
+  // one dialog and drop another (docs/lessons.md, "Sibling retained dialogs…").
   const moveDialogToken = useOpenToken(moveDialog !== null);
   const scheduleEditorRetained = useRef<ScheduleEditorState | null>(null);
   if (scheduleEditor) scheduleEditorRetained.current = scheduleEditor;
@@ -510,7 +513,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
         />
       </div>}
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
-      {moveDialogRetained.current && <ProductionCalendarMoveDialog key={moveDialogToken} open={!!moveDialog} event={moveDialogRetained.current.event} initialCivil={moveDialogRetained.current.initialCivil} foldChoices={moveDialogRetained.current.foldChoices} onSubmit={handleMoveDialogSubmit} onCancel={handleMoveDialogCancel} />}
+      {moveDialogRetained.current && <ProductionCalendarMoveDialog key={`move-dialog:${moveDialogToken}`} open={!!moveDialog} event={moveDialogRetained.current.event} initialCivil={moveDialogRetained.current.initialCivil} foldChoices={moveDialogRetained.current.foldChoices} onSubmit={handleMoveDialogSubmit} onCancel={handleMoveDialogCancel} />}
       {/* The key composes the open-token with the composite (source id + initialSchedule) parts
           the original design required verbatim — the two parts cover two different remount
           triggers that must both work: the token changes on a null→non-null transition (reopen
@@ -521,8 +524,8 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
           token does not bump — matching the original no-close-looking-remount requirement — but
           the JSON half still changes and forces the remount that re-seeds from the new
           `initialSchedule`, which is the whole point of that key surviving unchanged). */}
-      {scheduleEditorRetained.current && <ProductionCalendarScheduleEditor key={`${scheduleEditorToken}:${scheduleEditorRetained.current.source.id}:${JSON.stringify(scheduleEditorRetained.current.initialSchedule ?? null)}`} open={!!scheduleEditor} event={scheduleEditorRetained.current.source} rangesEnabled={rangesEnabled && scheduleEditorRetained.current.source.permissions.canScheduleRange} initialSchedule={scheduleEditorRetained.current.initialSchedule} validationError={scheduleEditorRetained.current.validationError} onSubmit={handleScheduleEditorSubmit} onCancel={handleScheduleEditorCancel} />}
-      {checklistFoldRetained.current && <ProductionCalendarFoldChoice key={checklistFoldToken} open={!!checklistFold} endpoint={checklistFoldRetained.current.endpoint} choices={checklistFoldRetained.current.choices} eyebrow={checklistFoldRetained.current.proposal.source.project.street} onSubmit={handleChecklistFoldSubmit} onCancel={handleChecklistFoldCancel} />}
+      {scheduleEditorRetained.current && <ProductionCalendarScheduleEditor key={`schedule-editor:${scheduleEditorToken}:${scheduleEditorRetained.current.source.id}:${JSON.stringify(scheduleEditorRetained.current.initialSchedule ?? null)}`} open={!!scheduleEditor} event={scheduleEditorRetained.current.source} rangesEnabled={rangesEnabled && scheduleEditorRetained.current.source.permissions.canScheduleRange} initialSchedule={scheduleEditorRetained.current.initialSchedule} validationError={scheduleEditorRetained.current.validationError} onSubmit={handleScheduleEditorSubmit} onCancel={handleScheduleEditorCancel} />}
+      {checklistFoldRetained.current && <ProductionCalendarFoldChoice key={`checklist-fold:${checklistFoldToken}`} open={!!checklistFold} endpoint={checklistFoldRetained.current.endpoint} choices={checklistFoldRetained.current.choices} eyebrow={checklistFoldRetained.current.proposal.source.project.street} onSubmit={handleChecklistFoldSubmit} onCancel={handleChecklistFoldCancel} />}
     </section>
   );
 }
