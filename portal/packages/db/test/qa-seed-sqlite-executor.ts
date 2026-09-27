@@ -1,6 +1,7 @@
 /**
- * Test support (not a test file): a `node:sqlite` in-memory database built from the REAL migrations,
- * the shared seed and `setup-local.mjs`'s own capability SQL, plus an executor with the exact shape
+ * Test support (not a test file): a `node:sqlite` in-memory database built by `setup-local.mjs`'s own
+ * `setupLocal` sequence (real migrations, shared seed, flags, capability fence) — so tests cannot pass
+ * on a state `db:migrate:local` never produces — plus an executor with the exact shape
  * `qa-seed/cli.mjs`'s `wranglerExecutor` has. The qa-seed integration tests hand this to cli.mjs's own
  * exported `apply`/`teardown`/`verify`, so what they exercise is the production orchestration, with
  * only the transport swapped — `emit` goes through `emit.ts`'s own `emitMode` dispatch with the same
@@ -17,7 +18,7 @@
  * here too instead of only in a real `--persist-to` run.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { QA_FIXTURE_CAPABILITY_SQL } from "../setup-local.mjs";
+import { setupLocal } from "../setup-local.mjs";
 import { emitMode } from "../qa-seed/emit";
 import { INTROSPECT_FOREIGN_KEYS_SQL, INTROSPECT_TABLES_SQL } from "../qa-seed/cli.mjs";
 import { buildTeardownGraph, buildTeardownPlan, type IntrospectedForeignKey, type IntrospectedTable } from "../qa-seed/teardown-graph";
@@ -91,18 +92,13 @@ export function sqliteSetupExecutor(db: SqliteDatabase): SetupExecutor {
   };
 }
 
-/** Every migration (in order), then `seed/0001_seed.sql`, then the local-only capability fence —
- * the same three steps a developer's local D1 has been through before `db:qa:apply` will run. */
+/** A database in exactly the state `db:migrate:local` leaves: built by `setupLocal` itself, through
+ * `sqliteSetupExecutor`, so every step and postcondition is the script's own. */
 export function freshFixtureDatabase(): SqliteDatabase {
   const db = openMemoryDatabase();
   const foreignKeys = db.prepare("PRAGMA foreign_keys;").get();
   if (Number(foreignKeys?.foreign_keys) !== 1) throw new Error("node:sqlite opened with foreign keys OFF — every FK assertion in these tests would be vacuous.");
-  const migrations = new URL("../migrations/", import.meta.url);
-  for (const name of readdirSync(migrations).filter((value) => /^\d{4}_.*\.sql$/.test(value)).sort()) {
-    db.exec(readFileSync(new URL(name, migrations), "utf8").replaceAll("--> statement-breakpoint", ""));
-  }
-  db.exec(readFileSync(new URL("../seed/0001_seed.sql", import.meta.url), "utf8"));
-  db.exec(QA_FIXTURE_CAPABILITY_SQL);
+  setupLocal(sqliteSetupExecutor(db), () => {});
   return db;
 }
 
