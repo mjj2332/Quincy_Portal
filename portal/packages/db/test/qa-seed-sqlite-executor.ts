@@ -96,9 +96,11 @@ export function sqliteSetupExecutor(db: SqliteDatabase): SetupExecutor {
 export function fakeWranglerSpawn(db: SqliteDatabase) {
   const executor = sqliteSetupExecutor(db);
   const calls: string[][] = [];
+  const processes: { command: string; cwd: unknown }[] = [];
   const valueAfter = (args: string[], flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
-  const spawn = (_command: string, args: string[]) => {
+  const spawn = (executable: string, args: string[], options: { cwd?: unknown } = {}) => {
     calls.push([...args]);
+    processes.push({ command: executable, cwd: options.cwd });
     const file = valueAfter(args, "--file");
     const command = valueAfter(args, "--command");
     if (args.includes("migrations") && args.includes("apply")) executor.migrate();
@@ -108,7 +110,7 @@ export function fakeWranglerSpawn(db: SqliteDatabase) {
     else throw new Error(`Unexpected wrangler invocation: ${args.join(" ")}`);
     return { status: 0, stdout: "" };
   };
-  return { spawn, calls };
+  return { spawn, calls, processes };
 }
 
 /** A database in exactly the state `db:migrate:local` leaves: built by `setupLocal` itself, through

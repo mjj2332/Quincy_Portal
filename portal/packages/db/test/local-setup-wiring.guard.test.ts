@@ -223,6 +223,9 @@ describe("guard: db:migrate:local applies the shared seed", () => {
     expect(laterNonQuery.length).toBeGreaterThan(0);
     for (const { index } of laterNonQuery) expect(index).toBeGreaterThan(seedIndex);
 
+    const packageDirectory = fileURLToPath(new URL("../", import.meta.url));
+    for (const spawned of fake.processes) expect(spawned).toEqual({ command: "npx", cwd: packageDirectory });
+
     for (const args of fake.calls) {
       expect(args).toContain("--local");
       expect(args).toContain("quincy-portal");
