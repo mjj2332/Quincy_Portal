@@ -3926,3 +3926,24 @@ dialog had been opened once.
 - **`ProductionCalendar.tsx` still has the collision:** `key={moveDialogToken}` and
   `key={checklistFoldToken}` are siblings in the same `<section>` (around line 513 and line 526). Not
   fixed in #221 PR C, because it is out of scope.
+
+## `overflow: hidden` is still a scroll container; a registry `data-horizontal:` variant matches nothing under Base UI (2026-09-28)
+
+The Gantt's `gantt-view` wrapper measured 145–445px wider in `scrollWidth` than its own width, and
+`bar.scrollIntoView({inline})` slid the whole view sideways — resource column cropped to
+"esources", stuck until reload. Two separate facts, both worth keeping:
+
+- **`overflow-hidden` clips but still scrolls programmatically.** `scrollIntoView`, find-in-page and
+  focus can all move it. Use `overflow-clip` for a box that must never scroll, after checking that no
+  `position: sticky` descendant anchors to it (sticky binds to the nearest scroll container).
+- **A registry class like `data-horizontal:flex-col` is dead under Base UI 1.7.0**, which emits
+  `data-orientation="horizontal|vertical"`, never a bare `data-horizontal`. `reui/tabs.tsx` hit this
+  in #202; `reui/scroll-area.tsx` shipped it too, so the horizontal thumb's `flex-1` beat its inline
+  width, filled the track, and was translated past the pane (the scrollbar is positioned against
+  the ScrollArea root, outside the viewport's clip, so the spill reached `gantt-view`). Vertical
+  scrollbars were 2px of padding with a 0-wide thumb — invisible. When vendoring a base-nova item,
+  grep it for `data-horizontal:` / `data-vertical:` and rewrite them as `data-[orientation=…]:`.
+  `reui/separator.tsx` still has them.
+- **Finding what overflows:** a bounding-rect scan misses it when the culprit is transformed or
+  sits inside another scroll container. Hiding each child in turn (`display: none`) and re-reading
+  the ancestor's `scrollWidth` finds it in one pass.

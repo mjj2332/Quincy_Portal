@@ -178,6 +178,26 @@
  * includes `warning` so a warning-only change re-renders it; the row drop target gains a
  * `"warning"` state (`bg-signal-caution/7`); custom drag/resize indicators receive `warning`
  * through their render props. Covered by `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, found in #221's browser pass (predates it; vendored in #219) — the wrapper
+ * (`data-slot="gantt-view"`) was `overflow-hidden` and measured ~145–445px wider in scrollWidth
+ * than clientWidth at 1440×900, growing with the timeline's scroll position. `overflow: hidden`
+ * still makes an element a scroll container, so `bar.scrollIntoView({inline})` (and find-in-page)
+ * scrolled the WHOLE view sideways: the resource column cropped to "esources", the timeline ended
+ * short of its scrollbar, and the offset stuck until reload. Two changes:
+ * (a) Root cause, in `reui/scroll-area.tsx` (see its header): its `data-horizontal:` variants never
+ *     matched, so the horizontal `ScrollBar` stayed `flex-row` and the thumb's `flex-1` (basis 0%)
+ *     beat its inline `width`, filling the whole track; Base UI's `translate3d` then pushed that
+ *     full-width thumb past the pane by `scrollRatio × (track − thumb)`. The scrollbar is
+ *     absolutely positioned against the ScrollArea ROOT, outside the viewport's clip, so the spill
+ *     reached this wrapper's scrollable overflow.
+ * (b) This wrapper is now `overflow-clip`: it clips the same way but is not a scroll container, so
+ *     no descendant's scrollIntoView can move it even if something overflows again. Every sticky
+ *     descendant (tree header, columns menu, timeline header, axis-group labels) sits inside an
+ *     inner scroll-area viewport in both the custom and native scrollbar paths, and every
+ *     scrollLeft/scrollTop read or write in this file targets those viewports, so nothing relied on
+ *     this box scrolling. Pinned by `gantt-view-overflow-clip.dom.test.tsx`, which selects the
+ *     wrapper through a new additive `data-testid="gantt-view"` (test-seam guard F).
  */
 
 import {
@@ -2787,10 +2807,18 @@ function GanttView({
 
   const defaultProps = {
     "data-slot": "gantt-view",
+    // 2026-09-28: additive, same reasoning as the zoom control's own data-testid -
+    // test-seam guard F forbids a DOM test selecting on this vendor-authored slot.
+    "data-testid": "gantt-view",
     "data-scale": scale,
     "aria-busy": loading || undefined,
     className: cn(
-      "flex min-h-0 flex-1 flex-col overflow-hidden",
+      // overflow-clip, not overflow-hidden: `hidden` still makes this a scroll
+      // container, so a scrollIntoView on a bar (or find-in-page) could slide
+      // the whole view sideways and leave it stuck. Every sticky descendant
+      // anchors to an inner scroll-area viewport, never to this box. See the
+      // header entry dated 2026-09-28.
+      "flex min-h-0 flex-1 flex-col overflow-clip",
       viewConfig.classNames?.view,
       className
     ),
