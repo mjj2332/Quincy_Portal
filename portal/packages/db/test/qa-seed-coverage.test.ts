@@ -419,3 +419,42 @@ describe("coverage 11: deadline occurrences look saved at the apply instant, and
     });
   }
 });
+
+describe("coverage 12: an apply instant earlier than the fixture's own creation times is refused", () => {
+  // A deadline modelled as saved at the apply instant must not be saved before the project (or any
+  // row the dataset emits) was created — e.g. `--anchor=2026-10-19` applied on 2026-09-27.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function sydneyInstant(localCivil: string): number {
+    const resolved = resolveSydneyCivilMinute(localCivil);
+    if (!resolved.ok) throw new Error(resolved.message);
+    return resolved.value.epochMs;
+  }
+
+  it("throws, naming the anchor and the apply instant, for a future anchor — through the same `plan` dispatch the CLI runs before touching the DB", () => {
+    const appliedAtMs = sydneyInstant("2026-09-27T12:00");
+    const expected = /anchor 2026-10-19 is too far in the future for apply instant 2026-09-27T02:00:00\.000Z/;
+    expect(() => buildQaFixtureDataset({ anchor: "2026-10-19", tiers: ["core"], appliedAtMs })).toThrow(expected);
+    expect(() => buildQaFixtureDataset({ anchor: "2026-10-19", tiers: ["density"], appliedAtMs })).toThrow(expected);
+    expect(() => emitMode("plan", ["--anchor=2026-10-19", `--applied-at-ms=${appliedAtMs}`])).toThrow(expected);
+  });
+
+  // The default anchor is the current Sydney week's Monday, so the earliest instant it can be
+  // applied at is Monday 00:00 Sydney. Checked across both DST transitions' weeks as well.
+  for (const monday of ["2026-09-21", "2026-10-05", "2027-04-05"]) {
+    it(`the default anchor applied at Monday ${monday} 00:00:01 Sydney builds (core + density, with editors)`, () => {
+      const appliedAtMs = sydneyInstant(`${monday}T00:00`) + 1_000;
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(appliedAtMs));
+      const plan = emitMode("plan", ["--tier=core,density", `--applied-at-ms=${appliedAtMs}`, "--default-editor-ids=1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d"]) as { anchor: string; statements: string[] };
+      vi.useRealTimers();
+      expect(plan.anchor).toBe(monday);
+      expect(plan.statements.length).toBeGreaterThan(0);
+      const dataset = buildQaFixtureDataset({ anchor: monday, tiers: ["core", "density"], appliedAtMs, defaultEditorIds: ["1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d"] });
+      const created = [...dataset.projects, ...dataset.subtasks, ...dataset.collections, ...dataset.members].map((row) => row.createdAtMs);
+      expect(Math.max(...created)).toBeLessThanOrEqual(appliedAtMs);
+    });
+  }
+});

@@ -547,5 +547,19 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
     })),
   );
 
+  // Every deadline is modelled as saved at `appliedAtMs`, so the apply instant must not predate any
+  // row the dataset says already existed — otherwise a deadline is saved (and a project row
+  // updated) before its project was created. A future anchor (`--anchor=2026-10-19` applied on
+  // 2026-09-27) is the way to get here; the default anchor (this Sydney week's Monday) never is,
+  // because every anchor-derived creation time sits days before the anchor's own 00:00.
+  const latestCreatedAtMs = Math.max(...[...projects, ...subtasks, ...collections, ...members].map((row) => row.createdAtMs));
+  if (appliedAtMs < latestCreatedAtMs) {
+    throw new Error(
+      `buildQaFixtureDataset: anchor ${anchor} is too far in the future for apply instant ${new Date(appliedAtMs).toISOString()} — ` +
+        `the fixture's rows are created up to ${new Date(latestCreatedAtMs).toISOString()}, so its deadlines would be saved before their projects exist. ` +
+        "Use a past or current-week anchor (the default is this Sydney week's Monday).",
+    );
+  }
+
   return { anchor, tiers, projects, subtasks, collections, deadlineOccurrences, members };
 }

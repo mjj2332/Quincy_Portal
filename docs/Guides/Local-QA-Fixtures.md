@@ -23,6 +23,8 @@ npm run db:qa:teardown                      # remove every fixture row AND every
                                              # references one, leave everything else untouched
 ```
 
+**Past or current-week anchors only.** `apply` refuses an anchor whose fixture rows would be created after the apply instant (e.g. `--anchor=2026-10-19` applied on 2026-09-27), because each deadline is saved at the apply instant and must not predate its project. It fails while building the plan, before the database is touched. The default anchor (this Sydney week's Monday) is always accepted.
+
 Every `apply` replaces any previously-applied fixture, so re-running is safe and a changed
 `--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows. It builds
 and validates the replacement dataset **first** — every DST cross-check, anchor check and schedule
