@@ -176,7 +176,7 @@ look at them, and they are exactly what the same delete leaves behind in product
 
 ## What each core-tier project proves
 
-On the Production Gantt a project draws a bar only when it has a deadline (`apps/web/src/lib/production-gantt-adapter.ts`, `buildProjectBar`: no deadline means a "Deadline not set" row and no bar), so every core project meant to show a bar, progress or a hue carries one — every core project except *No deadline, no shoot date* — at its shoot date + 7 days, 17:00 unless noted below. Coverage 10 in `packages/db/test/qa-seed-coverage.test.ts` fails, naming the project, if another one loses it.
+On the Production Gantt a project draws a bar only when it has a deadline (`apps/web/src/lib/production-gantt-adapter.ts`, `buildProjectBar`: no deadline means a "Deadline not set" row and no bar), so every core project meant to show a bar, progress or a hue carries one — every core project except *No deadline, no shoot date* — at its shoot date + 7 days, 17:00 unless noted below. Coverage 10 in `packages/db/test/qa-seed-coverage.test.ts` fails, naming the project, if another one loses it. Every fixture deadline is modelled as **saved at the apply instant**: its reminders are classified pending or `skipped` against that instant and stamped `created_at = updated_at =` that instant, as the app's own save does with one `now`.
 
 | Project (street prefix `QA FIXTURE ·`) | Stage | What it proves |
 |---|---|---|
@@ -184,7 +184,7 @@ On the Production Gantt a project draws a bar only when it has a deadline (`apps
 | Near-complete 199 of 200 | RAW review | `Math.round(99.5)` capped at 99 — progress never shows 100% until every child is done |
 | Complete 40 of 40 | Edited review | Progress is exactly 100%, the completed checkmark renders |
 | Zero progress | Editing · autoHDR | Progress is emitted as `0`, not omitted |
-| Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on**. It keeps its deadline, as a project does in the app when it is delivered. Any reminder that would be pending is `superseded` / `project_delivered`, which is what delivery does to it (`buildDeadlineSuppressionBundle`); one already elapsed at apply stays `skipped`. None is pending |
+| Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on**. It keeps its deadline, as a project does in the app when it is delivered. Its reminders are modelled as saved and then delivered at the apply instant: any that would be pending is `superseded` / `project_delivered` with `updated_at` = the apply instant, which is what delivery does to it (`buildDeadlineSuppressionBundle`); one already elapsed at apply stays `skipped`. None is pending |
 | Schedule edges | RAW review | Every checklist schedule state and endpoint kind (`unscheduled`, `due_only`, `range`, both `date` and `timed`), all three `legacy_unresolved` reasons, and the DST fold canary (see below) |
 | No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention (flagged hollow-start) and **no bar** — deliberately left without a deadline |
 | Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker (deadline anchor + 14 days, 17:00) |

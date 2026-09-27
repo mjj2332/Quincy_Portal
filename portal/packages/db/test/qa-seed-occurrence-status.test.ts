@@ -101,14 +101,22 @@ describe("occurrence status is classified against the real apply instant, not a 
     }
   });
 
-  it("two applies at the same anchor but different appliedAtMs values differ ONLY in occurrence status/terminalReason — every DATE stays anchor-derived", () => {
+  // The app writes an occurrence's `created_at = updated_at = now` from the same save instant it
+  // classifies against (`project-deadline.ts:226-229, 290-296`), so the fixture models the deadline
+  // as saved at apply time: those two stamps are the apply instant, and every other field stays
+  // anchor-derived.
+  it("two applies at the same anchor but different appliedAtMs values differ ONLY in occurrence status/terminalReason and the createdAt/updatedAt stamps, which equal each run's apply instant", () => {
     const early = hollowStartOccurrences(APPLIED_EARLY_MS);
     const late = hollowStartOccurrences(APPLIED_LATE_MS);
     expect(early.length).toBe(late.length);
     for (let i = 0; i < early.length; i += 1) {
-      const { status: earlyStatus, terminalReason: earlyReason, ...earlyRest } = early[i]!;
-      const { status: lateStatus, terminalReason: lateReason, ...lateRest } = late[i]!;
+      const { status: earlyStatus, terminalReason: earlyReason, createdAtMs: earlyCreated, updatedAtMs: earlyUpdated, ...earlyRest } = early[i]!;
+      const { status: lateStatus, terminalReason: lateReason, createdAtMs: lateCreated, updatedAtMs: lateUpdated, ...lateRest } = late[i]!;
       expect(lateRest).toEqual(earlyRest);
+      expect(earlyCreated).toBe(APPLIED_EARLY_MS);
+      expect(earlyUpdated).toBe(APPLIED_EARLY_MS);
+      expect(lateCreated).toBe(APPLIED_LATE_MS);
+      expect(lateUpdated).toBe(APPLIED_LATE_MS);
     }
   });
 });

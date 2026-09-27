@@ -5,9 +5,9 @@
  * fixed literal or derived from an explicit `anchor` civil date, so two runs against the same
  * `anchor` AND `appliedAtMs` emit byte-identical statements (`qa-seed-wiring.guard.test.ts` and
  * `qa-seed-coverage.test.ts` both depend on that). `appliedAtMs` (the real apply instant) is
- * consumed in exactly one place — classifying a deadline occurrence's `status` — so it is the one
- * input capable of making two applies at the same anchor differ; see the comment above
- * `anchorReferenceInstantMs` below.
+ * consumed in exactly one place — the deadline occurrences, modelled as saved at apply time (their
+ * `status` and their `created_at`/`updated_at`) — so it is the one input capable of making two
+ * applies at the same anchor differ; see the comment above `anchorReferenceInstantMs` below.
  *
  * Every subtask's `ChecklistScheduleStorage` is produced by `normalizeChecklistSchedule` (thrown on
  * `ok: false`) and round-tripped through `serializeChecklistSchedule` to assert the state it claims
@@ -216,16 +216,19 @@ export type QaFixtureDataset = {
 // Timing — every DATE is anchor-relative, never Date.now(); `anchorReferenceInstantMs` (anchor's
 // own 09:00 Sydney instant) is only ever used to synthesize plausible, deterministic
 // `created_at`/`updated_at` spacing, so two applies at the same anchor but different real times
-// still emit byte-identical statements.
+// emit byte-identical statements EXCEPT for the deadline occurrences.
 //
-// Deadline OCCURRENCE STATUS is the one deliberately time-dependent field (build spec item 4): the
+// Deadline OCCURRENCES are the one deliberately time-dependent rows (build spec item 4): the
 // real save path (`project-deadline.ts:226-230`) classifies each *advance* reminder as `pending` vs
 // `skipped` against the actual instant the schedule was saved (`now`), not against the deadline's
 // own anchor-derived date — classifying against a fixed anchor time-of-day instead left a fixture
 // occurrence `pending` in a state the app itself would already have written `skipped` for whenever
 // `apply` runs later in the day/week than the anchor's own 09:00. This mirrors that check against
-// the REAL apply instant (`cli.mjs`'s own `--applied-at-ms`, already threaded to `emit.ts`), while
-// every DATE stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
+// the REAL apply instant (`cli.mjs`'s own `--applied-at-ms`, already threaded to `emit.ts`). The
+// same save writes the occurrence's `created_at = updated_at = now` (`project-deadline.ts:290-296`),
+// so the occurrences are stamped with the apply instant too — otherwise a `skipped`/`elapsed_at_save`
+// row could predate the reminder it marked elapsed. Every OTHER date (projects, subtasks,
+// collections, members) stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
 // unconditionally inserted `pending` regardless of elapsed time in the real app — mirrored exactly
 // the same way below, not run through the elapsed check at all.
 // ---------------------------------------------------------------------------
@@ -254,19 +257,23 @@ function buildDeadline(localCivil: string): FixtureDeadline {
   return { localCivil, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, epochMs: resolved.value.epochMs, offsetsMinutes: PROJECT_DEADLINE_PRESETS };
 }
 
-/** `appliedAtMs` is the real apply instant (`--applied-at-ms`), used ONLY to classify `advance`
- * occurrences pending-vs-skipped — matching `project-deadline.ts:226-230`'s `fireAt <= now` check
- * exactly. `due_now` (line 231) is unconditionally `pending`, matching the same source: it is never
- * run through the elapsed check at all, so it does not take `appliedAtMs` into account either.
+/** Every fixture deadline is modelled as SAVED AT THE APPLY INSTANT (`appliedAtMs`, the real
+ * `--applied-at-ms`). The app saves a deadline with one `now`: `project-deadline.ts:226-229`
+ * classifies each `advance` occurrence `skipped`/`elapsed_at_save` when `fireAt <= now`, and
+ * `:290-296` writes the occurrence's `created_at = updated_at = now`. So each occurrence here is
+ * classified against `appliedAtMs` AND stamped `createdAtMs = updatedAtMs = appliedAtMs`; a
+ * `skipped` row can never predate the reminder it marked elapsed. `due_now` (line 231) is
+ * unconditionally `pending` before any suppression, never run through the elapsed check.
  *
  * A DELIVERED project keeps its deadline in the app, but delivery suppresses its reminders:
- * `project-stage.ts` runs `buildDeadlineSuppressionBundle` (`stage-board-bundles.ts`), which sets
- * every PENDING occurrence to `status = 'superseded'`, `terminal_reason = 'project_delivered'`,
- * `fired_at = NULL` and leaves `skipped` ones alone. So for `stageKey === "delivered"` the normal
- * pending-vs-skipped classification runs first, then each would-be-pending occurrence takes the
- * suppressed shape — a pending reminder on a delivered project is a state the app cannot produce.
+ * `project-stage.ts` runs `buildDeadlineSuppressionBundle` (`stage-board-bundles.ts:1636-1650`),
+ * which sets every PENDING occurrence to `status = 'superseded'`, `terminal_reason =
+ * 'project_delivered'`, `fired_at = NULL`, `updated_at = now`, and leaves `skipped` ones alone. So
+ * for `stageKey === "delivered"` the normal classification runs first, then each would-be-pending
+ * occurrence takes the suppressed shape, delivered at that same apply instant (`updatedAtMs =
+ * appliedAtMs`) — a pending reminder on a delivered project is a state the app cannot produce.
  * (No `notification_delivery_ledger` rows: the fixture never writes any.) */
-function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadline: FixtureDeadline, appliedAtMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
+function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadline: FixtureDeadline, appliedAtMs: number): FixtureOccurrenceRow[] {
   const rows: FixtureOccurrenceRow[] = [];
   // Delivery suppression runs AFTER classification and only touches pending rows.
   const settle = (status: "pending" | "skipped", terminalReason: "elapsed_at_save" | null): Pick<FixtureOccurrenceRow, "status" | "terminalReason"> =>
@@ -278,7 +285,7 @@ function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadlin
       id: fixtureId(`occurrence:${projectId}:advance:${offsetMinutes}`), projectId, scheduleVersion: 1, kind: "advance", reminderOffsetMinutes: offsetMinutes,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
       ...(pending ? settle("pending", null) : settle("skipped", "elapsed_at_save")),
-      createdAtMs, updatedAtMs: createdAtMs,
+      createdAtMs: appliedAtMs, updatedAtMs: appliedAtMs,
     });
   };
   const pushDueNow = () => {
@@ -287,7 +294,7 @@ function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadlin
       id: fixtureId(`occurrence:${projectId}:due_now:0`), projectId, scheduleVersion: 1, kind: "due_now", reminderOffsetMinutes: 0,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
       ...settle("pending", null),
-      createdAtMs, updatedAtMs: createdAtMs,
+      createdAtMs: appliedAtMs, updatedAtMs: appliedAtMs,
     });
   };
   for (const offset of deadline.offsetsMinutes) pushAdvance(offset);
@@ -517,11 +524,12 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
     })),
   );
 
-  // Occurrence STATUS (pending vs. skipped) is classified against the real apply instant, not the
-  // anchor's fixed 09:00 — see the header comment above `anchorReferenceInstantMs`. Every DATE
-  // above (createdAt/updatedAt spacing) still comes from `referenceInstantMs`.
+  // Occurrences are modelled as saved at the real apply instant, not the anchor's fixed 09:00: their
+  // STATUS (pending vs. skipped) is classified against it and their createdAt/updatedAt are stamped
+  // with it — see the header comment above `anchorReferenceInstantMs`. Every other DATE above
+  // (createdAt/updatedAt spacing) still comes from `referenceInstantMs`.
   const deadlineOccurrences: FixtureOccurrenceRow[] = builds.flatMap((b) =>
-    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.stageKey, b.project.deadline, appliedAtMs, b.project.createdAtMs) : [],
+    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.stageKey, b.project.deadline, appliedAtMs) : [],
   );
 
   const defaultEditorIds = [...new Set(options.defaultEditorIds ?? [])];
