@@ -19,6 +19,7 @@
  *
  * File-specific edits:
  * - `noUncheckedIndexedAccess`: `shallowEqualItemLists` narrows `a[i]`/`b[i]` (same result for equal-length arrays); `levels` and the status retry's `levelKey` read `path[path.length - 1] ?? CASCADER_ROOT_KEY`; the single-select `comboboxValue` narrows `selectedValues[0]`.
+ * - RE-SKIN (#255 browser pass F): the status retry button's `hover:bg-accent` -> `hover:bg-muted` (ink `--accent` under its `text-foreground` label; guard Detector 9).
  * - RE-SKIN (`filters-skin.guard.test.ts`): `dark:bg-input/30`, `dark:has-aria-invalid:ring-destructive/40`, `dark:has-aria-invalid:border-destructive/50` and `rounded-lg` stripped from the chip-input class; `shadow-md` and `rounded-lg` stripped from the popup class (its `ring-1 ring-foreground/10` hairline kept).
  */
 import * as React from "react"
@@ -2865,7 +2866,7 @@ function CascaderEmpty({
           /* A real button because this lives OUTSIDE the listbox; a focusable
              element inside a `role="option"` is `nested-interactive`. */
           onClick={() => retryLevel(levelKey)}
-          className="text-foreground hover:bg-accent focus-visible:ring-ring/50 rounded-md px-2 py-0.5 font-medium outline-hidden transition-colors focus-visible:ring-2"
+          className="text-foreground hover:bg-muted focus-visible:ring-ring/50 rounded-md px-2 py-0.5 font-medium outline-hidden transition-colors focus-visible:ring-2"
         >
           {labels.retry}
         </button>

@@ -12,6 +12,9 @@
  * 4 (non-token Tailwind palette class, bare black/white paint included), 5 (`outline-none` paired
  * with `focus-visible:ring-*`) and 8 (no `rounded-lg`/`rounded-xl`/`rounded-2xl` or larger).
  *
+ * ADDED (#255 browser pass F): Detector 9, no `bg-accent` without `text-accent-foreground` in the
+ * same class string (Quincy's `--accent` is `--ink-900`, so the pair's text vanishes otherwise).
+ *
  * NOT PORTED, and why: Detector 4a (`GANTT_COLORS` has no consumer) and Detector 7 (no
  * `destructive` on the now-line) name Gantt-only constructs; this tree has neither a colour-preset
  * constant nor a now-line, so a port would be vacuously green. The bare-`border` detector stays
@@ -328,6 +331,63 @@ describe("guard: no rounded-lg/rounded-xl/rounded-2xl (or larger) anywhere in th
     expect(offenders, [
       "A rounded-lg/rounded-xl/rounded-2xl (or larger) class survives in the vendored filters tree.",
       "The brand is square-ish (styles/tokens/spacing.css). Found in:",
+      ...offenders,
+    ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 9 — `bg-accent` without `text-accent-foreground` in the same class string
+// ---------------------------------------------------------------------------
+// Quincy's `--accent` is `--ink-900` (`styles/tokens/colors.css`), so a `bg-accent` fill that leaves
+// the text at `foreground` paints ink on ink: browser pass F found the chip's operator and value
+// labels vanishing under `hover:bg-accent`. Scoped per string literal (`"…"`, `'…'`, `` `…` ``),
+// because the pair has to travel together. `bg-accent-foreground` is a different class and does not
+// count; an opacity suffix (`bg-accent/50`) and any variant prefix do.
+const STRING_LITERAL = /"[^"\n]*"|'[^'\n]*'|`[^`]*`/g;
+const BG_ACCENT = /(?<![\w-])(?:[^\s"'`]*:)?bg-accent(?![\w-])/;
+const TEXT_ACCENT_FOREGROUND = /text-accent-foreground\b/;
+
+function findUnpairedAccentFills(files: Map<string, string>): Record<string, string[]> {
+  const found: Record<string, string[]> = {};
+  for (const [name, text] of files) {
+    const hits = (text.match(STRING_LITERAL) ?? []).filter((literal) => BG_ACCENT.test(literal) && !TEXT_ACCENT_FOREGROUND.test(literal));
+    if (hits.length > 0) found[name] = hits;
+  }
+  return found;
+}
+
+describe("guard: no `bg-accent` without `text-accent-foreground` in the same class string", () => {
+  it("self-test: the real detector fires on the two chip segments and the cascader retry as shipped, and on an opacity suffix; not on a paired fill, `bg-accent-foreground`, or a comment naming the trap", () => {
+    const planted = new Map([
+      ["fixture-chip.tsx", stripComments('cn(\n  "hover:bg-accent bg-background cursor-default",\n  incomplete ? "text-foreground" : "text-muted-foreground"\n)')],
+      ["fixture-retry.tsx", stripComments('className="text-foreground hover:bg-accent focus-visible:ring-ring/50 rounded-md px-2 py-0.5"')],
+      ["fixture-opacity.tsx", stripComments("const ROW = `data-highlighted:bg-accent/50 gap-2`")],
+      [
+        "fixture-clean.tsx",
+        stripComments(
+          [
+            '"text-muted-foreground hover:bg-accent hover:text-accent-foreground"',
+            '"data-highlighted:bg-accent data-highlighted:text-accent-foreground"',
+            '"aria-expanded:bg-accent aria-expanded:text-accent-foreground"',
+            "`hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground`",
+            '"bg-accent-foreground"',
+            "// not `hover:bg-accent` alone, just this comment",
+          ].join("\n"),
+        ),
+      ],
+    ]);
+    expect(Object.keys(findUnpairedAccentFills(planted)).sort()).toEqual(["fixture-chip.tsx", "fixture-opacity.tsx", "fixture-retry.tsx"]);
+    expect(findUnpairedAccentFills(planted)["fixture-chip.tsx"]).toEqual(['"hover:bg-accent bg-background cursor-default"']);
+  });
+
+  it("has no unpaired `bg-accent` in the 22 vendored files", () => {
+    const found = findUnpairedAccentFills(readVendoredFiles());
+    const offenders = Object.entries(found).map(([name, hits]) => `  ${name}: ${hits.join(" | ")}`);
+    expect(offenders, [
+      "A `bg-accent` fill without `text-accent-foreground` in the same class string. Quincy's",
+      "`--accent` is `--ink-900`, so the text left at `foreground` disappears on it. Use `bg-muted`",
+      "(the `.button--secondary:hover` surface) or pair the fill with its foreground. Found in:",
       ...offenders,
     ].join("\n")).toEqual([]);
   });

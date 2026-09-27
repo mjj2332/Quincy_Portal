@@ -20,6 +20,7 @@
  * File-specific edits:
  * - `noUncheckedIndexedAccess`: the single-value label narrows `values[0]` into a local.
  * - RE-SKIN (`filters-skin.guard.test.ts`): six `dark:bg-input/30` classes stripped from the chip segments; `bg-background` kept.
+ * - RE-SKIN (#255 browser pass F): the operator and value segments' `hover:bg-accent` -> `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the segment label (left at foreground) vanished on hover; `bg-muted` is the `.button--secondary:hover` surface. Guarded by `filters-skin.guard.test.ts` Detector 9.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -1014,7 +1015,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
           <ButtonGroupText
             render={<button type="button" />}
             className={cn(
-              "hover:bg-accent bg-background cursor-default",
+              "hover:bg-muted bg-background cursor-default",
               /* The operator is connective tissue between the field and the
                  value, so it reads quieter than either - unless it is still
                  the prompt "Select condition", the one thing to act on. */
@@ -1046,7 +1047,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
                  more to say than the segment already says. */
               title={valueFullText === valueText ? undefined : valueFullText}
               className={cn(
-                "hover:bg-accent bg-background cursor-default",
+                "hover:bg-muted bg-background cursor-default",
                 valueEmpty && "text-muted-foreground"
               )}
               onPointerDown={() => focusSegment("value")}
