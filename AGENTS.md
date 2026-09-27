@@ -116,11 +116,33 @@ than the registry's `rating` (`docs/adr/0003`), so do not "restore" it to `compo
 
 ## Reuse ReUI before building UI
 
-Before building any UI element, load the ReUI skill (`.claude/skills/reui/SKILL.md`, with its
-`rules/`) for the find → read-the-API → adapt loop, and read `docs/reui-reuse.md` for how this repo
-installs: through the sandbox, since `shadcn add` in `portal/apps/web` overwrites Quincy's adapted
-`button` and `badge`. Where the two differ, the doc wins. A 404 on `@reui/<name>` points to the
-shadcn base-nova registry (`sheet`, `sidebar`, `breadcrumb`, `dialog`, …), not a missing component.
+Every UI element starts from something premade. Search in this order and take the first that fits:
+
+1. What is already installed: `portal/apps/web/src/components/reui/` and `components/quincy/`.
+2. A ReUI component, or one of its `c-*` examples.
+3. A ReUI block or template.
+4. A shadcn base-nova primitive. A 404 on `@reui/<name>` points here (`sheet`, `sidebar`,
+   `breadcrumb`, `dialog`, …), not to a missing component.
+5. Hand-built, only when nothing above fits.
+
+**Query the ReUI MCP for steps 2–4** (`mcp__ReUI__search` → `get_component` / `get_examples`): it
+serves the current registry. The local copy in `tmp/ReUI_Full_Source_Code/` is the fallback for
+when the MCP is unavailable, and can be out of date; a ledger line built from it says so. When the
+MCP shows a newer version of an item already installed, reuse the installed copy and note the gap
+in the ledger: updating a vendored item is its own change, because it carries Quincy's adaptations.
+
+Load the ReUI skill (`.claude/skills/reui/SKILL.md`, with its `rules/`) for the find → read-the-API
+→ adapt loop, and read `docs/reui-reuse.md` for how this repo installs: through the sandbox, since
+`shadcn add` in `portal/apps/web` overwrites Quincy's adapted `button` and `badge`. Where the two
+differ, the doc wins. Adapt by wiring real data and theming with Quincy tokens; keep the item's
+structure and behaviour.
+
+**Reuse ledger.** Every plan and every PR that adds or changes UI carries a reuse ledger: one line
+per UI element, naming the ReUI or base-nova item it uses (registry name or file path). A
+hand-built element's line records the searches run, the closest candidates, and why each one fails
+(an ADR, a proven token conflict, a behaviour ReUI lacks). The ledger is complete when every new
+element in the diff has its line. Sol, `/code-review` and design-reviewer each report a new element
+with no ledger line as a finding.
 
 ## Agent skills
 

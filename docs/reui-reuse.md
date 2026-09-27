@@ -55,11 +55,13 @@ Then copy each file into `components/reui/`, and on the way:
 
 ## Where to read real compositions
 
-- **ReUI MCP** (`mcp__ReUI__*`, Ultimate plan): `search` → `get_component` / `get_examples` →
-  `validate_usage`. The server is the `proxy.collectui.pro` equivalent of `mcp.reui.io`.
-- **`tmp/ReUI_Full_Source_Code/`**, the full ReUI source: `reui-blocks-main/blocks/<name>/`,
-  `reui-icons-main/`, `reui-templates-main/<template>/`. Gitignored and on the owner's machine only; a
-  worktree, remote session or CI run has MCP and nothing else.
+- **ReUI MCP first** (`mcp__ReUI__*`, Ultimate plan): `search` → `get_component` / `get_examples`
+  → `validate_usage`. It serves the current registry, so it is the source for finding an item and
+  reading its API. The server is the `proxy.collectui.pro` equivalent of `mcp.reui.io`.
+- **`tmp/ReUI_Full_Source_Code/` as the fallback**, when the MCP is unavailable: the full ReUI
+  source (`reui-blocks-main/blocks/<name>/`, `reui-icons-main/`, `reui-templates-main/<template>/`),
+  a snapshot that can lag the registry. Gitignored and on the owner's machine only; a worktree,
+  remote session or CI run has MCP and nothing else.
 - **`reui-templates-main/tempo-tasks` is the app shell's reference.** The #109 design canvas is
   "Tempo's layout in Quincy's palette"; its `src/features/app-shell/` composes base-nova `sidebar`,
   `sheet` and `breadcrumb` into the shell, header and right panel.
