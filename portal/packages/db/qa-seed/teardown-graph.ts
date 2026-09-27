@@ -24,6 +24,10 @@
  *  4. **`audit_log`** (and every other polymorphic `*` column) matches ANY captured id, whatever its
  *     `target_type` — and every id ever registered for the fixture, even one whose row the app has
  *     already deleted (Sol round 3, finding 1). FK-edge capture is unchanged.
+ *  4b. **Boundary check.** Before deleting anything: every captured row's outgoing FK parents must
+ *     be in the closure too, or in `SHARED_PARENT_TABLES` (global lookups such as `user`). A captured
+ *     row that points at a parent outside the fixture (a real project's client link on a
+ *     `premium_unlocks` row for a fixture asset) aborts the teardown, named (Sol round 3, item 5).
  *  5. **Sweep.** After deleting: every captured row is gone, and no column that can hold a captured id
  *     (every FK edge and every no-FK column) still holds one.
  *
@@ -97,6 +101,24 @@ export const NO_FK_ID_COLUMNS: readonly NoFkColumn[] = [
   { table: "notice_board_read_markers", column: "last_read_post_id", references: "notice_board_posts", evidence: "read marker's last-read notice-board post" },
 ];
 
+/**
+ * FK parent tables that are legitimately shared between fixture rows and everything else — global
+ * lookups/directories a fixture row may point at without owning. A captured row whose FK parent is
+ * outside the closure aborts teardown (Sol round 3, fix item 5) UNLESS the parent's table is here.
+ * Candidates were derived from the live graph (every FK parent of a table reachable from the fixture
+ * roots that is not itself reachable), plus `pipeline_stages`, which the review named. Adding an entry
+ * requires a reason; `qa-seed-teardown-graph.test.ts` guards that each entry exists and that every
+ * unreachable FK parent is listed, so a new lookup FK forces a decision rather than aborting every
+ * teardown.
+ */
+export const SHARED_PARENT_TABLES: Readonly<Record<string, string>> = {
+  user: "global accounts: fixture rows are created_by / authored by / assigned to real users (the bootstrap admin, default editors), and teardown never deletes a user",
+  agencies: "global agency directory: projects.agency_id points at a shared agency row a browser pass may pick for a fixture project; teardown never deletes directory rows",
+  agents: "global agent directory: projects.agent_id points at a shared agent row a browser pass may pick for a fixture project; teardown never deletes directory rows",
+  integration_connections: "the one Dropbox/AutoHDR connection every project's AutoHDR handoffs, mappings and claims share; teardown never deletes it",
+  pipeline_stages: "global stage lookup named in the round-3 review; no FK points at it today (projects.stage_key is a bare text key), so this entry is inert until one does",
+};
+
 // ---------------------------------------------------------------------------
 // Graph
 // ---------------------------------------------------------------------------
@@ -114,6 +136,9 @@ export type TeardownGraph = {
   withId: string[];
   /** Every edge whose parent is involved (or `*`). */
   edges: GraphEdge[];
+  /** Every FK edge whose CHILD is involved, whatever its parent — including parents the closure never
+   * reaches (`user`, ...), which `edges` drops. The boundary check runs over these. */
+  outgoingFkEdges: GraphEdge[];
   /** Involved tables, children before parents. */
   deleteOrder: string[];
 };
@@ -227,6 +252,7 @@ export function buildTeardownGraph(tables: readonly IntrospectedTable[], foreign
     involved: [...involved].sort(),
     withId: [...involved].filter((t) => columnsByTable.get(t)?.has("id")).sort(),
     edges: involvedEdges,
+    outgoingFkEdges: edges.filter((edge) => edge.kind === "fk" && involved.has(edge.child)),
     deleteOrder,
   };
 }
@@ -246,6 +272,13 @@ export type TeardownPlan = {
    * reached through a back-reference. Teardown must abort before deleting anything if this is
    * non-empty. */
   overCaptureQuery: string;
+  /** Rows `{ label, n }`, one per outgoing FK edge whose parent is not a `SHARED_PARENT_TABLES` table:
+   * captured rows of the child whose non-NULL FK value is NOT a captured row of the parent. Every `n`
+   * must be 0 before anything is deleted. */
+  outOfClosureCountQueries: string[];
+  /** Label → a query listing the offending rows `{ table_name, row_id, column_name, parent, parent_id }`
+   * (at most 10), run only for labels whose count is non-zero. */
+  outOfClosureDetailQueries: Record<string, string>;
   deleteStatements: string[];
   /** Each returns rows `{ label, n }`; every `n` must be 0 after the deletes. */
   remainingQueries: string[];
@@ -311,6 +344,17 @@ export function buildTeardownPlan(graph: TeardownGraph, runIds: readonly string[
   ];
   const captureRoundStatements = graph.edges.map((edge) => insertCaptured(edge.child, `${edge.child}.${edge.column} IN (${capturedIdsOf(edge.parent)})`));
 
+  const boundaryEdges = graph.outgoingFkEdges.filter((edge) => !(edge.parent in SHARED_PARENT_TABLES));
+  const boundaryLabel = (edge: GraphEdge) => `${edge.child}.${edge.column} -> ${edge.parent}.id`;
+  const outOfClosureWhere = (edge: GraphEdge) =>
+    `${capturedRowPredicate(edge.child, hasId.has(edge.child))} AND ${edge.child}.${edge.column} IS NOT NULL AND ${edge.child}.${edge.column} NOT IN (${capturedIdsOf(edge.parent)})`;
+  const outOfClosureCountQueries = chunk(boundaryEdges, SWEEP_QUERY_CHUNK).map((edges) =>
+    countRowsQuery(edges.map((edge) => ({ label: boundaryLabel(edge), countSql: `SELECT COUNT(*) FROM ${edge.child} WHERE ${outOfClosureWhere(edge)}` }))));
+  const outOfClosureDetailQueries = Object.fromEntries(boundaryEdges.map((edge) => [
+    boundaryLabel(edge),
+    `SELECT '${edge.child}' AS table_name, ${hasId.has(edge.child) ? `${edge.child}.id` : `${edge.child}.rowid`} AS row_id, '${edge.column}' AS column_name, '${edge.parent}' AS parent, ${edge.child}.${edge.column} AS parent_id FROM ${edge.child} WHERE ${outOfClosureWhere(edge)} ORDER BY 2 LIMIT 10;`,
+  ]));
+
   const deleteStatements = graph.deleteOrder.map((table) => `DELETE FROM ${table} WHERE ${capturedRowPredicate(table, hasId.has(table))} AND ${CAPABILITY_PREDICATE};`);
 
   const remainingQueries = chunk(graph.deleteOrder, SWEEP_QUERY_CHUNK).map((tables) =>
@@ -339,6 +383,8 @@ export function buildTeardownPlan(graph: TeardownGraph, runIds: readonly string[
     captureRoundStatements,
     closureCountQuery: `SELECT COUNT(*) AS n FROM ${FIXTURE_CLOSURE_TABLE};`,
     capturedCountsQuery: `SELECT table_name AS label, COUNT(*) AS n FROM ${FIXTURE_CLOSURE_TABLE} GROUP BY table_name ORDER BY table_name;`,
+    outOfClosureCountQueries,
+    outOfClosureDetailQueries,
     overCaptureQuery: `SELECT entity_id AS id FROM ${FIXTURE_CLOSURE_TABLE} WHERE table_name = 'projects' AND entity_id NOT IN (SELECT id FROM ${FIXTURE_ENTITIES_TABLE} WHERE kind = 'project') ORDER BY entity_id;`,
     deleteStatements,
     remainingQueries,

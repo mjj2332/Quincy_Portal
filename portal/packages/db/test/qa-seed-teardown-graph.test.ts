@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { apply, teardown } from "../qa-seed/cli.mjs";
 import { BOOTSTRAP_ADMIN_ID } from "../qa-seed/dataset";
 import { FIXTURE_ENTITIES_TABLE } from "../qa-seed/sql";
-import { buildTeardownGraph, FIXTURE_CLOSURE_TABLE, type IntrospectedForeignKey, type IntrospectedTable } from "../qa-seed/teardown-graph";
+import { buildTeardownGraph, FIXTURE_CLOSURE_TABLE, SHARED_PARENT_TABLES, type IntrospectedForeignKey, type IntrospectedTable } from "../qa-seed/teardown-graph";
 import { freshFixtureDatabase, liveTeardownPlan, sqliteExecutor, type SqliteDatabase } from "./qa-seed-sqlite-executor";
 import { controlProjectRows, insertSql, plantId, type PlantContext } from "./qa-seed-app-rows";
 
@@ -133,6 +133,74 @@ describe("what the graph teardown cannot handle fails loudly, before deleting an
     db.exec(`UPDATE projects SET cover_asset_id = '${assetId}' WHERE id = '${control.projectId}';`);
     expectRefusedUntouched(db, executor, new RegExp(`NOT registered fixture projects \\(${control.projectId}\\).*projects\\.cover_asset_id -> assets`));
     db.close();
+  });
+});
+
+describe("fix item 5 (Sol round 3): a captured row whose FK parent is outside the closure aborts teardown", () => {
+  function premiumUnlockAcrossTheBoundary() {
+    const s = appliedWithControl();
+    const { db, fixtureProjectId, control } = s;
+    const collectionId = String(db.prepare("SELECT id FROM collections WHERE project_id = ? LIMIT 1;").get(fixtureProjectId)?.id);
+    const assetId = plantId("r3:fixture-asset");
+    const linkId = plantId("r3:control-client-link");
+    const unlockId = plantId("r3:premium-unlock");
+    db.exec(`INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES ('${assetId}', '${collectionId}', 'photo', 'qa/unlock', 'unlock.jpg', 1, 'upload', 0, 0);`);
+    db.exec(`INSERT INTO client_links (id, project_id, token_hash, publish_version, expires_at, created_at) VALUES ('${linkId}', '${control.projectId}', 'qa-token-hash', 1, 0, 0);`);
+    // A real (non-fixture) project's client link unlocking a FIXTURE asset: capture reaches the unlock
+    // through premium_unlocks.asset_id, and deleting it would delete a row that belongs to the control
+    // project's link too.
+    db.exec(`INSERT INTO premium_unlocks (id, client_link_id, scope, asset_id, unlocked_at) VALUES ('${unlockId}', '${linkId}', 'asset', '${assetId}', 0);`);
+    return { ...s, assetId, linkId, unlockId };
+  }
+
+  it("a premium_unlocks row joining a non-fixture project's client link to a fixture asset: aborts naming table, row id and parent, deletes nothing", () => {
+    const { db, executor, linkId, unlockId } = premiumUnlockAcrossTheBoundary();
+    const before = snapshot(db);
+    expect(() => teardown(executor)).toThrow(new RegExp(`premium_unlocks ${unlockId}[^\n]*premium_unlocks\.client_link_id -> client_links\.id = ${linkId}`));
+    const after = snapshot(db);
+    delete before[FIXTURE_CLOSURE_TABLE];
+    delete after[FIXTURE_CLOSURE_TABLE];
+    expect(after).toEqual(before);
+    db.close();
+  });
+
+  it("once the cross-boundary reference is cleared by hand, the same fixture tears down cleanly", () => {
+    const { db, executor, unlockId, control } = premiumUnlockAcrossTheBoundary();
+    db.exec(`DELETE FROM premium_unlocks WHERE id = '${unlockId}';`);
+    teardown(executor);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM ${FIXTURE_ENTITIES_TABLE};`).get()?.n).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM projects WHERE id = ?;").get(control.projectId)?.n).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM client_links WHERE project_id = ?;").get(control.projectId)?.n).toBe(1);
+    expect(db.prepare("PRAGMA foreign_key_check;").all()).toEqual([]);
+    db.close();
+  });
+});
+
+describe("guard: the shared-parent allowlist (Sol round 3, fix item 5)", () => {
+  const db = freshFixtureDatabase();
+  const { tables, graph } = liveTeardownPlan(db);
+  db.close();
+  const liveTables = new Set(tables.map((t) => t.name));
+  const involved = new Set(graph.involved);
+
+  it("every entry is a table in the live schema and carries a written reason", () => {
+    expect(Object.keys(SHARED_PARENT_TABLES).length).toBeGreaterThan(0);
+    for (const [table, reason] of Object.entries(SHARED_PARENT_TABLES)) {
+      expect(liveTables.has(table), `${table} exists in the migrated schema`).toBe(true);
+      expect(reason.trim().length, `${table} has a reason`).toBeGreaterThan(20);
+    }
+  });
+
+  it("every FK parent outside the fixture's reach is allowlisted — a new lookup FK forces a decision instead of making every teardown abort", () => {
+    const outside = [...new Set(graph.outgoingFkEdges.filter((edge) => !involved.has(edge.parent)).map((edge) => edge.parent))].sort();
+    expect(outside.length).toBeGreaterThan(0);
+    expect(outside.filter((table) => !(table in SHARED_PARENT_TABLES))).toEqual([]);
+  });
+
+  it("outgoing FK edges include parents the closure never reaches (graph.edges alone would drop them)", () => {
+    expect(graph.outgoingFkEdges.some((edge) => edge.child === "audit_log" && edge.column === "actor_id" && edge.parent === "user")).toBe(true);
+    expect(graph.outgoingFkEdges.some((edge) => edge.child === "premium_unlocks" && edge.column === "client_link_id" && edge.parent === "client_links")).toBe(true);
+    expect(graph.outgoingFkEdges.every((edge) => edge.kind === "fk" && involved.has(edge.child))).toBe(true);
   });
 });
 

@@ -241,7 +241,8 @@ function assertApplyPrerequisites(executor) {
 //      validates every identifier before interpolating it.
 //   2. Capture the full descendant closure BEFORE deleting anything — roots from the registry, then
 //      one round of edge captures after another until a round adds nothing.
-//   3. Abort if the closure reached a `projects` row that is not a registered fixture project.
+//   3. Abort if the closure reached a `projects` row that is not a registered fixture project, or if
+//      any captured row has an FK parent outside the closure that is not a shared lookup table.
 //   4. Delete, children first. 5. Assert every captured row is gone and no column that can hold a
 //      captured id still does. 6. Only then empty the registry.
 // ---------------------------------------------------------------------------
@@ -328,6 +329,25 @@ export function teardown(executor) {
       `Refusing to tear down: the closure reached ${overCaptured.length} project(s) that are NOT registered fixture projects ` +
         `(${overCaptured.slice(0, 10).join(", ")}) — a non-fixture project references a fixture row through ${plan.edgesIntoProjects.join(" or ") || "an edge into projects"}. ` +
         "Nothing has been deleted. Clear that reference by hand, then re-run teardown.",
+    );
+  }
+
+  // Boundary check (Sol round 3, fix item 5): a captured row whose FK parent is outside the closure
+  // (and not a shared lookup such as `user`) belongs partly to something that is not the fixture —
+  // e.g. a `premium_unlocks` row joining a real project's client link to a fixture asset. Refuse
+  // before deleting anything, naming each such row.
+  const crossing = nonZeroCounts(executor, plan.outOfClosureCountQueries);
+  if (crossing.length > 0) {
+    const total = crossing.reduce((sum, row) => sum + Number(row.n), 0);
+    const details = crossing.flatMap((row) => {
+      const sql = plan.outOfClosureDetailQueries[row.label];
+      if (!sql) throw new Error(`No boundary detail query for ${row.label}.`);
+      return executor.query(sql);
+    });
+    throw new Error(
+      `Refusing to tear down: ${total} captured row(s) reference a parent row outside the fixture closure:\n  - ` +
+        details.map((d) => `${d.table_name} ${d.row_id}: ${d.table_name}.${d.column_name} -> ${d.parent}.id = ${d.parent_id} (not a fixture row)`).join("\n  - ") +
+        "\nNothing has been deleted. Clear that reference by hand (or, if the parent table is a genuinely shared lookup, add it to SHARED_PARENT_TABLES in qa-seed/teardown-graph.ts with a reason), then re-run teardown.",
     );
   }
 
