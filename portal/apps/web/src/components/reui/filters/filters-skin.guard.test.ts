@@ -342,27 +342,43 @@ describe("guard: no rounded-lg/rounded-xl/rounded-2xl (or larger) anywhere in th
 // Quincy's `--accent` is `--ink-900` (`styles/tokens/colors.css`), so a `bg-accent` fill that leaves
 // the text at `foreground` paints ink on ink: browser pass F found the chip's operator and value
 // labels vanishing under `hover:bg-accent`. Scoped per string literal (`"…"`, `'…'`, `` `…` ``),
-// because the pair has to travel together. `bg-accent-foreground` is a different class and does not
-// count; an opacity suffix (`bg-accent/50`) and any variant prefix do.
+// because the pair has to travel together, and paired by variant prefix: `<variants>:bg-accent` is
+// satisfied only by `<same variants>:text-accent-foreground` (a bare fill by a bare foreground), so
+// `hover:bg-accent focus:text-accent-foreground` still paints ink on ink on hover.
+// `bg-accent-foreground` is a different class and does not count; an opacity suffix (`bg-accent/50`)
+// and any variant prefix do.
 const STRING_LITERAL = /"[^"\n]*"|'[^'\n]*'|`[^`]*`/g;
-const BG_ACCENT = /(?<![\w-])(?:[^\s"'`]*:)?bg-accent(?![\w-])/;
-const TEXT_ACCENT_FOREGROUND = /text-accent-foreground\b/;
+/** A class token: `<variants:>bg-accent`, optionally `/opacity` and a trailing `!`. Group 1 is the variant prefix. */
+const BG_ACCENT_TOKEN = /^((?:\S*:)?)bg-accent(?:\/\S+)?!?$/;
+/** `<variants:>text-accent-foreground`, optionally with a trailing `!`. Group 1 is the variant prefix. */
+const TEXT_ACCENT_FOREGROUND_TOKEN = /^((?:\S*:)?)text-accent-foreground!?$/;
+
+/** True when some `bg-accent` token in the literal has no `text-accent-foreground` under the same variants. */
+function hasUnpairedAccentFill(literal: string): boolean {
+  const tokens = literal.split(/\s+/).map((token) => token.replace(/^["'`]+|["'`]+$/g, ""));
+  const fills = tokens.flatMap((token) => BG_ACCENT_TOKEN.exec(token)?.[1] ?? []);
+  const foregrounds = new Set(tokens.flatMap((token) => TEXT_ACCENT_FOREGROUND_TOKEN.exec(token)?.[1] ?? []));
+  return fills.some((variants) => !foregrounds.has(variants));
+}
 
 function findUnpairedAccentFills(files: Map<string, string>): Record<string, string[]> {
   const found: Record<string, string[]> = {};
   for (const [name, text] of files) {
-    const hits = (text.match(STRING_LITERAL) ?? []).filter((literal) => BG_ACCENT.test(literal) && !TEXT_ACCENT_FOREGROUND.test(literal));
+    const hits = (text.match(STRING_LITERAL) ?? []).filter(hasUnpairedAccentFill);
     if (hits.length > 0) found[name] = hits;
   }
   return found;
 }
 
 describe("guard: no `bg-accent` without `text-accent-foreground` in the same class string", () => {
-  it("self-test: the real detector fires on the two chip segments and the cascader retry as shipped, and on an opacity suffix; not on a paired fill, `bg-accent-foreground`, or a comment naming the trap", () => {
+  it("self-test: the real detector fires on the two chip segments and the cascader retry as shipped, on an opacity suffix, and on a foreground under different variants; not on a paired fill, `bg-accent-foreground`, or a comment naming the trap", () => {
     const planted = new Map([
       ["fixture-chip.tsx", stripComments('cn(\n  "hover:bg-accent bg-background cursor-default",\n  incomplete ? "text-foreground" : "text-muted-foreground"\n)')],
       ["fixture-retry.tsx", stripComments('className="text-foreground hover:bg-accent focus-visible:ring-ring/50 rounded-md px-2 py-0.5"')],
       ["fixture-opacity.tsx", stripComments("const ROW = `data-highlighted:bg-accent/50 gap-2`")],
+      ["fixture-other-variant.tsx", stripComments('"hover:bg-accent focus:text-accent-foreground"')],
+      ["fixture-bare-text.tsx", stripComments('"hover:bg-accent text-accent-foreground"')],
+      ["fixture-bare-fill.tsx", stripComments('"bg-accent hover:text-accent-foreground"')],
       [
         "fixture-clean.tsx",
         stripComments(
@@ -372,12 +388,22 @@ describe("guard: no `bg-accent` without `text-accent-foreground` in the same cla
             '"aria-expanded:bg-accent aria-expanded:text-accent-foreground"',
             "`hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground`",
             '"bg-accent-foreground"',
+            '"bg-accent text-accent-foreground"',
+            '"focus:bg-accent focus:text-accent-foreground"',
+            '"dark:hover:bg-accent/50 dark:hover:text-accent-foreground"',
             "// not `hover:bg-accent` alone, just this comment",
           ].join("\n"),
         ),
       ],
     ]);
-    expect(Object.keys(findUnpairedAccentFills(planted)).sort()).toEqual(["fixture-chip.tsx", "fixture-opacity.tsx", "fixture-retry.tsx"]);
+    expect(Object.keys(findUnpairedAccentFills(planted)).sort()).toEqual([
+      "fixture-bare-fill.tsx",
+      "fixture-bare-text.tsx",
+      "fixture-chip.tsx",
+      "fixture-opacity.tsx",
+      "fixture-other-variant.tsx",
+      "fixture-retry.tsx",
+    ]);
     expect(findUnpairedAccentFills(planted)["fixture-chip.tsx"]).toEqual(['"hover:bg-accent bg-background cursor-default"']);
   });
 
