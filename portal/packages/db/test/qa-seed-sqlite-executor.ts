@@ -36,13 +36,27 @@ export type FixtureExecutor = {
  * (`wrangler d1 execute --local --persist-to <scratch>`), not taken from documentation. */
 export const LOCAL_D1_LIMITS = { compoundSelect: 5 } as const;
 
+/** A compound SELECT of `terms` single-row terms, e.g. `SELECT 1 UNION ALL SELECT 2`. */
+function compoundSelectOf(terms: number): string {
+  return Array.from({ length: terms }, (_, index) => `SELECT ${index + 1}`).join(" UNION ALL ");
+}
+
+/** The limits go in through the `DatabaseSync` constructor (Node >= 24.12). Older Node ignores the
+ * option silently, so the probe proves the limit bites instead of trusting that it was set: a
+ * statement exactly at the limit must run and one term over it must fail, as it does on local D1. */
 function openMemoryDatabase(): SqliteDatabase {
   const getBuiltinModule = (process as unknown as { getBuiltinModule: (name: string) => unknown }).getBuiltinModule;
-  const sqlite = getBuiltinModule("node:sqlite") as { DatabaseSync: new (filename: string) => SqliteDatabase & { limits: Record<string, number> } };
-  const db = new sqlite.DatabaseSync(":memory:");
-  for (const [limit, value] of Object.entries(LOCAL_D1_LIMITS)) {
-    db.limits[limit] = value;
-    if (db.limits[limit] !== value) throw new Error(`node:sqlite did not apply local D1's ${limit} limit (${value}).`);
+  const sqlite = getBuiltinModule("node:sqlite") as { DatabaseSync: new (filename: string, options: { limits: Record<string, number> }) => SqliteDatabase };
+  const db = new sqlite.DatabaseSync(":memory:", { limits: { ...LOCAL_D1_LIMITS } });
+  db.prepare(compoundSelectOf(LOCAL_D1_LIMITS.compoundSelect)).all();
+  let overLimitRan = true;
+  try {
+    db.prepare(compoundSelectOf(LOCAL_D1_LIMITS.compoundSelect + 1)).all();
+  } catch {
+    overLimitRan = false;
+  }
+  if (overLimitRan) {
+    throw new Error(`node:sqlite did not apply local D1's compoundSelect limit (${LOCAL_D1_LIMITS.compoundSelect}); the DatabaseSync limits option needs Node >= 24.12 (running ${process.version}).`);
   }
   return db;
 }

@@ -3755,9 +3755,12 @@ non-zero exit and threw "exited with 1", so the SQLite error never reached the t
 
 The fix was a multi-row `VALUES` of scalar subqueries
 (`SELECT column1 AS label, column2 AS n FROM (VALUES ('t', (SELECT COUNT(*) ...)), ...)`), which is
-not subject to the compound limit (local D1 accepted 120 rows). The qa-seed test executor now sets
-`db.limits.compoundSelect = 5` (`LOCAL_D1_LIMITS` in `test/qa-seed-sqlite-executor.ts`), so this
-class of failure shows up in `npm test`, not only in a real run.
+not subject to the compound limit (local D1 accepted 120 rows). The qa-seed test executor now opens
+its database with `limits: { compoundSelect: 5 }` (`LOCAL_D1_LIMITS` in
+`test/qa-seed-sqlite-executor.ts`) and probes that a 6-term compound fails, so this class of failure
+shows up in `npm test`, not only in a real run. The constructor option needs Node >= 24.12 (the
+`db.limits` setter first used here needs 25.8 and broke CI on Node 22), which is why CI runs Node 24;
+older Node ignores the option silently, hence the probe rather than trust.
 
 The generalisation: **a `node:sqlite` (or any stock-SQLite) test executor is not local D1.** Mirror
 every D1 limit you have measured into the test database, and run a new statement shape once through
