@@ -47,15 +47,43 @@ export type DashboardCalendarState = {
  * a commit.
  */
 /**
- * List/Kanban/Gantt carry the Dashboard's own `q` (#217; Gantt joined in #220). Gantt is a plain
- * flat view exactly like List and Kanban — optional `q`, no facet params, no subview/date keys
- * (unlike Calendar's own two-shape grammar below) — so it shares this one type and this one parser
- * arm rather than growing a facet of its own.
+ * List/Kanban carry the Dashboard's own `q` (#217) and nothing else — optional `q`, no facet
+ * params, no subview/date keys (unlike Calendar's own two-shape grammar below).
+ *
+ * Gantt used to share this type and parser arm (#220, when it had no facets of its own). #255 gave
+ * it Stage / Delivered / Completed filters, so it now has its own arm, `DashboardGanttRoute`
+ * below, rather than an optional facet field bolted onto this one: this arm's serializer only
+ * writes `view` and `q`, so a facet field here would be representable in a route value yet
+ * silently dropped on the way to the URL. A separate arm makes that state unrepresentable — the
+ * List/Kanban serializer can never be handed a field it would discard.
  */
 export type DashboardListKanbanRoute = {
   kind: "dashboard";
-  dashboardView: "list" | "kanban" | "gantt";
+  dashboardView: "list" | "kanban";
   search?: string;
+};
+
+/** The Gantt's own URL filter state (#255). Absent on the route whenever every facet is default. */
+export type DashboardGanttFacet = {
+  stageKeys: StagePresentationKey[];
+  delivered: boolean;
+  completed: boolean;
+};
+
+/**
+ * The Gantt arm (#255): `view=gantt`, an optional `q`, and the Gantt's own facets — `stages`,
+ * `delivered=1`, `completed=1` — parsed with the Calendar arm's own list/flag parsers and caps, so a
+ * duplicate key, a duplicate or unknown stage, `delivered=0`, or any other key is `not-found`
+ * exactly as it is there. `gantt` is omitted whenever every facet is default
+ * (`isDefaultGanttFacet`), so the bare `/?view=gantt` has exactly one route value and the
+ * serialize -> parse -> serialize round trip is a fixed point. The Gantt's filter state is
+ * independent of the Calendar's: the two arms never read each other's parameters.
+ */
+export type DashboardGanttRoute = {
+  kind: "dashboard";
+  dashboardView: "gantt";
+  search?: string;
+  gantt?: DashboardGanttFacet;
 };
 
 /**
@@ -83,7 +111,7 @@ export type DashboardCalendarIntentRoute = {
   search?: string;
 };
 
-export type DashboardViewRoute = DashboardListKanbanRoute | DashboardCalendarIntentRoute;
+export type DashboardViewRoute = DashboardListKanbanRoute | DashboardGanttRoute | DashboardCalendarIntentRoute;
 
 export type DashboardCalendarFacetRoute = {
   kind: "dashboard";
@@ -114,6 +142,7 @@ const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
 const dashboardListKanbanParameterNames = new Set(["view", "q"]);
+const dashboardGanttParameterNames = new Set(["view", "q", "stages", "delivered", "completed"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 /** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
@@ -300,10 +329,8 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   const editorValues = rawEditors === null ? [] : parseCalendarList(rawEditors);
   if (editorValues === null || editorValues.length > PRODUCTION_CALENDAR_MAX_EDITOR_IDS || editorValues.some((value) => !UUID.test(value)) || new Set(editorValues).size !== editorValues.length) return null;
 
-  const rawStages = params.get("stages");
-  const stageValues = rawStages === null ? [] : parseCalendarList(rawStages);
-  if (stageValues === null || stageValues.length > PRODUCTION_CALENDAR_MAX_STAGE_KEYS || stageValues.some((value) => !STAGE_PRESENTATION_KEYS.includes(value as StagePresentationKey)) || new Set(stageValues).size !== stageValues.length) return null;
-  const stageKeys = canonicalKnownList(stageValues as StagePresentationKey[], STAGE_PRESENTATION_KEYS);
+  const stageKeys = parseStageKeysParam(params);
+  if (stageKeys === null) return null;
 
   const includeUnassigned = parseCalendarFlag(params, "unassigned");
   const showCompletedChecklist = parseCalendarFlag(params, "completed");
@@ -366,11 +393,40 @@ function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardLis
     if (!dashboardListKanbanParameterNames.has(name)) return null;
   }
   const dashboardView = params.get("view");
-  if (dashboardView !== "list" && dashboardView !== "kanban" && dashboardView !== "gantt") return null;
+  if (dashboardView !== "list" && dashboardView !== "kanban") return null;
   const search = parseDashboardSearch(params);
   if (search === null) return null;
 
   return { kind: "dashboard", dashboardView, ...(search ? { search } : {}) };
+}
+
+/** The ONE definition of "every Gantt facet is at its default" (#255) — the parser, the serializer
+ * and the web app's own route builder all use it, so "default means absent" cannot drift. */
+export function isDefaultGanttFacet(facet: DashboardGanttFacet | undefined): boolean {
+  return facet === undefined || (facet.stageKeys.length === 0 && !facet.delivered && !facet.completed);
+}
+
+/** Parses the stage list with the Calendar arm's own parser, cap and canonical order. */
+function parseStageKeysParam(params: URLSearchParams): StagePresentationKey[] | null {
+  const rawStages = params.get("stages");
+  const stageValues = rawStages === null ? [] : parseCalendarList(rawStages);
+  if (stageValues === null || stageValues.length > PRODUCTION_CALENDAR_MAX_STAGE_KEYS || stageValues.some((value) => !STAGE_PRESENTATION_KEYS.includes(value as StagePresentationKey)) || new Set(stageValues).size !== stageValues.length) return null;
+  return canonicalKnownList(stageValues as StagePresentationKey[], STAGE_PRESENTATION_KEYS);
+}
+
+function parseDashboardGanttLocation(params: URLSearchParams): DashboardGanttRoute | null {
+  for (const name of params.keys()) {
+    if (!dashboardGanttParameterNames.has(name)) return null;
+  }
+  if (params.get("view") !== "gantt") return null;
+  const stageKeys = parseStageKeysParam(params);
+  const delivered = parseCalendarFlag(params, "delivered");
+  const completed = parseCalendarFlag(params, "completed");
+  if (stageKeys === null || delivered === null || completed === null) return null;
+  const search = parseDashboardSearch(params);
+  if (search === null) return null;
+  const gantt: DashboardGanttFacet = { stageKeys, delivered, completed };
+  return { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), ...(isDefaultGanttFacet(gantt) ? {} : { gantt }) };
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
@@ -400,7 +456,8 @@ export function parseStaffLocation(location: string): StaffRoute {
     // being entirely absent already did.
     return { kind: "dashboard", ...(search !== undefined ? { search } : {}) };
   }
-  if (view === "list" || view === "kanban" || view === "gantt") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
+  if (view === "list" || view === "kanban") return parseDashboardListKanbanLocation(params) ?? { kind: "not-found" };
+  if (view === "gantt") return parseDashboardGanttLocation(params) ?? { kind: "not-found" };
   if (view === "calendar") {
     // The bare `/?view=calendar` intent (#111), legal as the sole query field or paired with
     // exactly one `q` (#217 fix round 4, item 1 -- see `DashboardCalendarIntentRoute`'s own
@@ -484,6 +541,14 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       // `search` exists on every arm here now (#217 fix round 4, item 1 gave the Calendar INTENT
       // arm one too), so it is read from `route` uniformly.
       if ("dashboardView" in route) params.set("view", route.dashboardView);
+      // #255: the Gantt arm's own facets, in the same order and spelling the Calendar arm writes
+      // its `stages`/`completed`/`delivered` — only non-default values, so an all-default facet
+      // serialises to the bare `/?view=gantt`.
+      if ("gantt" in route && route.gantt && !isDefaultGanttFacet(route.gantt)) {
+        if (route.gantt.stageKeys.length > 0) params.set("stages", serializedList(route.gantt.stageKeys, STAGE_PRESENTATION_KEYS));
+        if (route.gantt.completed) params.set("completed", "1");
+        if (route.gantt.delivered) params.set("delivered", "1");
+      }
       const search = route.search;
       if (search !== undefined) {
         const safeSearch = normalizeDashboardSearchText(search);
