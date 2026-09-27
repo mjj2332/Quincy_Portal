@@ -400,8 +400,9 @@ function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardLis
   return { kind: "dashboard", dashboardView, ...(search ? { search } : {}) };
 }
 
-/** The ONE definition of "every Gantt facet is at its default" (#255) — the parser, the serializer
- * and the web app's own route builder all use it, so "default means absent" cannot drift. */
+/** The ONE definition of "every Gantt facet is at its default" (#255) — the parser and the web
+ * app's own route builder both use it, so "default means absent" cannot drift. (The serializer
+ * writes only non-default params field by field, so an all-default facet writes nothing.) */
 export function isDefaultGanttFacet(facet: DashboardGanttFacet | undefined): boolean {
   return facet === undefined || (facet.stageKeys.length === 0 && !facet.delivered && !facet.completed);
 }
@@ -511,6 +512,14 @@ function serializedList(values: readonly string[], order: readonly string[]): st
   return unique.join(",");
 }
 
+/** Writes the `stages` / `completed=1` / `delivered=1` params the Calendar and Gantt arms share, in
+ * that order and only when non-default — the serializing counterpart of `parseStageKeysParam`. */
+function setStageAndFlagParams(params: URLSearchParams, facet: { stageKeys: readonly StagePresentationKey[]; completed: boolean; delivered: boolean }): void {
+  if (facet.stageKeys.length > 0) params.set("stages", serializedList(facet.stageKeys, STAGE_PRESENTATION_KEYS));
+  if (facet.completed) params.set("completed", "1");
+  if (facet.delivered) params.set("delivered", "1");
+}
+
 function calendarPathFor(calendar: DashboardCalendarState): string {
   const params = new URLSearchParams();
   params.set("view", "calendar");
@@ -519,9 +528,7 @@ function calendarPathFor(calendar: DashboardCalendarState): string {
   params.set("layers", serializedList(calendar.layers, PRODUCTION_CALENDAR_LAYERS));
   if (calendar.editorIds.length > 0) params.set("editors", serializedList(calendar.editorIds, []));
   if (calendar.includeUnassigned !== calendarFilterDefaults.includeUnassigned) params.set("unassigned", "1");
-  if (calendar.stageKeys.length > 0) params.set("stages", serializedList(calendar.stageKeys, STAGE_PRESENTATION_KEYS));
-  if (calendar.showCompletedChecklist !== calendarFilterDefaults.showCompletedChecklist) params.set("completed", "1");
-  if (calendar.showDeliveredProjects !== calendarFilterDefaults.showDeliveredProjects) params.set("delivered", "1");
+  setStageAndFlagParams(params, { stageKeys: calendar.stageKeys, completed: calendar.showCompletedChecklist, delivered: calendar.showDeliveredProjects });
   if (calendar.overdueOnly !== calendarFilterDefaults.overdueOnly) params.set("overdue", "1");
   if (calendar.myTasks !== calendarFilterDefaults.myTasks) params.set("mine", "1");
   // #217 fix round 3, item 3 / round 4, item 2: normalised (strip, collapse whitespace, trim, cap)
@@ -541,14 +548,10 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       // `search` exists on every arm here now (#217 fix round 4, item 1 gave the Calendar INTENT
       // arm one too), so it is read from `route` uniformly.
       if ("dashboardView" in route) params.set("view", route.dashboardView);
-      // #255: the Gantt arm's own facets, in the same order and spelling the Calendar arm writes
-      // its `stages`/`completed`/`delivered` — only non-default values, so an all-default facet
+      // #255: the Gantt arm's own facets, through the same writer the Calendar arm uses for its
+      // `stages`/`completed`/`delivered` — only non-default values, so an all-default facet
       // serialises to the bare `/?view=gantt`.
-      if ("gantt" in route && route.gantt && !isDefaultGanttFacet(route.gantt)) {
-        if (route.gantt.stageKeys.length > 0) params.set("stages", serializedList(route.gantt.stageKeys, STAGE_PRESENTATION_KEYS));
-        if (route.gantt.completed) params.set("completed", "1");
-        if (route.gantt.delivered) params.set("delivered", "1");
-      }
+      if ("gantt" in route && route.gantt) setStageAndFlagParams(params, route.gantt);
       const search = route.search;
       if (search !== undefined) {
         const safeSearch = normalizeDashboardSearchText(search);
