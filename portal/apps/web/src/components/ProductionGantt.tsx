@@ -92,6 +92,7 @@ import {
 import {
   DEFAULT_GANTT_FACET_FILTERS,
   ganttFacetFor,
+  ganttFacetKey,
   ganttLegendEntries,
   productionStageFilterOptions,
   type GanttLegendEntry,
@@ -103,6 +104,7 @@ import { buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
+import { StageSwatch } from "./quincy/StageSwatch";
 import { Skeleton } from "./reui/skeleton";
 
 export type ProductionGanttProps = {
@@ -348,7 +350,7 @@ function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
     >
       {entries.map((entry) => (
         <span key={entry.key} className="inline-flex items-center gap-1.5" data-stage-key={entry.key}>
-          <span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: entry.color }} />
+          <StageSwatch color={entry.color} />
           {entry.label}
         </span>
       ))}
@@ -481,12 +483,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // #255: built field by field so nothing but the request's own filter fields reaches the query
   // key — each distinct filter tuple is a new `generationKey` below, restarting the child chains
   // through the existing lifecycle exactly as a `q` change always has.
+  // Keyed by value (`ganttFacetKey`: stages, delivered, completed; plus the editor ids, which that
+  // key does not carry), so a fresh facet object with the same filters keeps the same request.
   const { editorIds, stageKeys, delivered, completed } = facetFilters;
+  const facetKey = ganttFacetKey(facetFilters);
   const editorIdsKey = editorIds.join(",");
-  const stageKeysKey = stageKeys.join(",");
   const filters = useMemo<ProductionGanttFilters>(
-    () => ({ q, editorIds: editorIdsKey ? editorIdsKey.split(",") : [], stageKeys: stageKeysKey ? (stageKeysKey.split(",") as ProductionGanttFilters["stageKeys"]) : [], delivered, completed }),
-    [q, editorIdsKey, stageKeysKey, delivered, completed],
+    () => ({ q, editorIds, stageKeys, delivered, completed }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the arrays are read from the facet; its value keys stand in for them
+    [q, facetKey, editorIdsKey],
   );
   const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop

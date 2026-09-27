@@ -46,12 +46,13 @@ import {
   ganttFacetToQuery,
   ganttQueryForFacet,
   queryToGanttFacet,
+  stageOptionsWithColor,
   type GanttFilterQuery,
   type ProductionGanttFacetFilters,
   type StageFilterOption,
 } from "../lib/production-gantt-filters";
-import { stageColorFor } from "../lib/stage-colors";
 import { Button } from "./quincy/Button";
+import { StageSwatch } from "./quincy/StageSwatch";
 
 export type ProductionGanttFiltersBarProps = {
   /** The URL's Gantt facet (the Dashboard reads it from the route). */
@@ -118,10 +119,10 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
         operators: GANTT_STAGE_OPERATORS,
         disabled: stageUsed,
         className: VALUE_MENU_CLASS,
-        options: stageOptions.map((option) => ({
+        options: stageOptionsWithColor(stageOptions).map((option) => ({
           value: option.key,
           label: option.label,
-          icon: <span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: stageColorFor(option.key) }} />,
+          icon: <StageSwatch color={option.color} />,
         })),
       },
       {

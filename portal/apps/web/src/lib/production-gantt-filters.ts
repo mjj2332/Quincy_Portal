@@ -237,8 +237,15 @@ export function productionStageFilterOptions(stages: readonly PipelineStage[], c
  */
 export function ganttLegendEntries({ stageOptions, filters }: { stageOptions: readonly StageFilterOption[]; filters: Pick<ProductionGanttFacetFilters, "stageKeys" | "delivered"> }): GanttLegendEntry[] {
   const selected = new Set(filters.stageKeys);
-  return stageOptions
-    .filter((option) => selected.size === 0 || selected.has(option.key))
-    .filter((option) => option.key !== "delivered" || filters.delivered)
-    .map((option) => ({ ...option, color: stageColorFor(option.key) }));
+  return stageOptionsWithColor(
+    stageOptions
+      .filter((option) => selected.size === 0 || selected.has(option.key))
+      .filter((option) => option.key !== "delivered" || filters.delivered),
+  );
+}
+
+/** Each stage option with its swatch colour: the one place a legend entry or a Stage filter option
+ * takes its colour from the stage colour map. */
+export function stageOptionsWithColor(stageOptions: readonly StageFilterOption[]): GanttLegendEntry[] {
+  return stageOptions.map((option) => ({ ...option, color: stageColorFor(option.key) }));
 }
