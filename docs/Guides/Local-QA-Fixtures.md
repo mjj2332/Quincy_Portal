@@ -191,11 +191,17 @@ look at them, and they are exactly what the same delete leaves behind in product
 
 All five real `pipeline_stages` keys are used, which is **four distinct hues**, not five —
 `raw_review`/`edited_review` share `--signal-caution` and `editing_autohdr` alone reaches
-`--signal-info` (the fifth, `editing`, is a presentation-only key no seed can ever produce; see
-`apps/web/src/lib/stage-colors.ts`). `--signal-positive` needs the delivered filter, and the
+`--signal-info` (the fifth, `editing`, is a presentation-only key: no *seed* writes it, but a
+non-admin viewer receives every `editing_autohdr` project as `editing` —
+`packages/shared/src/stage-move.ts`'s `stageTransportKeyForRole` — so an Editor-role pass does see
+it; see `apps/web/src/lib/stage-colors.ts`). `--signal-positive` needs the delivered filter, and the
 199/200 vs. 200/200 boundary needs the completed-children filter. **A browser pass must explicitly
 flip `delivered=1` and `completed=1` at some point** — neither one is visible in the default filter
-state.
+state. On the Gantt that is now done through its own filter panel (#255): "Show delivered projects"
+and "Show completed checklist items" write `delivered=1` / `completed=1` into the Gantt URL, beside
+any `stages=` selection, so the state survives a reload and Back/Forward. On the density tier,
+`delivered` alone trips the draw cap (the "Delivered on" row below), so pair it with a single stage
+— `/?view=gantt&stages=delivered&delivered=1` — to see the delivered bar drawn.
 
 ## Density (`--tier=core,density`) — opt-in, and why
 

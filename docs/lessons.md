@@ -3837,3 +3837,19 @@ were delivered. The fixture would have shipped unable to show the draw cap at al
   returned `matched_rows: 2208`. A reimplementation checked against itself proves nothing.
 - **Leave margin over a threshold.** The tier now clears the cap by more than 10%, so ticking a
   few children done during a browser pass cannot quietly drop it back under.
+
+## A banner that says "narrow your filter" must be tested against the controls the surface renders; a legend comes from the role-aware stage set (#255, #254, 2026-09-27)
+
+The Gantt's draw-cap notice told users to "narrow your filter" for a whole release while the Gantt
+rendered no filter controls at all — its filters were hard-wired to defaults (#255). Every test of
+the notice checked that it appeared, none checked that the thing it asked for was on screen.
+
+- **Test the instruction, not just the message.** A test for advice copy should find the control
+  the copy points at on the same surface. `ProductionGantt-filters.dom.test.tsx` now asserts the
+  filter panel is rendered beside the banner.
+- **Build a legend from the role-aware stage options, not the colour map (#254).** `stageColors`
+  carries both `editing` and `editing_autohdr`; a non-admin receives `editing_autohdr` projects as
+  `editing` (`packages/shared/src/stage-move.ts`'s `stageTransportKeyForRole`), so one of the two
+  entries is always a colour this viewer never sees. Where no stage label matched, the legend fell back to
+  the raw key. `ganttLegendEntries` (`lib/production-gantt-filters.ts`) derives entries from the
+  same options the filter panel offers, and drops `Delivered` unless delivered projects are shown.
