@@ -1,6 +1,6 @@
 # Agy (Antigravity) CLI mechanics
 
-Loaded on demand from `Subagent-Orchestration.md` §3a. Verified live 2026-07-24, including
+Loaded on demand from `Subagent-Orchestration.md` §3a. Browser pass moved to huashu-chrome 2026-09-28; CLI mechanics verified live 2026-07-24, including
 a real accept-edits build test.
 
 Agy is **Google's Antigravity CLI** (<https://antigravity.google/docs/cli/using>) — the binary
@@ -13,7 +13,8 @@ name for the CLI running **`gemini-3.8-flash-high` at `--effort high`** — the 
 (2026-09-27). Pass both flags on every run.
 
 **Agy's job is stage 1 of every UI browser pass** ([Subagent-Orchestration.md](Subagent-Orchestration.md)
-§2a). The browser-pass recipe is [§Browser pass](#browser-pass-the-default-invocation) below.
+§2a), driving the owner's Chrome through `huashu-chrome`. The recipe is
+[§Browser pass](#browser-pass-the-default-invocation) below.
 
 ## Planning (read-only)
 
@@ -133,12 +134,24 @@ text — the DB does.
 
 ## Browser pass: the default invocation
 
+Agy drives the owner's Chrome through the **`huashu-chrome`** MCP server (owner decision,
+2026-09-28). It replaced both Luna and `chrome-devtools-mcp` as the pass's default: on the #221
+pass, the same brief against the same bundle took Agy on huashu 33 min and 243 browser calls
+(15 failed), and Luna on huashu 98 min and 381 calls (20 failed) with two context compactions.
+Luna's turns outlasted the 10 s Undo toast, so it could not measure or press it and left three
+writes behind; Agy left the data clean.
+
 Preconditions, each checked before spawning (Agy starts none of them — see the shutdown hang above):
 
-1. `wrangler dev` on 8787 serving the build under test, and the owner's debugging Chrome on 9333
-   signed in (`curl -sS http://127.0.0.1:9333/json/version` answers). §Option A below.
-2. `agy mcp list` shows `chrome-devtools … --browserUrl=http://127.0.0.1:9333`.
-3. The page under test is **hard-reloaded** at the start of the brief, and Agy reports the loaded
+1. `wrangler dev` on 8787 serving the build under test. It serves whichever checkout started it,
+   normally the main checkout; with the owner's OK, detach that checkout to the branch under test
+   (`git checkout --detach <branch>`), rebuild web (`npm run build -w @quincy/web`), and restore
+   `main` afterwards. A worktree cannot run its own server (no `.dev.vars`, no local D1 session).
+2. The owner's everyday Chrome is signed in to `http://localhost:8787`, and the huashu extension
+   is connected: a huashu `tabs` list answers. If calls fail, the owner clicks the extension icon →
+   Reconnect (a CLI/extension version mismatch warns but works).
+3. `agy mcp list` shows `huashu-chrome … npx -y huashu-chrome mcp --client gemini`.
+4. The page under test is **hard-reloaded** at the start of the brief, and Agy reports the loaded
    `index-*.js` name alongside the one the server now serves. A tab left open across a rebuild
    runs the old bundle, and a pass against it is void (#255 pass G).
 
@@ -146,19 +159,34 @@ Preconditions, each checked before spawning (Agy starts none of them — see the
 agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
   --dangerously-skip-permissions \
   --add-dir "<absolute repo root>" \
-  --print-timeout 30m0s \
+  --print-timeout 40m0s \
   -p "$(cat "$SCRATCH/browser-pass.md")" > report.md 2> run.log
 ```
 
 - Launch it with `Bash` `run_in_background: true`. `-p` stays last.
-- `--add-dir` is what lets `take_screenshot` write its files into `qa-evidence/<pass>/` on the repo
-  volume (outside `trustedWorkspaces`, see Building). Give every screenshot an absolute
-  `filePath` in the brief, and confirm the files exist after the run.
-- The brief's first line names the browser: "Drive Chrome only through the `chrome-devtools`
-  MCP tools (`list_pages`, `select_page`, `navigate_page`, `take_screenshot`, `evaluate_script`,
-  …)." Those reach the owner-signed-in Chrome on 9333; the CLI's native `browser_*` tools are
-  untested against a signed-in session. Confirm it afterwards: the smoke test's conversation DB showed only
-  `chrome-devtools` tool calls.
+- **Permission.** The owner added `Bash(agy:*)` to `.claude/settings.local.json` (2026-09-28). It
+  matches only a command line that *starts* with `agy`: a wrapper that waits for a previous run
+  (`while …; do sleep; done; agy …`) is not covered and is refused. Queue a second run by launching
+  it after the first one's completion notification, not from a waiting script.
+- The brief's first line names the browser: "Drive Chrome only through the `huashu-chrome` MCP
+  tools (`tabs`, `navigate`, `snapshot`, `act`, `click`, `key`, `eval`, `query`, `network`,
+  `screenshot`, `wait`, `read_text`)." Afterwards, confirm from the conversation DB that no other
+  browser tool ran.
+- **Containment.** huashu drives the owner's *everyday* Chrome, with every login in it. The brief
+  confines Agy to tabs it opens itself (`tabs` action `new`, a `label`, and that `tabId` on every
+  call), to `http://localhost:8787` only, and never `focus: true`; it never reads, selects or
+  closes another tab, never visits history, passwords or autofill, and closes its own tabs at the
+  end. Tabs open in the background and screenshots work there.
+- **Screenshots.** `screenshot` with an absolute `savePath` under `qa-evidence/<pass>/screens/` and
+  `full: true`. Confirm the files exist after the run.
+- **Drags.** huashu has no drag tool. The brief supplies an `eval` that dispatches
+  `pointerdown`, stepped `pointermove`s and (after the screenshot) `pointerup` on the real bar or
+  grip; the keyboard Adjust path (Space, arrows, M/S/E, Enter/Escape) is the fallback when a
+  synthetic drag does nothing, and the report says which one ran.
+- **Viewport.** huashu cannot resize the owner's window. The brief records `innerWidth`/`innerHeight`
+  and tries one narrow popup with `window.open(url, name, "popup,width=390,height=844")`; Chrome
+  allowed it for Luna and blocked it for Agy on the same day. A blocked popup puts the narrow rows
+  under **Could not verify**.
 - The brief carries the report contract of Subagent-Orchestration.md §2a — screenshots named per
   viewport and state, every PASS/FAIL row with its measurement and screenshot — plus local-dev
   only, no sign-in or sign-out, and restore anything it mutates.
@@ -168,19 +196,28 @@ agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
   - one screenshot file per state, taken while that state is on screen, named for it;
   - every PASS row cites the file for its own state, never a neighbouring one;
   - a state it could not reach or capture goes under **Could not verify**, by name, with the
-    reason. A DOM-only fact (a live-region string, a computed colour) cites the `evaluate_script`
-    output instead of a screenshot and says so.
+    reason. A DOM-only fact (a live-region string, a computed colour) cites the `eval` output
+    instead of a screenshot and says so.
 
   After the run, check the files yourself: `md5 -q qa-evidence/<pass>/screens/*.png | sort | uniq -d`
   must print nothing, and open the screenshots behind the rows the decision rests on (§2a).
-- **Permission.** The owner has approved `agy … --dangerously-skip-permissions` for browser passes
-  against local dev (2026-09-27). The session's auto-mode classifier may still stop the first
-  launch in a session; that is a request for the owner's say-so in chat, not something to route
-  around. The persistent rule, if the owner wants one, is theirs to add to
-  `.claude/settings.local.json`.
-- Measured 2026-09-27: attaching, finding the tab and reading the Admin session through
-  `evaluate_script` took 34 s end to end. Under this flag `evaluate_script` runs without the
-  per-tool approval gate that blocks Codex (Subagent-Orchestration.md §6).
+
+### What huashu cannot prove: the session's trusted-input re-check
+
+Everything huashu does to the page is a synthetic DOM event, not trusted browser input, and the tab
+is in the background. On #221 that made three kinds of row unreliable in both measurers' hands:
+**keyboard and focus** (a `key` press in a background tab did not register for Luna; Agy measured
+`activeElement = BODY` and still wrote PASS), **hover** (a synthetic `mouseenter` does not hold a
+pointer over the element), and **narrow viewports** when the popup is blocked. Treat any such PASS
+or FAIL as unmeasured. The session re-runs those rows itself before the gate, with trusted input
+over CDP in the dedicated debugging Chrome on 9333 (§Option A below): open its own target with
+`Target.createTarget`, set the size with `Emulation.setDeviceMetricsOverride`, and drive it with
+`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`. On #221 this settled every disputed row,
+and confirmed a focus-loss defect that a happy-dom test had passed.
+
+Both measurers also passed two layout defects they had measured (a street name squeezed to zero
+width, an 860px dialog). That is design-reviewer's job to catch (§2a stage 2), not a reason to
+trust a measurer's PASS on layout.
 
 ## Why not the Antigravity browser agent
 
@@ -190,11 +227,14 @@ with an allowlist that starts as `localhost` only. The docs mark it and its
 [separate profile](https://antigravity.google/docs/ide/separate-chrome-profile/) **"Available on:
 Antigravity IDE"** — not the CLI — and it cannot attach to an existing Chrome, so a headless
 `agy -p` run cannot reach a human-signed Quincy session through it. The CLI's own `browser_*`
-tools remain untested for that. The headless path is `chrome-devtools-mcp`, below.
+tools remain untested for that. The headless paths are `huashu-chrome` (above) and
+`chrome-devtools-mcp` (below).
 
 ## Chrome automation via `chrome-devtools-mcp` (verified 2026-08-27, re-verified 2026-09-27)
 
-Agy drives a real Chrome through the
+No longer the browser pass's default (huashu is, above). It stays configured for what huashu
+cannot do: native `drag`, `resize_page`/`emulate` for real viewports, and trusted input in the
+dedicated debugging Chrome. Agy drives that Chrome through the
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
 
 Tools exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
@@ -229,6 +269,13 @@ actually works reliably.
   watch the conversation DB step count and kill once the final reply step lands rather than
   trusting a wide timeout. In Option A the human signs in *before* Agy spawns, so there is no
   in-run wait to worry about.
+- **Give it a workspace root, or it cannot save files.** `chrome-devtools-mcp` (≥ 1.10) confines
+  `take_screenshot`'s `filePath` and every other file write to the OS temp directory unless the
+  client negotiates the MCP `roots` capability or the server gets `--workspace=<dir>`. `codex exec`
+  does not negotiate roots, which is why Luna's #221 run got `Access denied: path … is not within
+  any of the configured workspace roots` on every screenshot (the same failure recorded in
+  codex-cli.md on 2026-09-13). Pass `--workspace="<absolute repo root>/qa-evidence"` — verified
+  2026-09-28 with a bare MCP client: the same call failed without it and saved with it.
 - **Agy tests; it never plans or builds.** Every finding still clears the full §5 gate in the
   orchestrating session — the report is not ground truth.
 
@@ -254,7 +301,8 @@ curl -sS http://127.0.0.1:9333/json/version   # confirm the endpoint is up
 
 # 3. point the MCP server at it
 agy mcp remove chrome-devtools 2>/dev/null
-agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest --browserUrl=http://127.0.0.1:9333
+agy mcp add chrome-devtools npx -y chrome-devtools-mcp@latest --browserUrl=http://127.0.0.1:9333 \
+  "--workspace=<absolute repo root>/qa-evidence"
 agy mcp list
 
 # 4. run tasks — harness-backgrounded (Bash run_in_background: true), -p kept last,

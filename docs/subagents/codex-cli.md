@@ -1,6 +1,6 @@
 # Codex CLI mechanics (Sol / Terra / Luna / Astra)
 
-Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-13.
+Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-28.
 
 `codex exec` runs the real Codex CLI as an OS subprocess via `Bash` — OpenAI's model, its own
 sandbox, output read back from a file. It is not the `Agent` tool.
@@ -87,18 +87,13 @@ MCP write is blocked, use an already-authenticated CLI where one exists and repo
 
 ## Browser and computer control
 
-**The UI browser pass belongs to Agy** ([agy-cli.md](agy-cli.md)); Luna runs it only when Agy
-cannot. Any Codex model may still handle other tasks that need live browser or desktop
+**The UI browser pass belongs to Agy** ([agy-cli.md](agy-cli.md)); no Codex model runs it (owner
+decision, 2026-09-28). Any Codex model may still handle other tasks that need live browser or desktop
 interaction. When a Codex model drives Chrome, **`chrome-devtools-mcp` is the default**, with the
 head-to-head data in the section below. Use the native
 Chrome-use plugin when the task needs the owner's real logged-in browser and no viewport control.
 Computer-use (desktop, non-browser) is unaffected: native remains the only path. Tell the selected
 model the purpose, target environment, authentication state, and evidence to collect.
-
-A fallback UI browser pass is still stage 1 of two (`Subagent-Orchestration.md` §2a): the
-design-reviewer reads Luna's output next, so every brief states the report contract — screenshots saved as files in one
-folder, named per viewport and open state, and a PASS/FAIL table whose every row carries the
-measurement and the screenshot that shows it.
 
 The capabilities do not change task authorization. Follow `Subagent-Orchestration.md` for
 testing restrictions, and restate the applicable passive-only, local-dev, impersonation,
@@ -153,41 +148,35 @@ What decided it, and what to expect from each:
   so the debug-profile recipe below does not serve the native path.
 - **MCP needs a prepared browser but then behaves.** Launch Chrome with a debugging port and put a
   session in it first (recipe in `agy-cli.md` §Option A). It then runs in a throwaway profile, so
-  the owner's browsing is never in scope, and viewport control works. Its known weakness: it could
-  not save screenshot files (it rejected the workspace path), so evidence stays inline in the
-  transcript.
+  the owner's browsing is never in scope, and viewport control works. It saves screenshot files
+  only with a workspace root: `codex exec` does not negotiate MCP roots, so without
+  `--workspace=<dir>` the server confines writes to the OS temp directory and rejects the repo
+  path (root cause and verification in agy-cli.md §`chrome-devtools-mcp`).
 - **MCP read the spec more critically.** It caught an error in the brief — it was asked to measure
   a group label's contrast and found the element is `.sr-only`, a clipped 1x1 box that never
   paints, so the requested measurement was meaningless. The native run measured the computed colour
   of invisible text and reported it as a pass.
 
-Invocation, unchanged:
+Invocation:
 
 ```bash
 cat <prompt> | codex exec --dangerously-bypass-approvals-and-sandbox \
   -m <model> \
   -c 'mcp_servers.chrome_devtools={command="npx",args=["-y","chrome-devtools-mcp@latest",\
-      "--browserUrl=http://127.0.0.1:9333"],startup_timeout_sec=180}' \
+      "--browserUrl=http://127.0.0.1:9333","--workspace=<repo root>/qa-evidence"],\
+      startup_timeout_sec=180}' \
   --output-last-message <report> > <run.log> 2>&1
 ```
 
-**Standing owner authorization (2026-09-19).** The owner has approved this exact invocation —
-Luna, unsandboxed, `chrome-devtools-mcp` attached to the dedicated debugging Chrome — for browser
-passes against **local dev (`http://localhost:8787`) only**. It does not extend to production, to
-any other model or task, or to an unsandboxed run without the browser. The session's auto-mode
-permission classifier may still stop the command the first time in a session: that is a request
-for the owner's say-so in chat, not a missing rule (`Bash(codex exec *)` already covers it) and
-not something to route around. Ask, then run it as written. A session cannot add its own
-permission rules — `.claude/settings.local.json` is the owner's to edit; the rule, if the owner
-wants it persistent, is `Bash(codex exec --dangerously-bypass-approvals-and-sandbox *)`.
+**Authorization.** The owner's 2026-09-19 standing approval for this invocation covered Luna's
+UI browser passes against local dev, which ended on 2026-09-28. Any other unsandboxed Codex
+browser task needs the owner's say-so in chat first; `.claude/settings.local.json` is the owner's
+to edit, never the session's.
 
 Two set-up facts that cost a round when missed (#216, 2026-09-19):
 
-- **The dev server serves whichever checkout started it**, normally the main checkout on `main`,
-  not the worktree under test. A worktree cannot run its own server — it has no `.dev.vars` and no
-  local D1 session, and neither may be copied. With the owner's OK, detach the main checkout to
-  the branch under test (`git checkout --detach <branch>`), rebuild web
-  (`npm run build -w @quincy/web`), test, and restore `main` afterwards.
+- **The dev server serves whichever checkout started it** — the recipe is in agy-cli.md §Browser
+  pass, precondition 1.
 - **Confirm the debug port answers before launching** (`curl -s http://127.0.0.1:9333/json/version`).
   A Chrome listening on 9222 that returns nothing is the everyday profile, which refuses remote
   debugging.
