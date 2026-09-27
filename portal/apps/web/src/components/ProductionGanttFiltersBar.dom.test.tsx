@@ -224,6 +224,24 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     }
   });
 
+  it("widens both value menus past the vendored 12rem, so 'Completed checklist items' and the longer stage labels are not truncated (browser pass F)", async () => {
+    /** The width utility on the nearest ancestor of a menu row that sets one: the value panel. */
+    const panelWidth = (row: HTMLElement) => {
+      for (let element = row.parentElement; element; element = element.parentElement) {
+        const width = (element.getAttribute("class") ?? "").split(/\s+/).find((name) => /^w-\d+$/.test(name));
+        if (width) return width;
+      }
+      return null;
+    };
+    await render();
+    await addFilter("Stage", "is any of", ["Editing"]);
+    expect(panelWidth(option("Editing"))).toBe("w-60");
+    await press(document.activeElement ?? document.body, "Escape");
+    await settle();
+    await addFilter("Show", "includes", ["Completed checklist items"]);
+    expect(panelWidth(option("Completed checklist items"))).toBe("w-60");
+  });
+
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
     await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
     await click(addTrigger());

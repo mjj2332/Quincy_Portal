@@ -58,6 +58,12 @@ export type ProductionGanttFiltersBarProps = {
 const LABELS: Partial<FilterLabels> = { filtersLabel: "Gantt filters" };
 const RULE_MENU = { duplicate: false, negate: false } as const;
 const ADD_FILTER = "Add filter";
+/**
+ * Browser pass F: the vendored value menu's 12rem (`w-48`) default truncated "Completed checklist
+ * items" and the longer stage labels. `FilterField.className` lands last on the value panel
+ * (`filters-editors.tsx`), so this widens both menus without editing the vendored default.
+ */
+const VALUE_MENU_CLASS = "w-60";
 
 export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChange, triggerRef }: ProductionGanttFiltersBarProps) {
   const ownTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -90,6 +96,7 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
         type: "multiselect",
         operators: GANTT_STAGE_OPERATORS,
         disabled: stageUsed,
+        className: VALUE_MENU_CLASS,
         options: stageOptions.map((option) => ({
           value: option.key,
           label: option.label,
@@ -102,6 +109,7 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
         type: "multiselect",
         operators: GANTT_SHOW_OPERATORS,
         disabled: showUsed,
+        className: VALUE_MENU_CLASS,
         options: GANTT_SHOW_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
       },
     ],
