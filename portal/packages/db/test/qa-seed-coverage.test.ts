@@ -336,3 +336,125 @@ describe("fix item 2 (Sol round 3): the DST cross-check does not expire when the
     expect(() => crossCheckDstTransition("2027-09-01", "spring", "2028-10-01")).toThrow(/disagrees with the committed cross-check table/);
   });
 });
+
+describe("coverage 10: every core project meant to draw a Gantt bar carries a deadline", () => {
+  // The Production Gantt draws a project bar only when the project has a deadline
+  // (`apps/web/src/lib/production-gantt-adapter.ts`, `buildProjectBar`): no deadline is a
+  // "Deadline not set" row with no bar, so no progress and no hue. P07 is the one core project
+  // that exists to prove exactly that row.
+  const DELIBERATELY_DEADLINE_LESS = ["no-deadline-no-shoot"];
+
+  it("the only core project without a deadline is no-deadline-no-shoot (any other is named here)", () => {
+    const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
+    const withoutDeadline = dataset.projects.filter((p) => p.deadline === null).map((p) => p.key);
+    expect(withoutDeadline).toEqual(DELIBERATELY_DEADLINE_LESS);
+  });
+});
+
+describe("coverage 11: deadline occurrences look saved at the apply instant, and delivery suppresses the delivered project's pending ones", () => {
+  // The app saves a deadline in one statement batch with one `now` (`workers/app/src/lib/
+  // project-deadline.ts:226-229` classifies `fireAt <= now`; `:290-296` writes `created_at =
+  // updated_at = now`), so an occurrence is never created before a reminder it marked elapsed.
+  // Delivery (`buildDeadlineSuppressionBundle`, `packages/db/src/stage-board-bundles.ts`) then sets
+  // every PENDING occurrence to superseded / project_delivered / fired_at NULL, `updated_at = now`,
+  // and leaves skipped ones alone. The fixture models each deadline as saved at apply time (and the
+  // delivery at that same instant). Checked at two plausible apply instants, both after every
+  // project's creation: the anchor's reference instant and three days later.
+  const DAY_MS = 86_400_000;
+  for (const appliedAtMs of [APPLIED_AT_MS, APPLIED_AT_MS + 3 * DAY_MS]) {
+    const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs });
+
+    it(`every core occurrence is stamped with the apply instant and classified against it (appliedAtMs=${appliedAtMs})`, () => {
+      expect(dataset.projects.every((p) => p.createdAtMs < appliedAtMs)).toBe(true);
+      expect(dataset.deadlineOccurrences.length).toBeGreaterThan(0);
+      for (const o of dataset.deadlineOccurrences) {
+        expect(o.createdAtMs, o.id).toBe(appliedAtMs);
+        expect(o.updatedAtMs, o.id).toBe(appliedAtMs);
+        if (o.status === "skipped") expect(o.fireAt, o.id).toBeLessThanOrEqual(o.createdAtMs);
+        else if (o.kind === "advance") expect(o.fireAt, o.id).toBeGreaterThan(o.createdAtMs);
+      }
+    });
+
+    it(`every project row with a deadline reflects that save (updatedAt = the apply instant); the rest are untouched (appliedAtMs=${appliedAtMs})`, () => {
+      // The app bumps `projects.updated_at = now` on deadline save (`project-deadline.ts:246`), and
+      // delivery bumps it again — the same modelled instant for Delivered.
+      const coreAndDensity = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs });
+      const withDeadline = coreAndDensity.projects.filter((p) => p.deadline !== null);
+      const withoutDeadline = coreAndDensity.projects.filter((p) => p.deadline === null);
+      expect(withDeadline.length).toBeGreaterThan(0);
+      expect(withoutDeadline.length).toBeGreaterThan(0);
+      for (const p of withDeadline) expect(p.updatedAtMs, p.key).toBe(appliedAtMs);
+      for (const p of withoutDeadline) {
+        expect(p.updatedAtMs, p.key).toBe(p.createdAtMs);
+        expect(p.updatedAtMs, p.key).toBeLessThanOrEqual(appliedAtMs);
+      }
+    });
+
+    it(`"delivered" has no pending occurrence; would-be-pending ones are superseded, skipped ones unchanged (appliedAtMs=${appliedAtMs})`, () => {
+      const delivered = dataset.projects.find((p) => p.key === "delivered");
+      expect(delivered?.stageKey).toBe("delivered");
+      expect(delivered?.deadline).not.toBeNull();
+      const occurrences = dataset.deadlineOccurrences.filter((o) => o.projectId === delivered!.id);
+      expect(occurrences.length).toBeGreaterThan(0);
+      expect(occurrences.filter((o) => o.status === "pending")).toHaveLength(0);
+      for (const o of occurrences) {
+        const wouldBeSkipped = o.kind === "advance" && o.fireAt <= appliedAtMs;
+        if (wouldBeSkipped) {
+          expect(o.status).toBe("skipped");
+          expect(o.terminalReason).toBe("elapsed_at_save");
+        } else {
+          expect(o.status).toBe("superseded");
+          expect(o.terminalReason).toBe("project_delivered");
+          expect(o.updatedAtMs).toBe(appliedAtMs);
+        }
+      }
+      // Both outcomes are exercised: the advance reminders elapsed before the apply, `due_now` is superseded.
+      expect(occurrences.some((o) => o.status === "skipped")).toBe(true);
+      expect(occurrences.some((o) => o.status === "superseded")).toBe(true);
+      // The suppression is delivered-only: no other project has a superseded occurrence.
+      const others = dataset.deadlineOccurrences.filter((o) => o.projectId !== delivered!.id);
+      expect(others.length).toBeGreaterThan(0);
+      expect(others.filter((o) => o.status === "superseded")).toHaveLength(0);
+      expect(others.some((o) => o.status === "pending")).toBe(true);
+    });
+  }
+});
+
+describe("coverage 12: an apply instant earlier than the fixture's own creation times is refused", () => {
+  // A deadline modelled as saved at the apply instant must not be saved before the project (or any
+  // row the dataset emits) was created — e.g. `--anchor=2026-10-19` applied on 2026-09-27.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function sydneyInstant(localCivil: string): number {
+    const resolved = resolveSydneyCivilMinute(localCivil);
+    if (!resolved.ok) throw new Error(resolved.message);
+    return resolved.value.epochMs;
+  }
+
+  it("throws, naming the anchor and the apply instant, for a future anchor — through the same `plan` dispatch the CLI runs before touching the DB", () => {
+    const appliedAtMs = sydneyInstant("2026-09-27T12:00");
+    const expected = /anchor 2026-10-19 is too far in the future for apply instant 2026-09-27T02:00:00\.000Z/;
+    expect(() => buildQaFixtureDataset({ anchor: "2026-10-19", tiers: ["core"], appliedAtMs })).toThrow(expected);
+    expect(() => buildQaFixtureDataset({ anchor: "2026-10-19", tiers: ["density"], appliedAtMs })).toThrow(expected);
+    expect(() => emitMode("plan", ["--anchor=2026-10-19", `--applied-at-ms=${appliedAtMs}`])).toThrow(expected);
+  });
+
+  // The default anchor is the current Sydney week's Monday, so the earliest instant it can be
+  // applied at is Monday 00:00 Sydney. Checked across both DST transitions' weeks as well.
+  for (const monday of ["2026-09-21", "2026-10-05", "2027-04-05"]) {
+    it(`the default anchor applied at Monday ${monday} 00:00:01 Sydney builds (core + density, with editors)`, () => {
+      const appliedAtMs = sydneyInstant(`${monday}T00:00`) + 1_000;
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(appliedAtMs));
+      const plan = emitMode("plan", ["--tier=core,density", `--applied-at-ms=${appliedAtMs}`, "--default-editor-ids=1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d"]) as { anchor: string; statements: string[] };
+      vi.useRealTimers();
+      expect(plan.anchor).toBe(monday);
+      expect(plan.statements.length).toBeGreaterThan(0);
+      const dataset = buildQaFixtureDataset({ anchor: monday, tiers: ["core", "density"], appliedAtMs, defaultEditorIds: ["1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d"] });
+      const created = [...dataset.projects, ...dataset.subtasks, ...dataset.collections, ...dataset.members].map((row) => row.createdAtMs);
+      expect(Math.max(...created)).toBeLessThanOrEqual(appliedAtMs);
+    });
+  }
+});

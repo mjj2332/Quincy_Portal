@@ -14,7 +14,7 @@ after running.
 ## Commands
 
 ```sh
-npm run db:migrate:local                    # prerequisite — see "known gap" below
+npm run db:migrate:local                    # prerequisite — migrates, seeds, installs the capability fence
 npm run db:qa:apply                         # core tier, anchor = this Monday (Sydney)
 npm run db:qa:apply -- --tier=core,density  # + the draw-cap tier (opt-in, see below)
 npm run db:qa:apply -- --anchor=2026-09-21  # reproduce a specific browser-pass report
@@ -22,6 +22,8 @@ npm run db:qa:verify                        # assert the applied DB still matche
 npm run db:qa:teardown                      # remove every fixture row AND every app-written row that
                                              # references one, leave everything else untouched
 ```
+
+**Past or current-week anchors only.** `apply` refuses an anchor whose fixture rows would be created after the apply instant (e.g. `--anchor=2026-10-19` applied on 2026-09-27), because each deadline is saved at the apply instant and must not predate its project. It fails while building the plan, before the database is touched. The default anchor (this Sydney week's Monday) is always accepted.
 
 Every `apply` replaces any previously-applied fixture, so re-running is safe and a changed
 `--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows. It builds
@@ -176,18 +178,20 @@ look at them, and they are exactly what the same delete leaves behind in product
 
 ## What each core-tier project proves
 
+On the Production Gantt a project draws a bar only when it has a deadline (`apps/web/src/lib/production-gantt-adapter.ts`, `buildProjectBar`: no deadline means a "Deadline not set" row and no bar), so every core project meant to show a bar, progress or a hue carries one — every core project except *No deadline, no shoot date* — at its shoot date + 7 days, 17:00 unless noted below. Coverage 10 in `packages/db/test/qa-seed-coverage.test.ts` fails, naming the project, if another one loses it. Every fixture deadline is modelled as **saved at the apply instant**: its reminders are classified pending or `skipped` against that instant and stamped `created_at = updated_at =` that instant, and the project row reflects that save (`projects.updated_at =` the apply instant), as the app's own save does with one `now`. Projects without a deadline keep their earlier `updated_at`.
+
 | Project (street prefix `QA FIXTURE ·`) | Stage | What it proves |
 |---|---|---|
-| Pagination 260 | Awaiting RAW | 260 not-done children, more than 2× the child page limit → embedded page + two continuation pages |
+| Pagination 260 | Awaiting RAW | 260 not-done children, more than 2× the child page limit → embedded page + two continuation pages; the bar shows the `awaiting_raw` hue |
 | Near-complete 199 of 200 | RAW review | `Math.round(99.5)` capped at 99 — progress never shows 100% until every child is done |
 | Complete 40 of 40 | Edited review | Progress is exactly 100%, the completed checkmark renders |
 | Zero progress | Editing · autoHDR | Progress is emitted as `0`, not omitted |
-| Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on** |
+| Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on**. It keeps its deadline, as a project does in the app when it is delivered. Its reminders are modelled as saved and then delivered at the apply instant: any that would be pending is `superseded` / `project_delivered` with `updated_at` = the apply instant, which is what delivery does to it (`buildDeadlineSuppressionBundle`); one already elapsed at apply stays `skipped`. None is pending |
 | Schedule edges | RAW review | Every checklist schedule state and endpoint kind (`unscheduled`, `due_only`, `range`, both `date` and `timed`), all three `legacy_unresolved` reasons, and the DST fold canary (see below) |
-| No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention, hollow-start bar |
-| Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker |
-| Deadline before start | Edited review | Zero-length bar + `deadline_before_start` attention |
-| Invalid shoot date | RAW review | `shoot_date = '2026-02-30'` (a real Tonomo shape that isn't a valid calendar day) — the bar falls back to sorting by `created_at` |
+| No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention (flagged hollow-start) and **no bar** — deliberately left without a deadline |
+| Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker (deadline anchor + 14 days, 17:00) |
+| Deadline before start | Edited review | Zero-length bar + `deadline_before_start` attention (deadline anchor + 2 days 09:00, shoot anchor + 10) |
+| Invalid shoot date | RAW review | `shoot_date = '2026-02-30'` (a real Tonomo shape that isn't a valid calendar day) — serialized as no shoot date, so the bar starts at `created_at` (deadline anchor + 7 days, 17:00) |
 
 All five real `pipeline_stages` keys are used, which is **four distinct hues**, not five —
 `raw_review`/`edited_review` share `--signal-caution` and `editing_autohdr` alone reaches
@@ -274,21 +278,6 @@ storage row that serializes to `invalid`; that state exists only for genuinely c
 and similar shapes). Seeding it would mean hand-writing a row the application itself could never
 have written — exactly what this fixture exists to avoid. It stays covered by the existing
 unit tests in `packages/shared/src/checklist-schedule.ts`'s own test file, not by browser QA data.
-
-## Known gap this fixture does not fix
-
-`setup-local.mjs` applies migrations and the post-rollout board flag, but it does not apply
-`seed/0001_seed.sql`. A genuinely fresh local D1 therefore lacks the five pipeline stages and the
-bootstrap admin the fixture's preflight requires, even though most local setups already have them
-from ordinary use. The fixture's preflight fails with a clear, specific message in that case
-(`Run the shared seed first`) rather than a confusing downstream error — it does not attempt to
-apply the seed itself. If you are building a scratch database from nothing (as the fixture's own
-integration test does), apply the seed yourself first:
-
-```sh
-npx wrangler d1 execute quincy-portal --local --config ../../workers/app/wrangler.jsonc \
-  --persist-to <scratch dir> --file ./seed/0001_seed.sql
-```
 
 ## No fixture users (v1)
 

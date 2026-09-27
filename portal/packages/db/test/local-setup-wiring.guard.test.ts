@@ -10,15 +10,37 @@
  * pinned to `--local`. Delete the enable step or drop `--local` and these fail; wipe your own D1
  * and they do not. The end-to-end claim in #160 — drag handles rendering `data-disabled="false"`
  * — is closed by a browser pass, not by this file.
+ *
+ * It also covers the shared-seed step (#252): the real `setupLocal` sequence is run against an
+ * in-memory SQLite built from the real migrations, so a missing or skipped seed fails here.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BOARD_CONTRACT_FLAG } from "../src/board-schema-variant";
-import { assertFlagEnabled, assertSchemaMarkerPresent, LOCAL_FLAG_SQL, parseArguments, wranglerArguments } from "../setup-local.mjs";
+import { DEFAULT_STAGES } from "@quincy/shared";
+import {
+  assertFlagEnabled,
+  assertSchemaMarkerPresent,
+  assertSeedApplied,
+  BOOTSTRAP_ADMIN_ID,
+  LOCAL_FLAG_SQL,
+  main,
+  parseArguments,
+  SEED_PATH,
+  SEED_STAGE_KEYS,
+  seedWarnings,
+  setupLocal,
+  wranglerArguments,
+} from "../setup-local.mjs";
+import { BOOTSTRAP_ADMIN_ID as DATASET_BOOTSTRAP_ADMIN_ID } from "../qa-seed/dataset";
+import { fakeWranglerSpawn, openMemoryDatabase, sqliteSetupExecutor } from "./qa-seed-sqlite-executor";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  scripts: Record<string, string>;
+};
+const rootPackageJson = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as {
   scripts: Record<string, string>;
 };
 const setupSource = readFileSync(new URL("../setup-local.mjs", import.meta.url), "utf8");
@@ -30,6 +52,18 @@ describe("guard: db:migrate:local is wired to the local setup runner", () => {
   it("runs setup-local.mjs rather than wrangler directly", () => {
     // A bare `wrangler d1 migrations apply` leaves the Board disabled — that is the #160 bug.
     expect(packageJson.scripts["migrate:local"]).toBe("node ./setup-local.mjs");
+  });
+
+  // Without a trailing `--`, the nested `npm run` takes `--persist-to <dir>` as its own config and
+  // only the bare path reaches the script (#265).
+  const forwardingScripts = Object.entries(rootPackageJson.scripts).filter(
+    ([name, command]) => name.startsWith("db:") && /(?:^|\s)(?:-w|--workspace)[\s=]@quincy\/db(?:\s|$)/.test(command),
+  );
+  it("finds the root db:* scripts that forward to @quincy/db, however the workspace flag is spelled", () => {
+    expect(forwardingScripts.map(([name]) => name)).toEqual(expect.arrayContaining(["db:migrate:local", "db:generate"]));
+  });
+  it.each(forwardingScripts)("root %s forwards its arguments with a trailing --", (_name, command) => {
+    expect(command).toMatch(/ --$/);
   });
 
   it("enables the same flag key the application reads", () => {
@@ -127,14 +161,17 @@ describe("guard: the local setup runner cannot be pointed at production", () => 
     ["--persist-to=scratch/state"],
   ];
   it.each(ACCEPTED_ARGV_TABLE)("keeps every non-fixed argv element flag-shaped-free: %j", (...argv) => {
-    const options = parseArguments(argv);
-    for (const subcommand of SUBCOMMANDS) {
-      const args = wranglerArguments(subcommand, options);
+    const db = openMemoryDatabase();
+    const fake = fakeWranglerSpawn(db);
+    main(argv, { spawn: fake.spawn, log: () => {} });
+    expect(fake.calls.length).toBeGreaterThan(0);
+    for (const args of fake.calls) {
       for (const element of args) {
         if (KNOWN_FIXED_FLAGS.has(element)) continue;
         expect(element.startsWith("-")).toBe(false);
       }
     }
+    db.close();
   });
 });
 
@@ -143,5 +180,131 @@ describe("guard: the local flag stays out of the all-environments seed", () => {
     // That seed is headed "all envs" and uses INSERT OR IGNORE — wrong reach, and it would not
     // update the row 0037 already created at 0 anyway.
     expect(sharedSeed).not.toContain(BOARD_CONTRACT_FLAG);
+  });
+});
+
+describe("guard: db:migrate:local applies the shared seed", () => {
+  function freshSetup() {
+    const db = openMemoryDatabase();
+    const lines: string[] = [];
+    setupLocal(sqliteSetupExecutor(db), (line: string) => lines.push(line));
+    return { db, lines };
+  }
+
+  it("setupLocal on an empty database leaves the five seeded stage keys and the bootstrap admin", () => {
+    const { db } = freshSetup();
+    const stages = db.prepare("SELECT key, active FROM pipeline_stages ORDER BY key;").all();
+    expect(stages.map((row) => row.key)).toEqual(DEFAULT_STAGES.map((stage) => stage.key).sort());
+    expect(stages.every((row) => Number(row.active) === 1)).toBe(true);
+    const admin = db.prepare("SELECT role, active FROM user WHERE id = ?;").get(BOOTSTRAP_ADMIN_ID);
+    expect(admin?.role).toBe("admin");
+    expect(Number(admin?.active)).toBe(1);
+    db.close();
+  });
+
+  it("re-running setupLocal keeps a renamed or deactivated stage and an edited admin", () => {
+    const { db } = freshSetup();
+    db.prepare("UPDATE pipeline_stages SET label = 'Renamed locally', active = 0 WHERE key = 'raw_review';").run();
+    db.prepare("UPDATE user SET name = 'Edited Admin' WHERE id = ?;").run(BOOTSTRAP_ADMIN_ID);
+    const lines: string[] = [];
+    setupLocal(sqliteSetupExecutor(db), (line: string) => lines.push(line));
+    const stage = db.prepare("SELECT label, active FROM pipeline_stages WHERE key = 'raw_review';").get();
+    expect(stage?.label).toBe("Renamed locally");
+    expect(Number(stage?.active)).toBe(0);
+    expect(db.prepare("SELECT name FROM user WHERE id = ?;").get(BOOTSTRAP_ADMIN_ID)?.name).toBe("Edited Admin");
+    expect(lines.some((line) => line.startsWith("  ! ") && /stages are inactive/.test(line))).toBe(true);
+    db.close();
+  });
+
+  it("main() on a fresh database seeds it, through --local wrangler calls only", () => {
+    const db = openMemoryDatabase();
+    const fake = fakeWranglerSpawn(db);
+    main(["--persist-to", "/tmp/scratch"], { spawn: fake.spawn, log: () => {} });
+
+    const stages = db.prepare("SELECT key, active FROM pipeline_stages ORDER BY key;").all();
+    expect(stages.map((row) => row.key)).toEqual(DEFAULT_STAGES.map((stage) => stage.key).sort());
+    expect(stages.every((row) => Number(row.active) === 1)).toBe(true);
+    const admin = db.prepare("SELECT role, active FROM user WHERE id = ?;").get(BOOTSTRAP_ADMIN_ID);
+    expect(admin?.role).toBe("admin");
+    expect(Number(admin?.active)).toBe(1);
+
+    const isSeedCall = (args: string[]) => args.some((element, index) => element === "--file" && args[index + 1] === SEED_PATH);
+    expect(fake.calls.filter(isSeedCall)).toHaveLength(1);
+    const seedIndex = fake.calls.findIndex(isSeedCall);
+    expect(fake.calls[0].slice(0, 4)).toEqual(["wrangler", "d1", "migrations", "apply"]);
+    const laterNonQuery = fake.calls
+      .map((args, index) => ({ args, index }))
+      .filter(({ args, index }) => index !== 0 && index !== seedIndex && !args.includes("--json"));
+    expect(laterNonQuery.length).toBeGreaterThan(0);
+    for (const { index } of laterNonQuery) expect(index).toBeGreaterThan(seedIndex);
+
+    const packageDirectory = fileURLToPath(new URL("../", import.meta.url));
+    for (const spawned of fake.processes) expect(spawned).toEqual({ command: "npx", cwd: packageDirectory });
+
+    for (const args of fake.calls) {
+      expect(args).toContain("--local");
+      expect(args).toContain("quincy-portal");
+      expect(args).toContain("../../workers/app/wrangler.jsonc");
+      const persist = args.indexOf("--persist-to");
+      expect(persist).toBeGreaterThan(-1);
+      expect(args[persist + 1]).toBe("/tmp/scratch");
+    }
+    db.close();
+  });
+
+  it("setupLocal fails loudly when another user row already holds the bootstrap admin's email", () => {
+    const seeded = openMemoryDatabase();
+    setupLocal(sqliteSetupExecutor(seeded), () => {});
+    const adminEmail = seeded.prepare("SELECT email FROM user WHERE id = ?;").get(BOOTSTRAP_ADMIN_ID)?.email;
+    seeded.close();
+    expect(adminEmail).toMatch(/@/);
+    const db = openMemoryDatabase();
+    const real = sqliteSetupExecutor(db);
+    const executor = {
+      ...real,
+      migrate: () => {
+        real.migrate();
+        db.prepare(
+          "INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'Someone Else', ?, 0, 'admin', 1, 0, 0);",
+        ).run(adminEmail);
+      },
+    };
+    expect(() => setupLocal(executor, () => {})).toThrow(/email/);
+    // The sequence stopped at the seed: the Board flag step never ran.
+    expect(Number(db.prepare("SELECT enabled FROM feature_flags WHERE key = ?;").get(BOARD_CONTRACT_FLAG)?.enabled)).toBe(0);
+    db.close();
+  });
+
+  it("assertSeedApplied fails on missing rows and seedWarnings reports inactive ones", () => {
+    expect(() => assertSeedApplied({ stages: 4, active_stages: 4, admin_active: 1 })).toThrow(/4 of 5/);
+    expect(() => assertSeedApplied({ stages: 5, active_stages: 5, admin_active: null })).toThrow(/email/);
+    expect(() => assertSeedApplied(undefined)).toThrow();
+
+    const inactiveStage = { stages: 5, active_stages: 4, admin_active: 1 };
+    expect(() => assertSeedApplied(inactiveStage)).not.toThrow();
+    expect(seedWarnings(inactiveStage)).toHaveLength(1);
+
+    const inactiveAdmin = { stages: 5, active_stages: 5, admin_active: 0 };
+    expect(() => assertSeedApplied(inactiveAdmin)).not.toThrow();
+    expect(seedWarnings(inactiveAdmin)).toHaveLength(1);
+
+    const allGood = { stages: 5, active_stages: 5, admin_active: 1 };
+    expect(() => assertSeedApplied(allGood)).not.toThrow();
+    expect(seedWarnings(allGood)).toEqual([]);
+  });
+
+  it("the seed constants match the shared stages, the fixture dataset and the seed file", () => {
+    expect(SEED_STAGE_KEYS).toEqual(DEFAULT_STAGES.map((stage) => stage.key));
+    expect(BOOTSTRAP_ADMIN_ID).toBe(DATASET_BOOTSTRAP_ADMIN_ID);
+    expect(sharedSeed).toContain(BOOTSTRAP_ADMIN_ID);
+    for (const key of SEED_STAGE_KEYS) expect(sharedSeed).toContain(`'${key}'`);
+    expect(readFileSync(SEED_PATH, "utf8")).toBe(sharedSeed);
+  });
+
+  it("the seed is re-runnable: every INSERT in it is INSERT OR IGNORE", () => {
+    const inserts = sharedSeed.match(/\bINSERT\b/gi) ?? [];
+    expect(inserts.length).toBeGreaterThan(0);
+    expect(sharedSeed).not.toMatch(/\bINSERT\b(?!\s+OR\s+IGNORE\b)/i);
+    expect(sharedSeed).not.toMatch(/\b(UPDATE|DELETE)\b/i);
   });
 });

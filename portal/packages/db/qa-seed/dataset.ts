@@ -5,9 +5,10 @@
  * fixed literal or derived from an explicit `anchor` civil date, so two runs against the same
  * `anchor` AND `appliedAtMs` emit byte-identical statements (`qa-seed-wiring.guard.test.ts` and
  * `qa-seed-coverage.test.ts` both depend on that). `appliedAtMs` (the real apply instant) is
- * consumed in exactly one place — classifying a deadline occurrence's `status` — so it is the one
- * input capable of making two applies at the same anchor differ; see the comment above
- * `anchorReferenceInstantMs` below.
+ * consumed in exactly one place — the deadline save, modelled as happening at apply time (each
+ * occurrence's `status` and `created_at`/`updated_at`, and the `updated_at` of each project that
+ * carries a deadline) — so it is the one input capable of making two
+ * applies at the same anchor differ; see the comment above `anchorReferenceInstantMs` below.
  *
  * Every subtask's `ChecklistScheduleStorage` is produced by `normalizeChecklistSchedule` (thrown on
  * `ok: false`) and round-tripped through `serializeChecklistSchedule` to assert the state it claims
@@ -203,7 +204,7 @@ export type FixtureCollectionRow = { id: string; projectId: string; kind: string
 export type FixtureOccurrenceRow = {
   id: string; projectId: string; scheduleVersion: number; kind: "advance" | "due_now"; reminderOffsetMinutes: number;
   fireAt: number; deadlineAt: number; deadlineLocalCivil: string; deadlineUtcOffsetMinutes: number; deadlineFold: 0 | 1;
-  status: "pending" | "skipped"; terminalReason: "elapsed_at_save" | null; createdAtMs: number; updatedAtMs: number;
+  status: "pending" | "skipped" | "superseded"; terminalReason: "elapsed_at_save" | "project_delivered" | null; createdAtMs: number; updatedAtMs: number;
 };
 export type FixtureMemberRow = { id: string; projectId: string; userId: string; createdAtMs: number };
 
@@ -216,16 +217,21 @@ export type QaFixtureDataset = {
 // Timing — every DATE is anchor-relative, never Date.now(); `anchorReferenceInstantMs` (anchor's
 // own 09:00 Sydney instant) is only ever used to synthesize plausible, deterministic
 // `created_at`/`updated_at` spacing, so two applies at the same anchor but different real times
-// still emit byte-identical statements.
+// emit byte-identical statements EXCEPT for the deadline save (occurrences, and deadline projects'
+// `updated_at`).
 //
-// Deadline OCCURRENCE STATUS is the one deliberately time-dependent field (build spec item 4): the
+// Deadline OCCURRENCES are the one deliberately time-dependent rows (build spec item 4): the
 // real save path (`project-deadline.ts:226-230`) classifies each *advance* reminder as `pending` vs
 // `skipped` against the actual instant the schedule was saved (`now`), not against the deadline's
 // own anchor-derived date — classifying against a fixed anchor time-of-day instead left a fixture
 // occurrence `pending` in a state the app itself would already have written `skipped` for whenever
 // `apply` runs later in the day/week than the anchor's own 09:00. This mirrors that check against
-// the REAL apply instant (`cli.mjs`'s own `--applied-at-ms`, already threaded to `emit.ts`), while
-// every DATE stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
+// the REAL apply instant (`cli.mjs`'s own `--applied-at-ms`, already threaded to `emit.ts`). The
+// same save writes the occurrence's `created_at = updated_at = now` (`project-deadline.ts:290-296`),
+// so the occurrences are stamped with the apply instant too — otherwise a `skipped`/`elapsed_at_save`
+// row could predate the reminder it marked elapsed — and so is the `updated_at` of each project
+// that carries a deadline (the same save bumps it, `project-deadline.ts:246`). Every OTHER date
+// (project `created_at`, deadline-less projects, subtasks, collections, members) stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
 // unconditionally inserted `pending` regardless of elapsed time in the real app — mirrored exactly
 // the same way below, not run through the elapsed check at all.
 // ---------------------------------------------------------------------------
@@ -254,19 +260,35 @@ function buildDeadline(localCivil: string): FixtureDeadline {
   return { localCivil, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, epochMs: resolved.value.epochMs, offsetsMinutes: PROJECT_DEADLINE_PRESETS };
 }
 
-/** `appliedAtMs` is the real apply instant (`--applied-at-ms`), used ONLY to classify `advance`
- * occurrences pending-vs-skipped — matching `project-deadline.ts:226-230`'s `fireAt <= now` check
- * exactly. `due_now` (line 231) is unconditionally `pending`, matching the same source: it is never
- * run through the elapsed check at all, so it does not take `appliedAtMs` into account either. */
-function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, appliedAtMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
+/** Every fixture deadline is modelled as SAVED AT THE APPLY INSTANT (`appliedAtMs`, the real
+ * `--applied-at-ms`). The app saves a deadline with one `now`: `project-deadline.ts:226-229`
+ * classifies each `advance` occurrence `skipped`/`elapsed_at_save` when `fireAt <= now`, and
+ * `:290-296` writes the occurrence's `created_at = updated_at = now`. So each occurrence here is
+ * classified against `appliedAtMs` AND stamped `createdAtMs = updatedAtMs = appliedAtMs`; a
+ * `skipped` row can never predate the reminder it marked elapsed. `due_now` (line 231) is
+ * unconditionally `pending` before any suppression, never run through the elapsed check.
+ *
+ * A DELIVERED project keeps its deadline in the app, but delivery suppresses its reminders:
+ * `project-stage.ts` runs `buildDeadlineSuppressionBundle` (`stage-board-bundles.ts:1636-1650`),
+ * which sets every PENDING occurrence to `status = 'superseded'`, `terminal_reason =
+ * 'project_delivered'`, `fired_at = NULL`, `updated_at = now`, and leaves `skipped` ones alone. So
+ * for `stageKey === "delivered"` the normal classification runs first, then each would-be-pending
+ * occurrence takes the suppressed shape, delivered at that same apply instant (`updatedAtMs =
+ * appliedAtMs`) — a pending reminder on a delivered project is a state the app cannot produce.
+ * (No `notification_delivery_ledger` rows: the fixture never writes any.) */
+function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadline: FixtureDeadline, appliedAtMs: number): FixtureOccurrenceRow[] {
   const rows: FixtureOccurrenceRow[] = [];
+  // Delivery suppression runs AFTER classification and only touches pending rows.
+  const settle = (status: "pending" | "skipped", terminalReason: "elapsed_at_save" | null): Pick<FixtureOccurrenceRow, "status" | "terminalReason"> =>
+    stageKey === "delivered" && status === "pending" ? { status: "superseded", terminalReason: "project_delivered" } : { status, terminalReason };
   const pushAdvance = (offsetMinutes: number) => {
     const fireAt = deadlineFireAt(deadline.epochMs, offsetMinutes);
     const pending = fireAt > appliedAtMs;
     rows.push({
       id: fixtureId(`occurrence:${projectId}:advance:${offsetMinutes}`), projectId, scheduleVersion: 1, kind: "advance", reminderOffsetMinutes: offsetMinutes,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      status: pending ? "pending" : "skipped", terminalReason: pending ? null : "elapsed_at_save", createdAtMs, updatedAtMs: createdAtMs,
+      ...(pending ? settle("pending", null) : settle("skipped", "elapsed_at_save")),
+      createdAtMs: appliedAtMs, updatedAtMs: appliedAtMs,
     });
   };
   const pushDueNow = () => {
@@ -274,7 +296,8 @@ function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, 
     rows.push({
       id: fixtureId(`occurrence:${projectId}:due_now:0`), projectId, scheduleVersion: 1, kind: "due_now", reminderOffsetMinutes: 0,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      status: "pending", terminalReason: null, createdAtMs, updatedAtMs: createdAtMs,
+      ...settle("pending", null),
+      createdAtMs: appliedAtMs, updatedAtMs: appliedAtMs,
     });
   };
   for (const offset of deadline.offsetsMinutes) pushAdvance(offset);
@@ -362,33 +385,35 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
 
   // P01 — pagination: far more not-done rows than 2x the child page limit.
   {
-    const { project: p, createdAtMs } = project("pagination", "Pagination 260", "awaiting_raw", { priority: 1, shootDate: mustShift(anchor, 3) });
+    const { project: p, createdAtMs } = project("pagination", "Pagination 260", "awaiting_raw", { priority: 1, shootDate: mustShift(anchor, 3), deadlineLocalCivil: `${mustShift(anchor, 10)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 260, 0, createdAtMs) });
   }
   // P02 — near-complete: completed === total - 1.
   {
-    const { project: p, createdAtMs } = project("near-complete", "Near-complete 199 of 200", "raw_review", { priority: 2, shootDate: mustShift(anchor, 6) });
+    const { project: p, createdAtMs } = project("near-complete", "Near-complete 199 of 200", "raw_review", { priority: 2, shootDate: mustShift(anchor, 6), deadlineLocalCivil: `${mustShift(anchor, 13)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 200, 199, createdAtMs) });
   }
   // P03 — complete: completed === total > 0.
   {
-    const { project: p, createdAtMs } = project("complete", "Complete 40 of 40", "edited_review", { priority: 3, shootDate: mustShift(anchor, -4) });
+    const { project: p, createdAtMs } = project("complete", "Complete 40 of 40", "edited_review", { priority: 3, shootDate: mustShift(anchor, -4), deadlineLocalCivil: `${mustShift(anchor, 3)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 40, 40, createdAtMs) });
   }
   // P04 — zero: completed === 0 && total > 0.
   {
-    const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1) });
+    const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1), deadlineLocalCivil: `${mustShift(anchor, 8)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 12, 0, createdAtMs) });
   }
-  // P05 — delivered: the app's own deadline UPDATE predicate excludes stage_key = 'delivered', so
-  // a delivered project never carries a deadline through the normal app flow — this one doesn't either.
+  // P05 — delivered: carries a deadline so it draws a bar in the `--signal-positive` hue. In the app a
+  // project keeps its deadline when delivered (only later deadline EDITS are refused), and delivery
+  // suppresses its pending reminders — so each would-be-pending occurrence is superseded/project_delivered
+  // and none is pending (see `buildDeadlineOccurrences`).
   {
-    const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10) });
+    const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10), deadlineLocalCivil: `${mustShift(anchor, -3)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 6, 3, createdAtMs) });
   }
   // P06 — schedule-edges: the full checklist-schedule state/endpoint/legacy-reason/DST census.
   {
-    const { project: p, createdAtMs } = project("schedule-edges", "Schedule edges", "raw_review", { shootDate: mustShift(anchor, 2) });
+    const { project: p, createdAtMs } = project("schedule-edges", "Schedule edges", "raw_review", { shootDate: mustShift(anchor, 2), deadlineLocalCivil: `${mustShift(anchor, 9)}T17:00` });
     const edgeRows = buildScheduleEdgeRows(anchor, dst);
     const subtasks: FixtureSubtaskRow[] = edgeRows.map((row, index) => {
       const rowCreatedAtMs = createdAtMs + index * 1_000;
@@ -417,7 +442,7 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   }
   // P10 — invalid shoot_date literal (2026 is not a leap year, so Feb 30 is always out of range).
   {
-    const { project: p, createdAtMs } = project("invalid-shoot-date", "Invalid shoot date", "raw_review", { shootDate: "2026-02-30" });
+    const { project: p, createdAtMs } = project("invalid-shoot-date", "Invalid shoot date", "raw_review", { shootDate: "2026-02-30", deadlineLocalCivil: `${mustShift(anchor, 7)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
   }
 
@@ -488,9 +513,14 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
   const referenceInstantMs = anchorReferenceInstantMs(anchor);
   const appliedAtMs = options.appliedAtMs;
 
-  const builds: ProjectBuild[] = [];
-  if (tiers.includes("core")) builds.push(...buildCoreTier(anchor, referenceInstantMs));
-  if (tiers.includes("density")) builds.push(...buildDensityTier(anchor, referenceInstantMs));
+  const tierBuilds: ProjectBuild[] = [];
+  if (tiers.includes("core")) tierBuilds.push(...buildCoreTier(anchor, referenceInstantMs));
+  if (tiers.includes("density")) tierBuilds.push(...buildDensityTier(anchor, referenceInstantMs));
+  // A deadline is modelled as saved at the apply instant (see `buildDeadlineOccurrences`), and the
+  // app's save bumps the project row too: `project-deadline.ts:246` sets `projects.updated_at = now`
+  // (delivery bumps it again — the same modelled instant for a delivered project). Projects without
+  // a deadline keep their anchor-derived `updatedAtMs`.
+  const builds: ProjectBuild[] = tierBuilds.map((b) => (b.project.deadline ? { ...b, project: { ...b.project, updatedAtMs: appliedAtMs } } : b));
 
   const projects = builds.map((b) => b.project);
   const subtasks = builds.flatMap((b) => b.subtasks);
@@ -502,11 +532,12 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
     })),
   );
 
-  // Occurrence STATUS (pending vs. skipped) is classified against the real apply instant, not the
-  // anchor's fixed 09:00 — see the header comment above `anchorReferenceInstantMs`. Every DATE
-  // above (createdAt/updatedAt spacing) still comes from `referenceInstantMs`.
+  // Occurrences are modelled as saved at the real apply instant, not the anchor's fixed 09:00: their
+  // STATUS (pending vs. skipped) is classified against it and their createdAt/updatedAt are stamped
+  // with it — see the header comment above `anchorReferenceInstantMs`. Apart from those and a
+  // deadline project's own updatedAt (above), every DATE still comes from `referenceInstantMs`.
   const deadlineOccurrences: FixtureOccurrenceRow[] = builds.flatMap((b) =>
-    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.deadline, appliedAtMs, b.project.createdAtMs) : [],
+    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.stageKey, b.project.deadline, appliedAtMs) : [],
   );
 
   const defaultEditorIds = [...new Set(options.defaultEditorIds ?? [])];
@@ -515,6 +546,20 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
       id: fixtureId(`member:${b.project.key}:${userId}`), projectId: b.project.id, userId, createdAtMs: b.project.createdAtMs,
     })),
   );
+
+  // Every deadline is modelled as saved at `appliedAtMs`, so the apply instant must not predate any
+  // row the dataset says already existed — otherwise a deadline is saved (and a project row
+  // updated) before its project was created. A future anchor (`--anchor=2026-10-19` applied on
+  // 2026-09-27) is the way to get here; the default anchor (this Sydney week's Monday) never is,
+  // because every anchor-derived creation time sits days before the anchor's own 00:00.
+  const latestCreatedAtMs = Math.max(...[...projects, ...subtasks, ...collections, ...members].map((row) => row.createdAtMs));
+  if (appliedAtMs < latestCreatedAtMs) {
+    throw new Error(
+      `buildQaFixtureDataset: anchor ${anchor} is too far in the future for apply instant ${new Date(appliedAtMs).toISOString()} — ` +
+        `the fixture's rows are created up to ${new Date(latestCreatedAtMs).toISOString()}, so its deadlines would be saved before their projects exist. ` +
+        "Use a past or current-week anchor (the default is this Sydney week's Monday).",
+    );
+  }
 
   return { anchor, tiers, projects, subtasks, collections, deadlineOccurrences, members };
 }

@@ -9,8 +9,11 @@ spawned as a `Bash` subprocess like Codex, but shares none of its flags. **There
 `gpt-5.6-agy` model** — the account rejects that id.
 
 `agy agents` lists configured named agents (empty on this account). "Agy" is this project's
-name for whatever the CLI produces, the same way Sol/Terra/Luna name specific `gpt-5.6-*`
-models.
+name for the CLI running **`gemini-3.8-flash-high` at `--effort high`** — the owner's choice
+(2026-09-27). Pass both flags on every run.
+
+**Agy's job is stage 1 of every UI browser pass** ([Subagent-Orchestration.md](Subagent-Orchestration.md)
+§2a). The browser-pass recipe is [§Browser pass](#browser-pass-the-default-invocation) below.
 
 ## Planning (read-only)
 
@@ -26,14 +29,12 @@ agy --mode plan --effort high --sandbox --dangerously-skip-permissions \
 - `--sandbox` — OS-level terminal restrictions. A planning-only safety layer; see the build
   section, where it must be dropped.
 - `--effort low|medium|high` — use `high` for real planning work.
-- `--model <name>` — optional. `agy models` lists the account roster (verified 2026-09-03:
-  `gemini-3.8-flash-{high,medium,low}`, `gemini-3.7-flash-{high,medium,low}`,
-  `gemini-3.6-flash-{high,medium,low}`, `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`,
-  `claude-opus-4-6-thinking`, `gpt-oss-120b-medium` — `gemini-3.5-*` has since dropped off).
-  Default is `gemini-3.8-flash-high`; pass it explicitly rather than relying on the default, but
-  don't invent a preference for a different underlying model unasked. **Re-run `agy models` before
-  assuming this list is current** — the roster shifts under the account without notice, and a
-  retired id fails the run.
+- `--model gemini-3.8-flash-high` — always, explicitly. `agy models` lists the account roster
+  (verified 2026-09-27 on `agy` 1.2.7: `gemini-3.8-flash-*`, `gemini-3.7-flash-*`,
+  `gemini-3.6-flash-*`, `gemini-3.1-pro-{high,low}`, `claude-sonnet-4-6`,
+  `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`). The roster shifts without notice; if
+  `gemini-3.8-flash-high` ever drops off, the run fails — report it to the owner rather than
+  picking a substitute.
 - `--print-timeout <duration>` — default `5m0s`; `10m0s` handled a real cross-system
   architecture plan. On the print-mode shutdown hang (below) this also bounds dead wait time, so
   don't set it lavishly wide on a run you aren't watching.
@@ -130,12 +131,59 @@ sees progress and turn completion as they land) and emits a final `result` event
 `status:"ERROR"` on the hang instead of a silent 0-byte file. It still doesn't recover the answer
 text — the DB does.
 
-## Chrome automation via `chrome-devtools-mcp` (verified 2026-08-27)
+## Browser pass: the default invocation
 
-`agy` v1.1.22 lists native `browser_*` tools (`open_browser_url`, `read_browser_page`,
-`browser_click_element`, `execute_browser_javascript`, …) alongside `read_url_content` (static
-HTTP, no JS) and `search_web` — but they are untested here for a human-authenticated Quincy
-session. The verified path is driving a real Chrome through the
+Preconditions, each checked before spawning (Agy starts none of them — see the shutdown hang above):
+
+1. `wrangler dev` on 8787 serving the build under test, and the owner's debugging Chrome on 9333
+   signed in (`curl -sS http://127.0.0.1:9333/json/version` answers). §Option A below.
+2. `agy mcp list` shows `chrome-devtools … --browserUrl=http://127.0.0.1:9333`.
+3. The page under test is **hard-reloaded** at the start of the brief, and Agy reports the loaded
+   `index-*.js` name alongside the one the server now serves. A tab left open across a rebuild
+   runs the old bundle, and a pass against it is void (#255 pass G).
+
+```bash
+agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
+  --dangerously-skip-permissions \
+  --add-dir "<absolute repo root>" \
+  --print-timeout 30m0s \
+  -p "$(cat "$SCRATCH/browser-pass.md")" > report.md 2> run.log
+```
+
+- Launch it with `Bash` `run_in_background: true`. `-p` stays last.
+- `--add-dir` is what lets `take_screenshot` write its files into `qa-evidence/<pass>/` on the repo
+  volume (outside `trustedWorkspaces`, see Building). Give every screenshot an absolute
+  `filePath` in the brief, and confirm the files exist after the run.
+- The brief's first line names the browser: "Drive Chrome only through the `chrome-devtools`
+  MCP tools (`list_pages`, `select_page`, `navigate_page`, `take_screenshot`, `evaluate_script`,
+  …)." Those reach the owner-signed-in Chrome on 9333; the CLI's native `browser_*` tools are
+  untested against a signed-in session. Confirm it afterwards: the smoke test's conversation DB showed only
+  `chrome-devtools` tool calls.
+- The brief carries the report contract of Subagent-Orchestration.md §2a — screenshots named per
+  viewport and state, every PASS/FAIL row with its measurement and screenshot — plus local-dev
+  only, no sign-in or sign-out, and restore anything it mutates.
+- **Permission.** The owner has approved `agy … --dangerously-skip-permissions` for browser passes
+  against local dev (2026-09-27). The session's auto-mode classifier may still stop the first
+  launch in a session; that is a request for the owner's say-so in chat, not something to route
+  around. The persistent rule, if the owner wants one, is theirs to add to
+  `.claude/settings.local.json`.
+- Measured 2026-09-27: attaching, finding the tab and reading the Admin session through
+  `evaluate_script` took 34 s end to end. Under this flag `evaluate_script` runs without the
+  per-tool approval gate that blocks Codex (Subagent-Orchestration.md §6).
+
+## Why not the Antigravity browser agent
+
+[Antigravity's browser](https://antigravity.google/docs/ide/browser) is a browser subagent that
+drives its own separate Chrome profile, records its actions as video artifacts, and gates URLs
+with an allowlist that starts as `localhost` only. The docs mark it and its
+[separate profile](https://antigravity.google/docs/ide/separate-chrome-profile/) **"Available on:
+Antigravity IDE"** — not the CLI — and it cannot attach to an existing Chrome, so a headless
+`agy -p` run cannot reach a human-signed Quincy session through it. The CLI's own `browser_*`
+tools remain untested for that. The headless path is `chrome-devtools-mcp`, below.
+
+## Chrome automation via `chrome-devtools-mcp` (verified 2026-08-27, re-verified 2026-09-27)
+
+Agy drives a real Chrome through the
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP server.
 
 Tools exposed (~29): `navigate_page`, `new_page`, `select_page`, `list_pages`, `close_page`,
@@ -170,11 +218,8 @@ actually works reliably.
   watch the conversation DB step count and kill once the final reply step lands rather than
   trusting a wide timeout. In Option A the human signs in *before* Agy spawns, so there is no
   in-run wait to worry about.
-- **Agy is dormant** — it was the pipeline's tester from 2026-08-27, after a trial pass on
-  the TB4C QA matrix, until build routing moved to Sonnet and Luna took testing over. Its
-  danger-mode and YOLO-mode sanction and everything below stay current for
-  reactivation. Planning and building never go to Agy, dormant or not. Every QA finding still
-  clears the full §5 gate in the orchestrating session — the report is not ground truth.
+- **Agy tests; it never plans or builds.** Every finding still clears the full §5 gate in the
+  orchestrating session — the report is not ground truth.
 
 ### Option A — attach to a human-authenticated Chrome (verified 2026-08-27)
 
