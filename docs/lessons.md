@@ -3693,6 +3693,80 @@ is all-or-nothing per component instance, not per render call — reproduce the 
 inside the override for every case you are not actually changing, rather than assuming the
 override can stay silent for the common path.
 
+## A production guard checked once at the top proves nothing about the statement that runs last (#220 follow-on, 2026-09-21)
+
+Building the local QA scheduling fixture (`portal/packages/db/qa-seed/`), the obvious design was a
+single preflight check — "does this database look like local dev?" — before running a batch of
+generated INSERT/DELETE statements. That is not enough: an executor that continues past a failed
+statement, or a fixture statement copied out of the batch and run alone, never sees the preflight
+at all. The fix that actually holds is a **capability fence**: a local-only table
+(`__quincy_local_capability`, created only by `setup-local.mjs`, never a migration, never
+`seed/0001_seed.sql`) that every generated mutator statement — insert and teardown delete alike —
+references directly (`WHERE EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability =
+…)`). A statement missing that table fails with `no such table`, whether it runs as part of the
+batch, alone, or copied into an unrelated script. Verified directly: the exact generated SQL run
+against a migrated-and-seeded scratch database that never ran `setup-local.mjs` fails on its first
+statement with that error and leaves zero rows, not a subset.
+
+Paired with that: the same fixture generates every checklist-schedule row through
+`normalizeChecklistSchedule` and round-trips it through `serializeChecklistSchedule` — the exact
+pure functions the real API calls — rather than hand-computing the resolved instant/offset/fold a
+timed row stores. A single wrong offset in a hand-written fixture does not raise an error; it
+silently serializes to `invalid` and the row disappears from every surface that reads it, which is
+indistinguishable from the bug the fixture exists to help catch. Running the same validator the API
+runs turns that into a build-time exception instead of a browser-pass mystery.
+
+The generalisation: **a guard checked once, before the write, is a guard for the FIRST statement,
+not for the batch.** If a mechanism generates many mutator statements, put the check in the
+statement itself (a referenced marker row, an `EXISTS` predicate) rather than only in the caller
+that assembles them — and if a mechanism generates rows a validator elsewhere in the codebase
+already knows how to reject, run that exact validator at generation time rather than re-deriving
+its rules by hand.
+
+## `spawnSync`'s default `maxBuffer` fails silently as the child's own crash, not as a clear "buffer exceeded" (#220 follow-on, 2026-09-21)
+
+The same fixture's transport (`cli.mjs`) spawns a `tsx`-run generator and captures its JSON output
+via `child_process.spawnSync(..., { stdio: ["ignore", "pipe", "inherit"] })` with no explicit
+`maxBuffer`. The default (1 MiB) is far smaller than the ~3+ MB of SQL statements the fixture's
+opt-in density tier generates. Exceeding it does not surface as "maxBuffer exceeded" from the
+parent — it kills the child mid-write, and the child's own next `process.stdout.write()` call
+throws `Error: write EPIPE`, printed (via the inherited stderr) as if the *generator* had crashed.
+Nothing about that message points at the parent's `spawnSync` options at all; tracking it down
+meant reproducing the same generator invocation without going through the parent to see it succeed
+cleanly at 3.2 MB, which only made sense once `maxBuffer` was considered.
+
+The generalisation: **when a subprocess you spawn to capture output can plausibly produce more than
+a few hundred KB, set `maxBuffer` explicitly and generously — do not wait to discover the default
+via an `EPIPE` that looks like the child's own bug.** The failure mode is maximally confusing
+specifically because the error surfaces from the wrong process.
+
+## Local D1 caps a compound SELECT at 5 terms, and `wrangler --json` puts the error on stdout (#220 follow-on, 2026-09-26)
+
+The QA fixture's graph-driven teardown built its post-delete checks as one `UNION ALL` of per-table
+`COUNT(*)`s, 40 terms per statement. Every `node:sqlite` test passed. The first real run against a
+scratch `--persist-to` local D1 deleted the fixture and then failed on that check: local D1 runs
+SQLite with `SQLITE_LIMIT_COMPOUND_SELECT` lowered to **5** (measured: a 5-term `UNION ALL` runs, a
+6-term one fails `too many terms in compound SELECT: SQLITE_ERROR`), where stock SQLite allows 500.
+
+It took longer to find than it should have. With `--json`, wrangler reports a D1 error as
+`{"error":{"text":...}}` on **stdout**, not stderr. `qa-seed/cli.mjs` captured stdout, saw the
+non-zero exit and threw "exited with 1", so the SQLite error never reached the terminal.
+`runWrangler` now includes it ("D1 reported: ...").
+
+The fix was a multi-row `VALUES` of scalar subqueries
+(`SELECT column1 AS label, column2 AS n FROM (VALUES ('t', (SELECT COUNT(*) ...)), ...)`), which is
+not subject to the compound limit (local D1 accepted 120 rows). The qa-seed test executor now opens
+its database with `limits: { compoundSelect: 5 }` (`LOCAL_D1_LIMITS` in
+`test/qa-seed-sqlite-executor.ts`) and probes that a 6-term compound fails, so this class of failure
+shows up in `npm test`, not only in a real run. The constructor option needs Node >= 24.12 (the
+`db.limits` setter first used here needs 25.8 and broke CI on Node 22), which is why CI runs Node 24;
+older Node ignores the option silently, hence the probe rather than trust.
+
+The generalisation: **a `node:sqlite` (or any stock-SQLite) test executor is not local D1.** Mirror
+every D1 limit you have measured into the test database, and run a new statement shape once through
+real `wrangler d1 execute --local --persist-to <scratch>` before trusting it.
+
+
 ## A test that hard-codes dates must pin `Date` to them — and "which tests do?" is measured, not read (2026-09-26)
 
 `event-calendar-done-dim.dom.test.tsx` fixed `ANCHOR = 2026-09-21T02:00Z` and a done chip on
@@ -3746,3 +3820,20 @@ from the first run:
   so `TZDate` loses its prototype: 18 more web DOM false failures that looked like DST bugs.
 - **Tests that compare SQLite's clock with JS's** (`default-editors-backfill`) fail under any shift
   by design — shifting only JS cannot pass them. Leave them unpinned.
+
+## A test that asserts a server count must count the way the server does (2026-09-27)
+
+The QA fixture's draw-cap tier (`packages/db/qa-seed/`) exists to push the Gantt past
+`PRODUCTION_GANTT_DRAW_CAP`. Its coverage test asserted `2130 > 2000` and passed — while the real
+server count in the default view was **1,704**, under the cap. The test's helper counted every
+fixture project; the server's authorized-projects CTE (`workers/app/src/lib/production-scope-sql.ts:89`)
+drops `stage_key = 'delivered'` unless the delivered filter is on, and 6 of the tier's 30 projects
+were delivered. The fixture would have shipped unable to show the draw cap at all.
+
+- **Mirror the query, and name the lines you mirror** in the helper's comment, so a later change to
+  the server's filters has a visible twin to update.
+- **Prove it once against the real query.** The fix was only trusted after running the server's own
+  `productionGanttProjectsSql("admin")` against a scratch local D1 with default binds, which
+  returned `matched_rows: 2208`. A reimplementation checked against itself proves nothing.
+- **Leave margin over a threshold.** The tier now clears the cap by more than 10%, so ticking a
+  few children done during a browser pass cannot quietly drop it back under.
