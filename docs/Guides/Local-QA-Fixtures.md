@@ -199,17 +199,37 @@ state.
 
 ## Density (`--tier=core,density`) — opt-in, and why
 
-30 additional projects × 70 not-done children each (2,100 subtasks) push `matchedRows` — projects
-plus visible children, exactly what `production-gantt.ts`'s density accounting counts — over
-`PRODUCTION_GANTT_DRAW_CAP` (2,000), tripping `tooManyToDraw`. This is **forced to be opt-in**, not
-a judgement call: `ProductionGantt.tsx`'s child-chain walker stops starting new chains outright
-once `tooManyToDraw` is true, which would make the pagination case above unverifiable in the same
-filter state as the draw-cap case. Apply `density` only for the one browser pass that needs it, then
-apply `core` alone again — that removes it (every `apply` tears down the previous fixture before
-writing, so it is a clean replace).
+The density tier alone trips `PRODUCTION_GANTT_DRAW_CAP` **under the Gantt's default filters**
+(delivered off, completed off), with at least 10% to spare. `matchedRows` here means exactly what the
+server computes: `production-gantt.ts`'s `density_candidates`, i.e. every project that passes
+`authorized_projects_base` plus its *visible* children. That CTE (`production-scope-sql.ts:89`) drops
+delivered projects unless the delivered filter is on, and done children are hidden unless completed
+is on. The tier cycles its 30 projects through all five stages, so 6 of them are delivered and count
+for nothing in the default view.
 
-The documented recovery filter: filter to a single stage. A single density stage is 6 projects ×
-70 children + the 6 project rows themselves — comfortably under the cap.
+At today's cap of 2,000 the numbers the server computes are:
+
+| Density tier, filter state | Projects | Rows each (1 project + children) | `matchedRows` |
+| --- | --- | --- | --- |
+| Default (delivered off, completed off) | 24 | 92 | **2,208** — over the 2,200 margin (cap × 1.1) |
+| Delivered on | 30 | 92 | 2,760 |
+| One stage (the recovery filter) | 6 | 92 | 552 — back under the cap |
+
+Children per project (91, all not-done) is not hand-picked. `qa-seed/dataset.ts` derives it from
+`PRODUCTION_GANTT_DRAW_CAP` and the non-delivered project count: the smallest number that puts the
+default view strictly over `cap + ceil(cap / 10)`. Raising the cap raises the tier with it. The 10%
+margin is there so ordinary browser-pass activity cannot un-trip the cap by accident. Ticking a
+child done hides it from the default view, so each tick lowers the count by one. The density tier
+alone stays over the cap until 208 of its children are ticked: at 2,000 the count no longer
+*exceeds* the cap, and `tooManyToDraw` is `matchedRows > cap`. With `core` applied as well, the
+default view carries core's rows on top. `test/qa-seed-coverage.test.ts` counts the same way the server does and fails if any of these
+three states stops holding.
+
+This tier is **forced to be opt-in**, not a judgement call: `ProductionGantt.tsx`'s child-chain
+walker stops starting new chains outright once `tooManyToDraw` is true. With density applied,
+the pagination case above could not be verified in the same filter state as the draw-cap case.
+Apply `density` only for the one browser pass that needs it, then apply `core` alone again. That
+removes it: every `apply` tears down the previous fixture before writing, so it is a clean replace.
 
 ## The guard, and its honest limit
 
