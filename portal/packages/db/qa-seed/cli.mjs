@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SEED_POSTCONDITION_SQL, SEED_STAGE_KEYS } from "../setup-local.mjs";
 
 const DATABASE_NAME = "quincy-portal";
 const CONFIG_PATH = "../../workers/app/wrangler.jsonc";
@@ -217,11 +218,21 @@ export function assertCapabilityPresent(executor) {
   }
 }
 
+/** Same single-statement postcondition `setup-local.mjs` checks after applying the seed; the messages
+ * split by cause because a missing row and one deactivated in Admin have different fixes. */
 function assertApplyPrerequisites(executor) {
-  const stages = queryScalar(executor, "SELECT COUNT(*) AS n FROM pipeline_stages WHERE active = 1;");
-  if (Number(stages?.n) !== 5) throw new Error(`Expected 5 active pipeline_stages, found ${stages?.n}. Run the shared seed (\`seed/0001_seed.sql\`) first.`);
-  const admin = queryScalar(executor, `SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}';`);
-  if (Number(admin?.active) !== 1) throw new Error("The bootstrap admin (seed/0001_seed.sql) is missing or inactive. Run the shared seed first.");
+  const row = queryScalar(executor, SEED_POSTCONDITION_SQL);
+  const total = SEED_STAGE_KEYS.length;
+  if (Number(row?.stages) !== total) {
+    throw new Error(`Only ${Number(row?.stages ?? 0)} of ${total} seeded pipeline stages exist. Run \`npm run db:migrate:local\` (it applies the shared seed).`);
+  }
+  if (Number(row?.active_stages) !== total) {
+    throw new Error(`${total - Number(row?.active_stages)} of ${total} pipeline stages are inactive — reactivate them in Admin.`);
+  }
+  if (row?.admin_active === null || row?.admin_active === undefined) {
+    throw new Error(`The bootstrap admin (${BOOTSTRAP_ADMIN_ID}) is missing. Run \`npm run db:migrate:local\` (it applies the shared seed).`);
+  }
+  if (Number(row.admin_active) !== 1) throw new Error("The bootstrap admin is inactive — reactivate it in Admin.");
 }
 
 // ---------------------------------------------------------------------------

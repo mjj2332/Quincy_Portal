@@ -14,7 +14,7 @@ after running.
 ## Commands
 
 ```sh
-npm run db:migrate:local                    # prerequisite — see "known gap" below
+npm run db:migrate:local                    # prerequisite — migrates, seeds, installs the capability fence
 npm run db:qa:apply                         # core tier, anchor = this Monday (Sydney)
 npm run db:qa:apply -- --tier=core,density  # + the draw-cap tier (opt-in, see below)
 npm run db:qa:apply -- --anchor=2026-09-21  # reproduce a specific browser-pass report
@@ -269,21 +269,6 @@ storage row that serializes to `invalid`; that state exists only for genuinely c
 and similar shapes). Seeding it would mean hand-writing a row the application itself could never
 have written — exactly what this fixture exists to avoid. It stays covered by the existing
 unit tests in `packages/shared/src/checklist-schedule.ts`'s own test file, not by browser QA data.
-
-## Known gap this fixture does not fix
-
-`setup-local.mjs` applies migrations and the post-rollout board flag, but it does not apply
-`seed/0001_seed.sql`. A genuinely fresh local D1 therefore lacks the five pipeline stages and the
-bootstrap admin the fixture's preflight requires, even though most local setups already have them
-from ordinary use. The fixture's preflight fails with a clear, specific message in that case
-(`Run the shared seed first`) rather than a confusing downstream error — it does not attempt to
-apply the seed itself. If you are building a scratch database from nothing (as the fixture's own
-integration test does), apply the seed yourself first:
-
-```sh
-npx wrangler d1 execute quincy-portal --local --config ../../workers/app/wrangler.jsonc \
-  --persist-to <scratch dir> --file ./seed/0001_seed.sql
-```
 
 ## No fixture users (v1)
 

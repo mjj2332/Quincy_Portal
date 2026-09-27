@@ -19,8 +19,8 @@
   Separately: this is a **closed staff system** — Google sign-up is disabled
   (`disableSignUp: true` in `workers/app/src/auth.ts`, enforced again by a `user.create` database
   hook that unconditionally throws), so only a user row that already exists in D1 can ever sign
-  in. Local D1's only seeded user is the admin account from `packages/db/seed/0001_seed.sql`
-  (`mjj2332@gmail.com`) — a real Google account, not a placeholder — so local browser testing that
+  in. Local D1's only seeded user is the admin account from the shared seed
+  `packages/db/seed/0001_seed.sql`, which `npm run db:migrate:local` applies (`mjj2332@gmail.com`) — a real Google account, not a placeholder — so local browser testing that
   needs authentication can only ever be done by (or as) that account; there is no way to
   provision a second local test user without editing the seed.
 
