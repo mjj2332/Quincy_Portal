@@ -178,7 +178,16 @@ agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
   closes another tab, never visits history, passwords or autofill, and closes its own tabs at the
   end. Tabs open in the background and screenshots work there.
 - **Screenshots.** `screenshot` with an absolute `savePath` under `qa-evidence/<pass>/screens/` and
-  `full: true`. Confirm the files exist after the run.
+  `full: true`. The flag is what makes the file a full-resolution PNG: without it huashu writes a
+  60%-scale JPEG to the same path, `.png` name and all (2026-09-28: a smoke test's `agy.png` came
+  back a 2304×1336 JPEG; every `full: true` screenshot in the #221 pass was a 3840-wide PNG).
+  Confirm the files exist and check one with `file` after the run.
+- **`[NO_TAB]` on a tab huashu just opened.** In two Luna runs (2026-09-28) the first `screenshot`
+  failed with `[NO_TAB] 标签页 <id> 不存在` although `tabs new` and `wait` on that id had succeeded;
+  opening a fresh tab and retrying saved the file. Both failing opens printed the extension
+  v1.2.0 / CLI v1.2.1 mismatch warning, the working one did not. The brief tells the measurer to
+  open a new tab and retry once on `[NO_TAB]`; if it recurs, the owner reloads the extension
+  (`chrome://extensions` → reload).
 - **Drags.** huashu has no drag tool. The brief supplies an `eval` that dispatches
   `pointerdown`, stepped `pointermove`s and (after the screenshot) `pointerup` on the real bar or
   grip; the keyboard Adjust path (Space, arrows, M/S/E, Enter/Escape) is the fallback when a
@@ -274,8 +283,16 @@ actually works reliably.
   client negotiates the MCP `roots` capability or the server gets `--workspace=<dir>`. `codex exec`
   does not negotiate roots, which is why Luna's #221 run got `Access denied: path … is not within
   any of the configured workspace roots` on every screenshot (the same failure recorded in
-  codex-cli.md on 2026-09-13). Pass `--workspace="<absolute repo root>/qa-evidence"` — verified
-  2026-09-28 with a bare MCP client: the same call failed without it and saved with it.
+  codex-cli.md on 2026-09-13). **The fix is `--workspace="<absolute repo root>/qa-evidence"`** on
+  the server's command line. Verified 2026-09-28 three ways: a bare MCP client (the same call
+  failed without the flag and saved with it), then Agy and Luna end to end, each saving a real
+  screenshot of the signed-in Portal into `qa-evidence/`.
+  - **Agy** carries the flag in its saved server entry (`~/.gemini/config/mcp_config.json`, set by
+    the `agy mcp add` in §Option A step 3). `agy mcp add` stores the quoted path as one argument
+    despite its spaces; read that file, not `agy mcp list`, to confirm.
+  - **Codex** has no saved `chrome-devtools` server, so every `codex exec` passes it through `-c`
+    and must carry the flag each time (invocation in codex-cli.md). Put the absolute path in the
+    string: inside a single-quoted `-c`, `$PWD` stays literal.
 - **Agy tests; it never plans or builds.** Every finding still clears the full §5 gate in the
   orchestrating session — the report is not ground truth.
 

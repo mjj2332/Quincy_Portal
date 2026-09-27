@@ -177,4 +177,8 @@ injection broke its assertion math while the code under test was correct.
   reason the pass runs on Agy, which has no such per-tool gate under
   `--dangerously-skip-permissions` ([agy-cli.md](agy-cli.md)).
   See `../lessons.md` for the related MCP tool-list staleness issue.
+- **`chrome-devtools-mcp` cannot save screenshots.** `take_screenshot` into the repo fails with
+  `… is not within any of the configured workspace roots` unless the server is started with
+  `--workspace=<repo root>/qa-evidence` — for Agy in its saved config, for Codex in every run's `-c`
+  ([agy-cli.md §`chrome-devtools-mcp`](agy-cli.md)).
 

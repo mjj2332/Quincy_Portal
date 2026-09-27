@@ -151,7 +151,8 @@ What decided it, and what to expect from each:
   the owner's browsing is never in scope, and viewport control works. It saves screenshot files
   only with a workspace root: `codex exec` does not negotiate MCP roots, so without
   `--workspace=<dir>` the server confines writes to the OS temp directory and rejects the repo
-  path (root cause and verification in agy-cli.md §`chrome-devtools-mcp`).
+  path. The fix is `--workspace=<repo root>/qa-evidence` in the `-c` server config below, on every
+  run (root cause and verification in agy-cli.md §`chrome-devtools-mcp`).
 - **MCP read the spec more critically.** It caught an error in the brief — it was asked to measure
   a group label's contrast and found the element is `.sr-only`, a clipped 1x1 box that never
   paints, so the requested measurement was meaningless. The native run measured the computed colour
