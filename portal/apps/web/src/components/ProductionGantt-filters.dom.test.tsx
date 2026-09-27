@@ -393,6 +393,11 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
   });
 
   describe("empty state", () => {
+    // No test for "an empty first page with more to come": the server cannot send one. It sets
+    // `nextCursor` only when the page is full — `workers/app/src/routes/production-gantt.ts:789`
+    // (`truncatedPage = projectRows.length > parsed.limit`) and `:809-811` (a cursor only when
+    // `truncatedPage`) — so a page with no projects always carries `nextCursor: null`. The
+    // component's `!hasNextPage` guard on the empty state stays, as defence against a future server.
     function emptyState(): HTMLElement | null {
       return host.querySelector<HTMLElement>('[data-testid="production-gantt-empty"]');
     }
