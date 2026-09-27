@@ -51,6 +51,17 @@ function isoDate(daysFromToday: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function emptyGanttResponse() {
+  return adminProductionGanttResponseSchema.parse({
+    scope: "active",
+    zone: PRODUCTION_GANTT_ZONE,
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    projects: [],
+    page: { limit: 100, returned: 0, nextCursor: null },
+    density: { matchedProjects: 0, matchedRows: 0, drawCap: 2000, tooManyToDraw: false },
+  });
+}
+
 function ganttResponse() {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
@@ -84,9 +95,19 @@ function ganttResponse() {
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 
-function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS }: { initial?: ProductionGanttFacetFilters }) {
+function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, onFiltersChange }: { initial?: ProductionGanttFacetFilters; onFiltersChange?: (next: ProductionGanttFacetFilters) => void }) {
   const [filters, setFilters] = useState(initial);
-  return <ProductionGantt identity={identity} q="" filters={filters} onFiltersChange={setFilters} />;
+  return (
+    <ProductionGantt
+      identity={identity}
+      q=""
+      filters={filters}
+      onFiltersChange={(next) => {
+        onFiltersChange?.(next);
+        setFilters(next);
+      }}
+    />
+  );
 }
 
 async function settle() {
@@ -150,12 +171,12 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     host.remove();
   });
 
-  async function render(initial?: ProductionGanttFacetFilters) {
+  async function render(initial?: ProductionGanttFacetFilters, onFiltersChange?: (next: ProductionGanttFacetFilters) => void) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ControlledGantt {...(initial ? { initial } : {})} />
+          <ControlledGantt {...(initial ? { initial } : {})} {...(onFiltersChange ? { onFiltersChange } : {})} />
         </QueryClientProvider>,
       );
       await Promise.resolve();
@@ -295,5 +316,66 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(host.querySelector('[data-testid="production-gantt-too-many"]')?.textContent).toBe("Too many projects match these filters to draw at once — narrow the filters above to see the rest.");
     // The filters the banner points at are actually on screen.
     expect(panel(host).querySelectorAll("input[type=checkbox]").length).toBeGreaterThan(0);
+  });
+
+  describe("empty state", () => {
+    function emptyState(): HTMLElement | null {
+      return host.querySelector<HTMLElement>('[data-testid="production-gantt-empty"]');
+    }
+
+    function clearButton(scope: HTMLElement): HTMLButtonElement | undefined {
+      return [...scope.querySelectorAll("button")].find((button) => button.textContent === "Clear filters");
+    }
+
+    const deliveredStageOnly: ProductionGanttFacetFilters = { ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["delivered"], delivered: false };
+
+    it("says no projects match the filters, keeps the panel mounted and draws no chart", async () => {
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") ? emptyGanttResponse() : ganttResponse()));
+      await render(deliveredStageOnly);
+      expect(lastListQuery().get("stages")).toBe("delivered");
+
+      const empty = emptyState();
+      expect(empty).not.toBeNull();
+      expect(empty!.getAttribute("role")).toBe("status");
+      expect(empty!.textContent).toContain("No projects match these filters.");
+      expect(empty!.textContent).toContain("Change or clear the filters above to see more projects.");
+      // The empty state sits inside the chart slot and is the only thing in it: no Gantt mounted.
+      const chartSlot = host.querySelector('[data-testid="production-gantt"]');
+      expect(chartSlot).not.toBeNull();
+      expect([...chartSlot!.children]).toEqual([empty]);
+      // The panel and legend stay mounted around it.
+      expect(checkbox(host, "Stages", "Delivered").checked).toBe(true);
+      expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+    });
+
+    it("clears the filters from the empty state's Clear filters button", async () => {
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") ? emptyGanttResponse() : ganttResponse()));
+      const onFiltersChange = vi.fn<(next: ProductionGanttFacetFilters) => void>();
+      await render(deliveredStageOnly, onFiltersChange);
+      const button = clearButton(emptyState()!);
+      expect(button).toBeDefined();
+
+      await act(async () => { button!.click(); });
+      await settle();
+      expect(onFiltersChange).toHaveBeenCalledTimes(1);
+      expect(onFiltersChange).toHaveBeenCalledWith(DEFAULT_GANTT_FACET_FILTERS);
+      // Cleared filters load projects again, so the chart replaces the empty state.
+      expect(lastListQuery().get("stages")).toBeNull();
+      expect(emptyState()).toBeNull();
+    });
+
+    it("says there are no projects to schedule, with no Clear button, when the filters are default", async () => {
+      apiGetMock.mockImplementation(() => Promise.resolve(emptyGanttResponse()));
+      await render();
+      const empty = emptyState();
+      expect(empty).not.toBeNull();
+      expect(empty!.textContent).toBe("No projects to schedule.");
+      expect(clearButton(empty!)).toBeUndefined();
+    });
+
+    it("stays out of the way while projects are listed", async () => {
+      await render();
+      expect(emptyState()).toBeNull();
+    });
   });
 });

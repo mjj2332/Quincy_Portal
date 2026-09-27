@@ -90,6 +90,8 @@ import {
   type ProductionGanttRowData,
 } from "../lib/production-gantt-adapter";
 import {
+  DEFAULT_GANTT_FACET_FILTERS,
+  ganttFacetFor,
   ganttFiltersFromPanel,
   ganttLegendEntries,
   ganttPanelFiltersFor,
@@ -99,6 +101,7 @@ import {
 } from "../lib/production-gantt-filters";
 import { useStages } from "../lib/stages";
 import { ProductionCalendarFilters as ProductionCalendarFiltersPanel } from "./ProductionCalendarFilters";
+import { buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
@@ -896,6 +899,11 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       </EmptyState>
     );
   } else {
+    // #255: a settled query with no projects at all (and no further page to fetch) says why the
+    // chart is blank instead of drawing an empty grid. `projects` is the same flattened list the
+    // chart is built from.
+    const showEmpty = projects.length === 0 && !hasNextPage;
+    const facetFiltersDefault = editorIds.length === 0 && ganttFacetFor(facetFilters) === undefined;
     body = (
       <div className="grid gap-[var(--space-3)]" data-testid="production-gantt">
         {tooManyToDraw && (
@@ -903,33 +911,48 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             Too many projects match these filters to draw at once — narrow the filters above to see the rest.
           </Notice>
         )}
-        <Gantt
-          resources={model.resources}
-          events={model.events}
-          date={date}
-          onDateChange={setDate}
-          scale={scale}
-          onScaleChange={setScale}
-          timeZone={GANTT_TIME_ZONE}
-          interactions={{ drag: false, resize: false, selectSlot: false }}
-          parentScheduling={false}
-          summaryBars={false}
-          baselineBars={false}
-          dependencyLines={false}
-          scheduleMode="single"
-          rowCheckboxes={false}
-          barLabel="auto"
-          dragCreate={false}
-          displayScheduleHint={false}
-          displayCreateTaskHint={false}
-          renderResourceLabel={renderResourceLabel}
-          renderEvent={renderEvent}
-          className="h-[36rem]"
-        >
-          <GanttNav />
-          <GanttToolbar />
-          <GanttView />
-        </Gantt>
+        {showEmpty ? (
+          facetFiltersDefault ? (
+            <EmptyState role="status" data-testid="production-gantt-empty" title={q.trim() ? "No projects match this search." : "No projects to schedule."} />
+          ) : (
+            <EmptyState role="status" data-testid="production-gantt-empty" title="No projects match these filters.">
+              Change or clear the filters above to see more projects.
+              <div>
+                <button type="button" className={buttonClasses("text", { className: "mt-[var(--space-4)]" })} onClick={() => onFiltersChange(DEFAULT_GANTT_FACET_FILTERS)}>
+                  Clear filters
+                </button>
+              </div>
+            </EmptyState>
+          )
+        ) : (
+          <Gantt
+            resources={model.resources}
+            events={model.events}
+            date={date}
+            onDateChange={setDate}
+            scale={scale}
+            onScaleChange={setScale}
+            timeZone={GANTT_TIME_ZONE}
+            interactions={{ drag: false, resize: false, selectSlot: false }}
+            parentScheduling={false}
+            summaryBars={false}
+            baselineBars={false}
+            dependencyLines={false}
+            scheduleMode="single"
+            rowCheckboxes={false}
+            barLabel="auto"
+            dragCreate={false}
+            displayScheduleHint={false}
+            displayCreateTaskHint={false}
+            renderResourceLabel={renderResourceLabel}
+            renderEvent={renderEvent}
+            className="h-[36rem]"
+          >
+            <GanttNav />
+            <GanttToolbar />
+            <GanttView />
+          </Gantt>
+        )}
       </div>
     );
   }
