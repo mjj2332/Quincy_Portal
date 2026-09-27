@@ -143,12 +143,6 @@ function runWrangler(subcommand, options, extra = []) {
   return result.stdout ?? "";
 }
 
-function queryScalar(options, sql) {
-  const stdout = runWrangler(["execute"], options, ["--json", "--command", sql]);
-  const payload = JSON.parse(stdout.slice(stdout.indexOf("[")));
-  return payload.at(-1)?.results?.at(0);
-}
-
 /**
  * The postcondition. Exported so the wiring guard can assert the *behaviour* rather than match the
  * source text: applying SQL proves nothing unless something checks it landed.
@@ -185,32 +179,54 @@ function runSqlFile(options, sql, label) {
   }
 }
 
-async function main() {
-  const options = parseArguments(process.argv.slice(2));
+/**
+ * Every wrangler call goes through `wranglerArguments`, so `--local` pinning is unchanged; the
+ * executor seam only exists so tests can run the same sequence against an in-memory SQLite.
+ */
+export function wranglerSetupExecutor(options) {
+  return {
+    migrate: () => runWrangler(["migrations", "apply"], options),
+    run: (sql, label) => runSqlFile(options, sql, label),
+    runFile: (path) => runWrangler(["execute"], options, ["--file", path]),
+    query: (sql) => {
+      const stdout = runWrangler(["execute"], options, ["--json", "--command", sql]);
+      const payload = JSON.parse(stdout.slice(stdout.indexOf("[")));
+      return payload.at(-1)?.results ?? [];
+    },
+  };
+}
 
-  console.log("==> Applying migrations to local D1");
-  runWrangler(["migrations", "apply"], options);
+/** The whole setup sequence, in order, each step followed by its postcondition. */
+export function setupLocal(executor, log) {
+  log("==> Applying migrations to local D1");
+  executor.migrate();
 
   // The flag is meaningless without 0037's marker table, which is what gates the Board at all.
-  assertSchemaMarkerPresent(queryScalar(options, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_board_order_0037_rollback') AS present;"));
+  assertSchemaMarkerPresent(executor.query("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_board_order_0037_rollback') AS present;")[0]);
 
-  console.log(`==> Enabling ${BOARD_CONTRACT_FLAG} for local development`);
-  runWrangler(["execute"], options, ["--command", LOCAL_FLAG_SQL]);
+  log(`==> Enabling ${BOARD_CONTRACT_FLAG} for local development`);
+  executor.run(LOCAL_FLAG_SQL, "board-flag");
 
-  assertFlagEnabled(queryScalar(options, `SELECT enabled FROM feature_flags WHERE key = '${BOARD_CONTRACT_FLAG}';`));
+  assertFlagEnabled(executor.query(`SELECT enabled FROM feature_flags WHERE key = '${BOARD_CONTRACT_FLAG}';`)[0]);
 
-  console.log("==> Installing the QA scheduling fixture capability fence (local-only)");
-  runSqlFile(options, QA_FIXTURE_CAPABILITY_SQL, "qa-fixture-capability");
-  assertCapabilityInstalled(queryScalar(options, "SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;"));
+  log("==> Installing the QA scheduling fixture capability fence (local-only)");
+  executor.run(QA_FIXTURE_CAPABILITY_SQL, "qa-fixture-capability");
+  assertCapabilityInstalled(executor.query("SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;")[0]);
 
-  console.log(`==> Local D1 ready: ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
+  log(`==> Local D1 ready: ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
+}
+
+function main() {
+  setupLocal(wranglerSetupExecutor(parseArguments(process.argv.slice(2))), console.log);
 }
 
 // Only when run as a command. The parsing and argument-building seams above are importable so
 // tests can assert what this *would* spawn without spawning anything.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main().catch((error) => {
+  try {
+    main();
+  } catch (error) {
     console.error(`\nLocal D1 setup failed: ${error.message}`);
     process.exit(1);
-  });
+  }
 }

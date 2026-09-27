@@ -44,7 +44,7 @@ function compoundSelectOf(terms: number): string {
 /** The limits go in through the `DatabaseSync` constructor (Node >= 24.12). Older Node ignores the
  * option silently, so the probe proves the limit bites instead of trusting that it was set: a
  * statement exactly at the limit must run and one term over it must fail, as it does on local D1. */
-function openMemoryDatabase(): SqliteDatabase {
+export function openMemoryDatabase(): SqliteDatabase {
   const getBuiltinModule = (process as unknown as { getBuiltinModule: (name: string) => unknown }).getBuiltinModule;
   const sqlite = getBuiltinModule("node:sqlite") as { DatabaseSync: new (filename: string, options: { limits: Record<string, number> }) => SqliteDatabase };
   const db = new sqlite.DatabaseSync(":memory:", { limits: { ...LOCAL_D1_LIMITS } });
@@ -59,6 +59,28 @@ function openMemoryDatabase(): SqliteDatabase {
     throw new Error(`node:sqlite did not apply local D1's compoundSelect limit (${LOCAL_D1_LIMITS.compoundSelect}); the DatabaseSync limits option needs Node >= 24.12 (running ${process.version}).`);
   }
   return db;
+}
+
+export type SetupExecutor = {
+  migrate: () => void;
+  run: (sql: string, label: string) => void;
+  runFile: (path: string, label: string) => void;
+  query: (sql: string) => Row[];
+};
+
+/** `setup-local.mjs`'s `setupLocal` executor contract, against this SQLite instead of wrangler. */
+export function sqliteSetupExecutor(db: SqliteDatabase): SetupExecutor {
+  return {
+    migrate: () => {
+      const migrations = new URL("../migrations/", import.meta.url);
+      for (const name of readdirSync(migrations).filter((value) => /^\d{4}_.*\.sql$/.test(value)).sort()) {
+        db.exec(readFileSync(new URL(name, migrations), "utf8").replaceAll("--> statement-breakpoint", ""));
+      }
+    },
+    run: (sql) => db.exec(sql),
+    runFile: (path) => db.exec(readFileSync(path, "utf8")),
+    query: (sql) => db.prepare(sql).all().map((row) => ({ ...row })),
+  };
 }
 
 /** Every migration (in order), then `seed/0001_seed.sql`, then the local-only capability fence —
