@@ -370,16 +370,35 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       const button = clearButton(emptyState()!)!;
       button.focus();
       expect(document.activeElement).toBe(button);
+      // E4 (390×844): the browser's own focus scroll left the heading clipped at the viewport's
+      // bottom edge. Focus must not scroll on its own; the heading is scrolled to the top instead,
+      // below the sticky shell header (its scroll-margin-top).
+      const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+      const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
 
-      await act(async () => { button.click(); });
-      await settle();
-      expect(emptyState()).toBeNull();
-      const heading = panel(host).querySelector("h2");
-      expect(heading?.textContent).toBe("Gantt filters");
-      expect(document.activeElement).toBe(heading);
-      // Programmatically focusable only: out of the Tab order.
-      expect(heading!.tabIndex).toBe(-1);
-      expect(heading!.getAttribute("tabindex")).toBe("-1");
+      try {
+        await act(async () => { button.click(); });
+        await settle();
+        expect(emptyState()).toBeNull();
+        const heading = panel(host).querySelector("h2");
+        expect(heading?.textContent).toBe("Gantt filters");
+        expect(document.activeElement).toBe(heading);
+        // Programmatically focusable only: out of the Tab order.
+        expect(heading!.tabIndex).toBe(-1);
+        expect(heading!.getAttribute("tabindex")).toBe("-1");
+
+        const headingFocus = focusSpy.mock.contexts.flatMap((context, index) => (context === heading ? [focusSpy.mock.calls[index]] : []));
+        expect(headingFocus).toEqual([[{ preventScroll: true }]]);
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        expect(scrollIntoView.mock.contexts[0]).toBe(heading);
+        // Instant (default) behaviour, so reduced-motion users get no animated scroll.
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+        // Clears the sticky shell header rather than landing underneath it.
+        expect(heading!.className).toContain("scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]");
+      } finally {
+        focusSpy.mockRestore();
+        scrollIntoView.mockRestore();
+      }
     });
 
     it("says there are no projects to schedule, with no Clear button, when the filters are default", async () => {

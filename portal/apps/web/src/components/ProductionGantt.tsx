@@ -495,11 +495,16 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const handlePanelChange = useCallback((next: ProductionCalendarFilters) => onFiltersChange(ganttFiltersFromPanel(next)), [onFiltersChange]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
   // focus to <body>. Focus moves to the always-mounted filter panel's heading instead — the panel
-  // the empty state pointed the user to.
+  // the empty state pointed the user to. The browser's own focus scroll only brings the heading to
+  // the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus without
+  // scrolling, then scroll it to the top — its scroll-margin-top clears the sticky shell header.
+  // Default (instant) scroll behaviour: no animation for reduced-motion users.
   const filtersHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const clearFiltersFromEmptyState = useCallback(() => {
     onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
-    filtersHeadingRef.current?.focus();
+    const heading = filtersHeadingRef.current;
+    heading?.focus({ preventScroll: true });
+    heading?.scrollIntoView({ block: "start" });
   }, [onFiltersChange]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
