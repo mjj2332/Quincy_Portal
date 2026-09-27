@@ -154,6 +154,11 @@ agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
 - `--add-dir` is what lets `take_screenshot` write its files into `qa-evidence/<pass>/` on the repo
   volume (outside `trustedWorkspaces`, see Building). Give every screenshot an absolute
   `filePath` in the brief, and confirm the files exist after the run.
+- The brief's first line names the browser: "Drive Chrome only through the `chrome-devtools`
+  MCP tools (`list_pages`, `select_page`, `navigate_page`, `take_screenshot`, `evaluate_script`,
+  …)." Those reach the owner-signed-in Chrome on 9333; the CLI's native `browser_*` tools are
+  untested against a signed-in session. Confirm it afterwards: the smoke test's conversation DB showed only
+  `chrome-devtools` tool calls.
 - The brief carries the report contract of Subagent-Orchestration.md §2a — screenshots named per
   viewport and state, every PASS/FAIL row with its measurement and screenshot — plus local-dev
   only, no sign-in or sign-out, and restore anything it mutates.
