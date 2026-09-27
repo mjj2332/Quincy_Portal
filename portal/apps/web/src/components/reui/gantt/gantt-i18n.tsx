@@ -70,6 +70,11 @@
  * therefore read as keyboard-only under their old names and are renamed to name the mechanism
  * (a blocked change), not the input device. Every reference in both `gantt-bar.tsx` (keyboard) and
  * `gantt-dnd.tsx` (pointer) was updated to the new names.
+ *
+ * 2026-09-27, #221 PR A — ADDED, additive: `labels.dropWarningSuffix(reason)`, appended (after a
+ * space) to an accepted pointer release, an Adjust step and an Adjust commit whenever the
+ * consumer's `dropWarning` returned a reason. No existing string changes. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
  */
 
 import type {
@@ -153,6 +158,9 @@ interface GanttI18nConfig {
     adjustNoChange: string
     /** #219 PR A (Adjust mode) — live-region text on Escape, or a blur/pointer-elsewhere cancel. */
     adjustCancelled: string
+    /** #221 PR A — appended (after a space) to an accepted change's announcement when the
+     * consumer's `dropWarning` gave a reason for an allowed-but-flagged drop. */
+    dropWarningSuffix: (reason: string) => string
     scales: {
       day: string
       week: string
@@ -244,6 +252,7 @@ const DEFAULT_LABELS: GanttI18nConfig["labels"] = {
   adjustCommitted: (rangeLabel) => `Adjusted to ${rangeLabel}.`,
   adjustNoChange: "No change made.",
   adjustCancelled: "Adjustment cancelled.",
+  dropWarningSuffix: (reason) => `Warning: ${reason}`,
   scales: {
     day: "Day",
     week: "Week",

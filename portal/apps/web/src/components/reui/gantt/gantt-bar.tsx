@@ -251,6 +251,13 @@
  * toggleable button, and matches every other plain `type="button"` toggle in this app
  * (`RichTextEditor.tsx`, `ProjectDeadlineControl.tsx`, `Lightbox.tsx`, …), none of which use
  * `aria-selected` for the same reason.
+ *
+ * 2026-09-27, #221 PR A — ADDED, additive (no `dropWarning` passed and no `"deferred"` returned
+ * leaves every announcement unchanged): an Adjust step or commit whose result carries a `warning`
+ * appends `labels.dropWarningSuffix(warning)` (after a space) to `adjustStepped`/`adjustCommitted`;
+ * a commit that `onEventUpdate` answered `"deferred"` announces nothing at all (the consumer speaks
+ * next) instead of falling through to `changeBlockedRejected`. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
  */
 
 import {
@@ -859,10 +866,14 @@ function GanttBar<TData = unknown>({
           viewConfig.scheduleMode
         )
         if (result.applied) {
+          const stepped = settings.i18n.labels.adjustStepped(
+            formatRange(result.start!, result.end!, result.allDay ?? false)
+          )
+          // #221 PR A: a warned (allowed) step names its reason after the new range.
           announce(
-            settings.i18n.labels.adjustStepped(
-              formatRange(result.start!, result.end!, result.allDay ?? false)
-            )
+            result.warning
+              ? `${stepped} ${settings.i18n.labels.dropWarningSuffix(result.warning)}`
+              : stepped
           )
         } else if (result.reason === "locked") {
           announce(settings.i18n.labels.changeBlockedLocked)
@@ -884,6 +895,9 @@ function GanttBar<TData = unknown>({
       // pass-through `stepAdjust` above already needs - `commitAdjust` now re-validates the overlap
       // policy against the CURRENT resource, which needs it too.
       const result = instance.internals.commitAdjust(viewConfig.scheduleMode)
+      // #221 PR A: accept-and-defer - the consumer owns what happens next and speaks for it;
+      // announcing "rejected" here would misreport a change the consumer actually took.
+      if (result.deferred) return
       if (result.committed) {
         // A committed START change (move, or a start-edge resize - whichever target actually moved
         // it, regardless of which target was LAST selected via M/S/E) changes this occurrence's key
@@ -895,10 +909,14 @@ function GanttBar<TData = unknown>({
             targetKey: `${event.id}::${result.start!.toISOString()}`,
           })
         }
+        const committedText = settings.i18n.labels.adjustCommitted(
+          formatRange(result.start!, result.end!, result.allDay ?? false)
+        )
+        // #221 PR A: a warned (allowed) commit names its reason after the new range.
         announce(
-          settings.i18n.labels.adjustCommitted(
-            formatRange(result.start!, result.end!, result.allDay ?? false)
-          )
+          result.warning
+            ? `${committedText} ${settings.i18n.labels.dropWarningSuffix(result.warning)}`
+            : committedText
         )
       } else if (result.noChange) {
         announce(settings.i18n.labels.adjustNoChange)

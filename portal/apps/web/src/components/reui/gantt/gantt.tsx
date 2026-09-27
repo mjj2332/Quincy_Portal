@@ -92,6 +92,17 @@
  * the OLD range: under a controlled `events` prop, `setField`'s controlled path only invokes
  * `onEventsChange` — it never mutates internal state — so the parent's own state update (which
  * carries the new range) has not landed by the time that same synchronous call stack reads it back.
+ *
+ * 2026-09-27, #221 PR A — ADDED, all additive (no `dropWarning` passed and no `"deferred"` returned
+ * leaves every path byte-for-byte unchanged): (1) a `dropWarning(update) => string | null` callback
+ * beside `canDropEvent` — an advisory reason for an ALLOWED drop, consulted only when the proposal
+ * is already valid (invalid wins), never blocking; `proposeNudge`/`validateAdjustCommit` carry its
+ * verdict out as `warning`, `stepAdjust` writes it into `state.drag.warning`, and
+ * `stepAdjust`/`commitAdjust`/`nudgeEvent` return it. (2) `onEventUpdate` may return `"deferred"`:
+ * `applyProposedUpdate` returns the literal `"deferred"` before any `setField`, `commitAdjust`
+ * returns `{ committed: false, deferred: true }` and `nudgeEvent` `{ applied: false, deferred: true }`
+ * — the consumer owns what happens next, so nothing mutates and nothing is announced. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
  */
 
 import {
@@ -206,6 +217,14 @@ interface GanttCallbacks<TData = unknown> {
   ) => void
   onEventUpdate?: (update: GanttProposedUpdate<TData>) => GanttUpdateResult
   canDropEvent?: (update: GanttProposedUpdate<TData>) => boolean
+  /**
+   * #221 PR A, additive: an advisory reason for an ALLOWED drop (e.g. "Ends after the deadline").
+   * Never blocks, never affects `valid` or `enforceCanDrop`; only consulted when the proposal is
+   * already valid (an invalid proposal shows invalid, never a warning). Return null for no warning.
+   * A non-null reason styles the ghost `data-drop-warning`, shows the reason beside the dragged
+   * clone / resize chip, and is appended to the accepted change's announcement.
+   */
+  dropWarning?: (update: GanttProposedUpdate<TData>) => string | null
   onSlotClick?: (slot: GanttSlotInfo, e: React.MouseEvent) => void
   onSelectSlot?: (slot: GanttSlotDraft) => void
   canSelectSlot?: (slot: GanttSlotDraft) => boolean
@@ -389,7 +408,7 @@ interface GanttInternals<TData = unknown> {
    */
   applyProposedUpdate(
     update: GanttProposedUpdate<TData>
-  ): { start: Date; end: Date; allDay: boolean } | null
+  ): { start: Date; end: Date; allDay: boolean } | "deferred" | null
   getSettingsVersion(): number
   /**
    * Grow visibleRange by whole periods for infinite scrolling; resets on
@@ -859,9 +878,11 @@ function createGanttStore<TData>(
     // setField pass would read stale controlled options.events and emit an
     // array without the timing change
     extra?: Partial<GanttEvent<TData>>
-  ): { start: Date; end: Date; allDay: boolean } | null => {
+  ): { start: Date; end: Date; allDay: boolean } | "deferred" | null => {
     const result = settings.onEventUpdate?.(update)
     if (result === false) return null
+    // #221 PR A: accept-and-defer - the consumer owns what happens next; never mutate here.
+    if (result === "deferred") return "deferred"
     const acceptedStart = result && typeof result === "object" ? result.start ?? update.start : update.start
     const acceptedEnd = result && typeof result === "object" ? result.end ?? update.end : update.end
     const acceptedAllDay = result && typeof result === "object" ? result.allDay ?? update.allDay : update.allDay
@@ -973,7 +994,7 @@ function createGanttStore<TData>(
     // one (`soleOccurrenceOf`), `stepAdjust` passes its session's own.
     occurrence: GanttOccurrence<TData>
   ):
-    | { ok: true; start: Date; end: Date; allDay: boolean }
+    | { ok: true; start: Date; end: Date; allDay: boolean; warning: string | null }
     | { ok: false; reason: "locked" | "invalid" | "rejected" } => {
     if (event.readOnly) return { ok: false, reason: "locked" }
     // Quincy fix (#219 PR A, Sol review, sol1 item 2): no occurrence-aware exception semantics yet
@@ -1057,12 +1078,15 @@ function createGanttStore<TData>(
     if (settings.enforceCanDrop && !valid) {
       return { ok: false, reason: "rejected" }
     }
+    // #221 PR A: advisory reason for an allowed drop - invalid wins, so only asked when valid.
+    const warning = valid ? (settings.dropWarning?.(update) ?? null) : null
 
     return {
       ok: true,
       start: finalProposal.start,
       end: finalProposal.end,
       allDay: finalProposal.allDay,
+      warning,
     }
   }
 
@@ -1103,7 +1127,7 @@ function createGanttStore<TData>(
     session: GanttAdjustState<TData>,
     viewScheduleMode: GanttScheduleMode | undefined
   ):
-    | { ok: true; start: Date; end: Date; allDay: boolean }
+    | { ok: true; start: Date; end: Date; allDay: boolean; warning: string | null }
     | { ok: false; reason: "locked" | "rejected" } => {
     if (event.readOnly) return { ok: false, reason: "locked" }
     if (event.recurrence) return { ok: false, reason: "locked" }
@@ -1179,12 +1203,15 @@ function createGanttStore<TData>(
     if (settings.enforceCanDrop && !valid) {
       return { ok: false, reason: "rejected" }
     }
+    // #221 PR A: same advisory verdict as proposeNudge - invalid wins.
+    const warning = valid ? (settings.dropWarning?.(update) ?? null) : null
 
     return {
       ok: true,
       start: finalRange.start,
       end: finalRange.end,
       allDay: finalRange.allDay,
+      warning,
     }
   }
 
@@ -1312,8 +1339,16 @@ function createGanttStore<TData>(
       // Quincy fix (#219 PR A, Sol review, sol1 item 7): return the ACCEPTED range from
       // `applyProposedUpdate` itself, not a follow-up `api.getEvent` read - see that
       // function's own header for the controlled-mode race this closes.
+      // #221 PR A: accept-and-defer - nothing applied, nothing refused.
+      if (accepted === "deferred") return { applied: false, deferred: true }
       return accepted
-        ? { applied: true, start: accepted.start, end: accepted.end, allDay: accepted.allDay }
+        ? {
+            applied: true,
+            start: accepted.start,
+            end: accepted.end,
+            allDay: accepted.allDay,
+            warning: outcome.warning ?? undefined,
+          }
         : { applied: false, reason: "rejected" }
     },
     removeEvent(id) {
@@ -1579,6 +1614,9 @@ function createGanttStore<TData>(
         // #219 PR A fix (Sol re-review round 2, HIGH #4): tags this ghost as keyboard-owned - see
         // `gantt-types.tsx`'s `GanttDragState.source` doc comment.
         source: "keyboard",
+        // #221 PR A: the step's advisory `dropWarning` verdict drives `data-drop-warning`. Only
+        // present when there IS one, so with no `dropWarning` the drag state's shape is unchanged.
+        ...(outcome.warning ? { warning: outcome.warning } : {}),
       }
       invalidate()
       notify()
@@ -1587,6 +1625,7 @@ function createGanttStore<TData>(
         start: preview.start,
         end: preview.end,
         allDay: preview.allDay,
+        warning: outcome.warning ?? undefined,
       }
     },
     retargetAdjust(target) {
@@ -1646,12 +1685,15 @@ function createGanttStore<TData>(
       const accepted = applyProposedUpdate(update)
       invalidate()
       notify()
+      // #221 PR A: accept-and-defer - the consumer speaks next, so the bar announces nothing.
+      if (accepted === "deferred") return { committed: false, deferred: true }
       return accepted
         ? {
             committed: true,
             start: accepted.start,
             end: accepted.end,
             allDay: accepted.allDay,
+            warning: revalidation.warning ?? undefined,
           }
         : { committed: false }
     },
@@ -2139,6 +2181,9 @@ interface GanttDragIndicatorProps<TData = unknown> {
   start: Date
   end: Date
   valid: boolean
+  /** #221 PR A, additive: the consumer's `dropWarning` reason for this (valid) step; null when
+   * none, and always null while `valid` is false. */
+  warning?: string | null
   /** The event's planned (baseline) window, so a custom overlay can keep
    * drawing it mid-gesture; null when the event carries none. */
   baseline: GanttBaseline | null
@@ -2564,6 +2609,7 @@ const OPTION_KEYS: Array<keyof UseGanttStateOptions> = [
   "onEventDoubleClick",
   "onEventUpdate",
   "canDropEvent",
+  "dropWarning",
   "onSlotClick",
   "onSelectSlot",
   "canSelectSlot",

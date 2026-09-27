@@ -85,6 +85,17 @@
  * pointer refusal announces "rejected" — see this file's own `announceBlocked` doc comment and
  * `gantt-dnd-refusal-announce.dom.test.tsx`'s header for why "locked"/"invalid" are wired but
  * currently unreachable from a pointer gesture.
+ *
+ * 2026-09-27, #221 PR A — ADDED, additive (no `dropWarning` passed and no `"deferred"` returned
+ * leaves the DOM, announcements and behaviour unchanged): `applyProposal` asks the consumer's
+ * `dropWarning` for a VALID proposal only (invalid wins) and writes the reason into
+ * `state.drag.warning`; the resize edge line turns `--color-signal-caution` for a warned drop; a
+ * reason hint (`data-testid="gantt-drop-warning-hint"`, `aria-hidden` - the announcer speaks) is
+ * created lazily inside the move clone / resize chip on the first warning and hidden again when
+ * the warning clears, removed with its overlay on cleanup. `onPointerUp` appends
+ * `labels.dropWarningSuffix(reason)` to an accepted, warned release, and returns silently when
+ * `onEventUpdate` answers `"deferred"` (the consumer speaks next - `false` would wrongly announce
+ * "rejected" for a drop it actually took). Covered by `gantt-drop-warning.dom.test.tsx`.
  */
 
 import { useCallback, useEffect } from "react"
@@ -451,6 +462,47 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   let resizeRange: HTMLSpanElement | null = null
   let resizeDot: HTMLSpanElement | null = null
   let resizeDuration: HTMLSpanElement | null = null
+  let resizeChip: HTMLDivElement | null = null
+
+  // #221 PR A: the dropWarning reason hint, one per overlay, created lazily on the first
+  // warning (a gesture that never warns never gets one) and hidden when the warning clears.
+  // aria-hidden: the announcer, not this, speaks the reason.
+  let moveHint: HTMLSpanElement | null = null
+  let resizeHint: HTMLSpanElement | null = null
+  let resizeHintText: HTMLSpanElement | null = null
+  const markWarningHint = (el: HTMLElement) => {
+    el.setAttribute("data-slot", "gantt-drop-warning-hint")
+    el.setAttribute("data-testid", "gantt-drop-warning-hint")
+    el.setAttribute("aria-hidden", "true")
+  }
+  const syncWarningHint = (warning: string | null) => {
+    if (warning && overlay && !customMoveOverlay && !moveHint) {
+      moveHint = document.createElement("span")
+      markWarningHint(moveHint)
+      moveHint.className =
+        "border-signal-caution/40 bg-background text-warning shrink-0 rounded-sm border px-1.5 font-medium whitespace-nowrap"
+      overlay.appendChild(moveHint)
+    }
+    if (warning && resizeChip && !customResizeOverlay && !resizeHint) {
+      resizeHint = document.createElement("span")
+      markWarningHint(resizeHint)
+      resizeHint.className = "text-background/80 flex items-center gap-1.5"
+      const cautionDot = document.createElement("span")
+      cautionDot.className = "bg-signal-caution size-1.5 shrink-0 rounded-full"
+      resizeHint.appendChild(cautionDot)
+      resizeHintText = document.createElement("span")
+      resizeHint.appendChild(resizeHintText)
+      resizeChip.appendChild(resizeHint)
+    }
+    if (moveHint) {
+      moveHint.textContent = warning ?? ""
+      moveHint.style.display = warning ? "" : "none"
+    }
+    if (resizeHint && resizeHintText) {
+      resizeHintText.textContent = warning ?? ""
+      resizeHint.style.display = warning ? "" : "none"
+    }
+  }
 
   const positionResizeOverlay = (e: PointerEvent) => {
     if (!resizeOverlay && customResizeOverlay && kind.startsWith("resize")) {
@@ -513,6 +565,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       "bg-foreground absolute -bottom-1 left-1/2 size-2.5 -translate-x-1/2 rotate-45 rounded-[2px]"
     chip.appendChild(chipArrow)
     resizeOverlay.appendChild(chip)
+    resizeChip = chip
     document.body.appendChild(resizeOverlay)
     // seed the chip with the CURRENT range so it never flashes empty;
     // zoned so the label names the same day the grid shows
@@ -764,6 +817,8 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     const valid =
       !overlapRejected &&
       (settings.canDropEvent ? settings.canDropEvent(update) : true)
+    // #221 PR A: advisory reason for an ALLOWED drop - invalid wins, so only asked when valid.
+    const warning = valid ? (settings.dropWarning?.(update) ?? null) : null
     // live status: the indicator chip always names the CURRENT proposed
     // range; the edge line flips to destructive on an invalid drop
     if (resizeRange && resizeDot && resizeDuration) {
@@ -784,10 +839,13 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       }
     }
     if (resizeLine) {
-      resizeLine.style.background = valid
-        ? (occurrence!.event.color ?? "var(--color-primary)")
-        : "var(--color-destructive)"
+      resizeLine.style.background = !valid
+        ? "var(--color-destructive)"
+        : warning
+          ? "var(--color-signal-caution)"
+          : (occurrence!.event.color ?? "var(--color-primary)")
     }
+    syncWarningHint(warning)
     setBodyDragging(true, !valid)
     internals.setDrag({
       kind: kind === "move" ? "move" : (kind as "resize-start" | "resize-end"),
@@ -801,6 +859,9 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       // `gantt-types.tsx`'s `GanttDragState.source` doc comment and this file's own `onPointerUp`,
       // which refuses to commit a `state.drag` that is not tagged this way.
       source: "pointer",
+      // #221 PR A: only present when there IS a warning, so with no `dropWarning` the drag
+      // state's shape is unchanged.
+      ...(warning ? { warning } : {}),
     })
   }
 
@@ -871,6 +932,10 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     overlay = null
     if (!customResizeOverlay) resizeOverlay?.remove()
     resizeOverlay = null
+    moveHint = null
+    resizeHint = null
+    resizeHintText = null
+    resizeChip = null
     setBodyDragging(false)
   }
 
@@ -991,13 +1056,21 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       source:
         kind === "move" ? "drag" : (kind as "resize-start" | "resize-end"),
     })
+    // #221 PR A: accept-and-defer - the consumer owns what happens next (and speaks for it);
+    // announcing here would either claim a change that has not happened or, via `false`, call a
+    // drop the consumer actually took "rejected".
+    if (accepted === "deferred") return
     if (accepted && announcer) {
-      announcer.textContent = `${occurrence.event.title}, ${settings.i18n.functions.formatEventTime(
+      const acceptedText = `${occurrence.event.title}, ${settings.i18n.functions.formatEventTime(
         toZoned(drag.proposedStart, settings.timeZone),
         toZoned(drag.proposedEnd, settings.timeZone),
         drag.proposedAllDay,
         settings.locale
       )}`
+      // #221 PR A: a warned (allowed) drop names its reason after the accepted range.
+      announcer.textContent = drag.warning
+        ? `${acceptedText} ${settings.i18n.labels.dropWarningSuffix(drag.warning)}`
+        : acceptedText
     } else if (!accepted) {
       // #219 PR A fix (dr-219a HIGH #1): onEventUpdate itself refused (applyProposedUpdate
       // returned null) - the one refusal source that DOES call the consumer's callback before
