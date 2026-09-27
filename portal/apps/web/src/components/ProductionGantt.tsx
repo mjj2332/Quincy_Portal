@@ -67,9 +67,9 @@
  * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
  * the stock-fallthrough guarantee above for the common case.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import type { GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
+import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionCalendarFilters } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -89,8 +89,16 @@ import {
   type ProductionGanttAttentionReason,
   type ProductionGanttRowData,
 } from "../lib/production-gantt-adapter";
-import { stageColors } from "../lib/stage-colors";
+import {
+  ganttFiltersFromPanel,
+  ganttLegendEntries,
+  ganttPanelFiltersFor,
+  productionStageFilterOptions,
+  type GanttLegendEntry,
+  type ProductionGanttFacetFilters,
+} from "../lib/production-gantt-filters";
 import { useStages } from "../lib/stages";
+import { ProductionCalendarFilters as ProductionCalendarFiltersPanel } from "./ProductionCalendarFilters";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
@@ -100,6 +108,13 @@ export type ProductionGanttProps = {
   identity: DashboardIdentity;
   /** The Dashboard's shared search box, fed straight from the route. */
   q: string;
+  /**
+   * #255: the Gantt's Stage / Delivered / Completed filters, read from the URL by the Dashboard
+   * (the URL is their only home). `editorIds` is always `[]` in this release.
+   */
+  filters: ProductionGanttFacetFilters;
+  /** Writes a filter change back to the URL; the new filters arrive back through `filters`. */
+  onFiltersChange: (next: ProductionGanttFacetFilters) => void;
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
@@ -317,7 +332,12 @@ function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRende
   );
 }
 
-function GanttLegend({ stageLabelByKey }: { stageLabelByKey: Map<string, string> }) {
+/**
+ * #254: built from `ganttLegendEntries` — the role-aware stage options, narrowed to the active
+ * filters — never from the colour map, which carries both `editing` and `editing_autohdr` and
+ * would show a raw key for whichever one this role never sees.
+ */
+function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
   return (
     <div
       role="group"
@@ -325,17 +345,15 @@ function GanttLegend({ stageLabelByKey }: { stageLabelByKey: Map<string, string>
       data-testid="production-gantt-legend"
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground"
     >
-      {Object.entries(stageColors).map(([key, color]) => (
-        <span key={key} className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: color }} />
-          {stageLabelByKey.get(key) ?? key}
+      {entries.map((entry) => (
+        <span key={entry.key} className="inline-flex items-center gap-1.5" data-stage-key={entry.key}>
+          <span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: entry.color }} />
+          {entry.label}
         </span>
       ))}
     </div>
   );
 }
-
-const EMPTY_FILTERS: Omit<ProductionGanttFilters, "q"> = { editorIds: [], stageKeys: [], delivered: false, completed: false };
 
 /**
  * fix-220-sol1 #3: how many projects' remaining-child-page chains may be in flight at once. A
@@ -453,11 +471,25 @@ function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"])
   ]);
 }
 
-export function ProductionGantt({ identity, q }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange }: ProductionGanttProps) {
   const { stages } = useStages();
-  const stageLabelByKey = useMemo(() => new Map(stages.map((stage) => [stage.key, stage.label] as const)), [stages]);
+  // Role-derived (the same `identity` the request is authorised as), not a second session read.
+  const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
+  const stageOptions = useMemo(() => productionStageFilterOptions(stages, canAdminBackend), [stages, canAdminBackend]);
 
-  const filters = useMemo<ProductionGanttFilters>(() => ({ q, ...EMPTY_FILTERS }), [q]);
+  // #255: built field by field so nothing but the request's own filter fields reaches the query
+  // key — each distinct filter tuple is a new `generationKey` below, restarting the child chains
+  // through the existing lifecycle exactly as a `q` change always has.
+  const { editorIds, stageKeys, delivered, completed } = facetFilters;
+  const editorIdsKey = editorIds.join(",");
+  const stageKeysKey = stageKeys.join(",");
+  const filters = useMemo<ProductionGanttFilters>(
+    () => ({ q, editorIds: editorIdsKey ? editorIdsKey.split(",") : [], stageKeys: stageKeysKey ? (stageKeysKey.split(",") as ProductionGanttFilters["stageKeys"]) : [], delivered, completed }),
+    [q, editorIdsKey, stageKeysKey, delivered, completed],
+  );
+  const panelFilters = useMemo(() => ganttPanelFiltersFor(filters), [filters]);
+  const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
+  const handlePanelChange = useCallback((next: ProductionCalendarFilters) => onFiltersChange(ganttFiltersFromPanel(next)), [onFiltersChange]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
 
@@ -840,17 +872,20 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");
 
+  // #255: ONE always-mounted root. The filter panel and the legend sit above the loading / error /
+  // chart slot and never unmount with it, so a toggle keeps focus on the checkbox the user just
+  // clicked while the new filter's first page is pending. The panel is never `disabled` while
+  // pending — a disabled input drops focus, which is exactly what this structure exists to avoid.
+  let body: ReactNode;
   if (query.isPending) {
-    return (
+    body = (
       <div className="grid gap-[var(--space-3)]" data-testid="production-gantt-loading">
         <Skeleton className="h-10" />
         <Skeleton className="h-[28rem]" />
       </div>
     );
-  }
-
-  if (query.isError) {
-    return (
+  } else if (query.isError) {
+    body = (
       <EmptyState tone="error" role="alert" title="The production schedule is unavailable.">
         {query.error instanceof Error ? query.error.message : "The Gantt could not be loaded."}
         <div>
@@ -860,43 +895,50 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
         </div>
       </EmptyState>
     );
+  } else {
+    body = (
+      <div className="grid gap-[var(--space-3)]" data-testid="production-gantt">
+        {tooManyToDraw && (
+          <Notice tone="caution" role="status" data-testid="production-gantt-too-many">
+            Too many projects match these filters to draw at once — narrow the filters above to see the rest.
+          </Notice>
+        )}
+        <Gantt
+          resources={model.resources}
+          events={model.events}
+          date={date}
+          onDateChange={setDate}
+          scale={scale}
+          onScaleChange={setScale}
+          timeZone={GANTT_TIME_ZONE}
+          interactions={{ drag: false, resize: false, selectSlot: false }}
+          parentScheduling={false}
+          summaryBars={false}
+          baselineBars={false}
+          dependencyLines={false}
+          scheduleMode="single"
+          rowCheckboxes={false}
+          barLabel="auto"
+          dragCreate={false}
+          displayScheduleHint={false}
+          displayCreateTaskHint={false}
+          renderResourceLabel={renderResourceLabel}
+          renderEvent={renderEvent}
+          className="h-[36rem]"
+        >
+          <GanttNav />
+          <GanttToolbar />
+          <GanttView />
+        </Gantt>
+      </div>
+    );
   }
 
   return (
-    <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt">
-      <GanttLegend stageLabelByKey={stageLabelByKey} />
-      {tooManyToDraw && (
-        <Notice tone="caution" role="status" data-testid="production-gantt-too-many">
-          Too many projects match this filter to draw at once — narrow your filter to see the rest.
-        </Notice>
-      )}
-      <Gantt
-        resources={model.resources}
-        events={model.events}
-        date={date}
-        onDateChange={setDate}
-        scale={scale}
-        onScaleChange={setScale}
-        timeZone={GANTT_TIME_ZONE}
-        interactions={{ drag: false, resize: false, selectSlot: false }}
-        parentScheduling={false}
-        summaryBars={false}
-        baselineBars={false}
-        dependencyLines={false}
-        scheduleMode="single"
-        rowCheckboxes={false}
-        barLabel="auto"
-        dragCreate={false}
-        displayScheduleHint={false}
-        displayCreateTaskHint={false}
-        renderResourceLabel={renderResourceLabel}
-        renderEvent={renderEvent}
-        className="h-[36rem]"
-      >
-        <GanttNav />
-        <GanttToolbar />
-        <GanttView />
-      </Gantt>
+    <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt-root">
+      <ProductionCalendarFiltersPanel surface="gantt" filters={panelFilters} facetPeople={[]} stages={stageOptions} onChange={handlePanelChange} />
+      <GanttLegend entries={legendEntries} />
+      {body}
     </div>
   );
 }

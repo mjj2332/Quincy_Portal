@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
+import { dashboardSearchOf, formatSydneyCivil, roleHasCapability, type DashboardCalendarState, type DashboardRoute, type DashboardGanttRoute, type DashboardViewRoute as SharedDashboardViewRoute, type MoveProjectStageRequest, type MoveProjectStageResponse, type ProductionCalendarFilters, type StageKey } from "@quincy/shared";
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBadge } from "../components/atoms";
 import { LazyImage } from "../components/LazyImage";
@@ -70,6 +70,7 @@ import {
   takeDashboardSearchForNavigation,
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
+import { ganttFiltersFromRoute, ganttRouteFor, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
@@ -168,6 +169,18 @@ function isDashboardCalendarRoute(route: DashboardRouteArm): route is DashboardC
   return "calendar" in route;
 }
 
+function isDashboardGanttRoute(route: DashboardRouteArm): route is DashboardGanttRoute {
+  return "dashboardView" in route && route.dashboardView === "gantt";
+}
+
+/** #255: the Gantt facets a location carries, read at call time — `undefined` for any location that
+ * is not a filtered Gantt URL. Used by the debounced search writer so a search commit on a filtered
+ * Gantt rewrites `q` without wiping the filters beside it. */
+function ganttFacetOfLocation(location: string): DashboardGanttRoute["gantt"] {
+  const route = parseStaffLocation(location);
+  return route.kind === "dashboard" && isDashboardGanttRoute(route) ? route.gantt : undefined;
+}
+
 function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
   const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
@@ -191,6 +204,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // excludes the one arm -- the facet -- that has no `search` field at all).
   const routeDashboardSearch = currentDashboardRoute && !isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.search : undefined;
   const effectiveRouteCalendar = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.calendar : routeCalendar;
+  // #255: the Gantt's filters live in the URL only — derived here at render from the parsed route
+  // (defaults for the bare `/?view=gantt` or any non-Gantt location), never copied into state, so a
+  // cold deep link and Back/Forward both apply on their first commit. Independent of the Calendar's
+  // own filter state.
+  const routeGantt = currentDashboardRoute && isDashboardGanttRoute(currentDashboardRoute) ? currentDashboardRoute : null;
+  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => {
+    const { q: _q, ...facet } = ganttFiltersFromRoute(routeGantt);
+    return facet;
+  }, [routeGantt]);
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
     write: (key: string, value: string) => window.localStorage.setItem(key, value),
@@ -614,6 +636,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     } catch { /* Calendar fallback storage is best effort. */ }
     if (replace) history.replace(built); else history.push(built);
   }, [calendarInteractionBlocked, canViewProductionCalendar, history, viewingArchived]);
+
+  // #255: the Gantt's counterpart to `navigateCalendar` — a filter change is a URL write through
+  // `locationStore()` (pushed, so Back/Forward walks filter states; `replace` for a rewrite), with
+  // the same flush-and-carry of the live search. The new filters arrive back through the route.
+  const navigateGantt = useCallback((next: ProductionGanttFacetFilters, replace = false) => {
+    if (!canViewProductionCalendar || viewingArchived) return;
+    const built = staffPathFor(ganttRouteFor(next, takeDashboardSearchForNavigation(currentUserId)));
+    if (replace) history.replace(built); else history.push(built);
+  }, [canViewProductionCalendar, currentUserId, history, viewingArchived]);
 
   // #217: the single store's own debounce timer replaces this effect's bespoke one. Registers the
   // URL write the store calls once a debounced (or Enter-committed) query settles -- Calendar
@@ -1447,7 +1478,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           `onAcceptGateChange`/`onSettleStateChange`/`onAccessLoss` for it to own. */}
       {isGanttView && (
         <Suspense fallback={<div className="empty" role="status">Loading gantt…</div>}>
-          <ProductionGantt identity={identity} q={committedQuery} />
+          <ProductionGantt identity={identity} q={committedQuery} filters={ganttFilters} onFiltersChange={navigateGantt} />
         </Suspense>
       )}
 

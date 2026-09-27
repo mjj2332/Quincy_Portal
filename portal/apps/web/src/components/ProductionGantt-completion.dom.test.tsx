@@ -18,6 +18,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
+import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -121,7 +122,7 @@ async function render(host: HTMLElement, root: Root, projects: GanttProjectRowDt
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <ProductionGantt identity={identity} q="" />
+        <ProductionGantt identity={identity} q="" filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} />
       </QueryClientProvider>,
     );
     await Promise.resolve();

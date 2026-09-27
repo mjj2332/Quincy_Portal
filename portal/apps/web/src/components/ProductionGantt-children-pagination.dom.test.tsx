@@ -10,13 +10,14 @@
  * their own rendered text/aria-label, never a vendor `[data-slot]` (`test-seam.guard.test.ts` guard
  * F forbids that outside `components/reui/`).
  */
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { adminProductionGanttResponseSchema, productionGanttChildPageSchema, PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
+import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -129,6 +130,12 @@ function findByText(host: HTMLElement, text: string): Element | undefined {
   return [...host.querySelectorAll("button, span")].find((candidate) => candidate.textContent === text || candidate.getAttribute("aria-label")?.includes(text));
 }
 
+/** #255: `onFiltersChange` wired to local state, standing in for the Dashboard's URL round trip. */
+function FilterableGantt() {
+  const [filters, setFilters] = useState<ProductionGanttFacetFilters>(DEFAULT_GANTT_FACET_FILTERS);
+  return <ProductionGantt identity={identity} q="" filters={filters} onFiltersChange={setFilters} />;
+}
+
 describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -154,7 +161,7 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ProductionGantt identity={identity} q={q} />
+          <ProductionGantt identity={identity} q={q} filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} />
         </QueryClientProvider>,
       );
       await Promise.resolve();
@@ -242,6 +249,67 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(findByText(host, "Fresh generation task")).toBeDefined();
     expect(findByText(host, "Stale generation task one")).toBeUndefined();
     expect(findByText(host, "Stale generation task two")).toBeUndefined();
+    expect(host.querySelector('[data-testid="gantt-children-retry"]')).toBeNull();
+  });
+
+  it("restarts child chains on a filter change while child pages are in flight, never merging the old generation's children (#255)", async () => {
+    const oldPage1Task = task("22222222-2222-4222-8222-000000000010", "Pre-filter embedded task", 0);
+    const staleContinuationTask = task("22222222-2222-4222-8222-000000000011", "Pre-filter continuation task", 1);
+    const freshTask = task("22222222-2222-4222-8222-000000000012", "Post-filter embedded task", 0);
+
+    let resolveStaleChildPage: ((value: unknown) => void) | undefined;
+    const childPaths: string[] = [];
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("childrenOf=")) {
+        childPaths.push(path);
+        // Held open: the filter change below races this in-flight continuation.
+        return new Promise((resolve) => {
+          resolveStaleChildPage = resolve;
+        });
+      }
+      if (path.includes("completed=1")) {
+        // The same project id under the new filter, with its own complete embedded page.
+        return Promise.resolve(listResponse(projectRow({ rows: [freshTask], total: 1, truncated: false, nextCursor: null })));
+      }
+      return Promise.resolve(listResponse(projectRow({ rows: [oldPage1Task], total: 2, truncated: true, nextCursor: "cursor-1" })));
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <FilterableGantt />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+    await settle();
+    expect(findByText(host, "Pre-filter embedded task")).toBeDefined();
+    expect(childPaths).toHaveLength(1);
+
+    const completedToggle = [...host.querySelectorAll('[aria-label="Gantt filters"] label')].find((label) => label.textContent === "Show completed checklist items")?.querySelector("input");
+    if (!completedToggle) throw new Error("no completed toggle");
+    await act(async () => {
+      completedToggle.click();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(apiGetMock.mock.calls.some(([path]) => path.includes("completed=1") && !path.includes("childrenOf="))).toBe(true);
+    expect(findByText(host, "Post-filter embedded task")).toBeDefined();
+    expect(findByText(host, "Pre-filter embedded task")).toBeUndefined();
+
+    // The superseded generation's continuation lands late — it must be discarded.
+    await act(async () => {
+      resolveStaleChildPage?.(childPageResponse([staleContinuationTask], 2, false, null));
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(findByText(host, "Pre-filter continuation task")).toBeUndefined();
+    expect(findByText(host, "Pre-filter embedded task")).toBeUndefined();
+    expect(findByText(host, "Post-filter embedded task")).toBeDefined();
+    // The new generation's project is complete, so no new chain was started for it.
+    expect(childPaths).toHaveLength(1);
     expect(host.querySelector('[data-testid="gantt-children-retry"]')).toBeNull();
   });
 
