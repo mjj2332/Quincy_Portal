@@ -517,6 +517,55 @@ describe("ProductionCalendar checklist manipulation", () => {
     expect((patchBodies[0] as any).schedule.schedule.end.disambiguation).toBe("later");
   });
 
+  // The move dialog and the checklist fold choice are sibling retained dialogs, each keyed by its own
+  // `useOpenToken`. After one open of each, both retained elements stay mounted at token 1, so bare
+  // numeric keys collide: reopening the move dialog mounts a second copy beside the orphaned first,
+  // and every later fold choice silently fails to open (docs/lessons.md, "Sibling retained dialogs
+  // must namespace their open-token keys").
+  it("keeps the checklist fold choice rendering after the move dialog has been used (sibling open-token keys)", async () => {
+    const deadline: ProjectDeadlineCalendarEventDto = {
+      id: "project-deadline:sibling-keys",
+      kind: "project_deadline",
+      title: "Project handoff",
+      project,
+      timing: { allDay: false, start: "2026-04-04T00:00:00.000Z", end: null },
+      status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
+      permissions: { canDrag: true, canResize: false },
+      deadlineLocalCivil: "2026-04-04T11:00",
+      deadlineVersion: 3,
+      reminderOffsetsMinutes: [],
+    };
+    const event = dueEvent("checklist:sibling-keys", "2026-04-04T10:00", "timed");
+    const target = resolveSydneyCivilMinute("2026-04-05T02:30", "earlier");
+    if (!target.ok) throw new Error("fold fixture did not resolve");
+    const moveDialogs = () => document.querySelectorAll('[data-testid="calendar-move-cancel"]').length;
+    const openMove = async () => {
+      await clickFocus(`calendar-move:${deadline.id}`);
+      await click("calendar-move-cancel");
+    };
+    const openFold = async () => {
+      surfaceAction = { event: { allDay: false, start: new Date(target.value.instant), startStr: target.value.instant } };
+      await click(`drop-${event.id}`);
+      // "occurs twice" is the open fold choice's copy; a retained-but-closed instance does not show it.
+      expect(host.textContent).toContain("occurs twice");
+      expect(document.querySelector('[data-testid="calendar-fold-submit"]')).not.toBeNull();
+      await click("calendar-fold-cancel");
+    };
+    const consoleError = vi.spyOn(console, "error");
+    try {
+      await render([deadline, event], "week");
+      await openMove();
+      await openFold();
+      await openMove();
+      await openFold();
+      expect(moveDialogs()).toBe(1);
+      expect(patchBodies).toHaveLength(0);
+      expect(consoleError.mock.calls.flat().join(" ")).not.toContain("two children with the same key");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("re-PATCHes a dual-fold range editor save with both choices and the source version", async () => {
     const event = rangeEvent("checklist:dual-fold", "2026-08-12T10:00", "2026-08-12T11:00", "timed", 7);
     await render([event]);
