@@ -26,6 +26,7 @@ import {
   assertSeedApplied,
   BOOTSTRAP_ADMIN_ID,
   LOCAL_FLAG_SQL,
+  main,
   parseArguments,
   SEED_PATH,
   SEED_STAGE_KEYS,
@@ -34,7 +35,7 @@ import {
   wranglerArguments,
 } from "../setup-local.mjs";
 import { BOOTSTRAP_ADMIN_ID as DATASET_BOOTSTRAP_ADMIN_ID } from "../qa-seed/dataset";
-import { openMemoryDatabase, sqliteSetupExecutor } from "./qa-seed-sqlite-executor";
+import { fakeWranglerSpawn, openMemoryDatabase, sqliteSetupExecutor } from "./qa-seed-sqlite-executor";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   scripts: Record<string, string>;
@@ -145,14 +146,17 @@ describe("guard: the local setup runner cannot be pointed at production", () => 
     ["--persist-to=scratch/state"],
   ];
   it.each(ACCEPTED_ARGV_TABLE)("keeps every non-fixed argv element flag-shaped-free: %j", (...argv) => {
-    const options = parseArguments(argv);
-    const invocations = [...SUBCOMMANDS.map((subcommand) => wranglerArguments(subcommand, options)), [...wranglerArguments(["execute"], options), "--file", SEED_PATH]];
-    for (const args of invocations) {
+    const db = openMemoryDatabase();
+    const fake = fakeWranglerSpawn(db);
+    main(argv, { spawn: fake.spawn, log: () => {} });
+    expect(fake.calls.length).toBeGreaterThan(0);
+    for (const args of fake.calls) {
       for (const element of args) {
         if (KNOWN_FIXED_FLAGS.has(element)) continue;
         expect(element.startsWith("-")).toBe(false);
       }
     }
+    db.close();
   });
 });
 
@@ -197,8 +201,44 @@ describe("guard: db:migrate:local applies the shared seed", () => {
     db.close();
   });
 
+  it("main() on a fresh database seeds it, through --local wrangler calls only", () => {
+    const db = openMemoryDatabase();
+    const fake = fakeWranglerSpawn(db);
+    main(["--persist-to", "/tmp/scratch"], { spawn: fake.spawn, log: () => {} });
+
+    const stages = db.prepare("SELECT key, active FROM pipeline_stages ORDER BY key;").all();
+    expect(stages.map((row) => row.key)).toEqual(DEFAULT_STAGES.map((stage) => stage.key).sort());
+    expect(stages.every((row) => Number(row.active) === 1)).toBe(true);
+    const admin = db.prepare("SELECT role, active FROM user WHERE id = ?;").get(BOOTSTRAP_ADMIN_ID);
+    expect(admin?.role).toBe("admin");
+    expect(Number(admin?.active)).toBe(1);
+
+    const isSeedCall = (args: string[]) => args.some((element, index) => element === "--file" && args[index + 1] === SEED_PATH);
+    expect(fake.calls.filter(isSeedCall)).toHaveLength(1);
+    const seedIndex = fake.calls.findIndex(isSeedCall);
+    expect(fake.calls[0].slice(0, 4)).toEqual(["wrangler", "d1", "migrations", "apply"]);
+    const laterNonQuery = fake.calls
+      .map((args, index) => ({ args, index }))
+      .filter(({ args, index }) => index !== 0 && index !== seedIndex && !args.includes("--json"));
+    expect(laterNonQuery.length).toBeGreaterThan(0);
+    for (const { index } of laterNonQuery) expect(index).toBeGreaterThan(seedIndex);
+
+    for (const args of fake.calls) {
+      expect(args).toContain("--local");
+      expect(args).toContain("quincy-portal");
+      expect(args).toContain("../../workers/app/wrangler.jsonc");
+      const persist = args.indexOf("--persist-to");
+      expect(persist).toBeGreaterThan(-1);
+      expect(args[persist + 1]).toBe("/tmp/scratch");
+    }
+    db.close();
+  });
+
   it("setupLocal fails loudly when another user row already holds the bootstrap admin's email", () => {
-    const adminEmail = /INSERT OR IGNORE INTO user[\s\S]*?VALUES\s*\(\s*'[^']*',\s*'[^']*',\s*'([^']+)'/.exec(sharedSeed)?.[1];
+    const seeded = openMemoryDatabase();
+    setupLocal(sqliteSetupExecutor(seeded), () => {});
+    const adminEmail = seeded.prepare("SELECT email FROM user WHERE id = ?;").get(BOOTSTRAP_ADMIN_ID)?.email;
+    seeded.close();
     expect(adminEmail).toMatch(/@/);
     const db = openMemoryDatabase();
     const real = sqliteSetupExecutor(db);

@@ -16,12 +16,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SEED_POSTCONDITION_SQL, SEED_STAGE_KEYS } from "../setup-local.mjs";
+import { BOOTSTRAP_ADMIN_ID, SEED_POSTCONDITION_SQL, SEED_STAGE_KEYS } from "../setup-local.mjs";
 
 const DATABASE_NAME = "quincy-portal";
 const CONFIG_PATH = "../../workers/app/wrangler.jsonc";
 const packageDirectory = fileURLToPath(new URL("../", import.meta.url)); // packages/db/ — same cwd setup-local.mjs uses
-const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 const CAPABILITY_KEY = "scheduling-fixtures";
 const STATEMENTS_PER_FILE = 300;
 /** `spawnSync`'s default `maxBuffer` (1 MiB) is smaller than the density tier's JSON plan

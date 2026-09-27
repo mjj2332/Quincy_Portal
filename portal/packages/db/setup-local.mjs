@@ -33,10 +33,12 @@ export const SEED_PATH = fileURLToPath(new URL("./seed/0001_seed.sql", import.me
 export const SEED_STAGE_KEYS = ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review", "delivered"];
 export const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 
+const seedStageKeyList = SEED_STAGE_KEYS.map((key) => `'${key}'`).join(", ");
+
 /** One SELECT of scalar subqueries, not a compound SELECT: local D1 caps those at 5 terms. */
 export const SEED_POSTCONDITION_SQL = `SELECT
-  (SELECT COUNT(*) FROM pipeline_stages WHERE key IN (${SEED_STAGE_KEYS.map((key) => `'${key}'`).join(", ")})) AS stages,
-  (SELECT COUNT(*) FROM pipeline_stages WHERE active = 1 AND key IN (${SEED_STAGE_KEYS.map((key) => `'${key}'`).join(", ")})) AS active_stages,
+  (SELECT COUNT(*) FROM pipeline_stages WHERE key IN (${seedStageKeyList})) AS stages,
+  (SELECT COUNT(*) FROM pipeline_stages WHERE active = 1 AND key IN (${seedStageKeyList})) AS active_stages,
   (SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}') AS admin_active;`;
 
 /**
@@ -147,9 +149,9 @@ export function wranglerArguments(subcommand, options) {
   return ["wrangler", "d1", ...subcommand, DATABASE_NAME, "--local", "--config", CONFIG_PATH, ...persist];
 }
 
-function runWrangler(subcommand, options, extra = []) {
+function runWrangler(subcommand, options, extra = [], spawn = spawnSync) {
   const args = [...wranglerArguments(subcommand, options), ...extra];
-  const result = spawnSync("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
+  const result = spawn("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
   if (result.status !== 0) {
     throw new Error(`\`npx ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.`);
   }
@@ -181,7 +183,6 @@ export function assertCapabilityInstalled(row) {
   }
 }
 
-/** The seed's postcondition: rows that are missing are a failure. */
 export function assertSeedApplied(row) {
   const stages = Number(row?.stages);
   if (stages !== SEED_STAGE_KEYS.length) {
@@ -209,12 +210,12 @@ export function seedWarnings(row) {
   return warnings;
 }
 
-function runSqlFile(options, sql, label) {
+function runSqlFile(options, sql, label, spawn) {
   const dir = mkdtempSync(join(tmpdir(), `quincy-setup-local-${label}-`));
   const file = join(dir, `${label}.sql`);
   try {
     writeFileSync(file, sql, "utf8");
-    runWrangler(["execute"], options, ["--file", file]);
+    runWrangler(["execute"], options, ["--file", file], spawn);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -224,20 +225,19 @@ function runSqlFile(options, sql, label) {
  * Every wrangler call goes through `wranglerArguments`, so `--local` pinning is unchanged; the
  * executor seam only exists so tests can run the same sequence against an in-memory SQLite.
  */
-export function wranglerSetupExecutor(options) {
+export function wranglerSetupExecutor(options, spawn = spawnSync) {
   return {
-    migrate: () => runWrangler(["migrations", "apply"], options),
-    run: (sql, label) => runSqlFile(options, sql, label),
-    runFile: (path) => runWrangler(["execute"], options, ["--file", path]),
+    migrate: () => runWrangler(["migrations", "apply"], options, [], spawn),
+    run: (sql, label) => runSqlFile(options, sql, label, spawn),
+    runFile: (path) => runWrangler(["execute"], options, ["--file", path], spawn),
     query: (sql) => {
-      const stdout = runWrangler(["execute"], options, ["--json", "--command", sql]);
+      const stdout = runWrangler(["execute"], options, ["--json", "--command", sql], spawn);
       const payload = JSON.parse(stdout.slice(stdout.indexOf("[")));
       return payload.at(-1)?.results ?? [];
     },
   };
 }
 
-/** The whole setup sequence, in order, each step followed by its postcondition. */
 export function setupLocal(executor, log) {
   log("==> Applying migrations to local D1");
   executor.migrate();
@@ -246,7 +246,7 @@ export function setupLocal(executor, log) {
   assertSchemaMarkerPresent(executor.query("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_board_order_0037_rollback') AS present;")[0]);
 
   log("==> Applying the shared seed (seed/0001_seed.sql)");
-  executor.runFile(SEED_PATH, "shared-seed");
+  executor.runFile(SEED_PATH);
   const row = executor.query(SEED_POSTCONDITION_SQL)[0];
   assertSeedApplied(row);
   for (const warning of seedWarnings(row)) log(`  ! ${warning}`);
@@ -263,15 +263,15 @@ export function setupLocal(executor, log) {
   log(`==> Local D1 ready: pipeline stages and bootstrap admin seeded, ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
 }
 
-function main() {
-  setupLocal(wranglerSetupExecutor(parseArguments(process.argv.slice(2))), console.log);
+export function main(argv, { spawn = spawnSync, log = console.log } = {}) {
+  setupLocal(wranglerSetupExecutor(parseArguments(argv), spawn), log);
 }
 
 // Only when run as a command. The parsing and argument-building seams above are importable so
 // tests can assert what this *would* spawn without spawning anything.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
-    main();
+    main(process.argv.slice(2));
   } catch (error) {
     console.error(`\nLocal D1 setup failed: ${error.message}`);
     process.exit(1);

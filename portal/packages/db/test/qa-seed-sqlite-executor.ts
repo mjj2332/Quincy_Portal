@@ -65,7 +65,7 @@ export function openMemoryDatabase(): SqliteDatabase {
 export type SetupExecutor = {
   migrate: () => void;
   run: (sql: string, label: string) => void;
-  runFile: (path: string, label: string) => void;
+  runFile: (path: string) => void;
   query: (sql: string) => Row[];
 };
 
@@ -90,6 +90,25 @@ export function sqliteSetupExecutor(db: SqliteDatabase): SetupExecutor {
     runFile: (path) => db.exec(readFileSync(path, "utf8")),
     query: (sql) => db.prepare(sql).all().map((row) => ({ ...row })),
   };
+}
+
+/** A stand-in for `npx wrangler d1 …` against this SQLite, so `setup-local.mjs`'s real `main` runs. */
+export function fakeWranglerSpawn(db: SqliteDatabase) {
+  const executor = sqliteSetupExecutor(db);
+  const calls: string[][] = [];
+  const valueAfter = (args: string[], flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
+  const spawn = (_command: string, args: string[]) => {
+    calls.push([...args]);
+    const file = valueAfter(args, "--file");
+    const command = valueAfter(args, "--command");
+    if (args.includes("migrations") && args.includes("apply")) executor.migrate();
+    else if (file !== undefined) executor.runFile(file);
+    else if (command !== undefined && args.includes("--json")) return { status: 0, stdout: JSON.stringify([{ results: executor.query(command) }]) };
+    else if (command !== undefined) executor.run(command, "command");
+    else throw new Error(`Unexpected wrangler invocation: ${args.join(" ")}`);
+    return { status: 0, stdout: "" };
+  };
+  return { spawn, calls };
 }
 
 /** A database in exactly the state `db:migrate:local` leaves: built by `setupLocal` itself, through
