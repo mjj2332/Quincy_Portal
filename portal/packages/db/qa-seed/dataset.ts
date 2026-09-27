@@ -203,7 +203,7 @@ export type FixtureCollectionRow = { id: string; projectId: string; kind: string
 export type FixtureOccurrenceRow = {
   id: string; projectId: string; scheduleVersion: number; kind: "advance" | "due_now"; reminderOffsetMinutes: number;
   fireAt: number; deadlineAt: number; deadlineLocalCivil: string; deadlineUtcOffsetMinutes: number; deadlineFold: 0 | 1;
-  status: "pending" | "skipped"; terminalReason: "elapsed_at_save" | null; createdAtMs: number; updatedAtMs: number;
+  status: "pending" | "skipped" | "superseded"; terminalReason: "elapsed_at_save" | "project_delivered" | null; createdAtMs: number; updatedAtMs: number;
 };
 export type FixtureMemberRow = { id: string; projectId: string; userId: string; createdAtMs: number };
 
@@ -257,16 +257,27 @@ function buildDeadline(localCivil: string): FixtureDeadline {
 /** `appliedAtMs` is the real apply instant (`--applied-at-ms`), used ONLY to classify `advance`
  * occurrences pending-vs-skipped — matching `project-deadline.ts:226-230`'s `fireAt <= now` check
  * exactly. `due_now` (line 231) is unconditionally `pending`, matching the same source: it is never
- * run through the elapsed check at all, so it does not take `appliedAtMs` into account either. */
-function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, appliedAtMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
+ * run through the elapsed check at all, so it does not take `appliedAtMs` into account either.
+ *
+ * A DELIVERED project keeps its deadline in the app, but delivery suppresses its reminders:
+ * `project-stage.ts` runs `buildDeadlineSuppressionBundle` (`stage-board-bundles.ts`), which sets
+ * every occurrence to `status = 'superseded'`, `terminal_reason = 'project_delivered'`,
+ * `fired_at = NULL`. So for `stageKey === "delivered"` every occurrence takes exactly that shape,
+ * whatever `appliedAtMs` is — a pending reminder on a delivered project is a state the app cannot
+ * produce. (No `notification_delivery_ledger` rows: the fixture never writes any.) */
+function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadline: FixtureDeadline, appliedAtMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
   const rows: FixtureOccurrenceRow[] = [];
+  const delivered = stageKey === "delivered";
   const pushAdvance = (offsetMinutes: number) => {
     const fireAt = deadlineFireAt(deadline.epochMs, offsetMinutes);
     const pending = fireAt > appliedAtMs;
     rows.push({
       id: fixtureId(`occurrence:${projectId}:advance:${offsetMinutes}`), projectId, scheduleVersion: 1, kind: "advance", reminderOffsetMinutes: offsetMinutes,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      status: pending ? "pending" : "skipped", terminalReason: pending ? null : "elapsed_at_save", createdAtMs, updatedAtMs: createdAtMs,
+      ...(delivered
+        ? { status: "superseded" as const, terminalReason: "project_delivered" as const }
+        : { status: pending ? "pending" as const : "skipped" as const, terminalReason: pending ? null : "elapsed_at_save" as const }),
+      createdAtMs, updatedAtMs: createdAtMs,
     });
   };
   const pushDueNow = () => {
@@ -274,7 +285,10 @@ function buildDeadlineOccurrences(projectId: string, deadline: FixtureDeadline, 
     rows.push({
       id: fixtureId(`occurrence:${projectId}:due_now:0`), projectId, scheduleVersion: 1, kind: "due_now", reminderOffsetMinutes: 0,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      status: "pending", terminalReason: null, createdAtMs, updatedAtMs: createdAtMs,
+      ...(delivered
+        ? { status: "superseded" as const, terminalReason: "project_delivered" as const }
+        : { status: "pending" as const, terminalReason: null }),
+      createdAtMs, updatedAtMs: createdAtMs,
     });
   };
   for (const offset of deadline.offsetsMinutes) pushAdvance(offset);
@@ -380,10 +394,12 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
     const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1), deadlineLocalCivil: `${mustShift(anchor, 8)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 12, 0, createdAtMs) });
   }
-  // P05 — delivered: the app's own deadline UPDATE predicate excludes stage_key = 'delivered', so
-  // a delivered project never carries a deadline through the normal app flow — this one doesn't either.
+  // P05 — delivered: carries a deadline so it draws a bar in the `--signal-positive` hue. In the app a
+  // project keeps its deadline when delivered (only later deadline EDITS are refused), and delivery
+  // suppresses its reminders — so its occurrences are all superseded/project_delivered (see
+  // `buildDeadlineOccurrences`).
   {
-    const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10) });
+    const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10), deadlineLocalCivil: `${mustShift(anchor, -3)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 6, 3, createdAtMs) });
   }
   // P06 — schedule-edges: the full checklist-schedule state/endpoint/legacy-reason/DST census.
@@ -506,7 +522,7 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
   // anchor's fixed 09:00 — see the header comment above `anchorReferenceInstantMs`. Every DATE
   // above (createdAt/updatedAt spacing) still comes from `referenceInstantMs`.
   const deadlineOccurrences: FixtureOccurrenceRow[] = builds.flatMap((b) =>
-    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.deadline, appliedAtMs, b.project.createdAtMs) : [],
+    b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.stageKey, b.project.deadline, appliedAtMs, b.project.createdAtMs) : [],
   );
 
   const defaultEditorIds = [...new Set(options.defaultEditorIds ?? [])];

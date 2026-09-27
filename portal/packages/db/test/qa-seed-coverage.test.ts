@@ -336,3 +336,45 @@ describe("fix item 2 (Sol round 3): the DST cross-check does not expire when the
     expect(() => crossCheckDstTransition("2027-09-01", "spring", "2028-10-01")).toThrow(/disagrees with the committed cross-check table/);
   });
 });
+
+describe("coverage 10: every core project meant to draw a Gantt bar carries a deadline", () => {
+  // The Production Gantt draws a project bar only when the project has a deadline
+  // (`apps/web/src/lib/production-gantt-adapter.ts`, `buildProjectBar`): no deadline is a
+  // "Deadline not set" row with no bar, so no progress and no hue. P07 is the one core project
+  // that exists to prove exactly that row.
+  const DELIBERATELY_DEADLINE_LESS = ["no-deadline-no-shoot"];
+
+  it("the only core project without a deadline is no-deadline-no-shoot (any other is named here)", () => {
+    const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
+    const withoutDeadline = dataset.projects.filter((p) => p.deadline === null).map((p) => p.key);
+    expect(withoutDeadline).toEqual(DELIBERATELY_DEADLINE_LESS);
+  });
+});
+
+describe("coverage 11: the delivered project's reminders are suppressed the way delivery suppresses them", () => {
+  // `buildDeadlineSuppressionBundle` (`packages/db/src/stage-board-bundles.ts`) sets every pending
+  // occurrence of a delivered project to superseded / project_delivered / fired_at NULL. Checked at
+  // an apply instant before every fire time (where a non-delivered project's reminders would all be
+  // pending) and at the anchor's own reference instant.
+  for (const appliedAtMs of [0, APPLIED_AT_MS]) {
+    it(`every occurrence of "delivered" is superseded/project_delivered and none is pending (appliedAtMs=${appliedAtMs})`, () => {
+      const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs });
+      const delivered = dataset.projects.find((p) => p.key === "delivered");
+      expect(delivered?.stageKey).toBe("delivered");
+      expect(delivered?.deadline).not.toBeNull();
+      const occurrences = dataset.deadlineOccurrences.filter((o) => o.projectId === delivered!.id);
+      expect(occurrences.length).toBeGreaterThan(0);
+      expect(occurrences.filter((o) => o.status === "pending")).toHaveLength(0);
+      for (const o of occurrences) {
+        expect(o.status).toBe("superseded");
+        expect(o.terminalReason).toBe("project_delivered");
+      }
+      // The branch is delivered-only: at appliedAtMs 0 every other project's reminders are pending.
+      if (appliedAtMs === 0) {
+        const others = dataset.deadlineOccurrences.filter((o) => o.projectId !== delivered!.id);
+        expect(others.length).toBeGreaterThan(0);
+        for (const o of others) expect(o.status).toBe("pending");
+      }
+    });
+  }
+});
