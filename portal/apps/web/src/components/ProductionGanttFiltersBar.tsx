@@ -1,0 +1,156 @@
+/**
+ * #255: the Gantt's filters, as a ReUI `Filters` chip row (`components/reui/filters/`, basic
+ * variant). Quincy-owned composition: the vendored primitive draws the chips, the field picker, the
+ * value menus and Clear; this file owns the schema, the URL mapping and focus.
+ *
+ * Two fields, one operator each, no negation — Stage ("is any of", the role-aware stage options with
+ * their legend swatches) and Show ("includes": Delivered projects, Completed checklist items). The
+ * query <-> facet mapping is pure and lives in `lib/production-gantt-filters.ts`.
+ *
+ * STATE. The bar holds its own `FilterQuery`, because an unfinished chip (a field picked, no
+ * condition or value yet) has no URL spelling and must survive the URL echo of an unrelated edit.
+ * On every change the local query is set, and when it projects to a facet that differs from the
+ * URL's, `onFiltersChange` pushes it. The local query is re-seeded from the URL only when the URL
+ * facet CHANGES and differs from the local projection — Back/Forward, a reload, the empty state's
+ * Clear — so the bar's own write, echoing back equal, never resets chip ids, focus or an open menu.
+ *
+ * UNSUPPORTED EDITS. `onBeforeQueryChange` vetoes any query `queryToGanttFacet` cannot read (an
+ * `or`, a group, a negated rule, a second rule on one field). A field is disabled in the picker once
+ * a rule for it exists — never removed from `fields`, which would render an "unknown" chip — and
+ * the rule menu's Duplicate/Negate rows are hidden (`ruleMenu`, a Quincy addition to the vendored
+ * `Filters`).
+ *
+ * FOCUS. The add-filter trigger is a Quincy `Button` passed through `trigger`: labelled while the
+ * bar is empty, icon-only with `aria-label="Add filter"` once a chip exists. It takes focus after
+ * the bar's own Clear and after the last chip is removed (the control that had focus unmounts), and
+ * `ProductionGantt` focuses it through `triggerRef` after the empty state's Clear filters. Its
+ * scroll-margin clears the sticky shell header for that caller's `scrollIntoView`.
+ */
+import { ListFilterPlusIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Filters, countFilterRules, flattenFilterRules, type FilterChangeDetails, type FilterField, type FilterLabels, type FilterQuery } from "@/components/reui/filters/filters";
+import {
+  GANTT_FILTER_FIELD,
+  GANTT_SHOW_OPERATORS,
+  GANTT_SHOW_OPTIONS,
+  GANTT_STAGE_OPERATORS,
+  ganttFacetKey,
+  ganttFacetToQuery,
+  queryToGanttFacet,
+  type GanttFilterQuery,
+  type ProductionGanttFacetFilters,
+  type StageFilterOption,
+} from "../lib/production-gantt-filters";
+import { stageColorFor } from "../lib/stage-colors";
+import { Button } from "./quincy/Button";
+
+export type ProductionGanttFiltersBarProps = {
+  /** The URL's Gantt facet (the Dashboard reads it from the route). */
+  filters: ProductionGanttFacetFilters;
+  /** Role-aware stage options (`productionStageFilterOptions`). */
+  stageOptions: readonly StageFilterOption[];
+  /** Pushes a new facet to the URL; it arrives back through `filters`. */
+  onFiltersChange: (next: ProductionGanttFacetFilters) => void;
+  /** The add-filter trigger, for a caller that must move focus to it. */
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+};
+
+const LABELS: Partial<FilterLabels> = { filtersLabel: "Gantt filters" };
+const RULE_MENU = { duplicate: false, negate: false } as const;
+const ADD_FILTER = "Add filter";
+
+export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChange, triggerRef }: ProductionGanttFiltersBarProps) {
+  const ownTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const trigger = triggerRef ?? ownTriggerRef;
+
+  const urlKey = ganttFacetKey(filters);
+  const [query, setQuery] = useState<GanttFilterQuery>(() => ganttFacetToQuery(filters));
+  // Re-seed during render (not an effect, which would paint the stale chips for a frame), only on
+  // a URL change the local query does not already say.
+  const [seenUrlKey, setSeenUrlKey] = useState(urlKey);
+  if (seenUrlKey !== urlKey) {
+    setSeenUrlKey(urlKey);
+    const local = queryToGanttFacet(query);
+    if (!local || ganttFacetKey(local) !== urlKey) setQuery(ganttFacetToQuery(filters));
+  }
+
+  const latest = useRef({ urlKey, onFiltersChange });
+  useEffect(() => {
+    latest.current = { urlKey, onFiltersChange };
+  });
+
+  const usedFields = useMemo(() => new Set(flattenFilterRules(query).map((rule) => rule.path[0])), [query]);
+  const stageUsed = usedFields.has(GANTT_FILTER_FIELD.stage);
+  const showUsed = usedFields.has(GANTT_FILTER_FIELD.show);
+  const fields = useMemo<FilterField<string[]>[]>(
+    () => [
+      {
+        id: GANTT_FILTER_FIELD.stage,
+        label: "Stage",
+        type: "multiselect",
+        operators: GANTT_STAGE_OPERATORS,
+        disabled: stageUsed,
+        options: stageOptions.map((option) => ({
+          value: option.key,
+          label: option.label,
+          icon: <span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: stageColorFor(option.key) }} />,
+        })),
+      },
+      {
+        id: GANTT_FILTER_FIELD.show,
+        label: "Show",
+        type: "multiselect",
+        operators: GANTT_SHOW_OPERATORS,
+        disabled: showUsed,
+        options: GANTT_SHOW_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+      },
+    ],
+    [stageOptions, stageUsed, showUsed],
+  );
+
+  const focusTrigger = useCallback(() => {
+    // After the frame in which the control that had focus (the last chip, or Clear) unmounted.
+    requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
+  }, [trigger]);
+
+  const handleQueryChange = useCallback(
+    (next: FilterQuery<string[]>, details: FilterChangeDetails<string[]>) => {
+      setQuery(next);
+      const facet = queryToGanttFacet(next);
+      if (facet && ganttFacetKey(facet) !== latest.current.urlKey) latest.current.onFiltersChange(facet);
+      if ((details.reason === "remove" || details.reason === "clear") && countFilterRules(next) === 0) focusTrigger();
+    },
+    [focusTrigger],
+  );
+
+  const vetoUnsupported = useCallback((next: FilterQuery<string[]>) => queryToGanttFacet(next) !== null, []);
+
+  const compact = countFilterRules(query) > 0;
+
+  return (
+    <div data-testid="production-gantt-filters">
+      <Filters<string[]>
+        fields={fields}
+        query={query}
+        onQueryChange={handleQueryChange}
+        onBeforeQueryChange={vetoUnsupported}
+        labels={LABELS}
+        ruleMenu={RULE_MENU}
+        showClear
+        trigger={
+          <Button
+            ref={trigger}
+            type="button"
+            variant="secondary"
+            data-testid="production-gantt-filters-add"
+            aria-label={compact ? ADD_FILTER : undefined}
+            className="scroll-mt-[calc(var(--shell-header-height)+var(--space-4))]"
+          >
+            <ListFilterPlusIcon aria-hidden="true" />
+            {compact ? null : ADD_FILTER}
+          </Button>
+        }
+      />
+    </div>
+  );
+}
