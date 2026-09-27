@@ -24,7 +24,7 @@ const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
 const CAPABILITY_KEY = "scheduling-fixtures";
 const STATEMENTS_PER_FILE = 300;
 /** `spawnSync`'s default `maxBuffer` (1 MiB) is smaller than the density tier's JSON plan
- * (~3.2 MB at time of writing) — exceeding it kills the child mid-write, which surfaces as an
+ * (about 4 MB for core+density as of 2026-09-27) — exceeding it kills the child mid-write, which surfaces as an
  * opaque `EPIPE` from the child's own `process.stdout.write`, not as a clear "buffer exceeded"
  * error. Set generously above any tier this generator is expected to produce. */
 const MAX_SUBPROCESS_BUFFER_BYTES = 1024 * 1024 * 200;

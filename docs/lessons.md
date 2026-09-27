@@ -3817,3 +3817,20 @@ from the first run:
   so `TZDate` loses its prototype: 18 more web DOM false failures that looked like DST bugs.
 - **Tests that compare SQLite's clock with JS's** (`default-editors-backfill`) fail under any shift
   by design — shifting only JS cannot pass them. Leave them unpinned.
+
+## A test that asserts a server count must count the way the server does (2026-09-27)
+
+The QA fixture's draw-cap tier (`packages/db/qa-seed/`) exists to push the Gantt past
+`PRODUCTION_GANTT_DRAW_CAP`. Its coverage test asserted `2130 > 2000` and passed — while the real
+server count in the default view was **1,704**, under the cap. The test's helper counted every
+fixture project; the server's authorized-projects CTE (`workers/app/src/lib/production-scope-sql.ts:89`)
+drops `stage_key = 'delivered'` unless the delivered filter is on, and 6 of the tier's 30 projects
+were delivered. The fixture would have shipped unable to show the draw cap at all.
+
+- **Mirror the query, and name the lines you mirror** in the helper's comment, so a later change to
+  the server's filters has a visible twin to update.
+- **Prove it once against the real query.** The fix was only trusted after running the server's own
+  `productionGanttProjectsSql("admin")` against a scratch local D1 with default binds, which
+  returned `matched_rows: 2208`. A reimplementation checked against itself proves nothing.
+- **Leave margin over a threshold.** The tier now clears the cap by more than 10%, so ticking a
+  few children done during a browser pass cannot quietly drop it back under.
