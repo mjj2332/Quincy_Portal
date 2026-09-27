@@ -43,7 +43,7 @@ export type SchedulingProposal =
   | { kind: "place"; entity: "project_deadline"; entry: ProjectCalendarUnscheduledEntryDto; target: CalendarManipulationTarget; disambiguation?: ProjectDeadlineDisambiguation }
   | { kind: "deadline"; entity: "project_deadline"; event: ProjectDeadlineCalendarEventDto; target: CalendarManipulationTarget; disambiguation?: ProjectDeadlineDisambiguation };
 
-export type SchedulingWarningCode = "subtask_before_project_shoot" | "subtask_after_project_deadline";
+export type SchedulingWarningCode = "subtask_before_project_shoot" | "subtask_before_project_created" | "subtask_after_project_deadline";
 export type SchedulingWarning = { code: SchedulingWarningCode; message: string; endpoint: "start" | "end" };
 export type ScheduleBounds = { shootDate: string | null; deadlineLocalCivil: string | null } | null;
 

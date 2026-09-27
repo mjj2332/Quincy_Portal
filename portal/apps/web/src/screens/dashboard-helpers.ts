@@ -156,7 +156,8 @@ function writeCalendarPreference(storage: DashboardCalendarPreferenceStorage, ke
   }
 }
 
-function sydneyToday(now: Date | number | string): string {
+/** Sydney's civil date (`YYYY-MM-DD`) at `now`. */
+export function sydneyToday(now: Date | number | string): string {
   const value = formatSydneyCivilMinute(now instanceof Date ? now.getTime() : now).slice(0, 10);
   return isSydneyCalendarDate(value) ? value : "1970-01-01";
 }

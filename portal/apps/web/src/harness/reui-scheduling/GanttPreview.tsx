@@ -15,6 +15,10 @@
  * #219 PR A: the on-screen "Keyboard" legend below tracks gantt-bar.tsx's Adjust-mode scheme
  * (matchGanttBarKey in gantt-lib.tsx) -- Space enters/exits, not the old Alt+Arrow / Ctrl+Alt+Arrow
  * chords those replaced.
+ *
+ * #221 PR A: a "Warn instead of refuse" toggle beside the enforce toggle. When on, `canDropEvent`
+ * is not passed at all; `dropWarning` flags a drop ending after the fixture deadline instead - the
+ * ghost turns caution, the reason rides the cursor overlay, and the drop still commits.
  */
 import { useCallback, useState } from "react";
 import { Gantt } from "@/components/reui/gantt/gantt";
@@ -39,6 +43,7 @@ let nextLogId = 0;
 export default function GanttPreview() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("today");
   const [enforceCanDrop, setEnforceCanDrop] = useState(false);
+  const [warnInstead, setWarnInstead] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
 
   const fixture = buildScenario(scenarioId);
@@ -81,6 +86,11 @@ export default function GanttPreview() {
     (update: GanttProposedUpdate) => update.end.getTime() <= fixture.deadline.getTime(),
     [fixture.deadline],
   );
+  const dropWarning = useCallback(
+    (update: GanttProposedUpdate) =>
+      update.end.getTime() > fixture.deadline.getTime() ? "Ends after the deadline" : null,
+    [fixture.deadline],
+  );
 
   return (
     <div className="grid gap-4 p-4">
@@ -99,9 +109,14 @@ export default function GanttPreview() {
         <button type="button" data-testid="harness-enforce-toggle" onClick={() => setEnforceCanDrop((value) => !value)}>
           {enforceCanDrop ? "Switch to advisory" : "Switch to enforced"}
         </button>
+        <button type="button" data-testid="harness-warn-toggle" aria-pressed={warnInstead} onClick={() => setWarnInstead((value) => !value)}>
+          {warnInstead ? "Refuse past the deadline" : "Warn instead of refuse"}
+        </button>
         <span data-testid="harness-enforce-mode">
-          canDropEvent is {enforceCanDrop ? "ENFORCED (invalid drops revert)" : "ADVISORY (styles the ghost only)"} —
-          deadline {formatZonedInstant(fixture.deadline)}
+          {warnInstead
+            ? "dropWarning WARNS past the deadline (drop still commits; canDropEvent off)"
+            : `canDropEvent is ${enforceCanDrop ? "ENFORCED (invalid drops revert)" : "ADVISORY (styles the ghost only)"}`}{" "}
+          — deadline {formatZonedInstant(fixture.deadline)}
         </span>
       </div>
 
@@ -110,7 +125,8 @@ export default function GanttPreview() {
         events={events}
         onEventsChange={setEvents}
         onEventUpdate={handleEventUpdate}
-        canDropEvent={canDropEvent}
+        canDropEvent={warnInstead ? undefined : canDropEvent}
+        dropWarning={warnInstead ? dropWarning : undefined}
         enforceCanDrop={enforceCanDrop}
         date={date}
         onDateChange={setDate}

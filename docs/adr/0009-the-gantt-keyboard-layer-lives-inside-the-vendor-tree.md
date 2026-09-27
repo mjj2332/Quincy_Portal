@@ -144,3 +144,29 @@ directory, not because it had to.
 layer directly; `gantt-resize-edges.test.ts` covers `canResize`/`isResizableEdge` in the node
 suite. `gantt-skin.guard.test.ts` and `test-seam.guard.test.ts` (guard F) are the standing guards
 against a re-skin or a vendor-slot test dependency creeping back in.
+
+## Addendum (2026-09-27, #221)
+
+#221 lets a subtask be dragged outside its project's shoot..deadline window: allowed, but with a
+warning (caution styling and a reason beside the cursor while dragging, the reason announced on the
+keyboard path), never blocked. Two additive vendor seams carry it, and both live in this tree for
+the same reason the keyboard layer does:
+
+- **`dropWarning(update) => string | null`**, beside `canDropEvent`. The surfaces it has to reach —
+  the drag ghost (`gantt-view.tsx`), the cursor-following move clone and resize chip
+  (`gantt-dnd.tsx`'s closure DOM), the announcer writes on pointer release, and the Adjust
+  session's step/commit announcements (`gantt.tsx` / `gantt-bar.tsx`) — are all private to the
+  vendor. A wrapper cannot style a ghost or append to a chip it never sees.
+- **`onEventUpdate` may return `"deferred"`** — accept-and-defer: the consumer took the proposal
+  and owns what happens next (a confirmation dialog, for example); the Gantt neither mutates
+  `events` nor announces. It exists because `false` announces "That change was rejected." for a
+  drop the consumer actually accepted (owner decision 2026-09-27).
+
+What stays OUT of the vendor tree: the POLICY. What counts as "outside shoot..deadline", and the
+reason text, belong to Quincy code (the consumer passes `dropWarning`). The vendor only renders and
+announces whatever reason it is handed. Invalid beats warning: `dropWarning` is only consulted for a
+proposal that is already valid, so a drop is never both. With neither seam used, DOM, announcements
+and behaviour are unchanged. `gantt-drop-warning.dom.test.tsx` covers both.
+
+The #219 comment inherited on #221 pointed at the event-calendar tree and ADR 0010 for this; that
+was a mistake — the Gantt's seams are recorded here, not in 0010.

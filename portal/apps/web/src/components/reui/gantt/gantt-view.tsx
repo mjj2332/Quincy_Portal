@@ -171,6 +171,14 @@
  * directly, restoring the two glyphs' effective ink parity without changing either icon's
  * footprint or the 44px tap target around it.
  *
+ * 2026-09-27, #221 PR A — ADDED, additive (absent unless the consumer passes `dropWarning`): the
+ * drag ghost carries `data-drop-warning` and caution styling (`border-signal-caution
+ * bg-signal-caution/10 text-warning`, replacing the valid-state classes) when `state.drag` is valid
+ * AND carries a `warning`; invalid styling is unchanged and wins. The ghost selector's equality now
+ * includes `warning` so a warning-only change re-renders it; the row drop target gains a
+ * `"warning"` state (`bg-signal-caution/7`); custom drag/resize indicators receive `warning`
+ * through their render props. Covered by `gantt-drop-warning.dom.test.tsx`.
+ *
  * 2026-09-28, found in #221's browser pass (predates it; vendored in #219) — the wrapper
  * (`data-slot="gantt-view"`) was `overflow-hidden` and measured ~145–445px wider in scrollWidth
  * than clientWidth at 1440×900, growing with the timeline's scroll position. `overflow: hidden`
@@ -3244,6 +3252,8 @@ function GanttCustomDragLayer() {
         start: drag.proposedStart,
         end: drag.proposedEnd,
         valid: drag.valid,
+        // #221 PR A: the dropWarning reason (null when none, or when invalid)
+        warning: drag.warning ?? null,
         // the plan rides along so a custom overlay can keep drawing it
         // mid-gesture (the resting ghost is hidden with the original bar)
         baseline: resolveEventBaseline(drag.occurrence.event),
@@ -3696,13 +3706,16 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
   const fractionOf = (ms: number) =>
     Math.min(Math.max((ms - rangeStartMs) / (rangeEndMs - rangeStartMs), 0), 1)
 
-  const dragTarget = useGanttSelector<unknown, "valid" | "invalid" | null>(
-    (state) => {
-      const drag = state.drag
-      if (!drag || drag.proposedResourceId !== row.resource.id) return null
-      return drag.valid ? "valid" : "invalid"
-    }
-  )
+  const dragTarget = useGanttSelector<
+    unknown,
+    "valid" | "warning" | "invalid" | null
+  >((state) => {
+    const drag = state.drag
+    if (!drag || drag.proposedResourceId !== row.resource.id) return null
+    // #221 PR A: a valid-but-warned drop tints the row with caution; invalid still wins.
+    if (!drag.valid) return "invalid"
+    return drag.warning ? "warning" : "valid"
+  })
   const ghost = useGanttSelector<
     unknown,
     {
@@ -3710,6 +3723,8 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
       to: number
       color?: string
       valid: boolean
+      // #221 PR A: the dropWarning reason; only meaningful while `valid`.
+      warning: string | null
       title: string
       kind: string
       occurrenceKey: string
@@ -3727,6 +3742,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         to: fractionOf(drag.proposedEnd.getTime()),
         color: drag.occurrence.event.color,
         valid: drag.valid,
+        warning: drag.warning ?? null,
         title: drag.occurrence.event.title,
         kind: drag.kind,
         occurrenceKey: drag.occurrence.key,
@@ -3744,6 +3760,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
           a.from === b.from &&
           a.to === b.to &&
           a.valid === b.valid &&
+          a.warning === b.warning &&
           a.source === b.source),
     }
   )
@@ -3887,6 +3904,7 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         rowBorder !== null && "border-b border-border",
         rowBorder === "dashed" && "border-dashed",
         dragTarget === "valid" && "bg-muted/40",
+        dragTarget === "warning" && "bg-signal-caution/7",
         dragTarget === "invalid" && "bg-destructive/10"
       )}
       style={{
@@ -4369,6 +4387,9 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
             data-kind={ghost.kind}
             data-milestone={ghost.milestone || undefined}
             data-drop-invalid={!ghost.valid || undefined}
+            // #221 PR A: an ALLOWED drop the consumer's dropWarning flagged; never alongside
+            // data-drop-invalid (invalid wins).
+            data-drop-warning={(ghost.valid && !!ghost.warning) || undefined}
             // #219 PR A fix (Sol re-review round 2, MEDIUM #7): the Adjust-specific "you are
             // adjusting this" marker lives HERE, not on the bar - a keyboard Adjust session keeps
             // DOM focus on the origin bar, and its own dashed outline otherwise loses to the
@@ -4401,11 +4422,17 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
               !ghost.valid &&
                 "border-destructive bg-destructive/10 text-destructive",
               ghost.valid &&
+                !ghost.warning &&
                 ghost.kind === "move" &&
                 "border-(--gantt-event-color)/50 bg-(--gantt-event-color)/8",
               ghost.valid &&
+                !ghost.warning &&
                 ghost.kind !== "move" &&
                 "text-foreground border-(--gantt-event-color)/70 bg-(--gantt-event-color)/22",
+              // #221 PR A: a warned (allowed) drop reads as caution, not as the event colour
+              ghost.valid &&
+                !!ghost.warning &&
+                "border-signal-caution bg-signal-caution/10 text-warning",
               /* a milestone's landing marker keeps the milestone's SHAPE: the
                  wrapper sheds its own dashed box and centers a dashed diamond
                  instead - a dashed rectangle read as a different object */
