@@ -209,10 +209,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // cold deep link and Back/Forward both apply on their first commit. Independent of the Calendar's
   // own filter state.
   const routeGantt = currentDashboardRoute && isDashboardGanttRoute(currentDashboardRoute) ? currentDashboardRoute : null;
-  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => {
-    const { q: _q, ...facet } = ganttFiltersFromRoute(routeGantt);
-    return facet;
-  }, [routeGantt]);
+  const ganttFilters = useMemo<ProductionGanttFacetFilters>(() => ganttFiltersFromRoute(routeGantt), [routeGantt]);
   const calendarStorage = {
     read: (key: string) => window.localStorage.getItem(key),
     write: (key: string, value: string) => window.localStorage.setItem(key, value),

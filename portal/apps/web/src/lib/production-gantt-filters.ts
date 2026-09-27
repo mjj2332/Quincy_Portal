@@ -36,12 +36,12 @@ export type GanttLegendEntry = StageFilterOption & { color: string };
 
 export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], delivered: false, completed: false };
 
-/** URL -> request. A route with no `gantt` facet (the bare `/?view=gantt`, or no Gantt route at all)
- * reads as the defaults. */
-export function ganttFiltersFromRoute(route: Pick<DashboardGanttRoute, "search" | "gantt"> | null | undefined): ProductionGanttFilters {
+/** URL -> the Gantt facets. A route with no `gantt` facet (the bare `/?view=gantt`, or no Gantt
+ * route at all) reads as the defaults. The route's `search` is not read here: the Dashboard's
+ * shared search box owns it. */
+export function ganttFiltersFromRoute(route: Pick<DashboardGanttRoute, "gantt"> | null | undefined): ProductionGanttFacetFilters {
   const facet = route?.gantt;
   return {
-    q: route?.search ?? "",
     editorIds: [],
     stageKeys: facet ? [...facet.stageKeys] : [],
     delivered: facet?.delivered ?? false,

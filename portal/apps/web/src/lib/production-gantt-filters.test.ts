@@ -83,12 +83,15 @@ describe("ganttLegendEntries", () => {
 });
 
 describe("Gantt filter mapping", () => {
-  it("reads the route's facet into request filters, defaults when absent", () => {
-    expect(ganttFiltersFromRoute(null)).toEqual({ q: "", editorIds: [], stageKeys: [], delivered: false, completed: false });
-    expect(ganttFiltersFromRoute({ search: "smith" })).toEqual({ q: "smith", editorIds: [], stageKeys: [], delivered: false, completed: false });
+  it("reads only the route's facet (never its search), defaults when absent", () => {
+    expect(ganttFiltersFromRoute(null)).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    const searched = parseStaffLocation("/?view=gantt&q=smith");
+    if (searched.kind !== "dashboard" || !("dashboardView" in searched) || searched.dashboardView !== "gantt") throw new Error("expected a Gantt route");
+    // The route's `search` is the Dashboard search box's, not a facet: it never appears here.
+    expect(ganttFiltersFromRoute(searched)).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
     const route = parseStaffLocation("/?view=gantt&stages=raw_review&completed=1");
     if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error("expected a Gantt route");
-    expect(ganttFiltersFromRoute(route)).toEqual({ q: "", editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+    expect(ganttFiltersFromRoute(route)).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
   });
 
   it("writes an all-default facet as absent and canonicalises stage order", () => {
@@ -103,7 +106,7 @@ describe("Gantt filter mapping", () => {
       const route = parseStaffLocation(location);
       if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error(location);
       const filters = ganttFiltersFromRoute(route);
-      expect(staffPathFor(ganttRouteFor(filters, filters.q))).toBe(location);
+      expect(staffPathFor(ganttRouteFor(filters, route.search))).toBe(location);
     }
   });
 
