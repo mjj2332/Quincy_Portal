@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
-  STAGE_PRESENTATION_KEYS,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
   type CalendarEventDto,
   type CalendarManipulationTarget,
@@ -45,7 +44,8 @@ import { ProductionCalendarScheduleEditor } from "./ProductionCalendarScheduleEd
 import { ProductionCalendarUnscheduledPanel, unscheduledChecklistDraggable, unscheduledProjectDraggable } from "./ProductionCalendarUnscheduledPanel";
 import { CALENDAR_STATE_BOX, COARSE_TAP_TARGET } from "./production-calendar-classes";
 import { cn } from "@/lib/utils";
-import { presentationStages, useStages } from "../lib/stages";
+import { useStages } from "../lib/stages";
+import { productionStageFilterOptions } from "../lib/production-gantt-filters";
 import { useCapabilities } from "../lib/capabilities";
 import { useMediaQuery, usePrefersReducedMotion } from "../lib/use-media-query";
 import { buttonClasses } from "./quincy/Button";
@@ -157,14 +157,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   const phoneViewport = useMediaQuery("(max-width: 720px)");
   const actionOnlyWeek = coarsePointer && phoneViewport && calendar.subview === "week";
   const canAdminBackend = can("adminBackend");
-  const stageOptions = useMemo(() => {
-    const presented = presentationStages(stages, canAdminBackend);
-    return STAGE_PRESENTATION_KEYS.flatMap((key) => {
-      const stage = presented.find((candidate) => candidate.key === key)
-        ?? (key === "editing" && canAdminBackend ? presented.find((candidate) => candidate.key === "editing_autohdr") : undefined);
-      return stage && stage.active ? [{ key, label: stage.label }] : [];
-    });
-  }, [canAdminBackend, stages]);
+  const stageOptions = useMemo(() => productionStageFilterOptions(stages, canAdminBackend), [canAdminBackend, stages]);
 
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const calendarResetKey = `${calendar.date}|${calendar.subview}|${calendar.layers.join(",")}|${calendar.editorIds.join(",")}|${calendar.includeUnassigned}|${calendar.stageKeys.join(",")}|${calendar.showCompletedChecklist}|${calendar.showDeliveredProjects}|${calendar.overdueOnly}|${calendar.search}|${calendar.myTasks}`;
