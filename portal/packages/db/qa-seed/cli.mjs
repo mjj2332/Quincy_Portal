@@ -225,7 +225,8 @@ function assertApplyPrerequisites(executor) {
 }
 
 // ---------------------------------------------------------------------------
-// Teardown-first — every `apply` begins here too, so re-running never doubles up.
+// Teardown — every `apply` runs this too (after it has built its replacement), so re-running never
+// doubles up.
 //
 // Graph-driven teardown (Sol round 2, findings 1-3). The live database's own FK graph — not a hand
 // list of tables — decides what a fixture's descendants are. This file only introspects and runs;
@@ -358,9 +359,17 @@ export function teardown(executor) {
 // Apply
 // ---------------------------------------------------------------------------
 
+/**
+ * Generate first, tear down second (Sol round 3, fix item 1). The replacement dataset and its SQL
+ * are built — every DST cross-check, anchor check and schedule round-trip in `dataset.ts` runs
+ * inside `emit("plan")` — BEFORE the previous fixture is touched, so a generation failure leaves the
+ * previous fixture exactly as it was instead of leaving no fixture at all. Only then is the previous
+ * fixture torn down and the new one written. Reading the default editors before teardown is safe:
+ * teardown never touches `user`. (A failure part-way through WRITING is not covered by this: the
+ * statements go out as several `--file` batches, which are not one transaction.)
+ */
 export function apply(executor, options) {
   assertApplyPrerequisites(executor);
-  teardown(executor);
 
   const defaultEditorIds = executor.query(DEFAULT_EDITOR_QUERY).map((r) => r.id);
   const planArgs = [`--applied-at-ms=${Date.now()}`];
@@ -368,8 +377,11 @@ export function apply(executor, options) {
   if (options.anchor) planArgs.push(`--anchor=${options.anchor}`);
   if (defaultEditorIds.length > 0) planArgs.push(`--default-editor-ids=${defaultEditorIds.join(",")}`);
 
-  console.log("==> Building the fixture dataset");
+  console.log("==> Building and validating the replacement fixture dataset (before touching the current one)");
   const plan = executor.emit("plan", planArgs);
+
+  teardown(executor);
+
   console.log(`==> Applying ${plan.statements.length} statements (anchor=${plan.anchor}, tiers=${plan.tiers.join(",")})`);
   executor.run(plan.statements, "apply");
 
