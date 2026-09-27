@@ -17,7 +17,8 @@
  * new production dependency — see `filters-builder.tsx`), `cascader-columns.tsx` (imported only by
  * `cascader-virtual.tsx`), and `filters-date.tsx` (nothing imports it).
  *
- * No file-specific edits.
+ * File-specific edits:
+ * - RE-SKIN (`filters-skin.guard.test.ts`): `hover:shadow-xs` stripped from the hover class.
  */
 import * as React from "react"
 import {
@@ -117,7 +118,7 @@ const AFFORDANCE_BOX_CLASS =
 // `hover:bg-accent`: the row is `bg-accent` under the pointer, so the chip would
 // be invisible. `!` and `**:` for the `CHECKBOX_MARK_CLASS` reason.
 const AFFORDANCE_HOVER_CLASS =
-  "transition-[background-color,box-shadow,color] hover:bg-background hover:text-foreground! hover:**:text-foreground! hover:shadow-xs"
+  "transition-[background-color,box-shadow,color] hover:bg-background hover:text-foreground! hover:**:text-foreground!"
 
 // The selection MARK's colour, pinned so nothing can repaint it: every row
 // carries a DESCENDANT highlight rule, and a mark is STATE. Pinned TWICE
