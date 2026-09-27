@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeadlineEffectsPreview } from "../lib/production-gantt-scheduling";
 import { ProductionGanttDeadlineDialog, type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
+import { Sheet } from "./reui/sheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -114,6 +115,22 @@ describe("ProductionGanttDeadlineDialog", () => {
   it("says the preview is partial when the checklist is truncated", async () => {
     await render({ state: state({ preview: { ...basePreview, loaded: 4, total: 9, truncated: true } }), onResolve: vi.fn() });
     expect(byTestId("gantt-deadline-confirm-truncated")!.textContent).toBe("Based on 4 of 9 checklist items loaded.");
+  });
+
+  // Production mounts every page inside RailedShell's `Sheet` Root (closed on desktop), so Base UI
+  // sees this alert-dialog as NESTED and — by default — skips its Backdrop. Browser pass D
+  // (#221) caught the dialog with no scrim at all; this reproduces the shell ancestry.
+  it("renders its scrim when mounted inside the shell's closed Sheet", async () => {
+    await act(async () => {
+      root.render(
+        <Sheet open={false}>
+          <ProductionGanttDeadlineDialog open state={state()} onResolve={vi.fn()} />
+        </Sheet>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(byTestId("alert-dialog-scrim")).not.toBeNull();
   });
 
   it("focuses Cancel by default", async () => {

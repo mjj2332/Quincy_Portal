@@ -35,6 +35,12 @@ import { Button } from "@/components/reui/button"
  * - Footer: Modal's FOOT (hairline top rule, no tinted band, no rounded bottom). Because the
  *   content carries the padding, the footer pulls itself out by `--space-6` so the rule runs
  *   edge to edge like Modal's.
+ *
+ * #221 (2026-09-28, browser pass D): the overlay passes `forceRender` and carries
+ * `data-testid="alert-dialog-scrim"`. `RailedShell` wraps every page in one `Sheet` (a Base UI
+ * Dialog Root, closed on desktop), so any alert-dialog below it is "nested", and Base UI's
+ * Backdrop renders only when `forceRender || !nested` — the restyled scrim never appeared.
+ * `components/Modal.tsx` is unaffected: it draws its scrim with Floating UI, not a Base UI Root.
  */
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
@@ -59,6 +65,10 @@ function AlertDialogOverlay({
   return (
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
+      data-testid="alert-dialog-scrim"
+      // Every Portal page sits inside RailedShell's `Sheet` Root, so Base UI treats this dialog as
+      // nested and would skip its Backdrop (`enabled: forceRender || !nested`). See header, #221.
+      forceRender
       className={cn(
         "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
