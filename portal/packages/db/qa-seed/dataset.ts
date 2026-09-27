@@ -395,8 +395,8 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   }
   // P05 — delivered: carries a deadline so it draws a bar in the `--signal-positive` hue. In the app a
   // project keeps its deadline when delivered (only later deadline EDITS are refused), and delivery
-  // suppresses its reminders — so its occurrences are all superseded/project_delivered (see
-  // `buildDeadlineOccurrences`).
+  // suppresses its pending reminders — so each would-be-pending occurrence is superseded/project_delivered
+  // and none is pending (see `buildDeadlineOccurrences`).
   {
     const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10), deadlineLocalCivil: `${mustShift(anchor, -3)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 6, 3, createdAtMs) });
