@@ -103,6 +103,11 @@
  * returns `{ committed: false, deferred: true }` and `nudgeEvent` `{ applied: false, deferred: true }`
  * — the consumer owns what happens next, so nothing mutates and nothing is announced. Covered by
  * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #221 design fixes: `GanttInternals` gained `followFocus(eventId)`/
+ * `consumeFollowFocus(eventId)`, instance-scoped like the keyboard-focus token - an event-keyed
+ * claim that `gantt-bar.tsx` makes when a focused bar unmounts and its replacement consumes in the
+ * same commit; an unconsumed claim is dropped in a microtask. See the interface doc comment.
  */
 
 import {
@@ -465,6 +470,17 @@ interface GanttInternals<TData = unknown> {
    */
   clearKeyboardFocus(): void
   /**
+   * 2026-09-28, #221 design fixes: focus follows an EVENT across a bar remount, whatever caused it
+   * (a deferred commit the consumer applies later, a 409 revert, an overlay/refetch drift) - the
+   * key-scoped token above only covers a commit this Gantt applied itself. `gantt-bar.tsx`'s
+   * layout-effect cleanup calls this when the unmounting bar held focus; the replacement bar's
+   * layout effect, in the SAME commit, calls `consumeFollowFocus`. An unconsumed claim is dropped
+   * in a microtask, so it never outlives the commit that made it.
+   */
+  followFocus(eventId: GanttBarId): void
+  /** True (and clears the claim) iff a `followFocus` claim for exactly this event is pending. */
+  consumeFollowFocus(eventId: GanttBarId): boolean
+  /**
    * #219 PR A — begins one bar's modal keyboard Adjust session (`GanttState.adjust`). The CALLER
    * (`gantt-bar.tsx`'s Space handler) is the only place that knows this SEGMENT's own clip state,
    * so it has already gated eligibility (not recurring, at least one of canMove/canResizeStart/
@@ -670,6 +686,8 @@ function createGanttStore<TData>(
   // the token directly and synchronously in the happy path, before any further notify() can occur,
   // so this arithmetic only ever governs the abandoned-token fallback below.
   let pendingKeyboardFocus: GanttPendingKeyboardFocus | null = null
+  // 2026-09-28, #221 design fixes: see `GanttInternals.followFocus`.
+  let followFocusEventId: GanttBarId | null = null
   let pendingKeyboardFocusClaimedAtNotifyCount = 0
   let notifyCount = 0
 
@@ -1516,6 +1534,19 @@ function createGanttStore<TData>(
     },
     clearKeyboardFocus() {
       pendingKeyboardFocus = null
+    },
+    followFocus(eventId) {
+      followFocusEventId = eventId
+      queueMicrotask(() => {
+        if (followFocusEventId === eventId) followFocusEventId = null
+      })
+    },
+    consumeFollowFocus(eventId) {
+      if (followFocusEventId !== null && followFocusEventId === eventId) {
+        followFocusEventId = null
+        return true
+      }
+      return false
     },
     beginAdjust(eventId, occurrence, initialTarget) {
       // Quincy fix (#219 PR A, Sol re-review round 2, HIGH #4): see this method's own interface

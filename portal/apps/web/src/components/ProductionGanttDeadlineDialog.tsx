@@ -49,6 +49,12 @@ export type ProductionGanttDeadlineDialogProps = {
   open: boolean;
   state: ProductionGanttDeadlineConfirmState;
   onResolve: (ok: boolean) => void;
+  /**
+   * Where focus goes when the dialog closes — base-ui's `finalFocus` function form: an element, or
+   * `null` for its default (the previously focused element). `ProductionGantt` supplies the project
+   * bar when the dialog opened with nothing focused (a grip drag).
+   */
+  finalFocus?: () => HTMLElement | null;
 };
 
 const SECTION = "grid gap-[var(--space-2)]";
@@ -61,7 +67,7 @@ function pluralItems(count: number): string {
   return `${count} checklist ${count === 1 ? "item" : "items"}`;
 }
 
-export function ProductionGanttDeadlineDialog({ open, state, onResolve }: ProductionGanttDeadlineDialogProps) {
+export function ProductionGanttDeadlineDialog({ open, state, onResolve, finalFocus }: ProductionGanttDeadlineDialogProps) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const { preview } = state;
   const verb = state.scheduling ? "Schedule" : "Move";
@@ -81,13 +87,13 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve }: Produc
           `max-w-sm`/`max-w-md` are both far wider than their stock sizes. Use `Modal`'s own
           "wide" rung (560px) so this sits on the Portal's dialog ladder; it replaces the
           content's default 460px rung, and `max-[721px]:max-w-none` still wins on the sheet. */}
-      <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} className="max-w-[560px]">
+      <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} finalFocus={finalFocus} className="max-w-[560px]">
         <AlertDialogHeader>
           <AlertDialogTitle>{verb} Deadline</AlertDialogTitle>
           {/* The body below already bolds the street, so the visible description would only
               repeat it. It stays in the tree (visually hidden) as the dialog's
               `aria-describedby` target, so a screen reader still hears which project. */}
-          <AlertDialogDescription className="sr-only">{state.street}</AlertDialogDescription>
+          <AlertDialogDescription className="sr-only" data-testid="gantt-deadline-confirm-description">{state.street}</AlertDialogDescription>
         </AlertDialogHeader>
         <ProductionCalendarMoveConfirmation street={state.street} oldCivil={state.oldCivil} newCivil={state.newCivil} consequences={state.consequences} />
         {preview.affected.length > 0 && (

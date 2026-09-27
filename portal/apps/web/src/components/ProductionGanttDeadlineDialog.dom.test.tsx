@@ -86,7 +86,7 @@ describe("ProductionGanttDeadlineDialog", () => {
     const dialog = byTestId("gantt-deadline-confirm");
     expect(dialog).not.toBeNull();
     expect(dialog!.textContent).toContain("Move Deadline");
-    const description = document.body.querySelector('[data-slot="alert-dialog-description"]');
+    const description = document.body.querySelector('[data-testid="gantt-deadline-confirm-description"]');
     expect(description!.textContent).toBe("1 Writes Street");
     expect(dialog!.getAttribute("aria-describedby")).toBe(description!.id);
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain("2026-08-16 15:00");
@@ -107,7 +107,7 @@ describe("ProductionGanttDeadlineDialog", () => {
     expect(byTestId("gantt-deadline-confirm-affected")).toBeNull();
     expect(byTestId("gantt-deadline-confirm-clashes")).toBeNull();
     expect(byTestId("gantt-deadline-confirm")!.textContent).toContain("Schedule Deadline");
-    expect(document.body.querySelector('[data-slot="alert-dialog-description"]')!.textContent).toBe("1 Writes Street");
+    expect(document.body.querySelector('[data-testid="gantt-deadline-confirm-description"]')!.textContent).toBe("1 Writes Street");
     expect(byTestId("gantt-deadline-confirm-action")!.textContent).toBe("Schedule Deadline");
   });
 

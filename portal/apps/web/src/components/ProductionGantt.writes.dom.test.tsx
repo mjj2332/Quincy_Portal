@@ -384,6 +384,18 @@ async function keyboardResizeRangeEnd() {
   await keydown(bar, "Enter");
 }
 
+/** One keyboard Adjust MOVE step on the range task (Space enters on the move target), committed with Enter. */
+async function keyboardMoveRange() {
+  const bar = findBar(RANGE_TITLE);
+  await act(async () => {
+    bar.focus();
+    await Promise.resolve();
+  });
+  await keydown(bar, " ");
+  await keydown(bar, "ArrowRight");
+  await keydown(bar, "Enter");
+}
+
 function patchBody(index = 0) {
   return patches()[index]!.body as { schedule: { expectedVersion: number; schedule: ScheduleInput } };
 }
@@ -750,6 +762,26 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(onSettleStateChange).toHaveBeenLastCalledWith({ pending: false, recoveryReason: null });
   });
 
+  it("8b. a keyboard Adjust MOVE commit (the bar remounts under a new start) keeps focus on the moved bar", async () => {
+    await render();
+    await keyboardMoveRange();
+    expect(patches()).toHaveLength(1);
+    expect(document.activeElement).toBe(findBar(RANGE_TITLE));
+    await flush(6);
+    expect(document.activeElement).toBe(findBar(RANGE_TITLE));
+  });
+
+  it("8c. a keyboard Adjust MOVE answered 409: focus follows the bar through the revert", async () => {
+    await render();
+    const before = barLabel(RANGE_TITLE);
+    patchReply = () => ({ status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict" } });
+    await keyboardMoveRange();
+    expect(document.activeElement).toBe(findBar(RANGE_TITLE));
+    await flush(6);
+    expect(barLabel(RANGE_TITLE)).toBe(before);
+    expect(document.activeElement).toBe(findBar(RANGE_TITLE));
+  });
+
   it("never passes onEventsChange: a deferred commit leaves the vendor's own events untouched until the server answers", async () => {
     await render();
     const before = barLabel(RANGE_TITLE);
@@ -775,7 +807,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     const dialog = deadlineDialog();
     expect(dialog).not.toBeNull();
     expect(dialog!.textContent).toContain("Move Deadline");
-    expect(dialog!.querySelector('[data-slot="alert-dialog-description"]')!.textContent).toBe(PROJECT_STREET);
+    expect(dialog!.querySelector('[data-testid="gantt-deadline-confirm-description"]')!.textContent).toBe(PROJECT_STREET);
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain(`${civil(`${deadlineDay}T15:00`)} → ${civil(`${sydneyDay(-1)}T15:00`)}`);
     const affected = [...document.body.querySelectorAll('[data-testid="gantt-deadline-confirm-affected"] [role="listitem"]')].map((item) => item.textContent);
     expect(affected).toEqual([`${RANGE_TITLE}now after the deadline`, `${DUE_TITLE}now after the deadline`]);
@@ -839,6 +871,43 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     expect(liveRegionText()).toBe("Change undone.");
   });
 
+  it("3b. a grip resize (nothing focused) then Cancel returns focus to the project bar, not the page", async () => {
+    await render();
+    await resizeProjectEnd(450, 65);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    await click(byTestId("gantt-deadline-confirm-cancel")!);
+    await flush(4);
+    expect(deadlineDialog()).toBeNull();
+    expect(document.activeElement).toBe(projectBar());
+  });
+
+  it("3c. a grip resize then Escape returns focus to the project bar", async () => {
+    await render();
+    await resizeProjectEnd(450, 66);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    await act(async () => {
+      deadlineDialog()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await flush(4);
+    expect(deadlineDialog()).toBeNull();
+    expect(document.activeElement).toBe(projectBar());
+  });
+
+  it("3d. a grip resize then Confirm returns focus to the project bar", async () => {
+    await render();
+    await resizeProjectEnd(450, 67);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    await click(byTestId("gantt-deadline-confirm-action")!);
+    await flush(6);
+    expect(puts()).toHaveLength(1);
+    expect(deadlineDialog()).toBeNull();
+    expect(document.activeElement).toBe(projectBar());
+  });
+
   it("4. a truncated project's confirmation says how many checklist items the preview is based on", async () => {
     resetFixture({ truncatedTotal: 9 });
     await render();
@@ -895,7 +964,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
 
     expect(deadlineDialog()).not.toBeNull();
     expect(deadlineDialog()!.textContent).toContain("Schedule Deadline");
-    expect(deadlineDialog()!.querySelector('[data-slot="alert-dialog-description"]')!.textContent).toBe(PROJECT_STREET);
+    expect(deadlineDialog()!.querySelector('[data-testid="gantt-deadline-confirm-description"]')!.textContent).toBe(PROJECT_STREET);
     expect(puts()).toHaveLength(0);
     await click(byTestId("gantt-deadline-confirm-action")!);
     await flush(6);

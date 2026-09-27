@@ -258,6 +258,18 @@
  * a commit that `onEventUpdate` answered `"deferred"` announces nothing at all (the consumer speaks
  * next) instead of falling through to `changeBlockedRejected`. Covered by
  * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #221 design fixes: (1) focus FOLLOWS the event across a remount - a second
+ * `useLayoutEffect`, keyed on `[instance, event.id]`, whose cleanup claims
+ * `internals.followFocus(event.id)` when the unmounting bar held focus and whose mount consumes it
+ * (`consumeFollowFocus`). The key-scoped claim/consume token is untouched; this covers what it
+ * cannot: a commit answered `"deferred"` (it returns before claiming), a 409 revert and an
+ * overlay/refetch drift, all of which re-key the bar. Covered by
+ * `gantt-bar-adjust-keyboard.dom.test.tsx` and `ProductionGantt.writes.dom.test.tsx`. (2) The
+ * bar's own `{content}` sits in a `contents` span (`data-testid="gantt-bar-content"`) hidden with
+ * `visibility` during a resize (either input) or a keyboard move, whose ghost draws its own title
+ * ~6px off and read as a doubled label; the progress fill, done mark, grips and sr-only Adjust
+ * text stay outside it. Covered by `gantt-drop-warning.dom.test.tsx`.
  */
 
 import {
@@ -443,6 +455,22 @@ function GanttBar<TData = unknown>({
       barRef.current?.focus({ preventScroll: true })
     }
   }, [instance, event.id, occurrence.key])
+  // 2026-09-28, #221 design fixes: focus FOLLOWS this event across any remount, not only the one a
+  // commit this Gantt applied itself (the token above). A consumer that answers `"deferred"` and
+  // applies the new start later, a 409 revert, or an overlay/refetch drift all re-key the wrapper
+  // with nothing claimed. Cleanup runs while the old node is still attached (React destroys a
+  // deleted subtree's layout effects before removing its host node), so `contains(activeElement)`
+  // is still true; the replacement's layout effect in the same commit consumes the claim, and an
+  // unconsumed one dies in a microtask (`GanttInternals.followFocus`). Keyed on the event, not the
+  // occurrence key, so a same-key re-render never runs it. The captured `node` - not
+  // `barRef.current`, which React has already nulled by cleanup time.
+  useLayoutEffect(() => {
+    const node = barRef.current
+    if (instance.internals.consumeFollowFocus(event.id)) node?.focus({ preventScroll: true })
+    return () => {
+      if (node && node.contains(node.ownerDocument.activeElement)) instance.internals.followFocus(event.id)
+    }
+  }, [instance, event.id])
 
   const isSelected = useGanttSelector<TData, boolean>(
     (state) => state.selection.eventKeys.includes(occurrence.key),
@@ -472,6 +500,12 @@ function GanttBar<TData = unknown>({
       state.drag?.occurrence.key === occurrence.key ? state.drag.source : null,
     { calendar: instance }
   )
+  // 2026-09-28, #221 design fixes: while a ghost stands in with its own title, this bar is a
+  // placeholder whose label must not show through - see the content span in `children` below.
+  const placeholder =
+    dragKind === "resize-start" ||
+    dragKind === "resize-end" ||
+    (dragKind === "move" && dragSource === "keyboard")
   // #219 PR A (Adjust mode) - this bar's own Adjust session, keyed on occurrence.key the same way
   // isDragging/dragKind are above (a session's `occurrence` never changes mid-session - see
   // gantt-types.tsx's GanttAdjustState doc comment - so this stays TRUE across every step/retarget
@@ -1100,7 +1134,17 @@ function GanttBar<TData = unknown>({
           // for outside-label bars too (where the inner content is empty)
           <CheckIcon className="relative size-2.5 shrink-0 opacity-80" aria-hidden="true" />
         )}
-        {content}
+        {/* 2026-09-28, #221 design fixes: a resize (either input) and a keyboard move draw their
+            own titled ghost ~6px off this bar, so the bar's label under it read doubled. Hidden
+            with `visibility` (the box keeps its size); `contents` keeps the flex layout as it
+            was. The progress fill, grips and the sr-only Adjust text stay outside this span. */}
+        <span
+          data-testid="gantt-bar-content"
+          className="contents"
+          style={placeholder ? { visibility: "hidden" } : undefined}
+        >
+          {content}
+        </span>
         {resizeHandles}
       </>
     ),

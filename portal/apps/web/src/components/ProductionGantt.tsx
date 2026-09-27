@@ -578,6 +578,8 @@ const UNDO_TOAST_TTL_MS = 10_000;
 
 /** #221: the range a just-released bar shows until the controller's optimistic overlay lands. */
 type GanttPendingRange = { eventId: string; start: Date; end: Date; allDay: boolean };
+/** #221 PR C: an open Deadline confirmation — what it shows, how it settles, and where focus lands after. */
+type DeadlineConfirmOpen = { state: ProductionGanttDeadlineConfirmState; resolve: (ok: boolean) => void; finalFocus: () => HTMLElement | null };
 
 /**
  * #221: which edge(s) a vendor proposal moved. Pointer sources name it; a keyboard Adjust commit
@@ -888,13 +890,22 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   // #221 PR C: the Deadline confirmation the controller is awaiting (`SchedulingPort.confirmDeadline`).
   // `resolve` settles the controller's promise exactly once, and closes the dialog.
-  const [deadlineConfirm, setDeadlineConfirm] = useState<{ state: ProductionGanttDeadlineConfirmState; resolve: (ok: boolean) => void } | null>(null);
+  const [deadlineConfirm, setDeadlineConfirm] = useState<DeadlineConfirmOpen | null>(null);
   const openDeadlineConfirm = useCallback((input: SchedulingDeadlineConfirmInput) => new Promise<boolean>((resolve) => {
     if (input.signal.aborted) {
       resolve(false);
       return;
     }
     const { proposal } = input;
+    // #221 design fixes: a grip drag focuses nothing (its pointerdown prevents default) and the
+    // dialog has no Trigger, so base-ui would return focus to the page on close. Opened from the
+    // page itself, hand focus to this project's bar instead; otherwise keep base-ui's default
+    // (null) — e.g. the keyboard Adjust bar or the Set/Fix deadline flow already owns focus.
+    const fromBody = document.activeElement === document.body || document.activeElement === null;
+    const finalFocus = () =>
+      fromBody
+        ? (containerRef.current?.querySelector<HTMLElement>(`[data-gantt-resource="project:${CSS.escape(proposal.projectId)}"] [data-slot="gantt-bar"]`) ?? null)
+        : null;
     const project = projectByIdRef.current.get(proposal.projectId);
     const preview = project
       ? previewDeadlineEffects(project, { localCivil: proposal.newCivil, instant: proposal.newInstant ?? "" })
@@ -913,6 +924,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     setDeadlineConfirm({
       state: { street: proposal.street, oldCivil: proposal.oldCivil, newCivil: proposal.newCivil, scheduling: proposal.scheduling, consequences: input.consequences, preview },
       resolve: finish,
+      finalFocus,
     });
   }), []);
 
@@ -1356,8 +1368,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const moveDialogRetained = useRef<MoveDialogState | null>(null);
   if (commands.moveDialog) moveDialogRetained.current = commands.moveDialog;
   const moveDialogToken = useOpenToken(commands.moveDialog !== null);
-  const deadlineConfirmRetained = useRef<ProductionGanttDeadlineConfirmState | null>(null);
-  if (deadlineConfirm) deadlineConfirmRetained.current = deadlineConfirm.state;
+  // The whole open record, not only `state`: `finalFocus` must still be there on the render where
+  // `open` flips false (and `deadlineConfirm` is already null), which is when base-ui reads it.
+  const deadlineConfirmRetained = useRef<DeadlineConfirmOpen | null>(null);
+  if (deadlineConfirm) deadlineConfirmRetained.current = deadlineConfirm;
   const deadlineConfirmToken = useOpenToken(deadlineConfirm !== null);
 
   // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
@@ -1489,7 +1503,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         <ProductionGanttDeadlineDialog
           key={`deadline-confirm:${deadlineConfirmToken}`}
           open={deadlineConfirm !== null}
-          state={deadlineConfirmRetained.current}
+          state={deadlineConfirmRetained.current.state}
+          finalFocus={deadlineConfirmRetained.current.finalFocus}
           onResolve={(ok) => deadlineConfirm?.resolve(ok)}
         />
       )}
