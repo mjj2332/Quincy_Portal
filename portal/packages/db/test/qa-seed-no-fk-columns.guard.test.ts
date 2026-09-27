@@ -37,9 +37,49 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "external_edited_upload_sessions.r2_upload_id": "an R2 multipart-upload id",
 };
 
+/**
+ * `source` with every `//` and `/* *\/` comment blanked out, string literals (`'`, `"`, `` ` ``)
+ * left intact so a `//` inside one (a URL default) is not mistaken for a comment. Newlines are
+ * kept, because the column matcher below anchors on `^` per line.
+ */
+function stripComments(source: string): string {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i]!;
+    const next = source[i + 1];
+    if (ch === "/" && next === "/") {
+      while (i < source.length && source[i] !== "\n") i += 1;
+    } else if (ch === "/" && next === "*") {
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) {
+        if (source[i] === "\n") out += "\n";
+        i += 1;
+      }
+      i += 2;
+    } else if (ch === "'" || ch === '"' || ch === "`") {
+      out += ch;
+      i += 1;
+      while (i < source.length && source[i] !== ch) {
+        if (source[i] === "\\") { out += source[i]!; i += 1; }
+        if (i < source.length) { out += source[i]!; i += 1; }
+      }
+      if (i < source.length) { out += source[i]!; i += 1; }
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  return out;
+}
+
 /** `table.column` for every `*_id`-named (or `*Id`-keyed) column in a Drizzle schema source that has
- * no `.references(...)` in its own declaration. */
-export function unreferencedIdColumns(source: string): string[] {
+ * no `.references(...)` in its own declaration. **Comments do not count** (docs/lessons.md, "guards
+ * read documentation prose as code"): the source is comment-stripped first, so a `.references()`
+ * mentioned in a comment — including one sitting above the NEXT column, which the declaration
+ * slice below would otherwise attribute to this one — is not mistaken for a real foreign key. */
+export function unreferencedIdColumns(rawSource: string): string[] {
+  const source = stripComments(rawSource);
   const tableStarts = [...source.matchAll(/sqliteTable\(\s*"([a-z_0-9]+)"/g)].map((m) => ({ table: m[1]!, index: m.index! }));
   const out: string[] = [];
   tableStarts.forEach((start, i) => {
@@ -101,5 +141,20 @@ export const widgets = sqliteTable("widgets", {
     expect(unreferencedIdColumns(synthetic)).toEqual(["widgets.gadget_id"]);
     const unclassified = unreferencedIdColumns(schemaSource + synthetic).filter((column) => !noFk.has(column) && !(column in NOT_ENTITY_REFERENCES));
     expect(unclassified).toEqual(["widgets.gadget_id"]);
+  });
+
+  it("a commented-out .references() does not count as a foreign key — comments are not code (docs/lessons.md, guards reading prose)", () => {
+    const synthetic = `
+export const sprockets = sqliteTable("sprockets", {
+  id: id(),
+  gadgetId: text("gadget_id"), // TODO: .references(() => gadgets.id) once gadgets lands
+  /* widgetId: .references(() => widgets.id) was dropped in the split */
+  widgetId: text("widget_id"),
+  // The next column used to carry .references(() => cogs.id); it no longer does.
+  cogId: text("cog_id"),
+  // A "//" inside a string is not a comment: stripping it as one would eat the real FK after it.
+  realId: text("real_id").default("https://example.test/").references(() => projects.id),
+});`;
+    expect(unreferencedIdColumns(synthetic)).toEqual(["sprockets.cog_id", "sprockets.gadget_id", "sprockets.widget_id"]);
   });
 });
