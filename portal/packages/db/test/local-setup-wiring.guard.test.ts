@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BOARD_CONTRACT_FLAG } from "../src/board-schema-variant";
 import { assertFlagEnabled, assertSchemaMarkerPresent, LOCAL_FLAG_SQL, parseArguments, wranglerArguments } from "../setup-local.mjs";
@@ -95,6 +96,45 @@ describe("guard: the local setup runner cannot be pointed at production", () => 
   it("accepts only --persist-to", () => {
     expect(parseArguments(["--persist-to", "/tmp/scratch"])).toEqual({ persistTo: "/tmp/scratch" });
     expect(parseArguments([])).toEqual({ persistTo: undefined });
+  });
+
+  // A `--persist-to` value is never checked against FORBIDDEN_ARGUMENTS — it is consumed whole as
+  // the *value* of the flag before it, so a caller can smuggle `--remote` (or any other flag) past
+  // that check and into wrangler's argv, right after `--local`. These prove the smuggle is refused.
+  it.each([
+    ["--persist-to", "--remote"],
+    ["--persist-to=--remote"],
+    ["--persist-to", "--env=production"],
+    ["--persist-to="],
+  ])("refuses a --persist-to value that smuggles another flag: %j", (...argv) => {
+    expect(() => parseArguments(argv)).toThrow(/local-only/);
+  });
+
+  it("normalises an accepted --persist-to value to an absolute path", () => {
+    const options = parseArguments(["--persist-to", "scratch/state"]);
+    expect(options.persistTo).toBe(resolve(process.cwd(), "scratch/state"));
+    expect(options.persistTo.startsWith("/")).toBe(true);
+  });
+
+  // Property assertion: whatever a caller manages to get *accepted*, nothing beyond the fixed,
+  // known flags this file itself pins should ever start with `-` in the resulting wrangler argv —
+  // that is the shape a smuggled flag would need to reach wrangler.
+  const KNOWN_FIXED_FLAGS = new Set(["--local", "--config", "--persist-to", "--json", "--command", "--file"]);
+  const ACCEPTED_ARGV_TABLE = [
+    [],
+    ["--persist-to", "/tmp/scratch"],
+    ["--persist-to", "scratch/state"],
+    ["--persist-to=scratch/state"],
+  ];
+  it.each(ACCEPTED_ARGV_TABLE)("keeps every non-fixed argv element flag-shaped-free: %j", (...argv) => {
+    const options = parseArguments(argv);
+    for (const subcommand of SUBCOMMANDS) {
+      const args = wranglerArguments(subcommand, options);
+      for (const element of args) {
+        if (KNOWN_FIXED_FLAGS.has(element)) continue;
+        expect(element.startsWith("-")).toBe(false);
+      }
+    }
   });
 });
 
