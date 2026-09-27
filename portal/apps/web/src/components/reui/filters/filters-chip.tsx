@@ -23,6 +23,7 @@
  * - RE-SKIN (#255 browser pass F): the operator and value segments' `hover:bg-accent` -> `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the segment label (left at foreground) vanished on hover; `bg-muted` is the `.button--secondary:hover` surface. Guarded by `filters-skin.guard.test.ts` Detector 9.
  * - QUINCY (#255 browser pass F): `CHIP_HEIGHT_CLASS` (`min-h-[38px] max-[721px]:min-h-[44px]`, `reui/button.tsx`'s `size.default` contract) on both chip roots and their kebab / remove button, so a chip matches the 38px / 44px Add filter and Clear buttons; upstream sized the chip by the `icon` kebab (32px).
  * - QUINCY (#255 browser pass F): `SEGMENT_FOCUS_RADIUS_CLASS` (`focus-visible:rounded-(--radius-lg)!`) on the operator and value segments and the kebab / remove button, so a focused segment's global outline follows the chip's 14px radius instead of ButtonGroup's squared inner corners.
+ * - RE-SKIN (#255 browser pass G): the finished operator segment's `text-muted-foreground` -> `text-foreground-secondary`. `--text-muted` measured 3.13:1 on the `hover:bg-muted` fill (3.36:1 at rest); `--text-secondary` is 8.09:1 / 8.66:1. The incomplete prompt stays `text-foreground`.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -1038,7 +1039,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
               /* The operator is connective tissue between the field and the
                  value, so it reads quieter than either - unless it is still
                  the prompt "Select condition", the one thing to act on. */
-              incomplete ? "text-foreground" : "text-muted-foreground"
+              incomplete ? "text-foreground" : "text-foreground-secondary"
             )}
             onPointerDown={() => focusSegment("operator")}
           >

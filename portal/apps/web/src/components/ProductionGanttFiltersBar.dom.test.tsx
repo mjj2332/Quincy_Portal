@@ -255,6 +255,20 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     for (const segment of segments) expect((segment.getAttribute("class") ?? "").split(/\s+/)).toContain("focus-visible:rounded-(--radius-lg)!");
   });
 
+  it("draws a finished chip's operator in the secondary text role, which clears 4.5:1 on the resting and hover fills (browser pass G)", async () => {
+    await render({ editorIds: [], stageKeys: ["editing"], delivered: true, completed: false });
+    const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
+    // `text-muted-foreground` (--text-muted, greige-400) measured 3.13:1 on the `hover:bg-muted`
+    // fill (--paper-100) and 3.36:1 at rest (--paper-050). `text-foreground-secondary`
+    // (--text-secondary, greige-600) is 8.66:1 at rest and 8.09:1 on hover.
+    for (const operator of [button("is any of", toolbar()), button("includes", toolbar())]) {
+      expect(tokens(operator)).toContain("text-foreground-secondary");
+      expect(tokens(operator)).not.toContain("text-muted-foreground");
+      expect(tokens(operator)).toContain("hover:bg-muted");
+      expect(tokens(operator)).toContain("bg-background");
+    }
+  });
+
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
     await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
     await click(addTrigger());
