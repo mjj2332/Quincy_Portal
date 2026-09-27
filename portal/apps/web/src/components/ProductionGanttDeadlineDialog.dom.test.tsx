@@ -86,7 +86,9 @@ describe("ProductionGanttDeadlineDialog", () => {
     const dialog = byTestId("gantt-deadline-confirm");
     expect(dialog).not.toBeNull();
     expect(dialog!.textContent).toContain("Move Deadline");
-    expect(dialog!.textContent).toContain("Move the Deadline for 1 Writes Street?");
+    const description = document.body.querySelector('[data-slot="alert-dialog-description"]');
+    expect(description!.textContent).toBe("1 Writes Street");
+    expect(dialog!.getAttribute("aria-describedby")).toBe(description!.id);
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain("2026-08-16 15:00");
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain("2026-08-12 15:00");
 
@@ -104,7 +106,8 @@ describe("ProductionGanttDeadlineDialog", () => {
     await render({ state: state({ scheduling: true, oldCivil: "Not scheduled" }), onResolve: vi.fn() });
     expect(byTestId("gantt-deadline-confirm-affected")).toBeNull();
     expect(byTestId("gantt-deadline-confirm-clashes")).toBeNull();
-    expect(byTestId("gantt-deadline-confirm")!.textContent).toContain("Schedule the Deadline for 1 Writes Street?");
+    expect(byTestId("gantt-deadline-confirm")!.textContent).toContain("Schedule Deadline");
+    expect(document.body.querySelector('[data-slot="alert-dialog-description"]')!.textContent).toBe("1 Writes Street");
     expect(byTestId("gantt-deadline-confirm-action")!.textContent).toBe("Schedule Deadline");
   });
 

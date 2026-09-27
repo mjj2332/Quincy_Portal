@@ -93,7 +93,7 @@
  * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
  * the stock-fallthrough guarantee above for the common case.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
@@ -223,20 +223,12 @@ const CRITICAL_ATTENTION_REASONS = new Set<ProductionGanttAttentionReason>([
   "resolution_failed",
 ]);
 
-function GanttRowAttentionBadge({
-  reason,
-  shrinkable = false,
-}: {
-  reason: ProductionGanttAttentionReason;
-  shrinkable?: boolean;
-}) {
+function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
   const critical = CRITICAL_ATTENTION_REASONS.has(reason);
   return (
     <span
-      title={shrinkable ? ATTENTION_TEXT[reason] : undefined}
       className={cn(
-        shrinkable ? "min-w-0 shrink" : "shrink-0",
-        "truncate text-[10px] uppercase tracking-[0.04em]",
+        "shrink-0 truncate text-[10px] uppercase tracking-[0.04em]",
         critical ? "text-signal-critical-text" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
@@ -297,21 +289,36 @@ function GanttResourceLabel({
   const editorName = editorNameByProjectResourceId.get(resource.id);
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
   const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
+  const deadlineReasonId = useId();
+  const deadlineReason = attention ? ATTENTION_TEXT[attention.reason] : undefined;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      {/* With a Deadline action beside it, badge + button + avatar outgrow the tree column and
-          the title (the only shrinkable item) collapsed to nothing — the #221 browser pass saw
-          rows reading "Deadline not set · Set deadline" with no street. Keep the street a floor
-          and let the badge (which the button restates) truncate instead. */}
-      <span className={cn("truncate", deadlineAction && "min-w-[6rem]")}>{resource.title}</span>
-      {attention && <GanttRowAttentionBadge reason={attention.reason} shrinkable={deadlineAction !== undefined} />}
+      {/* With a Deadline action beside it, badge + button + avatar outgrew the tree column and
+          the title collapsed to nothing — the #221 browser pass saw rows reading
+          "Deadline not set · Set deadline" with no street. So a row with a Deadline action drops
+          the attention badge entirely (the button carries the reason instead, below), and the
+          street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
+          pixel. */}
+      <span className={cn("truncate", deadlineAction && "min-w-[var(--space-9)] flex-1")}>{resource.title}</span>
+      {attention && !deadlineAction && <GanttRowAttentionBadge reason={attention.reason} />}
+      {deadlineAction && deadlineReason && (
+        <span id={deadlineReasonId} className="sr-only" data-testid="gantt-deadline-action-reason">{deadlineReason}</span>
+      )}
       {deadlineAction && (
+        // Compact: reui Button's smallest size (`xs`). Its cva base forces
+        // `uppercase tracking-[var(--tracking-wide)]`; overridden to sentence case at
+        // `--tracking-normal` so the button stays narrow beside the street. The accessible name
+        // names the street (every "Set deadline" is distinct), `title` shows the reason on
+        // hover, and `aria-describedby` reads it to a screen reader.
         <Button
           type="button"
-          size="sm"
+          size="xs"
           variant="ghost"
-          className="shrink-0"
+          className="shrink-0 normal-case tracking-[var(--tracking-normal)]"
           data-testid="gantt-deadline-action"
+          aria-label={`${deadlineAction.label} for ${resource.title}`}
+          title={deadlineReason}
+          aria-describedby={deadlineReason ? deadlineReasonId : undefined}
           disabled={deadlineAction.disabled}
           onClick={(event) => {
             // Same as the retry badge: never also read as "select this row".

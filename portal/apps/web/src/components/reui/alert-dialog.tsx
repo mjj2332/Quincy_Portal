@@ -15,6 +15,26 @@ import { Button } from "@/components/reui/button"
  * already resolves `ui` to `reui`, but the vendored source hard-codes the registry's own path, so
  * the import is rewritten to the Quincy copy actually on disk rather than left to resolve by
  * accident. No other change.
+ *
+ * #221 (2026-09-28): restyled on Quincy's Modal tokens — scrim, square panel, display-serif title,
+ * Modal padding/footer, bottom sheet ≤721px. The Gantt deadline confirm is its first production
+ * consumer; the design review found the stock styling unlike every Portal dialog. Token choices
+ * copied from `components/Modal.tsx` (SCRIM, panelClasses, TITLE, FOOT), not its implementation:
+ * - Overlay: Modal's `--scrim-overlay` + 3px blur at `--z-dialog`; the base-ui open/close
+ *   animation attributes are kept.
+ * - Content: square, `bg-background`, hairline border, `--shadow-lg`, padded `--space-6` with
+ *   `--space-4` gaps. Width: default 460px (Modal's default rung), `sm` keeps the vendor's
+ *   `max-w-xs` (320px — Quincy does not redefine `--container-xs`). The vendor's
+ *   `sm:max-w-sm` is gone: Quincy redefines `--container-sm/md` (tokens/spacing.css) to
+ *   640/860px, so `max-w-sm` would resolve to 640px, not the stock 384px.
+ * - ≤721px: a bottom sheet like Modal — anchored to the bottom edge, full width, footer buttons
+ *   stacked full width at 44px. The Popup is a SIBLING of the overlay here (not its child, as in
+ *   Modal), so the sheet is positioned on the Popup itself.
+ * - Header: left-aligned at every width for `size="default"` (the vendor centred it below its
+ *   640px `sm`); `size="sm"` keeps the vendor's centred header.
+ * - Footer: Modal's FOOT (hairline top rule, no tinted band, no rounded bottom). Because the
+ *   content carries the padding, the footer pulls itself out by `--space-6` so the rule runs
+ *   edge to edge like Modal's.
  */
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
@@ -40,7 +60,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px] duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -62,7 +82,13 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "group/alert-dialog-content fixed top-1/2 left-1/2 z-[var(--z-dialog)] grid w-full -translate-x-1/2 -translate-y-1/2 gap-[var(--space-4)] p-[var(--space-6)] bg-background text-foreground border-solid border-[length:var(--border-width-hair)] border-border rounded-none shadow-[var(--shadow-lg)] max-h-[calc(100dvh-var(--space-7))] overflow-auto duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // Width rung as a plain (unprefixed) utility, not `data-[size=…]:max-w-*`: an attribute
+          // variant out-specifies both a consumer's `max-w-[560px]` and the sheet's
+          // `max-[721px]:max-w-none` below, and tailwind-merge only collapses same-variant pairs.
+          size === "sm" ? "max-w-xs" : "max-w-[460px]",
+          // ≤721px: Modal's bottom sheet — pinned to the bottom edge, full width.
+          "max-[721px]:top-auto max-[721px]:bottom-0 max-[721px]:left-0 max-[721px]:translate-x-0 max-[721px]:translate-y-0 max-[721px]:max-w-none max-[721px]:max-h-[85dvh]",
           className
         )}
         {...props}
@@ -79,7 +105,7 @@ function AlertDialogHeader({
     <div
       data-slot="alert-dialog-header"
       className={cn(
-        "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-4 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
+        "grid grid-rows-[auto_1fr] gap-[var(--space-2)] has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-[var(--space-4)] group-data-[size=sm]/alert-dialog-content:place-items-center group-data-[size=sm]/alert-dialog-content:text-center group-data-[size=default]/alert-dialog-content:place-items-start group-data-[size=default]/alert-dialog-content:text-left group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
         className
       )}
       {...props}
@@ -95,7 +121,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        "-mx-[var(--space-6)] -mb-[var(--space-6)] flex flex-wrap justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border min-[722px]:group-data-[size=sm]/alert-dialog-content:grid min-[722px]:group-data-[size=sm]/alert-dialog-content:grid-cols-2 max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full max-[721px]:[&>*]:min-h-[44px]",
         className
       )}
       {...props}
@@ -111,7 +137,7 @@ function AlertDialogMedia({
     <div
       data-slot="alert-dialog-media"
       className={cn(
-        "mb-2 inline-flex size-10 items-center justify-center rounded-md bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
+        "mb-2 inline-flex size-10 items-center justify-center rounded-md bg-muted group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
         className
       )}
       {...props}
@@ -127,7 +153,7 @@ function AlertDialogTitle({
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
       className={cn(
-        "font-heading text-base font-medium sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
+        "m-0 [font:var(--type-h3)] tracking-[var(--tracking-tight)] text-pretty group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
         className
       )}
       {...props}
@@ -143,7 +169,7 @@ function AlertDialogDescription({
     <AlertDialogPrimitive.Description
       data-slot="alert-dialog-description"
       className={cn(
-        "text-sm text-balance text-muted-foreground md:text-pretty *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
+        "m-0 text-[length:var(--text-sm)] leading-[var(--leading-normal)] text-muted-foreground text-pretty *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
         className
       )}
       {...props}

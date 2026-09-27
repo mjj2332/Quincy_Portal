@@ -59,13 +59,14 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
             item.tone === "error" && "bg-destructive",
           )}
         >
-          {/* #221 caution glyph: an aria-hidden graphical mark, so it takes the brand
-              `--signal-caution` (colors.css: icons keep the brand value at the 3:1 non-text bar),
-              which measures 4.20:1 on `--ink-900` (`bg-surface-inverse`). `--signal-caution-text`
-              is the TEXT role and measures only 2.20:1 on ink (colors.css) — below even the icon
-              bar. Written as an arbitrary `color` property rather than the `text-signal-caution` utility,
-              because that utility is the text-role misuse Guard 5 (design-system-guards) polices. */}
-          <span aria-hidden="true" className={cn("shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]", item.tone === "caution" && "[color:var(--signal-caution)]")}>{item.tone === "success" ? "✓" : "!"}</span>
+          {/* #221 caution glyph: an aria-hidden graphical mark on the ink toast. The toast takes its
+              dark ground from the root `bg-surface-inverse` role, with no `data-surface="inverse"`
+              ancestor, so it reads the root-level `--signal-caution-on-inverse` (colors.css,
+              `--star-amber`, 9.20:1 on `--ink-900`). The brand `--signal-caution` measured 4.20:1
+              here but read as a speck at this size (#221 design review), and the TEXT role
+              `--signal-caution-text` is only 2.98:1 on ink. Written as an arbitrary `color`
+              property: the `text-signal-caution` utility is the misuse Guard 5 polices. */}
+          <span aria-hidden="true" className={cn("shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-bold)_var(--text-sm)/1_var(--font-mono)]", item.tone === "caution" && "[color:var(--signal-caution-on-inverse)]")}>{item.tone === "success" ? "✓" : "!"}</span>
           <span aria-hidden={item.announcedElsewhere && item.action ? "true" : undefined}>{item.message}</span>
           {/* `text` (ghost) is the one existing variant legible here: it sets no rest-state
               background or text colour of its own, so it inherits this wrapper's `text-on-inverse`

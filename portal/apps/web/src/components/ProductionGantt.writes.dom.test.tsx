@@ -46,6 +46,9 @@ vi.mock("../lib/stages", () => ({
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_STREET = "1 Writes Street";
+/** A second, Deadline-less project — only in the fixture when `secondNoDeadlineProject` is set. */
+const SECOND_PROJECT_ID = "66666666-6666-4666-8666-666666666666";
+const SECOND_PROJECT_STREET = "2 Other Street";
 const RANGE_ID = "22222222-2222-4222-8222-222222222222";
 const RANGE_TITLE = "Edit hero set";
 const DUE_ID = "33333333-3333-4333-8333-333333333333";
@@ -92,6 +95,7 @@ let deadlineVersion: number;
 let canEditDeadline: boolean;
 /** When set, the project's checklist is truncated: `total` rows exist, only the fixture's are loaded. */
 let truncatedTotal: number | null;
+let secondNoDeadlineProject: boolean;
 
 function atFor(localCivil: string): string {
   const resolved = resolveSydneyCivilMinute(localCivil);
@@ -99,12 +103,13 @@ function atFor(localCivil: string): string {
   return resolved.value.instant;
 }
 
-function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; canEditDeadline?: boolean; truncatedTotal?: number } = {}) {
+function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; canEditDeadline?: boolean; truncatedTotal?: number; secondNoDeadlineProject?: boolean } = {}) {
   deadlineDay = sydneyDay(options.deadlineOffset ?? 6);
   deadline = options.noDeadline ? null : { localCivil: `${deadlineDay}T15:00`, at: atFor(`${deadlineDay}T15:00`) };
   deadlineVersion = 1;
   canEditDeadline = options.canEditDeadline ?? true;
   truncatedTotal = options.truncatedTotal ?? null;
+  secondNoDeadlineProject = options.secondNoDeadlineProject ?? false;
   const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true };
   rows = [
     { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(1)), end: dateEndpoint(sydneyDay(3)), due: sydneyDay(3) } },
@@ -146,9 +151,30 @@ function ganttResponse() {
           nextCursor: truncatedTotal !== null ? "cursor-2" : null,
         },
       },
+      ...(secondNoDeadlineProject
+        ? [{
+            id: SECOND_PROJECT_ID,
+            street: SECOND_PROJECT_STREET,
+            suburb: null,
+            agencyName: null,
+            agentName: null,
+            stageKey: "editing_autohdr",
+            delivered: false,
+            shootDate: shoot,
+            shootDateCivil: shoot,
+            createdAt: `${shoot}T00:00:00.000Z`,
+            barStartDate: shoot,
+            deadline: null,
+            deadlineVersion: 1,
+            editors: [],
+            checklist: { completed: 0, total: 0 },
+            permissions: { canEditDeadline, canEditChildren: true },
+            children: { rows: [], total: 0, returned: 0, truncated: false, nextCursor: null },
+          }]
+        : []),
     ],
-    page: { limit: 100, returned: 1, nextCursor: null },
-    density: { matchedProjects: 1, matchedRows: rows.length + 1, drawCap: 2000, tooManyToDraw: false },
+    page: { limit: 100, returned: secondNoDeadlineProject ? 2 : 1, nextCursor: null },
+    density: { matchedProjects: secondNoDeadlineProject ? 2 : 1, matchedRows: rows.length + (secondNoDeadlineProject ? 2 : 1), drawCap: 2000, tooManyToDraw: false },
   });
 }
 
@@ -748,7 +774,8 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
 
     const dialog = deadlineDialog();
     expect(dialog).not.toBeNull();
-    expect(dialog!.textContent).toContain("Move the Deadline for 1 Writes Street?");
+    expect(dialog!.textContent).toContain("Move Deadline");
+    expect(dialog!.querySelector('[data-slot="alert-dialog-description"]')!.textContent).toBe(PROJECT_STREET);
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain(`${civil(`${deadlineDay}T15:00`)} → ${civil(`${sydneyDay(-1)}T15:00`)}`);
     const affected = [...document.body.querySelectorAll('[data-testid="gantt-deadline-confirm-affected"] [role="listitem"]')].map((item) => item.textContent);
     expect(affected).toEqual([`${RANGE_TITLE}now after the deadline`, `${DUE_TITLE}now after the deadline`]);
@@ -826,11 +853,15 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
   it("5. a Deadline before the shoot date: the inverted bar offers Fix deadline, and the confirmation shows the clash", async () => {
     resetFixture({ deadlineOffset: -4 });
     await render();
-    expect(host.querySelector(`[data-testid="gantt-row-attention-deadline_before_start"]`)).not.toBeNull();
+    // The row's Deadline action carries the reason, so the attention badge is not rendered beside it.
+    expect(host.querySelector(`[data-testid="gantt-row-attention-deadline_before_start"]`)).toBeNull();
     // Inverted bars stay read-only: no Deadline grip.
     expect(host.querySelector(`[data-gantt-resource="project:${PROJECT_ID}"] [data-testid="gantt-resize-handle-end"]`)).toBeNull();
     const fix = deadlineActionButton();
     expect(fix?.textContent).toBe("Fix deadline");
+    expect(fix?.getAttribute("aria-label")).toBe(`Fix deadline for ${PROJECT_STREET}`);
+    expect(fix?.getAttribute("title")).toBe("Deadline before shoot");
+    expect(document.getElementById(fix!.getAttribute("aria-describedby")!)?.textContent).toBe("Deadline before shoot");
 
     await click(fix!);
     await flush(2);
@@ -849,9 +880,11 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
   it("6. Set deadline on a Deadline-not-set row → move dialog → confirmation → one PUT at deadlineVersion; Undo clears it", async () => {
     resetFixture({ noDeadline: true });
     await render();
-    expect(host.querySelector(`[data-testid="gantt-row-attention-missing_deadline"]`)?.textContent).toBe("Deadline not set");
+    expect(host.querySelector(`[data-testid="gantt-row-attention-missing_deadline"]`)).toBeNull();
     const set = deadlineActionButton();
     expect(set?.textContent).toBe("Set deadline");
+    expect(set?.getAttribute("title")).toBe("Deadline not set");
+    expect(document.getElementById(set!.getAttribute("aria-describedby")!)?.textContent).toBe("Deadline not set");
 
     await click(set!);
     await flush(2);
@@ -861,7 +894,8 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await flush(4);
 
     expect(deadlineDialog()).not.toBeNull();
-    expect(deadlineDialog()!.textContent).toContain("Schedule the Deadline for 1 Writes Street?");
+    expect(deadlineDialog()!.textContent).toContain("Schedule Deadline");
+    expect(deadlineDialog()!.querySelector('[data-slot="alert-dialog-description"]')!.textContent).toBe(PROJECT_STREET);
     expect(puts()).toHaveLength(0);
     await click(byTestId("gantt-deadline-confirm-action")!);
     await flush(6);
@@ -874,6 +908,20 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await flush(6);
     expect(puts()).toHaveLength(2);
     expect(putBody(1)).toEqual({ expectedVersion: 2, deadline: null });
+  });
+
+  it("6b. two Set deadline buttons have distinct accessible names, each naming its street and reason", async () => {
+    resetFixture({ noDeadline: true, secondNoDeadlineProject: true });
+    await render();
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="gantt-deadline-action"]')];
+    expect(buttons).toHaveLength(2);
+    expect(buttons.map((button) => button.textContent)).toEqual(["Set deadline", "Set deadline"]);
+    const names = buttons.map((button) => button.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(2);
+    expect(names).toEqual(expect.arrayContaining([`Set deadline for ${PROJECT_STREET}`, `Set deadline for ${SECOND_PROJECT_STREET}`]));
+    for (const button of buttons) {
+      expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toBe("Deadline not set");
+    }
   });
 
   it("7. unmounting while the confirmation is open withdraws it, releases the gate and writes nothing", async () => {

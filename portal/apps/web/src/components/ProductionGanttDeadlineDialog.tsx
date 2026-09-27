@@ -52,8 +52,10 @@ export type ProductionGanttDeadlineDialogProps = {
 };
 
 const SECTION = "grid gap-[var(--space-2)]";
-const SECTION_HEADING = "m-0 text-[12px] font-semibold text-foreground";
-const STATUS_PILL = "w-fit px-[6px] py-[2px] text-[10px]";
+const SECTION_HEADING = "m-0 text-[length:var(--text-xs)] font-semibold text-foreground";
+// No font-size here: `StatusPill` renders `reui/badge`, whose base is a `[font:…]` shorthand at
+// `--text-2xs` — so the old `text-[10px]` was already dead (Guard 2) and the pill renders 11px.
+const STATUS_PILL = "w-fit px-[var(--space-2)] py-[var(--space-1)]";
 
 function pluralItems(count: number): string {
   return `${count} checklist ${count === 1 ? "item" : "items"}`;
@@ -75,13 +77,17 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve }: Produc
         if (!next) onResolve(false);
       }}
     >
-      {/* Quincy redefines `--container-sm/md` (640/860px, tokens/spacing.css), so the vendor's
-          `sm:max-w-sm` and Tailwind's `max-w-md` are both far wider than their stock sizes. Use
-          `Modal`'s own "wide" rung (560px) so this sits on the Portal's dialog ladder. */}
-      <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} className="data-[size=default]:sm:max-w-[560px]">
+      {/* Quincy redefines `--container-sm/md` (640/860px, tokens/spacing.css), so Tailwind's
+          `max-w-sm`/`max-w-md` are both far wider than their stock sizes. Use `Modal`'s own
+          "wide" rung (560px) so this sits on the Portal's dialog ladder; it replaces the
+          content's default 460px rung, and `max-[721px]:max-w-none` still wins on the sheet. */}
+      <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} className="max-w-[560px]">
         <AlertDialogHeader>
           <AlertDialogTitle>{verb} Deadline</AlertDialogTitle>
-          <AlertDialogDescription>{verb} the Deadline for {state.street}?</AlertDialogDescription>
+          {/* The body below already bolds the street, so the visible description would only
+              repeat it. It stays in the tree (visually hidden) as the dialog's
+              `aria-describedby` target, so a screen reader still hears which project. */}
+          <AlertDialogDescription className="sr-only">{state.street}</AlertDialogDescription>
         </AlertDialogHeader>
         <ProductionCalendarMoveConfirmation street={state.street} oldCivil={state.oldCivil} newCivil={state.newCivil} consequences={state.consequences} />
         {preview.affected.length > 0 && (
@@ -112,7 +118,7 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve }: Produc
           </Notice>
         )}
         {preview.truncated && (
-          <p className="m-0 text-[12px] text-foreground-secondary" data-testid="gantt-deadline-confirm-truncated">
+          <p className="m-0 text-[length:var(--text-xs)] text-foreground-secondary" data-testid="gantt-deadline-confirm-truncated">
             Based on {preview.loaded} of {preview.total} checklist items loaded.
           </p>
         )}
