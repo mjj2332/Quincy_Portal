@@ -43,7 +43,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // React 19 requires this opt-in before `act(...)`; the sibling dom tests in this tree set it too.
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -55,6 +55,10 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // The vendor derives `data-past` from the real clock, so "now" must BE the fixture's ANCHOR or
+  // the future-dated done chip turns past once the wall clock overtakes it. Fake only `Date`:
+  // faking every timer stalls React's scheduler and Testing Library's polling.
+  vi.useFakeTimers({ toFake: ["Date"], now: ANCHOR });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -63,6 +67,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  vi.useRealTimers();
 });
 
 const TZ = "Australia/Sydney";

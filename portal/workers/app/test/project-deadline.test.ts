@@ -1,6 +1,6 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { ProjectDeadlineError, readProjectDeadlineSchedule, saveProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../src/lib/project-deadline";
@@ -50,6 +50,17 @@ function normalizeEventIntent(intent: NonNullable<Awaited<ReturnType<typeof save
     broadDelivery: { ...intent.broadDelivery, sourceActivityId: "activity-id" },
   };
 }
+
+/** The date these fixtures were written against (TB4B, 2026-08-27). The tests take `now` from
+ * `Date.now()` and compare it with hard-coded deadlines — `2026-08-26T09:00` Sydney must already be
+ * past, the `2027-01-xx` ones (minus a 1440-minute reminder) still ahead — so the real clock would
+ * turn them red around 2027-01-14. Pinned for the whole file, not per test, because the
+ * `beforeAll` below stamps the session (`expires_at = now + 1h`) and rows with the same clock the
+ * tests then read. Fake only `Date`: D1 and the worker fetches need real timers. */
+const TEST_NOW = new Date("2026-08-27T00:00:00.000Z");
+
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"], now: TEST_NOW }); });
+afterAll(() => { vi.useRealTimers(); });
 
 describe("TB4B Deadline and personal preference APIs", () => {
   const token = `tb4b-deadline-${crypto.randomUUID()}`;
