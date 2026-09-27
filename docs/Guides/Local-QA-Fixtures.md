@@ -197,9 +197,10 @@ non-admin viewer receives every `editing_autohdr` project as `editing` —
 it; see `apps/web/src/lib/stage-colors.ts`). `--signal-positive` needs the delivered filter, and the
 199/200 vs. 200/200 boundary needs the completed-children filter. **A browser pass must explicitly
 flip `delivered=1` and `completed=1` at some point** — neither one is visible in the default filter
-state. On the Gantt that is now done through its own filter panel (#255): "Show delivered projects"
-and "Show completed checklist items" write `delivered=1` / `completed=1` into the Gantt URL, beside
-any `stages=` selection, so the state survives a reload and Back/Forward. On the density tier,
+state. On the Gantt that is now done through its filters bar (#255): Add filter → Show → includes →
+"Delivered projects" / "Completed checklist items" writes `delivered=1` / `completed=1` into the
+Gantt URL, beside any `stages=` selection from a Stage chip, so the state survives a reload and
+Back/Forward. On the density tier,
 `delivered` alone trips the draw cap (the "Delivered on" row below), so pair it with a single stage
 — `/?view=gantt&stages=delivered&delivered=1` — to see the delivered bar drawn.
 
