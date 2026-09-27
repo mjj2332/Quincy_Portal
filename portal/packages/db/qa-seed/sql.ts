@@ -313,7 +313,7 @@ function subtaskFingerprintRow(subtask: QaFixtureDataset["subtasks"][number], cr
   const s = subtask.storage;
   return {
     id: subtask.id, project_id: subtask.projectId, title: subtask.title, done: subtask.done ? 1 : 0, position: (subtask.index + 1) * 1024,
-    assignee_id: null, assignment_version: 0, due_date: s.dueDate,
+    assignee_id: null, assignment_version: 0, due_date: s.dueDate, due_reminder_sent_at: null,
     schedule_start_kind: s.scheduleStartKind, schedule_start_civil: s.scheduleStartCivil, schedule_start_at: s.scheduleStartAt,
     schedule_start_utc_offset_minutes: s.scheduleStartUtcOffsetMinutes, schedule_start_fold: s.scheduleStartFold,
     schedule_end_kind: s.scheduleEndKind, schedule_end_at: s.scheduleEndAt, schedule_end_utc_offset_minutes: s.scheduleEndUtcOffsetMinutes,

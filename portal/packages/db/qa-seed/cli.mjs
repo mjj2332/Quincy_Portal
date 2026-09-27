@@ -416,28 +416,58 @@ export function apply(executor, options) {
 // fixture rows: that is its job. Re-`apply` resets to the generator's own state.
 // ---------------------------------------------------------------------------
 
-/** `scope: "registry"` diffs the rows whose ids apply registered. `project_members` is instead
- * scoped to EVERY membership on a fixture project (`scope: "fixture-projects"`), so a membership the
- * app added after apply is reported as unexpected, not silently ignored for lacking a registry row —
- * memberships are verified present/absent exactly (Sol round 2, finding 6). */
-const VERIFY_DIFF_TABLES = [
+/** `scope: "registry"` diffs the rows whose ids apply registered. `scope: "fixture-projects"` diffs
+ * EVERY row of that table on a fixture project, so a row the app added after apply is reported as
+ * unexpected rather than silently ignored for lacking a registry row — memberships (Sol round 2,
+ * finding 6), and subtasks and deadline occurrences (Sol round 3, finding 3). Exported for
+ * `qa-seed-verify-columns.guard.test.ts`. */
+export const VERIFY_DIFF_TABLES = [
   { label: "projects", table: "projects", registryKind: "project", manifestKey: "projects", scope: "registry" },
-  { label: "project_subtasks", table: "project_subtasks", registryKind: "subtask", manifestKey: "subtasks", scope: "registry" },
+  { label: "project_subtasks", table: "project_subtasks", registryKind: "subtask", manifestKey: "subtasks", scope: "fixture-projects" },
   { label: "collections", table: "collections", registryKind: "collection", manifestKey: "collections", scope: "registry" },
-  { label: "project_deadline_occurrences", table: "project_deadline_occurrences", registryKind: "deadline_occurrence", manifestKey: "deadlineOccurrences", scope: "registry" },
+  { label: "project_deadline_occurrences", table: "project_deadline_occurrences", registryKind: "deadline_occurrence", manifestKey: "deadlineOccurrences", scope: "fixture-projects" },
   { label: "project_members", table: "project_members", registryKind: "member", manifestKey: "members", scope: "fixture-projects" },
 ];
 const VERIFY_MAX_REPORTED_IDS = 10;
 
-/** The generator-owned column set for a table is read off the manifest's OWN expected rows (any
- * one of them) rather than hand-listed here a second time — the two can never drift apart. `id` is
- * always included: with zero expected rows (e.g. a run that recorded no default editors) the actual
- * rows must STILL be fetched, or an unexpected row would be invisible — the old early `return {}`
- * here is how a disabled sole default editor made the membership check vanish (finding 6). */
-function fingerprintColumnsOf(expectedRows) {
+/**
+ * Columns of a fingerprinted table that `verify` deliberately does NOT compare, as
+ * `"table.column": "reason"`. Every other column of every `VERIFY_DIFF_TABLES` table is compared —
+ * the column set is read off the LIVE table (`pragma_table_info`), never hand-listed (Sol round 3,
+ * finding 3: a hand list silently dropped `project_subtasks.due_reminder_sent_at`). Empty today:
+ * every column the generator writes has a deterministic expected value. An entry needs a written
+ * reason; `qa-seed-verify-columns.guard.test.ts` enforces that and that the column exists.
+ */
+export const VERIFY_EXCLUDED_COLUMNS = {};
+
+function liveColumnsOf(executor, table) {
+  assertSafeIdentifier(table, "fingerprinted table");
+  return executor.query(`SELECT name FROM pragma_table_info('${table}') ORDER BY cid;`).map((row) => assertSafeIdentifier(row.name, `column of ${table}`));
+}
+
+/** Every live column of `table` except the reasoned exclusions. A live column the generator's
+ * fingerprint has no expected value for — or a fingerprint key the live table no longer has — is a
+ * verify failure naming `table.column`, not a column silently left out of the comparison. */
+function comparedColumnsOf(executor, table, expectedRows, failures) {
+  const live = liveColumnsOf(executor, table);
+  if (live.length === 0) throw new Error(`verify: ${table} has no columns in the live schema.`);
+  const excluded = new Set(Object.keys(VERIFY_EXCLUDED_COLUMNS).filter((key) => key.startsWith(`${table}.`)).map((key) => key.slice(table.length + 1)));
+  const staleExclusions = [...excluded].filter((column) => !live.includes(column));
+  if (staleExclusions.length > 0) failures.push(`VERIFY_EXCLUDED_COLUMNS names ${staleExclusions.map((c) => `${table}.${c}`).join(", ")}, which the live table does not have`);
+  const compared = live.filter((column) => !excluded.has(column));
   const anyId = Object.keys(expectedRows)[0];
-  const columns = anyId ? Object.keys(expectedRows[anyId]) : [];
-  return columns.includes("id") ? columns : ["id", ...columns];
+  if (anyId) {
+    const fingerprinted = Object.keys(expectedRows[anyId]);
+    const uncovered = compared.filter((column) => !fingerprinted.includes(column));
+    if (uncovered.length > 0) {
+      failures.push(
+        `verify has no expected value for live column(s) ${uncovered.map((c) => `${table}.${c}`).join(", ")} — add it to the fingerprint in qa-seed/sql.ts, or to VERIFY_EXCLUDED_COLUMNS in qa-seed/cli.mjs with a reason`,
+      );
+    }
+    const stale = fingerprinted.filter((column) => !live.includes(column));
+    if (stale.length > 0) failures.push(`the fingerprint in qa-seed/sql.ts names ${stale.map((c) => `${table}.${c}`).join(", ")}, which the live table does not have`);
+  }
+  return compared.includes("id") ? compared : ["id", ...compared];
 }
 
 function fetchActualFingerprintRows(executor, table, registryKind, columns, scope) {
@@ -459,7 +489,7 @@ export function fingerprintValuesEqual(expected, actual) {
   return expected === actual;
 }
 
-function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
+function diffFingerprintTable(label, expectedTable, actualRowsById, comparedColumns, failures) {
   const expectedIds = expectedTable.ids;
   const expectedIdSet = new Set(expectedIds);
   const actualIdSet = new Set(Object.keys(actualRowsById));
@@ -478,7 +508,7 @@ function diffFingerprintTable(label, expectedTable, actualRowsById, failures) {
     const actualRow = actualRowsById[id];
     if (!actualRow) continue; // already reported as missing above
     const expectedRow = expectedTable.rows[id];
-    const differingColumns = Object.keys(expectedRow).filter((column) => !fingerprintValuesEqual(expectedRow[column], actualRow[column]));
+    const differingColumns = comparedColumns.filter((column) => column in expectedRow && !fingerprintValuesEqual(expectedRow[column], actualRow[column]));
     if (differingColumns.length > 0) rowMismatches.push(`${id} (${differingColumns.join(", ")})`);
   }
   if (rowMismatches.length > 0) {
@@ -551,13 +581,21 @@ export function verify(executor, options) {
   const failures = [];
   for (const { label, table, registryKind, manifestKey, scope } of VERIFY_DIFF_TABLES) {
     const expectedTable = manifest[manifestKey];
-    const columns = fingerprintColumnsOf(expectedTable.rows);
+    const columns = comparedColumnsOf(executor, table, expectedTable.rows, failures);
     const actualRowsById = fetchActualFingerprintRows(executor, table, registryKind, columns, scope);
-    diffFingerprintTable(label, expectedTable, actualRowsById, failures);
+    diffFingerprintTable(label, expectedTable, actualRowsById, columns, failures);
   }
 
+  // The GLOBAL foreign-key check covers every row in the local database, not just the fixture's, so
+  // a violation in unrelated local data is reported as a warning, never as a fixture mismatch (Sol
+  // round 3, finding 3). Anything the fixture itself owns is already compared exactly above.
+  const warnings = [];
   const fkViolations = executor.query("PRAGMA foreign_key_check;");
-  if (fkViolations.length > 0) failures.push(`${fkViolations.length} foreign_key_check violation(s)`);
+  if (fkViolations.length > 0) {
+    const sample = fkViolations.slice(0, VERIFY_MAX_REPORTED_IDS).map((v) => `${v.table} rowid ${v.rowid} -> ${v.parent}`).join("; ");
+    warnings.push(`${fkViolations.length} foreign_key_check violation(s) in this local database (a global check, not specific to the fixture), e.g. ${sample}`);
+  }
+  for (const warning of warnings) console.warn(`==> Warning: ${warning}`);
 
   if (failures.length > 0) throw new Error(`Verify failed:\n  - ${failures.join("\n  - ")}`);
   console.log(
@@ -565,6 +603,7 @@ export function verify(executor, options) {
       `for ${manifest.summary.projects} projects, ${manifest.summary.subtasks} subtasks, ${manifest.summary.collections} collections, ` +
       `${manifest.summary.deadlineOccurrences} deadline occurrences, ${manifest.summary.members} members.`,
   );
+  return { warnings };
 }
 
 async function main() {

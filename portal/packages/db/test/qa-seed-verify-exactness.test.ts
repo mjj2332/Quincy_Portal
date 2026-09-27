@@ -113,3 +113,49 @@ describe("finding 6: memberships are verified against the default-editor set app
     db.close();
   });
 });
+
+describe("fix item 4 (Sol round 3, finding 3): verify derives its column set from the live table", () => {
+  it("a changed project_subtasks.due_reminder_sent_at fails verify, naming that column", () => {
+    const { db, executor } = appliedDatabase([]);
+    const subtask = db.prepare("SELECT id FROM project_subtasks WHERE project_id IN (SELECT id FROM projects WHERE notes LIKE 'QA-FIXTURE-v1%') ORDER BY id LIMIT 1;").get();
+    db.prepare("UPDATE project_subtasks SET due_reminder_sent_at = 1790000000000 WHERE id = ?;").run(String(subtask?.id));
+    expect(verifyError(executor)).toMatch(/project_subtasks: 1 row\(s\) differ[^\n]*\(due_reminder_sent_at\)/);
+    db.close();
+  });
+
+  it("a column a migration adds to a fingerprinted table fails verify, naming it, until it is compared or excluded with a reason", () => {
+    const { db, executor } = appliedDatabase([]);
+    db.exec("ALTER TABLE project_subtasks ADD COLUMN qa_probe text;");
+    expect(verifyError(executor)).toMatch(/project_subtasks\.qa_probe/);
+    db.close();
+  });
+
+  it("a subtask the app added to a fixture project fails verify, naming project_subtasks", () => {
+    const { db, executor } = appliedDatabase([]);
+    db.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, created_by, created_at, updated_at) VALUES ('6d6d6d6d-6d6d-4d6d-8d6d-6d6d6d6d6d6d', ?, 'App-added', 0, 999999, '6b851dc8-14cf-4f90-bd29-ce6c27f86385', 0, 0);")
+      .run(firstFixtureProjectId(db));
+    expect(verifyError(executor)).toMatch(/project_subtasks: 1 unexpected id\(s\) found, e\.g\. 6d6d6d6d-6d6d-4d6d-8d6d-6d6d6d6d6d6d/);
+    db.close();
+  });
+
+  it("a deadline occurrence the app added to a fixture project fails verify, naming project_deadline_occurrences", () => {
+    const { db, executor } = appliedDatabase([]);
+    db.prepare(`INSERT INTO project_deadline_occurrences (id, project_id, schedule_version, kind, reminder_offset_minutes, fire_at, deadline_at, deadline_local_civil, deadline_zone, deadline_utc_offset_minutes, deadline_fold, status, created_by, created_at, updated_at)
+      VALUES ('5c5c5c5c-5c5c-4c5c-8c5c-5c5c5c5c5c5c', ?, 99, 'due_now', 0, 0, 0, '2026-09-30T17:00', 'Australia/Sydney', 600, 0, 'pending', '6b851dc8-14cf-4f90-bd29-ce6c27f86385', 0, 0);`)
+      .run(firstFixtureProjectId(db));
+    expect(verifyError(executor)).toMatch(/project_deadline_occurrences: 1 unexpected id\(s\) found, e\.g\. 5c5c5c5c-5c5c-4c5c-8c5c-5c5c5c5c5c5c/);
+    db.close();
+  });
+
+  it("a pre-existing FK violation in unrelated local data is a warning, not a fixture mismatch: an untouched fixture still verifies", () => {
+    const { db, executor } = appliedDatabase([]);
+    db.exec("PRAGMA foreign_keys = OFF;");
+    db.exec("INSERT INTO notice_board_posts (id, author_id, body, created_at) VALUES ('4b4b4b4b-4b4b-4b4b-8b4b-4b4b4b4b4b4b', 'no-such-user', 'orphan', 0);");
+    db.exec("PRAGMA foreign_keys = ON;");
+    expect(db.prepare("PRAGMA foreign_key_check;").all().length).toBe(1);
+    let result: unknown;
+    expect(() => { result = verify(executor, VERIFY_OPTIONS); }).not.toThrow();
+    expect((result as { warnings: string[] }).warnings).toEqual([expect.stringMatching(/1 foreign_key_check violation\(s\)[^\n]*notice_board_posts/)]);
+    db.close();
+  });
+});
