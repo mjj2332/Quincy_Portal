@@ -13,7 +13,8 @@ export type UndoTicket =
   | { kind: "deadline"; projectId: string; expectedVersion: number; request: SaveProjectDeadlineRequest };
 
 /** `"access"` (#221): a 401/403 — the caller treats it as access loss, not an ordinary failure. */
-export type UndoOutcome = { ok: true } | { ok: false; reason: "conflict" | "failed" | "access" };
+/** `response` is the checklist PATCH body (undecoded) so a caller can adopt the restored row. */
+export type UndoOutcome = { ok: true; response?: unknown } | { ok: false; reason: "conflict" | "failed" | "access" };
 
 /**
  * `null` when the forward edit produced no version change — nothing to undo. Otherwise the
@@ -123,11 +124,11 @@ function errorCode(error: unknown): string | undefined {
 export async function applyUndo(ticket: UndoTicket): Promise<UndoOutcome> {
   try {
     if (ticket.kind === "checklist") {
-      await apiPatch<unknown, { schedule: SaveChecklistScheduleRequest }>(
+      const response = await apiPatch<unknown, { schedule: SaveChecklistScheduleRequest }>(
         `/api/projects/${encodeURIComponent(ticket.projectId)}/subtasks/${encodeURIComponent(ticket.subtaskId)}`,
         { schedule: ticket.request },
       );
-      return { ok: true };
+      return { ok: true, response };
     }
     await apiPut<unknown, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(ticket.projectId)}/deadline`, ticket.request);
     return { ok: true };

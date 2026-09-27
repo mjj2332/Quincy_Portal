@@ -663,19 +663,31 @@ describe("interactive option (#221)", () => {
     expect([both.readOnly, both.draggable, both.resizable]).toEqual([false, true, true]);
   });
 
-  it("project bar: never draggable, end edge resizable per canEditDeadline", () => {
+  it("project bar: interactive alone leaves it read-only with no interaction keys (deadline writes are opt-in)", () => {
     const editable = makeProject({ shootDateCivil: "2026-03-01" });
     const [bar] = eventsFor(buildProductionGanttModel([editable], { now: NOW, interactive: true }), `project:${editable.id}`);
+    expect(bar!.readOnly).toBe(true);
+    expect(Object.keys(bar!)).not.toContain("draggable");
+    expect(Object.keys(bar!)).not.toContain("resizable");
+    expect(Object.keys(bar!)).not.toContain("resizableEdges");
+    const [ignored] = eventsFor(buildProductionGanttModel([editable], { now: NOW, deadlineInteractive: true }), `project:${editable.id}`);
+    expect(ignored!.readOnly).toBe(true);
+    expect(Object.keys(ignored!)).not.toContain("resizable");
+  });
+
+  it("project bar (deadlineInteractive): never draggable, end edge resizable per canEditDeadline", () => {
+    const editable = makeProject({ shootDateCivil: "2026-03-01" });
+    const [bar] = eventsFor(buildProductionGanttModel([editable], { now: NOW, interactive: true, deadlineInteractive: true }), `project:${editable.id}`);
     expect(bar).toMatchObject({ readOnly: false, draggable: false, resizable: true, resizableEdges: { start: false, end: true } });
 
     const locked = makeProject({ shootDateCivil: "2026-03-01", permissions: { canEditDeadline: false, canEditChildren: true } });
-    const [lockedBar] = eventsFor(buildProductionGanttModel([locked], { now: NOW, interactive: true }), `project:${locked.id}`);
+    const [lockedBar] = eventsFor(buildProductionGanttModel([locked], { now: NOW, interactive: true, deadlineInteractive: true }), `project:${locked.id}`);
     expect(lockedBar).toMatchObject({ readOnly: true, draggable: false, resizable: false, resizableEdges: { start: false, end: false } });
   });
 
   it("an inverted (deadline before start) project bar stays readOnly even when editable", () => {
     const inverted = makeProject({ shootDateCivil: "2026-07-01" });
-    const [bar] = eventsFor(buildProductionGanttModel([inverted], { now: NOW, interactive: true }), `project:${inverted.id}`);
+    const [bar] = eventsFor(buildProductionGanttModel([inverted], { now: NOW, interactive: true, deadlineInteractive: true }), `project:${inverted.id}`);
     expect(bar!.readOnly).toBe(true);
   });
 });

@@ -369,12 +369,15 @@ function compareChecklistRows(a: GanttChecklistRowDto, b: GanttChecklistRowDto):
  *
  * `interactive` (#221, default false) adds the per-event drag/resize vetoes the writable Gantt
  * needs; when false the output is exactly what it was before the option existed.
+ * `deadlineInteractive` (#221 PR B2, default false) additionally opens the project bar's deadline
+ * grip; it has no effect without `interactive`. Off, project bars keep the read-only output.
  */
 export function buildProductionGanttModel(
   projects: readonly GanttProjectRowDto[],
-  opts: { now: Date; interactive?: boolean },
+  opts: { now: Date; interactive?: boolean; deadlineInteractive?: boolean },
 ): ProductionGanttModel {
   const interactive = opts.interactive === true;
+  const deadlineInteractive = interactive && opts.deadlineInteractive === true;
   const resources: ProductionGanttResource[] = [];
   const events: ProductionGanttEvent<ProductionGanttRowData>[] = [];
   const attention: ProductionGanttAttention[] = [];
@@ -406,7 +409,7 @@ export function buildProductionGanttModel(
 
     resources.push({ id: projectResourceId, title: project.street, color, children: childResources });
 
-    const barResult = buildProjectBar(project, color, interactive);
+    const barResult = buildProjectBar(project, color, deadlineInteractive);
     if (barResult.event) events.push(barResult.event);
     if (barResult.attention) attention.push(barResult.attention);
   }

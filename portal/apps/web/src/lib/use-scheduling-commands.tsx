@@ -235,6 +235,9 @@ export type SchedulingControllerInput<TBaseline> = {
   onSettleStateChange?: (state: CalendarSettleState) => void;
   onAccessLoss?: () => void;
   onCommitted?: (info: SchedulingCommittedInfo) => void;
+  /** After a successful Undo, before its refetch: lets a surface patch rows the refetch won't
+   * return (the Gantt's continuation pages). Checklist Undo carries the decoded restored row. */
+  onUndone?: (info: { kind: "checklist" | "deadline"; projectId: string; checklistResult?: ChecklistMutationResult }) => void;
 };
 
 export type RunUndoOutcome = UndoOutcome | { ok: false; reason: "busy" };
@@ -391,7 +394,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
  * port identity. `useSchedulingCommands` is the Calendar's thin wrapper over this.
  */
 export function useSchedulingController<TBaseline>(input: SchedulingControllerInput<TBaseline>): SchedulingController<TBaseline> {
-  const { identity, resetKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted } = input;
+  const { identity, resetKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted, onUndone } = input;
   const queryClient = useOptionalProjectQueryClient();
   // Refs updated every render: callbacks read the LATEST port at call time.
   const portRef = useRef(port);
@@ -424,10 +427,12 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const onAcceptGateChangeRef = useRef(onAcceptGateChange);
   const onSettleStateChangeRef = useRef(onSettleStateChange);
   const onCommittedRef = useRef(onCommitted);
+  const onUndoneRef = useRef(onUndone);
   useEffect(() => {
     onAcceptGateChangeRef.current = onAcceptGateChange;
     onSettleStateChangeRef.current = onSettleStateChange;
     onCommittedRef.current = onCommitted;
+    onUndoneRef.current = onUndone;
   });
   // The confirm this hook currently has open, so unmount can withdraw exactly that one
   // request rather than leaving it stranded over whatever view replaced this component.
@@ -1291,7 +1296,8 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const runUndo = useCallback(async (ticket: UndoTicket): Promise<RunUndoOutcome> => {
     // Access loss releases the lock, so `canStartCommand` alone would let an Undo toast that
     // outlived the session fire a write into a purged surface.
-    if (accessLostRef.current || !canStartCommand()) return { ok: false, reason: "busy" };
+    if (accessLostRef.current) return { ok: false, reason: "access" };
+    if (!canStartCommand()) return { ok: false, reason: "busy" };
     const token = operationTokenRef.current;
     const fenced = () => accessLostRef.current || token !== operationTokenRef.current;
     commandLockRef.current.active = true;
@@ -1303,6 +1309,13 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       return outcome;
     }
     if (outcome.ok) {
+      // The write already succeeded: a body that fails to decode only skips the row patch (the
+      // refetch below still converges), it never turns a done Undo into a failure.
+      let checklistResult: ChecklistMutationResult | undefined;
+      if (ticket.kind === "checklist" && outcome.response !== undefined) {
+        try { checklistResult = decodeChecklistMutationResponse(identity.role, outcome.response); } catch { checklistResult = undefined; }
+      }
+      onUndoneRef.current?.({ kind: ticket.kind, projectId: ticket.projectId, ...(checklistResult ? { checklistResult } : {}) });
       if (queryClient) await invalidateProjectSurfaces(queryClient, portRef.current.invalidation(ticket.kind, ticket.projectId));
       if (fenced()) return outcome;
       await refetchAuthoritative();
@@ -1319,7 +1332,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (fenced()) return outcome;
     setAnnouncement(outcome.reason === "conflict" ? "Undo failed — the item changed since." : "Undo failed.");
     return outcome;
-  }, [canStartCommand, flushQueuedRefetch, handleAccessLoss, queryClient, refetchAuthoritative, setAcceptGate]);
+  }, [canStartCommand, flushQueuedRefetch, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate]);
 
   useEffect(() => () => {
     operationTokenRef.current += 1;

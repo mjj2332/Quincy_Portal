@@ -24,7 +24,7 @@ import { confirm } from "./confirm";
 import { productionCalendarFiltersFor } from "./production-calendar-query";
 import type { ChecklistSource, SchedulingProposal } from "./scheduling-policy";
 import type { UndoTicket } from "./scheduling-undo";
-import { useSchedulingController, type SchedulingCommittedInfo, type SchedulingController, type SchedulingPort } from "./use-scheduling-commands";
+import { useSchedulingController, type SchedulingCommittedInfo, type SchedulingController, type SchedulingControllerInput, type SchedulingPort } from "./use-scheduling-commands";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -117,6 +117,7 @@ describe("useSchedulingController (generic port)", () => {
   let reply: FakeReply;
   let controllerRef: SchedulingController<FakeBaseline> | undefined;
   let onCommitted: ReturnType<typeof vi.fn<(info: SchedulingCommittedInfo) => void>>;
+  let onUndone: ReturnType<typeof vi.fn<NonNullable<SchedulingControllerInput<FakeBaseline>["onUndone"]>>>;
 
   beforeEach(() => {
     host = document.createElement("div");
@@ -127,6 +128,7 @@ describe("useSchedulingController (generic port)", () => {
     reply = { status: 200, body: {} };
     controllerRef = undefined;
     onCommitted = vi.fn<(info: SchedulingCommittedInfo) => void>();
+    onUndone = vi.fn<NonNullable<SchedulingControllerInput<FakeBaseline>["onUndone"]>>();
     (confirm as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(true);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       requests.push({ method: init?.method ?? "GET", url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined });
@@ -146,7 +148,7 @@ describe("useSchedulingController (generic port)", () => {
 
   async function render(port: () => SchedulingPort<FakeBaseline>) {
     function Harness() {
-      const controller = useSchedulingController<FakeBaseline>({ identity, resetKey: "harness", port: port(), onCommitted });
+      const controller = useSchedulingController<FakeBaseline>({ identity, resetKey: "harness", port: port(), onCommitted, onUndone });
       controllerRef = controller;
       return null;
     }
@@ -221,17 +223,37 @@ describe("useSchedulingController (generic port)", () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
     const { spies, port } = makePort({ checklists: [source], deadlines: [] });
     await render(port);
-    reply = { status: 200, body: {} };
+    const restored = { ...source.schedule, version: 6 };
+    reply = { status: 200, body: mutationBody(source, restored) };
     let outcome: unknown;
     await act(async () => { outcome = await controllerRef!.runUndo(checklistTicket); });
     await settle();
 
-    expect(outcome).toEqual({ ok: true });
+    expect(outcome).toMatchObject({ ok: true });
+    // The restored row reaches the surface before the refetch (the Gantt patches continuation
+    // pages the refetch never returns).
+    expect(onUndone).toHaveBeenCalledTimes(1);
+    expect(onUndone.mock.calls[0]![0]).toMatchObject({ kind: "checklist", projectId, checklistResult: { id: subtaskId, scheduleVersion: 6 } });
+    expect(onUndone.mock.invocationCallOrder[0]!).toBeLessThan(spies.refetch.mock.invocationCallOrder.at(-1)!);
     expect(mutations()).toEqual([{ method: "PATCH", url: `/api/projects/${projectId}/subtasks/${subtaskId}`, body: { schedule: checklistTicket.request } }]);
     expect(spies.invalidation).toHaveBeenCalledWith("checklist", projectId);
     expect(spies.refetch).toHaveBeenCalled();
     expect(controllerRef!.canStartCommand()).toBe(true);
     expect(controllerRef!.interactionBlocked).toBe(false);
+    expect(controllerRef!.announcement).toBe("Change undone.");
+  });
+
+  it("runUndo whose success body does not decode still succeeds; onUndone carries no row", async () => {
+    const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
+    const { port } = makePort({ checklists: [source], deadlines: [] });
+    await render(port);
+    reply = { status: 200, body: {} };
+    let outcome: unknown;
+    await act(async () => { outcome = await controllerRef!.runUndo(checklistTicket); });
+    await settle();
+
+    expect(outcome).toMatchObject({ ok: true });
+    expect(onUndone).toHaveBeenCalledWith({ kind: "checklist", projectId });
     expect(controllerRef!.announcement).toBe("Change undone.");
   });
 
@@ -281,7 +303,7 @@ describe("useSchedulingController (generic port)", () => {
     expect(spies.purge).toHaveBeenCalledTimes(1);
   });
 
-  it("runUndo after access loss is refused with no request, although the lock was released", async () => {
+  it("runUndo after access loss is refused as access loss with no request, although the lock was released", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
     const { port } = makePort({ checklists: [source], deadlines: [] });
     await render(port);
@@ -295,7 +317,7 @@ describe("useSchedulingController (generic port)", () => {
     let outcome: unknown;
     await act(async () => { outcome = await controllerRef!.runUndo(checklistTicket); });
 
-    expect(outcome).toEqual({ ok: false, reason: "busy" });
+    expect(outcome).toEqual({ ok: false, reason: "access" });
     expect(mutations()).toHaveLength(before);
   });
 });
