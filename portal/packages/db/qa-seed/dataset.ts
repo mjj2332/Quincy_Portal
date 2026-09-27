@@ -132,6 +132,10 @@ function nextKnownSydneyTransition(anchor: string, kind: "spring" | "fall"): str
 export function crossCheckDstTransition(anchor: string, kind: "spring" | "fall", computedDate: string): void {
   const expected = nextKnownSydneyTransition(anchor, kind);
   if (expected === null) return; // beyond the committed table: trust Intl
+  // Before the committed table (Sol round 4): a computed transition earlier than the table's first
+  // entry of this kind is outside its range, so there is nothing to compare it against.
+  const firstOfKind = KNOWN_SYDNEY_TRANSITIONS.filter((t) => t.kind === kind).map((t) => t.date).sort()[0];
+  if (firstOfKind !== undefined && computedDate < firstOfKind) return;
   if (expected !== computedDate) {
     throw new Error(
       `Computed ${kind} transition ${computedDate} disagrees with the committed cross-check table's next ${kind} transition after ${anchor} (expected ${expected}).`,

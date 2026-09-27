@@ -240,6 +240,16 @@ describe("coverage 9: the DST cross-check table actually catches a regressed com
     expect(() => crossCheckDstTransition("2028-06-01", "fall", "2029-04-01")).not.toThrow();
   });
 
+  it("an anchor before the table's first entry trusts the Intl-computed transition too (Sol round 4)", () => {
+    // 2024-04-07 is the real fall transition; the table's first `fall` entry is 2025-04-06.
+    expect(() => crossCheckDstTransition("2024-01-01", "fall", "2024-04-07")).not.toThrow();
+    expect(() => resolveDstTransitions("2024-01-01")).not.toThrow();
+  });
+
+  it("a computed date inside the table's range but wrong still throws, even for an early anchor", () => {
+    expect(() => crossCheckDstTransition("2024-01-01", "spring", "2024-10-13")).toThrow(/disagrees with the committed cross-check table/);
+  });
+
   it("resolveDstTransitions itself still returns the correct, cross-checked pair for a real anchor", () => {
     const dst = resolveDstTransitions(ANCHOR);
     expect(dst.spring).toBe(REAL_SPRING_DATE);
