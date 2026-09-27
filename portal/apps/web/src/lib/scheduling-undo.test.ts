@@ -151,6 +151,13 @@ describe("applyUndo", () => {
     expect(outcome).toEqual({ ok: false, reason: "conflict" });
   });
 
+  it("reports access (not failed) on a 401 or 403", async () => {
+    for (const status of [401, 403]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "denied" }), { status, headers: { "content-type": "application/json" } })));
+      expect(await applyUndo(checklistTicket)).toEqual({ ok: false, reason: "access" });
+    }
+  });
+
   it("reports failed on a 500", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "boom" }), { status: 500, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);

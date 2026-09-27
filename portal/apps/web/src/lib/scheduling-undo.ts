@@ -12,7 +12,8 @@ export type UndoTicket =
   | { kind: "checklist"; projectId: string; subtaskId: string; expectedVersion: number; request: SaveChecklistScheduleRequest }
   | { kind: "deadline"; projectId: string; expectedVersion: number; request: SaveProjectDeadlineRequest };
 
-export type UndoOutcome = { ok: true } | { ok: false; reason: "conflict" | "failed" };
+/** `"access"` (#221): a 401/403 — the caller treats it as access loss, not an ordinary failure. */
+export type UndoOutcome = { ok: true } | { ok: false; reason: "conflict" | "failed" | "access" };
 
 /**
  * `null` when the forward edit produced no version change — nothing to undo. Otherwise the
@@ -131,6 +132,7 @@ export async function applyUndo(ticket: UndoTicket): Promise<UndoOutcome> {
     await apiPut<unknown, SaveProjectDeadlineRequest>(`/api/projects/${encodeURIComponent(ticket.projectId)}/deadline`, ticket.request);
     return { ok: true };
   } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return { ok: false, reason: "access" };
     const code = errorCode(error);
     if (code === "subtask_schedule_version_conflict" || code === "deadline_version_conflict") return { ok: false, reason: "conflict" };
     return { ok: false, reason: "failed" };
