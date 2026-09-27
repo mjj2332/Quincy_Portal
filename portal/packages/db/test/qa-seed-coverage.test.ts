@@ -4,7 +4,7 @@
  * primitive, never a literal, so raising a limit or narrowing a rule fails this test instead of
  * silently un-covering the gap it exists to catch.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PRODUCTION_GANTT_CHILD_PAGE_LIMIT,
   PRODUCTION_GANTT_DRAW_CAP,
@@ -14,6 +14,7 @@ import {
   type ChecklistScheduleDto,
 } from "@quincy/shared";
 import { stageColors } from "../../../apps/web/src/lib/stage-colors";
+import { emitMode } from "../qa-seed/emit";
 import { anchorReferenceInstantMs, buildQaFixtureDataset, crossCheckDstTransition, densitySingleStageRowCount, resolveDstTransitions, type QaFixtureDataset, type StageKey } from "../qa-seed/dataset";
 
 const ANCHOR = "2026-09-21";
@@ -235,12 +236,52 @@ describe("coverage 9: the DST cross-check table actually catches a regressed com
     expect(() => crossCheckDstTransition(ANCHOR, "spring", "2026-04-05")).toThrow(/disagrees with the committed cross-check table/);
   });
 
-  it("an anchor past the table's own coverage throws a clear 'extend the table' error rather than silently trusting Intl alone", () => {
-    expect(() => crossCheckDstTransition("2028-06-01", "fall", "2029-04-01")).toThrow(/extend the table/);
+  it("an anchor past the table's own coverage trusts the Intl-computed transition instead of throwing (Sol round 3, fix item 2)", () => {
+    expect(() => crossCheckDstTransition("2028-06-01", "fall", "2029-04-01")).not.toThrow();
   });
 
   it("resolveDstTransitions itself still returns the correct, cross-checked pair for a real anchor", () => {
     const dst = resolveDstTransitions(ANCHOR);
     expect(dst.spring).toBe(REAL_SPRING_DATE);
+  });
+});
+
+describe("fix item 2 (Sol round 3): the DST cross-check does not expire when the committed table runs out", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Noon UTC offset (minutes) on a Sydney civil date — an independent read of the transition. */
+  function noonOffset(date: string): number {
+    const resolved = resolveSydneyCivilMinute(`${date}T12:00`);
+    if (!resolved.ok) throw new Error(resolved.message);
+    return resolved.value.utcOffsetMinutes;
+  }
+  function previousDay(date: string): string {
+    const shifted = shiftSydneyCalendarDate(date, -1);
+    if (!shifted.ok) throw new Error(shifted.error.message);
+    return shifted.value;
+  }
+
+  it("a default-anchor plan (no --anchor) with the clock at 2029-06-01 — past the table's last entry — builds, on real Sydney transitions", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2029-06-01T02:00:00Z")); // Friday 2029-06-01, midday in Sydney
+    // `--applied-at-ms` is explicit, so the fake clock only drives the default anchor.
+    const plan = emitMode("plan", [`--applied-at-ms=${Date.UTC(2029, 4, 28)}`]) as { anchor: string; statements: string[] };
+    vi.useRealTimers();
+
+    expect(plan.anchor).toBe("2029-05-28"); // that week's Sydney Monday
+    expect(plan.statements.length).toBeGreaterThan(0);
+    const dst = resolveDstTransitions(plan.anchor);
+    // First Sunday of October 2029 / of April 2030 — the rule the committed table encodes.
+    expect(dst).toEqual({ spring: "2029-10-07", fall: "2030-04-07" });
+    // And independently of the scanner: the offset really changes on exactly those days.
+    expect([noonOffset(previousDay(dst.spring)), noonOffset(dst.spring)]).toEqual([600, 660]);
+    expect([noonOffset(previousDay(dst.fall)), noonOffset(dst.fall)]).toEqual([660, 600]);
+  });
+
+  it("within the table's coverage a wrong computation still throws (the exact-match check is kept)", () => {
+    expect(() => crossCheckDstTransition("2027-09-01", "spring", "2027-10-10")).toThrow(/disagrees with the committed cross-check table/);
+    expect(() => crossCheckDstTransition("2027-09-01", "spring", "2028-10-01")).toThrow(/disagrees with the committed cross-check table/);
   });
 });

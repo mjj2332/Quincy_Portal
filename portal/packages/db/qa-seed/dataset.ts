@@ -78,9 +78,12 @@ export function resolveAnchor(anchorArg: string | undefined): string {
 
 /** A small committed cross-check, not the source of truth — the source of truth is the Intl scan
  * below. Sydney/Melbourne DST: starts first Sunday in October, ends first Sunday in April. If the
- * scan below ever disagrees with this table for a year present here, that is a real bug (a change
- * to the underlying tzdata rules, or a defect in the scan), not something to silently trust either
- * side on — `resolveDstTransitions` throws rather than picking one. */
+ * scan below ever disagrees with this table for an anchor the table covers, that is a real bug (a
+ * change to the underlying tzdata rules, or a defect in the scan), not something to silently trust
+ * either side on — `resolveDstTransitions` throws rather than picking one. Past the table's last
+ * entry of a kind, the Intl scan is trusted on its own (Sol round 3, fix item 2): the table is a
+ * spot check of the scanner, not an expiry date for the default `apply`. Extending it is welcome,
+ * never required. */
 const KNOWN_SYDNEY_TRANSITIONS: ReadonlyArray<{ date: string; kind: "spring" | "fall" }> = [
   { date: "2024-10-06", kind: "spring" }, { date: "2025-04-06", kind: "fall" },
   { date: "2025-10-05", kind: "spring" }, { date: "2026-04-05", kind: "fall" },
@@ -123,15 +126,12 @@ function nextKnownSydneyTransition(anchor: string, kind: "spring" | "fall"): str
  * that regressed to a date absent from the table (an off-by-one, a skipped year) found no entry and
  * silently threw nothing. Correct shape: for an anchor the table actually covers (there exists a
  * known transition of this `kind` strictly after it), the computed date MUST equal that table
- * entry, full stop; for an anchor past the table's coverage, throw a clear "extend the table" error
- * instead of trusting `Intl` alone with no cross-check at all. */
+ * entry, full stop. For an anchor past the table's coverage of this `kind`, the Intl-computed
+ * transition is trusted (Sol round 3, fix item 2) — throwing there made a default `apply` (anchor =
+ * this week's Monday) start failing the day after the table's last spring entry. */
 export function crossCheckDstTransition(anchor: string, kind: "spring" | "fall", computedDate: string): void {
   const expected = nextKnownSydneyTransition(anchor, kind);
-  if (expected === null) {
-    throw new Error(
-      `No committed ${kind} transition in KNOWN_SYDNEY_TRANSITIONS falls strictly after anchor ${anchor} — extend the table in dataset.ts rather than trusting Intl alone for this anchor.`,
-    );
-  }
+  if (expected === null) return; // beyond the committed table: trust Intl
   if (expected !== computedDate) {
     throw new Error(
       `Computed ${kind} transition ${computedDate} disagrees with the committed cross-check table's next ${kind} transition after ${anchor} (expected ${expected}).`,
@@ -141,7 +141,7 @@ export function crossCheckDstTransition(anchor: string, kind: "spring" | "fall",
 
 /** The next spring-forward and fall-back transition strictly after `anchor`, computed via `Intl`
  * (through `resolveSydneyCivilMinute`) rather than trusted from `KNOWN_SYDNEY_TRANSITIONS` — that
- * table is only a cross-check, thrown on disagreement (or on falling outside its coverage). */
+ * table is only a cross-check, thrown on disagreement within its coverage and silent beyond it. */
 export function resolveDstTransitions(anchor: string): { spring: string; fall: string } {
   const spring = findNextSydneyTransition(anchor, "spring");
   const fall = findNextSydneyTransition(anchor, "fall");
