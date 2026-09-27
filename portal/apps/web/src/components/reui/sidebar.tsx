@@ -97,6 +97,18 @@ import {
  *   menu button's `outline` variant — `bg-background` is a role `tokens/inverse.css` re-scopes,
  *   which the rail-surface half of the bridge guard forbids; `--bg-canvas` is the same value
  *   (`tokens/tailwind.css`) through a non-re-scoped alias.
+ * - **2026-09-28 — `SidebarSeparator`'s `w-auto` → `data-[orientation=horizontal]:w-auto`.**
+ *   `reui/separator.tsx`'s orientation variants were rewritten to `data-[orientation=…]:` the same
+ *   day, so a horizontal separator now carries a live `data-[orientation=horizontal]:w-full`.
+ *   tailwind-merge does not treat that variant as conflicting with a bare `w-auto`, so both reach
+ *   the DOM and CSS specificity decides — `(0,2,0)` beats `(0,1,0)` — leaving a `w-full` rule with
+ *   `mx-2` on either side, 16px wider than the rail. Written as the same variant, it is a
+ *   tailwind-merge conflict instead and `cn` drops `w-full` before render. Verified:
+ *   `twMerge(<separator classes>, "mx-2 w-auto …")` keeps both widths;
+ *   `twMerge(<separator classes>, "mx-2 data-[orientation=horizontal]:w-auto …")` keeps only
+ *   `w-auto`. A vertical separator is `w-px` either way, so the bare `w-auto` was dead in both
+ *   orientations. No app consumer renders `SidebarSeparator` today;
+ *   `button-group-separator-orientation.dom.test.tsx` pins the class contract.
  *
  * The `--sidebar*` colour roles this file consumes (`--sidebar`, `--sidebar-foreground`,
  * `--sidebar-accent`, `--sidebar-accent-foreground`, `--sidebar-border`) are bridged in
@@ -445,7 +457,7 @@ function SidebarSeparator({
     <Separator
       data-slot="sidebar-separator"
       data-sidebar="separator"
-      className={cn("mx-2 w-auto bg-sidebar-border", className)}
+      className={cn("mx-2 data-[orientation=horizontal]:w-auto bg-sidebar-border", className)}
       {...props}
     />
   )

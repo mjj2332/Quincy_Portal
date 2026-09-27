@@ -5,6 +5,22 @@ import { cn } from "@/lib/utils"
 import { Label } from "@/components/reui/label"
 import { Separator } from "@/components/reui/separator"
 
+/**
+ * Field primitive — base-nova's `field`, installed with the form, table and tab primitives in #53.
+ *
+ * 2026-09-28 — `FieldDescription`'s `group-has-data-horizontal/field:text-balance` →
+ * `group-has-data-[orientation=horizontal]/field:text-balance`. `Field` (and every Base UI
+ * primitive with an orientation) emits `data-orientation="horizontal|vertical"`; nothing in this
+ * app writes a bare `data-horizontal` attribute, so the variant matched nothing — the same defect
+ * `reui/tabs.tsx` item 4 fixed in #202. The `has` is kept as the registry wrote it (upstream
+ * shadcn's is `group-has-[[data-orientation=horizontal]]/field:`): `:has()` tests DESCENDANTS of
+ * the `group/field` ancestor, so this balances the description when that field CONTAINS a
+ * horizontal-oriented element (a nested horizontal `Field`, a horizontal separator…), not when
+ * the enclosing `Field`'s own `data-orientation` is horizontal. Narrowing it to
+ * `group-data-[orientation=horizontal]/field:` would be a behaviour divergence from the registry,
+ * not a fix, so it is left as upstream's intent. No app consumer renders `FieldDescription` today.
+ */
+
 function FieldSet({ className, ...props }: React.ComponentProps<"fieldset">) {
   return (
     <fieldset
@@ -135,7 +151,7 @@ function FieldDescription({ className, ...props }: React.ComponentProps<"p">) {
     <p
       data-slot="field-description"
       className={cn(
-        "text-left text-sm leading-normal font-normal text-muted-foreground group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5",
+        "text-left text-sm leading-normal font-normal text-muted-foreground group-has-data-[orientation=horizontal]/field:text-balance [[data-variant=legend]+&]:-mt-1.5",
         "last:mt-0 nth-last-2:-mt-1",
         "[&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
         className
