@@ -133,6 +133,13 @@ describe("ProductionGanttDeadlineDialog", () => {
     expect(byTestId("alert-dialog-scrim")).not.toBeNull();
   });
 
+  it("names the street once, in the eyebrow above the title, not again in the body", async () => {
+    await render({ state: state(), onResolve: vi.fn() });
+    const eyebrow = byTestId("gantt-deadline-confirm-eyebrow");
+    expect(eyebrow?.textContent).toBe(state().street);
+    expect(byTestId("calendar-move-confirmation")?.textContent).not.toContain(state().street);
+  });
+
   it("focuses Cancel by default", async () => {
     await render({ state: state(), onResolve: vi.fn() });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });

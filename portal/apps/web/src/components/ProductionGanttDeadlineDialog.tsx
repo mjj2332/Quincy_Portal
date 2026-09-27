@@ -21,6 +21,7 @@ import { useRef } from "react";
 import type { ProjectDeadlineReminderConsequence } from "@quincy/shared";
 import { deadlineStartClashText, type DeadlineEffectsPreview } from "../lib/production-gantt-scheduling";
 import { ProductionCalendarMoveConfirmation } from "./ProductionCalendarMoveConfirmation";
+import { Eyebrow } from "./quincy/Eyebrow";
 import { Notice } from "./quincy/Notice";
 import { StatusPill } from "./quincy/StatusPill";
 import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "./reui/item";
@@ -58,7 +59,7 @@ export type ProductionGanttDeadlineDialogProps = {
 };
 
 const SECTION = "grid gap-[var(--space-2)]";
-const SECTION_HEADING = "m-0 text-[length:var(--text-xs)] font-semibold text-foreground";
+const SECTION_HEADING = "m-0";
 // No font-size here: `StatusPill` renders `reui/badge`, whose base is a `[font:…]` shorthand at
 // `--text-2xs` — so the old `text-[10px]` was already dead (Guard 2) and the pill renders 11px.
 const STATUS_PILL = "w-fit px-[var(--space-2)] py-[var(--space-1)]";
@@ -89,19 +90,22 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve, finalFoc
           content's default 460px rung, and `max-[721px]:max-w-none` still wins on the sheet. */}
       <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} finalFocus={finalFocus} className="max-w-[560px]">
         <AlertDialogHeader>
+          {/* The street sits in Modal's eyebrow slot, as it does in the move dialog that opens
+              one step before this one on the Set deadline flow (#221 design re-review), so the
+              body below does not repeat it. The eyebrow is aria-hidden; the visually hidden
+              description is the dialog's `aria-describedby` target, so a screen reader still
+              hears which project. */}
+          <Eyebrow aria-hidden="true" className="mb-[var(--space-3)]" data-testid="gantt-deadline-confirm-eyebrow">{state.street}</Eyebrow>
           <AlertDialogTitle>{verb} Deadline</AlertDialogTitle>
-          {/* The body below already bolds the street, so the visible description would only
-              repeat it. It stays in the tree (visually hidden) as the dialog's
-              `aria-describedby` target, so a screen reader still hears which project. */}
           <AlertDialogDescription className="sr-only" data-testid="gantt-deadline-confirm-description">{state.street}</AlertDialogDescription>
         </AlertDialogHeader>
-        <ProductionCalendarMoveConfirmation street={state.street} oldCivil={state.oldCivil} newCivil={state.newCivil} consequences={state.consequences} />
+        <ProductionCalendarMoveConfirmation street={state.street} oldCivil={state.oldCivil} newCivil={state.newCivil} consequences={state.consequences} showStreet={false} />
         {preview.affected.length > 0 && (
           <section className={SECTION} aria-label="Affected checklist items" data-testid="gantt-deadline-confirm-affected">
-            <h3 className={SECTION_HEADING}>Affected checklist items</h3>
+            <h3 className={SECTION_HEADING}><Eyebrow>Affected checklist items</Eyebrow></h3>
             <ItemGroup className="gap-[var(--space-1)]">
               {preview.affected.map((item) => (
-                <Item key={item.id} role="listitem" variant="outline" size="xs">
+                <Item key={item.id} role="listitem" variant="outline" size="xs" className="rounded-[var(--radius-card)]">
                   <ItemContent>
                     <ItemTitle>{item.title}</ItemTitle>
                   </ItemContent>

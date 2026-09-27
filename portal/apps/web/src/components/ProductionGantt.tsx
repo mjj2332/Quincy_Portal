@@ -307,14 +307,16 @@ function GanttResourceLabel({
       {deadlineAction && (
         // Compact: reui Button's smallest size (`xs`). Its cva base forces
         // `uppercase tracking-[var(--tracking-wide)]`; overridden to sentence case at
-        // `--tracking-normal` so the button stays narrow beside the street. The accessible name
+        // `--tracking-normal` so the button stays narrow beside the street. Secondary ink at rest,
+        // full ink + underline on hover/focus, so it reads as an action rather than row text
+        // without widening it (#221 design re-review). The accessible name
         // names the street (every "Set deadline" is distinct), `title` shows the reason on
         // hover, and `aria-describedby` reads it to a screen reader.
         <Button
           type="button"
           size="xs"
           variant="ghost"
-          className="shrink-0 normal-case tracking-[var(--tracking-normal)]"
+          className="shrink-0 normal-case tracking-[var(--tracking-normal)] text-foreground-secondary hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
           data-testid="gantt-deadline-action"
           aria-label={`${deadlineAction.label} for ${resource.title}`}
           title={deadlineReason}

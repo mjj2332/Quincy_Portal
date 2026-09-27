@@ -75,6 +75,11 @@
  * space) to an accepted pointer release, an Adjust step and an Adjust commit whenever the
  * consumer's `dropWarning` returned a reason. No existing string changes. Covered by
  * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #221 design re-review — CHANGED: `functions.formatEventTime` for a multi-day TIMED
+ * range whose end is exactly midnight now names the last day it covers, without a time
+ * ("Oct 3, 9:00 AM - Oct 8", was "... - Oct 9, 12:00 AM"): the end is exclusive, so the old text
+ * named the wrong day. Every other branch is unchanged. Covered by `gantt-i18n.test.ts`.
  */
 
 import type {
@@ -336,7 +341,12 @@ function makeDefaultGanttFunctions(
       const lastInstant =
         end.getTime() - 1 >= start.getTime() ? subMilliseconds(end, 1) : start
       if (format(start, "yyyy-MM-dd") !== format(lastInstant, "yyyy-MM-dd")) {
-        return `${format(start, `MMM d, ${fmt}`, opts)} - ${format(end, `MMM d, ${fmt}`, opts)}`
+        // An end at exactly midnight is exclusive: name the last day it covers, with no time -
+        // "Oct 9, 12:00 AM" read as the wrong day (#221 design re-review).
+        const endsAtMidnight = format(end, "HH:mm:ss.SSS") === "00:00:00.000"
+        return endsAtMidnight
+          ? `${format(start, `MMM d, ${fmt}`, opts)} - ${format(lastInstant, "MMM d", opts)}`
+          : `${format(start, `MMM d, ${fmt}`, opts)} - ${format(end, `MMM d, ${fmt}`, opts)}`
       }
       return `${format(start, fmt, opts)} - ${format(end, fmt, opts)}`
     },
