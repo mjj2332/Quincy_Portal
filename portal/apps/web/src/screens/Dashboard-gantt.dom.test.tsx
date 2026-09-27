@@ -15,7 +15,8 @@ import { dashboardSearchOf } from "@quincy/shared";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
-import { __resetDashboardSearchStoreForTest, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, commitDashboardSearchNow, DASHBOARD_SEARCH_DEBOUNCE_MS, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
+import type { ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -178,6 +179,100 @@ describe("Dashboard Gantt routing", () => {
     expect(window.location.search).toContain("view=gantt");
     expect(window.location.search).toContain("q=smith");
     expect(ganttPropsState.value?.q).toBe("smith");
+  });
+
+  describe("Gantt filters in the URL (#255)", () => {
+    async function renderAt(location: string) {
+      window.history.replaceState(null, "", location);
+      await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+
+    const url = () => `${window.location.pathname}${window.location.search}`;
+    const ganttFilters = () => ganttPropsState.value?.filters as ProductionGanttFacetFilters | undefined;
+    const changeFilters = async (next: ProductionGanttFacetFilters) => {
+      await act(async () => { (ganttPropsState.value?.onFiltersChange as (next: ProductionGanttFacetFilters) => void)(next); await Promise.resolve(); });
+    };
+    const popTo = async (location: string) => {
+      window.history.replaceState(null, "", location);
+      await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    };
+
+    it("applies a cold deep link's filters on the first render", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&completed=1");
+      expect(switcherButton("Gantt")?.getAttribute("data-active")).toBe("true");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+      expect(url()).toBe("/?view=gantt&stages=raw_review&completed=1");
+    });
+
+    it("hands the surface default filters for the bare Gantt URL", async () => {
+      await renderAt("/?view=gantt");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    });
+
+    it("pushes a filter change into the URL, carrying q", async () => {
+      await renderAt("/?view=gantt&q=smith");
+      await changeFilters({ editorIds: [], stageKeys: ["delivered", "raw_review"], delivered: true, completed: false });
+      expect(url()).toBe("/?view=gantt&stages=raw_review%2Cdelivered&delivered=1&q=smith");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review", "delivered"], delivered: true, completed: false });
+      expect(ganttPropsState.value?.q).toBe("smith");
+
+      await changeFilters({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+      expect(url()).toBe("/?view=gantt&q=smith");
+    });
+
+    it("keeps the Gantt filters when a search commits on a filtered Gantt", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&completed=1");
+      await act(async () => { setDashboardSearchDraft("smith", "user-1"); commitDashboardSearchNow("user-1"); await Promise.resolve(); });
+      expect(url()).toBe("/?view=gantt&stages=raw_review&completed=1&q=smith");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+      expect(ganttPropsState.value?.q).toBe("smith");
+    });
+
+    it("keeps the Gantt filters when the debounced search writer fires, reading them from the live URL", async () => {
+      await renderAt("/?view=gantt&stages=raw_review");
+      await typeSearch("smith");
+      // A filter change lands in the URL while the debounce is armed, without a Dashboard
+      // re-render in between: the writer must read the filters at fire time, not from a snapshot.
+      window.history.replaceState(null, "", "/?view=gantt&stages=edited_review&delivered=1");
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, DASHBOARD_SEARCH_DEBOUNCE_MS + 50)); });
+      expect(url()).toBe("/?view=gantt&stages=edited_review&delivered=1&q=smith");
+    });
+
+    it("restores the previous filter state on Back and the next one on Forward", async () => {
+      await renderAt("/?view=gantt");
+      await changeFilters({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: false });
+      await changeFilters({ editorIds: [], stageKeys: ["raw_review"], delivered: true, completed: true });
+      expect(url()).toBe("/?view=gantt&stages=raw_review&completed=1&delivered=1");
+      expect(window.history.length).toBeGreaterThanOrEqual(3);
+
+      await popTo("/?view=gantt&stages=raw_review");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: false });
+
+      await popTo("/?view=gantt");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+
+      await popTo("/?view=gantt&stages=raw_review&completed=1&delivered=1");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: true, completed: true });
+      expect(switcherButton("Gantt")?.getAttribute("data-active")).toBe("true");
+    });
+
+    it("starts the Gantt with default filters when switching in from another view", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&delivered=1");
+      await act(async () => { switcherButton("List")!.click(); await Promise.resolve(); });
+      expect(url()).toBe("/?view=list");
+      await act(async () => { switcherButton("Gantt")!.click(); await Promise.resolve(); });
+      expect(url()).toBe("/?view=gantt");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    });
+
+    it("keeps Gantt and Calendar filter state independent", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&delivered=1");
+      await act(async () => { switcherButton("Calendar")!.click(); await Promise.resolve(); });
+      const calendarRoute = parseStaffLocation(url());
+      expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.stageKeys : null).toEqual([]);
+      expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.showDeliveredProjects : null).toBe(false);
+    });
   });
 
   it("disables Gantt navigation only while a Board interaction blocks it, same as List/Kanban", async () => {

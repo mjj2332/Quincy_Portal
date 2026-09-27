@@ -684,7 +684,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const unregister = setDashboardSearchUrlWriter((q) => {
       const { view: currentView, calendarState: currentCalendarState, history: currentHistory, navigateCalendar: currentNavigateCalendar } = writerContextRef.current;
       if (currentView === "calendar" && currentCalendarState) currentNavigateCalendar({ ...currentCalendarState, search: q, view: "calendar" }, true);
-      else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "list" : currentView, search: q }));
+      // #255: a Gantt search commit keeps the Gantt's filters. They live only in the URL, so they
+      // are read from the LIVE location at fire time — never from this closure's render-time
+      // snapshot, which a filter change since the last render would make stale.
+      else if (currentView === "gantt") {
+        const gantt = ganttFacetOfLocation(currentHistory.getLocation());
+        currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: "gantt", search: q, ...(gantt ? { gantt } : {}) }));
+      } else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "list" : currentView, search: q }));
     });
     return unregister;
   }, []);
