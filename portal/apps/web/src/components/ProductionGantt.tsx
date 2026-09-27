@@ -122,7 +122,7 @@ import {
   previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
-import { adoptGanttChecklistRow, ganttCommittedWarnings, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { adoptGanttChecklistRow, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
 import {
   fetchGanttChildPage,
   mergeGanttChildPage,
@@ -580,6 +580,11 @@ function ganttEditKind(update: GanttProposedUpdate<ProductionGanttRowData>): Gan
   return null;
 }
 
+/** #221: the vendor's proposal as a `GanttEdit` of a known `kind` at the current `scale`. */
+function ganttEditFor(update: GanttProposedUpdate<ProductionGanttRowData>, kind: GanttEdit["kind"], scale: GanttScale): GanttEdit {
+  return { kind, eventStart: update.event.start, eventEnd: update.event.end, proposedStart: update.start, proposedEnd: update.end, scale };
+}
+
 function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRange | null): ProductionGanttModel {
   if (!pending) return model;
   const index = model.events.findIndex((event) => event.id === pending.eventId);
@@ -963,16 +968,14 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const handleCommitted = useCallback((info: SchedulingCommittedInfo) => {
     if (info.kind === "deadline") {
       // A Deadline Undo needs no row patch: the settle refetch returns the project row itself.
-      if (info.deadlineResult) pushUndoToast("Deadline saved.", "success", buildDeadlineUndoTicket(info.before as ProjectDeadlineCalendarEventDto, info.deadlineResult.current));
+      pushUndoToast("Deadline saved.", "success", buildDeadlineUndoTicket(info.before, info.deadlineResult.current));
       return;
     }
-    if (!info.checklistResult) return;
-    const result = info.checklistResult;
-    patchChildRow(info.projectId, result);
-    const project = projectByIdRef.current.get(info.projectId);
-    const warnings = project ? ganttCommittedWarnings(project, result) : info.warnings;
-    const warningText = ganttDropWarningText(warnings);
-    pushUndoToast(warningText ? `Schedule saved. ${warningText}` : "Schedule saved.", warningText ? "caution" : "success", buildChecklistUndoTicket(info.before as ChecklistSource, result));
+    patchChildRow(info.projectId, info.checklistResult);
+    // `warningText` is the port's `committedWarningText` — the exact text the controller's live
+    // announcement carries (this toast is `announcedElsewhere`).
+    const { warningText } = info;
+    pushUndoToast(warningText ? `Schedule saved. ${warningText}` : "Schedule saved.", warningText ? "caution" : "success", buildChecklistUndoTicket(info.before, info.checklistResult));
   }, [patchChildRow, pushUndoToast]);
 
   const commands = useSchedulingController({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone });
@@ -1283,7 +1286,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       commands.announceChecklistLifecycle("invalid", {});
       return "deferred";
     }
-    const edit: GanttEdit = { kind: target.kind, eventStart: update.event.start, eventEnd: update.event.end, proposedStart: update.start, proposedEnd: update.end, scale };
+    const edit = ganttEditFor(update, target.kind, scale);
     // A null proposal is a zero-day delta at a coarse scale: the drop landed where it started.
     const proposal = ganttEditToProposal(target.source, edit);
     if (!proposal) return "deferred";
@@ -1300,8 +1303,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
     const target = editFor(update);
     if (!target || target.kind === "none" || target.kind === null) return null;
-    const edit: GanttEdit = { kind: target.kind, eventStart: update.event.start, eventEnd: update.event.end, proposedStart: update.start, proposedEnd: update.end, scale };
-    return ganttDropWarningText(ganttEditWarnings(target.project, target.source, edit));
+    return ganttDropWarningText(ganttEditWarnings(target.project, target.source, ganttEditFor(update, target.kind, scale)));
   }, [deadlineEditFor, editFor, scale]);
 
   // Placement: only an unscheduled task row whose permissions allow `canDrag` takes a slot.
@@ -1435,7 +1437,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">
           <span>{commands.settle.recoveryReason}</span>
-          <button className={buttonClasses("secondary", { className: COARSE_TAP_TARGET })} type="button" data-focus-key="calendar-recovery" onClick={() => void commands.refreshRecovery()}>
+          <button className={buttonClasses("secondary", { className: COARSE_TAP_TARGET })} type="button" data-focus-key="gantt-recovery" onClick={() => void commands.refreshRecovery()}>
             Refresh
           </button>
         </Notice>

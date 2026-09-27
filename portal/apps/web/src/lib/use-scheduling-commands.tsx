@@ -222,6 +222,13 @@ export type SchedulingPort<TBaseline> = {
    * the surface must close its dialog and resolve `false`.
    */
   confirmDeadline?: (input: SchedulingDeadlineConfirmInput) => Promise<boolean>;
+  /**
+   * #221: the advisory warning a COMMITTED checklist save carries, as one sentence (e.g. "Ends
+   * after the project deadline."), or `null`. The controller appends it to its own "saved"
+   * announcement (` Warning: <text>`, the vendor's `dropWarningSuffix` wording) and hands it to
+   * `onCommitted` as `warningText`. Absent (the Calendar): the announcement is unchanged.
+   */
+  committedWarningText?: (projectId: string, result: ChecklistMutationResult) => string | null;
 };
 
 /** #221 PR C: the public shape of a Deadline awaiting confirmation (`SchedulingPort.confirmDeadline`). */
@@ -242,14 +249,23 @@ export type SchedulingDeadlineConfirmInput = {
 
 /** #221: fired once per successful NON-noop mutation, right after the response is decoded and
  * before invalidation — the Gantt builds its Undo ticket from it. */
-export type SchedulingCommittedInfo = {
-  kind: "checklist" | "deadline";
-  projectId: string;
-  before: ChecklistSource | ProjectDeadlineCalendarEventDto;
-  checklistResult?: ChecklistMutationResult;
-  deadlineResult?: SaveResponse;
-  warnings: SchedulingWarning[];
-};
+export type SchedulingCommittedInfo =
+  | {
+      kind: "checklist";
+      projectId: string;
+      before: ChecklistSource;
+      checklistResult: ChecklistMutationResult;
+      warnings: SchedulingWarning[];
+      /** The port's `committedWarningText` — the same text the live announcement carries. */
+      warningText: string | null;
+    }
+  | {
+      kind: "deadline";
+      projectId: string;
+      before: ProjectDeadlineCalendarEventDto;
+      deadlineResult: SaveResponse;
+      warnings: SchedulingWarning[];
+    };
 
 export type SchedulingControllerInput<TBaseline> = {
   identity: DashboardIdentity;
@@ -1083,7 +1099,8 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         return;
       }
 
-      onCommittedRef.current?.({ kind: "checklist", projectId: proposal.source.project.id, before: proposal.source, checklistResult: result, warnings: proposal.warnings ?? [] });
+      const warningText = portRef.current.committedWarningText?.(proposal.source.project.id, result) ?? null;
+      onCommittedRef.current?.({ kind: "checklist", projectId: proposal.source.project.id, before: proposal.source, checklistResult: result, warnings: proposal.warnings ?? [], warningText });
       setScheduleEditor(null);
       setChecklistFold(null);
       setAcceptGate(false);
@@ -1102,7 +1119,9 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       if (settled.ok) {
         setSettle({ type: "refetch-succeeded" });
         setOverlay(null);
-        announceChecklistLifecycle("saved", { street: proposal.source.project.street });
+        const saved = calendarAnnouncement("saved", { street: proposal.source.project.street, entity: "checklist" });
+        // Same guard as `announceLifecycle`; the warning rides the one "saved" announcement.
+        if (!accessLostRef.current && saved) setAnnouncement(warningText ? `${saved} Warning: ${warningText}` : saved);
       } else if (!accessLostRef.current) {
         setSettle({ type: "refetch-failed", reason: portRef.current.settleFailedReason });
         announceChecklistLifecycle("settle-failed", {});
@@ -1351,11 +1370,22 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       return outcome;
     }
     if (outcome.ok) {
-      // The write already succeeded: a body that fails to decode only skips the row patch (the
-      // refetch below still converges), it never turns a done Undo into a failure.
       let checklistResult: ChecklistMutationResult | undefined;
-      if (ticket.kind === "checklist" && outcome.response !== undefined) {
-        try { checklistResult = decodeChecklistMutationResponse(identity.role, outcome.response); } catch { checklistResult = undefined; }
+      try {
+        checklistResult = ticket.kind === "checklist" && outcome.response !== undefined
+          ? decodeChecklistMutationResponse(identity.role, outcome.response)
+          : undefined;
+      } catch {
+        // The write happened but its body is unreadable — reported, never hidden: no row patch,
+        // the refetch converges the surface on server truth, and the outcome is "failed" (final,
+        // like the forward path's undecodable save, which also rolls back to a refetch).
+        commandLockRef.current.active = false;
+        setAcceptGate(false);
+        await refetchAuthoritative();
+        const failed: UndoOutcome = { ok: false, reason: "failed" };
+        if (fenced()) return failed;
+        setAnnouncement("Undo result could not be read. Reloaded the latest.");
+        return failed;
       }
       onUndoneRef.current?.({ kind: ticket.kind, projectId: ticket.projectId, ...(checklistResult ? { checklistResult } : {}) });
       if (queryClient) await invalidateProjectSurfaces(queryClient, portRef.current.invalidation(ticket.kind, ticket.projectId));

@@ -53,7 +53,7 @@ import {
 
 const DAY_MS = 86_400_000;
 /** Calendar id prefix for a project deadline (workers/app/src/routes/production-calendar.ts). */
-const PROJECT_DEADLINE_ID_PREFIX = "project-deadline:";
+export const PROJECT_DEADLINE_ID_PREFIX = "project-deadline:";
 
 export type GanttScale = "day" | "week" | "month" | "quarter" | "year";
 

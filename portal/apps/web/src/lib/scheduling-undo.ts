@@ -12,8 +12,10 @@ export type UndoTicket =
   | { kind: "checklist"; projectId: string; subtaskId: string; expectedVersion: number; request: SaveChecklistScheduleRequest }
   | { kind: "deadline"; projectId: string; expectedVersion: number; request: SaveProjectDeadlineRequest };
 
-/** `"access"` (#221): a 401/403 — the caller treats it as access loss, not an ordinary failure. */
-/** `response` is the checklist PATCH body (undecoded) so a caller can adopt the restored row. */
+/**
+ * `response` is the checklist PATCH body (undecoded) so a caller can adopt the restored row.
+ * `"access"` (#221): a 401/403 — the caller treats it as access loss, not an ordinary failure.
+ */
 export type UndoOutcome = { ok: true; response?: unknown } | { ok: false; reason: "conflict" | "failed" | "access" };
 
 /**

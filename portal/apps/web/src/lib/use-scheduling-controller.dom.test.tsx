@@ -173,7 +173,7 @@ describe("useSchedulingController (generic port)", () => {
     expect(mutations()[0]!.method).toBe("PATCH");
     expect(onCommitted).toHaveBeenCalledTimes(1);
     const info = onCommitted.mock.calls[0]![0];
-    expect(info.kind).toBe("checklist");
+    if (info.kind !== "checklist") throw new Error("expected a checklist commit");
     expect(info.projectId).toBe(projectId);
     expect(info.before).toEqual(source);
     expect(info.checklistResult?.scheduleVersion).toBe(5);
@@ -184,6 +184,28 @@ describe("useSchedulingController (generic port)", () => {
     expect(spies.refetch).toHaveBeenCalled();
     expect(controllerRef!.settle.pending).toBe(false);
     expect(controllerRef!.canStartCommand()).toBe(true);
+    // No `committedWarningText` on the port (the Calendar): the plain saved announcement.
+    expect(info.warningText ?? null).toBeNull();
+    expect(controllerRef!.announcement).toBe("Saved the checklist schedule for 12 Harbour Street.");
+  });
+
+  it("appends the port's committedWarningText to the saved announcement after settle, and hands the same text to onCommitted", async () => {
+    const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
+    const committedWarningText = vi.fn(() => "Ends after the project deadline.");
+    const { port } = makePort({ checklists: [source], deadlines: [] }, { committedWarningText });
+    await render(port);
+    reply = { status: 200, body: mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-28T09:00"), end: timedEndpoint("2026-08-28T11:00"), due: "2026-08-28T11:00" }) };
+    await act(async () => { controllerRef!.submitProposal({ kind: "move", entity: "checklist", source, target: { subview: "month", targetDate: "2026-08-28" } }); await Promise.resolve(); });
+    await settle();
+
+    expect(committedWarningText).toHaveBeenCalledTimes(1);
+    expect(committedWarningText).toHaveBeenCalledWith(projectId, expect.objectContaining({ scheduleVersion: 5 }));
+    expect(committedWarningText.mock.invocationCallOrder[0]!).toBeLessThan(onCommitted.mock.invocationCallOrder[0]!);
+    const info = onCommitted.mock.calls[0]![0];
+    if (info.kind !== "checklist") throw new Error("expected a checklist commit");
+    expect(info.warningText).toBe("Ends after the project deadline.");
+    expect(controllerRef!.settle.pending).toBe(false);
+    expect(controllerRef!.announcement).toBe("Saved the checklist schedule for 12 Harbour Street. Warning: Ends after the project deadline.");
   });
 
   it("feeds boundsFor into the plan, so an out-of-bounds move surfaces its warnings on onCommitted", async () => {
@@ -243,18 +265,23 @@ describe("useSchedulingController (generic port)", () => {
     expect(controllerRef!.announcement).toBe("Change undone.");
   });
 
-  it("runUndo whose success body does not decode still succeeds; onUndone carries no row", async () => {
+  it("runUndo whose success body does not decode reports failed: no row patch, refetches, releases the lock and says so", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
-    const { port } = makePort({ checklists: [source], deadlines: [] });
+    const { spies, port } = makePort({ checklists: [source], deadlines: [] });
     await render(port);
+    const refetchesBefore = spies.refetch.mock.calls.length;
     reply = { status: 200, body: {} };
     let outcome: unknown;
     await act(async () => { outcome = await controllerRef!.runUndo(checklistTicket); });
     await settle();
 
-    expect(outcome).toMatchObject({ ok: true });
-    expect(onUndone).toHaveBeenCalledWith({ kind: "checklist", projectId });
-    expect(controllerRef!.announcement).toBe("Change undone.");
+    expect(outcome).toEqual({ ok: false, reason: "failed" });
+    expect(mutations()).toHaveLength(1);
+    expect(onUndone).not.toHaveBeenCalled();
+    expect(spies.refetch.mock.calls.length).toBeGreaterThan(refetchesBefore);
+    expect(controllerRef!.canStartCommand()).toBe(true);
+    expect(controllerRef!.interactionBlocked).toBe(false);
+    expect(controllerRef!.announcement).toBe("Undo result could not be read. Reloaded the latest.");
   });
 
   it("runUndo is rejected as busy while a proposal is in flight, with no request", async () => {

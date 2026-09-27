@@ -62,8 +62,8 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
           {/* #221 caution glyph: an aria-hidden graphical mark, so it takes the brand
               `--signal-caution` (colors.css: icons keep the brand value at the 3:1 non-text bar),
               which measures 4.20:1 on `--ink-900` (`bg-surface-inverse`). `--signal-caution-text`
-              is the TEXT role and measures only 2.98:1 on ink — below even the icon bar. Written
-              as an arbitrary `color` property rather than the `text-signal-caution` utility,
+              is the TEXT role and measures only 2.20:1 on ink (colors.css) — below even the icon
+              bar. Written as an arbitrary `color` property rather than the `text-signal-caution` utility,
               because that utility is the text-role misuse Guard 5 (design-system-guards) polices. */}
           <span aria-hidden="true" className={cn("shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]", item.tone === "caution" && "[color:var(--signal-caution)]")}>{item.tone === "success" ? "✓" : "!"}</span>
           <span aria-hidden={item.announcedElsewhere && item.action ? "true" : undefined}>{item.message}</span>

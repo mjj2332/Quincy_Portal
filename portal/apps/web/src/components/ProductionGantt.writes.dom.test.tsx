@@ -81,7 +81,7 @@ type Row = {
   permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canScheduleRange: boolean };
 };
 
-type ScheduleInput = { state: string; start?: { kind: string; localCivil: string }; end?: { kind: string; localCivil: string } };
+type ScheduleInput = { state: string; start?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" }; end?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" } };
 
 /** The server's view of the checklist — PATCH mutates it, GET reads it. */
 let rows: Row[];
@@ -152,8 +152,15 @@ function ganttResponse() {
   });
 }
 
+/** A stored timed endpoint; `disambiguation` picks a side of the April fold. */
+function timedEndpoint(localCivil: string, disambiguation?: "earlier" | "later"): ChecklistScheduleEndpointDto {
+  const resolved = resolveSydneyCivilMinute(localCivil, disambiguation);
+  if (!resolved.ok) throw new Error(`fixture civil did not resolve: ${localCivil}`);
+  return { kind: "timed", localCivil, instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: resolved.value.fold, resolution: "stored" };
+}
+
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
-  const endpoint = (value: { localCivil: string } | undefined) => (value ? dateEndpoint(value.localCivil) : null);
+  const endpoint = (value: ScheduleInput["end"]) => (value ? (value.kind === "timed" ? timedEndpoint(value.localCivil, value.disambiguation) : dateEndpoint(value.localCivil)) : null);
   if (input.state === "unscheduled") return { state: "unscheduled", version, zone: PRODUCTION_GANTT_ZONE, start: null, end: null, due: null };
   const end = endpoint(input.end);
   return { state: input.state as "due_only" | "range", version, zone: PRODUCTION_GANTT_ZONE, start: input.state === "range" ? endpoint(input.start) : null, end, due: end?.localCivil ?? null };
@@ -328,6 +335,16 @@ async function resizeRangeEnd(clientX: number, pointerId: number, options: { rel
   if (options.release !== false) await pointerEvent(window, "pointerup", { pointerId, clientX, clientY: 10 });
 }
 
+/** Drags the range task's START grip to `clientX` (absolute on the stubbed 1440px axis) and releases. */
+async function resizeRangeStart(clientX: number, pointerId: number) {
+  stubGeometry();
+  const grip = host.querySelector<HTMLElement>(`[data-gantt-resource="task:${RANGE_ID}"] [data-testid="gantt-resize-handle-start"]`);
+  if (!grip) throw new Error("no start grip");
+  await pointerEvent(grip, "pointerdown", { pointerId, button: 0, clientX: 500, clientY: 10 });
+  await pointerEvent(window, "pointermove", { pointerId, clientX, clientY: 10 });
+  await pointerEvent(window, "pointerup", { pointerId, clientX, clientY: 10 });
+}
+
 /** One keyboard Adjust step on the range task's END edge, committed with Enter. */
 async function keyboardResizeRangeEnd() {
   const bar = findBar(RANGE_TITLE);
@@ -482,6 +499,22 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(liveRegionText()).not.toMatch(/rejected/i);
   });
 
+  it("1b. a pointer resize-START of a range task sends one PATCH: the start moves, the end is unchanged", async () => {
+    await render();
+    await resizeRangeStart(40, 38);
+    await flush(6);
+
+    expect(patches()).toHaveLength(1);
+    expect(patches()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/subtasks/${RANGE_ID}`);
+    const body = patchBody();
+    expect(body.schedule.expectedVersion).toBe(1);
+    expect(body.schedule.schedule.state).toBe("range");
+    expect(body.schedule.schedule.start!.kind).toBe("date");
+    expect(body.schedule.schedule.start!.localCivil < sydneyDay(1)).toBe(true);
+    expect(body.schedule.schedule.end).toEqual({ kind: "date", localCivil: sydneyDay(3) });
+    expect(liveRegionText()).not.toMatch(/rejected/i);
+  });
+
   it("2. a pointer move of a due_only milestone sends one due_only PATCH", async () => {
     await render();
     stubGeometry();
@@ -583,6 +616,8 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(toasts()).toHaveLength(1);
     expect(toasts()[0]!.getAttribute("data-tone")).toBe("caution");
     expect(toasts()[0]!.textContent).toContain("Schedule saved. Ends after the project deadline.");
+    // The toast is aria-hidden (`announcedElsewhere`): the controller's live region carries the warning.
+    expect(liveRegionText()).toBe(`Saved the checklist schedule for ${PROJECT_STREET}. Warning: Ends after the project deadline.`);
   });
 
   it("8. a keyboard Adjust commit sends the PATCH, never announces rejected, and keeps focus on the bar", async () => {
@@ -891,5 +926,58 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await render();
     expect(host.querySelector(`[data-testid="gantt-row-attention-missing_deadline"]`)).not.toBeNull();
     expect(deadlineActionButton()).toBeUndefined();
+  });
+});
+
+describe("ProductionGantt — Sydney DST on a timed range (#221)", () => {
+  // The Gantt opens on the real current month; only `Date` is faked (timers stay real) so the view
+  // opens on the DST month and the fixture's timed range sits inside it.
+  async function renderTimedRangeAt(systemTime: string, start: string, end: string) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(systemTime));
+    resetFixture();
+    rows[0]!.schedule = { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: timedEndpoint(start), end: timedEndpoint(end), due: end };
+    await render();
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a keyboard Adjust onto the April fold (2026-04-05 02:30 occurs twice) asks which occurrence, then sends one PATCH carrying the choice", async () => {
+    await renderTimedRangeAt("2026-04-01T00:00:00Z", "2026-04-02T09:00", "2026-04-04T02:30");
+    await keyboardResizeRangeEnd();
+    await flush(4);
+
+    // The planner catches the fold before any request: nothing is sent until a side is chosen.
+    expect(patches()).toHaveLength(0);
+    const dialog = byTestId("calendar-fold-choice");
+    expect(dialog).not.toBeNull();
+    const radios = [...dialog!.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+    expect(radios.map((radio) => radio.getAttribute("aria-label"))).toEqual(["end earlier occurrence", "end later occurrence"]);
+    expect(liveRegionText()).toBe("That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.");
+
+    await click(radios[1]!);
+    await click(byTestId("calendar-fold-submit")!);
+    await flush(6);
+
+    expect(patches()).toHaveLength(1);
+    const body = patchBody();
+    expect(body.schedule.expectedVersion).toBe(1);
+    // The unmoved start keeps its stored civil time (the request builder carries its stored side).
+    expect(body.schedule.schedule.start).toMatchObject({ kind: "timed", localCivil: "2026-04-02T09:00" });
+    expect(body.schedule.schedule.end).toEqual({ kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" });
+  });
+
+  it("a keyboard Adjust into the October gap (2026-10-04 02:30 does not exist) announces the gap and sends nothing", async () => {
+    await renderTimedRangeAt("2026-10-01T00:00:00Z", "2026-10-01T09:00", "2026-10-03T02:30");
+    const before = barLabel(RANGE_TITLE);
+    await keyboardResizeRangeEnd();
+    await flush(6);
+
+    expect(patches()).toHaveLength(0);
+    expect(byTestId("calendar-fold-choice")).toBeNull();
+    expect(liveRegionText()).toBe("That time does not exist in Sydney on that date (daylight-saving gap).");
+    expect(barLabel(RANGE_TITLE)).toBe(before);
   });
 });

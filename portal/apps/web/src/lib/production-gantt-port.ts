@@ -12,7 +12,8 @@
  * `checkScheduleBounds`, whose copy differs from B1's `scheduleWindowWarnings` and has no created-at
  * lower bound. So this port supplies NO `boundsFor` (plan warnings stay empty) and the Gantt's
  * warnings come from `scheduleWindowWarnings` alone — `ganttEditWarnings` (the drop hint) and
- * `ganttCommittedWarnings` (the saved toast) below, so the hint and the toast always agree.
+ * `ganttCommittedWarnings` (the saved announcement and toast, via `committedWarningText`) below, so
+ * the hint, the live announcement and the toast always agree.
  *
  * Import boundary: like `production-gantt-adapter.ts` and `production-gantt-scheduling.ts`, never
  * import `@/components/reui/gantt/**` here, not even `import type`.
@@ -20,7 +21,6 @@
 import { useMemo } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import {
-  formatSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   type ChecklistCalendarEventDto,
   type GanttChecklistRowDto,
@@ -34,17 +34,18 @@ import {
   ganttChecklistSource,
   ganttDeadlineEntry,
   ganttDeadlineEvent,
+  ganttDropWarningText,
   ganttEditToProposal,
   ganttScheduleBounds,
+  PROJECT_DEADLINE_ID_PREFIX,
   scheduleWindowWarnings,
   type GanttEdit,
 } from "./production-gantt-scheduling";
 import { removeProductionGanttQueries } from "./production-gantt-query";
 import type { SchedulingDeadlineConfirmInput, SchedulingPort } from "./use-scheduling-commands";
+import { sydneyToday } from "../screens/dashboard-helpers";
 
 export type GanttBaseline = { projects: GanttProjectRowDto[] };
-
-const PROJECT_DEADLINE_ID_PREFIX = "project-deadline:";
 
 /** A deep, structured copy — the controller's accepted baseline must never alias query data. */
 export function cloneGanttBaseline(baseline: GanttBaseline): GanttBaseline {
@@ -130,10 +131,6 @@ export function ganttInvalidation(_kind: "checklist" | "deadline", projectId: st
  * it never reads back for the Gantt, so a default Calendar filter object is enough. */
 function defaultCalendarFilters(): ProductionCalendarFilters {
   return { layers: [], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
-}
-
-export function sydneyToday(): string {
-  return formatSydneyCivilMinute(Date.now()).slice(0, 10);
 }
 
 /**
@@ -240,8 +237,12 @@ export function useGanttSchedulingPort({ identity, projects, query, purgeChildre
       purgeChildren();
     },
     invalidation: ganttInvalidation,
-    defaultPlacementDate: sydneyToday,
+    defaultPlacementDate: () => sydneyToday(Date.now()),
     settleFailedReason: "The latest Gantt could not be loaded.",
+    committedWarningText: (projectId, result) => {
+      const project = projects.find((candidate) => candidate.id === projectId);
+      return project ? ganttDropWarningText(ganttCommittedWarnings(project, result)) : null;
+    },
     ...(openDeadlineConfirm ? { confirmDeadline: openDeadlineConfirm } : {}),
   };
 }
