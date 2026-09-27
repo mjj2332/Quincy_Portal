@@ -20,7 +20,8 @@
   (`disableSignUp: true` in `workers/app/src/auth.ts`, enforced again by a `user.create` database
   hook that unconditionally throws), so only a user row that already exists in D1 can ever sign
   in. Local D1's only seeded user is the admin account from `packages/db/seed/0001_seed.sql`
-  (`mjj2332@gmail.com`) — a real Google account, not a placeholder — so local browser testing that
+  (`mjj2332@gmail.com`, applied by `npm run db:migrate:local` since #252) — a real Google account,
+  not a placeholder — so local browser testing that
   needs authentication can only ever be done by (or as) that account; there is no way to
   provision a second local test user without editing the seed.
 
@@ -3837,3 +3838,30 @@ were delivered. The fixture would have shipped unable to show the draw cap at al
   returned `matched_rows: 2208`. A reimplementation checked against itself proves nothing.
 - **Leave margin over a threshold.** The tier now clears the cap by more than 10%, so ticking a
   few children done during a browser pass cannot quietly drop it back under.
+
+## A test harness that rebuilds the setup by hand hides the step the real setup forgot (#252, 2026-09-27)
+
+`db:migrate:local` (`packages/db/setup-local.mjs`) applied migrations, the Board flag and the QA
+capability fence, but never `seed/0001_seed.sql`. A fresh local D1 had no pipeline stages and no
+bootstrap admin, so nobody could sign in and `db:qa:apply` refused to run. Nothing went red, because
+the qa-seed integration tests built their database with their own hand-written copy of the sequence
+(`freshFixtureDatabase`: migrations → seed → fence), and that copy *did* include the seed. Every test
+passed against a database state the real command never produced. The gap was then written up in the
+fixture guide as a "known gap" with a manual workaround instead of being fixed.
+
+- **One sequence, two transports.** `setupLocal(executor, log)` is now the only copy of the setup
+  order. `main()` runs it through `wranglerSetupExecutor` (every call still built by
+  `wranglerArguments`, so `--local` pinning is unchanged); `freshFixtureDatabase` runs the same
+  function through `sqliteSetupExecutor`. A step dropped from the script now drops out of every
+  fixture test too, and `local-setup-wiring.guard.test.ts` asserts an empty database comes out with
+  the five stages and the admin.
+- **Assert what the seed can guarantee, not operator choices.** The seed is `INSERT OR IGNORE`, so it
+  can make rows *exist* but never change them. The postcondition fails on a missing stage key or a
+  missing admin id, and only warns on an inactive stage or admin, which are legitimate Admin-managed
+  local states. A missing admin id is the case to shout about: `user.email` is unique, so a
+  different-id row holding the owner's email makes the seed's insert skip silently.
+- **`npm run db:migrate:local -- --persist-to <dir>` does not work from `portal/`.** The root script
+  is itself `npm run migrate:local -w @quincy/db`; the inner npm swallows `--persist-to` as its own
+  config and only the bare path reaches the script, which refuses it as an unknown argument (safe,
+  but useless). For a scratch database, run `npm run migrate:local -- --persist-to <dir>` from
+  `packages/db`, one npm level down.

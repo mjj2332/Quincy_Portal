@@ -1,6 +1,7 @@
 /**
- * Bring a local D1 to the state production is actually in — migrations, then the post-rollout
- * feature flags. **Local only. This must never touch production.**
+ * Bring a local D1 to the state production is actually in — migrations, the shared seed, then the
+ * post-rollout feature flags. **Local only. This must never touch production.** The seed is all
+ * `INSERT OR IGNORE`, so re-running this never changes rows that already exist.
  *
  * `0037_project_board_order_contract` seeds `tb5a_board_contract_enabled` disabled, and production
  * was flipped on deliberately afterwards. Nothing brought a *local* database to that post-rollout
@@ -25,6 +26,20 @@ const BOARD_CONTRACT_FLAG = "tb5a_board_contract_enabled";
 const DATABASE_NAME = "quincy-portal";
 const CONFIG_PATH = "../../workers/app/wrangler.jsonc";
 const packageDirectory = fileURLToPath(new URL("./", import.meta.url));
+
+/** The shared, all-environments seed, applied in place. Its stage keys and admin id are asserted
+ * against `@quincy/shared` and `qa-seed/dataset` by the wiring guard. */
+export const SEED_PATH = fileURLToPath(new URL("./seed/0001_seed.sql", import.meta.url));
+export const SEED_STAGE_KEYS = ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review", "delivered"];
+export const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
+
+const seedStageKeyList = SEED_STAGE_KEYS.map((key) => `'${key}'`).join(", ");
+
+/** One SELECT of scalar subqueries, not a compound SELECT: local D1 caps those at 5 terms. */
+export const SEED_POSTCONDITION_SQL = `SELECT
+  (SELECT COUNT(*) FROM pipeline_stages WHERE key IN (${seedStageKeyList})) AS stages,
+  (SELECT COUNT(*) FROM pipeline_stages WHERE active = 1 AND key IN (${seedStageKeyList})) AS active_stages,
+  (SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}') AS admin_active;`;
 
 /**
  * Flags local dev needs on that production does not have. `UPDATE`, not an upsert: the row always
@@ -134,19 +149,13 @@ export function wranglerArguments(subcommand, options) {
   return ["wrangler", "d1", ...subcommand, DATABASE_NAME, "--local", "--config", CONFIG_PATH, ...persist];
 }
 
-function runWrangler(subcommand, options, extra = []) {
+function runWrangler(subcommand, options, extra = [], spawn = spawnSync) {
   const args = [...wranglerArguments(subcommand, options), ...extra];
-  const result = spawnSync("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
+  const result = spawn("npx", args, { cwd: packageDirectory, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
   if (result.status !== 0) {
     throw new Error(`\`npx ${args.join(" ")}\` exited with ${result.status ?? "a signal"}.`);
   }
   return result.stdout ?? "";
-}
-
-function queryScalar(options, sql) {
-  const stdout = runWrangler(["execute"], options, ["--json", "--command", sql]);
-  const payload = JSON.parse(stdout.slice(stdout.indexOf("[")));
-  return payload.at(-1)?.results?.at(0);
 }
 
 /**
@@ -174,43 +183,97 @@ export function assertCapabilityInstalled(row) {
   }
 }
 
-function runSqlFile(options, sql, label) {
+export function assertSeedApplied(row) {
+  const stages = Number(row?.stages);
+  if (stages !== SEED_STAGE_KEYS.length) {
+    throw new Error(`${Number.isFinite(stages) ? stages : 0} of ${SEED_STAGE_KEYS.length} seeded pipeline stages present after applying seed/0001_seed.sql.`);
+  }
+  if (row?.admin_active === null || row?.admin_active === undefined) {
+    throw new Error(
+      `The bootstrap admin user row (id ${BOOTSTRAP_ADMIN_ID}) is missing after applying seed/0001_seed.sql. ` +
+        "user.email is unique, so if another user row already holds the bootstrap admin's email the seed's INSERT OR IGNORE skipped it. " +
+        "Resolve that by hand; this script will not delete user data.",
+    );
+  }
+}
+
+/** Rows that exist but were changed in Admin are legitimate local states the seed cannot (and
+ * must not) change — so these warn rather than fail. */
+export function seedWarnings(row) {
+  const warnings = [];
+  if (Number(row.active_stages) !== SEED_STAGE_KEYS.length) {
+    warnings.push(`${SEED_STAGE_KEYS.length - Number(row.active_stages)} of ${SEED_STAGE_KEYS.length} seeded pipeline stages are inactive — re-activate them in Admin if you need them.`);
+  }
+  if (Number(row.admin_active) !== 1) {
+    warnings.push("The bootstrap admin is inactive — signing in as it will fail until it is re-activated in Admin.");
+  }
+  return warnings;
+}
+
+function runSqlFile(options, sql, label, spawn) {
   const dir = mkdtempSync(join(tmpdir(), `quincy-setup-local-${label}-`));
   const file = join(dir, `${label}.sql`);
   try {
     writeFileSync(file, sql, "utf8");
-    runWrangler(["execute"], options, ["--file", file]);
+    runWrangler(["execute"], options, ["--file", file], spawn);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-async function main() {
-  const options = parseArguments(process.argv.slice(2));
+/**
+ * Every wrangler call goes through `wranglerArguments`, so `--local` pinning is unchanged; the
+ * executor seam only exists so tests can run the same sequence against an in-memory SQLite.
+ */
+export function wranglerSetupExecutor(options, spawn = spawnSync) {
+  return {
+    migrate: () => runWrangler(["migrations", "apply"], options, [], spawn),
+    run: (sql, label) => runSqlFile(options, sql, label, spawn),
+    runFile: (path) => runWrangler(["execute"], options, ["--file", path], spawn),
+    query: (sql) => {
+      const stdout = runWrangler(["execute"], options, ["--json", "--command", sql], spawn);
+      const payload = JSON.parse(stdout.slice(stdout.indexOf("[")));
+      return payload.at(-1)?.results ?? [];
+    },
+  };
+}
 
-  console.log("==> Applying migrations to local D1");
-  runWrangler(["migrations", "apply"], options);
+export function setupLocal(executor, log) {
+  log("==> Applying migrations to local D1");
+  executor.migrate();
 
   // The flag is meaningless without 0037's marker table, which is what gates the Board at all.
-  assertSchemaMarkerPresent(queryScalar(options, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_board_order_0037_rollback') AS present;"));
+  assertSchemaMarkerPresent(executor.query("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_board_order_0037_rollback') AS present;")[0]);
 
-  console.log(`==> Enabling ${BOARD_CONTRACT_FLAG} for local development`);
-  runWrangler(["execute"], options, ["--command", LOCAL_FLAG_SQL]);
+  log("==> Applying the shared seed (seed/0001_seed.sql)");
+  executor.runFile(SEED_PATH);
+  const row = executor.query(SEED_POSTCONDITION_SQL)[0];
+  assertSeedApplied(row);
+  for (const warning of seedWarnings(row)) log(`  ! ${warning}`);
 
-  assertFlagEnabled(queryScalar(options, `SELECT enabled FROM feature_flags WHERE key = '${BOARD_CONTRACT_FLAG}';`));
+  log(`==> Enabling ${BOARD_CONTRACT_FLAG} for local development`);
+  executor.run(LOCAL_FLAG_SQL, "board-flag");
 
-  console.log("==> Installing the QA scheduling fixture capability fence (local-only)");
-  runSqlFile(options, QA_FIXTURE_CAPABILITY_SQL, "qa-fixture-capability");
-  assertCapabilityInstalled(queryScalar(options, "SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;"));
+  assertFlagEnabled(executor.query(`SELECT enabled FROM feature_flags WHERE key = '${BOARD_CONTRACT_FLAG}';`)[0]);
 
-  console.log(`==> Local D1 ready: ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
+  log("==> Installing the QA scheduling fixture capability fence (local-only)");
+  executor.run(QA_FIXTURE_CAPABILITY_SQL, "qa-fixture-capability");
+  assertCapabilityInstalled(executor.query("SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;")[0]);
+
+  log(`==> Local D1 ready: pipeline stages and bootstrap admin seeded, ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
+}
+
+export function main(argv, { spawn = spawnSync, log = console.log } = {}) {
+  setupLocal(wranglerSetupExecutor(parseArguments(argv), spawn), log);
 }
 
 // Only when run as a command. The parsing and argument-building seams above are importable so
 // tests can assert what this *would* spawn without spawning anything.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main().catch((error) => {
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
     console.error(`\nLocal D1 setup failed: ${error.message}`);
     process.exit(1);
-  });
+  }
 }
