@@ -95,12 +95,12 @@ function ganttResponse() {
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 
-function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, onFiltersChange }: { initial?: ProductionGanttFacetFilters; onFiltersChange?: (next: ProductionGanttFacetFilters) => void }) {
+function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFiltersChange }: { initial?: ProductionGanttFacetFilters; q?: string; onFiltersChange?: (next: ProductionGanttFacetFilters) => void }) {
   const [filters, setFilters] = useState(initial);
   return (
     <ProductionGantt
       identity={identity}
-      q=""
+      q={q}
       filters={filters}
       onFiltersChange={(next) => {
         onFiltersChange?.(next);
@@ -171,12 +171,12 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     host.remove();
   });
 
-  async function render(initial?: ProductionGanttFacetFilters, onFiltersChange?: (next: ProductionGanttFacetFilters) => void) {
+  async function render(initial?: ProductionGanttFacetFilters, onFiltersChange?: (next: ProductionGanttFacetFilters) => void, q?: string) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ControlledGantt {...(initial ? { initial } : {})} {...(onFiltersChange ? { onFiltersChange } : {})} />
+          <ControlledGantt {...(initial ? { initial } : {})} {...(onFiltersChange ? { onFiltersChange } : {})} {...(q !== undefined ? { q } : {})} />
         </QueryClientProvider>,
       );
       await Promise.resolve();
@@ -388,6 +388,16 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       const empty = emptyState();
       expect(empty).not.toBeNull();
       expect(empty!.textContent).toBe("No projects to schedule.");
+      expect(clearButton(empty!)).toBeUndefined();
+    });
+
+    it("says no projects match the search, with no Clear button, when only a search is active", async () => {
+      apiGetMock.mockImplementation(() => Promise.resolve(emptyGanttResponse()));
+      await render(undefined, undefined, "zzzz");
+      expect(lastListQuery().get("q")).toBe("zzzz");
+      const empty = emptyState();
+      expect(empty).not.toBeNull();
+      expect(empty!.textContent).toBe("No projects match this search.");
       expect(clearButton(empty!)).toBeUndefined();
     });
 
