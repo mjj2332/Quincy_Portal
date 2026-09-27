@@ -192,19 +192,42 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
     }
   });
 
+  /**
+   * The reserved-identifier fence. **Comments count, on purpose.** Every scan below — migrations,
+   * the shared seed, `schema.ts`, and every script under `packages/db` outside the allowlist — reads
+   * the WHOLE file text, comments included, through `mentionsReservedIdentifier`. The
+   * `__quincy_local_` tables exist only in a developer's local D1; a migration, the shared seed or
+   * the schema that so much as mentions one, even in a comment, tells the next reader those tables
+   * exist in production, and that is the first step of the drift this fence prevents. Prose that
+   * needs to talk about them says "the reserved local tables" instead. This is the deliberate
+   * opposite of the no-FK scanner in `qa-seed-no-fk-columns.guard.test.ts`, which strips comments
+   * because a `.references()` in a comment is not a foreign key (docs/lessons.md, guards reading
+   * prose as code: decide whether comments count, and say so where the guard is defined).
+   */
+  const RESERVED_IDENTIFIER_PREFIX = "__quincy_local_";
+  function mentionsReservedIdentifier(text: string): boolean {
+    return text.includes(RESERVED_IDENTIFIER_PREFIX);
+  }
+
+  it("the reserved-identifier fence counts a mention inside a comment (the decision above, pinned)", () => {
+    expect(mentionsReservedIdentifier("-- see __quincy_local_fixture_runs\nCREATE TABLE widgets (id text);")).toBe(true);
+    expect(mentionsReservedIdentifier("/* __quincy_local_capability */ export const x = 1;")).toBe(true);
+    expect(mentionsReservedIdentifier("// the reserved local tables\nexport const x = 1;")).toBe(false);
+  });
+
   it("keeps the reserved capability identifiers and fixture markers out of migrations", () => {
     const migrationFiles = readdirSync(migrationsDir).filter((name) => name.endsWith(".sql"));
     expect(migrationFiles.length).toBeGreaterThan(0);
     for (const file of migrationFiles) {
       const contents = readFileSync(new URL(file, `file://${migrationsDir}`), "utf8");
-      expect(contents).not.toContain("__quincy_local_");
+      expect(mentionsReservedIdentifier(contents), file).toBe(false);
       expect(contents).not.toContain("QA-FIXTURE-v1");
       expect(contents).not.toContain("QA FIXTURE");
     }
   });
 
   it("keeps the reserved capability identifiers and fixture markers out of the all-environments seed", () => {
-    expect(sharedSeed).not.toContain("__quincy_local_");
+    expect(mentionsReservedIdentifier(sharedSeed)).toBe(false);
     expect(sharedSeed).not.toContain("QA-FIXTURE-v1");
     expect(sharedSeed).not.toContain("QA FIXTURE");
   });
@@ -245,7 +268,7 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
 
   it("schema.ts never declares the reserved capability tables (they must stay out of Drizzle entirely)", () => {
     const schemaSource = readFileSync(new URL("../src/schema.ts", import.meta.url), "utf8");
-    expect(schemaSource).not.toContain("__quincy_local_");
+    expect(mentionsReservedIdentifier(schemaSource)).toBe(false);
   });
 
   it("no script under packages/db outside the allowlist (setup-local.mjs, qa-seed/*, this guard's own test files) references the reserved identifiers", () => {
@@ -257,7 +280,7 @@ describe("guard: no committed SQL artifact, no CI wiring", () => {
       if (RESERVED_IDENTIFIER_ALLOWLIST.has(rel)) continue;
       checked.push(rel);
       const contents = readFileSync(file, "utf8");
-      expect(contents, `${rel} should not reference the reserved __quincy_local_ identifiers`).not.toContain("__quincy_local_");
+      expect(mentionsReservedIdentifier(contents), `${rel} should not reference the reserved __quincy_local_ identifiers`).toBe(false);
     }
     // So this test cannot pass vacuously if the walk itself turned up nothing.
     expect(checked.length).toBeGreaterThan(10);
