@@ -5,12 +5,12 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { ToastViewport } from "./ToastViewport";
-import { clearToasts, pushToast } from "../../lib/toast-store";
+import { clearToasts, getToasts, pushToast } from "../../lib/toast-store";
 
 /**
  * Line-preserving strip, mirrored verbatim from `testing/test-seam.guard.test.ts` — see that
@@ -151,6 +151,58 @@ describe("ToastViewport", () => {
       "screens/Dashboard.tsx": 1,
       "screens/Admin.tsx": 1,
       "screens/ProjectWorkspace.tsx": 1,
+    });
+  });
+
+  describe("caution tone, hover/focus pause, single action (#221)", () => {
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("renders a caution toast with data-tone=\"caution\" on the inverse surface and a \"!\" glyph", async () => {
+      const container = await mount(<ToastViewport />);
+      await act(async () => { pushToast("Due after the project deadline.", "caution"); await Promise.resolve(); });
+      await flush();
+      const toastNode = container.querySelector('[data-testid="toast"]');
+      expect(toastNode?.getAttribute("data-tone")).toBe("caution");
+      expect(toastNode?.className).toContain("bg-surface-inverse");
+      expect(toastNode?.className).not.toContain("bg-destructive");
+      expect(toastNode?.querySelector('[aria-hidden="true"]')?.textContent).toBe("!");
+    });
+
+    it("pauses expiry while hovered and resumes on leave", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const container = await mount(<ToastViewport />);
+      await act(async () => { pushToast("Hover me", "success", { ttlMs: 10_000 }); await Promise.resolve(); });
+      const toastNode = container.querySelector('[data-testid="toast"]')!;
+      await act(async () => { toastNode.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body })); });
+      await act(async () => { vi.advanceTimersByTime(20_000); });
+      expect(getToasts()).toHaveLength(1);
+      await act(async () => { toastNode.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })); });
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(getToasts()).toHaveLength(0);
+    });
+
+    it("pauses expiry while focus is inside the toast and resumes only when focus leaves it", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const container = await mount(<ToastViewport />);
+      await act(async () => { pushToast("Focus me", "success", { ttlMs: 10_000, action: { label: "Undo", onAction: () => {} } }); await Promise.resolve(); });
+      const button = container.querySelector<HTMLButtonElement>('[data-testid="toast-action"]')!;
+      await act(async () => { button.focus(); });
+      await act(async () => { vi.advanceTimersByTime(20_000); });
+      expect(getToasts()).toHaveLength(1);
+      await act(async () => { button.blur(); });
+      await act(async () => { vi.advanceTimersByTime(10_000); });
+      expect(getToasts()).toHaveLength(0);
+    });
+
+    it("calls onAction exactly once for two clicks in the same tick", async () => {
+      const container = await mount(<ToastViewport />);
+      const onAction = vi.fn();
+      await act(async () => { pushToast("Moved", "success", { action: { label: "Undo", onAction } }); await Promise.resolve(); });
+      await flush();
+      const button = container.querySelector<HTMLButtonElement>('[data-testid="toast-action"]')!;
+      await act(async () => { button.click(); button.click(); });
+      expect(onAction).toHaveBeenCalledTimes(1);
+      expect(getToasts()).toHaveLength(0);
     });
   });
 });

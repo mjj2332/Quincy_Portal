@@ -70,6 +70,11 @@ export interface ProductionGanttEvent<TData = unknown> {
    * `undefined` explicitly (only omitted) so the "structural shape" unit test's exact-key check
    * stays meaningful for an event with no progress to report (fix-220-sol1 #4). */
   progress?: number;
+  /** #221 — set only when the model is built `interactive: true`; omitted (never `undefined`)
+   * otherwise, so the default output stays byte-identical. Mirror `GanttEvent`'s own fields. */
+  draggable?: boolean;
+  resizable?: boolean;
+  resizableEdges?: { start?: boolean; end?: boolean };
   data?: TData;
 }
 
@@ -120,10 +125,10 @@ export interface ProductionGanttModel {
 // `attention`; this module never falls back to a bare `new Date(dateOnlyText)`.
 // ---------------------------------------------------------------------------
 
-type EndpointResolution = { ok: true; date: Date } | { ok: false };
+export type EndpointResolution = { ok: true; date: Date } | { ok: false };
 
 /** `resolve(localCivil + "T00:00")` — a Sydney calendar date's civil midnight, as an instant. */
-function resolveCivilDayStart(localCivilDate: string): EndpointResolution {
+export function resolveCivilDayStart(localCivilDate: string): EndpointResolution {
   const resolved = resolveSydneyCivilMinute(`${localCivilDate}T00:00`);
   return resolved.ok ? { ok: true, date: new Date(resolved.value.epochMs) } : { ok: false };
 }
@@ -151,7 +156,14 @@ interface RowBuildResult {
   attention: ProductionGanttAttention | null;
 }
 
-function buildTaskResult(row: GanttChecklistRowDto, color: string): RowBuildResult {
+/** #221: the interaction fields for a task event, appended after the default keys. */
+function taskInteraction(row: GanttChecklistRowDto, dueOnly: boolean): Pick<ProductionGanttEvent, "readOnly" | "draggable" | "resizable"> {
+  const { canDrag, canResize } = row.permissions;
+  if (dueOnly) return { readOnly: !canDrag, draggable: canDrag, resizable: false };
+  return { readOnly: !(canDrag || canResize), draggable: canDrag, resizable: canResize };
+}
+
+function buildTaskResult(row: GanttChecklistRowDto, color: string, interactive: boolean): RowBuildResult {
   const schedule = row.schedule;
   const resourceId = `task:${row.id}`;
   const attentionFor = (reason: ProductionGanttAttentionReason): ProductionGanttAttention => ({
@@ -187,6 +199,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string): RowBuildResu
         // never populating it at all.
         ...(row.done ? { progress: 100 } : {}),
         data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
+        ...(interactive ? taskInteraction(row, true) : {}),
       },
       attention: null,
     };
@@ -213,12 +226,13 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string): RowBuildResu
       resourceId,
       ...(row.done ? { progress: 100 } : {}),
       data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
+      ...(interactive ? taskInteraction(row, false) : {}),
     },
     attention: null,
   };
 }
 
-function buildProjectBar(project: GanttProjectRowDto, color: string): RowBuildResult {
+function buildProjectBar(project: GanttProjectRowDto, color: string, interactive: boolean): RowBuildResult {
   const resourceId = `project:${project.id}`;
 
   if (!project.deadline) {
@@ -319,6 +333,15 @@ function buildProjectBar(project: GanttProjectRowDto, color: string): RowBuildRe
     resourceId,
     ...(progress !== undefined ? { progress } : {}),
     data: { kind: "project", dto: project, hollowStart, missingDeadline: false },
+    // #221: only the deadline (end edge) is editable from the Gantt; the start is derived.
+    ...(interactive
+      ? {
+          readOnly: !project.permissions.canEditDeadline || inverted,
+          draggable: false,
+          resizable: project.permissions.canEditDeadline,
+          resizableEdges: { start: false, end: project.permissions.canEditDeadline },
+        }
+      : {}),
   };
   return {
     event,
@@ -343,11 +366,15 @@ function compareChecklistRows(a: GanttChecklistRowDto, b: GanttChecklistRowDto):
  * codebase's other builders — nothing in this pass's contract is `now`-relative (no "today"
  * marker, no client-side overdue recompute: `GanttProjectDeadlineDto.overdue` is already
  * server-computed), so it is intentionally unused today. Kept for signature stability into pass B.
+ *
+ * `interactive` (#221, default false) adds the per-event drag/resize vetoes the writable Gantt
+ * needs; when false the output is exactly what it was before the option existed.
  */
 export function buildProductionGanttModel(
   projects: readonly GanttProjectRowDto[],
-  _opts: { now: Date },
+  opts: { now: Date; interactive?: boolean },
 ): ProductionGanttModel {
+  const interactive = opts.interactive === true;
   const resources: ProductionGanttResource[] = [];
   const events: ProductionGanttEvent<ProductionGanttRowData>[] = [];
   const attention: ProductionGanttAttention[] = [];
@@ -372,14 +399,14 @@ export function buildProductionGanttModel(
     for (const row of sortedChildren) {
       const taskResourceId = `task:${row.id}`;
       childResources.push({ id: taskResourceId, title: row.title, color });
-      const result = buildTaskResult(row, color);
+      const result = buildTaskResult(row, color, interactive);
       if (result.event) events.push(result.event);
       if (result.attention) attention.push(result.attention);
     }
 
     resources.push({ id: projectResourceId, title: project.street, color, children: childResources });
 
-    const barResult = buildProjectBar(project, color);
+    const barResult = buildProjectBar(project, color, interactive);
     if (barResult.event) events.push(barResult.event);
     if (barResult.attention) attention.push(barResult.attention);
   }

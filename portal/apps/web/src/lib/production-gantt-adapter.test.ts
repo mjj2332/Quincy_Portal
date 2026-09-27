@@ -623,3 +623,59 @@ describe("structural shape", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #221 — interactive option
+// ---------------------------------------------------------------------------
+
+describe("interactive option (#221)", () => {
+  function taskEvent(task: GanttChecklistRowDto, interactive?: boolean) {
+    const project = makeProject({ shootDateCivil: "2026-03-01", children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
+    const model = buildProductionGanttModel([project], interactive === undefined ? { now: NOW } : { now: NOW, interactive });
+    return eventsFor(model, `task:${task.id}`)[0]!;
+  }
+
+  it("interactive:false (and omitted) adds no interaction keys at all", () => {
+    const task = makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-06-10")) });
+    for (const event of [taskEvent(task), taskEvent(task, false)]) {
+      expect(event.readOnly).toBe(true);
+      expect(Object.keys(event)).not.toContain("draggable");
+      expect(Object.keys(event)).not.toContain("resizable");
+      expect(Object.keys(event)).not.toContain("resizableEdges");
+    }
+  });
+
+  it("due_only task: draggable per canDrag, never resizable", () => {
+    const dragging = taskEvent(makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-06-10")) }), true);
+    expect([dragging.readOnly, dragging.draggable, dragging.resizable]).toEqual([false, true, false]);
+    const locked = taskEvent(makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-06-10")), permissions: { canDrag: false, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } }), true);
+    expect([locked.readOnly, locked.draggable, locked.resizable]).toEqual([true, false, false]);
+  });
+
+  it("range task: draggable per canDrag, resizable per canResize, readOnly only when neither", () => {
+    const schedule = rangeSchedule(dateEndpoint("2026-06-10"), dateEndpoint("2026-06-12"));
+    const perms = (canDrag: boolean, canResize: boolean) => ({ canDrag, canResize, canOpenScheduleEditor: true, canScheduleRange: true });
+    const resizeOnly = taskEvent(makeTask({ schedule, permissions: perms(false, true) }), true);
+    expect([resizeOnly.readOnly, resizeOnly.draggable, resizeOnly.resizable]).toEqual([false, false, true]);
+    const neither = taskEvent(makeTask({ schedule, permissions: perms(false, false) }), true);
+    expect([neither.readOnly, neither.draggable, neither.resizable]).toEqual([true, false, false]);
+    const both = taskEvent(makeTask({ schedule, permissions: perms(true, true) }), true);
+    expect([both.readOnly, both.draggable, both.resizable]).toEqual([false, true, true]);
+  });
+
+  it("project bar: never draggable, end edge resizable per canEditDeadline", () => {
+    const editable = makeProject({ shootDateCivil: "2026-03-01" });
+    const [bar] = eventsFor(buildProductionGanttModel([editable], { now: NOW, interactive: true }), `project:${editable.id}`);
+    expect(bar).toMatchObject({ readOnly: false, draggable: false, resizable: true, resizableEdges: { start: false, end: true } });
+
+    const locked = makeProject({ shootDateCivil: "2026-03-01", permissions: { canEditDeadline: false, canEditChildren: true } });
+    const [lockedBar] = eventsFor(buildProductionGanttModel([locked], { now: NOW, interactive: true }), `project:${locked.id}`);
+    expect(lockedBar).toMatchObject({ readOnly: true, draggable: false, resizable: false, resizableEdges: { start: false, end: false } });
+  });
+
+  it("an inverted (deadline before start) project bar stays readOnly even when editable", () => {
+    const inverted = makeProject({ shootDateCivil: "2026-07-01" });
+    const [bar] = eventsFor(buildProductionGanttModel([inverted], { now: NOW, interactive: true }), `project:${inverted.id}`);
+    expect(bar!.readOnly).toBe(true);
+  });
+});
