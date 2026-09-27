@@ -23,9 +23,13 @@ npm run db:qa:teardown                      # remove every fixture row AND every
                                              # references one, leave everything else untouched
 ```
 
-Every `apply` tears down any previously-applied fixture first, so re-running is safe and a changed
-`--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows — **as long
-as `verify`/`teardown` succeed**; if a browser pass leaves the DB in a shape teardown's own
+Every `apply` replaces any previously-applied fixture, so re-running is safe and a changed
+`--anchor` or `--tier` cleanly replaces the previous state rather than accumulating rows. It builds
+and validates the replacement dataset **first** — every DST cross-check, anchor check and schedule
+round-trip — and only then tears down the previous fixture and writes the new one, so a generation
+failure leaves the previous fixture exactly as it was rather than leaving none. (A failure part-way
+through *writing* is not covered: the statements go out as several `--file` batches, which are not
+one transaction.) Replacement works **as long as `verify`/`teardown` succeed**; if a browser pass leaves the DB in a shape teardown's own
 post-condition checks or its sweep (below) don't like, both fail loudly rather than
 silently leaving orphaned rows for the next `apply` to inherit.
 
@@ -34,7 +38,16 @@ silently leaving orphaned rows for the next `apply` to inherit.
 pass it (`--anchor`/`--tier` on `verify` are an ASSERTION against that recorded run, not a new value
 to recompute against — a mismatch fails immediately, before anything is recomputed). It diffs the
 exact id set AND a per-column content fingerprint, including `project_members`, for every table the
-generator owns. Comparison is exact and type-aware: NULL is not `''`, and `1` is not `"1"`.
+generator owns. The compared columns are read off the **live** table (`pragma_table_info`), not a
+hand list: every column is compared except `VERIFY_EXCLUDED_COLUMNS` in `qa-seed/cli.mjs` (empty
+today; each entry must carry a reason). A live column the generator's fingerprint has no expected
+value for fails `verify` naming `table.column`, and
+`test/qa-seed-verify-columns.guard.test.ts` fails in CI for the same case — so a migration that adds a
+column to a fixture-written table cannot silently go uncompared. Subtasks, deadline occurrences and
+memberships are scoped by fixture `project_id`, so a row the app *added* to a fixture project fails
+too. Comparison is exact and type-aware: NULL is not `''`, and `1` is not `"1"`. The global
+`PRAGMA foreign_key_check` is printed as a **warning**, not a failure: it covers every row in the
+local database, and a violation in unrelated local data says nothing about the fixture.
 `projects.board_position` is compared against the value apply actually wrote, which apply records in
 `__quincy_local_fixture_board_positions`. Memberships are compared against the default-editor set
 apply used, which it records in `__quincy_local_fixture_run_records`, never against today's `user`
@@ -65,9 +78,18 @@ runs** (`qa-seed/teardown-graph.ts`, driven by `qa-seed/cli.mjs`):
    self-reference (the `assets` version chain, for instance) is covered and terminates.
 3. **Refuse over-capture.** If the closure reaches a `projects` row that is not a registered fixture
    project (a non-fixture project whose `cover_asset_id` points at a fixture asset, say), teardown
-   aborts before deleting anything and names the project.
+   aborts before deleting anything and names the project. More generally, every captured row's
+   outgoing FK parents must be in the closure too, unless the parent table is a shared lookup in
+   `SHARED_PARENT_TABLES` (`user`, `agencies`, `agents`, `integration_connections`, and
+   `pipeline_stages`, each with its reason). A captured row that points outside the fixture — a
+   `premium_unlocks` row joining a real project's client link to a fixture asset — aborts the
+   teardown before anything is deleted, naming the table, row id, column and parent. Clear the
+   reference by hand and re-run.
 4. **Delete in reverse topological order** of the FK edges, one `DELETE` per table. `audit_log` rows
-   go if their `target_id` is *any* captured id, whatever the `target_type`.
+   (and `project_activity_events.source_id`) go if their id column holds *any* captured id, whatever
+   the `target_type`, **or any id ever registered for the fixture, even if the app has already
+   deleted that row**. The app deletes a fixture subtask and writes an audit row targeting its id in
+   the same batch, and that audit row goes too.
 5. **Sweep.** Every captured row must be gone, and no FK column or no-FK column may still hold a
    captured id. Anything left fails loudly, naming the table and column, and the registry is left in
    place for inspection. Only a clean sweep empties the registry.
@@ -120,12 +142,37 @@ It fails loudly on all of these rather than guessing:
   `DELETE` of a captured chain can fail under it. `NO ACTION`, `CASCADE` and `SET NULL`
   self-references are fine; `test/qa-seed-teardown-graph.test.ts` proves both halves.
 - An FK cycle between different tables.
-- Over-capture into a non-fixture project (step 3).
+- Over-capture into a non-fixture project, or a captured row whose FK parent is outside the fixture
+  and is not a shared lookup (step 3).
 
 And it only covers D1. It does **not** remove anything outside the database: R2 objects uploaded
 against a fixture asset, queue messages already in flight, or a fixture id that appears only inside a
 JSON/text column (`audit_log.meta_json`, a notification payload). Those are not followed, because
 nothing in the schema says they are references.
+
+### What teardown cannot remove: residue about rows the app created *and* deleted
+
+Some rows describe an entity that the app **created and then deleted** during a pass. For example:
+
+- an `audit_log` row for a comment or asset that was created and then deleted;
+- a rendition DLQ event (`rendition_dlq_events`) that arrives after its asset was deleted.
+
+Teardown leaves these rows. Nothing left in the database links them to the fixture: the entity was
+never registered, and its row is gone, so neither the FK graph nor the registered-id match can reach
+it. The only way to reach them would be to harvest ids out of text and payload columns
+(`meta_json`, `source_key`, payload JSON). That would reopen the over-capture risk the boundary
+check in step 3 closes, so teardown deliberately does not do it. They are FK-less orphans in a
+**local** database. They are harmless to a later `apply`, `verify` or teardown sweep, none of which
+look at them, and they are exactly what the same delete leaves behind in production.
+
+## Browser passes against the fixture
+
+- Record the **anchor** and **tier** (printed by `apply`, readable again via `verify`) in the pass
+  report — see `docs/subagents/Subagent-Orchestration.md` §2a.
+- **Fixture passes do not upload media.** Renditions cannot be generated locally anyway, so an upload
+  only produces rendition DLQ noise, some of which teardown cannot reach (see above). Exercise the
+  scheduling surfaces the fixture exists for; take media flows to a pass that is set up for them.
+- `verify` is expected to fail after a pass has edited fixture rows; re-`apply` to reset.
 
 ## What each core-tier project proves
 
@@ -158,7 +205,8 @@ plus visible children, exactly what `production-gantt.ts`'s density accounting c
 a judgement call: `ProductionGantt.tsx`'s child-chain walker stops starting new chains outright
 once `tooManyToDraw` is true, which would make the pagination case above unverifiable in the same
 filter state as the draw-cap case. Apply `density` only for the one browser pass that needs it, then
-apply `core` alone again — that removes it (teardown-first makes every `apply` a clean replace).
+apply `core` alone again — that removes it (every `apply` tears down the previous fixture before
+writing, so it is a clean replace).
 
 The documented recovery filter: filter to a single stage. A single density stage is 6 projects ×
 70 children + the 6 project rows themselves — comfortably under the cap.

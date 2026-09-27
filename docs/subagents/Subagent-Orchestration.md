@@ -86,7 +86,9 @@ db:qa:apply` (add `-- --tier=core,density` only for the draw-cap gap) before Lun
 record the **anchor** and **tier** her report used (printed by the apply command, and readable
 again any time via `npm run db:qa:verify`) in both her report and design-reviewer's — a report
 without them cannot be reproduced bit-for-bit later, since the default anchor slides forward every
-Sydney week.
+Sydney week. **Fixture passes do not upload media.** Renditions cannot generate locally, so an upload
+only produces rendition DLQ noise. Some of that noise lands after the asset is gone, and teardown
+cannot reach it (`docs/Guides/Local-QA-Fixtures.md`, "What teardown cannot remove").
 
 ## 3. CLI mechanics
 
