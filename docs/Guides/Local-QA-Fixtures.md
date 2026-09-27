@@ -43,9 +43,9 @@ hand list: every column is compared except `VERIFY_EXCLUDED_COLUMNS` in `qa-seed
 today; each entry must carry a reason). A live column the generator's fingerprint has no expected
 value for fails `verify` naming `table.column`, and
 `test/qa-seed-verify-columns.guard.test.ts` fails in CI for the same case — so a migration that adds a
-column to a fixture-written table cannot silently go uncompared. Subtasks, deadline occurrences and
-memberships are scoped by fixture `project_id`, so a row the app *added* to a fixture project fails
-too. Comparison is exact and type-aware: NULL is not `''`, and `1` is not `"1"`. The global
+column to a fixture-written table cannot silently go uncompared. Subtasks, collections, deadline
+occurrences and memberships are scoped by fixture `project_id`, so a row the app *added* to a fixture
+project (a checklist item, a floorplan collection, a reminder, an editor) fails too. Comparison is exact and type-aware: NULL is not `''`, and `1` is not `"1"`. The global
 `PRAGMA foreign_key_check` is printed as a **warning**, not a failure: it covers every row in the
 local database, and a violation in unrelated local data says nothing about the fixture.
 `projects.board_position` is compared against the value apply actually wrote, which apply records in

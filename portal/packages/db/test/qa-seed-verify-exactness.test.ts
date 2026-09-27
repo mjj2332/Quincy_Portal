@@ -147,6 +147,16 @@ describe("fix item 4 (Sol round 3, finding 3): verify derives its column set fro
     db.close();
   });
 
+  it("a collection the app added to a fixture project fails verify, naming collections", () => {
+    const { db, executor } = appliedDatabase([]);
+    // `collections_project_kind` is UNIQUE and every fixture project carries only `raw`, so the
+    // app-added collection is a different real kind.
+    db.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES ('3a3a3a3a-3a3a-4a3a-8a3a-3a3a3a3a3a3a', ?, 'floorplan', 'empty', 0, 0, 0);")
+      .run(firstFixtureProjectId(db));
+    expect(verifyError(executor)).toMatch(/collections: 1 unexpected id\(s\) found, e\.g\. 3a3a3a3a-3a3a-4a3a-8a3a-3a3a3a3a3a3a/);
+    db.close();
+  });
+
   it("a pre-existing FK violation in unrelated local data is a warning, not a fixture mismatch: an untouched fixture still verifies", () => {
     const { db, executor } = appliedDatabase([]);
     db.exec("PRAGMA foreign_keys = OFF;");

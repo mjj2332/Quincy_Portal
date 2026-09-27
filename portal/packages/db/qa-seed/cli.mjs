@@ -439,12 +439,14 @@ export function apply(executor, options) {
 /** `scope: "registry"` diffs the rows whose ids apply registered. `scope: "fixture-projects"` diffs
  * EVERY row of that table on a fixture project, so a row the app added after apply is reported as
  * unexpected rather than silently ignored for lacking a registry row — memberships (Sol round 2,
- * finding 6), and subtasks and deadline occurrences (Sol round 3, finding 3). Exported for
+ * finding 6), subtasks and deadline occurrences (Sol round 3, finding 3), and collections (a
+ * collection the app adds to a fixture project, e.g. a floorplan, is a fixture mismatch too).
+ * Only `projects` stays registry-scoped: it has no `project_id` to scope by. Exported for
  * `qa-seed-verify-columns.guard.test.ts`. */
 export const VERIFY_DIFF_TABLES = [
   { label: "projects", table: "projects", registryKind: "project", manifestKey: "projects", scope: "registry" },
   { label: "project_subtasks", table: "project_subtasks", registryKind: "subtask", manifestKey: "subtasks", scope: "fixture-projects" },
-  { label: "collections", table: "collections", registryKind: "collection", manifestKey: "collections", scope: "registry" },
+  { label: "collections", table: "collections", registryKind: "collection", manifestKey: "collections", scope: "fixture-projects" },
   { label: "project_deadline_occurrences", table: "project_deadline_occurrences", registryKind: "deadline_occurrence", manifestKey: "deadlineOccurrences", scope: "fixture-projects" },
   { label: "project_members", table: "project_members", registryKind: "member", manifestKey: "members", scope: "fixture-projects" },
 ];
