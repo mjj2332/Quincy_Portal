@@ -223,12 +223,20 @@ const CRITICAL_ATTENTION_REASONS = new Set<ProductionGanttAttentionReason>([
   "resolution_failed",
 ]);
 
-function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
+function GanttRowAttentionBadge({
+  reason,
+  shrinkable = false,
+}: {
+  reason: ProductionGanttAttentionReason;
+  shrinkable?: boolean;
+}) {
   const critical = CRITICAL_ATTENTION_REASONS.has(reason);
   return (
     <span
+      title={shrinkable ? ATTENTION_TEXT[reason] : undefined}
       className={cn(
-        "shrink-0 truncate text-[10px] uppercase tracking-[0.04em]",
+        shrinkable ? "min-w-0 shrink" : "shrink-0",
+        "truncate text-[10px] uppercase tracking-[0.04em]",
         critical ? "text-signal-critical-text" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
@@ -291,8 +299,12 @@ function GanttResourceLabel({
   const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span className="truncate">{resource.title}</span>
-      {attention && <GanttRowAttentionBadge reason={attention.reason} />}
+      {/* With a Deadline action beside it, badge + button + avatar outgrow the tree column and
+          the title (the only shrinkable item) collapsed to nothing — the #221 browser pass saw
+          rows reading "Deadline not set · Set deadline" with no street. Keep the street a floor
+          and let the badge (which the button restates) truncate instead. */}
+      <span className={cn("truncate", deadlineAction && "min-w-[6rem]")}>{resource.title}</span>
+      {attention && <GanttRowAttentionBadge reason={attention.reason} shrinkable={deadlineAction !== undefined} />}
       {deadlineAction && (
         <Button
           type="button"

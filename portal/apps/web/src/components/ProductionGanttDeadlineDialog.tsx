@@ -75,7 +75,10 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve }: Produc
         if (!next) onResolve(false);
       }}
     >
-      <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} className="data-[size=default]:sm:max-w-md">
+      {/* Quincy redefines `--container-sm/md` (640/860px, tokens/spacing.css), so the vendor's
+          `sm:max-w-sm` and Tailwind's `max-w-md` are both far wider than their stock sizes. Use
+          `Modal`'s own "wide" rung (560px) so this sits on the Portal's dialog ladder. */}
+      <AlertDialogContent data-testid="gantt-deadline-confirm" initialFocus={cancelRef} className="data-[size=default]:sm:max-w-[560px]">
         <AlertDialogHeader>
           <AlertDialogTitle>{verb} Deadline</AlertDialogTitle>
           <AlertDialogDescription>{verb} the Deadline for {state.street}?</AlertDialogDescription>
