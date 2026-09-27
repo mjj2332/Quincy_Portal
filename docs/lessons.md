@@ -3911,3 +3911,24 @@ any other edit wiped it.
 - **happy-dom drives the whole flow, with two gaps named in the tests:** it does not turn Enter on a
   `<button>` into a `click` (a browser does), and Base UI's ScrollArea needs an
   `Element.prototype.getAnimations` stub.
+
+## `overflow: hidden` is still a scroll container; a registry `data-horizontal:` variant matches nothing under Base UI (2026-09-28)
+
+The Gantt's `gantt-view` wrapper measured 145–445px wider in `scrollWidth` than its own width, and
+`bar.scrollIntoView({inline})` slid the whole view sideways — resource column cropped to
+"esources", stuck until reload. Two separate facts, both worth keeping:
+
+- **`overflow-hidden` clips but still scrolls programmatically.** `scrollIntoView`, find-in-page and
+  focus can all move it. Use `overflow-clip` for a box that must never scroll, after checking that no
+  `position: sticky` descendant anchors to it (sticky binds to the nearest scroll container).
+- **A registry class like `data-horizontal:flex-col` is dead under Base UI 1.7.0**, which emits
+  `data-orientation="horizontal|vertical"`, never a bare `data-horizontal`. `reui/tabs.tsx` hit this
+  in #202; `reui/scroll-area.tsx` shipped it too, so the horizontal thumb's `flex-1` beat its inline
+  width, filled the track, and was translated past the pane (the scrollbar is positioned against
+  the ScrollArea root, outside the viewport's clip, so the spill reached `gantt-view`). Vertical
+  scrollbars were 2px of padding with a 0-wide thumb — invisible. When vendoring a base-nova item,
+  grep it for `data-horizontal:` / `data-vertical:` and rewrite them as `data-[orientation=…]:`.
+  `reui/separator.tsx` still has them.
+- **Finding what overflows:** a bounding-rect scan misses it when the culprit is transformed or
+  sits inside another scroll container. Hiding each child in turn (`display: none`) and re-reading
+  the ancestor's `scrollWidth` finds it in one pass.
