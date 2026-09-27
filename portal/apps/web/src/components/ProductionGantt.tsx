@@ -493,6 +493,14 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const panelFilters = useMemo(() => ganttPanelFiltersFor(filters), [filters]);
   const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
   const handlePanelChange = useCallback((next: ProductionCalendarFilters) => onFiltersChange(ganttFiltersFromPanel(next)), [onFiltersChange]);
+  // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
+  // focus to <body>. Focus moves to the always-mounted filter panel's heading instead — the panel
+  // the empty state pointed the user to.
+  const filtersHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const clearFiltersFromEmptyState = useCallback(() => {
+    onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
+    filtersHeadingRef.current?.focus();
+  }, [onFiltersChange]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
 
@@ -918,7 +926,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             <EmptyState role="status" data-testid="production-gantt-empty" title="No projects match these filters.">
               Change or clear the filters above to see more projects.
               <div>
-                <button type="button" className={buttonClasses("text", { className: "mt-[var(--space-4)]" })} onClick={() => onFiltersChange(DEFAULT_GANTT_FACET_FILTERS)}>
+                <button type="button" className={buttonClasses("text", { className: "mt-[var(--space-4)]" })} onClick={clearFiltersFromEmptyState}>
                   Clear filters
                 </button>
               </div>
@@ -959,7 +967,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt-root">
-      <ProductionCalendarFiltersPanel surface="gantt" filters={panelFilters} facetPeople={[]} stages={stageOptions} onChange={handlePanelChange} />
+      <ProductionCalendarFiltersPanel surface="gantt" headingRef={filtersHeadingRef} filters={panelFilters} facetPeople={[]} stages={stageOptions} onChange={handlePanelChange} />
       <GanttLegend entries={legendEntries} />
       {body}
     </div>

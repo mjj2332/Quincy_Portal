@@ -364,6 +364,24 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       expect(emptyState()).toBeNull();
     });
 
+    it("moves focus to the Gantt filters heading when the empty state's Clear filters unmounts with it", async () => {
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") ? emptyGanttResponse() : ganttResponse()));
+      await render(deliveredStageOnly);
+      const button = clearButton(emptyState()!)!;
+      button.focus();
+      expect(document.activeElement).toBe(button);
+
+      await act(async () => { button.click(); });
+      await settle();
+      expect(emptyState()).toBeNull();
+      const heading = panel(host).querySelector("h2");
+      expect(heading?.textContent).toBe("Gantt filters");
+      expect(document.activeElement).toBe(heading);
+      // Programmatically focusable only: out of the Tab order.
+      expect(heading!.tabIndex).toBe(-1);
+      expect(heading!.getAttribute("tabindex")).toBe("-1");
+    });
+
     it("says there are no projects to schedule, with no Clear button, when the filters are default", async () => {
       apiGetMock.mockImplementation(() => Promise.resolve(emptyGanttResponse()));
       await render();

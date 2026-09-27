@@ -156,6 +156,13 @@ describe("ProductionCalendarFilters", () => {
     expect(host.querySelectorAll("input[type=checkbox]")).toHaveLength(2 + 3 + 3 + 4);
   });
 
+  it("leaves the Calendar surface heading out of focus management: no tabindex (#255)", () => {
+    renderPanel();
+    const heading = host.querySelector("h2");
+    expect(heading?.textContent).toBe("Calendar filters");
+    expect(heading?.hasAttribute("tabindex")).toBe(false);
+  });
+
   describe("Gantt surface (#255)", () => {
     it("renders only Stages, Show completed checklist items and Show delivered projects, titled Gantt filters", () => {
       renderPanel(defaults, { surface: "gantt" });

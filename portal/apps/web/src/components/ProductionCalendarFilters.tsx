@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { buttonClasses } from "./quincy/Button";
 import { Checkbox } from "./quincy/Checkbox";
 import { COARSE_TAP_TARGET } from "./production-calendar-classes";
@@ -24,6 +25,13 @@ export type ProductionCalendarFiltersPanelProps = {
    * Layers, Editors/Unassigned, "Overdue only" and "My tasks". Defaults to `"calendar"`, unchanged.
    */
   surface?: "calendar" | "gantt";
+  /**
+   * #255: when passed, the panel heading becomes programmatically focusable (`tabIndex={-1}`, out
+   * of the Tab order) and is attached to this ref, so a caller can move focus to it. Only the Gantt
+   * passes it — its empty state's Clear filters button unmounts on click and hands focus here.
+   * Omitted (the Calendar), the heading carries no tabindex.
+   */
+  headingRef?: RefObject<HTMLHeadingElement | null>;
 };
 
 const LAYER_LABELS: Record<ProductionCalendarLayer, string> = {
@@ -92,6 +100,7 @@ export function ProductionCalendarFilters({
   disabled = false,
   onChange,
   surface = "calendar",
+  headingRef,
 }: ProductionCalendarFiltersPanelProps) {
   const isGantt = surface === "gantt";
   const title = isGantt ? "Gantt filters" : "Calendar filters";
@@ -144,7 +153,7 @@ export function ProductionCalendarFilters({
       <div className={FILTERS_HEAD}>
         <div>
           <div className="ey">Refine the desk</div>
-          <h2 className="mt-[4px] mb-0 [font:var(--type-h3)] tracking-[-.02em]">{title}</h2>
+          <h2 ref={headingRef} tabIndex={headingRef ? -1 : undefined} className="mt-[4px] mb-0 [font:var(--type-h3)] tracking-[-.02em]">{title}</h2>
         </div>
         <button className={buttonClasses("text", { className: FILTERS_CLEAR })} type="button" disabled={disabled} onClick={clearFilters}>Clear filters</button>
       </div>
