@@ -898,12 +898,16 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
     const { proposal } = input;
     // #221 design fixes: a grip drag focuses nothing (its pointerdown prevents default) and the
-    // dialog has no Trigger, so base-ui would return focus to the page on close. Opened from the
-    // page itself, hand focus to this project's bar instead; otherwise keep base-ui's default
-    // (null) — e.g. the keyboard Adjust bar or the Set/Fix deadline flow already owns focus.
-    const fromBody = document.activeElement === document.body || document.activeElement === null;
+    // dialog has no Trigger, so base-ui would return focus to whatever held it before — the page,
+    // or (browser pass E) an unrelated subtask bar left focused by earlier keyboard work. Opened
+    // from the page or from any Gantt bar (a grip drag, or this project's keyboard Adjust), hand
+    // focus to this project's bar, re-queried on close because a saved Deadline remounts it.
+    // Otherwise keep base-ui's default (null): the Set/Fix deadline flow owns focus.
+    const opener = document.activeElement;
+    const fromGantt =
+      opener === null || opener === document.body || (opener instanceof HTMLElement && opener.closest('[data-slot="gantt-bar"]') !== null);
     const finalFocus = () =>
-      fromBody
+      fromGantt
         ? (containerRef.current?.querySelector<HTMLElement>(`[data-gantt-resource="project:${CSS.escape(proposal.projectId)}"] [data-slot="gantt-bar"]`) ?? null)
         : null;
     const project = projectByIdRef.current.get(proposal.projectId);

@@ -882,6 +882,23 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     expect(document.activeElement).toBe(projectBar());
   });
 
+  // Browser pass E (#221): focus still sat on a subtask bar from earlier keyboard work when the
+  // Deadline grip was dragged (a grip pointerdown focuses nothing), and Cancel sent focus back to
+  // that unrelated subtask bar instead of the project whose Deadline the dialog was about.
+  it("3b2. a grip resize while another bar holds focus then Cancel returns focus to the project bar", async () => {
+    await render();
+    const other = findBar(RANGE_TITLE);
+    await act(async () => { other.focus(); });
+    expect(document.activeElement).toBe(other);
+    await resizeProjectEnd(450, 68);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    await click(byTestId("gantt-deadline-confirm-cancel")!);
+    await flush(4);
+    expect(deadlineDialog()).toBeNull();
+    expect(document.activeElement).toBe(projectBar());
+  });
+
   it("3c. a grip resize then Escape returns focus to the project bar", async () => {
     await render();
     await resizeProjectEnd(450, 66);
