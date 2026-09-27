@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   checklistScheduleToDto,
   normalizeChecklistSchedule,
   previewProjectDeadlineReminderConsequences,
+  type ProjectDeadlineReminderConsequence,
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
@@ -17,12 +19,13 @@ import {
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type ProjectDeadlineDisambiguation,
+  type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
   type SaveChecklistScheduleRequest,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
-import type { SaveResponse } from "./scheduling-types";
+import type { ChecklistMutationResult, SaveResponse } from "./scheduling-types";
 import { ApiError, apiPatch, apiPut } from "./api";
 import { confirm, confirmStore } from "./confirm";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "./project-data";
@@ -49,8 +52,11 @@ import {
   responseEvent,
   timingFromChecklistSchedule,
   type ChecklistSource,
+  type ScheduleBounds,
   type SchedulingProposal,
+  type SchedulingWarning,
 } from "./scheduling-policy";
+import { applyUndo, type UndoOutcome, type UndoTicket } from "./scheduling-undo";
 import {
   applyOptimisticOverlay,
   beginCalendarInteraction,
@@ -135,6 +141,9 @@ export type ChecklistProposal = {
    * `undefined`, so this changes no existing behaviour.
    */
   edge?: "start" | "end";
+  /** #221: the plan's bounds warnings (`planSchedulingProposal`). Only set when non-empty, and only
+   * the Gantt supplies bounds (`SchedulingPort.boundsFor`) — always absent for the Calendar. */
+  warnings?: SchedulingWarning[];
 };
 export type ChecklistFoldState = {
   proposal: ChecklistProposal;
@@ -175,8 +184,106 @@ export type SchedulingCommandsInput = {
   onAccessLoss?: () => void;
 };
 
-export type SchedulingCommands = {
-  acceptedResponse: ProductionCalendarRangeResponse | null;
+/**
+ * #221: every data-access decision the scheduling controller makes, behind one port, so the same
+ * orchestration (lock, token fencing, settle, access loss, fold/gap, retainDraft, unmount
+ * withdrawal, announcements) drives both the Calendar and the Gantt. The port object may change
+ * identity every render — the controller reads it through a ref. Its only reactive members are
+ * `latest`/`latestStamp` (accept effect) and `latestError` (access-loss effect).
+ */
+export type SchedulingPort<TBaseline> = {
+  /** Accept-eligible data (the Calendar also requires the server-echoed route date to match). */
+  latest: TBaseline | undefined;
+  /** Raw latest data with NO eligibility check — `acceptForInteraction`'s pre-accept fallback. */
+  latestUnchecked: TBaseline | undefined;
+  latestStamp: number;
+  latestError: unknown;
+  refetch: () => Promise<{ data?: TBaseline; error?: unknown; isError: boolean }>;
+  clone: (baseline: TBaseline) => TBaseline;
+  /** Heals client-only needs-attention markers off an authoritative baseline; returns `current`
+   * itself when nothing changed. */
+  healNeedsAttention: (current: Set<string>, baseline: TBaseline) => Set<string>;
+  snapshotFilters: () => ProductionCalendarFilters;
+  findUnscheduledEntry: (baseline: TBaseline, id: string | undefined, kind: string | undefined) => CalendarUnscheduledEntryDto | undefined;
+  findChecklist: (baseline: TBaseline, id: string) => ChecklistSource | undefined;
+  findDeadline: (baseline: TBaseline, eventId: string) => ProjectDeadlineCalendarEventDto | undefined;
+  findUnscheduledDeadline: (baseline: TBaseline, entryId: string) => ProjectCalendarUnscheduledEntryDto | undefined;
+  adoptChecklist: (baseline: TBaseline, source: ChecklistSource, result: ChecklistMutationResult) => TBaseline;
+  adoptDeadline: (baseline: TBaseline, event: ProjectDeadlineCalendarEventDto, current: SaveResponse["current"]) => TBaseline;
+  purge: (queryClient: QueryClient) => void;
+  invalidation: (kind: "checklist" | "deadline", projectId: string) => Parameters<typeof invalidateProjectSurfaces>[1];
+  defaultPlacementDate: () => string;
+  settleFailedReason: string;
+  boundsFor?: (projectId: string) => ScheduleBounds;
+  /**
+   * #221 PR C: a surface-owned Deadline confirmation. When present, `runConfirmedProposal` awaits
+   * this instead of the shared `confirm()` modal; absent (the Calendar), behaviour is unchanged.
+   * `signal` aborts when the controller withdraws the confirmation (unmount, reset, access loss) —
+   * the surface must close its dialog and resolve `false`.
+   */
+  confirmDeadline?: (input: SchedulingDeadlineConfirmInput) => Promise<boolean>;
+  /**
+   * #221: the advisory warning a COMMITTED checklist save carries, as one sentence (e.g. "Ends
+   * after the project deadline."), or `null`. The controller appends it to its own "saved"
+   * announcement (` Warning: <text>`, the vendor's `dropWarningSuffix` wording) and hands it to
+   * `onCommitted` as `warningText`. Absent (the Calendar): the announcement is unchanged.
+   */
+  committedWarningText?: (projectId: string, result: ChecklistMutationResult) => string | null;
+};
+
+/** #221 PR C: the public shape of a Deadline awaiting confirmation (`SchedulingPort.confirmDeadline`). */
+export type SchedulingDeadlineConfirmInput = {
+  proposal: {
+    street: string;
+    projectId: string;
+    oldCivil: string;
+    newCivil: string;
+    /** The resolved new instant; `null` only for the defensive all-day shape. */
+    newInstant: string | null;
+    /** `true` when placing a Deadline that was not set (the dialog says "Schedule"). */
+    scheduling: boolean;
+  };
+  consequences: ProjectDeadlineReminderConsequence[];
+  signal: AbortSignal;
+};
+
+/** #221: fired once per successful NON-noop mutation, right after the response is decoded and
+ * before invalidation — the Gantt builds its Undo ticket from it. */
+export type SchedulingCommittedInfo =
+  | {
+      kind: "checklist";
+      projectId: string;
+      before: ChecklistSource;
+      checklistResult: ChecklistMutationResult;
+      warnings: SchedulingWarning[];
+      /** The port's `committedWarningText` — the same text the live announcement carries. */
+      warningText: string | null;
+    }
+  | {
+      kind: "deadline";
+      projectId: string;
+      before: ProjectDeadlineCalendarEventDto;
+      deadlineResult: SaveResponse;
+      warnings: SchedulingWarning[];
+    };
+
+export type SchedulingControllerInput<TBaseline> = {
+  identity: DashboardIdentity;
+  resetKey: string;
+  port: SchedulingPort<TBaseline>;
+  onAcceptGateChange?: (blocked: boolean) => void;
+  onSettleStateChange?: (state: CalendarSettleState) => void;
+  onAccessLoss?: () => void;
+  onCommitted?: (info: SchedulingCommittedInfo) => void;
+  /** After a successful Undo, before its refetch: lets a surface patch rows the refetch won't
+   * return (the Gantt's continuation pages). Checklist Undo carries the decoded restored row. */
+  onUndone?: (info: { kind: "checklist" | "deadline"; projectId: string; checklistResult?: ChecklistMutationResult }) => void;
+};
+
+export type RunUndoOutcome = UndoOutcome | { ok: false; reason: "busy" };
+
+export type SchedulingController<TBaseline> = {
+  acceptedResponse: TBaseline | null;
   interactionBlocked: boolean;
   optimisticOverlay: CalendarOptimisticOverlay;
   settle: CalendarSettleState;
@@ -201,7 +308,11 @@ export type SchedulingCommands = {
    * `submitChecklistProposal`/`submitDeadlineProposal` adapters call too — fix round 2 item 3: one
    * path, not two.
    */
-  submitProposal: (proposal: SchedulingProposal) => SubmitProposalOutcome;
+  submitProposal: (proposal: SchedulingProposal, options?: { revertable?: CalendarRevertable }) => SubmitProposalOutcome;
+  /** #221: applies an Undo ticket (a compensating versioned mutation, `applyUndo`) under the same
+   * command lock/accept gate/token fence as a forward edit. "busy" when `canStartCommand()` is
+   * false; never retried on conflict. */
+  runUndo: (ticket: UndoTicket) => Promise<RunUndoOutcome>;
   openMoveDialog: (event: ProjectDeadlineCalendarEventDto) => void;
   openUnscheduledProjectDialog: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: InitialChecklistScheduleInput) => void;
@@ -232,6 +343,8 @@ export type SchedulingCommands = {
   focusDescriptor: (descriptor: CalendarFocusDescriptor) => void;
 };
 
+export type SchedulingCommands = SchedulingController<ProductionCalendarRangeResponse>;
+
 /**
  * §216 fix round 2 item 2: on a fold/gap mapping failure, the dialog needs the civil time that
  * was actually ATTEMPTED — the shared mapper's own error object never carries it (only
@@ -248,11 +361,87 @@ function attemptedDeadlineLocalCivil(proposal: Extract<SchedulingProposal, { ent
   return proposal.target.targetCivilMinute ?? event.deadlineLocalCivil;
 }
 
+function proposalProjectId(proposal: SchedulingProposal): string {
+  if (proposal.entity === "checklist") return proposal.kind === "place" ? proposal.entry.project.id : proposal.source.project.id;
+  return proposal.kind === "place" ? proposal.entry.project.id : proposal.event.project.id;
+}
+
+/**
+ * #221: the Calendar's `SchedulingPort` — every Calendar-data access the controller used to make
+ * inline, moved here verbatim. Not memoised: the controller reads the port through a ref.
+ */
+export function useCalendarSchedulingPort(calendar: DashboardCalendarState, query: ReturnType<typeof useProductionCalendarRange>, principalId: string): SchedulingPort<ProductionCalendarRangeResponse> {
+  return {
+    // A late observer result can outlive a route-key change in a query client;
+    // the server echoes the route date, so never accept data for another range.
+    latest: query.data && query.data.range.date === calendar.date ? query.data : undefined,
+    latestUnchecked: query.data,
+    latestStamp: query.dataUpdatedAt,
+    latestError: query.error,
+    refetch: async () => {
+      const result = await query.refetch();
+      return { data: result.data, error: result.error, isError: result.isError };
+    },
+    clone: cloneResponse,
+    healNeedsAttention: (current, copy) => {
+      const invalidIds = new Set(copy.unscheduled.filter((entry) => entry.kind === "checklist" && entry.reason === "schedule_needs_attention" && entry.attentionReason === "invalid").map((entry) => entry.id));
+      const presentIds = new Set([
+        ...copy.events.filter((event) => event.kind === "checklist").map((event) => event.id),
+        ...copy.unscheduled.filter((entry) => entry.kind === "checklist").map((entry) => entry.id),
+      ]);
+      let changed = false;
+      const next = new Set(current);
+      for (const id of current) {
+        if (presentIds.has(id) && !invalidIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    },
+    snapshotFilters: () => cloneFilters(productionCalendarFiltersFor(calendar)),
+    findUnscheduledEntry: (baseline, id, kind) => baseline.unscheduled.find((candidate) => candidate.id === id && (
+      kind === "project" ? candidate.kind === "project_deadline" : kind === "checklist" && candidate.kind === "checklist"
+    )),
+    findChecklist: checklistSourceFromResponse,
+    findDeadline: responseEvent,
+    findUnscheduledDeadline: (baseline, entryId) => baseline.unscheduled.find((entry): entry is ProjectCalendarUnscheduledEntryDto => entry.id === entryId && entry.kind === "project_deadline"),
+    adoptChecklist: adoptChecklistResult,
+    adoptDeadline: (baseline, event, current) => ({ ...baseline, events: baseline.events.map((candidate) => candidate.id === event.id && candidate.kind === "project_deadline" ? canonicalEventFromSchedule(candidate, current) : candidate) }),
+    purge: (queryClient) => {
+      removeProductionCalendarQueries(queryClient, principalId);
+      void queryClient.cancelQueries({ queryKey: ["production-calendar", principalId] });
+    },
+    // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar"
+    // suppresses this tab's own refetch; refetchAuthoritative is the single settle refetch).
+    invalidation: (kind, projectId) => kind === "deadline"
+      ? { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true, producer: "calendar" }
+      : { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, gantt: true, producer: "calendar" },
+    defaultPlacementDate: () => calendar.date,
+    settleFailedReason: "The latest Calendar could not be loaded.",
+  };
+}
+
 export function useSchedulingCommands(input: SchedulingCommandsInput): SchedulingCommands {
   const { identity, calendar, resetKey, query, onAcceptGateChange, onSettleStateChange, onAccessLoss } = input;
-  const queryClient = useOptionalProjectQueryClient();
+  const port = useCalendarSchedulingPort(calendar, query, identity.principalId);
+  return useSchedulingController({ identity, resetKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss });
+}
 
-  const [acceptedResponse, setAcceptedResponse] = useState<ProductionCalendarRangeResponse | null>(null);
+/**
+ * #221: the §216 controller, generic over its data source. Every Calendar-data access now goes
+ * through `port` (read via `portRef`, refreshed every render), so no callback's dep list churns on
+ * port identity. `useSchedulingCommands` is the Calendar's thin wrapper over this.
+ */
+export function useSchedulingController<TBaseline>(input: SchedulingControllerInput<TBaseline>): SchedulingController<TBaseline> {
+  const { identity, resetKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted, onUndone } = input;
+  const queryClient = useOptionalProjectQueryClient();
+  // Refs updated every render: callbacks read the LATEST port at call time.
+  const portRef = useRef(port);
+  portRef.current = port;
+  const { latest, latestStamp, latestError } = port;
+
+  const [acceptedResponse, setAcceptedResponse] = useState<TBaseline | null>(null);
   const [calendarInteractionBlocked, setCalendarInteractionBlocked] = useState(false);
   const [optimisticOverlay, setOptimisticOverlay] = useState<CalendarOptimisticOverlay>(null);
   const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
@@ -264,7 +453,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
   const [checklistNeedsAttention, setChecklistNeedsAttention] = useState<Set<string>>(() => new Set());
   const [announcement, setAnnouncement] = useState("");
   const [calendarAccessLost, setCalendarAccessLost] = useState(false);
-  const acceptedResponseRef = useRef<ProductionCalendarRangeResponse | null>(null);
+  const acceptedResponseRef = useRef<TBaseline | null>(null);
   const snapshotRef = useRef<CalendarAcceptedSnapshot | null>(null);
   const acceptGateRef = useRef(false);
   const settleRef = useRef<CalendarSettleState>({ pending: false, recoveryReason: null });
@@ -277,9 +466,13 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
   // (the `move-to-control.tsx` pattern), so the LATEST callbacks are the ones cleanup reaches for.
   const onAcceptGateChangeRef = useRef(onAcceptGateChange);
   const onSettleStateChangeRef = useRef(onSettleStateChange);
+  const onCommittedRef = useRef(onCommitted);
+  const onUndoneRef = useRef(onUndone);
   useEffect(() => {
     onAcceptGateChangeRef.current = onAcceptGateChange;
     onSettleStateChangeRef.current = onSettleStateChange;
+    onCommittedRef.current = onCommitted;
+    onUndoneRef.current = onUndone;
   });
   // The confirm this hook currently has open, so unmount can withdraw exactly that one
   // request rather than leaving it stranded over whatever view replaced this component.
@@ -312,9 +505,10 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     setCalendarSettle(next);
   }, []);
 
-  const acceptRange = useCallback((response: ProductionCalendarRangeResponse, authoritative = true) => {
+  const acceptRange = useCallback((response: TBaseline, authoritative = true) => {
     if (accessLostRef.current) return;
-    const copy = cloneResponse(response);
+    const port = portRef.current;
+    const copy = port.clone(response);
     acceptedResponseRef.current = copy;
     setAcceptedResponse(copy);
     // Needs-attention / movement-disabled markers are client-only and are NOT
@@ -324,22 +518,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     // for an unrelated item still present in the stale baseline.
     if (!authoritative) return;
     if (settleRef.current.pending) setSettle({ type: "refetch-succeeded" });
-    setChecklistNeedsAttention((current) => {
-      const invalidIds = new Set(copy.unscheduled.filter((entry) => entry.kind === "checklist" && entry.reason === "schedule_needs_attention" && entry.attentionReason === "invalid").map((entry) => entry.id));
-      const presentIds = new Set([
-        ...copy.events.filter((event) => event.kind === "checklist").map((event) => event.id),
-        ...copy.unscheduled.filter((entry) => entry.kind === "checklist").map((entry) => entry.id),
-      ]);
-      let changed = false;
-      const next = new Set(current);
-      for (const id of current) {
-        if (presentIds.has(id) && !invalidIds.has(id)) {
-          next.delete(id);
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
+    setChecklistNeedsAttention((current) => port.healNeedsAttention(current, copy));
     setDeadlineMovementDisabled(false);
     setChecklistRangeSchedulingDisabled(false);
   }, [setSettle]);
@@ -367,20 +546,23 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     // access purge; the token bump above still fences every older async path.
     accessLostRef.current = false;
     setCalendarAccessLost(false);
+    // #221 PR C: a port-owned confirmation (`confirmDeadline`) never sees `confirmStore` — withdraw
+    // it through its signal. For the shared `confirm()` this is the same outcome (resolves false).
+    openConfirmControllerRef.current?.abort();
+    openConfirmControllerRef.current = null;
     if (confirmStore.getSnapshot()) confirmStore.resolve(false);
   }, [resetKey, identity.principalId, identity.role, identity.authorizationEpoch, setAcceptGate, setOverlay, setSettle]);
 
   useEffect(() => {
-    if (!query.data) return;
-    // A late observer result can outlive a route-key change in a query client;
-    // the server echoes the route date, so never accept data for another range.
-    if (query.data.range.date !== calendar.date) return;
+    // `latest` is already accept-eligible — the port owns the eligibility check (the Calendar's
+    // route-date echo check lives in `useCalendarSchedulingPort`).
+    if (!latest) return;
     if (acceptGateRef.current) {
       queuedRefetchRef.current = true;
       return;
     }
-    acceptRange(query.data);
-  }, [acceptRange, query.data, query.dataUpdatedAt]);
+    acceptRange(latest);
+  }, [acceptRange, latest, latestStamp]);
 
   const announceLifecycle = useCallback((kind: Parameters<typeof calendarAnnouncement>[0], context: Parameters<typeof calendarAnnouncement>[1]) => {
     if (accessLostRef.current) return;
@@ -424,20 +606,19 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     setChecklistFold(null);
     setSettle({ type: "terminal" });
     queuedRefetchRef.current = false;
-    if (queryClient) {
-      removeProductionCalendarQueries(queryClient, identity.principalId);
-      void queryClient.cancelQueries({ queryKey: ["production-calendar", identity.principalId] });
-    }
+    if (queryClient) portRef.current.purge(queryClient);
+    openConfirmControllerRef.current?.abort();
+    openConfirmControllerRef.current = null;
     if (confirmStore.getSnapshot()) confirmStore.resolve(false);
     setAnnouncement("");
     onAccessLoss?.();
-  }, [identity.principalId, onAccessLoss, queryClient, setAcceptGate, setOverlay, setSettle]);
+  }, [onAccessLoss, queryClient, setAcceptGate, setOverlay, setSettle]);
 
   useEffect(() => {
     if (accessLostRef.current) return;
-    const err = query.error;
+    const err = latestError;
     if (err instanceof ApiError && (err.status === 401 || err.status === 403)) handleAccessLoss();
-  }, [query.error, handleAccessLoss]);
+  }, [latestError, handleAccessLoss]);
 
   // §216 step 4: the four external-facing FullCalendar handlers that used to set
   // `commandLockRef.current.active = true` immediately after every successful accept now get
@@ -445,12 +626,13 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
   // so folding it in is behaviour-preserving and lets `commandLockRef` stay hook-private.
   const acceptForInteraction = useCallback(function <TEvent extends CalendarInteractionSource>(event: TEvent, focus: CalendarFocusDescriptor): CalendarAcceptedSnapshot<TEvent> | null {
     if (accessLostRef.current) return null;
-    const accepted = acceptedResponseRef.current ?? query.data;
+    const port = portRef.current;
+    const accepted = acceptedResponseRef.current ?? port.latestUnchecked;
     if (!accepted) return null;
     if (!acceptedResponseRef.current) acceptRange(accepted);
     const snapshot = beginCalendarInteraction({
       event,
-      filters: cloneFilters(productionCalendarFiltersFor(calendar)),
+      filters: port.snapshotFilters(),
       principalId: identity.principalId,
       authorizationEpoch: identity.authorizationEpoch,
       focus,
@@ -462,7 +644,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     setAcceptGate(true);
     commandLockRef.current.active = true;
     return snapshot;
-  }, [acceptRange, calendar, identity.authorizationEpoch, identity.principalId, query.data, setAcceptGate]);
+  }, [acceptRange, identity.authorizationEpoch, identity.principalId, setAcceptGate]);
 
   // Combines the two ref-based start-gates every FullCalendar handler used to check directly
   // (`settleRef.current.pending`, `canStartCalendarCommand(commandLockRef.current)`) into one
@@ -470,16 +652,15 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
   const canStartCommand = useCallback((): boolean => !settleRef.current.pending && canStartCalendarCommand(commandLockRef.current), []);
 
   const findUnscheduledEntry = useCallback((id: string | undefined, kind: string | undefined): CalendarUnscheduledEntryDto | undefined => {
-    return acceptedResponseRef.current?.unscheduled.find((candidate) => candidate.id === id && (
-      kind === "project" ? candidate.kind === "project_deadline" : kind === "checklist" && candidate.kind === "checklist"
-    ));
+    const baseline = acceptedResponseRef.current;
+    return baseline ? portRef.current.findUnscheduledEntry(baseline, id, kind) : undefined;
   }, []);
 
-  const refetchAuthoritative = useCallback(async (): Promise<{ ok: boolean; data?: ProductionCalendarRangeResponse }> => {
+  const refetchAuthoritative = useCallback(async (): Promise<{ ok: boolean; data?: TBaseline }> => {
     const token = operationTokenRef.current;
     queuedRefetchRef.current = false;
     try {
-      const result = await query.refetch();
+      const result = await portRef.current.refetch();
       if (token !== operationTokenRef.current || accessLostRef.current) return { ok: false };
       if (result.error instanceof ApiError && (result.error.status === 401 || result.error.status === 403)) {
         if (token !== operationTokenRef.current || accessLostRef.current) return { ok: false };
@@ -498,7 +679,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       }
       return { ok: false };
     }
-  }, [acceptRange, handleAccessLoss, query.refetch]);
+  }, [acceptRange, handleAccessLoss]);
 
   const flushQueuedRefetch = useCallback(() => {
     if (acceptGateRef.current || !queuedRefetchRef.current || accessLostRef.current) return;
@@ -553,7 +734,19 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     const scheduling = Boolean(proposal.unscheduledEntry);
     const confirmController = new AbortController();
     openConfirmControllerRef.current = confirmController;
-    const ok = await confirm({
+    const confirmDeadline = portRef.current.confirmDeadline;
+    const ok = confirmDeadline ? await confirmDeadline({
+      proposal: {
+        street: proposal.event.project.street,
+        projectId: proposal.event.project.id,
+        oldCivil: proposal.event.deadlineLocalCivil,
+        newCivil: proposal.localCivil,
+        newInstant: proposal.timing.allDay ? null : proposal.timing.start,
+        scheduling,
+      },
+      consequences,
+      signal: confirmController.signal,
+    }) : await confirm({
       title: scheduling ? "Schedule Deadline" : "Move Deadline",
       message: scheduling
         ? `Schedule the Deadline for ${proposal.event.project.street}?`
@@ -581,7 +774,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       if (!response.changed && currentMatchesSource(proposal.event, response.current)) {
         const baseline = acceptedResponseRef.current;
-        if (baseline) acceptRange({ ...baseline, events: baseline.events.map((event) => event.id === proposal.event.id && event.kind === "project_deadline" ? canonicalEventFromSchedule(event, response.current) : event) }, false);
+        if (baseline) acceptRange(portRef.current.adoptDeadline(baseline, proposal.event, response.current), false);
         setOverlay(null);
         commandLockRef.current.active = false;
         snapshotRef.current = null;
@@ -591,14 +784,15 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
         return;
       }
 
+      onCommittedRef.current?.({ kind: "deadline", projectId: proposal.event.project.id, before: proposal.event, deadlineResult: response, warnings: [] });
       setAcceptGate(false);
       setSettle({ type: "winner" });
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar"
-      // suppresses this tab's own refetch; refetchAuthoritative below is the single settle refetch).
+      // invalidateProjectSurfaces owns the surface broadcast (the port's `producer` suppresses this
+      // tab's own refetch; refetchAuthoritative below is the single settle refetch).
       if (queryClient) {
-        await invalidateProjectSurfaces(queryClient, { projectId: proposal.event.project.id, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true, producer: "calendar" });
+        await invalidateProjectSurfaces(queryClient, portRef.current.invalidation("deadline", proposal.event.project.id));
       }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
@@ -610,7 +804,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
         setOverlay(null);
         announceLifecycle("saved", { entity: "deadline", street: proposal.event.project.street, newCivil: proposal.localCivil });
       } else if (!accessLostRef.current) {
-        setSettle({ type: "refetch-failed", reason: "The latest Calendar could not be loaded." });
+        setSettle({ type: "refetch-failed", reason: portRef.current.settleFailedReason });
         announceLifecycle("settle-failed", { entity: "deadline" });
       }
     } catch (error) {
@@ -645,13 +839,14 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       const refreshed = action.refetch ? await refetchAuthoritative() : { ok: false };
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       if (action.retainDraft) {
-        const refreshedResponse = refreshed.data ? cloneResponse(refreshed.data) : acceptedResponseRef.current;
-        const refreshedEntry = proposal.unscheduledEntry
-          ? refreshedResponse?.unscheduled.find((entry): entry is ProjectCalendarUnscheduledEntryDto => entry.id === proposal.unscheduledEntry!.id && entry.kind === "project_deadline")
+        const port = portRef.current;
+        const refreshedResponse = refreshed.data ? port.clone(refreshed.data) : acceptedResponseRef.current;
+        const refreshedEntry = proposal.unscheduledEntry && refreshedResponse
+          ? port.findUnscheduledDeadline(refreshedResponse, proposal.unscheduledEntry.id)
           : undefined;
         const latest = refreshedEntry
           ? projectDeadlinePlaceholder(refreshedEntry)
-          : responseEvent(refreshedResponse, proposal.event.id) ?? proposal.event;
+          : (refreshedResponse ? port.findDeadline(refreshedResponse, proposal.event.id) : undefined) ?? proposal.event;
         const nextSnapshot = { ...proposal.snapshot, event: cloneSource(latest) };
         // Rebase the retry onto the authoritative unscheduled entry when the refetch
         // found one — the mapper derives expectedVersion from it, so a stale entry
@@ -689,7 +884,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
    */
   const runDeadlineProposal = useCallback((proposal: Extract<SchedulingProposal, { entity: "project_deadline" }>, snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, event: ProjectDeadlineCalendarEventDto, drop?: CalendarRevertable, attemptedLocalCivil?: string) => {
     const isPlace = proposal.kind === "place";
-    const planned = planSchedulingProposal(proposal);
+    const planned = planSchedulingProposal(proposal, { bounds: portRef.current.boundsFor?.(proposalProjectId(proposal)) ?? null });
     if (!planned.ok) {
       const seedLocalCivil = attemptedLocalCivil ?? attemptedDeadlineLocalCivil(proposal, event);
       if (planned.error.code === "repeated_local_time" && planned.error.choices) {
@@ -782,10 +977,10 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     if (!sourceSnapshot) return;
     const event = projectDeadlinePlaceholder(entry);
     const snapshot = { ...sourceSnapshot, event } as CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>;
-    const initialCivil = `${calendar.date}T17:00`;
+    const initialCivil = `${portRef.current.defaultPlacementDate()}T17:00`;
     announceLifecycle("picked-up", { entity: "deadline", street: entry.project.street, oldCivil: "Not scheduled" });
     setMoveDialog({ event, snapshot, initialCivil, unscheduledEntry: entry });
-  }, [acceptForInteraction, announceLifecycle, calendar.date, calendarInteractionBlocked]);
+  }, [acceptForInteraction, announceLifecycle, calendarInteractionBlocked]);
 
   const handleMoveDialogSubmit = useCallback((localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => {
     const state = moveDialog;
@@ -890,7 +1085,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       const noop = result.scheduleVersion === proposal.source.schedule.version
         && checklistSchedulesEqual(result.schedule, proposal.source.schedule);
       const baseline = acceptedResponseRef.current;
-      if (baseline) acceptRange(adoptChecklistResult(baseline, proposal.source, result), false);
+      if (baseline) acceptRange(portRef.current.adoptChecklist(baseline, proposal.source, result), false);
       setChecklistNeedsAttention((current) => { const next = new Set(current); next.delete(proposal.source.id); return next; });
       if (noop) {
         setOverlay(null);
@@ -904,15 +1099,17 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
         return;
       }
 
+      const warningText = portRef.current.committedWarningText?.(proposal.source.project.id, result) ?? null;
+      onCommittedRef.current?.({ kind: "checklist", projectId: proposal.source.project.id, before: proposal.source, checklistResult: result, warnings: proposal.warnings ?? [], warningText });
       setScheduleEditor(null);
       setChecklistFold(null);
       setAcceptGate(false);
       setSettle({ type: "winner" });
       commandLockRef.current.active = false;
       snapshotRef.current = null;
-      // invalidateProjectSurfaces owns the production-calendar broadcast (producer: "calendar").
+      // invalidateProjectSurfaces owns the surface broadcast (the port's `producer`).
       if (queryClient) {
-        await invalidateProjectSurfaces(queryClient, { projectId: proposal.source.project.id, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, gantt: true, producer: "calendar" });
+        await invalidateProjectSurfaces(queryClient, portRef.current.invalidation("checklist", proposal.source.project.id));
       }
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       settleRefetchInFlightRef.current = true;
@@ -922,9 +1119,11 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       if (settled.ok) {
         setSettle({ type: "refetch-succeeded" });
         setOverlay(null);
-        announceChecklistLifecycle("saved", { street: proposal.source.project.street });
+        const saved = calendarAnnouncement("saved", { street: proposal.source.project.street, entity: "checklist" });
+        // Same guard as `announceLifecycle`; the warning rides the one "saved" announcement.
+        if (!accessLostRef.current && saved) setAnnouncement(warningText ? `${saved} Warning: ${warningText}` : saved);
       } else if (!accessLostRef.current) {
-        setSettle({ type: "refetch-failed", reason: "The latest Calendar could not be loaded." });
+        setSettle({ type: "refetch-failed", reason: portRef.current.settleFailedReason });
         announceChecklistLifecycle("settle-failed", {});
       }
     } catch (error) {
@@ -975,7 +1174,9 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       const refreshed = action.refetch ? await refetchAuthoritative() : { ok: false };
       if (accessLostRef.current || token !== operationTokenRef.current) return;
       if (action.retainDraft) {
-        const latest = checklistSourceFromResponse(refreshed.data ? cloneResponse(refreshed.data) : acceptedResponseRef.current, proposal.source.id) ?? proposal.source;
+        const port = portRef.current;
+        const refreshedResponse = refreshed.data ? port.clone(refreshed.data) : acceptedResponseRef.current;
+        const latest = (refreshedResponse ? port.findChecklist(refreshedResponse, proposal.source.id) : undefined) ?? proposal.source;
         const nextSnapshot: ChecklistSnapshot = { ...proposal.snapshot, event: cloneSource(latest) };
         commandLockRef.current.active = true;
         setAcceptGate(true);
@@ -1001,7 +1202,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
    * `finishChecklistInteraction` and `checklistInputFromSchedule` — never `snapshot.event` there.
    */
   const runChecklistProposal = useCallback((proposal: Extract<SchedulingProposal, { entity: "checklist" }>, snapshot: ChecklistSnapshot, event: ChecklistSource, operation: ChecklistOperationInfo) => {
-    const planned = planSchedulingProposal(proposal);
+    const planned = planSchedulingProposal(proposal, { bounds: portRef.current.boundsFor?.(proposalProjectId(proposal)) ?? null });
     if (!planned.ok) {
       const repeated = planned.error.code === "repeated_local_time" || planned.error.code === "subtask_schedule_repeated_local_time";
       const nonexistent = planned.error.code === "nonexistent_local_time" || planned.error.code === "subtask_schedule_nonexistent_local_time";
@@ -1030,6 +1231,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
       operation,
       target: proposal.target,
       ...(proposal.kind === "resize" ? { edge: proposal.edge } : {}),
+      ...(planned.value.warnings.length ? { warnings: planned.value.warnings } : {}),
     };
     void runChecklistMutation(mutationProposal);
   }, [announceChecklistLifecycle, finishChecklistInteraction, rangesEnabled, runChecklistMutation]);
@@ -1054,19 +1256,20 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
    * activates the command lock) is never reached. On success, plans + runs through the exact same
    * `runChecklistProposal`/`runDeadlineProposal` the positional adapters call.
    */
-  const submitProposal = useCallback((proposal: SchedulingProposal): SubmitProposalOutcome => {
+  const submitProposal = useCallback((proposal: SchedulingProposal, options?: { revertable?: CalendarRevertable }): SubmitProposalOutcome => {
     if (!canStartCommand()) return { ok: false, reason: "busy" };
+    const revertable = options?.revertable;
     if (proposal.entity === "checklist") {
       const source: ChecklistSource = proposal.kind === "place" ? proposal.entry : proposal.source;
       const snapshot = acceptForInteraction(source, { eventId: source.id, control: "event" });
       if (!snapshot) return { ok: false, reason: "not-accepted" };
-      runChecklistProposal(proposal, snapshot, source, {});
+      runChecklistProposal(proposal, snapshot, source, revertable ? { drop: revertable } : {});
       return { ok: true };
     }
     const event = proposal.kind === "place" ? projectDeadlinePlaceholder(proposal.entry) : proposal.event;
     const snapshot = acceptForInteraction(event, { eventId: event.id, control: "event" });
     if (!snapshot) return { ok: false, reason: "not-accepted" };
-    runDeadlineProposal(proposal, snapshot, event);
+    runDeadlineProposal(proposal, snapshot, event, revertable);
     return { ok: true };
   }, [acceptForInteraction, canStartCommand, runChecklistProposal, runDeadlineProposal]);
 
@@ -1099,10 +1302,10 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
 
   const openUnscheduledChecklistScheduleEditor = useCallback((entry: ChecklistCalendarUnscheduledEntryDto) => {
     const initialSchedule: InitialChecklistScheduleInput | undefined = entry.reason === "unscheduled"
-      ? { state: "due_only", end: { kind: "date", localCivil: calendar.date } }
+      ? { state: "due_only", end: { kind: "date", localCivil: portRef.current.defaultPlacementDate() } }
       : undefined;
     openChecklistScheduleEditor(entry, initialSchedule);
-  }, [calendar.date, openChecklistScheduleEditor]);
+  }, [openChecklistScheduleEditor]);
 
   const handleScheduleEditorSubmit = useCallback((schedule: InitialChecklistScheduleInput) => {
     const state = scheduleEditor;
@@ -1147,6 +1350,62 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     }
   }, [refetchAuthoritative, setOverlay, setSettle]);
 
+  /**
+   * #221: Undo as a command. Same gate (`canStartCommand`), lock, accept gate and token fence as a
+   * forward edit; a 401/403 (`applyUndo`'s "access") is access loss. Never retried on conflict.
+   */
+  const runUndo = useCallback(async (ticket: UndoTicket): Promise<RunUndoOutcome> => {
+    // Access loss releases the lock, so `canStartCommand` alone would let an Undo toast that
+    // outlived the session fire a write into a purged surface.
+    if (accessLostRef.current) return { ok: false, reason: "access" };
+    if (!canStartCommand()) return { ok: false, reason: "busy" };
+    const token = operationTokenRef.current;
+    const fenced = () => accessLostRef.current || token !== operationTokenRef.current;
+    commandLockRef.current.active = true;
+    setAcceptGate(true);
+    const outcome = await applyUndo(ticket);
+    if (fenced()) return outcome;
+    if (!outcome.ok && outcome.reason === "access") {
+      handleAccessLoss();
+      return outcome;
+    }
+    if (outcome.ok) {
+      let checklistResult: ChecklistMutationResult | undefined;
+      try {
+        checklistResult = ticket.kind === "checklist" && outcome.response !== undefined
+          ? decodeChecklistMutationResponse(identity.role, outcome.response)
+          : undefined;
+      } catch {
+        // The write happened but its body is unreadable — reported, never hidden: no row patch,
+        // the refetch converges the surface on server truth, and the outcome is "failed" (final,
+        // like the forward path's undecodable save, which also rolls back to a refetch).
+        commandLockRef.current.active = false;
+        setAcceptGate(false);
+        await refetchAuthoritative();
+        const failed: UndoOutcome = { ok: false, reason: "failed" };
+        if (fenced()) return failed;
+        setAnnouncement("Undo result could not be read. Reloaded the latest.");
+        return failed;
+      }
+      onUndoneRef.current?.({ kind: ticket.kind, projectId: ticket.projectId, ...(checklistResult ? { checklistResult } : {}) });
+      if (queryClient) await invalidateProjectSurfaces(queryClient, portRef.current.invalidation(ticket.kind, ticket.projectId));
+      if (fenced()) return outcome;
+      await refetchAuthoritative();
+      if (fenced()) return outcome;
+      commandLockRef.current.active = false;
+      setAcceptGate(false);
+      setAnnouncement("Change undone.");
+      flushQueuedRefetch();
+      return outcome;
+    }
+    commandLockRef.current.active = false;
+    setAcceptGate(false);
+    await refetchAuthoritative();
+    if (fenced()) return outcome;
+    setAnnouncement(outcome.reason === "conflict" ? "Undo failed — the item changed since." : "Undo failed.");
+    return outcome;
+  }, [canStartCommand, flushQueuedRefetch, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate]);
+
   useEffect(() => () => {
     operationTokenRef.current += 1;
     accessLostRef.current = true;
@@ -1187,6 +1446,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
     submitDeadlineProposal,
     submitChecklistProposal: mapChecklistCommand,
     submitProposal,
+    runUndo,
     openMoveDialog,
     openUnscheduledProjectDialog,
     openChecklistScheduleEditor,

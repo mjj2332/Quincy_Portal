@@ -75,6 +75,13 @@
  * live event object (never cloned), so an in-place mutation of it, or of one of its own `Date`
  * fields, moved BOTH sides of the comparison at once and the drift went undetected. See
  * `GanttAdjustState.ownerSnapshot`'s own doc comment.
+ *
+ * 2026-09-27, #221 PR A — ADDED, all additive (an omitted field / a result nobody returns changes
+ * nothing): `GanttUpdateResult` gained `"deferred"` (accept-and-defer — the Gantt neither mutates
+ * `events` nor announces); `GanttDragState.warning` (the last `dropWarning` verdict for a VALID
+ * proposal, driving `data-drop-warning`); `warning` on `GanttAdjustStepResult`,
+ * `GanttAdjustCommitResult` and `GanttNudgeResult`; `deferred` on the last two. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
  */
 
 type GanttBarId = string
@@ -267,6 +274,11 @@ interface GanttDragState<TData = unknown> {
    * did not itself drive.
    */
   source: "pointer" | "keyboard"
+  /**
+   * #221 PR A, additive: last `dropWarning` verdict for a VALID proposal; drives
+   * `data-drop-warning`. Always null/absent when `valid` is false (invalid wins).
+   */
+  warning?: string | null
 }
 
 /** The in-gesture drag-create rectangle only; the committed slot is GanttSelection.slot. */
@@ -333,6 +345,8 @@ interface GanttAdjustStepResult {
   applied: boolean
   reason?: "locked" | "invalid" | "rejected"
   noChange?: boolean
+  /** #221 PR A, additive: the `dropWarning` reason for an applied step, if any. */
+  warning?: string
   start?: Date
   end?: Date
   allDay?: boolean
@@ -346,6 +360,10 @@ interface GanttAdjustStepResult {
 interface GanttAdjustCommitResult {
   committed: boolean
   noChange?: boolean
+  /** #221 PR A, additive: `onEventUpdate` returned `"deferred"` - nothing committed, nothing to announce. */
+  deferred?: boolean
+  /** #221 PR A, additive: the `dropWarning` reason for a committed change, if any. */
+  warning?: string
   start?: Date
   end?: Date
   allDay?: boolean
@@ -402,10 +420,17 @@ type GanttProposedUpdate<TData = unknown> = {
     }
 )
 
-/** false = reject/revert; void or true = accept; object = accept with adjustment. */
+/**
+ * false = reject/revert; void or true = accept; object = accept with adjustment.
+ *
+ * #221 PR A, additive: `"deferred"` = accept-and-defer — the consumer took the proposal and owns
+ * what happens next (e.g. a confirmation dialog); the Gantt neither mutates `events` nor announces
+ * anything. Distinct from `false` (reject → reverts + announces rejected).
+ */
 type GanttUpdateResult =
   | boolean
   | void
+  | "deferred"
   | { start?: Date; end?: Date; allDay?: boolean }
 
 /** The action a keyboard nudge requests; mirrors the pointer gesture kinds minus `"move"`'s pointer specifics. */
@@ -421,6 +446,10 @@ type GanttNudgeAction = "move" | "resize-start" | "resize-end"
 interface GanttNudgeResult {
   applied: boolean
   reason?: "locked" | "invalid" | "rejected" | "not-found"
+  /** #221 PR A, additive: `onEventUpdate` returned `"deferred"` - `applied` is false, no `reason`. */
+  deferred?: boolean
+  /** #221 PR A, additive: the `dropWarning` reason for an applied nudge, if any. */
+  warning?: string
   /**
    * Quincy addition (#219 PR A, Sol review, sol1 item 7): the ACCEPTED range, present iff
    * `applied` is true - after any overlap clamp AND any `onEventUpdate` consumer adjustment. The

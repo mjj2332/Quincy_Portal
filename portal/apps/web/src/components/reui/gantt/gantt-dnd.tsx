@@ -85,6 +85,34 @@
  * pointer refusal announces "rejected" — see this file's own `announceBlocked` doc comment and
  * `gantt-dnd-refusal-announce.dom.test.tsx`'s header for why "locked"/"invalid" are wired but
  * currently unreachable from a pointer gesture.
+ *
+ * 2026-09-27, #221 PR A — ADDED, additive (no `dropWarning` passed and no `"deferred"` returned
+ * leaves the DOM, announcements and behaviour unchanged): `applyProposal` asks the consumer's
+ * `dropWarning` for a VALID proposal only (invalid wins) and writes the reason into
+ * `state.drag.warning`; the resize edge line turns `--color-signal-caution` for a warned drop; a
+ * reason hint (`data-testid="gantt-drop-warning-hint"`, `aria-hidden` - the announcer speaks) is
+ * created lazily inside the move clone / resize chip on the first warning and hidden again when
+ * the warning clears, removed with its overlay on cleanup. `onPointerUp` appends
+ * `labels.dropWarningSuffix(reason)` to an accepted, warned release, and returns silently when
+ * `onEventUpdate` answers `"deferred"` (the consumer speaks next - `false` would wrongly announce
+ * "rejected" for a drop it actually took). Covered by `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #221 design fixes: the overlays now respect the VISIBLE timeline pane (the axis rect
+ * is the full scroll width). `timelineViewport` is hoisted up beside `beginGesture`'s `let surface`
+ * (the resize indicator is created synchronously at gesture start and would read it in its TDZ) and its rect
+ * cached on activation, refreshed by `autoScrollTick`. The resize chip is shifted back inside the
+ * pane with an 8px pad (inline `left`; the arrow moves the other way to stay on the cursor; pinned
+ * to the inline-start edge when wider than the pane). The move clone is clipped on its
+ * inline-start side only, so it no longer slides over the resource column, and carries
+ * `data-testid="gantt-drag-overlay"`. Both skip when the pane (or chip) measures 0 wide. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #221 browser pass E: the move clone is now clipped at BOTH pane edges, and near the
+ * far edge its label + warning hint flip to the bar's inline-start side (`flex-direction:
+ * row-reverse`, overlay shifted by the text's width so the bar stays under the pointer) - dragged
+ * toward the end, the hint had ridden off-screen. Its width is re-read each move (the hint appears
+ * mid-gesture). Not applied to a consumer's custom move overlay. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
  */
 
 import { useCallback, useEffect } from "react"
@@ -282,6 +310,19 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // never start an accidental resize
   let active = kind.startsWith("resize") && !isTouch
   let surface: GanttSurface | null = active ? collectSurface(viewRoot) : null
+  // 2026-09-28, #221 design fixes: hoisted from the edge auto-scroll block below - the resize
+  // indicator (created synchronously just below when a resize activates at once) now reads it, and
+  // a `const` further down would still be in its TDZ there. `paneRect` is the VISIBLE timeline
+  // pane (the axis rect is the full scroll width): cached on activation, refreshed by
+  // `autoScrollTick`, measured afresh by the resize chip's clamp.
+  const timelineViewport = viewRoot?.querySelector<HTMLElement>(
+    "[data-slot=gantt-timeline-pane] [data-slot=scroll-area-viewport]"
+  )
+  let paneRect: DOMRect | null = null
+  const cachePane = (rect: DOMRect | null) => {
+    paneRect = rect
+  }
+  const measurePane = () => cachePane(timelineViewport?.getBoundingClientRect() ?? null)
   let lastProposalKey = ""
   let touchTimer: ReturnType<typeof setTimeout> | null = null
   let lastPointer: PointerEvent = startEvent
@@ -379,6 +420,8 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   // Smooth cursor-following clone for a move: a real-looking bar that tracks
   // the pointer's x via transform (no per-frame React), lifted with a shadow.
   let overlay: HTMLDivElement | null = null
+  // #221 design fixes: the clone's own width, measured once (RTL clips its right side).
+  let overlayWidth = 0
   let grabOffsetPx = 0
   let barTop = 0
   let barWidth = 0
@@ -392,6 +435,8 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     const color = occurrence.event.color ?? "var(--color-primary)"
     overlay = document.createElement("div")
     overlay.setAttribute("data-slot", "gantt-drag-overlay")
+    // #221 design fixes: additive test hook (Guard F forbids selecting the slot above).
+    overlay.setAttribute("data-testid", "gantt-drag-overlay")
     // container: the bar + its label ride together; the label stays OUTSIDE
     // the bar (to the right), matching the resting look - no in-bar text
     overlay.className =
@@ -440,7 +485,34 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     }
     if (!overlay) return
     // x follows the pointer freely (smooth); y stays on the bar's own row
-    overlay.style.transform = `translate3d(${snapToPixel(e.clientX - grabOffsetPx)}px, ${snapToPixel(barTop)}px, 0)`
+    const x = e.clientX - grabOffsetPx
+    // 2026-09-28, #221 design fixes: the clone is `fixed` on <body>, so nothing clips it to the
+    // timeline - dragged toward the start it slid over the resource column, and (browser pass E)
+    // toward the end its label ran past the timeline and the warning hint rode off-screen. Near
+    // the far edge the label + hint flip to the bar's inline-start side (the bar stays under the
+    // pointer), and whatever still overhangs either pane edge is clipped. Skipped with no
+    // measurable pane (happy-dom lays nothing out).
+    if (!paneRect || paneRect.width === 0) {
+      overlay.style.transform = `translate3d(${snapToPixel(x)}px, ${snapToPixel(barTop)}px, 0)`
+      return
+    }
+    // Re-read each move: the hint appears and its text changes mid-gesture.
+    overlayWidth = overlay.offsetWidth
+    const text = Math.max(0, overlayWidth - barWidth)
+    // `x` is the overlay's left edge unflipped. LTR the bar leads (left), RTL it trails (right);
+    // the flipped overlay moves by the text's width so the bar keeps its screen position.
+    const flip =
+      !customMoveOverlay &&
+      text > 0 &&
+      (surface?.isRtl
+        ? x < paneRect.left && x + text + overlayWidth <= paneRect.right
+        : x + overlayWidth > paneRect.right && x - text >= paneRect.left)
+    const left = flip ? (surface?.isRtl ? x + text : x - text) : x
+    overlay.style.flexDirection = flip ? "row-reverse" : ""
+    overlay.style.transform = `translate3d(${snapToPixel(left)}px, ${snapToPixel(barTop)}px, 0)`
+    const start = Math.max(0, paneRect.left - left)
+    const end = Math.max(0, left + overlayWidth - paneRect.right)
+    overlay.style.clipPath = start > 0 || end > 0 ? `inset(0 ${end}px 0 ${start}px)` : ""
   }
 
   // Resize status indicator: a smooth cursor-following edge line plus a live
@@ -451,6 +523,48 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   let resizeRange: HTMLSpanElement | null = null
   let resizeDot: HTMLSpanElement | null = null
   let resizeDuration: HTMLSpanElement | null = null
+  let resizeChip: HTMLDivElement | null = null
+  let resizeChipArrow: HTMLSpanElement | null = null
+
+  // #221 PR A: the dropWarning reason hint, one per overlay, created lazily on the first
+  // warning (a gesture that never warns never gets one) and hidden when the warning clears.
+  // aria-hidden: the announcer, not this, speaks the reason.
+  let moveHint: HTMLSpanElement | null = null
+  let resizeHint: HTMLSpanElement | null = null
+  let resizeHintText: HTMLSpanElement | null = null
+  const markWarningHint = (el: HTMLElement) => {
+    el.setAttribute("data-slot", "gantt-drop-warning-hint")
+    el.setAttribute("data-testid", "gantt-drop-warning-hint")
+    el.setAttribute("aria-hidden", "true")
+  }
+  const syncWarningHint = (warning: string | null) => {
+    if (warning && overlay && !customMoveOverlay && !moveHint) {
+      moveHint = document.createElement("span")
+      markWarningHint(moveHint)
+      moveHint.className =
+        "border-signal-caution/40 bg-background text-warning shrink-0 rounded-sm border px-1.5 font-medium whitespace-nowrap"
+      overlay.appendChild(moveHint)
+    }
+    if (warning && resizeChip && !customResizeOverlay && !resizeHint) {
+      resizeHint = document.createElement("span")
+      markWarningHint(resizeHint)
+      resizeHint.className = "text-background/80 flex items-center gap-1.5"
+      const cautionDot = document.createElement("span")
+      cautionDot.className = "bg-signal-caution size-1.5 shrink-0 rounded-full"
+      resizeHint.appendChild(cautionDot)
+      resizeHintText = document.createElement("span")
+      resizeHint.appendChild(resizeHintText)
+      resizeChip.appendChild(resizeHint)
+    }
+    if (moveHint) {
+      moveHint.textContent = warning ?? ""
+      moveHint.style.display = warning ? "" : "none"
+    }
+    if (resizeHint && resizeHintText) {
+      resizeHintText.textContent = warning ?? ""
+      resizeHint.style.display = warning ? "" : "none"
+    }
+  }
 
   const positionResizeOverlay = (e: PointerEvent) => {
     if (!resizeOverlay && customResizeOverlay && kind.startsWith("resize")) {
@@ -466,6 +580,34 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       surface.rect.right
     )
     resizeOverlay.style.transform = `translate3d(${snapToPixel(x)}px, ${snapToPixel(barTop)}px, 0)`
+    clampResizeChip(x)
+  }
+
+  // 2026-09-28, #221 design fixes: the chip is centred on the cursor and was only clamped to the
+  // axis (the full scroll width), so near the pane's edge it ran off screen. Runs after the text
+  // update (its width is current): shift it back inside the VISIBLE pane with an 8px pad via an
+  // inline `left` (Tailwind v4's `-translate-x-1/2` is the `translate` property, so the two
+  // compose), and move the arrow the other way so it stays on the cursor. Wider than the pane:
+  // pinned to the inline-start edge. Skipped with no measurable pane or chip (happy-dom).
+  const clampResizeChip = (x: number) => {
+    if (!resizeChip) return
+    measurePane()
+    const w = resizeChip.offsetWidth
+    if (!paneRect || paneRect.width === 0 || w === 0) return
+    const PAD = 8
+    const minShift = paneRect.left + PAD - (x - w / 2)
+    const maxShift = paneRect.right - PAD - (x + w / 2)
+    const shift =
+      minShift > maxShift
+        ? surface?.isRtl
+          ? maxShift
+          : minShift
+        : Math.min(Math.max(0, minShift), maxShift)
+    resizeChip.style.left = shift === 0 ? "" : `${shift}px`
+    if (resizeChipArrow) {
+      const arrowLeft = Math.min(Math.max(w / 2 - shift, 10), w - 10)
+      resizeChipArrow.style.left = shift === 0 ? "" : `${arrowLeft}px`
+    }
   }
 
   const createResizeOverlay = () => {
@@ -512,7 +654,9 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     chipArrow.className =
       "bg-foreground absolute -bottom-1 left-1/2 size-2.5 -translate-x-1/2 rotate-45 rounded-[2px]"
     chip.appendChild(chipArrow)
+    resizeChipArrow = chipArrow
     resizeOverlay.appendChild(chip)
+    resizeChip = chip
     document.body.appendChild(resizeOverlay)
     // seed the chip with the CURRENT range so it never flashes empty;
     // zoned so the label names the same day the grid shows
@@ -535,7 +679,10 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   }
 
   // resize activates immediately, so its indicator mounts with the gesture
-  if (active) createResizeOverlay()
+  if (active) {
+    measurePane()
+    createResizeOverlay()
+  }
 
   const activationDistance =
     kind === "create" ? activation.createDistancePx : activation.moveDistancePx
@@ -558,6 +705,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     if (active) return
     active = true
     surface = collectSurface(viewRoot)
+    measurePane()
     // touch resize activates here (long-press) instead of at gesture start,
     // so its indicator mounts now; the guard inside makes this a no-op for
     // every other path
@@ -764,6 +912,8 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     const valid =
       !overlapRejected &&
       (settings.canDropEvent ? settings.canDropEvent(update) : true)
+    // #221 PR A: advisory reason for an ALLOWED drop - invalid wins, so only asked when valid.
+    const warning = valid ? (settings.dropWarning?.(update) ?? null) : null
     // live status: the indicator chip always names the CURRENT proposed
     // range; the edge line flips to destructive on an invalid drop
     if (resizeRange && resizeDot && resizeDuration) {
@@ -784,10 +934,13 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       }
     }
     if (resizeLine) {
-      resizeLine.style.background = valid
-        ? (occurrence!.event.color ?? "var(--color-primary)")
-        : "var(--color-destructive)"
+      resizeLine.style.background = !valid
+        ? "var(--color-destructive)"
+        : warning
+          ? "var(--color-signal-caution)"
+          : (occurrence!.event.color ?? "var(--color-primary)")
     }
+    syncWarningHint(warning)
     setBodyDragging(true, !valid)
     internals.setDrag({
       kind: kind === "move" ? "move" : (kind as "resize-start" | "resize-end"),
@@ -801,6 +954,9 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       // `gantt-types.tsx`'s `GanttDragState.source` doc comment and this file's own `onPointerUp`,
       // which refuses to commit a `state.drag` that is not tagged this way.
       source: "pointer",
+      // #221 PR A: only present when there IS a warning, so with no `dropWarning` the drag
+      // state's shape is unchanged.
+      ...(warning ? { warning } : {}),
     })
   }
 
@@ -814,22 +970,21 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
   const AUTO_SCROLL_EDGE_PX = 24
   const AUTO_SCROLL_MAX_SPEED = 14
   let autoScrollRaf = 0
-  const timelineViewport = viewRoot?.querySelector<HTMLElement>(
-    "[data-slot=gantt-timeline-pane] [data-slot=scroll-area-viewport]"
-  )
+  // (`timelineViewport` is hoisted up beside `let surface` - #221 design fixes.)
   const autoScrollTick = () => {
     autoScrollRaf = 0
     if (finished || !active || !surface || !timelineViewport) return
-    const paneRect = timelineViewport.getBoundingClientRect()
+    const pane = timelineViewport.getBoundingClientRect()
+    cachePane(pane)
     const x = lastPointer.clientX
     let speed = 0
-    if (x < paneRect.left + AUTO_SCROLL_EDGE_PX) {
+    if (x < pane.left + AUTO_SCROLL_EDGE_PX) {
       speed =
-        -((paneRect.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX) *
+        -((pane.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX) *
         AUTO_SCROLL_MAX_SPEED
-    } else if (x > paneRect.right - AUTO_SCROLL_EDGE_PX) {
+    } else if (x > pane.right - AUTO_SCROLL_EDGE_PX) {
       speed =
-        ((x - (paneRect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX) *
+        ((x - (pane.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX) *
         AUTO_SCROLL_MAX_SPEED
     }
     if (speed === 0) return
@@ -871,6 +1026,11 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     overlay = null
     if (!customResizeOverlay) resizeOverlay?.remove()
     resizeOverlay = null
+    moveHint = null
+    resizeHint = null
+    resizeHintText = null
+    resizeChip = null
+    resizeChipArrow = null
     setBodyDragging(false)
   }
 
@@ -991,13 +1151,21 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       source:
         kind === "move" ? "drag" : (kind as "resize-start" | "resize-end"),
     })
+    // #221 PR A: accept-and-defer - the consumer owns what happens next (and speaks for it);
+    // announcing here would either claim a change that has not happened or, via `false`, call a
+    // drop the consumer actually took "rejected".
+    if (accepted === "deferred") return
     if (accepted && announcer) {
-      announcer.textContent = `${occurrence.event.title}, ${settings.i18n.functions.formatEventTime(
+      const acceptedText = `${occurrence.event.title}, ${settings.i18n.functions.formatEventTime(
         toZoned(drag.proposedStart, settings.timeZone),
         toZoned(drag.proposedEnd, settings.timeZone),
         drag.proposedAllDay,
         settings.locale
       )}`
+      // #221 PR A: a warned (allowed) drop names its reason after the accepted range.
+      announcer.textContent = drag.warning
+        ? `${acceptedText} ${settings.i18n.labels.dropWarningSuffix(drag.warning)}`
+        : acceptedText
     } else if (!accepted) {
       // #219 PR A fix (dr-219a HIGH #1): onEventUpdate itself refused (applyProposedUpdate
       // returned null) - the one refusal source that DOES call the consumer's callback before

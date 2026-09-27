@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { cn } from "../../lib/utils";
 import { buttonClasses } from "./Button";
-import { dismissToast, getToasts, registerToastViewport, subscribeToasts } from "../../lib/toast-store";
+import { dismissToast, getToasts, pauseToast, registerToastViewport, resumeToast, subscribeToasts, type Toast } from "../../lib/toast-store";
 
 /**
  * The single toast surface — issue #110. Rendered in-tree, with no portal, by exactly the three
@@ -13,6 +13,14 @@ import { dismissToast, getToasts, registerToastViewport, subscribeToasts } from 
  * screen rendered standalone with `createRoot` (no provider of any kind) behaves identically to a
  * shell-mounted one.
  */
+
+/** #221: a second click in the same tick finds the toast already gone and does nothing. */
+function activateToastAction(item: Toast): void {
+  if (!item.action || !getToasts().some((candidate) => candidate.id === item.id)) return;
+  item.action.onAction();
+  dismissToast(item.id);
+}
+
 export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast" }: { testId?: string; toastTestId?: string }) {
   useEffect(() => registerToastViewport(), []);
   const toasts = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
@@ -38,12 +46,27 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
           aria-hidden={item.announcedElsewhere && !item.action ? "true" : undefined}
           data-testid={toastTestId}
           data-tone={item.tone}
+          // #221: hover or focus anywhere inside the toast holds its expiry; leaving resumes it.
+          // Blur resumes only when focus moves OUTSIDE this toast, not between its own children.
+          onMouseEnter={() => pauseToast(item.id)}
+          onMouseLeave={() => resumeToast(item.id)}
+          onFocus={() => pauseToast(item.id)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) resumeToast(item.id);
+          }}
           className={cn(
             "flex items-center gap-[var(--space-3)] bg-surface-inverse text-on-inverse px-[var(--space-5)] py-[var(--space-3)] rounded-[var(--radius-sm)] shadow-[var(--shadow-md)] text-[length:var(--text-sm)] leading-[var(--leading-normal)] motion-safe:animate-[slidein_var(--dur-base)_var(--ease-entrance)] pointer-events-auto max-w-[min(380px,100%)]",
             item.tone === "error" && "bg-destructive",
           )}
         >
-          <span aria-hidden="true" className="shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-regular)_var(--text-xs)/1.4_var(--font-mono)]">{item.tone === "error" ? "!" : "✓"}</span>
+          {/* #221 caution glyph: an aria-hidden graphical mark on the ink toast. The toast takes its
+              dark ground from the root `bg-surface-inverse` role, with no `data-surface="inverse"`
+              ancestor, so it reads the root-level `--signal-caution-on-inverse` (colors.css,
+              `--star-amber`, 9.20:1 on `--ink-900`). The brand `--signal-caution` measured 4.20:1
+              here but read as a speck at this size (#221 design review), and the TEXT role
+              `--signal-caution-text` is only 2.98:1 on ink. Written as an arbitrary `color`
+              property: the `text-signal-caution` utility is the misuse Guard 5 polices. */}
+          <span aria-hidden="true" className={cn("shrink-0 inline-grid place-items-center size-[var(--space-4)] [font:var(--weight-bold)_var(--text-sm)/1_var(--font-mono)]", item.tone === "caution" && "[color:var(--signal-caution-on-inverse)]")}>{item.tone === "success" ? "✓" : "!"}</span>
           <span aria-hidden={item.announcedElsewhere && item.action ? "true" : undefined}>{item.message}</span>
           {/* `text` (ghost) is the one existing variant legible here: it sets no rest-state
               background or text colour of its own, so it inherits this wrapper's `text-on-inverse`
@@ -63,7 +86,7 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
               `index.css:8`) beats an ordinary layered `outline-*` utility regardless of
               specificity — so without the `!`, the ring stays `--focus-ring` (ink), unreadable on
               an ink toast (~1.00:1) and barely better on the destructive one (~1.98:1). */}
-          {item.action && <button type="button" data-testid="toast-action" className={buttonClasses("text", { className: "underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)] focus-visible:!outline-on-inverse" })} onClick={() => { item.action!.onAction(); dismissToast(item.id); }}>{item.action.label}</button>}
+          {item.action && <button type="button" data-testid="toast-action" className={buttonClasses("text", { className: "underline underline-offset-2 shrink-0 min-h-[44px] px-[var(--space-2)] focus-visible:!outline-on-inverse" })} onClick={() => activateToastAction(item)}>{item.action.label}</button>}
         </div>
       ))}
     </div>

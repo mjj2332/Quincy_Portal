@@ -41,7 +41,7 @@
   --primary-hover:         var(--greige-100);   /* only works because of §2.2 */
   --ring:                  var(--paper-050);      /* 18.64:1 — the §1.2 fix, utilities half */
   --focus-ring:            var(--paper-050);      /* 18.64:1 — the §1.2 fix, global-rule half */
-  --star-on:               var(--star-amber);     /*  9.20:1 — the paper ochre reads 2.20:1 here */
+  --star-on:               var(--star-amber);     /*  9.20:1 — the paper ochre reads 2.98:1 here */
   --star-off:              var(--greige-200);     /* 11.78:1 — tracks --foreground-secondary,
                                                      the same role :root's --star-off names */
 }

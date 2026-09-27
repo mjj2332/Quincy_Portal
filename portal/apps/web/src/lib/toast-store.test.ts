@@ -11,8 +11,10 @@ import {
   dismissToast,
   getToasts,
   mountedToastViewports,
+  pauseToast,
   pushToast,
   registerToastViewport,
+  resumeToast,
   subscribeToasts,
   TOAST_TTL_MS,
 } from "./toast-store";
@@ -156,6 +158,77 @@ describe("toast-store", () => {
       expect(mountedToastViewports()).toBe(1);
       unregisterB();
       expect(mountedToastViewports()).toBe(0);
+    });
+  });
+
+  describe("ttlMs, caution tone, pause/resume (#221)", () => {
+    it("honours a per-toast ttlMs", () => {
+      vi.useFakeTimers();
+      pushToast("Undo available", "success", { ttlMs: 10_000 });
+      vi.advanceTimersByTime(TOAST_TTL_MS);
+      expect(getToasts()).toHaveLength(1);
+      vi.advanceTimersByTime(10_000 - TOAST_TTL_MS - 1);
+      expect(getToasts()).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(getToasts()).toHaveLength(0);
+    });
+
+    it("keeps the caution tone on the record", () => {
+      pushToast("Starts before the shoot date.", "caution");
+      expect(getToasts()[0]?.tone).toBe("caution");
+    });
+
+    it("pause freezes the remaining time and resume restarts it from there", () => {
+      vi.useFakeTimers();
+      const id = pushToast("Paused", "success", { ttlMs: 10_000 });
+      vi.advanceTimersByTime(4_000);
+      pauseToast(id);
+      vi.advanceTimersByTime(60_000);
+      expect(getToasts()).toHaveLength(1);
+      resumeToast(id);
+      vi.advanceTimersByTime(5_999);
+      expect(getToasts()).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(getToasts()).toHaveLength(0);
+    });
+
+    it("pause and resume are idempotent", () => {
+      vi.useFakeTimers();
+      const id = pushToast("Twice", "success", { ttlMs: 10_000 });
+      vi.advanceTimersByTime(2_000);
+      pauseToast(id);
+      vi.advanceTimersByTime(1_000);
+      pauseToast(id);
+      resumeToast(id);
+      vi.advanceTimersByTime(1_000);
+      resumeToast(id);
+      vi.advanceTimersByTime(6_999);
+      expect(getToasts()).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(getToasts()).toHaveLength(0);
+    });
+
+    it("resume without a prior pause does not restart the timer", () => {
+      vi.useFakeTimers();
+      const id = pushToast("Unpaused");
+      vi.advanceTimersByTime(TOAST_TTL_MS - 100);
+      resumeToast(id);
+      vi.advanceTimersByTime(100);
+      expect(getToasts()).toHaveLength(0);
+    });
+
+    it("dismissToast still removes a paused toast, and a later resume is a no-op", () => {
+      vi.useFakeTimers();
+      const id = pushToast("Paused then dismissed");
+      pauseToast(id);
+      dismissToast(id);
+      expect(getToasts()).toHaveLength(0);
+      const listener = vi.fn();
+      const unsubscribe = subscribeToasts(listener);
+      resumeToast(id);
+      vi.advanceTimersByTime(TOAST_TTL_MS * 2);
+      expect(listener).not.toHaveBeenCalled();
+      unsubscribe();
     });
   });
 });

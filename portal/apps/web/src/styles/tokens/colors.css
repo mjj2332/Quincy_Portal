@@ -72,6 +72,9 @@
   --text-muted:       var(--greige-400);
   --text-on-inverse:  var(--paper-050);
   --text-on-inverse-muted: var(--greige-200);
+  /* A caution MARK on the root ink surface (the toast, #221), which has no data-surface
+     ancestor and so never sees inverse.css's scoped roles. 9.20:1 on --ink-900. */
+  --signal-caution-on-inverse: var(--star-amber);
 
   --border-hairline:  var(--greige-200);
   --border-strong:    var(--ink-900);
@@ -98,7 +101,7 @@
   /* What a star reads. Ground-dependent for the same reason as the four TB8-09 roles
      above, and redefined in the same two places: one value cannot serve every ground a
      star lands on. --star-amber measures 1.89:1 on --paper-100, under the 3:1 floor for
-     a non-text graphical object; --signal-caution-text measures 2.20:1 on --ink-900.
+     a non-text graphical object; --signal-caution-text measures 2.98:1 on --ink-900.
      Each is correct on its own ground and illegible on the other, so the pair is scoped
      per surface (tokens/inverse.css) and over media (app.css `.tstars`) instead of being
      picked once. A component names the role and gets the right one. */

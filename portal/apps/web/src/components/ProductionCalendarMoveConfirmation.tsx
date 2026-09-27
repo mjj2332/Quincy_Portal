@@ -6,6 +6,8 @@ export type ProductionCalendarMoveConfirmationProps = {
   oldCivil: string;
   newCivil: string;
   consequences: ProjectDeadlineReminderConsequence[];
+  /** Off when the host dialog already names the street (the Gantt confirm's eyebrow). */
+  showStreet?: boolean;
 };
 
 const CONFIRM_PILL = "w-fit px-[6px] py-[2px] text-[10px]";
@@ -35,10 +37,10 @@ function offsetLabel(offsetMinutes: number): string {
   return `${deadlineOffsetLabel(offsetMinutes)} before`;
 }
 
-export function ProductionCalendarMoveConfirmation({ street, oldCivil, newCivil, consequences }: ProductionCalendarMoveConfirmationProps) {
+export function ProductionCalendarMoveConfirmation({ street, oldCivil, newCivil, consequences, showStreet = true }: ProductionCalendarMoveConfirmationProps) {
   return (
     <div className={CONFIRMATION} data-testid="calendar-move-confirmation">
-      <p className={CONFIRMATION_SUMMARY}><strong>{street}</strong><br />{civil(oldCivil)} <span aria-hidden="true">→</span> {civil(newCivil)} Sydney time</p>
+      <p className={CONFIRMATION_SUMMARY}>{showStreet && <><strong>{street}</strong><br /></>}{civil(oldCivil)} <span aria-hidden="true">→</span> {civil(newCivil)} <span className="whitespace-nowrap">Sydney time</span></p>
       {consequences.length === 0 ? <p className="muted">No reminders are set.</p> : <ul className={CONFIRMATION_LIST}>
         {consequences.map((consequence) => (
           <li key={`${consequence.offsetMinutes}:${consequence.newFireAt}`} className={CONFIRMATION_ITEM}>

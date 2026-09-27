@@ -3911,3 +3911,18 @@ any other edit wiped it.
 - **happy-dom drives the whole flow, with two gaps named in the tests:** it does not turn Enter on a
   `<button>` into a `click` (a browser does), and Base UI's ScrollArea needs an
   `Element.prototype.getAnimations` stub.
+
+## Sibling retained dialogs must namespace their open-token keys (#221 PR C, 2026-09-27)
+
+`useOpenToken` returns a small integer that starts at 0 and bumps on each open, and the retained-dialog
+pattern uses it as the dialog's `key`. Two retained dialogs rendered as siblings each reach token `1`
+the first time they open. Once both retained refs are set, React sees two children with key `1` under
+one parent and silently drops one of them. The only sign is a console warning ("Encountered two
+children with the same key"). In the Gantt, the Deadline confirmation never appeared after the move
+dialog had been opened once.
+
+- **Prefix every open-token key with its dialog** (`key={`move-dialog:${token}`}`), as
+  `ProductionGantt.tsx` now does for its fold, move and Deadline-confirm dialogs.
+- **`ProductionCalendar.tsx` still has the collision:** `key={moveDialogToken}` and
+  `key={checklistFoldToken}` are siblings in the same `<section>` (around line 513 and line 526). Not
+  fixed in #221 PR C, because it is out of scope.

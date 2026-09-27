@@ -939,12 +939,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // then read that q-less arrival as authoritative and cleared the draft too. Built with
     // `staffPathFor`/`takeDashboardSearchForNavigation` the same way every other navigation site in
     // this file already carries a committed-or-mid-debounce search across a route change.
-    if (view === "calendar" || routeCalendar !== null || locationHasCalendar) {
+    // #221 PR B2: the Gantt reports access loss through this same handler, so its facet URL
+    // (`/?view=gantt&...`) is rewritten to the list the same way, committed q carried.
+    if (view === "calendar" || routeCalendar !== null || locationHasCalendar || view === "gantt" || routeGantt !== null) {
       const currentSearch = takeDashboardSearchForNavigation(currentUserId);
       history.push(staffPathFor({ kind: "dashboard", ...(currentSearch ? { search: currentSearch } : {}) }));
     }
     window.setTimeout(() => document.querySelector<HTMLElement>('[data-focus-key="dashboard-view-list"]')?.focus(), 0);
-  }, [currentUserId, history, locationHasCalendar, routeCalendar, view]);
+  }, [currentUserId, history, locationHasCalendar, routeCalendar, routeGantt, view]);
 
   const projectHrefFor = useCallback((projectId: string) => `/projects/${encodeURIComponent(projectId)}`, []);
 
@@ -1476,12 +1478,21 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </Suspense>
       )}
 
-      {/* #220: no accept/settle gate to wire — the surface is read-only (see
-          `ProductionGantt.tsx`'s own header), so there is no Calendar-style
-          `onAcceptGateChange`/`onSettleStateChange`/`onAccessLoss` for it to own. */}
+      {/* #221 PR B2: the Gantt writes checklist schedules through the shared scheduling
+          controller, so it wires the same accept/settle gate and access-loss path as the
+          Calendar. The Calendar and the Gantt are never mounted together, so they share the
+          Dashboard's one scheduling gate. */}
       {isGanttView && (
         <Suspense fallback={<div className="empty" role="status">Loading gantt…</div>}>
-          <ProductionGantt identity={identity} q={committedQuery} filters={ganttFilters} onFiltersChange={navigateGantt} />
+          <ProductionGantt
+            identity={identity}
+            q={committedQuery}
+            filters={ganttFilters}
+            onFiltersChange={navigateGantt}
+            onAcceptGateChange={setCalendarInteractionBlocked}
+            onSettleStateChange={setCalendarSettle}
+            onAccessLoss={handleCalendarAccessLoss}
+          />
         </Suspense>
       )}
 

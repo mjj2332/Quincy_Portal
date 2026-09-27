@@ -1,7 +1,10 @@
 /**
  * #220 pass B, build spec S6 — proves the read-only boundary in a real render, not just by
  * inspecting props: `Space` on a focused project bar must not open Adjust mode, and no bar may
- * render a resize grip. `gantt-bar-adjust-keyboard.dom.test.tsx` and
+ * render a resize grip. Since #221 PR B2 checklist rows are writable, so this now pins what stays
+ * read-only: the PROJECT bar (deadline writes are not wired yet), and this fixture's only task is a
+ * `due_only` milestone, which never renders grips — checklist writes are covered by
+ * `ProductionGantt.writes.dom.test.tsx`. `gantt-bar-adjust-keyboard.dom.test.tsx` and
  * `gantt-bar-resize-grips.dom.test.tsx` already prove the VENDOR's own `readOnly`/`interactions`
  * contract in isolation; this proves `ProductionGantt.tsx`'s actual composition of it — the real
  * props this file passes to `<Gantt>`, through the real adapter, end to end.

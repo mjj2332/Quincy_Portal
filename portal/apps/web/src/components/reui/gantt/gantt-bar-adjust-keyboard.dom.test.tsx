@@ -45,7 +45,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Gantt, useGantt, useGanttSelector, type GanttInternals } from "@/components/reui/gantt/gantt";
 import { GanttBar } from "@/components/reui/gantt/gantt-bar";
-import type { GanttEvent, GanttOccurrence, GanttSegment } from "@/components/reui/gantt/gantt-types";
+import type { GanttEvent, GanttOccurrence, GanttProposedUpdate, GanttSegment, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -202,6 +202,42 @@ describe("GanttBar Adjust mode (#219 PR A)", () => {
     expect(document.activeElement?.textContent).toContain("Keyboard Move");
     expect((document.activeElement as HTMLButtonElement).isConnected).toBe(true);
     expect(announcerText()).toContain("Adjusted to");
+  });
+
+  it("#221: a commit answered \"deferred\" whose consumer applies the moved range LATER (setTimeout 0) still lands focus on the remounted bar", async () => {
+    function DeferringHost() {
+      const [events, setEvents] = useState<GanttEvent[]>([
+        { id: "kb-deferred", title: "Deferred Move", start: START, end: END },
+      ]);
+      const onEventUpdate = (update: GanttProposedUpdate): GanttUpdateResult => {
+        setTimeout(() => {
+          setEvents((current) =>
+            current.map((event) => (event.id === update.event.id ? { ...event, start: update.start, end: update.end } : event)),
+          );
+        }, 0);
+        return "deferred";
+      };
+      return (
+        <Gantt events={events} onEventUpdate={onEventUpdate} date={START} timeZone="UTC">
+          <KeyedBarHost eventId="kb-deferred" />
+        </Gantt>
+      );
+    }
+    await render(<DeferringHost />);
+    const bar = findBarByTitle("Deferred Move");
+    await focusBar(bar);
+    await keydown(bar, { key: " " });
+    await keydown(bar, { key: "ArrowRight" });
+    await keydown(bar, { key: "Enter" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(bar.isConnected).toBe(false);
+    const replacement = findBarByTitle("Deferred Move");
+    expect(replacement).not.toBe(bar);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(replacement);
   });
 
   it("commit announces the NEW range in genuinely controlled mode (reads the accepted result, not a stale re-fetch)", async () => {
