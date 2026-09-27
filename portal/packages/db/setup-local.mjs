@@ -1,6 +1,7 @@
 /**
- * Bring a local D1 to the state production is actually in — migrations, then the post-rollout
- * feature flags. **Local only. This must never touch production.**
+ * Bring a local D1 to the state production is actually in — migrations, the shared seed, then the
+ * post-rollout feature flags. **Local only. This must never touch production.** The seed is all
+ * `INSERT OR IGNORE`, so re-running this never changes rows that already exist.
  *
  * `0037_project_board_order_contract` seeds `tb5a_board_contract_enabled` disabled, and production
  * was flipped on deliberately afterwards. Nothing brought a *local* database to that post-rollout
@@ -25,6 +26,18 @@ const BOARD_CONTRACT_FLAG = "tb5a_board_contract_enabled";
 const DATABASE_NAME = "quincy-portal";
 const CONFIG_PATH = "../../workers/app/wrangler.jsonc";
 const packageDirectory = fileURLToPath(new URL("./", import.meta.url));
+
+/** The shared, all-environments seed, applied in place. Its stage keys and admin id are asserted
+ * against `@quincy/shared` and `qa-seed/dataset` by the wiring guard. */
+export const SEED_PATH = fileURLToPath(new URL("./seed/0001_seed.sql", import.meta.url));
+export const SEED_STAGE_KEYS = ["awaiting_raw", "raw_review", "editing_autohdr", "edited_review", "delivered"];
+export const BOOTSTRAP_ADMIN_ID = "6b851dc8-14cf-4f90-bd29-ce6c27f86385";
+
+/** One SELECT of scalar subqueries, not a compound SELECT: local D1 caps those at 5 terms. */
+export const SEED_POSTCONDITION_SQL = `SELECT
+  (SELECT COUNT(*) FROM pipeline_stages WHERE key IN (${SEED_STAGE_KEYS.map((key) => `'${key}'`).join(", ")})) AS stages,
+  (SELECT COUNT(*) FROM pipeline_stages WHERE active = 1 AND key IN (${SEED_STAGE_KEYS.map((key) => `'${key}'`).join(", ")})) AS active_stages,
+  (SELECT active FROM user WHERE id = '${BOOTSTRAP_ADMIN_ID}') AS admin_active;`;
 
 /**
  * Flags local dev needs on that production does not have. `UPDATE`, not an upsert: the row always
@@ -168,6 +181,34 @@ export function assertCapabilityInstalled(row) {
   }
 }
 
+/** The seed's postcondition: rows that are missing are a failure. */
+export function assertSeedApplied(row) {
+  const stages = Number(row?.stages);
+  if (stages !== SEED_STAGE_KEYS.length) {
+    throw new Error(`${Number.isFinite(stages) ? stages : 0} of ${SEED_STAGE_KEYS.length} seeded pipeline stages present after applying seed/0001_seed.sql.`);
+  }
+  if (row?.admin_active === null || row?.admin_active === undefined) {
+    throw new Error(
+      `The bootstrap admin user row (id ${BOOTSTRAP_ADMIN_ID}) is missing after applying seed/0001_seed.sql. ` +
+        "user.email is unique, so if another user row already holds the bootstrap admin's email the seed's INSERT OR IGNORE skipped it. " +
+        "Resolve that by hand; this script will not delete user data.",
+    );
+  }
+}
+
+/** Rows that exist but were changed in Admin are legitimate local states the seed cannot (and
+ * must not) change — so these warn rather than fail. */
+export function seedWarnings(row) {
+  const warnings = [];
+  if (Number(row.active_stages) !== SEED_STAGE_KEYS.length) {
+    warnings.push(`${SEED_STAGE_KEYS.length - Number(row.active_stages)} of ${SEED_STAGE_KEYS.length} seeded pipeline stages are inactive — re-activate them in Admin if you need them.`);
+  }
+  if (Number(row.admin_active) !== 1) {
+    warnings.push("The bootstrap admin is inactive — signing in as it will fail until it is re-activated in Admin.");
+  }
+  return warnings;
+}
+
 function runSqlFile(options, sql, label) {
   const dir = mkdtempSync(join(tmpdir(), `quincy-setup-local-${label}-`));
   const file = join(dir, `${label}.sql`);
@@ -204,6 +245,12 @@ export function setupLocal(executor, log) {
   // The flag is meaningless without 0037's marker table, which is what gates the Board at all.
   assertSchemaMarkerPresent(executor.query("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_board_order_0037_rollback') AS present;")[0]);
 
+  log("==> Applying the shared seed (seed/0001_seed.sql)");
+  executor.runFile(SEED_PATH, "shared-seed");
+  const row = executor.query(SEED_POSTCONDITION_SQL)[0];
+  assertSeedApplied(row);
+  for (const warning of seedWarnings(row)) log(`  ! ${warning}`);
+
   log(`==> Enabling ${BOARD_CONTRACT_FLAG} for local development`);
   executor.run(LOCAL_FLAG_SQL, "board-flag");
 
@@ -213,7 +260,7 @@ export function setupLocal(executor, log) {
   executor.run(QA_FIXTURE_CAPABILITY_SQL, "qa-fixture-capability");
   assertCapabilityInstalled(executor.query("SELECT EXISTS (SELECT 1 FROM __quincy_local_capability WHERE capability = 'scheduling-fixtures') AS present;")[0]);
 
-  log(`==> Local D1 ready: ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
+  log(`==> Local D1 ready: pipeline stages and bootstrap admin seeded, ${BOARD_CONTRACT_FLAG} = 1, Board drag reachable, QA fixture capability installed.`);
 }
 
 function main() {

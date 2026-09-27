@@ -68,13 +68,21 @@ export type SetupExecutor = {
   query: (sql: string) => Row[];
 };
 
+/** Migrations already applied to each database, so `migrate` is re-runnable the way `wrangler d1
+ * migrations apply` is — without adding a tracking table the teardown introspection would see. */
+const appliedMigrations = new WeakMap<SqliteDatabase, Set<string>>();
+
 /** `setup-local.mjs`'s `setupLocal` executor contract, against this SQLite instead of wrangler. */
 export function sqliteSetupExecutor(db: SqliteDatabase): SetupExecutor {
   return {
     migrate: () => {
+      const applied = appliedMigrations.get(db) ?? new Set<string>();
+      appliedMigrations.set(db, applied);
       const migrations = new URL("../migrations/", import.meta.url);
       for (const name of readdirSync(migrations).filter((value) => /^\d{4}_.*\.sql$/.test(value)).sort()) {
+        if (applied.has(name)) continue;
         db.exec(readFileSync(new URL(name, migrations), "utf8").replaceAll("--> statement-breakpoint", ""));
+        applied.add(name);
       }
     },
     run: (sql) => db.exec(sql),
