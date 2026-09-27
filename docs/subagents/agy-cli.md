@@ -162,6 +162,17 @@ agy --model gemini-3.8-flash-high --mode accept-edits --effort high \
 - The brief carries the report contract of Subagent-Orchestration.md §2a — screenshots named per
   viewport and state, every PASS/FAIL row with its measurement and screenshot — plus local-dev
   only, no sign-in or sign-out, and restore anything it mutates.
+- **Evidence per row.** Agy's tables overclaim unless the brief pins this down (#255 pass I: eight
+  PASS rows cited screenshots of a different state, one screenshot was byte-identical to another,
+  and the report still said "Could not verify: none"). The brief requires:
+  - one screenshot file per state, taken while that state is on screen, named for it;
+  - every PASS row cites the file for its own state, never a neighbouring one;
+  - a state it could not reach or capture goes under **Could not verify**, by name, with the
+    reason. A DOM-only fact (a live-region string, a computed colour) cites the `evaluate_script`
+    output instead of a screenshot and says so.
+
+  After the run, check the files yourself: `md5 -q qa-evidence/<pass>/screens/*.png | sort | uniq -d`
+  must print nothing, and open the screenshots behind the rows the decision rests on (§2a).
 - **Permission.** The owner has approved `agy … --dangerously-skip-permissions` for browser passes
   against local dev (2026-09-27). The session's auto-mode classifier may still stop the first
   launch in a session; that is a request for the owner's say-so in chat, not something to route
