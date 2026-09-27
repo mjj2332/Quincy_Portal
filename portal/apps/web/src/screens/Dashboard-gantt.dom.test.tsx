@@ -11,17 +11,26 @@
 import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dashboardSearchOf } from "@quincy/shared";
+import { adminProductionGanttResponseSchema, dashboardSearchOf, PRODUCTION_GANTT_ZONE } from "@quincy/shared";
 import { Dashboard } from "./Dashboard";
 import { locationStore, parseStaffLocation } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
-import { __resetDashboardSearchStoreForTest, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
+import { __resetDashboardSearchStoreForTest, commitDashboardSearchNow, DASHBOARD_SEARCH_DEBOUNCE_MS, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
+import type { ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import type { ProductionGanttProps } from "../components/ProductionGantt";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const authRole = vi.hoisted(() => ({ value: "admin" as "admin" | "editor" | "photographer" | "external_editor" }));
 const ganttPropsState = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
+// #255: the one test that drives the real filters bar (Back/Forward through real edits) flips
+// this to render the real `ProductionGantt` behind the same props-recording mock.
+const realGantt = vi.hoisted(() => ({ value: false }));
 
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiGet: (path: string) => apiGetMock(path) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authRole.value } } }) }));
@@ -32,18 +41,33 @@ vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div 
 // #220: the same "mock at the surface" boundary `Dashboard-calendar.dom.test.tsx` draws for
 // `ProductionCalendarSurface` — this suite owns Dashboard's routing/URL/rail contract, not the
 // Gantt surface's own rendering (`ProductionGantt-readonly.dom.test.tsx` owns that).
-vi.mock("../components/ProductionGantt", () => ({
-  ProductionGantt: (props: Record<string, unknown>) => {
-    ganttPropsState.value = props;
-    return <div data-testid="dashboard-gantt-surface" data-q={String(props.q ?? "")} />;
-  },
-}));
+vi.mock("../components/ProductionGantt", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/ProductionGantt")>();
+  return {
+    ProductionGantt: (props: ProductionGanttProps) => {
+      ganttPropsState.value = props as unknown as Record<string, unknown>;
+      if (realGantt.value) return <actual.ProductionGantt {...props} />;
+      return <div data-testid="dashboard-gantt-surface" data-q={String(props.q ?? "")} />;
+    },
+  };
+});
 
 function projectResponse() {
   return {
     projects: [{ id: "33333333-3333-4333-8333-333333333333", street: "3 Board Street", suburb: null, postcode: null, agencyName: null, agentName: null, stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0, expectedCount: null, priority: null, boardRevision: 1, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null }],
     board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["33333333-3333-4333-8333-333333333333"] } },
   };
+}
+
+function ganttResponse() {
+  return adminProductionGanttResponseSchema.parse({
+    scope: "active",
+    zone: PRODUCTION_GANTT_ZONE,
+    appliedFilters: { q: "", editorIds: [], stageKeys: [], includeDelivered: false, includeCompletedChecklist: false },
+    projects: [],
+    page: { limit: 100, returned: 0, nextCursor: null },
+    density: { matchedProjects: 0, matchedRows: 0, drawCap: 2000, tooManyToDraw: false },
+  });
 }
 
 function DashboardRouteHarness() {
@@ -64,6 +88,7 @@ describe("Dashboard Gantt routing", () => {
   beforeEach(() => {
     authRole.value = "admin";
     ganttPropsState.value = null;
+    realGantt.value = false;
     apiGetMock.mockReset();
     apiGetMock.mockImplementation(() => Promise.resolve(projectResponse()));
     const storage = new Map<string, string>();
@@ -178,6 +203,191 @@ describe("Dashboard Gantt routing", () => {
     expect(window.location.search).toContain("view=gantt");
     expect(window.location.search).toContain("q=smith");
     expect(ganttPropsState.value?.q).toBe("smith");
+  });
+
+  describe("Gantt filters in the URL (#255)", () => {
+    async function renderAt(location: string) {
+      window.history.replaceState(null, "", location);
+      await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+
+    const url = () => `${window.location.pathname}${window.location.search}`;
+    const ganttFilters = () => ganttPropsState.value?.filters as ProductionGanttFacetFilters | undefined;
+    const changeFilters = async (next: ProductionGanttFacetFilters) => {
+      await act(async () => { (ganttPropsState.value?.onFiltersChange as (next: ProductionGanttFacetFilters) => void)(next); await Promise.resolve(); });
+    };
+
+    it("applies a cold deep link's filters on the first render", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&completed=1");
+      expect(switcherButton("Gantt")?.getAttribute("data-active")).toBe("true");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+      expect(url()).toBe("/?view=gantt&stages=raw_review&completed=1");
+    });
+
+    it("hands the surface default filters for the bare Gantt URL", async () => {
+      await renderAt("/?view=gantt");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    });
+
+    it("pushes a filter change into the URL, carrying q", async () => {
+      await renderAt("/?view=gantt&q=smith");
+      await changeFilters({ editorIds: [], stageKeys: ["delivered", "raw_review"], delivered: true, completed: false });
+      expect(url()).toBe("/?view=gantt&stages=raw_review%2Cdelivered&delivered=1&q=smith");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review", "delivered"], delivered: true, completed: false });
+      expect(ganttPropsState.value?.q).toBe("smith");
+
+      await changeFilters({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+      expect(url()).toBe("/?view=gantt&q=smith");
+    });
+
+    it("keeps the Gantt filters when a search commits on a filtered Gantt", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&completed=1");
+      await act(async () => { setDashboardSearchDraft("smith", "user-1"); commitDashboardSearchNow("user-1"); await Promise.resolve(); });
+      expect(url()).toBe("/?view=gantt&stages=raw_review&completed=1&q=smith");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true });
+      expect(ganttPropsState.value?.q).toBe("smith");
+    });
+
+    it("keeps the Gantt filters when the debounced search writer fires, reading them from the live URL", async () => {
+      await renderAt("/?view=gantt&stages=raw_review");
+      await typeSearch("smith");
+      // A filter change lands in the URL while the debounce is armed, without a Dashboard
+      // re-render in between: the writer must read the filters at fire time, not from a snapshot.
+      window.history.replaceState(null, "", "/?view=gantt&stages=edited_review&delivered=1");
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, DASHBOARD_SEARCH_DEBOUNCE_MS + 50)); });
+      expect(url()).toBe("/?view=gantt&stages=edited_review&delivered=1&q=smith");
+    });
+
+    it("restores the previous filter state on Back and the next one on Forward", async () => {
+      realGantt.value = true;
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.startsWith("/api/production-gantt") ? ganttResponse() : projectResponse()));
+      const settle = async () => {
+        for (let i = 0; i < 3; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+        }
+      };
+      // The real `ProductionGanttFiltersBar`, driven by role / name / Quincy test id.
+      const chipNames = () => {
+        const toolbar = host.querySelector<HTMLElement>('[data-testid="production-gantt-filters"] [role="toolbar"][aria-label="Gantt filters"]');
+        if (!toolbar) throw new Error("no Gantt filters toolbar");
+        return [...toolbar.querySelectorAll('[role="group"]')].map((chip) => chip.getAttribute("aria-label"));
+      };
+      const waitForOption = async (name: string) => {
+        const start = Date.now();
+        for (;;) {
+          const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.trim() === name);
+          if (match) return match;
+          if (Date.now() - start > 1500) throw new Error(`no option "${name}"`);
+          // eslint-disable-next-line no-await-in-loop
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+        }
+      };
+      const clickOption = async (name: string) => {
+        const match = await waitForOption(name);
+        await act(async () => { match.click(); });
+        await settle();
+      };
+      const closeMenu = async () => {
+        await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+        await settle();
+      };
+      const listQueriesSince = (callIndex: number) => apiGetMock.mock.calls.slice(callIndex)
+        .map(([called]) => called)
+        .filter((called) => called.startsWith("/api/production-gantt?") && !called.includes("childrenOf="))
+        .map((path) => new URLSearchParams(path.slice(path.indexOf("?") + 1)));
+      const lastListQuery = () => {
+        const query = listQueriesSince(0).at(-1);
+        if (!query) throw new Error("no /api/production-gantt project-list request");
+        return query;
+      };
+      // The browser's own Back/Forward, awaited on the `popstate` it dispatches — not a synthetic
+      // `replaceState` + `PopStateEvent`, so a filter change that replaced instead of pushing
+      // leaves no entry to go back to and this fails.
+      const traverse = async (step: () => void) => {
+        callsBeforeTraversal = apiGetMock.mock.calls.length;
+        await act(async () => {
+          const popped = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("no popstate after history traversal")), 1000);
+            window.addEventListener("popstate", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
+          step();
+          await popped;
+        });
+        await settle();
+      };
+      let callsBeforeTraversal = 0;
+      const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
+        expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], ...expected });
+        // The bar's chips follow the URL (re-seeded on Back/Forward).
+        const shown = [expected.delivered && "Delivered projects", expected.completed && "Completed checklist items"].filter(Boolean);
+        expect(chipNames()).toEqual(shown.length === 0 ? [] : [`Show includes ${shown.length === 1 ? shown[0] : `${shown.length} selected`}`]);
+      };
+      // A filter push fetches its new key, so the latest project-list request is the new filters'.
+      const expectRequested = (expected: { delivered: boolean; completed: boolean }) => {
+        expect(lastListQuery().get("delivered")).toBe(expected.delivered ? "1" : null);
+        expect(lastListQuery().get("completed")).toBe(expected.completed ? "1" : null);
+      };
+      // A Back/Forward returns to a key fetched moments ago, which the Gantt query's
+      // `staleTime: 15_000` (`production-gantt-query.ts`) serves from cache with no request. So:
+      // any project-list request the traversal did make must be for the restored filters.
+      const expectRequestedSinceTraversal = (expected: { delivered: boolean; completed: boolean }) => {
+        for (const query of listQueriesSince(callsBeforeTraversal)) {
+          expect(query.get("delivered")).toBe(expected.delivered ? "1" : null);
+          expect(query.get("completed")).toBe(expected.completed ? "1" : null);
+        }
+      };
+
+      await renderAt("/?view=gantt");
+      await settle();
+      expectApplied({ delivered: false, completed: false });
+      expectRequested({ delivered: false, completed: false });
+
+      const trigger = host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-filters-add"]');
+      if (!trigger) throw new Error("no add-filter trigger");
+      await act(async () => { trigger.click(); });
+      await clickOption("Show");
+      await clickOption("includes");
+      await clickOption("Delivered projects");
+      expect(url()).toBe("/?view=gantt&delivered=1");
+      expectApplied({ delivered: true, completed: false });
+      expectRequested({ delivered: true, completed: false });
+
+      await clickOption("Completed checklist items");
+      expect(url()).toBe("/?view=gantt&completed=1&delivered=1");
+      await closeMenu();
+      expectApplied({ delivered: true, completed: true });
+      expectRequested({ delivered: true, completed: true });
+
+      await traverse(() => window.history.back());
+      expect(url()).toBe("/?view=gantt&delivered=1");
+      expectApplied({ delivered: true, completed: false });
+      expectRequestedSinceTraversal({ delivered: true, completed: false });
+
+      await traverse(() => window.history.forward());
+      expect(url()).toBe("/?view=gantt&completed=1&delivered=1");
+      expectApplied({ delivered: true, completed: true });
+      expectRequestedSinceTraversal({ delivered: true, completed: true });
+      expect(switcherButton("Gantt")?.getAttribute("data-active")).toBe("true");
+    });
+
+    it("starts the Gantt with default filters when switching in from another view", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&delivered=1");
+      await act(async () => { switcherButton("List")!.click(); await Promise.resolve(); });
+      expect(url()).toBe("/?view=list");
+      await act(async () => { switcherButton("Gantt")!.click(); await Promise.resolve(); });
+      expect(url()).toBe("/?view=gantt");
+      expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], delivered: false, completed: false });
+    });
+
+    it("keeps Gantt and Calendar filter state independent", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&delivered=1");
+      await act(async () => { switcherButton("Calendar")!.click(); await Promise.resolve(); });
+      const calendarRoute = parseStaffLocation(url());
+      expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.stageKeys : null).toEqual([]);
+      expect(calendarRoute.kind === "dashboard" && "calendar" in calendarRoute ? calendarRoute.calendar.showDeliveredProjects : null).toBe(false);
+    });
   });
 
   it("disables Gantt navigation only while a Board interaction blocks it, same as List/Kanban", async () => {

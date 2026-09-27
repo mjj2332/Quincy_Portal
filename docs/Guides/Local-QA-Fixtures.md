@@ -195,11 +195,20 @@ On the Production Gantt a project draws a bar only when it has a deadline (`apps
 
 All five real `pipeline_stages` keys are used, which is **four distinct hues**, not five —
 `raw_review`/`edited_review` share `--signal-caution` and `editing_autohdr` alone reaches
-`--signal-info` (the fifth, `editing`, is a presentation-only key no seed can ever produce; see
-`apps/web/src/lib/stage-colors.ts`). `--signal-positive` needs the delivered filter, and the
+`--signal-info` (the fifth, `editing`, is a presentation-only key: no *seed* writes it, but a
+non-admin viewer receives every `editing_autohdr` project as `editing` —
+`packages/shared/src/stage-move.ts`'s `stageTransportKeyForRole` — so an Editor-role pass does see
+it; see `apps/web/src/lib/stage-colors.ts`). `--signal-positive` needs the delivered filter, and the
 199/200 vs. 200/200 boundary needs the completed-children filter. **A browser pass must explicitly
 flip `delivered=1` and `completed=1` at some point** — neither one is visible in the default filter
-state.
+state. On the Gantt that is now done through its filters bar (#255): Add filter → Show → includes →
+"Delivered projects" / "Completed checklist items" writes `delivered=1` / `completed=1` into the
+Gantt URL, beside any `stages=` selection from a Stage chip, so the state survives a reload and
+Back/Forward. Stage and Show keep Delivered paired: picking Stage → Delivered also turns Show →
+Delivered on, and turning Show → Delivered off also drops it from Stage, in the same write. On the
+density tier, `delivered` alone trips the draw cap (the "Delivered on" row below), so pair it with a
+single stage — Stage → Delivered alone does it, writing `/?view=gantt&stages=delivered&delivered=1`
+— to see the delivered bar drawn.
 
 ## Density (`--tier=core,density`) — opt-in, and why
 

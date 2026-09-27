@@ -159,3 +159,39 @@ For any block, the estimate has four parts, and only the first is about the bloc
 Port the old tests assertion-for-assertion when you cut over. On this adoption that discipline is
 what caught a real regression the new Board had silently lost — see `docs/lessons.md`, "Two orders,
 one list".
+
+## Addendum: the Gantt filters bar (`@reui/filters`, #255)
+
+The third adoption, and the first registry item that replaced a working Quincy control rather than
+landing ahead of a consumer (the Gantt's reused checkbox panel). What it actually cost:
+
+| | |
+|---|---|
+| `shadcn add @reui/filters` wrote | 34 files, 19,047 lines, into the sandbox |
+| Vendored | 22 files, ~17,440 lines: 13 in `components/reui/filters/`, 9 in `components/reui/cascader/`, plus base-nova `spinner.tsx` (10) |
+| Kept Quincy's copy instead | 8 primitives the item depends on (`button`, `button-group`, `dropdown-menu`, `input`, `popover`, `scroll-area`, `separator`, `tooltip`) |
+| Left out | `cascader-virtual.tsx` (needs `@tanstack/react-virtual`), `cascader-columns.tsx` (only the virtual list imports it), `filters-date.tsx` (nothing imports it) |
+| New production dependencies | 0 — one import swapped (`CascaderVirtualItems` → `CascaderItems`) to get there |
+| `noUncheckedIndexedAccess` errors | 38 across 9 files, all local narrowing, each named in its file header |
+| Skin-guard strips | 15 class tokens across 4 files (`dark:`, `shadow-*`, `rounded-lg`) |
+| Other class edits (browser passes F/G) | 7 across 3 files: in `filters-chip.tsx` the segments' `hover:bg-accent` → `hover:bg-muted`, the finished operator's `text-muted-foreground` → `text-foreground-secondary`, the chip height (the button's `BUTTON_HEIGHT_CLASS`), the segments' focus radius, and the value's one-line truncation; in `filters-editors.tsx` the tick's forced `text-foreground!` removed; in `cascader.tsx` the retry button's `hover:bg-accent` → `hover:bg-muted`. Each is recorded in its file's header |
+| Behavioural vendor edits | 2: `ruleMenu`, additive, hides the rule menu's Duplicate/Negate rows (3 files); `writtenRef` in `filters.tsx`, so the live status announces the count after an outside re-seed of a controlled `query` |
+| Quincy code | One composition file, `ProductionGanttFiltersBar.tsx` (the schema, URL sync and focus), and the pure mapping and Delivered-pair rule in `lib/production-gantt-filters.ts` |
+| Bundle (`vite build`, raw / gzip, all JS) | 2,289 kB / 679 kB before, 2,429 kB / 721 kB after; the entry chunk shrank (1,280 → 1,250 kB) as rolldown re-split shared modules into a new chunk |
+
+What was new this time:
+
+- **Size is almost all cascader.** The chip row the Gantt needs is small; the field picker and every
+  value menu are the cascader, and the cascader is two thirds of the install. Budget for the
+  cascader whenever `filters` is on the list, even for a two-field bar.
+- **A bar that drops a dependency is a one-line trim, not a fork.** The windowed list upstream
+  renders exactly `CascaderItems` below its threshold; swapping the import removed
+  `@tanstack/react-virtual` without touching behaviour at this list size.
+- **The chip bar needs local state even when the URL is the source of truth** — see
+  `docs/lessons.md`, "A URL-backed chip bar keeps its own query".
+- **One upstream decision could not be configured away:** a new rule is committed with
+  `operator: ""`, so a single-operator field still shows its one-row condition menu. Not forked.
+- **happy-dom drove the whole field → condition → value flow**, unlike the Board's drag work. The
+  real-browser pass is still where chip, trigger and Clear heights (all three on the button's
+  38px / 44px-at-≤721px contract since browser pass F) and the `outline-hidden` + ring focus
+  treatment in the cascader get judged.

@@ -3868,3 +3868,46 @@ fixture guide as a "known gap" with a manual workaround instead of being fixed.
   `@quincy/db` (`-w` or `--workspace`, space- or `=`-separated) to end in `--`, as the `db:qa:*`
   scripts already did. `npm run db:migrate:local -- --persist-to <absolute dir>` from `portal/` is
   the scratch-database command.
+
+## A banner that says "narrow your filter" must be tested against the controls the surface renders; a legend comes from the role-aware stage set (#255, #254, 2026-09-27)
+
+The Gantt's draw-cap notice told users to "narrow your filter" for a whole release while the Gantt
+rendered no filter controls at all — its filters were hard-wired to defaults (#255). Every test of
+the notice checked that it appeared, none checked that the thing it asked for was on screen.
+
+- **Test the instruction, not just the message.** A test for advice copy should find the control
+  the copy points at on the same surface. `ProductionGantt-filters.dom.test.tsx` now asserts the
+  filters bar is rendered beside the banner.
+- **Build a legend from the role-aware stage options, not the colour map (#254).** `stageColors`
+  carries both `editing` and `editing_autohdr`; a non-admin receives `editing_autohdr` projects as
+  `editing` (`packages/shared/src/stage-move.ts`'s `stageTransportKeyForRole`), so one of the two
+  entries is always a colour this viewer never sees. Where no stage label matched, the legend fell back to
+  the raw key. `ganttLegendEntries` (`lib/production-gantt-filters.ts`) derives entries from the
+  same options the filters bar offers, and drops `Delivered` unless delivered projects are shown.
+
+## A URL-backed chip bar keeps its own query: an unfinished chip has no URL spelling (#255, 2026-09-27)
+
+The Gantt's filters moved from a reused checkbox panel to a ReUI `Filters` chip row
+(`components/ProductionGanttFiltersBar.tsx`). A checkbox is always a complete value, so the panel
+could be fully controlled by the URL. A chip is not: picking a field creates a rule with no
+condition and no value, which the URL cannot hold. Driven straight from the URL, the first echo of
+any other edit wiped it.
+
+- **Hold a local `FilterQuery`, push only when its projection changes the URL, and re-seed only when
+  the URL changes to something the local query does not already say.** The bar's own push echoes
+  back equal and must not rebuild the query — a rebuild resets chip ids, an open value menu and
+  focus. Compare facets by a canonical key (`ganttFacetKey`), never by object identity: the
+  Dashboard hands a fresh object every render.
+- **Give the query stable ids** (`gantt-stage`, `gantt-show`), so a genuine re-seed (Back/Forward,
+  the empty state's Clear) still hands React the same chip keys.
+- **Veto what the mapping cannot read, then also hide the route to it.** `onBeforeQueryChange`
+  refuses any query `queryToGanttFacet` maps to `null`; the picker disables a field once a chip for
+  it exists (removing it from `fields` would render an "unknown" chip instead); and the rule menu's
+  Duplicate/Negate rows are hidden by `ruleMenu`, an additive Quincy prop on the vendored `Filters`,
+  because upstream had no option for it.
+- **The vendored create path always asks for the condition.** `filters.tsx` commits a new rule with
+  `operator: ""` on purpose, so a field with exactly one operator still shows a one-row condition
+  menu. There is no supported option to skip it; we did not fork for it.
+- **happy-dom drives the whole flow, with two gaps named in the tests:** it does not turn Enter on a
+  `<button>` into a `click` (a browser does), and Base UI's ScrollArea needs an
+  `Element.prototype.getAnimations` stub.

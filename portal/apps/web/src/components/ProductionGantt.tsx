@@ -67,9 +67,9 @@
  * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
  * the stock-fallthrough guarantee above for the common case.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import type { GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
+import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -89,17 +89,35 @@ import {
   type ProductionGanttAttentionReason,
   type ProductionGanttRowData,
 } from "../lib/production-gantt-adapter";
-import { stageColors } from "../lib/stage-colors";
+import {
+  DEFAULT_GANTT_FACET_FILTERS,
+  ganttFacetFor,
+  ganttFacetKey,
+  ganttLegendEntries,
+  productionStageFilterOptions,
+  type GanttLegendEntry,
+  type ProductionGanttFacetFilters,
+} from "../lib/production-gantt-filters";
 import { useStages } from "../lib/stages";
+import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
+import { buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
+import { StageSwatch } from "./quincy/StageSwatch";
 import { Skeleton } from "./reui/skeleton";
 
 export type ProductionGanttProps = {
   identity: DashboardIdentity;
   /** The Dashboard's shared search box, fed straight from the route. */
   q: string;
+  /**
+   * #255: the Gantt's Stage / Delivered / Completed filters, read from the URL by the Dashboard
+   * (the URL is their only home). `editorIds` is always `[]` in this release.
+   */
+  filters: ProductionGanttFacetFilters;
+  /** Writes a filter change back to the URL; the new filters arrive back through `filters`. */
+  onFiltersChange: (next: ProductionGanttFacetFilters) => void;
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
@@ -317,7 +335,12 @@ function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRende
   );
 }
 
-function GanttLegend({ stageLabelByKey }: { stageLabelByKey: Map<string, string> }) {
+/**
+ * #254: built from `ganttLegendEntries` — the role-aware stage options, narrowed to the active
+ * filters — never from the colour map, which carries both `editing` and `editing_autohdr` and
+ * would show a raw key for whichever one this role never sees.
+ */
+function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
   return (
     <div
       role="group"
@@ -325,17 +348,15 @@ function GanttLegend({ stageLabelByKey }: { stageLabelByKey: Map<string, string>
       data-testid="production-gantt-legend"
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground"
     >
-      {Object.entries(stageColors).map(([key, color]) => (
-        <span key={key} className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className="size-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: color }} />
-          {stageLabelByKey.get(key) ?? key}
+      {entries.map((entry) => (
+        <span key={entry.key} className="inline-flex items-center gap-1.5" data-stage-key={entry.key}>
+          <StageSwatch color={entry.color} />
+          {entry.label}
         </span>
       ))}
     </div>
   );
 }
-
-const EMPTY_FILTERS: Omit<ProductionGanttFilters, "q"> = { editorIds: [], stageKeys: [], delivered: false, completed: false };
 
 /**
  * fix-220-sol1 #3: how many projects' remaining-child-page chains may be in flight at once. A
@@ -453,13 +474,54 @@ function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"])
   ]);
 }
 
-export function ProductionGantt({ identity, q }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange }: ProductionGanttProps) {
   const { stages } = useStages();
-  const stageLabelByKey = useMemo(() => new Map(stages.map((stage) => [stage.key, stage.label] as const)), [stages]);
+  // Role-derived (the same `identity` the request is authorised as), not a second session read.
+  const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
+  const stageOptions = useMemo(() => productionStageFilterOptions(stages, canAdminBackend), [stages, canAdminBackend]);
 
-  const filters = useMemo<ProductionGanttFilters>(() => ({ q, ...EMPTY_FILTERS }), [q]);
+  // #255: built field by field so nothing but the request's own filter fields reaches the query
+  // key — each distinct filter tuple is a new `generationKey` below, restarting the child chains
+  // through the existing lifecycle exactly as a `q` change always has.
+  // Keyed by value (`ganttFacetKey`: stages, delivered, completed; plus the editor ids, which that
+  // key does not carry), so a fresh facet object with the same filters keeps the same request.
+  const { editorIds, stageKeys, delivered, completed } = facetFilters;
+  const facetKey = ganttFacetKey(facetFilters);
+  const editorIdsKey = editorIds.join(",");
+  const filters = useMemo<ProductionGanttFilters>(
+    () => ({ q, editorIds, stageKeys, delivered, completed }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the arrays are read from the facet; its value keys stand in for them
+    [q, facetKey, editorIdsKey],
+  );
+  const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
+  // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
+  // focus to <body>. Focus moves to the always-mounted filters bar's add-filter trigger instead —
+  // the filters the empty state pointed the user to. The browser's own focus scroll only brings the
+  // target to the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus
+  // without scrolling, then scroll it to the top — the trigger's scroll-margin-top clears the sticky
+  // shell header. Default (instant) scroll behaviour: no animation for reduced-motion users.
+  //
+  // Focus is immediate; the SCROLL waits for the cleared filters to render. Browser pass F: scrolling
+  // inside the click handler measured the old, short empty-state page, so at 390×844 the trigger
+  // still ended 7px below the viewport with scrollY 0. The handler arms a flag; the layout effect
+  // below, keyed on the request filters, spends it after the render that carries the cleared filters
+  // (the loading slot in place of the empty state) has reached the DOM, and before it paints. No
+  // other filter change arms it, so the bar's own edits never scroll the page.
+  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const scrollToFiltersPendingRef = useRef(false);
+  const clearFiltersFromEmptyState = useCallback(() => {
+    scrollToFiltersPendingRef.current = true;
+    onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
+    filtersTriggerRef.current?.focus({ preventScroll: true });
+  }, [onFiltersChange]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
+
+  useLayoutEffect(() => {
+    if (!scrollToFiltersPendingRef.current) return;
+    scrollToFiltersPendingRef.current = false;
+    filtersTriggerRef.current?.scrollIntoView({ block: "start" });
+  }, [filters]);
 
   /**
    * fix-220-sol1 #1: everything below this line that accumulates ACROSS renders (per-project child
@@ -840,17 +902,20 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");
 
+  // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
+  // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
+  // while the new filter's first page is pending. The bar is never `disabled` while pending — a
+  // disabled control drops focus, which is exactly what this structure exists to avoid.
+  let body: ReactNode;
   if (query.isPending) {
-    return (
+    body = (
       <div className="grid gap-[var(--space-3)]" data-testid="production-gantt-loading">
         <Skeleton className="h-10" />
         <Skeleton className="h-[28rem]" />
       </div>
     );
-  }
-
-  if (query.isError) {
-    return (
+  } else if (query.isError) {
+    body = (
       <EmptyState tone="error" role="alert" title="The production schedule is unavailable.">
         {query.error instanceof Error ? query.error.message : "The Gantt could not be loaded."}
         <div>
@@ -860,43 +925,70 @@ export function ProductionGantt({ identity, q }: ProductionGanttProps) {
         </div>
       </EmptyState>
     );
+  } else {
+    // #255: a settled query with no projects at all (and no further page to fetch) says why the
+    // chart is blank instead of drawing an empty grid. `projects` is the same flattened list the
+    // chart is built from.
+    const showEmpty = projects.length === 0 && !hasNextPage;
+    const facetFiltersDefault = editorIds.length === 0 && ganttFacetFor(facetFilters) === undefined;
+    body = (
+      <div className="grid gap-[var(--space-3)]" data-testid="production-gantt">
+        {tooManyToDraw && (
+          <Notice tone="caution" role="status" data-testid="production-gantt-too-many">
+            Too many projects match these filters to draw at once — narrow the filters above to see the rest.
+          </Notice>
+        )}
+        {showEmpty ? (
+          facetFiltersDefault ? (
+            <EmptyState role="status" data-testid="production-gantt-empty" title={q.trim() ? "No projects match this search." : "No projects to schedule."} />
+          ) : (
+            <EmptyState role="status" data-testid="production-gantt-empty" title="No projects match these filters.">
+              Change or clear the filters above to see more projects.
+              <div>
+                <button type="button" className={buttonClasses("text", { className: "mt-[var(--space-4)]" })} onClick={clearFiltersFromEmptyState}>
+                  Clear filters
+                </button>
+              </div>
+            </EmptyState>
+          )
+        ) : (
+          <Gantt
+            resources={model.resources}
+            events={model.events}
+            date={date}
+            onDateChange={setDate}
+            scale={scale}
+            onScaleChange={setScale}
+            timeZone={GANTT_TIME_ZONE}
+            interactions={{ drag: false, resize: false, selectSlot: false }}
+            parentScheduling={false}
+            summaryBars={false}
+            baselineBars={false}
+            dependencyLines={false}
+            scheduleMode="single"
+            rowCheckboxes={false}
+            barLabel="auto"
+            dragCreate={false}
+            displayScheduleHint={false}
+            displayCreateTaskHint={false}
+            renderResourceLabel={renderResourceLabel}
+            renderEvent={renderEvent}
+            className="h-[36rem]"
+          >
+            <GanttNav />
+            <GanttToolbar />
+            <GanttView />
+          </Gantt>
+        )}
+      </div>
+    );
   }
 
   return (
-    <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt">
-      <GanttLegend stageLabelByKey={stageLabelByKey} />
-      {tooManyToDraw && (
-        <Notice tone="caution" role="status" data-testid="production-gantt-too-many">
-          Too many projects match this filter to draw at once — narrow your filter to see the rest.
-        </Notice>
-      )}
-      <Gantt
-        resources={model.resources}
-        events={model.events}
-        date={date}
-        onDateChange={setDate}
-        scale={scale}
-        onScaleChange={setScale}
-        timeZone={GANTT_TIME_ZONE}
-        interactions={{ drag: false, resize: false, selectSlot: false }}
-        parentScheduling={false}
-        summaryBars={false}
-        baselineBars={false}
-        dependencyLines={false}
-        scheduleMode="single"
-        rowCheckboxes={false}
-        barLabel="auto"
-        dragCreate={false}
-        displayScheduleHint={false}
-        displayCreateTaskHint={false}
-        renderResourceLabel={renderResourceLabel}
-        renderEvent={renderEvent}
-        className="h-[36rem]"
-      >
-        <GanttNav />
-        <GanttToolbar />
-        <GanttView />
-      </Gantt>
+    <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt-root">
+      <ProductionGanttFiltersBar filters={facetFilters} stageOptions={stageOptions} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
+      <GanttLegend entries={legendEntries} />
+      {body}
     </div>
   );
 }
