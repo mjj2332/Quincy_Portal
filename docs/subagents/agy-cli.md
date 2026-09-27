@@ -1,7 +1,7 @@
 # Agy (Antigravity) CLI mechanics
 
-Loaded on demand from `Subagent-Orchestration.md` §3a. Browser pass on `chrome-devtools-mcp` at
-medium effort since 2026-09-28; CLI mechanics verified live 2026-07-24, including a real
+Loaded on demand from `Subagent-Orchestration.md` §3a. Browser pass on `huashu-chrome` at medium
+effort, `chrome-devtools-mcp` as the fallback, since 2026-09-28; CLI mechanics verified live 2026-07-24, including a real
 accept-edits build test.
 
 Agy is **Google's Antigravity CLI** (<https://antigravity.google/docs/cli/using>) — the binary
@@ -15,8 +15,9 @@ for the browser pass (2026-09-28; `-high` at `high` before that). The tier is ba
 id, so the two flags always move together. Pass both on every run.
 
 **Agy's job is stage 1 of every UI browser pass** ([Subagent-Orchestration.md](Subagent-Orchestration.md)
-§2a), driving the dedicated debugging Chrome through `chrome-devtools-mcp`, whose native `drag`
-moves Gantt bars. The recipe is [§Browser pass](#browser-pass-the-default-invocation) below.
+§2a), driving the owner's Chrome through `huashu-chrome`, with `chrome-devtools-mcp` in the
+dedicated debugging Chrome as the fallback. The recipe is
+[§Browser pass](#browser-pass-the-default-invocation) below.
 
 ## Planning (read-only)
 
@@ -136,9 +137,9 @@ text — the DB does.
 
 ## Browser pass: the default invocation
 
-Agy drives the dedicated debugging Chrome on 9333 through **`chrome-devtools-mcp`** at medium
-effort (owner decision, 2026-09-28; §Option A below sets that Chrome up). It replaced
-`huashu-chrome` the same day. On the #221 pass D brief, against the same bundle and fixture:
+Agy drives the owner's everyday Chrome through **`huashu-chrome`** at medium effort, and falls
+back to **`chrome-devtools-mcp`** in the dedicated debugging Chrome (owner decision, 2026-09-28).
+On the #221 pass D brief, against the same bundle and fixture:
 
 | Agy (high effort) | `huashu-chrome` | `chrome-devtools-mcp` |
 |---|---|---|
@@ -147,7 +148,8 @@ effort (owner decision, 2026-09-28; §Option A below sets that Chrome up). It re
 | Writes left behind | 2 | 0 |
 | Keyboard, focus, hover, 390px | synthetic or blocked: unmeasured | trusted: measured, and caught a Cancel-focus defect |
 
-Medium effort is unmeasured on a full pass: hold its first run against the right-hand column.
+huashu is faster and needs no setup; chrome-devtools proves what huashu cannot. Medium effort is
+unmeasured on a full pass: hold its first run against the huashu column.
 
 Preconditions, each checked before spawning (Agy starts none of them — see the shutdown hang above):
 
@@ -155,11 +157,10 @@ Preconditions, each checked before spawning (Agy starts none of them — see the
    normally the main checkout; with the owner's OK, detach that checkout to the branch under test
    (`git checkout --detach <branch>`), rebuild web (`npm run build -w @quincy/web`), and restore
    `main` afterwards. A worktree cannot run its own server (no `.dev.vars`, no local D1 session).
-2. The dedicated Chrome is up and signed in: `curl -sS http://127.0.0.1:9333/json/version`
-   answers and `curl -sS http://127.0.0.1:9333/json` lists a `localhost:8787` page. The owner
-   starts it and does the sign-in (§Option A).
-3. `~/.gemini/config/mcp_config.json` has `chrome-devtools` with `--browserUrl=http://127.0.0.1:9333`
-   and `--workspace=<repo root>/qa-evidence` (§Rules that apply to both).
+2. The owner's everyday Chrome is signed in to `http://localhost:8787`, and the huashu extension
+   is connected: a huashu `tabs` list answers. If calls fail, the owner clicks the extension icon →
+   Reconnect (a CLI/extension version mismatch warns but works).
+3. `agy mcp list` shows `huashu-chrome … npx -y huashu-chrome mcp --client gemini`.
 4. The page under test is **hard-reloaded** at the start of the brief, and Agy reports the loaded
    `index-*.js` name alongside the one the server now serves. A tab left open across a rebuild
    runs the old bundle, and a pass against it is void (#255 pass G).
@@ -177,11 +178,54 @@ agy --model gemini-3.8-flash-medium --mode accept-edits --effort medium \
   matches only a command line that *starts* with `agy`: a wrapper that waits for a previous run
   (`while …; do sleep; done; agy …`) is not covered and is refused. Queue a second run by launching
   it after the first one's completion notification, not from a waiting script.
-- The brief's first line names the browser: "Drive Chrome only through the `chrome-devtools` MCP
-  tools." Afterwards, confirm from the conversation DB that no other browser tool ran.
-- **Containment.** Agy works only in pages it opens itself (`new_page`, then that `pageId` on every
-  call), on `http://localhost:8787` only, and closes them at the end. The dedicated profile is the
-  boundary (§Option A).
+- The brief's first line names the browser: "Drive Chrome only through the `huashu-chrome` MCP
+  tools (`tabs`, `navigate`, `snapshot`, `act`, `click`, `key`, `eval`, `query`, `network`,
+  `screenshot`, `wait`, `read_text`)." Afterwards, confirm from the conversation DB that no other
+  browser tool ran.
+- **Containment.** huashu drives the owner's *everyday* Chrome, with every login in it. The brief
+  confines Agy to tabs it opens itself (`tabs` action `new`, a `label`, and that `tabId` on every
+  call), to `http://localhost:8787` only, and never `focus: true`; it never reads, selects or
+  closes another tab, never visits history, passwords or autofill, and closes its own tabs at the
+  end. Tabs open in the background and screenshots work there.
+- **Screenshots.** `screenshot` with an absolute `savePath` under `qa-evidence/<pass>/screens/` and
+  `full: true`. Without the flag huashu writes a 60%-scale JPEG under the `.png` name (2026-09-28,
+  2304×1336). Confirm the files exist and check one with `file` after the run.
+- **`[NO_TAB]`** on a tab huashu just opened: open a fresh tab and retry once. If it recurs, the
+  owner reloads the extension (`chrome://extensions` → reload); runs that hit it printed the
+  extension v1.2.0 / CLI v1.2.1 mismatch warning.
+- **Drags.** huashu has no drag tool. The brief supplies an `eval` that dispatches `pointerdown`,
+  stepped `pointermove`s and (after the screenshot) `pointerup` on the real bar or grip; the
+  keyboard Adjust path (Space, arrows, M/S/E, Enter/Escape) is the fallback when a synthetic drag
+  does nothing, and the report says which one ran.
+- **Viewport.** huashu cannot resize the owner's window. The brief records `innerWidth`/`innerHeight`
+  and tries one `window.open(url, name, "popup,width=390,height=844")`; Chrome blocks it on some
+  runs, which puts the narrow rows under **Could not verify**.
+- The brief carries the report contract of Subagent-Orchestration.md §2a — screenshots named per
+  viewport and state, every PASS/FAIL row with its measurement and screenshot — plus local-dev
+  only, no sign-in or sign-out, and restore anything it mutates.
+- **Evidence per row.** Agy's tables overclaim unless the brief pins this down (#255 pass I: eight
+  PASS rows cited screenshots of a different state, one screenshot was byte-identical to another,
+  and the report still said "Could not verify: none"). The brief requires:
+  - one screenshot file per state, taken while that state is on screen, named for it;
+  - every PASS row cites the file for its own state, never a neighbouring one;
+  - a state it could not reach or capture goes under **Could not verify**, by name, with the
+    reason. A DOM-only fact (a live-region string, a computed colour) cites the `eval` output
+    instead of a screenshot and says so.
+
+  After the run, check the files yourself: `md5 -q qa-evidence/<pass>/screens/*.png | sort | uniq -d`
+  must print nothing, and open the screenshots behind the rows the decision rests on (§2a).
+
+### The `chrome-devtools-mcp` fallback
+
+Everything huashu does is a synthetic DOM event in a background tab, so its **drag, keyboard,
+focus, hover and narrow-viewport** rows are unmeasured. Those rows, and the whole pass when huashu
+is down (the extension disconnected, `[NO_TAB]` on every retry), rerun as a second Agy pass on
+`chrome-devtools-mcp` in the dedicated debugging Chrome. Same command and brief contract; the
+preconditions become §Option A's (the Chrome on 9333 up and signed in, its server entry carrying
+`--workspace`), and the brief's first line names the `chrome-devtools` MCP tools instead:
+
+- **Containment.** Only pages it opens itself (`new_page`, then that `pageId` on every call), on
+  `http://localhost:8787` only, closed at the end. The dedicated profile is the boundary.
 - **Moves: `drag`.** It takes two uids from a fresh `take_snapshot`: `from_uid` is the bar's
   `button` (its accessible name carries the dates), `to_uid` is the destination day's header
   `StaticText` in the timeline (e.g. `"Tue 29"`), which must be on screen, so scroll the timeline
@@ -194,57 +238,23 @@ agy --model gemini-3.8-flash-medium --mode accept-edits --effort medium \
   Space, S or E for the edge, the arrows, Enter or Escape. The keys are trusted, so focus rows are
   measured directly (`evaluate_script` → `document.activeElement`).
 - **Mid-drag states** (the ghost, hint or chip while held) need the pointer down at screenshot
-  time, which one `drag` call never leaves. For those rows only, the brief supplies an
-  `evaluate_script` that dispatches `pointerdown` and stepped `pointermove`s, the screenshot runs,
-  then a second script dispatches `pointerup`; the row says it was synthetic.
+  time, which one `drag` call never leaves: an `evaluate_script` dispatches `pointerdown` and
+  stepped `pointermove`s, the screenshot runs, then a second script dispatches `pointerup`, and
+  the row says it was synthetic.
 - **Hover:** `hover`. **Viewport:** `emulate` with `viewport: "390x844x2,mobile,touch"` on its own
   page, reset with `emulate` again before the wide rows.
-- **Screenshots:** `take_screenshot` with a `filePath` under `qa-evidence/<pass>/screens/`. Confirm
-  the files exist after the run.
-- The brief carries the report contract of Subagent-Orchestration.md §2a — screenshots named per
-  viewport and state, every PASS/FAIL row with its measurement and screenshot — plus local-dev
-  only, no sign-in or sign-out, and restore anything it mutates.
-- **Evidence per row.** Agy's tables overclaim unless the brief pins this down (#255 pass I: eight
-  PASS rows cited screenshots of a different state, one screenshot was byte-identical to another,
-  and the report still said "Could not verify: none"). The brief requires:
-  - one screenshot file per state, taken while that state is on screen, named for it;
-  - every PASS row cites the file for its own state, never a neighbouring one;
-  - a state it could not reach or capture goes under **Could not verify**, by name, with the
-    reason. A DOM-only fact (a live-region string, a computed colour) cites the `evaluate_script`
-    output instead of a screenshot and says so.
-
-  After the run, check the files yourself: `md5 -q qa-evidence/<pass>/screens/*.png | sort | uniq -d`
-  must print nothing, and open the screenshots behind the rows the decision rests on (§2a).
+- **Screenshots:** `take_screenshot` with a `filePath` under `qa-evidence/<pass>/screens/`.
 
 ### What the session still re-checks
 
-Trusted keys, hover and viewports close most of the gap, but a measurer still passes rows its own
-numbers fail: on #221 pass E Agy measured the dialog backdrop as `rgba(0,0,0,0)` and focus landing
-on an unrelated bar, and marked both PASS. The session re-runs, with trusted CDP input in the same
-Chrome, every synthetic mid-drag row and every row whose measurement contradicts its verdict: open
-its own target with `Target.createTarget`, size it with `Emulation.setDeviceMetricsOverride`, drive
-it with `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`. Layout defects a measurer measured
-and passed (a street squeezed to zero width, an 860px dialog) are design-reviewer's to catch (§2a
+A measurer passes rows its own numbers fail: on #221 pass E Agy measured the dialog backdrop as
+`rgba(0,0,0,0)` and focus landing on an unrelated bar, and marked both PASS. The session re-runs,
+with trusted CDP input in the dedicated Chrome, every row still synthetic after the fallback and
+every row whose measurement contradicts its verdict: open its own target with
+`Target.createTarget`, size it with `Emulation.setDeviceMetricsOverride`, drive it with
+`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`. Layout defects a measurer measured and
+passed (a street squeezed to zero width, an 860px dialog) are design-reviewer's to catch (§2a
 stage 2).
-
-### `huashu-chrome`: the fallback when the debugging Chrome is down
-
-huashu drives the owner's *everyday* Chrome with no setup (`agy mcp list` shows
-`huashu-chrome … npx -y huashu-chrome mcp --client gemini`). Its input is synthetic and its tabs sit
-in the background, so every keyboard, focus, hover and narrow-viewport row is unmeasured and goes to
-the session's re-check; it has no drag tool, so moves are an `eval` of pointer events. When it runs:
-
-- **Containment.** The owner's everyday Chrome holds every login. The brief confines Agy to tabs it
-  opens itself (`tabs` action `new`, a `label`, and that `tabId` on every call), to
-  `http://localhost:8787` only, and never `focus: true`; it never reads, selects or closes another
-  tab, never visits history, passwords or autofill, and closes its own tabs at the end.
-- **Screenshots** need `full: true`: without it huashu writes a 60%-scale JPEG under the `.png`
-  name (2026-09-28, 2304×1336).
-- **`[NO_TAB]`** on a tab huashu just opened: open a fresh tab and retry once. If it recurs, the
-  owner reloads the extension (`chrome://extensions` → reload); runs that hit it printed the
-  extension v1.2.0 / CLI v1.2.1 mismatch warning.
-- **Viewport.** It cannot resize the owner's window; one `window.open(url, name,
-  "popup,width=390,height=844")` is the only narrow path, and Chrome blocks it on some runs.
 
 ## Why not the Antigravity browser agent
 
@@ -254,12 +264,12 @@ with an allowlist that starts as `localhost` only. The docs mark it and its
 [separate profile](https://antigravity.google/docs/ide/separate-chrome-profile/) **"Available on:
 Antigravity IDE"** — not the CLI — and it cannot attach to an existing Chrome, so a headless
 `agy -p` run cannot reach a human-signed Quincy session through it. The CLI's own `browser_*`
-tools remain untested for that. The headless paths are `chrome-devtools-mcp` (below) and the
-`huashu-chrome` fallback (above).
+tools remain untested for that. The headless paths are `huashu-chrome` (above) and the
+`chrome-devtools-mcp` fallback (below).
 
 ## Chrome automation via `chrome-devtools-mcp` (verified 2026-08-27, re-verified 2026-09-27)
 
-The browser pass's browser (§Browser pass above). Agy drives the dedicated debugging Chrome
+The browser pass's fallback (§The `chrome-devtools-mcp` fallback above). Agy drives the dedicated debugging Chrome
 through the [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) MCP
 server (1.10.1 on 2026-09-28).
 
@@ -282,7 +292,7 @@ actually works reliably.
   the task also writes repo files).
 - **Model and effort must agree.** The tier is baked into the model id, and a mismatch errors
   `invalid model selection … conflicts with --effort`: `gemini-3.8-flash-medium` takes
-  `--effort medium` (the browser pass; verified 2026-09-28), a `*-high` id takes `high`, a `*-low`
+  `--effort medium` (the browser pass, on either server; verified 2026-09-28), a `*-high` id takes `high`, a `*-low`
   id takes `low`.
 - **Launch through the harness (`Bash` `run_in_background: true`).** The prompt travels as a
   `--print=` argument, not on stdin (see the large-prompt section below), so a harness-supervised

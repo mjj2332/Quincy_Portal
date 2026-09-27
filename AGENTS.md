@@ -21,7 +21,7 @@ not a build-routing change. Keep your own context lean: fork or spawn rather tha
 transcripts back and forth.
 
 Sol owns diff review. Luna owns test code and non-browser QA. **Agy owns the browser pass**
-(Antigravity CLI, Gemini 3.8 Flash at medium effort, driving the dedicated debugging Chrome through `chrome-devtools-mcp`).
+(Antigravity CLI, Gemini 3.8 Flash at medium effort, driving the owner's Chrome through `huashu-chrome`, with `chrome-devtools-mcp` as the fallback).
 **Every UI change gets a two-stage browser pass:** Agy measures, then **design-reviewer** (Opus)
 judges the screenshots against the design tokens and the rest of the Portal, and audits Agy's
 table, blind to its verdicts until it has looked. The session verifies both reports against the

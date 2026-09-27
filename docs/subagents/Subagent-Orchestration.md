@@ -21,7 +21,7 @@ mechanics of spawning them.
 | **Codex (peer)** | `/codex:rescue --background` | shared Codex runtime | A second, independent-model-family opinion on high-stakes decisions — a peer worked in parallel with Opus/deep-reasoner, not a reviewer of their output |
 | **Terra** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-terra` | No default role — available as an on-request builder when the user asks for a Codex-driven build by name |
 | **Astra** | `codex exec` — [§3](codex-cli.md) | `gpt-6-astra` | No default role — available on request; pass `-m gpt-6-astra` explicitly, the account default doesn't reliably select it |
-| **Agy** | `agy` CLI subprocess — [§3a](agy-cli.md) | `gemini-3.8-flash-medium`, `--effort medium`, always | Browser-pass measurer, driving the dedicated debugging Chrome through `chrome-devtools-mcp`: stage 1 of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)). Never planning or building |
+| **Agy** | `agy` CLI subprocess — [§3a](agy-cli.md) | `gemini-3.8-flash-medium`, `--effort medium`, always | Browser-pass measurer, driving the owner's Chrome through `huashu-chrome` (fallback: `chrome-devtools-mcp`): stage 1 of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)). Never planning or building |
 
 
 **"The session" means whoever is reading this**, acting directly with its own file tools. The
@@ -44,12 +44,11 @@ system prompts.
 1. **Every authenticated session is human-made.** A human does every sign-in click
    (`feedback-no-autonomous-google-signin`), and an agent borrows the session that click created:
 
-   - **Local dev:** the dedicated debugging Chrome on 9333, a separate profile the owner signs
-     into `http://localhost:8787` once ([agy-cli.md §Option A](agy-cli.md)). Agy reaches it through
-     `chrome-devtools-mcp` and works only in pages it opens itself, on localhost only
-     ([agy-cli.md §Browser pass](agy-cli.md)); the session's trusted-input re-checks use the same
-     Chrome. Mutate freely there. The owner's everyday Chrome, through `huashu-chrome`, is the
-     fallback when that Chrome is down.
+   - **Local dev:** the owner's everyday Chrome, signed into `http://localhost:8787`, reached
+     through the `huashu-chrome` extension. Agy works only in tabs it opens itself, on localhost
+     only ([agy-cli.md §Browser pass](agy-cli.md)). Mutate freely there. The dedicated debugging
+     Chrome on 9333 (a separate profile the owner signs into once, [agy-cli.md §Option A](agy-cli.md))
+     serves the `chrome-devtools-mcp` fallback and the session's trusted-input re-checks.
    - **Production:** the owner's already signed-in Chrome tab, **passive only**: read, measure,
      screenshot, verify. Production writes stay on the YOLO-mode path (a human-authenticated Admin
      plus impersonation), because that is what makes a mutation *attributable* in `audit_log`.
@@ -66,15 +65,16 @@ system prompts.
 Every UI change runs both stages, in order. Measurement and judgement are different skills, so
 they are different agents, and the second is blind to the first's verdicts until it has looked.
 
-1. **Agy measures** (`agy` CLI, `chrome-devtools-mcp`, [agy-cli.md](agy-cli.md)): each viewport
+1. **Agy measures** (`agy` CLI, `huashu-chrome`, [agy-cli.md](agy-cli.md)): each viewport
    the ticket names, each open state (popover, menu, sheet), hit areas, gaps, overflow, tab order.
    Its report contract: screenshots as files in one folder named per viewport and state, and a
    PASS/FAIL table where every row carries the measurement and the screenshot that shows it.
    Agy is the only measurer (owner decision, 2026-09-28): Luna's passes ran one to two hours and
-   outlasted timed UI such as a 10 s toast. Moves use `chrome-devtools-mcp`'s native `drag`;
-   keys, hover and viewports are trusted input too. The session still re-runs every synthetic
-   mid-drag row, and every row whose measurement contradicts its verdict, with trusted input
-   before the gate ([agy-cli.md §What the session still re-checks](agy-cli.md)).
+   outlasted timed UI such as a 10 s toast. huashu's input is synthetic, so its drag, keyboard,
+   focus, hover and narrow-viewport rows rerun as a `chrome-devtools-mcp` fallback pass (native
+   `drag`, trusted keys, real viewports). The session still re-runs every row that stays
+   synthetic, and every row whose measurement contradicts its verdict, with trusted input before
+   the gate ([agy-cli.md §Browser pass](agy-cli.md)).
 2. **design-reviewer judges** (Opus, `Agent` tool): given the design tokens, the measurer's
    screenshot folder, its report and the diff range, it looks at every screenshot before reading
    the table, writes designer's notes per screenshot (hierarchy, spacing, typography, colour, wrap,
@@ -106,8 +106,8 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 and Codex-as-peer goes through `/codex:rescue --background`.
 
 - **§3a — Agy (the browser pass): [agy-cli.md](agy-cli.md)** — the browser-pass invocation on
-  `chrome-devtools-mcp` (drag, keyboard Adjust, viewports), what the session still re-checks, the
-  `huashu-chrome` fallback, the Option A setup for the dedicated debugging Chrome, why the
+  `huashu-chrome`, the `chrome-devtools-mcp` fallback (drag, keyboard Adjust, viewports), what the
+  session still re-checks, the Option A setup for the dedicated debugging Chrome, why the
   Antigravity IDE's built-in browser agent is not usable headlessly, the print-mode shutdown hang
   (a long run whose report never lands, recoverable from the conversation DB), and the silent
   no-op failure modes (a cheerful "done" with zero effect and zero error output).
