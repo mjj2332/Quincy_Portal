@@ -24,6 +24,7 @@
  * - QUINCY (#255 browser pass F): `CHIP_HEIGHT_CLASS` (`min-h-[38px] max-[721px]:min-h-[44px]`, `reui/button.tsx`'s `size.default` contract) on both chip roots and their kebab / remove button, so a chip matches the 38px / 44px Add filter and Clear buttons; upstream sized the chip by the `icon` kebab (32px).
  * - QUINCY (#255 browser pass F): `SEGMENT_FOCUS_RADIUS_CLASS` (`focus-visible:rounded-(--radius-lg)!`) on the operator and value segments and the kebab / remove button, so a focused segment's global outline follows the chip's 14px radius instead of ButtonGroup's squared inner corners.
  * - RE-SKIN (#255 browser pass G): the finished operator segment's `text-muted-foreground` -> `text-foreground-secondary`. `--text-muted` measured 3.13:1 on the `hover:bg-muted` fill (3.36:1 at rest); `--text-secondary` is 8.09:1 / 8.66:1. The incomplete prompt stays `text-foreground`.
+ * - QUINCY (#255 browser pass G): the value segment carries `VALUE_SEGMENT_LINE_CLASS` (`min-w-0 max-w-60 whitespace-nowrap`) and wraps its label in a `min-w-0 truncate` span; `valueWithIcon` adds `min-w-0` to its flex row and a `truncate` span around the text. A long value ellipsizes on one line instead of wrapping the chip to two.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -145,6 +146,14 @@ function defaultValueDisplay<V>(
 /** The same display with the option's own icon in front. A status filter reads
  *  as its colour before its word, so dropping the swatch the picker showed
  *  makes the chip harder to scan than the list it came from. */
+/** Quincy (#255 browser pass G): a chip's value stays on ONE line. At 390px
+ *  "Completed checklist items" wrapped and made its chip 62px tall. The
+ *  segment never wraps, caps at the value menu's own 15rem (`w-60`, the
+ *  Gantt bar's `VALUE_MENU_CLASS`), and may shrink below it (`min-w-0`) on a
+ *  narrow row; the label inside truncates. The full value stays in the
+ *  segment's `aria-label` and the chip's name. */
+const VALUE_SEGMENT_LINE_CLASS = "min-w-0 max-w-60 whitespace-nowrap"
+
 function valueWithIcon<V>(
   value: V | undefined,
   text: string,
@@ -159,9 +168,9 @@ function valueWithIcon<V>(
   const icon = single ? resolveOption(single)?.icon : null
   if (!icon) return text
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5">
       {icon}
-      {text}
+      <span className="truncate">{text}</span>
     </span>
   )
 }
@@ -1069,11 +1078,12 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
               className={cn(
                 "hover:bg-muted bg-background cursor-default",
                 SEGMENT_FOCUS_RADIUS_CLASS,
+                VALUE_SEGMENT_LINE_CLASS,
                 valueEmpty && "text-muted-foreground"
               )}
               onPointerDown={() => focusSegment("value")}
             >
-              {valueLabel}
+              <span className="min-w-0 truncate">{valueLabel}</span>
             </ButtonGroupText>
           }
         />

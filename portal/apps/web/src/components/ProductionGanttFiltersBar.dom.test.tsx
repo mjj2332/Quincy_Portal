@@ -269,6 +269,21 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     }
   });
 
+  it("keeps a chip's value on one line, truncated under a max width, with the full value in its name (browser pass G)", async () => {
+    // Stage carries a single value with a swatch icon; Show a single long value with none.
+    await render({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: false, completed: true });
+    const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
+    for (const name of ["Awaiting RAW", "Completed checklist items"]) {
+      const segment = button(name, toolbar());
+      // At 390x844 "Completed checklist items" wrapped and made the chip 62px tall.
+      for (const utility of ["whitespace-nowrap", "min-w-0", "max-w-60"]) expect(tokens(segment)).toContain(utility);
+      // The text itself sits in a truncating box, so it ellipsizes instead of overflowing the segment.
+      const text = [...segment.querySelectorAll<HTMLElement>("span")].find((span) => span.textContent === name && tokens(span).includes("truncate"));
+      expect(text, `a truncating span holding "${name}"`).toBeDefined();
+    }
+    expect(chipNames()).toEqual(["Stage is any of Awaiting RAW", "Show includes Completed checklist items"]);
+  });
+
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
     await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
     await click(addTrigger());
