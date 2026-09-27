@@ -106,6 +106,13 @@
  * inline-start side only, so it no longer slides over the resource column, and carries
  * `data-testid="gantt-drag-overlay"`. Both skip when the pane (or chip) measures 0 wide. Covered by
  * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #221 browser pass E: the move clone is now clipped at BOTH pane edges, and near the
+ * far edge its label + warning hint flip to the bar's inline-start side (`flex-direction:
+ * row-reverse`, overlay shifted by the text's width so the bar stays under the pointer) - dragged
+ * toward the end, the hint had ridden off-screen. Its width is re-read each move (the hint appears
+ * mid-gesture). Not applied to a consumer's custom move overlay. Covered by
+ * `gantt-drop-warning.dom.test.tsx`.
  */
 
 import { useCallback, useEffect } from "react"
@@ -479,20 +486,33 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
     if (!overlay) return
     // x follows the pointer freely (smooth); y stays on the bar's own row
     const x = e.clientX - grabOffsetPx
-    overlay.style.transform = `translate3d(${snapToPixel(x)}px, ${snapToPixel(barTop)}px, 0)`
     // 2026-09-28, #221 design fixes: the clone is `fixed` on <body>, so nothing clips it to the
-    // timeline - dragged toward the start it slid over the resource column. Clip only its
-    // inline-START side at the pane edge; the far side stays whole (it carries the warning hint).
-    // Skipped with no measurable pane (happy-dom lays nothing out).
-    if (!paneRect || paneRect.width === 0) return
-    if (surface?.isRtl) {
-      if (!overlayWidth) overlayWidth = overlay.offsetWidth
-      const over = Math.max(0, x + overlayWidth - paneRect.right)
-      overlay.style.clipPath = over > 0 ? `inset(0 ${over}px 0 0)` : ""
-    } else {
-      const over = Math.max(0, paneRect.left - x)
-      overlay.style.clipPath = over > 0 ? `inset(0 0 0 ${over}px)` : ""
+    // timeline - dragged toward the start it slid over the resource column, and (browser pass E)
+    // toward the end its label ran past the timeline and the warning hint rode off-screen. Near
+    // the far edge the label + hint flip to the bar's inline-start side (the bar stays under the
+    // pointer), and whatever still overhangs either pane edge is clipped. Skipped with no
+    // measurable pane (happy-dom lays nothing out).
+    if (!paneRect || paneRect.width === 0) {
+      overlay.style.transform = `translate3d(${snapToPixel(x)}px, ${snapToPixel(barTop)}px, 0)`
+      return
     }
+    // Re-read each move: the hint appears and its text changes mid-gesture.
+    overlayWidth = overlay.offsetWidth
+    const text = Math.max(0, overlayWidth - barWidth)
+    // `x` is the overlay's left edge unflipped. LTR the bar leads (left), RTL it trails (right);
+    // the flipped overlay moves by the text's width so the bar keeps its screen position.
+    const flip =
+      !customMoveOverlay &&
+      text > 0 &&
+      (surface?.isRtl
+        ? x < paneRect.left && x + text + overlayWidth <= paneRect.right
+        : x + overlayWidth > paneRect.right && x - text >= paneRect.left)
+    const left = flip ? (surface?.isRtl ? x + text : x - text) : x
+    overlay.style.flexDirection = flip ? "row-reverse" : ""
+    overlay.style.transform = `translate3d(${snapToPixel(left)}px, ${snapToPixel(barTop)}px, 0)`
+    const start = Math.max(0, paneRect.left - left)
+    const end = Math.max(0, left + overlayWidth - paneRect.right)
+    overlay.style.clipPath = start > 0 || end > 0 ? `inset(0 ${end}px 0 ${start}px)` : ""
   }
 
   // Resize status indicator: a smooth cursor-following edge line plus a live

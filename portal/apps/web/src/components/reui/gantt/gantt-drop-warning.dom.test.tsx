@@ -480,4 +480,54 @@ describe("#221 design fixes - the cursor-following overlays stay inside the visi
     await pointerRelease(52, 750);
     expect(document.body.querySelector('[data-testid="gantt-drag-overlay"]')).toBeNull();
   });
+
+  // Browser pass E (#221): dragged toward the timeline's END the clone was clipped on neither
+  // side, so its label ran past the timeline and the warning hint rode off-screen. Near the far
+  // edge the label + hint now flip to the bar's start side, and whatever still overhangs the
+  // pane end is clipped.
+  it("near the pane's far edge the clone flips its label + hint before the bar and clips the overhang", async () => {
+    const event: GanttEvent = { id: "c-flip", title: "Clone Flip", start: START, end: END, resourceId: "r1" };
+    await renderGantt({ event, dropWarning: () => WARNING });
+    const bar = findBar("Clone Flip");
+    stubPaneGeometry({ el: bar, left: 700, right: 800 });
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("data-testid") === "gantt-drag-overlay" ? 500 : 0;
+    });
+    // Grabbed 10px into the bar (x 710), dragged to 1350: unflipped the clone would span
+    // 1340..1840, well past the pane's end at 1400.
+    await pointerEvent(bar, "pointerdown", { pointerId: 53, button: 0, clientX: 710, clientY: 10 });
+    await pointerEvent(window, "pointermove", { pointerId: 53, clientX: 1000, clientY: 10 });
+    await pointerEvent(window, "pointermove", { pointerId: 53, clientX: 1350, clientY: 10 });
+
+    const overlay = document.body.querySelector<HTMLElement>('[data-testid="gantt-drag-overlay"]')!;
+    expect(hintEl()?.textContent).toBe(WARNING);
+    expect(overlay.style.flexDirection).toBe("row-reverse");
+    // The bar keeps its place under the pointer (1340..1440); the overlay's left moves back by
+    // the text's width (500 - 100), so the hint now starts at 940, inside the pane.
+    const overlayX = Number(/translate3d\(([-\d.]+)px/.exec(overlay.style.transform)![1]);
+    expect(overlayX).toBe(940);
+    const clip = /inset\(0(?:px)? ([\d.]+)px 0(?:px)? 0(?:px)?\)/.exec(overlay.style.clipPath);
+    expect(clip).not.toBeNull();
+    expect(Number(clip![1])).toBe(40);
+
+    await pointerRelease(53, 1350);
+    width.mockRestore();
+  });
+
+  it("away from the far edge the clone keeps its bar-first layout and no end clip", async () => {
+    const event: GanttEvent = { id: "c-noflip", title: "Clone Stay", start: START, end: END, resourceId: "r1" };
+    await renderGantt({ event, dropWarning: () => WARNING });
+    const bar = findBar("Clone Stay");
+    stubPaneGeometry({ el: bar, left: 700, right: 800 });
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("data-testid") === "gantt-drag-overlay" ? 300 : 0;
+    });
+    await pointerEvent(bar, "pointerdown", { pointerId: 54, button: 0, clientX: 710, clientY: 10 });
+    await pointerEvent(window, "pointermove", { pointerId: 54, clientX: 800, clientY: 10 });
+    const overlay = document.body.querySelector<HTMLElement>('[data-testid="gantt-drag-overlay"]')!;
+    expect(overlay.style.flexDirection).toBe("");
+    expect(overlay.style.clipPath).toBe("");
+    await pointerRelease(54, 800);
+    width.mockRestore();
+  });
 });
