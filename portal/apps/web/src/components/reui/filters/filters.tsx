@@ -18,6 +18,7 @@
  * `cascader-virtual.tsx`), and `filters-date.tsx` (nothing imports it).
  *
  * File-specific edits:
+ * - QUINCY (#255 browser pass G): `useControllableQuery` also returns `writtenRef` (the root's own last write), and the root announces `countAnnouncement` when a controlled `query` changes to anything else. Upstream announced only edits made through the bar, so an outside re-seed left a stale count in the live status.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -152,18 +153,22 @@ function useControllableQuery<V, O>(
   React.useEffect(() => {
     queryRef.current = query
   })
+  // QUINCY (#255 browser pass G): the last query this bar wrote itself, so the
+  // root can tell its own edit echoing back from an outside change.
+  const writtenRef = React.useRef(query)
 
   const setQuery = React.useCallback(
     (next: FilterQuery<V>, details: FilterChangeDetails<V, O>) => {
       if (next === queryRef.current) return
       queryRef.current = next
+      writtenRef.current = next
       if (!isControlled) setInternal(next)
       onChange?.(next, details)
     },
     [isControlled, onChange]
   )
 
-  return { query, queryRef, setQuery }
+  return { query, queryRef, writtenRef, setQuery }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -313,7 +318,7 @@ export function Filters<V = unknown, O = unknown>({
   className,
   children,
 }: FiltersProps<V, O>) {
-  const { query, queryRef, setQuery } = useControllableQuery<V, O>(
+  const { query, queryRef, writtenRef, setQuery } = useControllableQuery<V, O>(
     controlledQuery,
     defaultQuery,
     onQueryChange
@@ -391,6 +396,20 @@ export function Filters<V = unknown, O = unknown>({
     () => ({ duplicate: ruleMenuDuplicate, negate: ruleMenuNegate }),
     [ruleMenuDuplicate, ruleMenuNegate]
   )
+
+  // QUINCY (#255 browser pass G): every edit made THROUGH the bar announces the
+  // new count, but a controlled query replaced from OUTSIDE (a consumer
+  // re-seeding it: Back/Forward, a reset elsewhere on the page) announced
+  // nothing, so the status kept saying "1 filter applied" over zero chips. A
+  // query that changes to anything but the bar's own last write announces the
+  // count it now holds.
+  const seenQueryRef = React.useRef(query)
+  React.useEffect(() => {
+    if (query === seenQueryRef.current) return
+    seenQueryRef.current = query
+    if (query === writtenRef.current) return
+    setAnnouncement(labels.countAnnouncement(ruleCount))
+  }, [query, ruleCount, labels, setAnnouncement, writtenRef])
 
   /* --------------------------- latest-props ref --------------------------- */
 

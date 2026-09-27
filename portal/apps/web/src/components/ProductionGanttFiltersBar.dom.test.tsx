@@ -441,6 +441,34 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     expect(pushes).toHaveLength(1);
   });
 
+  it("updates the live status when an outside change re-seeds the bar, e.g. the empty state's Clear filters (browser pass G)", async () => {
+    const status = () => {
+      const element = bar().querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
+      if (!element) throw new Error("no live status region");
+      return element.textContent?.trim();
+    };
+    await render();
+    await addFilter("Stage", "is any of", ["Editing"]);
+    await press(document.activeElement ?? document.body, "Escape");
+    await settle();
+    expect(chips()).toHaveLength(1);
+    expect(status()).toBe("1 filter applied");
+    const pushed = pushes.length;
+
+    // An outside reseed: the chips follow the URL, and so must the status.
+    await act(async () => { setUrl(DEFAULT_GANTT_FACET_FILTERS); });
+    await settle();
+    expect(chips()).toHaveLength(0);
+    expect(status()).toBe("0 filters applied");
+
+    await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: true, completed: false }); });
+    await settle();
+    expect(chips()).toHaveLength(2);
+    expect(status()).toBe("2 filters applied");
+    // Announcing is not writing: an outside reseed never pushes back.
+    expect(pushes).toHaveLength(pushed);
+  });
+
   it("keeps focus on the control in use while the URL round trip is pending, and after it lands", async () => {
     await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
     await addFilter("Stage", "is any of", ["Editing"]);
