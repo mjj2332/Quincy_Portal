@@ -396,6 +396,11 @@ describe("guard: no `bg-accent` without `text-accent-foreground` in the same cla
 // ---------------------------------------------------------------------------
 // Sanity — the scan reads the real vendored files, and no new file escapes the lists
 // ---------------------------------------------------------------------------
+/** A vendored source a re-vendor could add: any `.tsx`/`.ts`/`.jsx`/`.js` file that is not a test. */
+function isVendoredSource(name: string): boolean {
+  return /\.(?:tsx|ts|jsx|js)$/.test(name) && !name.includes(".test.");
+}
+
 describe("the file scan itself", () => {
   it("reads all 22 vendored files with real content", () => {
     const files = readVendoredFiles();
@@ -403,8 +408,13 @@ describe("the file scan itself", () => {
     for (const [name, text] of files) expect(text.length, `${name} read as empty`).toBeGreaterThan(200);
   });
 
-  it("lists every non-test .tsx file in filters/ and cascader/ — a re-vendor cannot add an unscanned file", () => {
-    const onDisk = (dir: string) => readdirSync(dir).filter((name) => name.endsWith(".tsx") && !name.includes(".test.")).sort();
+  it("self-test: discovery counts every non-test .tsx/.ts/.jsx/.js source, and nothing else", () => {
+    const listing = ["a.tsx", "b.ts", "c.jsx", "d.js", "e.test.ts", "f.dom.test.tsx", "g.guard.test.js", "h.css", "i.json", "j.md"];
+    expect(listing.filter(isVendoredSource)).toEqual(["a.tsx", "b.ts", "c.jsx", "d.js"]);
+  });
+
+  it("lists every non-test source file in filters/ and cascader/ — a re-vendor cannot add an unscanned file", () => {
+    const onDisk = (dir: string) => readdirSync(dir).filter(isVendoredSource).sort();
     expect(onDisk(filtersDir)).toEqual([...FILTERS_FILES].sort());
     expect(onDisk(cascaderDir)).toEqual([...CASCADER_FILES].sort());
   });
