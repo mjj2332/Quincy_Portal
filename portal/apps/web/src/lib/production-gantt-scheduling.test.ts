@@ -29,7 +29,9 @@ import {
   ganttDropWarningText,
   ganttEditToProposal,
   ganttPlacementToProposal,
+  ganttDeadlineDropWarning,
   ganttScheduleBounds,
+  previewDeadlineEffects,
   scheduleWindowWarnings,
   type GanttEdit,
 } from "./production-gantt-scheduling";
@@ -573,6 +575,97 @@ describe("applyGanttOptimisticOverlay", () => {
   it("an overlay naming an event not in the model leaves the model unchanged", () => {
     const base = model();
     expect(applyGanttOptimisticOverlay(base, { eventId: "checklist:nope", timing: { allDay: false, start: "2026-06-11T00:00:00.000Z", end: null } }).events).toEqual(base.events);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// previewDeadlineEffects (#221 PR C)
+// ---------------------------------------------------------------------------
+
+describe("previewDeadlineEffects", () => {
+  const ROW = (id: string, title: string, schedule: ChecklistScheduleDto, position = 1) => makeTask({ id, title, schedule, position });
+  // Deadline 2026-06-01T15:00 (makeDeadline). Rows end on 2026-05-30 (on time), 2026-06-01 date
+  // (on time — same day, by date), 2026-06-03 (after).
+  const onTime = ROW("r-on", "On time", dueOnlySchedule(dateEndpoint("2026-05-30")));
+  const sameDay = ROW("r-same", "Same day", rangeSchedule(dateEndpoint("2026-05-20"), dateEndpoint("2026-06-01")));
+  const late = ROW("r-late", "Late", dueOnlySchedule(dateEndpoint("2026-06-03")));
+  const timed = ROW("r-timed", "Timed", dueOnlySchedule(timedEndpoint("2026-05-31T12:00", "2026-05-31T02:00:00.000Z", 600)));
+  const unscheduled = ROW("r-unsched", "Unscheduled", unscheduledSchedule());
+  const invalid = ROW("r-invalid", "Invalid", { ...unscheduledSchedule(), state: "invalid" } as unknown as ChecklistScheduleDto);
+  const project = makeProject({ children: { rows: [onTime, sameDay, late, timed, unscheduled, invalid], total: 6, returned: 6, truncated: false, nextCursor: null } });
+
+  it("lists rows that flip on-time → after, with a subtask clash for each", () => {
+    const preview = previewDeadlineEffects(project, { localCivil: "2026-05-31T09:00", instant: "2026-05-30T23:00:00.000Z" });
+    expect(preview.affected).toEqual([
+      { id: "r-same", title: "Same day", before: "on-time", after: "after" },
+      { id: "r-timed", title: "Timed", before: "on-time", after: "after" },
+    ]);
+    expect(preview.clashes).toEqual([
+      { kind: "subtask-after-deadline", id: "r-same", title: "Same day" },
+      { kind: "subtask-after-deadline", id: "r-timed", title: "Timed" },
+    ]);
+  });
+
+  it("lists rows that flip after → on-time, with no clash", () => {
+    const preview = previewDeadlineEffects(project, { localCivil: "2026-06-05T15:00", instant: "2026-06-05T05:00:00.000Z" });
+    expect(preview.affected).toEqual([{ id: "r-late", title: "Late", before: "after", after: "on-time" }]);
+    expect(preview.clashes).toEqual([]);
+  });
+
+  it("never lists an unchanged row, an unscheduled row or an invalid row", () => {
+    const preview = previewDeadlineEffects(project, { localCivil: "2026-06-02T15:00", instant: "2026-06-02T05:00:00.000Z" });
+    expect(preview.affected).toEqual([]);
+    expect(preview.clashes).toEqual([]);
+  });
+
+  it("treats a project with no deadline yet as every row on time before", () => {
+    const preview = previewDeadlineEffects(makeProject({ deadline: null, children: project.children }), { localCivil: "2026-06-02T15:00", instant: "2026-06-02T05:00:00.000Z" });
+    expect(preview.affected).toEqual([{ id: "r-late", title: "Late", before: "on-time", after: "after" }]);
+    expect(preview.clashes).toEqual([{ kind: "subtask-after-deadline", id: "r-late", title: "Late" }]);
+  });
+
+  it("reports a deadline before the shoot date", () => {
+    const preview = previewDeadlineEffects(makeProject(), { localCivil: "2026-04-30T15:00", instant: "2026-04-30T05:00:00.000Z" });
+    expect(preview.clashes).toEqual([{ kind: "deadline-before-start", boundKind: "shoot" }]);
+    // The shoot day itself is not before the shoot.
+    expect(previewDeadlineEffects(makeProject(), { localCivil: "2026-05-01T09:00", instant: "2026-04-30T23:00:00.000Z" }).clashes).toEqual([]);
+  });
+
+  it("reports a deadline before the project was created when there is no shoot date", () => {
+    const noShoot = makeProject({ shootDate: null, shootDateCivil: null, createdAt: "2026-03-10T00:00:00.000Z" });
+    expect(previewDeadlineEffects(noShoot, { localCivil: "2026-03-09T15:00", instant: "2026-03-09T04:00:00.000Z" }).clashes).toEqual([{ kind: "deadline-before-start", boundKind: "created" }]);
+    expect(previewDeadlineEffects(noShoot, { localCivil: "2026-03-10T15:00", instant: "2026-03-10T04:00:00.000Z" }).clashes).toEqual([]);
+  });
+
+  it("reports loaded / total / truncated from the project's children", () => {
+    const truncated = makeProject({ children: { rows: [onTime, late], total: 9, returned: 2, truncated: true, nextCursor: "c2" } });
+    const preview = previewDeadlineEffects(truncated, { localCivil: "2026-06-05T15:00", instant: "2026-06-05T05:00:00.000Z" });
+    expect(preview).toMatchObject({ loaded: 2, total: 9, truncated: true });
+    expect(previewDeadlineEffects(project, { localCivil: "2026-06-05T15:00", instant: "2026-06-05T05:00:00.000Z" })).toMatchObject({ loaded: 6, total: 6, truncated: false });
+  });
+});
+
+describe("ganttDeadlineDropWarning", () => {
+  const originalEnd = new Date("2026-06-01T05:00:00.000Z");
+
+  it("warns when the proposed deadline lands before the shoot date", () => {
+    expect(ganttDeadlineDropWarning(makeProject(), new Date(originalEnd.getTime() - 32 * DAY), originalEnd, "month")).toBe("Deadline before the shoot date.");
+  });
+
+  it("warns when it lands before the creation date of a project with no shoot date", () => {
+    const noShoot = makeProject({ shootDate: null, shootDateCivil: null, createdAt: "2026-05-20T00:00:00.000Z" });
+    expect(ganttDeadlineDropWarning(noShoot, new Date(originalEnd.getTime() - 20 * DAY), originalEnd, "week")).toBe("Deadline before the project was created.");
+  });
+
+  it("is null inside the window, for a zero-day delta and for a project with no deadline", () => {
+    expect(ganttDeadlineDropWarning(makeProject(), new Date(originalEnd.getTime() + 2 * DAY), originalEnd, "month")).toBeNull();
+    expect(ganttDeadlineDropWarning(makeProject(), originalEnd, originalEnd, "month")).toBeNull();
+    expect(ganttDeadlineDropWarning(makeProject({ deadline: null }), new Date(originalEnd.getTime() - 40 * DAY), originalEnd, "month")).toBeNull();
+  });
+
+  it("uses the pointer's Sydney civil minute at day scale", () => {
+    expect(ganttDeadlineDropWarning(makeProject(), new Date("2026-04-30T13:00:00.000Z"), originalEnd, "day")).toBe("Deadline before the shoot date.");
+    expect(ganttDeadlineDropWarning(makeProject(), new Date("2026-04-30T14:00:00.000Z"), originalEnd, "day")).toBeNull();
   });
 });
 

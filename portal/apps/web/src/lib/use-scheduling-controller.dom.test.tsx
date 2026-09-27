@@ -24,7 +24,7 @@ import { confirm } from "./confirm";
 import { productionCalendarFiltersFor } from "./production-calendar-query";
 import type { ChecklistSource, SchedulingProposal } from "./scheduling-policy";
 import type { UndoTicket } from "./scheduling-undo";
-import { useSchedulingController, type SchedulingCommittedInfo, type SchedulingController, type SchedulingControllerInput, type SchedulingPort } from "./use-scheduling-commands";
+import { useSchedulingController, type SchedulingCommittedInfo, type SchedulingController, type SchedulingControllerInput, type SchedulingDeadlineConfirmInput, type SchedulingPort } from "./use-scheduling-commands";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -319,5 +319,64 @@ describe("useSchedulingController (generic port)", () => {
 
     expect(outcome).toEqual({ ok: false, reason: "access" });
     expect(mutations()).toHaveLength(before);
+  });
+  describe("port.confirmDeadline (#221 PR C)", () => {
+    const deadlineProposal = (event: ProjectDeadlineCalendarEventDto): SchedulingProposal => ({ kind: "deadline", entity: "project_deadline", event, target: { subview: "month", targetDate: "2026-08-29" } });
+    const saveReply = { status: 200, body: { changed: true, current: { version: 9, deadline: { localCivil: "2026-08-29T09:00", instant: "2026-08-28T23:00:00.000Z" }, reminderOffsetsMinutes: [1440, 60] }, eventIntent: null, publicationIds: [] } };
+
+    it("is used instead of the shared confirm: resolving false sends nothing and reverts the caller's revertable", async () => {
+      const event = deadlineEvent();
+      const confirmDeadline = vi.fn(async (_input: SchedulingDeadlineConfirmInput) => false);
+      const { port } = makePort({ checklists: [], deadlines: [event] }, { confirmDeadline });
+      await render(port);
+      const revertable = { revert: vi.fn() };
+      await act(async () => { controllerRef!.submitProposal(deadlineProposal(event), { revertable }); await Promise.resolve(); });
+      await settle();
+
+      expect(confirm).not.toHaveBeenCalled();
+      expect(confirmDeadline).toHaveBeenCalledTimes(1);
+      const input = confirmDeadline.mock.calls[0]![0];
+      expect(input.proposal).toMatchObject({ street: project.street, projectId, oldCivil: "2026-08-27T09:00", newCivil: "2026-08-29T09:00", scheduling: false });
+      expect(input.proposal.newInstant).toBe("2026-08-28T23:00:00.000Z");
+      expect(input.consequences).toHaveLength(2);
+      expect(input.signal.aborted).toBe(false);
+      expect(mutations()).toHaveLength(0);
+      expect(revertable.revert).toHaveBeenCalledTimes(1);
+      expect(controllerRef!.canStartCommand()).toBe(true);
+    });
+
+    it("resolving true sends exactly one PUT", async () => {
+      const event = deadlineEvent();
+      const confirmDeadline = vi.fn(async () => true);
+      const { port } = makePort({ checklists: [], deadlines: [event] }, { confirmDeadline });
+      await render(port);
+      reply = saveReply;
+      await act(async () => { controllerRef!.submitProposal(deadlineProposal(event)); await Promise.resolve(); });
+      await settle();
+
+      expect(mutations()).toHaveLength(1);
+      expect(mutations()[0]).toMatchObject({ method: "PUT", url: `/api/projects/${projectId}/deadline`, body: { expectedVersion: 8 } });
+      expect(onCommitted).toHaveBeenCalledWith(expect.objectContaining({ kind: "deadline", projectId }));
+    });
+
+    it("unmounting while it is open aborts its signal, with no request", async () => {
+      const event = deadlineEvent();
+      let seen: AbortSignal | undefined;
+      const confirmDeadline = vi.fn((input: SchedulingDeadlineConfirmInput) => {
+        seen = input.signal;
+        return new Promise<boolean>((resolve) => input.signal.addEventListener("abort", () => resolve(false)));
+      });
+      const { port } = makePort({ checklists: [], deadlines: [event] }, { confirmDeadline });
+      await render(port);
+      await act(async () => { controllerRef!.submitProposal(deadlineProposal(event)); await Promise.resolve(); });
+      await settle();
+      expect(seen?.aborted).toBe(false);
+
+      act(() => root.unmount());
+      root = createRoot(host);
+      await settle();
+      expect(seen?.aborted).toBe(true);
+      expect(mutations()).toHaveLength(0);
+    });
   });
 });

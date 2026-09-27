@@ -4,6 +4,7 @@ import {
   checklistScheduleToDto,
   normalizeChecklistSchedule,
   previewProjectDeadlineReminderConsequences,
+  type ProjectDeadlineReminderConsequence,
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
@@ -214,6 +215,29 @@ export type SchedulingPort<TBaseline> = {
   defaultPlacementDate: () => string;
   settleFailedReason: string;
   boundsFor?: (projectId: string) => ScheduleBounds;
+  /**
+   * #221 PR C: a surface-owned Deadline confirmation. When present, `runConfirmedProposal` awaits
+   * this instead of the shared `confirm()` modal; absent (the Calendar), behaviour is unchanged.
+   * `signal` aborts when the controller withdraws the confirmation (unmount, reset, access loss) —
+   * the surface must close its dialog and resolve `false`.
+   */
+  confirmDeadline?: (input: SchedulingDeadlineConfirmInput) => Promise<boolean>;
+};
+
+/** #221 PR C: the public shape of a Deadline awaiting confirmation (`SchedulingPort.confirmDeadline`). */
+export type SchedulingDeadlineConfirmInput = {
+  proposal: {
+    street: string;
+    projectId: string;
+    oldCivil: string;
+    newCivil: string;
+    /** The resolved new instant; `null` only for the defensive all-day shape. */
+    newInstant: string | null;
+    /** `true` when placing a Deadline that was not set (the dialog says "Schedule"). */
+    scheduling: boolean;
+  };
+  consequences: ProjectDeadlineReminderConsequence[];
+  signal: AbortSignal;
 };
 
 /** #221: fired once per successful NON-noop mutation, right after the response is decoded and
@@ -506,6 +530,10 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     // access purge; the token bump above still fences every older async path.
     accessLostRef.current = false;
     setCalendarAccessLost(false);
+    // #221 PR C: a port-owned confirmation (`confirmDeadline`) never sees `confirmStore` — withdraw
+    // it through its signal. For the shared `confirm()` this is the same outcome (resolves false).
+    openConfirmControllerRef.current?.abort();
+    openConfirmControllerRef.current = null;
     if (confirmStore.getSnapshot()) confirmStore.resolve(false);
   }, [resetKey, identity.principalId, identity.role, identity.authorizationEpoch, setAcceptGate, setOverlay, setSettle]);
 
@@ -563,6 +591,8 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     setSettle({ type: "terminal" });
     queuedRefetchRef.current = false;
     if (queryClient) portRef.current.purge(queryClient);
+    openConfirmControllerRef.current?.abort();
+    openConfirmControllerRef.current = null;
     if (confirmStore.getSnapshot()) confirmStore.resolve(false);
     setAnnouncement("");
     onAccessLoss?.();
@@ -688,7 +718,19 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     const scheduling = Boolean(proposal.unscheduledEntry);
     const confirmController = new AbortController();
     openConfirmControllerRef.current = confirmController;
-    const ok = await confirm({
+    const confirmDeadline = portRef.current.confirmDeadline;
+    const ok = confirmDeadline ? await confirmDeadline({
+      proposal: {
+        street: proposal.event.project.street,
+        projectId: proposal.event.project.id,
+        oldCivil: proposal.event.deadlineLocalCivil,
+        newCivil: proposal.localCivil,
+        newInstant: proposal.timing.allDay ? null : proposal.timing.start,
+        scheduling,
+      },
+      consequences,
+      signal: confirmController.signal,
+    }) : await confirm({
       title: scheduling ? "Schedule Deadline" : "Move Deadline",
       message: scheduling
         ? `Schedule the Deadline for ${proposal.event.project.street}?`

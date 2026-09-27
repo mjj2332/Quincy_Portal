@@ -305,6 +305,88 @@ export function ganttDeadlineEditToProposal(event: ProjectDeadlineCalendarEventD
 }
 
 // ---------------------------------------------------------------------------
+// Deadline effects preview (#221 PR C)
+// ---------------------------------------------------------------------------
+
+export type DeadlineEffectStatus = "on-time" | "after";
+
+export type DeadlineStartClash = { kind: "deadline-before-start"; boundKind: "shoot" | "created" };
+
+export type DeadlineEffectsPreview = {
+  affected: Array<{ id: string; title: string; before: DeadlineEffectStatus; after: DeadlineEffectStatus }>;
+  clashes: Array<{ kind: "subtask-after-deadline"; id: string; title: string } | DeadlineStartClash>;
+  /** Checklist rows actually loaded for this project; `total` is the project's full count. */
+  loaded: number;
+  total: number;
+  truncated: boolean;
+};
+
+/** `scheduleWindowWarnings`' upper-bound rule: by date when either side is a date, else by minute. */
+function endIsAfterDeadline(end: { kind: string; localCivil: string }, deadlineLocalCivil: string | null): boolean {
+  if (!deadlineLocalCivil) return false;
+  const byDate = end.kind === "date" || !deadlineLocalCivil.includes("T");
+  const endCivil = byDate ? end.localCivil.slice(0, 10) : end.localCivil;
+  const boundCivil = byDate ? deadlineLocalCivil.slice(0, 10) : deadlineLocalCivil;
+  return endCivil > boundCivil;
+}
+
+/**
+ * The new deadline's civil DATE before the project's lower bound (`ganttScheduleBounds` — the
+ * shoot date, else the Sydney creation date). Same civil-date rule as `scheduleWindowWarnings`'
+ * lower bound, so the drop hint and the confirm dialog always agree. The adapter's own inverted-bar
+ * check compares instants (a created-at bar starts at `createdAt` itself), so a deadline earlier on
+ * the creation DAY is inverted there but not a clash here — display-only, never blocking.
+ */
+export function deadlineStartClash(project: GanttProjectRowDto, newLocalCivil: string): DeadlineStartClash | null {
+  const lower = ganttScheduleBounds(project).lower;
+  if (!lower || newLocalCivil.slice(0, 10) >= lower.civilDate) return null;
+  return { kind: "deadline-before-start", boundKind: lower.kind };
+}
+
+export function deadlineStartClashText(clash: DeadlineStartClash): string {
+  return clash.boundKind === "shoot" ? "Deadline before the shoot date." : "Deadline before the project was created.";
+}
+
+/**
+ * What moving `project`'s deadline to `newDeadline` does to its LOADED checklist rows: every
+ * scheduled (`range`/`due_only`) row whose after-deadline status flips either way, plus the clashes
+ * (rows newly after the deadline, and a deadline before the bar start). Pure; advisory only.
+ */
+export function previewDeadlineEffects(project: GanttProjectRowDto, newDeadline: { localCivil: string; instant: string }): DeadlineEffectsPreview {
+  const oldCivil = project.deadline?.localCivil ?? null;
+  const affected: DeadlineEffectsPreview["affected"] = [];
+  const clashes: DeadlineEffectsPreview["clashes"] = [];
+  for (const row of project.children.rows) {
+    const schedule = row.schedule;
+    if (schedule.state !== "range" && schedule.state !== "due_only") continue;
+    const end = schedule.end;
+    if (!end) continue;
+    const before: DeadlineEffectStatus = endIsAfterDeadline(end, oldCivil) ? "after" : "on-time";
+    const after: DeadlineEffectStatus = endIsAfterDeadline(end, newDeadline.localCivil) ? "after" : "on-time";
+    if (before === after) continue;
+    affected.push({ id: row.id, title: row.title, before, after });
+    if (after === "after") clashes.push({ kind: "subtask-after-deadline", id: row.id, title: row.title });
+  }
+  const startClash = deadlineStartClash(project, newDeadline.localCivil);
+  if (startClash) clashes.push(startClash);
+  return { affected, clashes, loaded: project.children.rows.length, total: project.children.total, truncated: project.children.truncated };
+}
+
+/**
+ * The vendor `dropWarning` for a project bar's end-edge resize: the same mapping the commit uses
+ * (`ganttDeadlineEditToProposal`), then `deadlineStartClash` on the target date. `null` for a
+ * project with no deadline or a no-op edit.
+ */
+export function ganttDeadlineDropWarning(project: GanttProjectRowDto, proposedEnd: Date, originalEnd: Date, scale: GanttScale): string | null {
+  const event = ganttDeadlineEvent(project);
+  if (!event) return null;
+  const proposal = ganttDeadlineEditToProposal(event, proposedEnd, originalEnd, scale);
+  if (!proposal || proposal.entity !== "project_deadline" || proposal.kind !== "deadline") return null;
+  const clash = deadlineStartClash(project, proposal.target.targetDate);
+  return clash ? deadlineStartClashText(clash) : null;
+}
+
+// ---------------------------------------------------------------------------
 // Optimistic overlay
 // ---------------------------------------------------------------------------
 

@@ -1,5 +1,6 @@
 /**
- * #221 PR B2 — the Dashboard Gantt's checklist (subtask) writes, end to end through the real
+ * #221 PR B2 + PR C — the Dashboard Gantt's checklist (subtask) writes and (PR C, the last
+ * `describe`) project Deadline writes through the confirmation dialog, end to end through the real
  * `ProductionGantt` → `useSchedulingController` → Gantt port → `lib/api` stack over a stubbed
  * `fetch`. Only the network is fake: the adapter, the vendor Gantt, the controller, the Undo module
  * and the toast store are all real.
@@ -24,6 +25,7 @@ import {
   adminProductionGanttResponseSchema,
   formatSydneyCivilMinute,
   PRODUCTION_GANTT_ZONE,
+  resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
   type ChecklistScheduleDto,
   type ChecklistScheduleEndpointDto,
@@ -84,9 +86,25 @@ type ScheduleInput = { state: string; start?: { kind: string; localCivil: string
 /** The server's view of the checklist — PATCH mutates it, GET reads it. */
 let rows: Row[];
 let deadlineDay: string;
+/** The server's view of the project Deadline — PUT mutates it, GET reads it. */
+let deadline: { localCivil: string; at: string } | null;
+let deadlineVersion: number;
+let canEditDeadline: boolean;
+/** When set, the project's checklist is truncated: `total` rows exist, only the fixture's are loaded. */
+let truncatedTotal: number | null;
 
-function resetFixture(options: { deadlineOffset?: number } = {}) {
+function atFor(localCivil: string): string {
+  const resolved = resolveSydneyCivilMinute(localCivil);
+  if (!resolved.ok) throw new Error(`fixture civil did not resolve: ${localCivil}`);
+  return resolved.value.instant;
+}
+
+function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; canEditDeadline?: boolean; truncatedTotal?: number } = {}) {
   deadlineDay = sydneyDay(options.deadlineOffset ?? 6);
+  deadline = options.noDeadline ? null : { localCivil: `${deadlineDay}T15:00`, at: atFor(`${deadlineDay}T15:00`) };
+  deadlineVersion = 1;
+  canEditDeadline = options.canEditDeadline ?? true;
+  truncatedTotal = options.truncatedTotal ?? null;
   const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true };
   rows = [
     { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(1)), end: dateEndpoint(sydneyDay(3)), due: sydneyDay(3) } },
@@ -115,17 +133,17 @@ function ganttResponse() {
         shootDateCivil: shoot,
         createdAt: `${shoot}T00:00:00.000Z`,
         barStartDate: shoot,
-        deadline: { at: `${deadlineDay}T05:00:00.000Z`, localCivil: `${deadlineDay}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
-        deadlineVersion: 1,
+        deadline: deadline ? { at: deadline.at, localCivil: deadline.localCivil, version: deadlineVersion, reminderOffsetsMinutes: [], overdue: false } : null,
+        deadlineVersion,
         editors: [],
-        checklist: { completed: 0, total: rows.length },
-        permissions: { canEditDeadline: true, canEditChildren: true },
+        checklist: { completed: 0, total: truncatedTotal ?? rows.length },
+        permissions: { canEditDeadline, canEditChildren: true },
         children: {
           rows: rows.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: row.schedule, permissions: row.permissions })),
-          total: rows.length,
+          total: truncatedTotal ?? rows.length,
           returned: rows.length,
-          truncated: false,
-          nextCursor: null,
+          truncated: truncatedTotal !== null,
+          nextCursor: truncatedTotal !== null ? "cursor-2" : null,
         },
       },
     ],
@@ -149,6 +167,8 @@ let requests: Request[];
 let patchReply: ((body: { schedule: { expectedVersion: number; schedule: ScheduleInput } }, subtaskId: string) => Promise<Reply> | Reply) | null;
 /** When set, GETs wait on it (to hold the controller's settle refetch open). */
 let getGate: Promise<void> | null;
+/** When set, a truncated project's continuation page answers with this once it resolves (else held forever). */
+let childPageReply: Promise<Reply> | null;
 
 function echoPatch(body: { schedule: { expectedVersion: number; schedule: ScheduleInput } }, subtaskId: string): Reply {
   const row = rows.find((candidate) => candidate.id === subtaskId)!;
@@ -159,6 +179,32 @@ function echoPatch(body: { schedule: { expectedVersion: number; schedule: Schedu
 
 function patches(): Request[] {
   return requests.filter((request) => request.method === "PATCH");
+}
+
+function puts(): Request[] {
+  return requests.filter((request) => request.method === "PUT");
+}
+
+type DeadlinePut = { expectedVersion: number; deadline: { localCivil: string } | null; reminderOffsetsMinutes?: number[] };
+
+function putBody(index = 0): DeadlinePut {
+  return puts()[index]!.body as DeadlinePut;
+}
+
+/** Applies a Deadline PUT to the fixture (versioned), answering like `PUT /api/projects/:id/deadline`. */
+function applyDeadlinePut(body: DeadlinePut): Reply {
+  if (body.expectedVersion !== deadlineVersion) return { status: 409, body: { error: "conflict", code: "deadline_version_conflict" } };
+  deadlineVersion += 1;
+  deadline = body.deadline ? { localCivil: body.deadline.localCivil, at: atFor(body.deadline.localCivil) } : null;
+  return {
+    status: 200,
+    body: {
+      changed: true,
+      current: { version: deadlineVersion, deadline: deadline ? { localCivil: deadline.localCivil, instant: deadline.at } : null, reminderOffsetsMinutes: body.reminderOffsetsMinutes ?? [] },
+      eventIntent: null,
+      publicationIds: [],
+    },
+  };
 }
 
 function gets(): Request[] {
@@ -275,7 +321,7 @@ async function click(el: HTMLElement) {
  */
 async function resizeRangeEnd(clientX: number, pointerId: number, options: { release?: boolean } = {}) {
   stubGeometry();
-  const grip = host.querySelector<HTMLElement>('[data-testid="gantt-resize-handle-end"]');
+  const grip = host.querySelector<HTMLElement>(`[data-gantt-resource="task:${RANGE_ID}"] [data-testid="gantt-resize-handle-end"]`);
   if (!grip) throw new Error("no end grip");
   await pointerEvent(grip, "pointerdown", { pointerId, button: 0, clientX: 300, clientY: 10 });
   await pointerEvent(window, "pointermove", { pointerId, clientX, clientY: 10 });
@@ -299,11 +345,65 @@ function patchBody(index = 0) {
   return patches()[index]!.body as { schedule: { expectedVersion: number; schedule: ScheduleInput } };
 }
 
+function byTestId(id: string): HTMLElement | null {
+  return document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+}
+
+function deadlineDialog(): HTMLElement | null {
+  return byTestId("gantt-deadline-confirm");
+}
+
+/** Drags the project bar's END (Deadline) grip to `clientX`. */
+async function resizeProjectEnd(clientX: number, pointerId: number, options: { release?: boolean } = {}) {
+  stubGeometry();
+  const grip = host.querySelector<HTMLElement>(`[data-gantt-resource="project:${PROJECT_ID}"] [data-testid="gantt-resize-handle-end"]`);
+  if (!grip) throw new Error("no project end grip");
+  await pointerEvent(grip, "pointerdown", { pointerId, button: 0, clientX: 700, clientY: 10 });
+  await pointerEvent(window, "pointermove", { pointerId, clientX, clientY: 10 });
+  if (options.release !== false) await pointerEvent(window, "pointerup", { pointerId, clientX, clientY: 10 });
+}
+
+/** The project's timeline bar (the tree panel's row toggle carries the bare street as its name). */
+function projectBar(): HTMLButtonElement {
+  const row = host.querySelector<HTMLElement>(`[data-gantt-resource="project:${PROJECT_ID}"]`);
+  const bar = row && [...row.querySelectorAll<HTMLButtonElement>("button")].find((el) => el.getAttribute("aria-label")?.startsWith(`${PROJECT_STREET},`));
+  if (!bar) throw new Error("no project bar");
+  return bar;
+}
+
+/** `steps` keyboard Adjust steps on the project bar's END edge (negative = earlier), then Enter. */
+async function keyboardResizeProjectEnd(steps: number) {
+  const bar = projectBar();
+  await act(async () => {
+    bar.focus();
+    await Promise.resolve();
+  });
+  await keydown(bar, " ");
+  await keydown(bar, "e");
+  for (let index = 0; index < Math.abs(steps); index += 1) await keydown(bar, steps < 0 ? "ArrowLeft" : "ArrowRight");
+  await keydown(bar, "Enter");
+}
+
+function deadlineActionButton(): HTMLButtonElement | undefined {
+  return [...host.querySelectorAll<HTMLButtonElement>('[data-testid="gantt-deadline-action"]')][0];
+}
+
+async function setInput(el: HTMLInputElement, value: string) {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
 beforeEach(() => {
   resetFixture();
   requests = [];
   patchReply = null;
   getGate = null;
+  childPageReply = null;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -317,6 +417,11 @@ beforeEach(() => {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     requests.push({ method, url, body });
     const json = (reply: Reply) => new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
+    if (method === "GET" && url.startsWith("/api/production-gantt") && url.includes("childrenOf=")) {
+      // A truncated project's continuation pages: held forever, so the project stays truncated.
+      if (childPageReply) return json(await childPageReply);
+      return new Promise<Response>(() => {});
+    }
     if (method === "GET" && url.startsWith("/api/production-gantt")) {
       if (getGate) await getGate;
       return json({ status: 200, body: ganttResponse() });
@@ -325,6 +430,9 @@ beforeEach(() => {
     if (method === "PATCH" && subtask) {
       const subtaskId = decodeURIComponent(subtask[1]!);
       return json(await (patchReply ?? echoPatch)(body, subtaskId));
+    }
+    if (method === "PUT" && url === `/api/projects/${PROJECT_ID}/deadline`) {
+      return json(applyDeadlinePut(body as DeadlinePut));
     }
     return json({ status: 404, body: { error: `unexpected ${method} ${url}` } });
   }));
@@ -546,15 +654,13 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(body.schedule.schedule.end!.kind).toBe("date");
   });
 
-  it("12. project bars stay read-only in B2: no key shortcuts, no resize grip", async () => {
+  it("12. a project bar the user may re-deadline offers only its END grip and advertises its keyboard contract (#221 PR C)", async () => {
     await render();
-    const projectBar = findBar(PROJECT_STREET);
-    expect(projectBar.getAttribute("aria-keyshortcuts")).toBeNull();
+    expect(projectBar().getAttribute("aria-keyshortcuts")).not.toBeNull();
     const projectRow = host.querySelector<HTMLElement>(`[data-gantt-resource="project:${PROJECT_ID}"]`);
     expect(projectRow).not.toBeNull();
-    expect(projectRow!.querySelector('[data-testid="gantt-resize-handle-end"]')).toBeNull();
+    expect(projectRow!.querySelector('[data-testid="gantt-resize-handle-end"]')).not.toBeNull();
     expect(projectRow!.querySelector('[data-testid="gantt-resize-handle-start"]')).toBeNull();
-    // The writable task bar does advertise its keyboard contract.
     expect(findBar(RANGE_TITLE).getAttribute("aria-keyshortcuts")).not.toBeNull();
   });
 
@@ -592,5 +698,198 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     // Had the vendor applied the change itself (onEventsChange / a truthy onEventUpdate), the bar
     // would keep the rejected range after the controller's rollback.
     expect(barLabel(RANGE_TITLE)).toBe(before);
+  });
+});
+
+describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
+  const civil = (value: string) => value.replace("T", " ");
+
+  it("1. a grip resize of the project end opens the confirmation with from → to and the affected items; Cancel writes nothing and restores the bar", async () => {
+    await render();
+    const original = projectBar().getAttribute("aria-label");
+    // Far left: the vendor clamps the end to the day after the bar start (the shoot day).
+    await resizeProjectEnd(450, 60);
+    await flush(4);
+
+    const dialog = deadlineDialog();
+    expect(dialog).not.toBeNull();
+    expect(dialog!.textContent).toContain("Move the Deadline for 1 Writes Street?");
+    expect(byTestId("calendar-move-confirmation")!.textContent).toContain(`${civil(`${deadlineDay}T15:00`)} → ${civil(`${sydneyDay(-1)}T15:00`)}`);
+    const affected = [...document.body.querySelectorAll('[data-testid="gantt-deadline-confirm-affected"] [role="listitem"]')].map((item) => item.textContent);
+    expect(affected).toEqual([`${RANGE_TITLE}now after the deadline`, `${DUE_TITLE}now after the deadline`]);
+    expect(liveRegionText()).toMatch(/Confirmation required\.$/);
+    expect(projectBar().getAttribute("aria-label")).not.toBe(original);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
+
+    await click(byTestId("gantt-deadline-confirm-cancel")!);
+    await flush(4);
+
+    expect(puts()).toHaveLength(0);
+    expect(deadlineDialog()).toBeNull();
+    expect(projectBar().getAttribute("aria-label")).toBe(original);
+    expect(liveRegionText()).toBe(`Cancelled moving the Deadline for ${PROJECT_STREET}. It remains at ${civil(`${deadlineDay}T15:00`)}.`);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("2. Escape is the same as Cancel", async () => {
+    await render();
+    const original = projectBar().getAttribute("aria-label");
+    await resizeProjectEnd(450, 61);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+
+    await act(async () => {
+      deadlineDialog()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await flush(4);
+
+    expect(puts()).toHaveLength(0);
+    expect(deadlineDialog()).toBeNull();
+    expect(projectBar().getAttribute("aria-label")).toBe(original);
+    expect(liveRegionText()).toMatch(/^Cancelled moving the Deadline/);
+  });
+
+  it("3. confirm sends one PUT at the Deadline's version; the Undo toast restores the old Deadline with one PUT", async () => {
+    await render();
+    await keyboardResizeProjectEnd(-2);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    expect(puts()).toHaveLength(0);
+
+    await click(byTestId("gantt-deadline-confirm-action")!);
+    await flush(6);
+
+    expect(puts()).toHaveLength(1);
+    expect(puts()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/deadline`);
+    expect(putBody()).toEqual({ expectedVersion: 1, deadline: { localCivil: `${sydneyDay(4)}T15:00` }, reminderOffsetsMinutes: [] });
+    expect(deadlineDialog()).toBeNull();
+    expect(undoButtons()).toHaveLength(1);
+    expect(toasts()[0]!.textContent).toContain("Deadline saved.");
+    expect(liveRegionText()).toBe(`Moved the Deadline for ${PROJECT_STREET} to ${civil(`${sydneyDay(4)}T15:00`)}.`);
+
+    await click(undoButtons()[0]!);
+    await flush(6);
+
+    expect(puts()).toHaveLength(2);
+    expect(putBody(1)).toEqual({ expectedVersion: 2, deadline: { localCivil: `${deadlineDay}T15:00` }, reminderOffsetsMinutes: [] });
+    expect(deadline?.localCivil).toBe(`${deadlineDay}T15:00`);
+    expect(liveRegionText()).toBe("Change undone.");
+  });
+
+  it("4. a truncated project's confirmation says how many checklist items the preview is based on", async () => {
+    resetFixture({ truncatedTotal: 9 });
+    await render();
+    await resizeProjectEnd(450, 62);
+    await flush(4);
+    expect(byTestId("gantt-deadline-confirm-truncated")?.textContent).toBe("Based on 4 of 9 checklist items loaded.");
+    await click(byTestId("gantt-deadline-confirm-cancel")!);
+    await flush(2);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("5. a Deadline before the shoot date: the inverted bar offers Fix deadline, and the confirmation shows the clash", async () => {
+    resetFixture({ deadlineOffset: -4 });
+    await render();
+    expect(host.querySelector(`[data-testid="gantt-row-attention-deadline_before_start"]`)).not.toBeNull();
+    // Inverted bars stay read-only: no Deadline grip.
+    expect(host.querySelector(`[data-gantt-resource="project:${PROJECT_ID}"] [data-testid="gantt-resize-handle-end"]`)).toBeNull();
+    const fix = deadlineActionButton();
+    expect(fix?.textContent).toBe("Fix deadline");
+
+    await click(fix!);
+    await flush(2);
+    expect(byTestId("calendar-move-dialog")).not.toBeNull();
+    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(-3));
+    await click(byTestId("calendar-move-submit")!);
+    await flush(4);
+
+    expect(deadlineDialog()).not.toBeNull();
+    expect(byTestId("gantt-deadline-confirm-clashes")!.textContent).toContain("Deadline before the shoot date.");
+    await click(byTestId("gantt-deadline-confirm-cancel")!);
+    await flush(4);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("6. Set deadline on a Deadline-not-set row → move dialog → confirmation → one PUT at deadlineVersion; Undo clears it", async () => {
+    resetFixture({ noDeadline: true });
+    await render();
+    expect(host.querySelector(`[data-testid="gantt-row-attention-missing_deadline"]`)?.textContent).toBe("Deadline not set");
+    const set = deadlineActionButton();
+    expect(set?.textContent).toBe("Set deadline");
+
+    await click(set!);
+    await flush(2);
+    expect(byTestId("calendar-move-dialog")).not.toBeNull();
+    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
+    await click(byTestId("calendar-move-submit")!);
+    await flush(4);
+
+    expect(deadlineDialog()).not.toBeNull();
+    expect(deadlineDialog()!.textContent).toContain("Schedule the Deadline for 1 Writes Street?");
+    expect(puts()).toHaveLength(0);
+    await click(byTestId("gantt-deadline-confirm-action")!);
+    await flush(6);
+
+    expect(puts()).toHaveLength(1);
+    expect(putBody()).toMatchObject({ expectedVersion: 1, deadline: { localCivil: `${sydneyDay(5)}T17:00` } });
+    expect(deadlineActionButton()).toBeUndefined();
+
+    await click(undoButtons()[0]!);
+    await flush(6);
+    expect(puts()).toHaveLength(2);
+    expect(putBody(1)).toEqual({ expectedVersion: 2, deadline: null });
+  });
+
+  it("7. unmounting while the confirmation is open withdraws it, releases the gate and writes nothing", async () => {
+    await render();
+    await resizeProjectEnd(450, 63);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
+
+    await act(async () => {
+      root.render(view(false));
+      await Promise.resolve();
+    });
+    await flush(4);
+
+    expect(deadlineDialog()).toBeNull();
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("7b. access loss while the confirmation is open withdraws it and writes nothing", async () => {
+    resetFixture({ truncatedTotal: 9 });
+    const childPage = deferred<Reply>();
+    childPageReply = childPage.promise;
+    await render();
+    await resizeProjectEnd(450, 64);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+
+    // A continuation page answering 401 is access loss (the port's `latestError`).
+    childPage.resolve({ status: 401, body: { error: "unauthorized" } });
+    await flush(6);
+
+    expect(onAccessLoss).toHaveBeenCalledTimes(1);
+    expect(deadlineDialog()).toBeNull();
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("8. without canEditDeadline: no Deadline grip, no keyboard contract on the bar, no Set deadline", async () => {
+    resetFixture({ canEditDeadline: false });
+    await render();
+    expect(host.querySelector(`[data-gantt-resource="project:${PROJECT_ID}"] [data-testid="gantt-resize-handle-end"]`)).toBeNull();
+    expect(projectBar().getAttribute("aria-keyshortcuts")).toBeNull();
+    expect(deadlineActionButton()).toBeUndefined();
+
+    await act(async () => { root.unmount(); await Promise.resolve(); });
+    root = createRoot(host);
+    resetFixture({ canEditDeadline: false, noDeadline: true });
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await render();
+    expect(host.querySelector(`[data-testid="gantt-row-attention-missing_deadline"]`)).not.toBeNull();
+    expect(deadlineActionButton()).toBeUndefined();
   });
 });

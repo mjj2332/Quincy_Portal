@@ -40,7 +40,7 @@ import {
   type GanttEdit,
 } from "./production-gantt-scheduling";
 import { removeProductionGanttQueries } from "./production-gantt-query";
-import type { SchedulingPort } from "./use-scheduling-commands";
+import type { SchedulingDeadlineConfirmInput, SchedulingPort } from "./use-scheduling-commands";
 
 export type GanttBaseline = { projects: GanttProjectRowDto[] };
 
@@ -172,9 +172,14 @@ export type GanttSchedulingPortInput = {
    * through `latestError` so the controller's own access-loss path handles it.
    */
   accessError?: unknown;
+  /**
+   * #221 PR C: opens the Gantt's own Deadline confirmation (`ProductionGanttDeadlineDialog`) and
+   * resolves with the user's answer — becomes the port's `confirmDeadline`.
+   */
+  openDeadlineConfirm?: (input: SchedulingDeadlineConfirmInput) => Promise<boolean>;
 };
 
-export function useGanttSchedulingPort({ identity, projects, query, purgeChildren, accessError }: GanttSchedulingPortInput): SchedulingPort<GanttBaseline> {
+export function useGanttSchedulingPort({ identity, projects, query, purgeChildren, accessError, openDeadlineConfirm }: GanttSchedulingPortInput): SchedulingPort<GanttBaseline> {
   const hasData = query.data !== undefined;
   // Memoised on the projects' identity: the controller's accept effect keys on `latest`, and a
   // fresh object every render would re-accept (and re-render) forever.
@@ -237,5 +242,6 @@ export function useGanttSchedulingPort({ identity, projects, query, purgeChildre
     invalidation: ganttInvalidation,
     defaultPlacementDate: sydneyToday,
     settleFailedReason: "The latest Gantt could not be loaded.",
+    ...(openDeadlineConfirm ? { confirmDeadline: openDeadlineConfirm } : {}),
   };
 }

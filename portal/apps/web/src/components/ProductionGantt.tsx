@@ -38,8 +38,22 @@
  * range the server refused. `ProductionGantt.import-boundary.guard.test.ts` asserts that (and the
  * `canDropEvent`/`enforceCanDrop` rule) against this file's source.
  *
- * Still read-only: project bars (the deadline grip is #221 PR C — the adapter's
- * `deadlineInteractive` stays off), and `legacy_unresolved` / `invalid` rows, which the adapter
+ * Project Deadlines (#221 PR C): a project bar's END edge is a Deadline grip for users with
+ * `permissions.canEditDeadline` (the adapter's `deadlineInteractive`; an inverted "Deadline before
+ * shoot" bar stays read-only). Releasing it submits a Deadline proposal; the controller asks the
+ * port's `confirmDeadline`, which opens `ProductionGanttDeadlineDialog` (reui alert-dialog) with
+ * `previewDeadlineEffects` — Cancel/Escape reverts with zero writes, confirm saves and offers Undo.
+ * A project with no Deadline ("Deadline not set") gets a label-side "Set deadline" button, and an
+ * inverted bar a "Fix deadline" one; both open the shared `ProductionCalendarMoveDialog`, whose
+ * submit flows into the same confirmation.
+ *
+ * Reuse ledger (PR C UI): Deadline confirmation — `components/reui/alert-dialog.tsx` via
+ * `ProductionGanttDeadlineDialog` (its own ledger lists the rest); Set/Fix deadline —
+ * `components/reui/button.tsx` `size="sm" variant="ghost"` (ghost, not outline: a row label is
+ * dense and the button sits beside a quiet attention badge, so it must not read as a primary box);
+ * the move dialog — `components/ProductionCalendarMoveDialog.tsx`, reused unchanged.
+ *
+ * Still read-only: `legacy_unresolved` / `invalid` rows, which the adapter
  * routes to `attention` with no event at all. `interactions` stays CONTROLLED and is switched off
  * while an interaction is open, the post-save refetch is pending, or access was lost.
  *
@@ -81,7 +95,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
+import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -90,17 +104,22 @@ import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ApiError } from "../lib/api";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
-import { useSchedulingController, type ChecklistFoldState, type SchedulingCommittedInfo } from "../lib/use-scheduling-commands";
+import { useSchedulingController, type ChecklistFoldState, type MoveDialogState, type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import type { ChecklistMutationResult } from "../lib/scheduling-types";
-import { buildChecklistUndoTicket, type UndoTicket } from "../lib/scheduling-undo";
+import { buildChecklistUndoTicket, buildDeadlineUndoTicket, type UndoTicket } from "../lib/scheduling-undo";
 import type { ChecklistSource } from "../lib/scheduling-policy";
 import { dismissToast, pushToast, type ToastTone } from "../lib/toast-store";
 import {
   applyGanttOptimisticOverlay,
   ganttChecklistSource,
+  ganttDeadlineDropWarning,
+  ganttDeadlineEditToProposal,
+  ganttDeadlineEntry,
+  ganttDeadlineEvent,
   ganttDropWarningText,
   ganttEditToProposal,
   ganttPlacementToProposal,
+  previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
 import { adoptGanttChecklistRow, ganttCommittedWarnings, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
@@ -130,12 +149,15 @@ import {
 import { useStages } from "../lib/stages";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { ProductionCalendarFoldChoice } from "./ProductionCalendarFoldChoice";
+import { ProductionCalendarMoveDialog } from "./ProductionCalendarMoveDialog";
+import { ProductionGanttDeadlineDialog, type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { COARSE_TAP_TARGET } from "./production-calendar-classes";
 import { buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { StageSwatch } from "./quincy/StageSwatch";
+import { Button } from "./reui/button";
 import { Skeleton } from "./reui/skeleton";
 
 export type ProductionGanttProps = {
@@ -247,24 +269,47 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
  * — reusing `InitialsAvatar` per the build spec rather than adding a dependency — and (project rows
  * whose remaining checklist pages failed to load, fix-220-sol1 #2) a retry affordance.
  */
+/** #221 PR C: a project row's label-side Deadline action ("Set deadline" / "Fix deadline"). */
+type GanttDeadlineAction = { label: "Set deadline" | "Fix deadline"; disabled: boolean; onAction: () => void };
+
 function GanttResourceLabel({
   resource,
   attentionByResourceId,
   editorNameByProjectResourceId,
   childLoadRetryByProjectResourceId,
+  deadlineActionByProjectResourceId,
 }: {
   resource: GanttResource;
   attentionByResourceId: Map<string, ProductionGanttAttention>;
   editorNameByProjectResourceId: Map<string, string>;
   childLoadRetryByProjectResourceId: Map<string, () => void>;
+  deadlineActionByProjectResourceId: Map<string, GanttDeadlineAction>;
 }) {
   const attention = attentionByResourceId.get(resource.id);
   const editorName = editorNameByProjectResourceId.get(resource.id);
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
+  const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="truncate">{resource.title}</span>
       {attention && <GanttRowAttentionBadge reason={attention.reason} />}
+      {deadlineAction && (
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="shrink-0"
+          data-testid="gantt-deadline-action"
+          disabled={deadlineAction.disabled}
+          onClick={(event) => {
+            // Same as the retry badge: never also read as "select this row".
+            event.stopPropagation();
+            deadlineAction.onAction();
+          }}
+        >
+          {deadlineAction.label}
+        </Button>
+      )}
       {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
       {editorName && <InitialsAvatar name={editorName} className="size-5 shrink-0" />}
     </span>
@@ -813,15 +858,52 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     childControllersRef.current.clear();
     setChildState({});
   }, []);
+  // Latest accepted projects by id, refreshed every render below; the port's confirmation and the
+  // edit handlers read it synchronously.
+  const projectByIdRef = useRef<Map<string, GanttProjectRowDto>>(new Map());
+
+  // #221 PR C: the Deadline confirmation the controller is awaiting (`SchedulingPort.confirmDeadline`).
+  // `resolve` settles the controller's promise exactly once, and closes the dialog.
+  const [deadlineConfirm, setDeadlineConfirm] = useState<{ state: ProductionGanttDeadlineConfirmState; resolve: (ok: boolean) => void } | null>(null);
+  const openDeadlineConfirm = useCallback((input: SchedulingDeadlineConfirmInput) => new Promise<boolean>((resolve) => {
+    if (input.signal.aborted) {
+      resolve(false);
+      return;
+    }
+    const { proposal } = input;
+    const project = projectByIdRef.current.get(proposal.projectId);
+    const preview = project
+      ? previewDeadlineEffects(project, { localCivil: proposal.newCivil, instant: proposal.newInstant ?? "" })
+      : { affected: [], clashes: [], loaded: 0, total: 0, truncated: false };
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      input.signal.removeEventListener("abort", onAbort);
+      setDeadlineConfirm(null);
+      resolve(ok);
+    };
+    // Unmount, reset or access loss: the controller withdraws the confirmation through `signal`.
+    const onAbort = () => finish(false);
+    input.signal.addEventListener("abort", onAbort, { once: true });
+    setDeadlineConfirm({
+      state: { street: proposal.street, oldCivil: proposal.oldCivil, newCivil: proposal.newCivil, scheduling: proposal.scheduling, consequences: input.consequences, preview },
+      resolve: finish,
+    });
+  }), []);
+
   const port = useGanttSchedulingPort({
     identity,
     projects: effectiveProjects,
     query,
     purgeChildren,
     accessError: childAccessError?.generationKey === generationKey ? childAccessError.error : undefined,
+    openDeadlineConfirm,
   });
 
   const [pending, setPending] = useState<GanttPendingRange | null>(null);
+  // #221 PR C: the project bar's end while its Deadline awaits confirmation (before any overlay).
+  const [pendingDeadline, setPendingDeadline] = useState<{ projectId: string; end: Date } | null>(null);
   const undoToastIdRef = useRef<number | null>(null);
   const unmountedRef = useRef(false);
   const dismissUndoToast = useCallback(() => {
@@ -831,7 +913,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // The controller is created below with `onCommitted`, which needs the controller's own `runUndo`
   // and the latest projects: both reach it through refs, refreshed every render.
   const runUndoRef = useRef<((ticket: UndoTicket) => Promise<{ ok: boolean; reason?: string }>) | null>(null);
-  const projectByIdRef = useRef<Map<string, GanttProjectRowDto>>(new Map());
 
   const pushUndoToast = useCallback((message: string, tone: ToastTone, ticket: UndoTicket | null) => {
     dismissUndoToast();
@@ -880,7 +961,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, [patchChildRow]);
 
   const handleCommitted = useCallback((info: SchedulingCommittedInfo) => {
-    if (info.kind !== "checklist" || !info.checklistResult) return;
+    if (info.kind === "deadline") {
+      // A Deadline Undo needs no row patch: the settle refetch returns the project row itself.
+      if (info.deadlineResult) pushUndoToast("Deadline saved.", "success", buildDeadlineUndoTicket(info.before as ProjectDeadlineCalendarEventDto, info.deadlineResult.current));
+      return;
+    }
+    if (!info.checklistResult) return;
     const result = info.checklistResult;
     patchChildRow(info.projectId, result);
     const project = projectByIdRef.current.get(info.projectId);
@@ -891,6 +977,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   const commands = useSchedulingController({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone });
   runUndoRef.current = commands.runUndo;
+  const live = !commands.interactionBlocked && !commands.settle.pending && !commands.accessLost;
 
   // Accept-gate freeze: while an interaction is open the controller holds its accepted baseline and
   // queues any refetch, exactly as the Calendar does.
@@ -901,11 +988,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // The bar never snaps back between release and the controller's overlay: `pending` covers that
   // gap and yields to the overlay the moment it exists.
   const effectivePending = commands.optimisticOverlay ? null : pending;
+  const effectivePendingDeadline = commands.optimisticOverlay ? null : pendingDeadline;
   useEffect(() => {
     if (commands.optimisticOverlay) setPending(null);
   }, [commands.optimisticOverlay]);
   useEffect(() => {
-    if (!commands.interactionBlocked && !commands.settle.pending) setPending(null);
+    if (!commands.interactionBlocked && !commands.settle.pending) {
+      setPending(null);
+      setPendingDeadline(null);
+    }
   }, [commands.interactionBlocked, commands.settle.pending]);
 
   // One live Undo: gone on unmount, on a generation change (identity/filters), and on access loss.
@@ -919,15 +1010,18 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   useEffect(() => {
     dismissUndoToast();
     setPending(null);
+    setPendingDeadline(null);
   }, [generationKey, dismissUndoToast]);
   useEffect(() => {
-    if (commands.accessLost) dismissUndoToast();
+    if (!commands.accessLost) return;
+    dismissUndoToast();
+    setPendingDeadline(null);
   }, [commands.accessLost, dismissUndoToast]);
 
-  const baseModel = useMemo(() => buildProductionGanttModel(displayProjects, { now, interactive: true, deadlineInteractive: false }), [displayProjects, now]);
+  const baseModel = useMemo(() => buildProductionGanttModel(displayProjects, { now, interactive: true, deadlineInteractive: true }), [displayProjects, now]);
   const model = useMemo(
-    () => withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay), effectivePending),
-    [baseModel, commands.optimisticOverlay, effectivePending],
+    () => withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending),
+    [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending],
   );
 
   // fix-220-sol1 #3: the server's own `density.tooManyToDraw`, read off the FIRST page, is
@@ -1075,6 +1169,25 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return map;
   }, [projects, liveChildState, retryProjectChildren]);
 
+  // #221 PR C: "Set deadline" for a project with no Deadline, "Fix deadline" for an inverted one —
+  // project rows are vendor groups, so the placement hint can't serve them; this label button can.
+  const openUnscheduledProjectDialog = commands.openUnscheduledProjectDialog;
+  const openMoveDialog = commands.openMoveDialog;
+  const deadlineActionByProjectResourceId = useMemo(() => {
+    const map = new Map<string, GanttDeadlineAction>();
+    for (const project of displayProjects) {
+      if (!project.permissions.canEditDeadline) continue;
+      const resourceId = `project:${project.id}`;
+      if (project.deadline === null) {
+        map.set(resourceId, { label: "Set deadline", disabled: !live, onAction: () => openUnscheduledProjectDialog(ganttDeadlineEntry(project)) });
+      } else if (attentionByResourceId.get(resourceId)?.reason === "deadline_before_start") {
+        const event = ganttDeadlineEvent(project);
+        if (event) map.set(resourceId, { label: "Fix deadline", disabled: !live, onAction: () => openMoveDialog(event) });
+      }
+    }
+    return map;
+  }, [displayProjects, attentionByResourceId, live, openUnscheduledProjectDialog, openMoveDialog]);
+
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (
       <GanttResourceLabel
@@ -1082,9 +1195,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         attentionByResourceId={attentionByResourceId}
         editorNameByProjectResourceId={editorNameByProjectResourceId}
         childLoadRetryByProjectResourceId={childLoadRetryByProjectResourceId}
+        deadlineActionByProjectResourceId={deadlineActionByProjectResourceId}
       />
     ),
-    [attentionByResourceId, editorNameByProjectResourceId, childLoadRetryByProjectResourceId],
+    [attentionByResourceId, editorNameByProjectResourceId, childLoadRetryByProjectResourceId, deadlineActionByProjectResourceId],
   );
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
@@ -1126,8 +1240,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const [scale, setScale] = useState<GanttScale>("month");
 
   // #221: the vendor's proposal → the grab-time checklist source and a `GanttEdit`. `null` for
-  // anything that is not a scheduled task this user may change (project bars are not interactive
-  // in this PR; the adapter already vetoes the rest per row permissions).
+  // anything that is not a scheduled task this user may change (project bars go through
+  // `deadlineEditFor` below; the adapter already vetoes the rest per row permissions).
   const editFor = useCallback((update: GanttProposedUpdate<ProductionGanttRowData>) => {
     const data = update.event.data;
     if (data?.kind !== "task") return null;
@@ -1138,9 +1252,31 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return { project, source, kind };
   }, []);
 
+  // #221 PR C: a project bar's proposal → its project and Deadline event. Only an END-edge resize
+  // is a Deadline edit (the adapter offers no other gesture on a project bar).
+  const deadlineEditFor = useCallback((update: GanttProposedUpdate<ProductionGanttRowData>) => {
+    const data = update.event.data;
+    if (data?.kind !== "project") return null;
+    const project = projectByIdRef.current.get(data.dto.id);
+    const event = project?.permissions.canEditDeadline ? ganttDeadlineEvent(project) : null;
+    if (!project || !event) return null;
+    return { project, event, kind: ganttEditKind(update) };
+  }, []);
+
   const handleEventUpdate = useCallback((update: GanttProposedUpdate<ProductionGanttRowData>): GanttUpdateResult => {
     // Never `false` (that announces "rejected" for a drop the controller has not judged yet) and
     // never a truthy accept (that would let the vendor move the bar on its own): always "deferred".
+    const deadlineTarget = deadlineEditFor(update);
+    if (deadlineTarget) {
+      if (deadlineTarget.kind !== "resize-end") return "deferred";
+      const proposal = ganttDeadlineEditToProposal(deadlineTarget.event, update.end, update.event.end, scale);
+      if (!proposal) return "deferred";
+      // The controller announces "confirm-required", then saved / cancelled; Cancel reverts this.
+      setPendingDeadline({ projectId: deadlineTarget.project.id, end: update.end });
+      const outcome = commands.submitProposal(proposal, { revertable: { revert: () => setPendingDeadline(null) } });
+      if (!outcome.ok) setPendingDeadline(null);
+      return "deferred";
+    }
     const target = editFor(update);
     if (!target || target.kind === "none") return "deferred";
     if (target.kind === null) {
@@ -1155,14 +1291,18 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const outcome = commands.submitProposal(proposal, { revertable: { revert: () => setPending(null) } });
     if (!outcome.ok) setPending(null);
     return "deferred";
-  }, [commands, editFor, scale]);
+  }, [commands, deadlineEditFor, editFor, scale]);
 
   const dropWarning = useCallback((update: GanttProposedUpdate<ProductionGanttRowData>): string | null => {
+    const deadlineTarget = deadlineEditFor(update);
+    if (deadlineTarget) {
+      return deadlineTarget.kind === "resize-end" ? ganttDeadlineDropWarning(deadlineTarget.project, update.end, update.event.end, scale) : null;
+    }
     const target = editFor(update);
     if (!target || target.kind === "none" || target.kind === null) return null;
     const edit: GanttEdit = { kind: target.kind, eventStart: update.event.start, eventEnd: update.event.end, proposedStart: update.start, proposedEnd: update.end, scale };
     return ganttDropWarningText(ganttEditWarnings(target.project, target.source, edit));
-  }, [editFor, scale]);
+  }, [deadlineEditFor, editFor, scale]);
 
   // Placement: only an unscheduled task row whose permissions allow `canDrag` takes a slot.
   const placeableEntryByResourceId = useMemo(() => {
@@ -1184,13 +1324,20 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (proposal) commands.submitProposal(proposal);
   }, [commands, placeableEntryByResourceId, scale]);
 
-  const live = !commands.interactionBlocked && !commands.settle.pending && !commands.accessLost;
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
 
   // Fold dialog, retained through its close animation (ProductionCalendar.tsx's pattern).
   const checklistFoldRetained = useRef<ChecklistFoldState | null>(null);
   if (commands.checklistFold) checklistFoldRetained.current = commands.checklistFold;
   const checklistFoldToken = useOpenToken(commands.checklistFold !== null);
+  // #221 PR C: the shared Deadline move dialog ("Set deadline" / "Fix deadline") and the Deadline
+  // confirmation, both retained through their close animation the same way.
+  const moveDialogRetained = useRef<MoveDialogState | null>(null);
+  if (commands.moveDialog) moveDialogRetained.current = commands.moveDialog;
+  const moveDialogToken = useOpenToken(commands.moveDialog !== null);
+  const deadlineConfirmRetained = useRef<ProductionGanttDeadlineConfirmState | null>(null);
+  if (deadlineConfirm) deadlineConfirmRetained.current = deadlineConfirm.state;
+  const deadlineConfirmToken = useOpenToken(deadlineConfirm !== null);
 
   // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
@@ -1297,13 +1444,32 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
       {checklistFoldRetained.current && (
         <ProductionCalendarFoldChoice
-          key={checklistFoldToken}
+          key={`checklist-fold:${checklistFoldToken}`}
           open={!!commands.checklistFold}
           endpoint={checklistFoldRetained.current.endpoint}
           choices={checklistFoldRetained.current.choices}
           eyebrow={checklistFoldRetained.current.proposal.source.project.street}
           onSubmit={commands.submitChecklistFold}
           onCancel={commands.cancelChecklistFold}
+        />
+      )}
+      {moveDialogRetained.current && (
+        <ProductionCalendarMoveDialog
+          key={`move-dialog:${moveDialogToken}`}
+          open={!!commands.moveDialog}
+          event={moveDialogRetained.current.event}
+          initialCivil={moveDialogRetained.current.initialCivil}
+          foldChoices={moveDialogRetained.current.foldChoices}
+          onSubmit={commands.submitMoveDialog}
+          onCancel={commands.cancelMoveDialog}
+        />
+      )}
+      {deadlineConfirmRetained.current && (
+        <ProductionGanttDeadlineDialog
+          key={`deadline-confirm:${deadlineConfirmToken}`}
+          open={deadlineConfirm !== null}
+          state={deadlineConfirmRetained.current}
+          onResolve={(ok) => deadlineConfirm?.resolve(ok)}
         />
       )}
     </div>
