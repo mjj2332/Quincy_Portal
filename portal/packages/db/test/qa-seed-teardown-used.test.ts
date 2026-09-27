@@ -148,3 +148,41 @@ describe("teardown of a used fixture — every app-shaped row at once, against a
     s.db.close();
   });
 });
+
+describe("fix item 3 (Sol round 3, finding 1): polymorphic columns match every REGISTERED id, not only rows still present", () => {
+  it("an audit_log row for a fixture subtask the app already deleted is removed; the control project's audit rows survive", () => {
+    const db = freshFixtureDatabase();
+    const executor = sqliteExecutor(db);
+    apply(executor, { command: "apply", tier: undefined, anchor: ANCHOR, persistTo: undefined });
+    const control: PlantContext = {
+      tag: "r3-control", projectId: plantId("r3:control:project"), collectionId: plantId("r3:control:collection"), subtaskId: plantId("r3:control:subtask"),
+      occurrenceId: plantId("r3:control:occurrence"), userId: BOOTSTRAP_ADMIN_ID, connectionId: plantId("r3:connection"),
+    };
+    for (const row of controlProjectRows(control)) db.exec(insertSql(row));
+    const controlAudits = [
+      { id: plantId("r3:control:audit:subtask-delete"), type: "project_subtask", target: control.subtaskId },
+      { id: plantId("r3:control:audit:project"), type: "project", target: control.projectId },
+    ];
+    for (const audit of controlAudits) {
+      db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, ?, ?, ?, NULL, 0);")
+        .run(audit.id, BOOTSTRAP_ADMIN_ID, `qa.${audit.type}`, audit.type, audit.target);
+    }
+
+    // What `DELETE /projects/:projectId/subtasks/:subtaskId` does (workers/app/src/routes/project-subtasks.ts):
+    // the row goes, and an audit row targeting its id is written in the same batch.
+    const subtaskId = String(db.prepare(`SELECT id FROM ${FIXTURE_ENTITIES_TABLE} WHERE kind = 'subtask' ORDER BY id LIMIT 1;`).get()?.id);
+    const deleteAuditId = plantId("r3:fixture:audit:subtask-delete");
+    db.prepare("DELETE FROM project_subtasks WHERE id = ?;").run(subtaskId);
+    db.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'project_subtask.delete', 'project_subtask', ?, NULL, 0);")
+      .run(deleteAuditId, BOOTSTRAP_ADMIN_ID, subtaskId);
+
+    teardown(executor);
+
+    expect(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE id = ?;").get(deleteAuditId)?.n).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE target_id = ?;").get(subtaskId)?.n).toBe(0);
+    for (const audit of controlAudits) expect(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE id = ?;").get(audit.id)?.n, `${audit.type} control audit survived`).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM projects WHERE id = ?;").get(control.projectId)?.n).toBe(1);
+    expect(db.prepare("PRAGMA foreign_key_check;").all()).toEqual([]);
+    db.close();
+  });
+});

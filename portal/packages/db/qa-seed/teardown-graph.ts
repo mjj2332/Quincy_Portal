@@ -22,7 +22,8 @@
  *  3. **Delete** in reverse topological order of the FK edges among captured tables — children first,
  *     so RESTRICT/NO ACTION never fire and nothing relies on local-vs-remote cascade behaviour.
  *  4. **`audit_log`** (and every other polymorphic `*` column) matches ANY captured id, whatever its
- *     `target_type`.
+ *     `target_type` — and every id ever registered for the fixture, even one whose row the app has
+ *     already deleted (Sol round 3, finding 1). FK-edge capture is unchanged.
  *  5. **Sweep.** After deleting: every captured row is gone, and no column that can hold a captured id
  *     (every FK edge and every no-FK column) still holds one.
  *
@@ -270,9 +271,19 @@ function chunk<T>(values: readonly T[], size: number): T[][] {
   return out;
 }
 
+/**
+ * The ids a column pointing at `parent` is matched against. For an FK or a typed no-FK edge: the
+ * captured rows of that table. For a polymorphic `*` column (`audit_log.target_id`,
+ * `project_activity_events.source_id`): every captured id UNION every id ever registered for the
+ * fixture, whether or not that row still exists (Sol round 3, finding 1). The app deletes a fixture
+ * subtask and, in the same batch, writes an audit row targeting its id; the subtask is gone before
+ * teardown runs, so a closure seeded from rows still present never learns that id. Registered ids are
+ * deterministic UUIDv5s that only ever name fixture rows, so matching them cannot over-capture.
+ * Two terms — well under local D1's compound-SELECT limit.
+ */
 function capturedIdsOf(parent: string): string {
   return parent === "*"
-    ? `SELECT entity_id FROM ${FIXTURE_CLOSURE_TABLE} WHERE entity_id IS NOT NULL`
+    ? `SELECT entity_id FROM ${FIXTURE_CLOSURE_TABLE} WHERE entity_id IS NOT NULL UNION SELECT id FROM ${FIXTURE_ENTITIES_TABLE}`
     : `SELECT entity_id FROM ${FIXTURE_CLOSURE_TABLE} WHERE table_name = '${identifier(parent, "parent table")}' AND entity_id IS NOT NULL`;
 }
 

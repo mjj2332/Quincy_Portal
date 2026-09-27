@@ -173,9 +173,9 @@ describe("guard: the no-plain-FK traps are ordered and captured by the graph, no
     expect(captureStatementsFor("project_comment_mentions").some((s) => s.includes("project_comment_mentions.comment_id IN (") && s.includes("table_name = 'project_comments'"))).toBe(true);
   });
 
-  it("INVERTED from round 1: audit_log matches ANY captured id, whatever its target_type (Sol round 2, finding 2)", () => {
+  it("INVERTED from round 1: audit_log matches ANY captured id OR any registered id, whatever its target_type (Sol round 2 #2, round 3 #1)", () => {
     const audit = captureStatementsFor("audit_log");
-    expect(audit.some((s) => s.includes("audit_log.target_id IN (") && s.includes("WHERE entity_id IS NOT NULL)"))).toBe(true);
+    expect(audit.some((s) => s.includes("audit_log.target_id IN (") && s.includes("WHERE entity_id IS NOT NULL UNION SELECT id FROM __quincy_local_fixture_entities)"))).toBe(true);
     for (const statement of [...audit, ...deleteStatementFor("audit_log")]) expect(statement).not.toContain("target_type");
   });
 
