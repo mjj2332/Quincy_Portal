@@ -176,18 +176,20 @@ look at them, and they are exactly what the same delete leaves behind in product
 
 ## What each core-tier project proves
 
+On the Production Gantt a project draws a bar only when it has a deadline (`apps/web/src/lib/production-gantt-adapter.ts`, `buildProjectBar`: no deadline means a "Deadline not set" row and no bar), so every core project meant to show a bar, progress or a hue carries one — its shoot date + 7 days at 17:00 unless noted below.
+
 | Project (street prefix `QA FIXTURE ·`) | Stage | What it proves |
 |---|---|---|
-| Pagination 260 | Awaiting RAW | 260 not-done children, more than 2× the child page limit → embedded page + two continuation pages |
+| Pagination 260 | Awaiting RAW | 260 not-done children, more than 2× the child page limit → embedded page + two continuation pages; the bar shows the `awaiting_raw` hue |
 | Near-complete 199 of 200 | RAW review | `Math.round(99.5)` capped at 99 — progress never shows 100% until every child is done |
 | Complete 40 of 40 | Edited review | Progress is exactly 100%, the completed checkmark renders |
 | Zero progress | Editing · autoHDR | Progress is emitted as `0`, not omitted |
 | Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on** |
 | Schedule edges | RAW review | Every checklist schedule state and endpoint kind (`unscheduled`, `due_only`, `range`, both `date` and `timed`), all three `legacy_unresolved` reasons, and the DST fold canary (see below) |
-| No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention, hollow-start bar |
-| Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker |
-| Deadline before start | Edited review | Zero-length bar + `deadline_before_start` attention |
-| Invalid shoot date | RAW review | `shoot_date = '2026-02-30'` (a real Tonomo shape that isn't a valid calendar day) — the bar falls back to sorting by `created_at` |
+| No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention (flagged hollow-start) and **no bar** — deliberately left without a deadline |
+| Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker (deadline anchor + 14 days, 17:00) |
+| Deadline before start | Edited review | Zero-length bar + `deadline_before_start` attention (deadline anchor + 2 days 09:00, shoot anchor + 10) |
+| Invalid shoot date | RAW review | `shoot_date = '2026-02-30'` (a real Tonomo shape that isn't a valid calendar day) — serialized as no shoot date, so the bar starts at `created_at` (deadline anchor + 7 days, 17:00) |
 
 All five real `pipeline_stages` keys are used, which is **four distinct hues**, not five —
 `raw_review`/`edited_review` share `--signal-caution` and `editing_autohdr` alone reaches

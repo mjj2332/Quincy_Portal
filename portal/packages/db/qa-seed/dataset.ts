@@ -362,22 +362,22 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
 
   // P01 — pagination: far more not-done rows than 2x the child page limit.
   {
-    const { project: p, createdAtMs } = project("pagination", "Pagination 260", "awaiting_raw", { priority: 1, shootDate: mustShift(anchor, 3) });
+    const { project: p, createdAtMs } = project("pagination", "Pagination 260", "awaiting_raw", { priority: 1, shootDate: mustShift(anchor, 3), deadlineLocalCivil: `${mustShift(anchor, 10)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 260, 0, createdAtMs) });
   }
   // P02 — near-complete: completed === total - 1.
   {
-    const { project: p, createdAtMs } = project("near-complete", "Near-complete 199 of 200", "raw_review", { priority: 2, shootDate: mustShift(anchor, 6) });
+    const { project: p, createdAtMs } = project("near-complete", "Near-complete 199 of 200", "raw_review", { priority: 2, shootDate: mustShift(anchor, 6), deadlineLocalCivil: `${mustShift(anchor, 13)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 200, 199, createdAtMs) });
   }
   // P03 — complete: completed === total > 0.
   {
-    const { project: p, createdAtMs } = project("complete", "Complete 40 of 40", "edited_review", { priority: 3, shootDate: mustShift(anchor, -4) });
+    const { project: p, createdAtMs } = project("complete", "Complete 40 of 40", "edited_review", { priority: 3, shootDate: mustShift(anchor, -4), deadlineLocalCivil: `${mustShift(anchor, 3)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 40, 40, createdAtMs) });
   }
   // P04 — zero: completed === 0 && total > 0.
   {
-    const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1) });
+    const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1), deadlineLocalCivil: `${mustShift(anchor, 8)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 12, 0, createdAtMs) });
   }
   // P05 — delivered: the app's own deadline UPDATE predicate excludes stage_key = 'delivered', so
@@ -388,7 +388,7 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   }
   // P06 — schedule-edges: the full checklist-schedule state/endpoint/legacy-reason/DST census.
   {
-    const { project: p, createdAtMs } = project("schedule-edges", "Schedule edges", "raw_review", { shootDate: mustShift(anchor, 2) });
+    const { project: p, createdAtMs } = project("schedule-edges", "Schedule edges", "raw_review", { shootDate: mustShift(anchor, 2), deadlineLocalCivil: `${mustShift(anchor, 9)}T17:00` });
     const edgeRows = buildScheduleEdgeRows(anchor, dst);
     const subtasks: FixtureSubtaskRow[] = edgeRows.map((row, index) => {
       const rowCreatedAtMs = createdAtMs + index * 1_000;
@@ -417,7 +417,7 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   }
   // P10 — invalid shoot_date literal (2026 is not a leap year, so Feb 30 is always out of range).
   {
-    const { project: p, createdAtMs } = project("invalid-shoot-date", "Invalid shoot date", "raw_review", { shootDate: "2026-02-30" });
+    const { project: p, createdAtMs } = project("invalid-shoot-date", "Invalid shoot date", "raw_review", { shootDate: "2026-02-30", deadlineLocalCivil: `${mustShift(anchor, 7)}T17:00` });
     builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
   }
 
