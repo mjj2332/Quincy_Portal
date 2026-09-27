@@ -242,6 +242,19 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     expect(panelWidth(option("Completed checklist items"))).toBe("w-60");
   });
 
+  it("rounds every focusable chip segment's focus ring to the chip's 14px radius, like the Add filter ring (browser pass F)", async () => {
+    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    const [chip] = chips();
+    const segments = [...chip!.querySelectorAll<HTMLElement>("button")];
+    // Operator, value, kebab: the three a keyboard lands on.
+    expect(segments.map((segment) => segment.getAttribute("aria-label") ?? segment.textContent?.trim())).toEqual(["is any of", "Editing", "Stage filter options"]);
+    // The global `:focus-visible` outline follows `border-radius`, and ButtonGroup squares the inner
+    // corners of every segment, so a focused segment drew a square ring on a rounded pill. On focus
+    // the segment takes the chip's radius token (`--radius-lg`, what `rounded-lg` resolves to on the
+    // Add filter trigger), `!` to beat ButtonGroup's child-combinator corner resets.
+    for (const segment of segments) expect((segment.getAttribute("class") ?? "").split(/\s+/)).toContain("focus-visible:rounded-(--radius-lg)!");
+  });
+
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
     await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
     await click(addTrigger());

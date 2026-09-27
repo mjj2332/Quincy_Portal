@@ -22,6 +22,7 @@
  * - RE-SKIN (`filters-skin.guard.test.ts`): six `dark:bg-input/30` classes stripped from the chip segments; `bg-background` kept.
  * - RE-SKIN (#255 browser pass F): the operator and value segments' `hover:bg-accent` -> `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the segment label (left at foreground) vanished on hover; `bg-muted` is the `.button--secondary:hover` surface. Guarded by `filters-skin.guard.test.ts` Detector 9.
  * - QUINCY (#255 browser pass F): `CHIP_HEIGHT_CLASS` (`min-h-[38px] max-[721px]:min-h-[44px]`, `reui/button.tsx`'s `size.default` contract) on both chip roots and their kebab / remove button, so a chip matches the 38px / 44px Add filter and Clear buttons; upstream sized the chip by the `icon` kebab (32px).
+ * - QUINCY (#255 browser pass F): `SEGMENT_FOCUS_RADIUS_CLASS` (`focus-visible:rounded-(--radius-lg)!`) on the operator and value segments and the kebab / remove button, so a focused segment's global outline follows the chip's 14px radius instead of ButtonGroup's squared inner corners.
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -879,6 +880,14 @@ export interface FilterChipProps<V = unknown> {
    kebab carries its own `size-*` height, so it takes the classes too. */
 const CHIP_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
 
+/* QUINCY (#255 browser pass F): a focused segment's ring in the chip's radius.
+   The global `:focus-visible` outline follows `border-radius`, and ButtonGroup
+   squares every segment's inner corners, so the ring drew square on a 14px
+   pill. On focus the segment takes `--radius-lg` (what the Add filter
+   trigger's `rounded-lg` resolves to); `!` beats ButtonGroup's child-combinator
+   corner resets. Token form, not `rounded-lg`: the skin guard bans the class. */
+const SEGMENT_FOCUS_RADIUS_CLASS = "focus-visible:rounded-(--radius-lg)!"
+
 /** One filter, as a chip. Memoization means something here: the actions
  *  context is stable, the focus store is subscribed to a boolean and the query
  *  shares structure, so editing one filter of forty re-renders one chip. */
@@ -946,7 +955,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
         <Button
           variant="outline"
           size={sizes.icon}
-          className={cn("bg-background", CHIP_HEIGHT_CLASS)}
+          className={cn("bg-background", CHIP_HEIGHT_CLASS, SEGMENT_FOCUS_RADIUS_CLASS)}
           aria-label={actions.labels.remove}
           /* It had no gate at all, so the one chip whose whole purpose is to be
              removed could be removed from a bar that refuses every other edit. */
@@ -1025,6 +1034,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
             render={<button type="button" />}
             className={cn(
               "hover:bg-muted bg-background cursor-default",
+              SEGMENT_FOCUS_RADIUS_CLASS,
               /* The operator is connective tissue between the field and the
                  value, so it reads quieter than either - unless it is still
                  the prompt "Select condition", the one thing to act on. */
@@ -1057,6 +1067,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
               title={valueFullText === valueText ? undefined : valueFullText}
               className={cn(
                 "hover:bg-muted bg-background cursor-default",
+                SEGMENT_FOCUS_RADIUS_CLASS,
                 valueEmpty && "text-muted-foreground"
               )}
               onPointerDown={() => focusSegment("value")}
@@ -1084,7 +1095,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
               /* The same surface the three text segments force. Styles whose
                  outline button is transparent in dark (sera, luma, rhea) left
                  the kebab as a notch in an otherwise filled pill. */
-              className={cn("bg-background", CHIP_HEIGHT_CLASS)}
+              className={cn("bg-background", CHIP_HEIGHT_CLASS, SEGMENT_FOCUS_RADIUS_CLASS)}
               aria-label={actions.labels.chipMenu(field.label)}
               onPointerDown={() => focusSegment("menu")}
             />
