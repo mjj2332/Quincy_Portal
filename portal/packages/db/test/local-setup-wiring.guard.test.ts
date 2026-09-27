@@ -40,6 +40,9 @@ import { fakeWranglerSpawn, openMemoryDatabase, sqliteSetupExecutor } from "./qa
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   scripts: Record<string, string>;
 };
+const rootPackageJson = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as {
+  scripts: Record<string, string>;
+};
 const setupSource = readFileSync(new URL("../setup-local.mjs", import.meta.url), "utf8");
 const sharedSeed = readFileSync(new URL("../seed/0001_seed.sql", import.meta.url), "utf8");
 
@@ -49,6 +52,18 @@ describe("guard: db:migrate:local is wired to the local setup runner", () => {
   it("runs setup-local.mjs rather than wrangler directly", () => {
     // A bare `wrangler d1 migrations apply` leaves the Board disabled — that is the #160 bug.
     expect(packageJson.scripts["migrate:local"]).toBe("node ./setup-local.mjs");
+  });
+
+  // Without a trailing `--`, the nested `npm run` takes `--persist-to <dir>` as its own config and
+  // only the bare path reaches the script (#265).
+  const forwardingScripts = Object.entries(rootPackageJson.scripts).filter(
+    ([name, command]) => name.startsWith("db:") && /(?:^|\s)(?:-w|--workspace)[\s=]@quincy\/db(?:\s|$)/.test(command),
+  );
+  it("finds the root db:* scripts that forward to @quincy/db, however the workspace flag is spelled", () => {
+    expect(forwardingScripts.map(([name]) => name)).toEqual(expect.arrayContaining(["db:migrate:local", "db:generate"]));
+  });
+  it.each(forwardingScripts)("root %s forwards its arguments with a trailing --", (_name, command) => {
+    expect(command).toMatch(/ --$/);
   });
 
   it("enables the same flag key the application reads", () => {
