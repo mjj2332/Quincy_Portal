@@ -18,6 +18,12 @@ export type ProductionCalendarFiltersPanelProps = {
   stages: Array<{ key: string; label: string }>;
   disabled?: boolean;
   onChange: (next: ProductionCalendarFilters) => void;
+  /**
+   * #255: the Gantt reuses this panel. `"gantt"` renders only the controls the Gantt request
+   * honours — Stages, "Show completed checklist items" and "Show delivered projects" — and hides
+   * Layers, Editors/Unassigned, "Overdue only" and "My tasks". Defaults to `"calendar"`, unchanged.
+   */
+  surface?: "calendar" | "gantt";
 };
 
 const LAYER_LABELS: Record<ProductionCalendarLayer, string> = {
@@ -31,6 +37,9 @@ const TOGGLE_OPTIONS = [
   ["overdueOnly", "Overdue only"],
   ["myTasks", "My tasks"],
 ] as const satisfies ReadonlyArray<readonly [keyof Pick<ProductionCalendarFilters, "showCompletedChecklist" | "showDeliveredProjects" | "overdueOnly" | "myTasks">, string]>;
+
+/** The "Show" toggles the Gantt request honours (#255). */
+const GANTT_TOGGLE_KEYS = new Set<(typeof TOGGLE_OPTIONS)[number][0]>(["showCompletedChecklist", "showDeliveredProjects"]);
 
 function sortedEditorIds(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.toLowerCase()))].sort();
@@ -82,7 +91,11 @@ export function ProductionCalendarFilters({
   stages,
   disabled = false,
   onChange,
+  surface = "calendar",
 }: ProductionCalendarFiltersPanelProps) {
+  const isGantt = surface === "gantt";
+  const title = isGantt ? "Gantt filters" : "Calendar filters";
+  const toggleOptions = isGantt ? TOGGLE_OPTIONS.filter(([key]) => GANTT_TOGGLE_KEYS.has(key)) : TOGGLE_OPTIONS;
   const emit = (changes: Partial<ProductionCalendarFilters>) => {
     // The panel owns canonical ordering and casing. Parsing here both validates
     // the component contract and makes every callback payload safe to serialize.
@@ -127,17 +140,17 @@ export function ProductionCalendarFilters({
   });
 
   return (
-    <section className={cn(FILTERS_PANEL, disabled && "opacity-[.58]")} aria-label="Calendar filters" aria-disabled={disabled || undefined}>
+    <section className={cn(FILTERS_PANEL, disabled && "opacity-[.58]")} aria-label={title} aria-disabled={disabled || undefined}>
       <div className={FILTERS_HEAD}>
         <div>
           <div className="ey">Refine the desk</div>
-          <h2 className="mt-[4px] mb-0 [font:var(--type-h3)] tracking-[-.02em]">Calendar filters</h2>
+          <h2 className="mt-[4px] mb-0 [font:var(--type-h3)] tracking-[-.02em]">{title}</h2>
         </div>
         <button className={buttonClasses("text", { className: FILTERS_CLEAR })} type="button" disabled={disabled} onClick={clearFilters}>Clear filters</button>
       </div>
 
       <div className={FILTERS_GROUPS}>
-        <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
+        {!isGantt && <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
           <legend className={FILTERS_LEGEND}>Layers</legend>
           <div className={FILTER_OPTIONS}>
             {PRODUCTION_CALENDAR_LAYERS.map((layer) => (
@@ -147,9 +160,9 @@ export function ProductionCalendarFilters({
               </label>
             ))}
           </div>
-        </fieldset>
+        </fieldset>}
 
-        <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
+        {!isGantt && <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
           <legend className={FILTERS_LEGEND}>Editors</legend>
           <div className={FILTER_OPTIONS}>
             {people.map((person) => {
@@ -167,7 +180,7 @@ export function ProductionCalendarFilters({
             </label>
           </div>
           {people.length === 0 && <p className="mt-[8px] mb-0 text-muted-foreground text-[11px]">No editors in this range</p>}
-        </fieldset>
+        </fieldset>}
 
         <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
           <legend className={FILTERS_LEGEND}>Stages</legend>
@@ -184,7 +197,7 @@ export function ProductionCalendarFilters({
         <fieldset disabled={disabled} className={FILTERS_FIELDSET}>
           <legend className={FILTERS_LEGEND}>Show</legend>
           <div className={FILTER_OPTIONS}>
-            {TOGGLE_OPTIONS.map(([key, label]) => (
+            {toggleOptions.map(([key, label]) => (
               <label className={FILTER_OPTION} key={key}>
                 <Checkbox className={FILTER_OPTION_BOX} disabled={disabled} checked={filters[key]} onChange={(event) => emit({ [key]: event.currentTarget.checked })} />
                 <span className="min-w-0">{label}</span>

@@ -47,9 +47,9 @@ function fieldset(host: HTMLElement, legend: string): HTMLElement {
   return result;
 }
 
-function ControlledPanel({ initial, facetPeople = people, panelStages = stages, disabled = false, onChange }: { initial: Filters; facetPeople?: CalendarPerson[]; panelStages?: Array<{ key: string; label: string }>; disabled?: boolean; onChange?: (next: Filters) => void }) {
+function ControlledPanel({ initial, facetPeople = people, panelStages = stages, disabled = false, surface, onChange }: { initial: Filters; facetPeople?: CalendarPerson[]; panelStages?: Array<{ key: string; label: string }>; disabled?: boolean; surface?: "calendar" | "gantt"; onChange?: (next: Filters) => void }) {
   const [filters, setFilters] = useState(initial);
-  return <ProductionCalendarFilters filters={filters} facetPeople={facetPeople} stages={panelStages} disabled={disabled} onChange={(next) => { onChange?.(next); setFilters(next); }} />;
+  return <ProductionCalendarFilters filters={filters} facetPeople={facetPeople} stages={panelStages} disabled={disabled} {...(surface ? { surface } : {})} onChange={(next) => { onChange?.(next); setFilters(next); }} />;
 }
 
 describe("ProductionCalendarFilters", () => {
@@ -145,6 +145,50 @@ describe("ProductionCalendarFilters", () => {
     expect(host.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
     act(() => { labelInput(fieldset(host, "Editors"), "Unassigned").click(); });
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("defaults to the Calendar surface: every fieldset and toggle, titled Calendar filters (#255)", () => {
+    renderPanel();
+    expect([...host.querySelectorAll("fieldset legend")].map((legend) => legend.textContent)).toEqual(["Layers", "Editors", "Stages", "Show"]);
+    expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Calendar filters");
+    expect(host.querySelector("h2")?.textContent).toBe("Calendar filters");
+    expect([...fieldset(host, "Show").querySelectorAll("label")].map((label) => label.textContent)).toEqual(["Show completed checklist items", "Show delivered projects", "Overdue only", "My tasks"]);
+    expect(host.querySelectorAll("input[type=checkbox]")).toHaveLength(2 + 3 + 3 + 4);
+  });
+
+  describe("Gantt surface (#255)", () => {
+    it("renders only Stages, Show completed checklist items and Show delivered projects, titled Gantt filters", () => {
+      renderPanel(defaults, { surface: "gantt" });
+      expect([...host.querySelectorAll("fieldset legend")].map((legend) => legend.textContent)).toEqual(["Stages", "Show"]);
+      expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Gantt filters");
+      expect(host.querySelector("h2")?.textContent).toBe("Gantt filters");
+      expect([...fieldset(host, "Show").querySelectorAll("label")].map((label) => label.textContent)).toEqual(["Show completed checklist items", "Show delivered projects"]);
+      expect(host.querySelectorAll("input[type=checkbox]")).toHaveLength(3 + 2);
+      for (const hidden of ["Projects", "Checklist", "Alex Editor", "Unassigned", "Overdue only", "My tasks", "No editors in this range"]) {
+        expect(host.textContent, hidden).not.toContain(hidden);
+      }
+    });
+
+    it("emits the stage, delivered and completed changes", () => {
+      const onChange = renderPanel(defaults, { surface: "gantt" });
+      act(() => { labelInput(fieldset(host, "Stages"), "Delivered").click(); });
+      expectCanonical(onChange, { stageKeys: ["delivered"] });
+      act(() => { labelInput(fieldset(host, "Stages"), "Awaiting RAW").click(); });
+      expectCanonical(onChange, { stageKeys: ["awaiting_raw", "delivered"] });
+      act(() => { labelInput(fieldset(host, "Show"), "Show delivered projects").click(); });
+      expectCanonical(onChange, { stageKeys: ["awaiting_raw", "delivered"], showDeliveredProjects: true, showCompletedChecklist: false });
+      act(() => { labelInput(fieldset(host, "Show"), "Show completed checklist items").click(); });
+      expectCanonical(onChange, { showDeliveredProjects: true, showCompletedChecklist: true });
+      act(() => { labelInput(fieldset(host, "Show"), "Show delivered projects").click(); });
+      expectCanonical(onChange, { showDeliveredProjects: false, showCompletedChecklist: true });
+      expect(onChange).toHaveBeenCalledTimes(5);
+    });
+
+    it("clears to defaults", () => {
+      const onChange = renderPanel({ ...defaults, stageKeys: ["editing"], showCompletedChecklist: true, showDeliveredProjects: true }, { surface: "gantt" });
+      act(() => { host.querySelector<HTMLButtonElement>("button")?.click(); });
+      expectCanonical(onChange, defaults);
+    });
   });
 
   it("uses the shared presentation vocabulary", () => {
