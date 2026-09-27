@@ -286,12 +286,22 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(findByText(host, "Pre-filter embedded task")).toBeDefined();
     expect(childPaths).toHaveLength(1);
 
-    const completedToggle = [...host.querySelectorAll('[aria-label="Gantt filters"] label')].find((label) => label.textContent === "Show completed checklist items")?.querySelector("input");
-    if (!completedToggle) throw new Error("no completed toggle");
-    await act(async () => {
-      completedToggle.click();
-      await Promise.resolve();
-    });
+    // #255: the filter change goes through the real filters bar — Show / includes / Completed
+    // checklist items — selected by Quincy test id, role and name.
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-filters-add"]');
+    if (!trigger) throw new Error("no add-filter trigger");
+    await act(async () => { trigger.click(); });
+    for (const name of ["Show", "includes", "Completed checklist items"]) {
+      let match: HTMLElement | undefined;
+      for (let attempt = 0; attempt < 50 && !match; attempt++) {
+        match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.trim() === name);
+        // eslint-disable-next-line no-await-in-loop
+        if (!match) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      }
+      if (!match) throw new Error(`no option "${name}"`);
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => { match!.click(); await Promise.resolve(); });
+    }
     await settle();
 
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("completed=1") && !path.includes("childrenOf="))).toBe(true);

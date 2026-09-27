@@ -69,7 +69,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionCalendarFilters } from "@quincy/shared";
+import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
@@ -92,15 +92,13 @@ import {
 import {
   DEFAULT_GANTT_FACET_FILTERS,
   ganttFacetFor,
-  ganttFiltersFromPanel,
   ganttLegendEntries,
-  ganttPanelFiltersFor,
   productionStageFilterOptions,
   type GanttLegendEntry,
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
 import { useStages } from "../lib/stages";
-import { ProductionCalendarFilters as ProductionCalendarFiltersPanel } from "./ProductionCalendarFilters";
+import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
@@ -490,21 +488,19 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     () => ({ q, editorIds: editorIdsKey ? editorIdsKey.split(",") : [], stageKeys: stageKeysKey ? (stageKeysKey.split(",") as ProductionGanttFilters["stageKeys"]) : [], delivered, completed }),
     [q, editorIdsKey, stageKeysKey, delivered, completed],
   );
-  const panelFilters = useMemo(() => ganttPanelFiltersFor(filters), [filters]);
   const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
-  const handlePanelChange = useCallback((next: ProductionCalendarFilters) => onFiltersChange(ganttFiltersFromPanel(next)), [onFiltersChange]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
-  // focus to <body>. Focus moves to the always-mounted filter panel's heading instead — the panel
-  // the empty state pointed the user to. The browser's own focus scroll only brings the heading to
-  // the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus without
-  // scrolling, then scroll it to the top — its scroll-margin-top clears the sticky shell header.
-  // Default (instant) scroll behaviour: no animation for reduced-motion users.
-  const filtersHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  // focus to <body>. Focus moves to the always-mounted filters bar's add-filter trigger instead —
+  // the filters the empty state pointed the user to. The browser's own focus scroll only brings the
+  // target to the nearest edge, which at 390×844 left it clipped at the viewport's bottom; so focus
+  // without scrolling, then scroll it to the top — the trigger's scroll-margin-top clears the sticky
+  // shell header. Default (instant) scroll behaviour: no animation for reduced-motion users.
+  const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const clearFiltersFromEmptyState = useCallback(() => {
     onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
-    const heading = filtersHeadingRef.current;
-    heading?.focus({ preventScroll: true });
-    heading?.scrollIntoView({ block: "start" });
+    const trigger = filtersTriggerRef.current;
+    trigger?.focus({ preventScroll: true });
+    trigger?.scrollIntoView({ block: "start" });
   }, [onFiltersChange]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
@@ -888,10 +884,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");
 
-  // #255: ONE always-mounted root. The filter panel and the legend sit above the loading / error /
-  // chart slot and never unmount with it, so a toggle keeps focus on the checkbox the user just
-  // clicked while the new filter's first page is pending. The panel is never `disabled` while
-  // pending — a disabled input drops focus, which is exactly what this structure exists to avoid.
+  // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
+  // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
+  // while the new filter's first page is pending. The bar is never `disabled` while pending — a
+  // disabled control drops focus, which is exactly what this structure exists to avoid.
   let body: ReactNode;
   if (query.isPending) {
     body = (
@@ -972,7 +968,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt-root">
-      <ProductionCalendarFiltersPanel surface="gantt" headingRef={filtersHeadingRef} filters={panelFilters} facetPeople={[]} stages={stageOptions} onChange={handlePanelChange} />
+      <ProductionGanttFiltersBar filters={facetFilters} stageOptions={stageOptions} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
       <GanttLegend entries={legendEntries} />
       {body}
     </div>

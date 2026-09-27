@@ -7,10 +7,8 @@ import {
   ganttFacetFor,
   ganttFacetKey,
   ganttFacetToQuery,
-  ganttFiltersFromPanel,
   ganttFiltersFromRoute,
   ganttLegendEntries,
-  ganttPanelFiltersFor,
   ganttRouteFor,
   productionStageFilterOptions,
   queryToGanttFacet,
@@ -114,14 +112,6 @@ describe("Gantt filter mapping", () => {
       const filters = ganttFiltersFromRoute(route);
       expect(staffPathFor(ganttRouteFor(filters, route.search))).toBe(location);
     }
-  });
-
-  it("maps request filters to the panel and back through only the three Gantt controls", () => {
-    const filters = { editorIds: [], stageKeys: ["raw_review" as const], delivered: true, completed: true };
-    const panel = ganttPanelFiltersFor(filters);
-    expect(panel).toMatchObject({ layers: ["project", "checklist"], includeUnassigned: false, overdueOnly: false, myTasks: false, stageKeys: ["raw_review"], showDeliveredProjects: true, showCompletedChecklist: true });
-    expect(ganttFiltersFromPanel(panel)).toEqual(filters);
-    expect(ganttFiltersFromPanel({ ...panel, editorIds: ["11111111-1111-4111-8111-111111111111"], overdueOnly: true })).toEqual(filters);
   });
 });
 

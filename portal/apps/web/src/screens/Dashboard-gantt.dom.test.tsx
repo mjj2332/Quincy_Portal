@@ -28,7 +28,7 @@ if (!Element.prototype.getAnimations) {
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const authRole = vi.hoisted(() => ({ value: "admin" as "admin" | "editor" | "photographer" | "external_editor" }));
 const ganttPropsState = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
-// #255: the one test that drives the real filter panel (Back/Forward through real toggles) flips
+// #255: the one test that drives the real filters bar (Back/Forward through real edits) flips
 // this to render the real `ProductionGantt` behind the same props-recording mock.
 const realGantt = vi.hoisted(() => ({ value: false }));
 
@@ -268,12 +268,30 @@ describe("Dashboard Gantt routing", () => {
           await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
         }
       };
-      const showCheckbox = (label: string) => {
-        const panel = host.querySelector<HTMLElement>('[aria-label="Gantt filters"]');
-        const fieldset = panel && [...panel.querySelectorAll("fieldset")].find((candidate) => candidate.querySelector("legend")?.textContent === "Show");
-        const input = fieldset && [...fieldset.querySelectorAll("label")].find((candidate) => candidate.textContent === label)?.querySelector("input");
-        if (!(input instanceof HTMLInputElement)) throw new Error(`no Show / ${label} checkbox`);
-        return input;
+      // The real `ProductionGanttFiltersBar`, driven by role / name / Quincy test id.
+      const chipNames = () => {
+        const toolbar = host.querySelector<HTMLElement>('[data-testid="production-gantt-filters"] [role="toolbar"][aria-label="Gantt filters"]');
+        if (!toolbar) throw new Error("no Gantt filters toolbar");
+        return [...toolbar.querySelectorAll('[role="group"]')].map((chip) => chip.getAttribute("aria-label"));
+      };
+      const waitForOption = async (name: string) => {
+        const start = Date.now();
+        for (;;) {
+          const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.trim() === name);
+          if (match) return match;
+          if (Date.now() - start > 1500) throw new Error(`no option "${name}"`);
+          // eslint-disable-next-line no-await-in-loop
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+        }
+      };
+      const clickOption = async (name: string) => {
+        const match = await waitForOption(name);
+        await act(async () => { match.click(); });
+        await settle();
+      };
+      const closeMenu = async () => {
+        await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+        await settle();
       };
       const listQueriesSince = (callIndex: number) => apiGetMock.mock.calls.slice(callIndex)
         .map(([called]) => called)
@@ -302,8 +320,9 @@ describe("Dashboard Gantt routing", () => {
       let callsBeforeTraversal = 0;
       const expectApplied = (expected: { delivered: boolean; completed: boolean }) => {
         expect(ganttFilters()).toEqual({ editorIds: [], stageKeys: [], ...expected });
-        expect(showCheckbox("Show delivered projects").checked).toBe(expected.delivered);
-        expect(showCheckbox("Show completed checklist items").checked).toBe(expected.completed);
+        // The bar's chips follow the URL (re-seeded on Back/Forward).
+        const shown = [expected.delivered && "Delivered projects", expected.completed && "Completed checklist items"].filter(Boolean);
+        expect(chipNames()).toEqual(shown.length === 0 ? [] : [`Show includes ${shown.length === 1 ? shown[0] : `${shown.length} selected`}`]);
       };
       // A filter push fetches its new key, so the latest project-list request is the new filters'.
       const expectRequested = (expected: { delivered: boolean; completed: boolean }) => {
@@ -325,15 +344,19 @@ describe("Dashboard Gantt routing", () => {
       expectApplied({ delivered: false, completed: false });
       expectRequested({ delivered: false, completed: false });
 
-      await act(async () => { showCheckbox("Show delivered projects").click(); });
-      await settle();
+      const trigger = host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-filters-add"]');
+      if (!trigger) throw new Error("no add-filter trigger");
+      await act(async () => { trigger.click(); });
+      await clickOption("Show");
+      await clickOption("includes");
+      await clickOption("Delivered projects");
       expect(url()).toBe("/?view=gantt&delivered=1");
       expectApplied({ delivered: true, completed: false });
       expectRequested({ delivered: true, completed: false });
 
-      await act(async () => { showCheckbox("Show completed checklist items").click(); });
-      await settle();
+      await clickOption("Completed checklist items");
       expect(url()).toBe("/?view=gantt&completed=1&delivered=1");
+      await closeMenu();
       expectApplied({ delivered: true, completed: true });
       expectRequested({ delivered: true, completed: true });
 

@@ -4,22 +4,20 @@
  * - the URL (`DashboardGanttRoute`, `@quincy/shared`'s `staff-routes.ts` — the ONLY place the
  *   Gantt's filter state lives; Gantt and Calendar keep independent filter state),
  * - the request (`ProductionGanttFilters`, `lib/production-gantt-query.ts`), and
- * - the reused filter panel (`ProductionCalendarFilters` in its `surface="gantt"` mode, which
- *   speaks the Calendar's `ProductionCalendarFilters` shape).
+ * - the filters bar's query (`ProductionGanttFiltersBar`, a ReUI `Filters` chip row, which speaks
+ *   a `FilterQuery`: `ganttFacetToQuery` / `queryToGanttFacet`).
  *
  * `editorIds` is always `[]` here: the Editor filter needs a server change and ships separately, so
- * the Gantt URL does not accept `editors` and the panel hides that fieldset on the Gantt.
+ * the Gantt URL does not accept `editors` and the bar offers no Editor field.
  *
- * Also the one role-aware stage-option derivation both the Calendar and the Gantt filter panels
- * use (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
+ * Also the one role-aware stage-option derivation both the Calendar filter panel and the Gantt
+ * filters bar use (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
  */
 import {
   isDefaultGanttFacet,
-  productionCalendarFiltersSchema,
   STAGE_PRESENTATION_KEYS,
   type DashboardGanttFacet,
   type DashboardGanttRoute,
-  type ProductionCalendarFilters,
   type StagePresentationKey,
 } from "@quincy/shared";
 import type { FilterOperator, FilterQuery, FilterRule } from "../components/reui/filters/filters-types";
@@ -68,22 +66,6 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
   return { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), ...(gantt ? { gantt } : {}) };
 }
 
-/** Request -> the reused panel's own value. Parsed through the panel's schema so every field the
- * Gantt surface hides (layers, unassigned, overdue, my tasks) holds its default. */
-export function ganttPanelFiltersFor(filters: ProductionGanttFacetFilters): ProductionCalendarFilters {
-  return productionCalendarFiltersSchema.parse({
-    stageKeys: filters.stageKeys,
-    showCompletedChecklist: filters.completed,
-    showDeliveredProjects: filters.delivered,
-  });
-}
-
-/** The reused panel's value -> request. Only the three controls the Gantt surface renders are
- * read; `editorIds` stays `[]` in this release. */
-export function ganttFiltersFromPanel(panel: ProductionCalendarFilters): ProductionGanttFacetFilters {
-  return { editorIds: [], stageKeys: [...panel.stageKeys], delivered: panel.showDeliveredProjects, completed: panel.showCompletedChecklist };
-}
-
 // ---------------------------------------------------------------------------
 // #255: the Gantt filters bar (`ProductionGanttFiltersBar`, ReUI `Filters`) <-> the facet
 // ---------------------------------------------------------------------------
@@ -103,7 +85,7 @@ const SHOW_OPERATOR = "includes";
 /** Stage: one operator, no negation. */
 export const GANTT_STAGE_OPERATORS: FilterOperator[] = [{ value: STAGE_OPERATOR, label: "is any of", arity: "many" }];
 
-/** Show: one operator, no negation. One chip replaces the panel's two checkboxes. */
+/** Show: one operator, no negation. One chip replaces the old panel's two checkboxes. */
 export const GANTT_SHOW_OPERATORS: FilterOperator[] = [{ value: SHOW_OPERATOR, label: "includes", arity: "many" }];
 
 /** Show's options, in display order. */
@@ -182,7 +164,7 @@ export function ganttFacetKey(facet: ProductionGanttFacetFilters): string {
 }
 
 /**
- * The stage options a filter panel offers, in `STAGE_PRESENTATION_KEYS` order, labelled from the
+ * The stage options a filter surface offers, in `STAGE_PRESENTATION_KEYS` order, labelled from the
  * real (role-presented) stage list and limited to active stages. Non-admins receive
  * `editing_autohdr` projects as `editing` (`packages/shared/src/stage-move.ts`'s
  * `stageTransportKeyForRole`); an admin sees the internal `editing_autohdr` stage, which is the one
