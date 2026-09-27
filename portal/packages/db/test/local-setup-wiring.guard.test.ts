@@ -57,10 +57,10 @@ describe("guard: db:migrate:local is wired to the local setup runner", () => {
   // Without a trailing `--`, the nested `npm run` takes `--persist-to <dir>` as its own config and
   // only the bare path reaches the script (#265).
   const forwardingScripts = Object.entries(rootPackageJson.scripts).filter(
-    ([name, command]) => name.startsWith("db:") && command.includes("-w @quincy/db"),
+    ([name, command]) => name.startsWith("db:") && /(?:^|\s)(?:-w|--workspace)[\s=]@quincy\/db(?:\s|$)/.test(command),
   );
-  it("finds the root db:* scripts that forward to @quincy/db", () => {
-    expect(forwardingScripts.map(([name]) => name)).toContain("db:migrate:local");
+  it("finds the root db:* scripts that forward to @quincy/db, however the workspace flag is spelled", () => {
+    expect(forwardingScripts.map(([name]) => name)).toEqual(expect.arrayContaining(["db:migrate:local", "db:generate"]));
   });
   it.each(forwardingScripts)("root %s forwards its arguments with a trailing --", (_name, command) => {
     expect(command).toMatch(/ --$/);

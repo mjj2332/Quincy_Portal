@@ -3860,10 +3860,11 @@ fixture guide as a "known gap" with a manual workaround instead of being fixed.
   missing admin id, and only warns on an inactive stage or admin, which are legitimate Admin-managed
   local states. A missing admin id is the case to shout about: `user.email` is unique, so a
   different-id row holding the owner's email makes the seed's insert skip silently.
-- **A root script that forwards to a workspace needs a trailing `--`.** `db:migrate:local` was
-  `npm run migrate:local -w @quincy/db` with no `--`, so from `portal/` the inner npm swallowed
-  `--persist-to` as its own config and only the bare path reached the script, which refused it as an
-  unknown argument (safe, but useless). Fixed in #265, together with `db:generate`; the wiring guard
-  now requires every root `db:*` script that forwards to `@quincy/db` to end in `--`, as the
-  `db:qa:*` scripts already did. `npm run db:migrate:local -- --persist-to <absolute dir>` from
-  `portal/` is the scratch-database command.
+- **A root script that forwards to a workspace needs a trailing `--` to pass the caller's arguments
+  on.** `db:migrate:local` was `npm run migrate:local -w @quincy/db` with no `--`, so from `portal/`
+  the inner npm swallowed `--persist-to` as its own config and only the bare path reached the
+  script, which refused it as an unknown argument (safe, but useless). Fixed in #265, together with
+  `db:generate`; the wiring guard now requires every root `db:*` script whose workspace flag names
+  `@quincy/db` (`-w` or `--workspace`, space- or `=`-separated) to end in `--`, as the `db:qa:*`
+  scripts already did. `npm run db:migrate:local -- --persist-to <absolute dir>` from `portal/` is
+  the scratch-database command.
