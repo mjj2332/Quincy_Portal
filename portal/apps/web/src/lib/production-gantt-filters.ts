@@ -161,6 +161,52 @@ export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttF
   return ganttFiltersFromRoute({ gantt: facet });
 }
 
+/**
+ * The Delivered pair (#255, owner decision): Stage = Delivered only draws anything while delivered
+ * projects are shown, so the bar never writes one without the other. Given the facet the bar last
+ * said (`previous`) and the one an edit produces (`next`), when `next` holds `delivered` as a stage
+ * with delivered projects hidden:
+ *
+ * - if `previous` showed delivered projects, the edit turned Show -> Delivered off (its value or the
+ *   whole Show chip), so `delivered` leaves the stage list too (an emptied list is no Stage filter);
+ * - otherwise the edit selected Delivered as a stage (or edited beside an inconsistent pair a URL
+ *   carried in), so delivered projects are switched on.
+ *
+ * Any other facet is returned as is. Only the bar's own edits go through this: a URL that already
+ * holds the inconsistent pair is never rewritten on load.
+ */
+export function ganttFacetForWrite(previous: ProductionGanttFacetFilters, next: ProductionGanttFacetFilters): ProductionGanttFacetFilters {
+  if (next.delivered || !next.stageKeys.includes("delivered")) return next;
+  if (previous.delivered) return { ...next, stageKeys: next.stageKeys.filter((key) => key !== "delivered") };
+  return { ...next, delivered: true };
+}
+
+/**
+ * Brings the bar's query in line with a facet `ganttFacetForWrite` changed, keeping chip identities:
+ * a rule the facet still needs keeps its id and takes the facet's operator and values (finishing an
+ * unfinished Show chip the facet now needs); a rule the facet no longer has is dropped when the
+ * facet emptied it, and kept when it was already empty or unfinished (the user's own state); a rule
+ * the facet needs and the query lacks is appended with its stable id.
+ */
+export function ganttQueryForFacet(query: GanttFilterQuery, facet: ProductionGanttFacetFilters): GanttFilterQuery {
+  const needed = new Map(ganttFacetToQuery(facet).rules.flatMap((node) => (node.type === "rule" ? [[node.path[0], node] as const] : [])));
+  const rules: GanttFilterQuery["rules"] = [];
+  for (const node of query.rules) {
+    if (node.type !== "rule") {
+      rules.push(node);
+      continue;
+    }
+    const target = needed.get(node.path[0]);
+    if (target) {
+      needed.delete(node.path[0]);
+      rules.push({ ...node, operator: target.operator, value: target.value });
+    } else if (node.operator === "" || !node.value || node.value.length === 0) {
+      rules.push(node);
+    }
+  }
+  return { ...query, rules: [...rules, ...needed.values()] };
+}
+
 /** A canonical string for a facet, so two facets compare by value, never by object identity. */
 export function ganttFacetKey(facet: ProductionGanttFacetFilters): string {
   return JSON.stringify(ganttFacetFor(facet) ?? null);

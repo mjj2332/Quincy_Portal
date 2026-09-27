@@ -7,6 +7,11 @@
  * their legend swatches) and Show ("includes": Delivered projects, Completed checklist items). The
  * query <-> facet mapping is pure and lives in `lib/production-gantt-filters.ts`.
  *
+ * THE DELIVERED PAIR. Stage = Delivered draws nothing while delivered projects are hidden, so a bar
+ * edit that selects it also turns Show -> Delivered on, and one that turns Show -> Delivered off
+ * also drops it from Stage — in the same write (`ganttFacetForWrite`, owner decision). A URL that
+ * already holds the pair inconsistently is rendered as it is and never rewritten on load.
+ *
  * STATE. The bar holds its own `FilterQuery`, because an unfinished chip (a field picked, no
  * condition or value yet) has no URL spelling and must survive the URL echo of an unrelated edit.
  * On every change the local query is set, and when it projects to a facet that differs from the
@@ -36,8 +41,10 @@ import {
   GANTT_SHOW_OPERATORS,
   GANTT_SHOW_OPTIONS,
   GANTT_STAGE_OPERATORS,
+  ganttFacetForWrite,
   ganttFacetKey,
   ganttFacetToQuery,
+  ganttQueryForFacet,
   queryToGanttFacet,
   type GanttFilterQuery,
   type ProductionGanttFacetFilters,
@@ -94,9 +101,9 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
     }
   }
 
-  const latest = useRef({ urlKey, pending, onFiltersChange });
+  const latest = useRef({ urlKey, pending, onFiltersChange, query });
   useEffect(() => {
-    latest.current = { urlKey, pending, onFiltersChange };
+    latest.current = { urlKey, pending, onFiltersChange, query };
   });
 
   const usedFields = useMemo(() => new Set(flattenFilterRules(query).map((rule) => rule.path[0])), [query]);
@@ -136,14 +143,22 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
   }, [trigger]);
 
   const handleQueryChange = useCallback(
-    (next: FilterQuery<string[]>, details: FilterChangeDetails<string[]>) => {
+    (edited: FilterQuery<string[]>, details: FilterChangeDetails<string[]>) => {
+      const current = latest.current;
+      let next = edited;
+      const edit = queryToGanttFacet(edited);
+      const previous = queryToGanttFacet(current.query);
+      // The Delivered pair: an edit that selects Stage = Delivered also shows delivered projects,
+      // and one that hides them drops that stage, in this one write (`ganttFacetForWrite`). The
+      // chips follow, keeping their ids, so the write's own echo finds nothing to re-seed.
+      const facet = edit && previous ? ganttFacetForWrite(previous, edit) : edit;
+      if (edit && facet && ganttFacetKey(facet) !== ganttFacetKey(edit)) next = ganttQueryForFacet(edited, facet);
+      current.query = next;
       setQuery(next);
-      const facet = queryToGanttFacet(next);
       if (facet) {
         // Compare with what the URL will say once the bar's own writes land, not the last rendered
         // URL: an edit that undoes a still-pending write must be written too.
         const key = ganttFacetKey(facet);
-        const current = latest.current;
         if (key !== (current.pending.at(-1) ?? current.urlKey)) {
           current.pending = [...current.pending, key];
           setPending(current.pending);

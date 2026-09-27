@@ -365,13 +365,12 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     await addFilter(host, "Stage", ["RAW review"]);
     expect(legendKeys(host)).toEqual(["raw_review"]);
 
+    // Selecting Delivered as a stage switches delivered projects on in the same write (#255), so
+    // its legend entry arrives with it.
     await toggle("Delivered");
-    // Delivered is selected as a stage but delivered projects are still hidden.
-    expect(legendKeys(host)).toEqual(["raw_review"]);
+    await waitFor(() => expect(legendKeys(host)).toEqual(["raw_review", "delivered"]));
     await escape();
-
-    await addFilter(host, "Show", ["Delivered projects"]);
-    expect(legendKeys(host)).toEqual(["raw_review", "delivered"]);
+    expect(chipNames(host)).toEqual(["Stage is any of 2 selected", "Show includes Delivered projects"]);
   });
 
   it("labels every legend entry with a real stage label, never a raw key", async () => {

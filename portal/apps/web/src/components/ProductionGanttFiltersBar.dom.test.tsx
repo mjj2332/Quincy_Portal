@@ -296,11 +296,68 @@ describe("ProductionGanttFiltersBar (#255)", () => {
 
     // Edit the finished Stage chip: its push echoes back through the URL.
     await click(button("Editing", toolbar()));
-    await waitFor(() => option("Delivered"));
-    await click(option("Delivered"));
-    await waitFor(() => expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing", "delivered"], delivered: false, completed: false }]));
+    await waitFor(() => option("Awaiting RAW"));
+    await click(option("Awaiting RAW"));
+    await waitFor(() => expect(pushes).toEqual([{ editorIds: [], stageKeys: ["awaiting_raw", "editing"], delivered: false, completed: false }]));
     await settle();
     expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show Select condition, incomplete filter"]);
+  });
+
+  describe("the Delivered pair: Stage = Delivered switches Show -> Delivered on (owner decision)", () => {
+    it("selecting Delivered on the Stage chip writes one facet with delivered projects on, and the Show chip shows it", async () => {
+      await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+      await click(button("Editing", toolbar()));
+      await waitFor(() => option("Delivered"));
+      await click(option("Delivered"));
+      await waitFor(() => expect(pushes).toHaveLength(1));
+      expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: false }]);
+      await press(document.activeElement ?? document.body, "Escape");
+      await settle();
+      expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes Delivered projects"]);
+      expect(pushes).toHaveLength(1);
+    });
+
+    it("keeps Show -> Completed when selecting Delivered adds Delivered to the Show chip", async () => {
+      await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: true });
+      await click(button("Editing", toolbar()));
+      await waitFor(() => option("Delivered"));
+      await click(option("Delivered"));
+      await waitFor(() => expect(pushes).toHaveLength(1));
+      expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: true }]);
+      await press(document.activeElement ?? document.body, "Escape");
+      await settle();
+      expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes 2 selected"]);
+    });
+
+    it("turning Show -> Delivered off while Stage holds Delivered and another stage writes one facet with only the other stage", async () => {
+      await render({ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: false });
+      await click(button("Delivered projects", toolbar()));
+      await waitFor(() => option("Delivered projects"));
+      await click(option("Delivered projects"));
+      await waitFor(() => expect(pushes).toHaveLength(1));
+      expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }]);
+      await settle();
+      expect(chipNames()[0]).toBe("Stage is any of Editing");
+      expect(pushes).toHaveLength(1);
+    });
+
+    it("removing the Show chip when Delivered is the only stage drops the Stage chip too", async () => {
+      await render({ editorIds: [], stageKeys: ["delivered"], delivered: true, completed: false });
+      expect(chipNames()).toEqual(["Stage is any of Delivered", "Show includes Delivered projects"]);
+      await click(button("Show filter options", toolbar()));
+      await waitFor(() => expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual(["Remove"]));
+      await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!);
+      await waitFor(() => expect(chips()).toHaveLength(0));
+      expect(pushes).toEqual([DEFAULT_GANTT_FACET_FILTERS]);
+      await waitFor(() => expect(document.activeElement).toBe(addTrigger()));
+    });
+
+    it("never rewrites a cold URL holding Stage = Delivered with delivered projects hidden", async () => {
+      await render({ editorIds: [], stageKeys: ["delivered"], delivered: false, completed: false });
+      await settle();
+      expect(chipNames()).toEqual(["Stage is any of Delivered"]);
+      expect(pushes).toEqual([]);
+    });
   });
 
   it("re-seeds from the URL when the URL changes to something the bar does not already say (Back/Forward, reload)", async () => {

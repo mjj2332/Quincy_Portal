@@ -200,9 +200,11 @@ flip `delivered=1` and `completed=1` at some point** — neither one is visible 
 state. On the Gantt that is now done through its filters bar (#255): Add filter → Show → includes →
 "Delivered projects" / "Completed checklist items" writes `delivered=1` / `completed=1` into the
 Gantt URL, beside any `stages=` selection from a Stage chip, so the state survives a reload and
-Back/Forward. On the density tier,
-`delivered` alone trips the draw cap (the "Delivered on" row below), so pair it with a single stage
-— `/?view=gantt&stages=delivered&delivered=1` — to see the delivered bar drawn.
+Back/Forward. Stage and Show keep Delivered paired: picking Stage → Delivered also turns Show →
+Delivered on, and turning Show → Delivered off also drops it from Stage, in the same write. On the
+density tier, `delivered` alone trips the draw cap (the "Delivered on" row below), so pair it with a
+single stage — Stage → Delivered alone does it, writing `/?view=gantt&stages=delivered&delivered=1`
+— to see the delivered bar drawn.
 
 ## Density (`--tier=core,density`) — opt-in, and why
 

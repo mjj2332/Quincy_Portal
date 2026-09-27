@@ -6,9 +6,11 @@ import {
   GANTT_FILTER_ROOT_ID,
   ganttFacetFor,
   ganttFacetKey,
+  ganttFacetForWrite,
   ganttFacetToQuery,
   ganttFiltersFromRoute,
   ganttLegendEntries,
+  ganttQueryForFacet,
   ganttRouteFor,
   productionStageFilterOptions,
   queryToGanttFacet,
@@ -207,5 +209,70 @@ describe("Gantt filters bar mapping (#255)", () => {
     expect(ganttFacetKey({ editorIds: [], stageKeys: ["delivered", "editing"], delivered: false, completed: false })).toBe(ganttFacetKey({ editorIds: [], stageKeys: ["editing", "delivered"], delivered: false, completed: false }));
     expect(ganttFacetKey(DEFAULT_GANTT_FACET_FILTERS)).toBe(ganttFacetKey({ ...DEFAULT_GANTT_FACET_FILTERS }));
     expect(ganttFacetKey(DEFAULT_GANTT_FACET_FILTERS)).not.toBe(ganttFacetKey({ ...DEFAULT_GANTT_FACET_FILTERS, completed: true }));
+  });
+});
+
+describe("the Delivered pair: Stage = Delivered and Show -> Delivered (#255)", () => {
+  const facet = (stageKeys: ProductionGanttFacetFilters["stageKeys"], delivered: boolean, completed = false): ProductionGanttFacetFilters => ({ editorIds: [], stageKeys, delivered, completed });
+
+  it("selecting Delivered as a stage turns delivered projects on in the same facet", () => {
+    expect(ganttFacetForWrite(facet(["editing"], false), facet(["editing", "delivered"], false))).toEqual(facet(["editing", "delivered"], true));
+    expect(ganttFacetForWrite(facet([], false, true), facet(["delivered"], false, true))).toEqual(facet(["delivered"], true, true));
+  });
+
+  it("turning delivered projects off while Delivered is a stage drops that stage in the same facet", () => {
+    expect(ganttFacetForWrite(facet(["editing", "delivered"], true), facet(["editing", "delivered"], false))).toEqual(facet(["editing"], false));
+    // Delivered was the only stage: the Stage filter goes (the default stage list).
+    expect(ganttFacetForWrite(facet(["delivered"], true, true), facet(["delivered"], false, true))).toEqual(facet([], false, true));
+    expect(ganttFacetKey(ganttFacetForWrite(facet(["delivered"], true), facet(["delivered"], false)))).toBe(ganttFacetKey(DEFAULT_GANTT_FACET_FILTERS));
+  });
+
+  it("an edit that leaves an inconsistent pair from the URL makes it consistent by showing delivered projects", () => {
+    // A cold `stages=delivered` without `delivered=1`, then an unrelated edit (Completed on).
+    expect(ganttFacetForWrite(facet(["delivered"], false), facet(["delivered"], false, true))).toEqual(facet(["delivered"], true, true));
+  });
+
+  it("leaves every consistent facet as it is", () => {
+    for (const [previous, next] of [
+      [facet([], false), facet(["editing"], false)],
+      [facet(["editing"], false), facet(["editing"], true)],
+      [facet(["delivered"], true), facet(["delivered", "editing"], true)],
+      [facet(["delivered", "editing"], true), facet(["editing"], true)],
+      [facet(["editing"], true), facet(["editing"], false)],
+    ] as const) {
+      expect(ganttFacetForWrite(previous, next)).toEqual(next);
+    }
+  });
+
+  describe("ganttQueryForFacet", () => {
+    const root = (rules: FilterNode<string[]>[]): FilterQuery<string[]> => ({ id: "root", type: "group", combinator: "and", rules });
+    const rule = (id: string, field: "stage" | "show", value: string[] | undefined, operator = field === "stage" ? "is_any_of" : "includes"): FilterNode<string[]> => ({ id, type: "rule", path: [field], operator, value });
+
+    it("updates a written rule's values in place, keeping its id", () => {
+      const next = ganttQueryForFacet(root([rule("a", "stage", ["editing", "delivered"]), rule("b", "show", ["completed"])]), facet(["editing", "delivered"], true, true));
+      expect(next.rules).toEqual([rule("a", "stage", ["editing", "delivered"]), rule("b", "show", ["delivered", "completed"])]);
+    });
+
+    it("adds a Show rule the facet now needs", () => {
+      const next = ganttQueryForFacet(root([rule("a", "stage", ["delivered"])]), facet(["delivered"], true));
+      expect(next.rules).toEqual([rule("a", "stage", ["delivered"]), { id: "gantt-show", type: "rule", path: ["show"], operator: "includes", value: ["delivered"] }]);
+    });
+
+    it("finishes an unfinished Show rule the facet now needs", () => {
+      const next = ganttQueryForFacet(root([rule("a", "stage", ["delivered"]), rule("b", "show", undefined, "")]), facet(["delivered"], true));
+      expect(next.rules).toEqual([rule("a", "stage", ["delivered"]), rule("b", "show", ["delivered"])]);
+    });
+
+    it("drops a rule whose values the facet emptied, and keeps one the user emptied or has not finished", () => {
+      const next = ganttQueryForFacet(root([rule("a", "stage", ["delivered"]), rule("b", "show", [])]), facet([], false));
+      expect(next.rules).toEqual([rule("b", "show", [])]);
+      const unfinished = ganttQueryForFacet(root([rule("a", "stage", undefined, ""), rule("b", "show", ["completed"])]), facet([], false, true));
+      expect(unfinished.rules).toEqual([rule("a", "stage", undefined, ""), rule("b", "show", ["completed"])]);
+    });
+
+    it("projects back to the facet it was given", () => {
+      const target = facet(["raw_review"], false, true);
+      expect(queryToGanttFacet(ganttQueryForFacet(root([rule("a", "stage", ["raw_review", "delivered"]), rule("b", "show", ["completed"])]), target))).toEqual(target);
+    });
   });
 });
