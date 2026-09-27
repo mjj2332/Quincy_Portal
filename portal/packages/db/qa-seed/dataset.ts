@@ -5,8 +5,9 @@
  * fixed literal or derived from an explicit `anchor` civil date, so two runs against the same
  * `anchor` AND `appliedAtMs` emit byte-identical statements (`qa-seed-wiring.guard.test.ts` and
  * `qa-seed-coverage.test.ts` both depend on that). `appliedAtMs` (the real apply instant) is
- * consumed in exactly one place — the deadline occurrences, modelled as saved at apply time (their
- * `status` and their `created_at`/`updated_at`) — so it is the one input capable of making two
+ * consumed in exactly one place — the deadline save, modelled as happening at apply time (each
+ * occurrence's `status` and `created_at`/`updated_at`, and the `updated_at` of each project that
+ * carries a deadline) — so it is the one input capable of making two
  * applies at the same anchor differ; see the comment above `anchorReferenceInstantMs` below.
  *
  * Every subtask's `ChecklistScheduleStorage` is produced by `normalizeChecklistSchedule` (thrown on
@@ -216,7 +217,8 @@ export type QaFixtureDataset = {
 // Timing — every DATE is anchor-relative, never Date.now(); `anchorReferenceInstantMs` (anchor's
 // own 09:00 Sydney instant) is only ever used to synthesize plausible, deterministic
 // `created_at`/`updated_at` spacing, so two applies at the same anchor but different real times
-// emit byte-identical statements EXCEPT for the deadline occurrences.
+// emit byte-identical statements EXCEPT for the deadline save (occurrences, and deadline projects'
+// `updated_at`).
 //
 // Deadline OCCURRENCES are the one deliberately time-dependent rows (build spec item 4): the
 // real save path (`project-deadline.ts:226-230`) classifies each *advance* reminder as `pending` vs
@@ -227,8 +229,9 @@ export type QaFixtureDataset = {
 // the REAL apply instant (`cli.mjs`'s own `--applied-at-ms`, already threaded to `emit.ts`). The
 // same save writes the occurrence's `created_at = updated_at = now` (`project-deadline.ts:290-296`),
 // so the occurrences are stamped with the apply instant too — otherwise a `skipped`/`elapsed_at_save`
-// row could predate the reminder it marked elapsed. Every OTHER date (projects, subtasks,
-// collections, members) stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
+// row could predate the reminder it marked elapsed — and so is the `updated_at` of each project
+// that carries a deadline (the same save bumps it, `project-deadline.ts:246`). Every OTHER date
+// (project `created_at`, deadline-less projects, subtasks, collections, members) stays anchor-derived. The `due_now` occurrence (line 231 of the same function) is
 // unconditionally inserted `pending` regardless of elapsed time in the real app — mirrored exactly
 // the same way below, not run through the elapsed check at all.
 // ---------------------------------------------------------------------------
@@ -510,9 +513,14 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
   const referenceInstantMs = anchorReferenceInstantMs(anchor);
   const appliedAtMs = options.appliedAtMs;
 
-  const builds: ProjectBuild[] = [];
-  if (tiers.includes("core")) builds.push(...buildCoreTier(anchor, referenceInstantMs));
-  if (tiers.includes("density")) builds.push(...buildDensityTier(anchor, referenceInstantMs));
+  const tierBuilds: ProjectBuild[] = [];
+  if (tiers.includes("core")) tierBuilds.push(...buildCoreTier(anchor, referenceInstantMs));
+  if (tiers.includes("density")) tierBuilds.push(...buildDensityTier(anchor, referenceInstantMs));
+  // A deadline is modelled as saved at the apply instant (see `buildDeadlineOccurrences`), and the
+  // app's save bumps the project row too: `project-deadline.ts:246` sets `projects.updated_at = now`
+  // (delivery bumps it again — the same modelled instant for a delivered project). Projects without
+  // a deadline keep their anchor-derived `updatedAtMs`.
+  const builds: ProjectBuild[] = tierBuilds.map((b) => (b.project.deadline ? { ...b, project: { ...b.project, updatedAtMs: appliedAtMs } } : b));
 
   const projects = builds.map((b) => b.project);
   const subtasks = builds.flatMap((b) => b.subtasks);
@@ -526,8 +534,8 @@ export function buildQaFixtureDataset(options: { anchor: string; tiers: readonly
 
   // Occurrences are modelled as saved at the real apply instant, not the anchor's fixed 09:00: their
   // STATUS (pending vs. skipped) is classified against it and their createdAt/updatedAt are stamped
-  // with it — see the header comment above `anchorReferenceInstantMs`. Every other DATE above
-  // (createdAt/updatedAt spacing) still comes from `referenceInstantMs`.
+  // with it — see the header comment above `anchorReferenceInstantMs`. Apart from those and a
+  // deadline project's own updatedAt (above), every DATE still comes from `referenceInstantMs`.
   const deadlineOccurrences: FixtureOccurrenceRow[] = builds.flatMap((b) =>
     b.project.deadline ? buildDeadlineOccurrences(b.project.id, b.project.stageKey, b.project.deadline, appliedAtMs) : [],
   );

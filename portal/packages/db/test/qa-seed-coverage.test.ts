@@ -375,6 +375,21 @@ describe("coverage 11: deadline occurrences look saved at the apply instant, and
       }
     });
 
+    it(`every project row with a deadline reflects that save (updatedAt = the apply instant); the rest are untouched (appliedAtMs=${appliedAtMs})`, () => {
+      // The app bumps `projects.updated_at = now` on deadline save (`project-deadline.ts:246`), and
+      // delivery bumps it again — the same modelled instant for Delivered.
+      const coreAndDensity = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs });
+      const withDeadline = coreAndDensity.projects.filter((p) => p.deadline !== null);
+      const withoutDeadline = coreAndDensity.projects.filter((p) => p.deadline === null);
+      expect(withDeadline.length).toBeGreaterThan(0);
+      expect(withoutDeadline.length).toBeGreaterThan(0);
+      for (const p of withDeadline) expect(p.updatedAtMs, p.key).toBe(appliedAtMs);
+      for (const p of withoutDeadline) {
+        expect(p.updatedAtMs, p.key).toBe(p.createdAtMs);
+        expect(p.updatedAtMs, p.key).toBeLessThanOrEqual(appliedAtMs);
+      }
+    });
+
     it(`"delivered" has no pending occurrence; would-be-pending ones are superseded, skipped ones unchanged (appliedAtMs=${appliedAtMs})`, () => {
       const delivered = dataset.projects.find((p) => p.key === "delivered");
       expect(delivered?.stageKey).toBe("delivered");
