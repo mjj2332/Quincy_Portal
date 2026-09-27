@@ -996,6 +996,41 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     expect(putBody(1)).toEqual({ expectedVersion: 2, deadline: null });
   });
 
+  // Browser pass F (#221, 390px, real input): the Set deadline confirm opens from the move
+  // dialog, which is gone by the time the confirm closes, so base-ui's default sent focus to the
+  // page. Cancel returns it to the row's Set deadline button; a saved Deadline (the button is
+  // gone) hands it to the project's new bar.
+  it("6c. Set deadline → confirm → Cancel returns focus to the Set deadline button", async () => {
+    resetFixture({ noDeadline: true });
+    await render();
+    await click(deadlineActionButton()!);
+    await flush(2);
+    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
+    await click(byTestId("calendar-move-submit")!);
+    await flush(4);
+    expect(deadlineDialog()).not.toBeNull();
+    await click(byTestId("gantt-deadline-confirm-cancel")!);
+    await flush(4);
+    expect(deadlineDialog()).toBeNull();
+    expect(puts()).toHaveLength(0);
+    expect(document.activeElement).toBe(deadlineActionButton());
+  });
+
+  it("6d. Set deadline → confirm → Schedule hands focus to the project's new bar", async () => {
+    resetFixture({ noDeadline: true });
+    await render();
+    await click(deadlineActionButton()!);
+    await flush(2);
+    await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
+    await click(byTestId("calendar-move-submit")!);
+    await flush(4);
+    await click(byTestId("gantt-deadline-confirm-action")!);
+    await flush(6);
+    expect(puts()).toHaveLength(1);
+    expect(deadlineActionButton()).toBeUndefined();
+    expect(document.activeElement).toBe(projectBar());
+  });
+
   it("6b. two Set deadline buttons have distinct accessible names, each naming its street and reason", async () => {
     resetFixture({ noDeadline: true, secondNoDeadlineProject: true });
     await render();

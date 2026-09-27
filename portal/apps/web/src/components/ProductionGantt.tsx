@@ -318,6 +318,7 @@ function GanttResourceLabel({
           variant="ghost"
           className="shrink-0 normal-case tracking-[var(--tracking-normal)] text-foreground-secondary hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
           data-testid="gantt-deadline-action"
+          data-gantt-deadline-action-for={resource.id}
           aria-label={`${deadlineAction.label} for ${resource.title}`}
           title={deadlineReason}
           aria-describedby={deadlineReason ? deadlineReasonId : undefined}
@@ -904,14 +905,18 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     // or (browser pass E) an unrelated subtask bar left focused by earlier keyboard work. Opened
     // from the page or from any Gantt bar (a grip drag, or this project's keyboard Adjust), hand
     // focus to this project's bar, re-queried on close because a saved Deadline remounts it.
-    // Otherwise keep base-ui's default (null): the Set/Fix deadline flow owns focus.
+    // Otherwise the Set/Fix deadline flow opened it from the move dialog, which is gone by the
+    // time this closes (browser pass F: focus fell to the page): return to that row's Set/Fix
+    // button, or - once a saved Deadline removed the button - to the project's new bar.
     const opener = document.activeElement;
     const fromGantt =
       opener === null || opener === document.body || (opener instanceof HTMLElement && opener.closest('[data-slot="gantt-bar"]') !== null);
-    const finalFocus = () =>
-      fromGantt
-        ? (containerRef.current?.querySelector<HTMLElement>(`[data-gantt-resource="project:${CSS.escape(proposal.projectId)}"] [data-slot="gantt-bar"]`) ?? null)
-        : null;
+    const resourceId = CSS.escape(`project:${proposal.projectId}`);
+    const finalFocus = () => {
+      const bar = containerRef.current?.querySelector<HTMLElement>(`[data-gantt-resource="${resourceId}"] [data-slot="gantt-bar"]`) ?? null;
+      if (fromGantt) return bar;
+      return containerRef.current?.querySelector<HTMLElement>(`[data-gantt-deadline-action-for="${resourceId}"]`) ?? bar;
+    };
     const project = projectByIdRef.current.get(proposal.projectId);
     const preview = project
       ? previewDeadlineEffects(project, { localCivil: proposal.newCivil, instant: proposal.newInstant ?? "" })
