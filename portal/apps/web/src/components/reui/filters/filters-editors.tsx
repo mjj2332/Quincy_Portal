@@ -18,6 +18,7 @@
  * `cascader-virtual.tsx`), and `filters-date.tsx` (nothing imports it).
  *
  * File-specific edits:
+ * - RE-SKIN (#255 browser pass F): the selected-option tick's `text-foreground! **:text-foreground!` dropped, so it draws in `currentColor`. Quincy's highlighted row is `bg-accent` (`--ink-900`) with `text-accent-foreground` on its descendants; the forced foreground drew the tick ink on ink.
  * - `noUncheckedIndexedAccess`: the pinned option partition destructures `ordered` with `[]` defaults; the divider marking skips an undefined row.
  */
 import * as React from "react"
@@ -997,7 +998,7 @@ export function FilterMenu({
                logical inset. `end-*` rather than `right-2`, so RTL mirrors. */
             className="size-4 pointer-events-none absolute end-[var(--cascader-row-inset,8px)]! flex items-center justify-center rtl:right-auto!"
           >
-            <CheckIcon className="text-foreground! **:text-foreground!" />
+            <CheckIcon />
           </span>
         ) : null}
       </>

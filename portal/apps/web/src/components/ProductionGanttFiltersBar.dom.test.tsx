@@ -191,6 +191,23 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     await waitFor(() => expect(chipNames()).toEqual(["Stage is any of 2 selected", "Show includes 2 selected"]));
   });
 
+  it("draws the selected option's tick in the row's own colour, so it survives the ink highlight (browser pass F)", async () => {
+    await render();
+    await addFilter("Stage", "is any of", ["Editing"]);
+    await waitFor(() => expect(option("Editing").getAttribute("aria-selected")).toBe("true"));
+    // The stage swatch is a <span>, so the one <svg> in a row is its tick.
+    const ticks = option("Editing").querySelectorAll("svg");
+    expect(ticks).toHaveLength(1);
+    const tick = ticks[0]!;
+    // An unselected row draws no tick at all.
+    expect(option("Delivered").querySelectorAll("svg")).toHaveLength(0);
+    // No forced foreground: the highlighted row is `bg-accent` (--ink-900) with `text-accent-foreground`
+    // on its descendants, and a tick pinned to `text-foreground!` drew ink on ink. It inherits instead.
+    const classes = (tick.getAttribute("class") ?? "").split(/\s+/);
+    expect(classes.filter((name) => name.includes("text-foreground"))).toEqual([]);
+    expect(tick.getAttribute("stroke")).toBe("currentColor");
+  });
+
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
     await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
     await click(addTrigger());
