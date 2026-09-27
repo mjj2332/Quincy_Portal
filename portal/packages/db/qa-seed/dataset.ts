@@ -19,6 +19,7 @@
 import {
   PROJECT_ASSIGNMENT_ELIGIBLE_ROLES,
   PROJECT_DEADLINE_PRESETS,
+  PRODUCTION_GANTT_DRAW_CAP,
   STAGE_KEYS,
   deadlineFireAt,
   isSydneyCalendarDate,
@@ -424,20 +425,38 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
 }
 
 // ---------------------------------------------------------------------------
-// Density tier — enough rows that `matchedRows` (projects + visible children, mirroring
-// `production-gantt.ts`'s `density_candidates`) exceeds `PRODUCTION_GANTT_DRAW_CAP`, while a
-// single-stage filter brings it back under the cap.
+// Density tier — enough rows that the server's `matchedRows` trips `PRODUCTION_GANTT_DRAW_CAP` on
+// its own, UNDER DEFAULT FILTERS, while a single-stage filter brings it back under the cap.
+//
+// "The server's `matchedRows`" is `production-gantt.ts`'s `density_candidates`: every project that
+// passes `authorized_projects_base` (`production-scope-sql.ts:88-90`) plus its VISIBLE children.
+// That CTE drops `stage_key = 'delivered'` unless the delivered filter is on, and hides done
+// children unless completed is on. The tier cycles through all five stages (the single-stage
+// "gets back under" state needs that), so 1/5 of its projects are delivered and INVISIBLE by
+// default — they contribute nothing to the default-view count. Children per project is therefore
+// derived from the cap and the NON-delivered project count, never hand-picked: the smallest count
+// that puts the default view strictly over `cap + ceil(cap / 10)`, so ordinary browser-pass
+// activity (ticking children done, which hides them) cannot un-trip it. Every child is not-done.
 // ---------------------------------------------------------------------------
 
-const DENSITY_PROJECT_COUNT = 30;
-const DENSITY_SUBTASKS_PER_PROJECT = 70;
+/** The one shape parameter: density projects per stage. Everything else is derived from it,
+ * `STAGE_KEYS` and `PRODUCTION_GANTT_DRAW_CAP`. */
+const DENSITY_PROJECTS_PER_STAGE = 6;
+const DENSITY_PROJECT_COUNT = DENSITY_PROJECTS_PER_STAGE * STAGE_KEYS.length;
+const densityStageAt = (i: number): StageKey => STAGE_KEYS[i % STAGE_KEYS.length]!;
+/** Density projects the default view shows (delivered is hidden unless the delivered filter is on). */
+const DENSITY_DEFAULT_VISIBLE_PROJECTS = Array.from({ length: DENSITY_PROJECT_COUNT }, (_, i) => densityStageAt(i)).filter((stage) => stage !== "delivered").length;
+/** The default-view `matchedRows` the density tier must strictly exceed: the cap plus 10%, in integers. */
+const DENSITY_DEFAULT_VIEW_TARGET = PRODUCTION_GANTT_DRAW_CAP + Math.ceil(PRODUCTION_GANTT_DRAW_CAP / 10);
+/** Smallest `c` with `visible × (1 + c) > target`. */
+const DENSITY_SUBTASKS_PER_PROJECT = Math.floor(DENSITY_DEFAULT_VIEW_TARGET / DENSITY_DEFAULT_VISIBLE_PROJECTS);
 
 function buildDensityTier(anchor: string, referenceInstantMs: number): ProjectBuild[] {
   const builds: ProjectBuild[] = [];
   const densityBase = referenceInstantMs - 400 * 3_600_000; // strictly earlier than every core-tier createdAt
   for (let i = 0; i < DENSITY_PROJECT_COUNT; i += 1) {
     const key = `density-${String(i + 1).padStart(2, "0")}`;
-    const stageKey = STAGE_KEYS[i % STAGE_KEYS.length]!;
+    const stageKey = densityStageAt(i);
     const createdAtMs = densityBase - (DENSITY_PROJECT_COUNT - i) * 3_600_000;
     const project: FixtureProjectRow = {
       id: fixtureId(`project:${key}`), key, street: `QA FIXTURE · Density ${String(i + 1).padStart(2, "0")}`, suburb: "QA Density",
@@ -453,8 +472,7 @@ function buildDensityTier(anchor: string, referenceInstantMs: number): ProjectBu
 /** The row count a single-stage filter over the density tier alone leaves — pure arithmetic, no
  * need to build the full dataset to check it against `PRODUCTION_GANTT_DRAW_CAP`. */
 export function densitySingleStageRowCount(): number {
-  const projectsPerStage = DENSITY_PROJECT_COUNT / STAGE_KEYS.length;
-  return projectsPerStage * (1 + DENSITY_SUBTASKS_PER_PROJECT);
+  return DENSITY_PROJECTS_PER_STAGE * (1 + DENSITY_SUBTASKS_PER_PROJECT);
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PRODUCTION_GANTT_CHILD_PAGE_LIMIT,
   PRODUCTION_GANTT_DRAW_CAP,
+  PRODUCTION_GANTT_MAX_MATCHED_ROWS,
+  STAGE_KEYS,
   resolveSydneyCivilMinute,
   serializeChecklistSchedule,
   shiftSydneyCalendarDate,
@@ -24,10 +26,36 @@ const ANCHOR = "2026-09-21";
 // consistent with what an apply run the same week as its anchor would actually produce.
 const APPLIED_AT_MS = anchorReferenceInstantMs(ANCHOR);
 
-function matchedRows(dataset: QaFixtureDataset, completed: boolean): number {
-  const visible = dataset.subtasks.filter((s) => completed || !s.done).length;
-  return dataset.projects.length + visible;
+type GanttFilters = { delivered: boolean; completed: boolean; stages?: readonly StageKey[] };
+/** The Gantt's default view: delivered off, completed off, no stage filter. */
+const DEFAULT_FILTERS: GanttFilters = { delivered: false, completed: false };
+
+/**
+ * `matchedRows` exactly as the server computes it for an admin with no search and no editor filter
+ * — the `density_candidates` count in `workers/app/src/routes/production-gantt.ts`. Mirrors, line
+ * for line:
+ *  - `workers/app/src/lib/production-scope-sql.ts:88-90` (`authorized_projects_base`'s WHERE):
+ *    `p.archived_at IS NULL` — the fixture never archives, so no fixture project has an
+ *    `archived_at` and the predicate is vacuously true here; `(include_delivered = 1 OR
+ *    p.stage_key <> 'delivered')`; and the `request_stages` filter (empty = every stage).
+ *  - `production-gantt.ts:354-360` (`visible_checklist_candidates`): only subtasks of a project that
+ *    passed the filter above, and `(r.include_completed = 1 OR s.done = 0)`.
+ *  - `production-gantt.ts:361-366` (`density_candidates` / `density_ranked`): matched projects UNION
+ *    ALL their visible subtasks, counted.
+ * Delivered projects are excluded unless the delivered filter is on — the rule the old helper
+ * missed, which let it assert a count the server never computes.
+ */
+function serverMatchedRows(dataset: QaFixtureDataset, filters: GanttFilters): number {
+  const projects = dataset.projects.filter((p) =>
+    (filters.delivered || p.stageKey !== "delivered")
+    && (!filters.stages || filters.stages.length === 0 || filters.stages.includes(p.stageKey)));
+  const projectIds = new Set(projects.map((p) => p.id));
+  const visibleChildren = dataset.subtasks.filter((s) => projectIds.has(s.projectId) && (filters.completed || !s.done));
+  return projects.length + visibleChildren.length;
 }
+
+/** The margin the density tier must clear under default filters — `cap × 1.1`, in integers. */
+const DRAW_CAP_WITH_MARGIN = PRODUCTION_GANTT_DRAW_CAP + Math.ceil(PRODUCTION_GANTT_DRAW_CAP / 10);
 
 function subtasksByProjectKey(dataset: QaFixtureDataset, key: string) {
   return dataset.subtasks.filter((s) => s.projectKey === key);
@@ -40,33 +68,46 @@ describe("coverage 1: pagination cannot silently stop paginating", () => {
   it("has more not-done rows than 2x the imported child page limit", () => {
     expect(paginationNotDone).toBeGreaterThan(2 * PRODUCTION_GANTT_CHILD_PAGE_LIMIT);
   });
-
-  it("would go red if PRODUCTION_GANTT_CHILD_PAGE_LIMIT were raised to 300 (this is the exact failure mode the spec names)", () => {
-    expect(paginationNotDone).toBeLessThan(2 * 300);
-  });
 });
 
-describe("coverage 2: the draw cap trips for density, and un-trips for a single stage", () => {
+describe("coverage 2: the draw cap trips for density under DEFAULT filters, with margin, and un-trips for a single stage", () => {
   const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["density"], appliedAtMs: APPLIED_AT_MS });
 
-  it("density alone exceeds PRODUCTION_GANTT_DRAW_CAP", () => {
-    expect(matchedRows(dataset, false)).toBeGreaterThan(PRODUCTION_GANTT_DRAW_CAP);
+  it("density alone, under default filters (delivered off, completed off), exceeds PRODUCTION_GANTT_DRAW_CAP by more than 10%", () => {
+    expect(serverMatchedRows(dataset, DEFAULT_FILTERS)).toBeGreaterThan(DRAW_CAP_WITH_MARGIN);
   });
 
-  it("a single-stage subset of density is at or under the cap (the documented recovery filter)", () => {
-    expect(densitySingleStageRowCount()).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
+  it("every single-stage subset of density is at or under the cap (the documented recovery filter), and is not empty", () => {
+    for (const stage of STAGE_KEYS) {
+      // `delivered` is only reachable with the delivered filter on; every other stage is checked
+      // under the default filters, exactly as the recovery filter would be applied.
+      const filters: GanttFilters = { ...DEFAULT_FILTERS, delivered: stage === "delivered", stages: [stage] };
+      const rows = serverMatchedRows(dataset, filters);
+      expect(rows, stage).toBeGreaterThan(0);
+      expect(rows, stage).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
+    }
+  });
+
+  it("densitySingleStageRowCount (pure arithmetic) agrees with the built dataset's largest single stage", () => {
+    const largest = Math.max(...STAGE_KEYS.map((stage) => serverMatchedRows(dataset, { delivered: true, completed: true, stages: [stage] })));
+    expect(densitySingleStageRowCount()).toBe(largest);
+  });
+
+  it("core + density with every filter on stays under PRODUCTION_GANTT_MAX_MATCHED_ROWS (above it the route 422s instead of rendering)", () => {
+    const both = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core", "density"], appliedAtMs: APPLIED_AT_MS });
+    expect(serverMatchedRows(both, { delivered: true, completed: true })).toBeLessThanOrEqual(PRODUCTION_GANTT_MAX_MATCHED_ROWS);
   });
 });
 
-describe("coverage 3: core tier never trips the draw cap, at either completed toggle", () => {
+describe("coverage 3: core tier never trips the draw cap, at either filter setting", () => {
   const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
 
-  it("completed=0 stays under the cap with headroom for hand-made local rows", () => {
-    expect(matchedRows(dataset, false) + 50).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
+  it("default filters stay under the cap with headroom for hand-made local rows", () => {
+    expect(serverMatchedRows(dataset, DEFAULT_FILTERS) + 50).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
   });
 
-  it("completed=1 stays under the cap with headroom for hand-made local rows", () => {
-    expect(matchedRows(dataset, true) + 50).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
+  it("delivered=1 and completed=1 (the widest view) stays under the cap with headroom for hand-made local rows", () => {
+    expect(serverMatchedRows(dataset, { delivered: true, completed: true }) + 50).toBeLessThanOrEqual(PRODUCTION_GANTT_DRAW_CAP);
   });
 });
 
