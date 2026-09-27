@@ -372,6 +372,46 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     await waitFor(() => expect(document.activeElement).toBe(addTrigger()));
   });
 
+  it("writes a second edit made before the first write's URL lands, and the stale URL does not revert it (Sol review)", async () => {
+    await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
+    await addFilter("Stage", "is any of", ["Editing"]);
+    expect(pushes).toEqual([{ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false }]);
+
+    // Deselect it again while the first write is still in flight: the bar must write the default.
+    await click(option("Editing"));
+    await waitFor(() => expect(pushes).toHaveLength(2));
+    expect(pushes[1]).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+    await settle();
+    const chipsAfterSecondEdit = chipNames();
+    expect(chipsAfterSecondEdit.join(" ")).not.toContain("Editing");
+
+    // The first write's URL lands late: it is the bar's own stale echo, so nothing reverts.
+    await act(async () => { setUrl(pushes[0]!); });
+    await settle();
+    expect(chipNames()).toEqual(chipsAfterSecondEdit);
+    expect(pushes).toHaveLength(2);
+
+    // Then the second write's URL: the bar already says it.
+    await act(async () => { setUrl(pushes[1]!); });
+    await settle();
+    expect(chipNames()).toEqual(chipsAfterSecondEdit);
+    expect(pushes).toHaveLength(2);
+  });
+
+  it("still re-seeds from an outside navigation that lands while its own write is in flight", async () => {
+    await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
+    await addFilter("Stage", "is any of", ["Editing"]);
+    expect(pushes).toHaveLength(1);
+    await press(document.activeElement ?? document.body, "Escape");
+    await settle();
+
+    // Back/Forward to a URL the bar never wrote, before its own write lands.
+    await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: true, completed: false }); });
+    await settle();
+    expect(chipNames()).toEqual(["Stage is any of Awaiting RAW", "Show includes Delivered projects"]);
+    expect(pushes).toHaveLength(1);
+  });
+
   it("keeps focus on the control in use while the URL round trip is pending, and after it lands", async () => {
     await render(DEFAULT_GANTT_FACET_FILTERS, { echo: false });
     await addFilter("Stage", "is any of", ["Editing"]);

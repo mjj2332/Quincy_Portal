@@ -10,9 +10,11 @@
  * STATE. The bar holds its own `FilterQuery`, because an unfinished chip (a field picked, no
  * condition or value yet) has no URL spelling and must survive the URL echo of an unrelated edit.
  * On every change the local query is set, and when it projects to a facet that differs from the
- * URL's, `onFiltersChange` pushes it. The local query is re-seeded from the URL only when the URL
- * facet CHANGES and differs from the local projection — Back/Forward, a reload, the empty state's
- * Clear — so the bar's own write, echoing back equal, never resets chip ids, focus or an open menu.
+ * URL's — the URL as it will read once the bar's own pending writes land — `onFiltersChange` pushes
+ * it. The local query is re-seeded from the URL only when the URL facet CHANGES to something that
+ * is neither one of the bar's own pending writes nor the local projection — Back/Forward, a reload,
+ * the empty state's Clear — so the bar's own write, echoing back (even late, behind a newer edit),
+ * never resets chip ids, focus or an open menu, nor reverts that newer edit.
  *
  * UNSUPPORTED EDITS. `onBeforeQueryChange` vetoes any query `queryToGanttFacet` cannot read (an
  * `or`, a group, a negated rule, a second rule on one field). A field is disabled in the picker once
@@ -71,18 +73,30 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
 
   const urlKey = ganttFacetKey(filters);
   const [query, setQuery] = useState<GanttFilterQuery>(() => ganttFacetToQuery(filters));
+  // The keys of the bar's own writes whose URL has not landed yet, oldest first.
+  const [pending, setPending] = useState<readonly string[]>([]);
   // Re-seed during render (not an effect, which would paint the stale chips for a frame), only on
-  // a URL change the local query does not already say.
+  // a URL change the local query does not already say. A URL that is one of the bar's own pending
+  // writes is its echo: a stale one (a newer write is still in flight) must not revert the newer
+  // edit, so the local query wins and only the landed writes are dropped. Anything else is an
+  // outside navigation, which re-seeds and forgets the pending writes. Trimmed only here, on a URL
+  // change, never by comparing with a stale `urlKey` on an unrelated render.
   const [seenUrlKey, setSeenUrlKey] = useState(urlKey);
   if (seenUrlKey !== urlKey) {
     setSeenUrlKey(urlKey);
-    const local = queryToGanttFacet(query);
-    if (!local || ganttFacetKey(local) !== urlKey) setQuery(ganttFacetToQuery(filters));
+    const landed = pending.indexOf(urlKey);
+    if (landed >= 0) {
+      setPending(pending.slice(landed + 1));
+    } else {
+      if (pending.length > 0) setPending([]);
+      const local = queryToGanttFacet(query);
+      if (!local || ganttFacetKey(local) !== urlKey) setQuery(ganttFacetToQuery(filters));
+    }
   }
 
-  const latest = useRef({ urlKey, onFiltersChange });
+  const latest = useRef({ urlKey, pending, onFiltersChange });
   useEffect(() => {
-    latest.current = { urlKey, onFiltersChange };
+    latest.current = { urlKey, pending, onFiltersChange };
   });
 
   const usedFields = useMemo(() => new Set(flattenFilterRules(query).map((rule) => rule.path[0])), [query]);
@@ -125,7 +139,17 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
     (next: FilterQuery<string[]>, details: FilterChangeDetails<string[]>) => {
       setQuery(next);
       const facet = queryToGanttFacet(next);
-      if (facet && ganttFacetKey(facet) !== latest.current.urlKey) latest.current.onFiltersChange(facet);
+      if (facet) {
+        // Compare with what the URL will say once the bar's own writes land, not the last rendered
+        // URL: an edit that undoes a still-pending write must be written too.
+        const key = ganttFacetKey(facet);
+        const current = latest.current;
+        if (key !== (current.pending.at(-1) ?? current.urlKey)) {
+          current.pending = [...current.pending, key];
+          setPending(current.pending);
+          current.onFiltersChange(facet);
+        }
+      }
       if ((details.reason === "remove" || details.reason === "clear") && countFilterRules(next) === 0) focusTrigger();
     },
     [focusTrigger],
