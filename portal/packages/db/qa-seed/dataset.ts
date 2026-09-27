@@ -261,22 +261,23 @@ function buildDeadline(localCivil: string): FixtureDeadline {
  *
  * A DELIVERED project keeps its deadline in the app, but delivery suppresses its reminders:
  * `project-stage.ts` runs `buildDeadlineSuppressionBundle` (`stage-board-bundles.ts`), which sets
- * every occurrence to `status = 'superseded'`, `terminal_reason = 'project_delivered'`,
- * `fired_at = NULL`. So for `stageKey === "delivered"` every occurrence takes exactly that shape,
- * whatever `appliedAtMs` is — a pending reminder on a delivered project is a state the app cannot
- * produce. (No `notification_delivery_ledger` rows: the fixture never writes any.) */
+ * every PENDING occurrence to `status = 'superseded'`, `terminal_reason = 'project_delivered'`,
+ * `fired_at = NULL` and leaves `skipped` ones alone. So for `stageKey === "delivered"` the normal
+ * pending-vs-skipped classification runs first, then each would-be-pending occurrence takes the
+ * suppressed shape — a pending reminder on a delivered project is a state the app cannot produce.
+ * (No `notification_delivery_ledger` rows: the fixture never writes any.) */
 function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadline: FixtureDeadline, appliedAtMs: number, createdAtMs: number): FixtureOccurrenceRow[] {
   const rows: FixtureOccurrenceRow[] = [];
-  const delivered = stageKey === "delivered";
+  // Delivery suppression runs AFTER classification and only touches pending rows.
+  const settle = (status: "pending" | "skipped", terminalReason: "elapsed_at_save" | null): Pick<FixtureOccurrenceRow, "status" | "terminalReason"> =>
+    stageKey === "delivered" && status === "pending" ? { status: "superseded", terminalReason: "project_delivered" } : { status, terminalReason };
   const pushAdvance = (offsetMinutes: number) => {
     const fireAt = deadlineFireAt(deadline.epochMs, offsetMinutes);
     const pending = fireAt > appliedAtMs;
     rows.push({
       id: fixtureId(`occurrence:${projectId}:advance:${offsetMinutes}`), projectId, scheduleVersion: 1, kind: "advance", reminderOffsetMinutes: offsetMinutes,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      ...(delivered
-        ? { status: "superseded" as const, terminalReason: "project_delivered" as const }
-        : { status: pending ? "pending" as const : "skipped" as const, terminalReason: pending ? null : "elapsed_at_save" as const }),
+      ...(pending ? settle("pending", null) : settle("skipped", "elapsed_at_save")),
       createdAtMs, updatedAtMs: createdAtMs,
     });
   };
@@ -285,9 +286,7 @@ function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadlin
     rows.push({
       id: fixtureId(`occurrence:${projectId}:due_now:0`), projectId, scheduleVersion: 1, kind: "due_now", reminderOffsetMinutes: 0,
       fireAt, deadlineAt: deadline.epochMs, deadlineLocalCivil: deadline.localCivil, deadlineUtcOffsetMinutes: deadline.utcOffsetMinutes, deadlineFold: deadline.fold,
-      ...(delivered
-        ? { status: "superseded" as const, terminalReason: "project_delivered" as const }
-        : { status: "pending" as const, terminalReason: null }),
+      ...settle("pending", null),
       createdAtMs, updatedAtMs: createdAtMs,
     });
   };

@@ -184,7 +184,7 @@ On the Production Gantt a project draws a bar only when it has a deadline (`apps
 | Near-complete 199 of 200 | RAW review | `Math.round(99.5)` capped at 99 — progress never shows 100% until every child is done |
 | Complete 40 of 40 | Edited review | Progress is exactly 100%, the completed checkmark renders |
 | Zero progress | Editing · autoHDR | Progress is emitted as `0`, not omitted |
-| Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on**. It keeps its deadline, as a project does in the app when it is delivered. Its reminders are all `superseded` / `project_delivered`, which is what delivery does to them (`buildDeadlineSuppressionBundle`), so none is pending |
+| Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on**. It keeps its deadline, as a project does in the app when it is delivered. Any reminder that would be pending is `superseded` / `project_delivered`, which is what delivery does to it (`buildDeadlineSuppressionBundle`); one already elapsed at apply stays `skipped`. None is pending |
 | Schedule edges | RAW review | Every checklist schedule state and endpoint kind (`unscheduled`, `due_only`, `range`, both `date` and `timed`), all three `legacy_unresolved` reasons, and the DST fold canary (see below) |
 | No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention (flagged hollow-start) and **no bar** — deliberately left without a deadline |
 | Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker (deadline anchor + 14 days, 17:00) |

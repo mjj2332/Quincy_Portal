@@ -352,12 +352,14 @@ describe("coverage 10: every core project meant to draw a Gantt bar carries a de
 });
 
 describe("coverage 11: the delivered project's reminders are suppressed the way delivery suppresses them", () => {
-  // `buildDeadlineSuppressionBundle` (`packages/db/src/stage-board-bundles.ts`) sets every pending
-  // occurrence of a delivered project to superseded / project_delivered / fired_at NULL. Checked at
-  // an apply instant before every fire time (where a non-delivered project's reminders would all be
-  // pending) and at the anchor's own reference instant.
+  // `buildDeadlineSuppressionBundle` (`packages/db/src/stage-board-bundles.ts`) sets every PENDING
+  // occurrence of a delivered project to superseded / project_delivered / fired_at NULL and leaves
+  // skipped ones alone. So the normal classification still decides skipped (an advance whose fire
+  // time is at or before the apply instant; `due_now` never is), and every other occurrence is
+  // superseded. Checked at an apply instant before every fire time (nothing skipped) and at the
+  // anchor's own reference instant (after the delivered deadline, so its advance reminders are skipped).
   for (const appliedAtMs of [0, APPLIED_AT_MS]) {
-    it(`every occurrence of "delivered" is superseded/project_delivered and none is pending (appliedAtMs=${appliedAtMs})`, () => {
+    it(`"delivered" has no pending occurrence; would-be-pending ones are superseded, skipped ones unchanged (appliedAtMs=${appliedAtMs})`, () => {
       const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs });
       const delivered = dataset.projects.find((p) => p.key === "delivered");
       expect(delivered?.stageKey).toBe("delivered");
@@ -366,14 +368,26 @@ describe("coverage 11: the delivered project's reminders are suppressed the way 
       expect(occurrences.length).toBeGreaterThan(0);
       expect(occurrences.filter((o) => o.status === "pending")).toHaveLength(0);
       for (const o of occurrences) {
-        expect(o.status).toBe("superseded");
-        expect(o.terminalReason).toBe("project_delivered");
+        const wouldBeSkipped = o.kind === "advance" && o.fireAt <= appliedAtMs;
+        if (wouldBeSkipped) {
+          expect(o.status).toBe("skipped");
+          expect(o.terminalReason).toBe("elapsed_at_save");
+        } else {
+          expect(o.status).toBe("superseded");
+          expect(o.terminalReason).toBe("project_delivered");
+        }
       }
-      // The branch is delivered-only: at appliedAtMs 0 every other project's reminders are pending.
       if (appliedAtMs === 0) {
+        // Nothing has elapsed: every delivered occurrence is superseded, and the branch is
+        // delivered-only — every other project's reminders are pending.
+        expect(occurrences.every((o) => o.status === "superseded")).toBe(true);
         const others = dataset.deadlineOccurrences.filter((o) => o.projectId !== delivered!.id);
         expect(others.length).toBeGreaterThan(0);
         for (const o of others) expect(o.status).toBe("pending");
+      } else {
+        // Both outcomes are exercised: the advance reminders elapsed, `due_now` is superseded.
+        expect(occurrences.some((o) => o.status === "skipped")).toBe(true);
+        expect(occurrences.some((o) => o.status === "superseded")).toBe(true);
       }
     });
   }
