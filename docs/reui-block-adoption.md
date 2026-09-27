@@ -174,8 +174,9 @@ landing ahead of a consumer (the Gantt's reused checkbox panel). What it actuall
 | New production dependencies | 0 — one import swapped (`CascaderVirtualItems` → `CascaderItems`) to get there |
 | `noUncheckedIndexedAccess` errors | 38 across 9 files, all local narrowing, each named in its file header |
 | Skin-guard strips | 15 class tokens across 4 files (`dark:`, `shadow-*`, `rounded-lg`) |
-| Behavioural vendor edits | 1, additive: `ruleMenu` hides the rule menu's Duplicate/Negate rows (3 files) |
-| Quincy code | `ProductionGanttFiltersBar.tsx` 156 lines, ~100 lines of pure mapping in `lib/production-gantt-filters.ts` |
+| Other class edits (browser passes F/G) | 7 across 3 files: in `filters-chip.tsx` the segments' `hover:bg-accent` → `hover:bg-muted`, the finished operator's `text-muted-foreground` → `text-foreground-secondary`, the chip height (the button's `BUTTON_HEIGHT_CLASS`), the segments' focus radius, and the value's one-line truncation; in `filters-editors.tsx` the tick's forced `text-foreground!` removed; in `cascader.tsx` the retry button's `hover:bg-accent` → `hover:bg-muted`. Each is recorded in its file's header |
+| Behavioural vendor edits | 2: `ruleMenu`, additive, hides the rule menu's Duplicate/Negate rows (3 files); `writtenRef` in `filters.tsx`, so the live status announces the count after an outside re-seed of a controlled `query` |
+| Quincy code | One composition file, `ProductionGanttFiltersBar.tsx` (the schema, URL sync and focus), and the pure mapping and Delivered-pair rule in `lib/production-gantt-filters.ts` |
 | Bundle (`vite build`, raw / gzip, all JS) | 2,289 kB / 679 kB before, 2,429 kB / 721 kB after; the entry chunk shrank (1,280 → 1,250 kB) as rolldown re-split shared modules into a new chunk |
 
 What was new this time:
@@ -191,6 +192,6 @@ What was new this time:
 - **One upstream decision could not be configured away:** a new rule is committed with
   `operator: ""`, so a single-operator field still shows its one-row condition menu. Not forked.
 - **happy-dom drove the whole field → condition → value flow**, unlike the Board's drag work. The
-  real-browser pass is still where chip, trigger and Clear heights (32px chip at the `default`
-  rung, 38px trigger and Clear, 44px at ≤721px) and the `outline-hidden` + ring focus treatment in
-  the cascader get judged.
+  real-browser pass is still where chip, trigger and Clear heights (all three on the button's
+  38px / 44px-at-≤721px contract since browser pass F) and the `outline-hidden` + ring focus
+  treatment in the cascader get judged.

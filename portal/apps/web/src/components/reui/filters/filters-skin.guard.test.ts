@@ -21,8 +21,10 @@
  * deleted for the reason the Gantt guard's header gives (`styles/tokens/base.css`'s layered
  * border-colour compat rule).
  *
- * What the re-skin stripped to turn this guard green on the fresh install (the ONLY class changes
- * made to the vendored tree): six `dark:bg-input/30` in `filters-chip.tsx`; three `dark:` classes
+ * What the re-skin stripped to turn this guard green on the fresh install — ONE category of class
+ * edit, not all of them: every other edit to the vendored tree (the browser-pass re-skins and Quincy
+ * classes, the behavioural additions) is recorded in the header of the file it touches, which is
+ * the one place to look. The strips: six `dark:bg-input/30` in `filters-chip.tsx`; three `dark:` classes
  * in `cascader.tsx`'s chip-input class; `shadow-md` + `rounded-lg` from the popup classes in
  * `cascader.tsx` and `cascader-footer.tsx`, `rounded-lg` from `cascader.tsx`'s chip-input class,
  * and `hover:shadow-xs` from `cascader-item.tsx`'s hover class. Semantic classes (`bg-background`,
