@@ -123,7 +123,8 @@ export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilt
  * express: a nested group, an `or` root, a negated rule, an unknown field / operator / value, a
  * nested path, a non-array value, or a second rule on a field already used (finished or not — the
  * bar allows one chip per field). Unfinished rules (no operator yet) and rules with no values are
- * skipped, so they read as the default. `editorIds` is always `[]` (the Editor filter ships
+ * skipped, so they read as the default — though a value an unfinished rule retains is still
+ * checked, and an unknown or malformed one returns `null`. `editorIds` is always `[]` (the Editor filter ships
  * separately). Canonicalised through `ganttFacetFor` / `ganttFiltersFromRoute`.
  */
 export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttFacetFilters | null {
@@ -139,13 +140,15 @@ export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttF
     if (field !== GANTT_FILTER_FIELD.stage && field !== GANTT_FILTER_FIELD.show) return null;
     if (seen.has(field)) return null;
     seen.add(field);
-    if (node.operator === "") continue;
+    const unfinished = node.operator === "";
     const expectedOperator = field === GANTT_FILTER_FIELD.stage ? STAGE_OPERATOR : SHOW_OPERATOR;
-    if (node.operator !== expectedOperator) return null;
+    if (!unfinished && node.operator !== expectedOperator) return null;
     if (node.value === undefined) continue;
+    // A value is checked even on an unfinished rule: one it retained must still be readable.
     if (!Array.isArray(node.value)) return null;
     const allowed = field === GANTT_FILTER_FIELD.stage ? STAGE_VALUES : SHOW_VALUES;
     for (const value of node.value) if (typeof value !== "string" || !allowed.has(value)) return null;
+    if (unfinished) continue;
     if (field === GANTT_FILTER_FIELD.stage) stageKeys = node.value as string[];
     else for (const value of node.value as string[]) show.add(value);
   }

@@ -193,6 +193,10 @@ describe("Gantt filters bar mapping (#255)", () => {
       ["unknown show value", root([showRule(["overdue"])])],
       ["non-string value", root([stageRule([1])])],
       ["non-array value", root([stageRule("editing")])],
+      ["unfinished rule, unknown retained stage value", root([stageRule(["editing_autohdr"], { operator: "" })])],
+      ["unfinished rule, unknown retained show value", root([showRule(["overdue"], { operator: "" })])],
+      ["unfinished rule, non-string retained value", root([stageRule([1], { operator: "" })])],
+      ["unfinished rule, non-array retained value", root([stageRule("editing", { operator: "" })])],
       ["duplicate field, both finished", root([stageRule(["editing"]), { ...stageRule(["raw_review"]), id: "s2" } as FilterNode<unknown>])],
       ["duplicate field, one unfinished", root([stageRule(["editing"]), { ...stageRule(undefined, { operator: "" }), id: "s2" } as FilterNode<unknown>])],
     ];
