@@ -173,12 +173,12 @@ function isDashboardGanttRoute(route: DashboardRouteArm): route is DashboardGant
   return "dashboardView" in route && route.dashboardView === "gantt";
 }
 
-/** #255: the Gantt facets a location carries, read at call time — `undefined` for any location that
- * is not a filtered Gantt URL. Used by the debounced search writer so a search commit on a filtered
- * Gantt rewrites `q` without wiping the filters beside it. */
-function ganttFacetOfLocation(location: string): DashboardGanttRoute["gantt"] {
+/** #255: the Gantt route a location carries, read at call time — `null` for any location that is
+ * not a Gantt URL. Used by the debounced search writer so a search commit on a filtered Gantt
+ * rewrites `q` without wiping the filters beside it. */
+function ganttRouteOfLocation(location: string): DashboardGanttRoute | null {
   const route = parseStaffLocation(location);
-  return route.kind === "dashboard" && isDashboardGanttRoute(route) ? route.gantt : undefined;
+  return route.kind === "dashboard" && isDashboardGanttRoute(route) ? route : null;
 }
 
 function DashboardContent({ currentUserId, role = "photographer", authorizationEpoch = 0, calendar: routeCalendar = null }: DashboardProps) {
@@ -685,8 +685,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // are read from the LIVE location at fire time — never from this closure's render-time
       // snapshot, which a filter change since the last render would make stale.
       else if (currentView === "gantt") {
-        const gantt = ganttFacetOfLocation(currentHistory.getLocation());
-        currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: "gantt", search: q, ...(gantt ? { gantt } : {}) }));
+        const liveFilters = ganttFiltersFromRoute(ganttRouteOfLocation(currentHistory.getLocation()));
+        currentHistory.replace(staffPathFor(ganttRouteFor(liveFilters, q)));
       } else currentHistory.replace(staffPathFor({ kind: "dashboard", dashboardView: currentView === "calendar" ? "list" : currentView, search: q }));
     });
     return unregister;
