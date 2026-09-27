@@ -21,6 +21,7 @@
  * - `noUncheckedIndexedAccess`: the single-value label narrows `values[0]` into a local.
  * - RE-SKIN (`filters-skin.guard.test.ts`): six `dark:bg-input/30` classes stripped from the chip segments; `bg-background` kept.
  * - RE-SKIN (#255 browser pass F): the operator and value segments' `hover:bg-accent` -> `hover:bg-muted`. Quincy's `--accent` is `--ink-900`, so the segment label (left at foreground) vanished on hover; `bg-muted` is the `.button--secondary:hover` surface. Guarded by `filters-skin.guard.test.ts` Detector 9.
+ * - QUINCY (#255 browser pass F): `CHIP_HEIGHT_CLASS` (`min-h-[38px] max-[721px]:min-h-[44px]`, `reui/button.tsx`'s `size.default` contract) on both chip roots and their kebab / remove button, so a chip matches the 38px / 44px Add filter and Clear buttons; upstream sized the chip by the `icon` kebab (32px).
  * - QUINCY ADDITION (#255), additive: a `ruleMenu?: { duplicate?: boolean; negate?: boolean }` option (`FilterRuleMenuOptions`, `filters-context.tsx`) threaded root prop -> actions context -> `FilterRuleMenuItems`, so a consumer can hide the rule menu's Duplicate and Negate rows. Upstream has no option for it. Omitted, both rows render exactly as upstream.
  */
 import * as React from "react"
@@ -871,6 +872,13 @@ export interface FilterChipProps<V = unknown> {
   index: number
 }
 
+/* QUINCY (#255 browser pass F): the chip's height contract, the SAME classes
+   `reui/button.tsx` gives `size.default` (Quincy's touch-target contract:
+   38px, 44px at <=721px), so a chip stands as tall as the Add filter and Clear
+   buttons beside it. On the group it lifts the stretched text segments; the
+   kebab carries its own `size-*` height, so it takes the classes too. */
+const CHIP_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
+
 /** One filter, as a chip. Memoization means something here: the actions
  *  context is stable, the focus store is subscribed to a boolean and the query
  *  shares structure, so editing one filter of forty re-renders one chip. */
@@ -919,6 +927,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
         data-slot="filter-chip"
         data-unknown=""
         role="group"
+        className={CHIP_HEIGHT_CLASS}
         aria-label={actions.labels.filterLabel(
           rule.path.join(actions.labels.pathSeparator)
         )}
@@ -937,7 +946,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
         <Button
           variant="outline"
           size={sizes.icon}
-          className="bg-background"
+          className={cn("bg-background", CHIP_HEIGHT_CLASS)}
           aria-label={actions.labels.remove}
           /* It had no gate at all, so the one chip whose whole purpose is to be
              removed could be removed from a bar that refuses every other edit. */
@@ -986,7 +995,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
       className={cn(
         /* Sera is an underline style, so the boxed segments are normalised to
            its bottom-border-only look or the chip reads as a mix of both. */
-        ""
+        CHIP_HEIGHT_CLASS
       )}
       onFocusCapture={() => {
         if (!focused)
@@ -1075,7 +1084,7 @@ function FilterChipImpl<V, O>({ rule, index }: FilterChipProps<V>) {
               /* The same surface the three text segments force. Styles whose
                  outline button is transparent in dark (sera, luma, rhea) left
                  the kebab as a notch in an otherwise filled pill. */
-              className="bg-background"
+              className={cn("bg-background", CHIP_HEIGHT_CLASS)}
               aria-label={actions.labels.chipMenu(field.label)}
               onPointerDown={() => focusSegment("menu")}
             />

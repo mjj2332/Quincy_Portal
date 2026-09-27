@@ -208,6 +208,22 @@ describe("ProductionGanttFiltersBar (#255)", () => {
     expect(tick.getAttribute("stroke")).toBe("currentColor");
   });
 
+  it("sizes a chip to the Add filter and Clear buttons: the Quincy Button's 38px / 44px (<=721px) height contract (browser pass F)", async () => {
+    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
+    // Read off the real trigger, so the chip is tied to the Button's contract rather than to literals.
+    const heightContract = tokens(addTrigger()).filter((name) => /(^|:)min-h-/.test(name));
+    expect(heightContract).toEqual(["min-h-[38px]", "max-[721px]:min-h-[44px]"]);
+    expect(tokens(button("Clear", bar())).filter((name) => /(^|:)min-h-/.test(name))).toEqual(heightContract);
+
+    const [chip] = chips();
+    // The chip is an items-stretch group, so its height lifts the text segments; the kebab carries an
+    // explicit `size-*` height, so it needs the contract itself or it stays 32px inside a taller pill.
+    for (const element of [chip!, button("Stage filter options", chip!)]) {
+      for (const name of heightContract) expect(tokens(element)).toContain(name);
+    }
+  });
+
   it("an unfinished chip writes nothing and survives the URL echo of another chip's edit", async () => {
     await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
     await click(addTrigger());
