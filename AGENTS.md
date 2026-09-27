@@ -125,6 +125,12 @@ Every UI element starts from something premade. Search in this order and take th
    `breadcrumb`, `dialog`, …), not to a missing component.
 5. Hand-built, only when nothing above fits.
 
+**Query the ReUI MCP for steps 2–4** (`mcp__ReUI__search` → `get_component` / `get_examples`): it
+serves the current registry. The local copy in `tmp/ReUI_Full_Source_Code/` is the fallback for
+when the MCP is unavailable, and can be out of date; a ledger line built from it says so. When the
+MCP shows a newer version of an item already installed, reuse the installed copy and note the gap
+in the ledger: updating a vendored item is its own change, because it carries Quincy's adaptations.
+
 Load the ReUI skill (`.claude/skills/reui/SKILL.md`, with its `rules/`) for the find → read-the-API
 → adapt loop, and read `docs/reui-reuse.md` for how this repo installs: through the sandbox, since
 `shadcn add` in `portal/apps/web` overwrites Quincy's adapted `button` and `badge`. Where the two
