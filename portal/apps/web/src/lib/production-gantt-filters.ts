@@ -22,6 +22,7 @@ import {
   type ProductionCalendarFilters,
   type StagePresentationKey,
 } from "@quincy/shared";
+import type { FilterOperator, FilterQuery, FilterRule } from "../components/reui/filters/filters-types";
 import type { ProductionGanttFilters } from "./production-gantt-query";
 import { stageColorFor } from "./stage-colors";
 import { presentationStages, type PipelineStage } from "./stages";
@@ -81,6 +82,103 @@ export function ganttPanelFiltersFor(filters: ProductionGanttFacetFilters): Prod
  * read; `editorIds` stays `[]` in this release. */
 export function ganttFiltersFromPanel(panel: ProductionCalendarFilters): ProductionGanttFacetFilters {
   return { editorIds: [], stageKeys: [...panel.stageKeys], delivered: panel.showDeliveredProjects, completed: panel.showCompletedChecklist };
+}
+
+// ---------------------------------------------------------------------------
+// #255: the Gantt filters bar (`ProductionGanttFiltersBar`, ReUI `Filters`) <-> the facet
+// ---------------------------------------------------------------------------
+
+/** The two bar fields. Their ids are the rule `path` segments the mapping reads. */
+export const GANTT_FILTER_FIELD = { stage: "stage", show: "show" } as const;
+
+/** Stable rule ids, so a URL re-seed hands the bar the same chip identities it already had. */
+export const GANTT_FILTER_RULE_ID = { stage: "gantt-stage", show: "gantt-show" } as const;
+
+/** The query root's id, stable for the same reason. */
+export const GANTT_FILTER_ROOT_ID = "gantt-filters";
+
+const STAGE_OPERATOR = "is_any_of";
+const SHOW_OPERATOR = "includes";
+
+/** Stage: one operator, no negation. */
+export const GANTT_STAGE_OPERATORS: FilterOperator[] = [{ value: STAGE_OPERATOR, label: "is any of", arity: "many" }];
+
+/** Show: one operator, no negation. One chip replaces the panel's two checkboxes. */
+export const GANTT_SHOW_OPERATORS: FilterOperator[] = [{ value: SHOW_OPERATOR, label: "includes", arity: "many" }];
+
+/** Show's options, in display order. */
+export const GANTT_SHOW_OPTIONS = [
+  { value: "delivered", label: "Delivered projects" },
+  { value: "completed", label: "Completed checklist items" },
+] as const;
+
+export type GanttShowValue = (typeof GANTT_SHOW_OPTIONS)[number]["value"];
+
+export type GanttFilterQuery = FilterQuery<string[]>;
+
+const STAGE_VALUES = new Set<string>(STAGE_PRESENTATION_KEYS);
+const SHOW_VALUES = new Set<string>(GANTT_SHOW_OPTIONS.map((option) => option.value));
+
+/**
+ * Facet -> the bar's query: a flat `and` root holding a rule only for each non-default facet, with
+ * stable ids (`GANTT_FILTER_RULE_ID`) and stage values in `STAGE_PRESENTATION_KEYS` order.
+ */
+export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilterQuery {
+  const canonical = ganttFiltersFromRoute({ gantt: ganttFacetFor(facet) });
+  const rules: FilterRule<string[]>[] = [];
+  if (canonical.stageKeys.length > 0) {
+    rules.push({ id: GANTT_FILTER_RULE_ID.stage, type: "rule", path: [GANTT_FILTER_FIELD.stage], operator: STAGE_OPERATOR, value: [...canonical.stageKeys] });
+  }
+  const show = GANTT_SHOW_OPTIONS.map((option) => option.value).filter((value) => canonical[value]);
+  if (show.length > 0) {
+    rules.push({ id: GANTT_FILTER_RULE_ID.show, type: "rule", path: [GANTT_FILTER_FIELD.show], operator: SHOW_OPERATOR, value: show });
+  }
+  return { id: GANTT_FILTER_ROOT_ID, type: "group", combinator: "and", rules };
+}
+
+/**
+ * The bar's query -> facet, or `null` when the query holds something the Gantt request cannot
+ * express: a nested group, an `or` root, a negated rule, an unknown field / operator / value, a
+ * nested path, a non-array value, or a second rule on a field already used (finished or not — the
+ * bar allows one chip per field). Unfinished rules (no operator yet) and rules with no values are
+ * skipped, so they read as the default. `editorIds` is always `[]` (the Editor filter ships
+ * separately). Canonicalised through `ganttFacetFor` / `ganttFiltersFromRoute`.
+ */
+export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttFacetFilters | null {
+  if (query.type !== "group" || query.combinator !== "and") return null;
+  const seen = new Set<string>();
+  let stageKeys: string[] = [];
+  const show = new Set<string>();
+  for (const node of query.rules) {
+    if (node.type !== "rule") return null;
+    if (node.negated) return null;
+    const [field, ...rest] = node.path;
+    if (field === undefined || rest.length > 0) return null;
+    if (field !== GANTT_FILTER_FIELD.stage && field !== GANTT_FILTER_FIELD.show) return null;
+    if (seen.has(field)) return null;
+    seen.add(field);
+    if (node.operator === "") continue;
+    const expectedOperator = field === GANTT_FILTER_FIELD.stage ? STAGE_OPERATOR : SHOW_OPERATOR;
+    if (node.operator !== expectedOperator) return null;
+    if (node.value === undefined) continue;
+    if (!Array.isArray(node.value)) return null;
+    const allowed = field === GANTT_FILTER_FIELD.stage ? STAGE_VALUES : SHOW_VALUES;
+    for (const value of node.value) if (typeof value !== "string" || !allowed.has(value)) return null;
+    if (field === GANTT_FILTER_FIELD.stage) stageKeys = node.value as string[];
+    else for (const value of node.value as string[]) show.add(value);
+  }
+  const facet = ganttFacetFor({
+    editorIds: [],
+    stageKeys: stageKeys as ProductionGanttFacetFilters["stageKeys"],
+    delivered: show.has("delivered"),
+    completed: show.has("completed"),
+  });
+  return ganttFiltersFromRoute({ gantt: facet });
+}
+
+/** A canonical string for a facet, so two facets compare by value, never by object identity. */
+export function ganttFacetKey(facet: ProductionGanttFacetFilters): string {
+  return JSON.stringify(ganttFacetFor(facet) ?? null);
 }
 
 /**
