@@ -87,15 +87,16 @@ MCP write is blocked, use an already-authenticated CLI where one exists and repo
 
 ## Browser and computer control
 
-Any Codex model, including Luna, may handle a task that needs live browser or desktop interaction.
-**For a Chrome measurement pass, `chrome-devtools-mcp` is the default** — that reverses the earlier
-guidance, and the head-to-head data behind the reversal is in the section below. Use the native
+**The UI browser pass belongs to Agy** ([agy-cli.md](agy-cli.md)); Luna runs it only when Agy
+cannot. Any Codex model may still handle other tasks that need live browser or desktop
+interaction. When a Codex model drives Chrome, **`chrome-devtools-mcp` is the default**, with the
+head-to-head data in the section below. Use the native
 Chrome-use plugin when the task needs the owner's real logged-in browser and no viewport control.
 Computer-use (desktop, non-browser) is unaffected: native remains the only path. Tell the selected
 model the purpose, target environment, authentication state, and evidence to collect.
 
-A UI browser pass is stage 1 of two (`Subagent-Orchestration.md` §2a): the design-reviewer reads
-Luna's output next, so every brief states the report contract — screenshots saved as files in one
+A fallback UI browser pass is still stage 1 of two (`Subagent-Orchestration.md` §2a): the
+design-reviewer reads Luna's output next, so every brief states the report contract — screenshots saved as files in one
 folder, named per viewport and open state, and a PASS/FAIL table whose every row carries the
 measurement and the screenshot that shows it.
 

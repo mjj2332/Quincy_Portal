@@ -15,13 +15,13 @@ mechanics of spawning them.
 | **The session** | runs in Claude Code| whichever Claude model the user started on: Sonnet, Opus, Fable, any | Orchestrates: plans, decomposes, delegates, synthesizes, at its own discretion |
 | **fast-worker** | `Agent` tool, `subagent_type: fast-worker` (`~/.claude/agents/fast-worker.md`) | Claude Opus 5.5, medium effort | **Default builder** — mechanical, well-specified work: boilerplate, tests, formatting, straightforward edits. Stops and reports back on anything ambiguous or design-level rather than guessing |
 | **deep-reasoner** | `Agent` tool, `subagent_type: deep-reasoner` (`~/.claude/agents/deep-reasoner.md`) | Claude Opus 5.5, high effort | Reasoning-heavy phases: architecture decisions, hard debugging, algorithm design, tradeoff analysis. Returns a concise, actionable conclusion |
-| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots against the prototype as a designer, audits Luna's PASS/FAIL table. Read-only |
+| **design-reviewer** | `Agent` tool, `subagent_type: design-reviewer` (`~/.claude/agents/design-reviewer.md`) | Claude Opus 5.5, medium effort | Second stage of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)): judges the screenshots as a designer against the design tokens and the rest of the Portal, audits Agy's PASS/FAIL table. Read-only |
 | **Sol** | `codex exec` — [§3](codex-cli.md) | `gpt-6-sol`, always high effort | Diff reviewer |
-| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Tester — QA execution, diagnosis, authoring/fixing test code, and the mechanical stage of every Chrome/browser pass ([§2a](#2a-the-browser-pass-two-stages)) |
+| **Luna** | `codex exec` — [§3](codex-cli.md) | `gpt-6-luna`, always xhigh effort | Test code and non-browser QA: diagnosis, authoring and fixing tests. Runs the browser pass only as the fallback when Agy cannot |
 | **Codex (peer)** | `/codex:rescue --background` | shared Codex runtime | A second, independent-model-family opinion on high-stakes decisions — a peer worked in parallel with Opus/deep-reasoner, not a reviewer of their output |
 | **Terra** | `codex exec` — [§3](codex-cli.md) | `gpt-5.6-terra` | No default role — available as an on-request builder when the user asks for a Codex-driven build by name |
 | **Astra** | `codex exec` — [§3](codex-cli.md) | `gpt-6-astra` | No default role — available on request; pass `-m gpt-6-astra` explicitly, the account default doesn't reliably select it |
-| **Agy** | `agy` CLI subprocess — [§3a](agy-cli.md) | `gemini-3.8-flash-high`, `--effort high` | Dormant by default — testing and ad hoc groundwork only, never planning or building; available on request when the user asks for it by name |
+| **Agy** | `agy` CLI subprocess — [§3a](agy-cli.md) | `gemini-3.8-flash-high`, `--effort high`, always | Browser-pass measurer: stage 1 of every UI browser pass ([§2a](#2a-the-browser-pass-two-stages)). Never planning or building |
 
 
 **"The session" means whoever is reading this**, acting directly with its own file tools. The
@@ -45,7 +45,7 @@ system prompts.
    (`feedback-no-autonomous-google-signin`), and an agent borrows the session that click created:
 
    - **Local dev:** the owner starts a dedicated debugging Chrome and signs into
-     `http://localhost:8787` in it ([agy-cli.md §Option A](agy-cli.md)); Luna attaches over CDP on
+     `http://localhost:8787` in it ([agy-cli.md §Option A](agy-cli.md)); Agy attaches over CDP on
      that port. Mutate freely there.
    - **Production:** the owner's already signed-in Chrome tab, **passive only**: read, measure,
      screenshot, verify. Production writes stay on the YOLO-mode path (a human-authenticated Admin
@@ -63,16 +63,18 @@ system prompts.
 Every UI change runs both stages, in order. Measurement and judgement are different skills, so
 they are different agents, and the second is blind to the first's verdicts until it has looked.
 
-1. **Luna measures** (Codex, `chrome-devtools-mcp`, [codex-cli.md](codex-cli.md)): each viewport
+1. **Agy measures** (`agy` CLI, `chrome-devtools-mcp`, [agy-cli.md](agy-cli.md)): each viewport
    the ticket names, each open state (popover, menu, sheet), hit areas, gaps, overflow, tab order.
-   Her report contract: screenshots as files in one folder named per viewport and state, and a
+   Its report contract: screenshots as files in one folder named per viewport and state, and a
    PASS/FAIL table where every row carries the measurement and the screenshot that shows it.
-2. **design-reviewer judges** (Opus, `Agent` tool): given the prototype, Luna's screenshot
-   folder, her report and the diff range, it looks at every screenshot before reading her table,
-   writes designer's notes per screenshot (hierarchy, spacing, typography, colour, wrap, states,
-   fit with the rest of the Portal), maps each deviation to a token or a literal, then marks every
-   Luna row *agree*/*disagree* and lists what her table missed. It returns Ship / Fix first, ranked
-   defects, disagreements with evidence, and suggestions kept apart from defects.
+   Luna runs this stage only when Agy cannot ([codex-cli.md](codex-cli.md)); Agy took it over
+   (owner decision, 2026-09-27) because Luna's passes ran one to two hours each.
+2. **design-reviewer judges** (Opus, `Agent` tool): given the design tokens, the measurer's
+   screenshot folder, its report and the diff range, it looks at every screenshot before reading
+   the table, writes designer's notes per screenshot (hierarchy, spacing, typography, colour, wrap,
+   states, fit with the rest of the Portal), maps each deviation to a token or a literal, then
+   marks every row *agree*/*disagree* and lists what the table missed. It returns Ship / Fix first,
+   ranked defects, disagreements with evidence, and suggestions kept apart from defects.
 
 The session then gates both (§5): open the screenshots, confirm every disagreement one way or the
 other, and treat an unmeasured PASS as a FAIL. Defects go back through the fix loop and a fresh
@@ -82,9 +84,9 @@ stage 1; suggestions go to the owner.
 as a precondition.** The local tenant otherwise has only the ~6 hand-made rows from ordinary
 development, which cannot exercise pagination, the draw cap, the 199/200 progress boundary, all
 four stage hues, or any DST/fold row — see `docs/Guides/Local-QA-Fixtures.md`. Run `npm run
-db:qa:apply` (add `-- --tier=core,density` only for the draw-cap gap) before Luna's stage, and
-record the **anchor** and **tier** her report used (printed by the apply command, and readable
-again any time via `npm run db:qa:verify`) in both her report and design-reviewer's — a report
+db:qa:apply` (add `-- --tier=core,density` only for the draw-cap gap) before the measuring stage,
+and record the **anchor** and **tier** its report used (printed by the apply command, and readable
+again any time via `npm run db:qa:verify`) in both its report and design-reviewer's — a report
 without them cannot be reproduced bit-for-bit later, since the default anchor slides forward every
 Sydney week. **Fixture passes do not upload media.** Renditions cannot generate locally, so an upload
 only produces rendition DLQ noise. Some of that noise lands after the asset is gone, and teardown
@@ -97,17 +99,14 @@ its own flags, sandboxing, and file access, output read back from a file. There 
 "Codex subagent" tool. fast-worker and deep-reasoner go through the `Agent` tool instead (§1),
 and Codex-as-peer goes through `/codex:rescue --background`.
 
-- **Codex (Sol/Luna/Terra/Astra): [codex-cli.md](codex-cli.md)** — invocation, flags, driving
-  Chrome for Luna's testing pass, and the MCP write-approval failure mode (§6). A Chrome
-  measurement pass defaults to `chrome-devtools-mcp`, not the native plugin: it measured 2.4x
-  faster on 22% of the tokens and was the only one of the two to finish the task. The
-  head-to-head numbers and each path's tradeoffs are in that doc, as is the reason a Lightbox
-  or photo-preview check cannot run on local dev at all.
-- **§3a — Agy (dormant, on-request): [agy-cli.md](agy-cli.md)** — invocation, the backgrounding and
-  print-mode shutdown-hang failure modes (a long run whose report never lands, recoverable from the
-  conversation DB), the silent-no-op failure modes (a cheerful "done" with zero effect and zero
-  error output), and the `chrome-devtools-mcp` Option A setup that gave Agy an authenticated
-  Chrome — all still current, kept for reactivation.
+- **§3a — Agy (the browser pass): [agy-cli.md](agy-cli.md)** — the browser-pass invocation, the
+  `chrome-devtools-mcp` Option A setup that gives Agy the owner-signed-in Chrome, why the
+  Antigravity IDE's built-in browser agent is not usable headlessly, the print-mode shutdown hang
+  (a long run whose report never lands, recoverable from the conversation DB), and the silent
+  no-op failure modes (a cheerful "done" with zero effect and zero error output).
+- **Codex (Sol/Luna/Terra/Astra): [codex-cli.md](codex-cli.md)** — invocation, flags, the MCP
+  write-approval failure mode (§6), and Luna's fallback Chrome path, including the reason a
+  Lightbox or photo-preview check cannot run on local dev at all.
 
 ---
 
@@ -120,8 +119,8 @@ planning or building inline (§1).
    prompts reviewable and reusable when a fix loop needs a second round.
 2. **Launch in the background** (`Bash`, `run_in_background: true`), passing the spec as the
    subprocess prompt and capturing the final report to its own file, so orchestration continues
-   and a notification arrives on exit. This holds for Agy too, if reactivated: its prompt is a
-   `--print=` argument, not stdin, so harness-supervised backgrounding is safe. Only a bare
+   and a notification arrives on exit. This holds for Agy too: its prompt is a `--print=`
+   argument, not stdin, so harness-supervised backgrounding is safe. Only a bare
    `nohup agy … &` fails at launch — it closes stdin and dies in ~10s (§3a). Separately, a long
    Agy run that leaves a server it started running async hangs at shutdown until `--print-timeout`
    and loses its printed report — never let Agy start `wrangler dev`; bring it up first (§3a).
@@ -139,7 +138,7 @@ here directly:
 - **Read the security- and correctness-critical diff yourself** — auth checks, author-only guards,
   money, migrations, deletion.
 
-- **Open the browser-pass screenshots yourself** (§2a) — every Luna/design-reviewer disagreement
+- **Open the browser-pass screenshots yourself** (§2a) — every Agy/design-reviewer disagreement
   is settled by the image, and a PASS with no measurement beside it is a FAIL.
 
 - If an agent is spawned and a danger-mode task touched production, confirm it was genuinely passive —
@@ -170,6 +169,7 @@ injection broke its assertion math while the code under test was correct.
   not policy-driven. Where an authenticated CLI can do the write instead (`wrangler` for
   Cloudflare), fall back to that rather than tuning the invocation. The **one** case with no such
   fallback is `chrome-devtools-mcp`'s `evaluate_script`, which is the entire point of a browser
-  measurement pass — that case, and only that case, is what Luna's unsandboxed mode exists for.
+  measurement pass — that case, and only that case, is what Luna's unsandboxed fallback mode exists
+  for. Agy has no such per-tool gate under `--dangerously-skip-permissions` ([agy-cli.md](agy-cli.md)).
   See `../lessons.md` for the related MCP tool-list staleness issue.
 
