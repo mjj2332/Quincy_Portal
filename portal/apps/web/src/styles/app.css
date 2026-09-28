@@ -135,7 +135,7 @@ button { font-family: var(--font-sans); }
    Page scaffolding
    --------------------------------------------------------------------- */
 .page { width: 100%; max-width: var(--container-page); margin: 0 auto; padding: var(--space-7) var(--space-7) var(--space-10); }
-.page--full { max-width: none; padding-inline: var(--gutter); }
+.page--full { max-width: none; }
 .pagehead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-6); margin-bottom: var(--space-6); flex-wrap: wrap; }
 .pagehead h1 { font: var(--type-h1); letter-spacing: var(--tracking-tight); }
 .toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
@@ -487,7 +487,6 @@ button { font-family: var(--font-sans); }
 }
 @media (max-width: 720px) {
   .page { padding: var(--space-6) var(--space-4) var(--space-9); }
-  .page--full { padding-inline: var(--space-4); }
   .legacy-grid { --cols: 2 !important; --gap: 8px; }
   .vpanel { left: 0; right: 0; top: auto; bottom: 0; width: auto; height: auto; max-height: 85vh; border-left: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; transform: translateY(calc(100% - 72px)); overflow: hidden; }
   .vpanel.open { transform: translateY(0); }

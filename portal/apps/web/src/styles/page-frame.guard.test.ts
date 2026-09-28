@@ -2,16 +2,18 @@
  * Page frame guard — full-width Dashboard.
  *
  * `.page` is the capped page frame (`max-width: var(--container-page)`); `.page--full` lifts the cap
- * and swaps the frame's inline padding for the layout gutter (`--gutter`, 32px) — `--space-4`
- * (16px) at ≤720px. The Dashboard and ProjectWorkspace's loading/unavailable/error states are full
- * width; every other `.page` stays capped. This guard pins:
+ * and nothing else. Owner decision: the full-width frame keeps `.page`'s own inline padding —
+ * `--space-7` (48px), and `--space-4` (16px) at ≤720px via the phone `.page` rule — so the two
+ * frames share one gutter at every breakpoint. The Dashboard and ProjectWorkspace's
+ * loading/unavailable/error states are full width; every other `.page` stays capped. This guard pins:
  *
  *   (a) `--container-page` is declared exactly once in `tokens/spacing.css`, as a px length in a
  *       top-level `:root` rule (not inside `@media` or on any other selector), and the `.page` rule
  *       reads it with no px `max-width` literal;
- *   (b) `.page--full`'s declarations exactly, after `.page` (equal specificity, so source order is
- *       what lets its `padding-inline` beat the `padding` shorthand), and the ≤720 override exactly,
- *       after the phone `.page` rule in the same `@media (max-width: 720px)` block;
+ *   (b) `.page--full` is exactly one top-level `{ max-width: none; }`, after `.page` (equal
+ *       specificity, so source order is what lets it lift `.page`'s cap), and there is NO
+ *       `.page--full` rule nested in any at-rule — so its padding cannot drift from `.page`'s at
+ *       any breakpoint;
  *   (c) a split manifest: per non-test `.tsx` under `src`, how many className string literals,
  *       `const` string initialisers and `cn(…)`/`clsx(…)`/`twMerge(…)` calls inside a className
  *       expression carry the full frame (`page page--full`) vs the capped frame (`page` alone). An
@@ -93,8 +95,6 @@ export function parseCssRules(css: string): CssRule[] {
   return rules;
 }
 
-const PHONE_MEDIA = "@media (max-width: 720px)";
-
 function sameDeclarations(actual: Declaration[], expected: Declaration[]): boolean {
   return actual.length === expected.length && expected.every(([p, v], k) => actual[k]?.[0] === p && actual[k]?.[1] === v);
 }
@@ -142,8 +142,7 @@ export function findPageCapErrors(appCss: string): string[] {
 // (b) .page--full, exactly
 // ---------------------------------------------------------------------------------------------
 
-const FULL_DESKTOP: Declaration[] = [["max-width", "none"], ["padding-inline", "var(--gutter)"]];
-const FULL_PHONE: Declaration[] = [["padding-inline", "var(--space-4)"]];
+const FULL: Declaration[] = [["max-width", "none"]];
 
 export function findPageFullErrors(appCss: string): string[] {
   const rules = parseCssRules(appCss);
@@ -156,29 +155,19 @@ export function findPageFullErrors(appCss: string): string[] {
   if (topFull.length !== 1 || !full) {
     errors.push(`Expected exactly one top-level \`.page--full\` rule, found ${topFull.length}.`);
   } else {
-    if (!sameDeclarations(full.declarations, FULL_DESKTOP)) {
-      errors.push(`\`.page--full\` must be exactly ${show(FULL_DESKTOP)}; found ${show(full.declarations)}.`);
+    if (!sameDeclarations(full.declarations, FULL)) {
+      errors.push(`\`.page--full\` must be exactly ${show(FULL)}; found ${show(full.declarations)}.`);
     }
     if (topPage.length !== 1 || !page || full.index < page.index) {
-      errors.push("`.page--full` must come after the single top-level `.page` rule, or `.page`'s padding shorthand wins.");
+      errors.push("`.page--full` must come after the single top-level `.page` rule, or `.page`'s max-width wins.");
     }
   }
 
-  const phoneFull = rules.filter((r) => r.selector === ".page--full" && r.ancestors.length > 0);
-  const [override] = phoneFull;
-  if (phoneFull.length !== 1 || !override) {
-    errors.push(`Expected exactly one nested \`.page--full\` rule (the ≤720 override), found ${phoneFull.length}.`);
-    return errors;
-  }
-  if (override.ancestors.length !== 1 || override.ancestors[0] !== PHONE_MEDIA) {
-    errors.push(`The \`.page--full\` override must sit directly in \`${PHONE_MEDIA}\`; found in ${JSON.stringify(override.ancestors)}.`);
-  }
-  if (!sameDeclarations(override.declarations, FULL_PHONE)) {
-    errors.push(`The ≤720 \`.page--full\` override must be exactly ${show(FULL_PHONE)}; found ${show(override.declarations)}.`);
-  }
-  const phonePage = rules.find((r) => r.selector === ".page" && r.blockId === override.blockId);
-  if (!phonePage || phonePage.index > override.index) {
-    errors.push("The ≤720 `.page--full` override must follow the phone `.page` rule in the same media block.");
+  const nested = rules.filter((r) => r.selector === ".page--full" && r.ancestors.length > 0);
+  for (const rule of nested) {
+    errors.push(
+      `\`.page--full\` must not be restyled inside an at-rule (it shares \`.page\`'s padding at every breakpoint); found ${show(rule.declarations)} in ${JSON.stringify(rule.ancestors)}.`,
+    );
   }
   return errors;
 }
@@ -301,10 +290,9 @@ function listSourceTsx(dir: string): string[] {
 const GOOD_CSS = `
 /* .page { max-width: 1480px; } — comments are ignored */
 .page { width: 100%; max-width: var(--container-page); margin: 0 auto; padding: var(--space-7) var(--space-7) var(--space-10); }
-.page--full { max-width: none; padding-inline: var(--gutter); }
+.page--full { max-width: none; }
 @media (max-width: 720px) {
   .page { padding: var(--space-6) var(--space-4) var(--space-9); }
-  .page--full { padding-inline: var(--space-4); }
 }
 `;
 
@@ -339,26 +327,22 @@ describe("page frame detectors (planted fixtures)", () => {
 
   it("(b) fail on any drift in .page--full", () => {
     const planted = [
-      GOOD_CSS.replace("max-width: none; padding-inline: var(--gutter);", "max-width: none;"),
-      GOOD_CSS.replace("padding-inline: var(--gutter)", "padding-inline: var(--space-7)"),
+      // The old gutter re-added.
+      GOOD_CSS.replace(".page--full { max-width: none; }", ".page--full { max-width: none; padding-inline: var(--gutter); }"),
+      // Any extra declaration.
+      GOOD_CSS.replace(".page--full { max-width: none; }", ".page--full { max-width: none; margin: 0; }"),
       GOOD_CSS.replace("max-width: none;", "max-width: 1920px;"),
-      GOOD_CSS.replace("padding-inline: var(--gutter); }", "padding-inline: var(--gutter); margin: 0; }"),
-      // Before `.page`: the shorthand would win.
-      GOOD_CSS.replace(".page--full { max-width: none; padding-inline: var(--gutter); }\n", "").replace(
-        ".page { width",
-        ".page--full { max-width: none; padding-inline: var(--gutter); }\n.page { width",
-      ),
-      GOOD_CSS.replace("  .page--full { padding-inline: var(--space-4); }\n", ""),
-      GOOD_CSS.replace("padding-inline: var(--space-4)", "padding-inline: var(--gutter)"),
-      GOOD_CSS.replace("@media (max-width: 720px)", "@media (max-width: 721px)"),
-      // Override ahead of the phone `.page` rule.
+      // Missing altogether.
+      GOOD_CSS.replace(".page--full { max-width: none; }\n", ""),
+      // Before `.page`: its max-width would win.
+      GOOD_CSS.replace(".page--full { max-width: none; }\n", "").replace(".page { width", ".page--full { max-width: none; }\n.page { width"),
+      // A phone override nested in the 720 block.
       GOOD_CSS.replace(
-        "  .page { padding: var(--space-6) var(--space-4) var(--space-9); }\n  .page--full { padding-inline: var(--space-4); }",
-        "  .page--full { padding-inline: var(--space-4); }\n  .page { padding: var(--space-6) var(--space-4) var(--space-9); }",
+        "  .page { padding: var(--space-6) var(--space-4) var(--space-9); }\n",
+        "  .page { padding: var(--space-6) var(--space-4) var(--space-9); }\n  .page--full { padding-inline: var(--space-4); }\n",
       ),
-      // Override in a different 720 block from the phone `.page` rule.
-      GOOD_CSS.replace("  .page--full { padding-inline: var(--space-4); }\n", "") +
-        "@media (max-width: 720px) { .page--full { padding-inline: var(--space-4); } }",
+      // Nested in any other at-rule.
+      GOOD_CSS + "@media (min-width: 1600px) { .page--full { max-width: none; } }",
     ];
     for (const css of planted) {
       expect(css).not.toBe(GOOD_CSS);
@@ -418,7 +402,7 @@ describe("page frame (real files)", () => {
     expect(findPageCapErrors(readFileSync(join(stylesDir, "app.css"), "utf8"))).toEqual([]);
   });
 
-  it("(b) .page--full and its ≤720 override are pinned exactly", () => {
+  it("(b) .page--full only lifts the cap, and is never restyled per breakpoint", () => {
     expect(findPageFullErrors(readFileSync(join(stylesDir, "app.css"), "utf8"))).toEqual([]);
   });
 
