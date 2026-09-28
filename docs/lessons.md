@@ -4047,8 +4047,8 @@ recover; only a full reload fetches the new index.html and its new hashes. With 
 around the lazy view, the rejection climbed to TanStack's global CatchBoundary, which replaced the shell.
 
 **Fix:** `components/ViewLoadBoundary.tsx` wraps each lazy view in `screens/Dashboard.tsx`, outside its
-`<Suspense>`. A chunk-load error (`lib/chunk-load-error.ts`) shows a caution notice — "The Portal was
-updated. Reload to open the …" — with a Reload button; any other error shows the error empty state
+`<Suspense>`. A chunk-load error (`lib/chunk-load-error.ts`) shows a caution notice — "The Portal may
+have been updated. Reload to open the …" — with a Reload button; any other error shows the error empty state
 with the same button. The switcher stays usable, leaving the view unmounts (resets) the boundary, and
 returning shows the notice again because the rejection is cached. The boundary does not swallow the
 error: React 19's default `onCaughtError` still logs it.
