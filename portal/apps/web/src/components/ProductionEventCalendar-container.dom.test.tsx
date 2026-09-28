@@ -27,6 +27,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: fals
 vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
+vi.mock("./reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
@@ -115,7 +116,7 @@ describe("ProductionEventCalendar container", () => {
     expect(rail.textContent).toContain("Unscheduled projects");
   });
 
-  it("requests bounds, maps the subview to the controlled view and Sydney date, and stays read-only", async () => {
+  it("requests bounds, maps the subview to the controlled view and Sydney date, and defers writes", async () => {
     const parsed = adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr"));
     await renderCalendar(calendar("month"), parsed);
     expect(requestedPaths().some((path) => path.includes("bounds=1") && path.includes("sub=month"))).toBe(true);
@@ -130,7 +131,7 @@ describe("ProductionEventCalendar container", () => {
     // Sydney noon of the civil date: 12:00 AEST = 02:00Z.
     expect((props.date as Date).toISOString()).toBe("2026-08-12T02:00:00.000Z");
     expect(props.interactions).toEqual({ drag: true, resize: true, selectSlot: false });
-    expect((props.onEventUpdate as () => unknown)()).toBe("deferred");
+    expect(typeof props.onEventUpdate).toBe("function");
     expect("onEventsChange" in props).toBe(false);
     expect("canDropEvent" in props).toBe(false);
     expect("enforceCanDrop" in props).toBe(false);
