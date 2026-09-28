@@ -63,6 +63,37 @@ describe("production calendar query family", () => {
     );
   });
 
+  it("#222: requests project bounds only when asked (the old calendar never sends bounds=1)", () => {
+    const base = buildProductionCalendarQuery(calendar(), { start: "2026-07-27", end: "2026-09-07" });
+    expect(base).not.toContain("bounds");
+    expect(buildProductionCalendarQuery(calendar(), { start: "2026-07-27", end: "2026-09-07" }, { bounds: false })).toBe(base);
+    expect(buildProductionCalendarQuery(calendar(), { start: "2026-07-27", end: "2026-09-07" }, { bounds: true })).toBe(`${base}&bounds=1`);
+  });
+
+  it("#222: a bounds query has its own cache entry and fetches with bounds=1; the default is unchanged", async () => {
+    const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 0 };
+    const plain = productionCalendarRangeQueryOptions({ identity, calendar: calendar(), enabled: true });
+    const bounded = productionCalendarRangeQueryOptions({ identity, calendar: calendar(), enabled: true, bounds: true });
+    expect(plain.queryKey).toHaveLength(9);
+    expect(bounded.queryKey.slice(0, 9)).toEqual(plain.queryKey);
+    expect(bounded.queryKey).not.toEqual(plain.queryKey);
+    // prefix removal still reaches the bounded entry
+    expect(bounded.queryKey.slice(0, 2)).toEqual(["production-calendar", principal]);
+
+    const api = await import("./api");
+    const apiGet = vi.spyOn(api, "apiGet").mockResolvedValue({ ...response("editing_autohdr"), projectBounds: [{ projectId: principal, shootDate: "2026-08-10", deadlineLocalCivil: "2026-08-12T10:00" }] });
+    try {
+      const decoded = await bounded.queryFn({ signal: new AbortController().signal } as never);
+      expect(apiGet.mock.calls[0]![0]).toMatch(/&bounds=1$/u);
+      expect(decoded.projectBounds).toEqual([{ projectId: principal, shootDate: "2026-08-10", deadlineLocalCivil: "2026-08-12T10:00" }]);
+      apiGet.mockResolvedValue(response("editing_autohdr"));
+      await plain.queryFn({ signal: new AbortController().signal } as never);
+      expect(apiGet.mock.calls[1]![0]).not.toContain("bounds");
+    } finally {
+      apiGet.mockRestore();
+    }
+  });
+
   it("strips parse-unsafe characters from the API q parameter", () => {
     const dirty = `smith${String.fromCharCode(92)}${String.fromCharCode(7)} street`;
     const query = buildProductionCalendarQuery(calendar({ search: dirty }), { start: "2026-07-27", end: "2026-09-07" });

@@ -15,6 +15,7 @@ import {
   adminProductionCalendarRangeResponseSchema,
   externalProductionCalendarRangeQuerySchema,
   formatSydneyCivilMinute,
+  isSydneyCalendarDate,
   productionCalendarRangeQuerySchema,
   resolveSydneyCivilMinute,
   roleHasCapability,
@@ -24,6 +25,7 @@ import {
   type CalendarEventDto,
   type CalendarPerson,
   type CalendarUnscheduledEntryDto,
+  type ProductionCalendarProjectBounds,
   type ProductionCalendarRangeQuery,
   type ProductionCalendarRangeResponse,
   type Role,
@@ -90,8 +92,16 @@ type CalendarFacetRow = {
   my_tasks_user_id: string | null;
 };
 
+type CalendarBoundsRow = {
+  project_id: string;
+  shoot_date: string | null;
+  deadline_local_civil: string | null;
+};
+
 type ParsedCalendarRequest = {
   query: ProductionCalendarRangeQuery;
+  /** #222: `bounds=1` — add `projectBounds` (the event-calendar renderer only; old bundles never send it). */
+  includeBounds: boolean;
   startInstant: number;
   endInstant: number;
   todayDate: string;
@@ -107,8 +117,10 @@ type ParseFailure = {
 const QUERY_NAMES = new Set([
   "start", "end", "date", "sub", "scope", "layers", "editors", "unassigned", "stages",
   "completed", "delivered", "overdue", "mine", "q",
+  // #222: request-gated project bounds — see `productionCalendarBoundsSql`.
+  "bounds",
 ]);
-const FLAG_NAMES = ["unassigned", "completed", "delivered", "overdue", "mine"] as const;
+const FLAG_NAMES = ["unassigned", "completed", "delivered", "overdue", "mine", "bounds"] as const;
 
 function parseFailure(message: string, code: ParseFailure["code"], endpoint?: ParseFailure["endpoint"]): ParseFailure {
   return { message, code, ...(endpoint ? { endpoint } : {}) };
@@ -214,7 +226,7 @@ function parseCalendarQuery(c: Context<AppEnv>): ParsedCalendarRequest | ParseFa
   if (!endResolution.ok) return parseFailure("Calendar end cannot be resolved in Sydney time.", "calendar_invalid_local_time", "end");
   const now = Date.now();
   const todayDate = formatSydneyCivilMinute(now).slice(0, 10);
-  return { query, startInstant: startResolution.value.epochMs, endInstant: endResolution.value.epochMs, todayDate, now };
+  return { query, includeBounds: flagValue(params, "bounds") === true, startInstant: startResolution.value.epochMs, endInstant: endResolution.value.epochMs, todayDate, now };
 }
 
 // authorized_projects_base's search filter additionally short-circuits true whenever the
@@ -487,6 +499,41 @@ SELECT 'density', d.scheduled_total, NULL, NULL, NULL, NULL, NULL, NULL, NULL, N
   NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM density d
 WHERE d.scheduled_total > ${PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS}`;
+}
+
+/**
+ * #222, statement 3 — issued ONLY for `bounds=1`, so statements 1 and 2 (and their SHA-pinned text
+ * in `test/project-search.test.ts`) are untouched. Built on the same `calendarCtes` chain, so it is
+ * access-scoped by `authorized_projects_base` exactly like the other two, over the editor-unfiltered
+ * candidate universe; the handler keeps only projects the response actually references.
+ */
+export function productionCalendarBoundsSql(role: CalendarRole): string {
+  return calendarCtes(role) + `,
+bounds_projects AS (
+  SELECT project_id FROM project_candidate_universe
+  UNION
+  SELECT project_id FROM candidate_subtasks_unfiltered
+)
+SELECT bp.project_id, bounds_project.shoot_date,
+  CASE WHEN ap.deadline_at IS NOT NULL THEN ap.deadline_local_civil ELSE NULL END AS deadline_local_civil
+FROM bounds_projects bp
+INNER JOIN authorized_projects_base ap ON ap.project_id = bp.project_id
+INNER JOIN projects bounds_project ON bounds_project.id = bp.project_id`;
+}
+
+function projectBoundsFor(response: ProductionCalendarRangeResponse, rows: CalendarBoundsRow[]): ProductionCalendarProjectBounds[] {
+  const referenced = new Set([...response.events, ...response.unscheduled].map((item) => item.project.id));
+  const byId = new Map<string, ProductionCalendarProjectBounds>();
+  for (const row of rows) {
+    if (!referenced.has(row.project_id) || byId.has(row.project_id)) continue;
+    byId.set(row.project_id, {
+      projectId: row.project_id,
+      // the Gantt's `shootDateCivil` rule: free-text shoot dates are not a bound
+      shootDate: row.shoot_date !== null && isSydneyCalendarDate(row.shoot_date) ? row.shoot_date : null,
+      deadlineLocalCivil: row.deadline_local_civil,
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.projectId.localeCompare(b.projectId));
 }
 
 /** Statement 2 uses the same request-bounded, editor-unfiltered candidate universe for facets. */
@@ -807,7 +854,11 @@ async function productionCalendarHandlerImpl(c: Context<AppEnv>): Promise<Respon
   const density = rows.find((row) => row.row_kind === "density");
   if (density) return c.json({ error: "This Calendar view spans too many projects and checklist items to load; narrow the filters.", code: "calendar_range_too_dense", count: Number(density.scheduled_total), max: PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS, refinement: "Refine the date range, Stage, Editor, layer, or search filters." }, 422);
   const second = await c.env.DB.prepare(productionCalendarFacetsSql(role)).bind(...params).all<CalendarFacetRow>();
-  const response = responseFromRows(role, parsed, rows, second.results ?? []);
+  const assembled = responseFromRows(role, parsed, rows, second.results ?? []);
+  // #222: the key exists ONLY when requested — an absent param must never serialize it, even as null.
+  const response: ProductionCalendarRangeResponse = parsed.includeBounds
+    ? { ...assembled, projectBounds: projectBoundsFor(assembled, (await c.env.DB.prepare(productionCalendarBoundsSql(role)).bind(...params).all<CalendarBoundsRow>()).results ?? []) }
+    : assembled;
   if (role === "external_editor") return c.json(EXTERNAL_API_RESPONSE_SCHEMAS.calendar.parse(response));
   if (role === "admin") return c.json(adminProductionCalendarRangeResponseSchema.parse(response));
   return c.json(editorProductionCalendarRangeResponseSchema.parse(response));

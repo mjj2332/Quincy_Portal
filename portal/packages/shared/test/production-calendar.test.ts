@@ -205,6 +205,26 @@ describe("TB5C strict role-safe DTOs", () => {
     expect(externalCalendarRangeSchema.safeParse({ ...response(EDITOR_STAGE), events: [{ ...response(EDITOR_STAGE).events[0], boardPosition: 1 }] }).success).toBe(false);
   });
 
+  it("#222: accepts OPTIONAL strict projectBounds on every role's response", () => {
+    const projectId = "123e4567-e89b-42d3-a456-426614174000";
+    const bounds = [
+      { projectId, shootDate: "2026-08-20", deadlineLocalCivil: "2026-08-27T09:00" },
+      { projectId: "223e4567-e89b-42d3-a456-426614174000", shootDate: null, deadlineLocalCivil: null },
+    ];
+    for (const [schema, stage] of [[adminProductionCalendarRangeResponseSchema, ADMIN_STAGE], [editorProductionCalendarRangeResponseSchema, EDITOR_STAGE], [externalCalendarRangeSchema, EDITOR_STAGE]] as const) {
+      // absent (what every request without bounds=1 receives) and present both parse
+      expect(schema.safeParse(response(stage)).success).toBe(true);
+      const parsed = schema.parse({ ...response(stage), projectBounds: bounds });
+      expect(parsed.projectBounds).toEqual(bounds);
+      expect("projectBounds" in schema.parse(response(stage))).toBe(false);
+      // strict entries: no extra fields, canonical dates only, lowercase-uuid project ids
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], street: "private" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], shootDate: "Tuesday" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], projectId: "not-a-uuid" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: null }).success).toBe(false);
+    }
+  });
+
   it("accepts every checklist source state only in its matching projection branch", () => {
     const stage = z.enum(STAGE_PRESENTATION_KEYS);
     const eventSchema = calendarEventSchemaFor(stage);
