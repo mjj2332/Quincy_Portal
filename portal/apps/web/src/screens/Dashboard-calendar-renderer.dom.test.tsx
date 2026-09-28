@@ -31,11 +31,13 @@ function calendarResponse(params: URLSearchParams) {
 }
 
 /**
- * #222 — the renderer flag's one behaviour in this slice: FullCalendar (the default) draws no
- * `day`/`days` view, so with the flag off those subviews — in a URL shared by an opted-in browser,
- * or in the remembered-subview preference — are coerced to `week` in the URL AND in storage.
+ * #222/#223 — the renderer preference. Since #223 the event calendar is the default and draws
+ * `day`/`days` as-is. A browser opted out with the exact value `"fullcalendar"` gets FullCalendar,
+ * which draws no `day`/`days` view, so there those subviews — in a URL shared by a default browser,
+ * or in the remembered-subview preference — are coerced to `week` in the URL AND in storage. Any
+ * other stored value is the default.
  */
-describe("Calendar renderer flag — day/days coercion (#222)", () => {
+describe("Calendar renderer preference — default and FullCalendar opt-out (#222/#223)", () => {
   let host: HTMLDivElement;
   let root: Root;
   let storage: Map<string, string>;
@@ -70,7 +72,25 @@ describe("Calendar renderer flag — day/days coercion (#222)", () => {
     .map(([path]) => new URLSearchParams(path.split("?", 2)[1]).get("sub"));
 
   for (const subview of ["day", "days"]) {
-    it(`flag off: a sub=${subview} URL is rewritten to sub=week and only week is requested`, async () => {
+    it(`default: a sub=${subview} URL is left alone and the event calendar draws it`, async () => {
+      const location = `/?view=calendar&date=${date}&sub=${subview}&layers=project%2Cchecklist`;
+      await renderAt(location);
+      expect(currentLocation()).toBe(location);
+      expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe(subview);
+      expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    });
+
+    it(`default: a remembered ${subview} subview resolves the bare intent to ${subview} and storage keeps it`, async () => {
+      storage.set(DASHBOARD_CALENDAR_SUBVIEW_KEY, subview);
+      storage.set(DASHBOARD_CALENDAR_LAST_DATE_KEY, date);
+      await renderAt("/?view=calendar");
+      expect(currentLocation()).toBe(`/?view=calendar&date=${date}&sub=${subview}&layers=project%2Cchecklist`);
+      expect(storage.get(DASHBOARD_CALENDAR_SUBVIEW_KEY)).toBe(subview);
+      expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe(subview);
+    });
+
+    it(`opted out: a sub=${subview} URL is rewritten to sub=week and only week is requested`, async () => {
+      storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
       await renderAt(`/?view=calendar&date=${date}&sub=${subview}&layers=project%2Cchecklist`);
       expect(currentLocation()).toBe(`/?view=calendar&date=${date}&sub=week&layers=project%2Cchecklist`);
       expect(calendarSubviewsRequested().length).toBeGreaterThan(0);
@@ -78,7 +98,8 @@ describe("Calendar renderer flag — day/days coercion (#222)", () => {
       expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeTruthy();
     });
 
-    it(`flag off: a remembered ${subview} subview resolves the bare intent to week and is rewritten in storage`, async () => {
+    it(`opted out: a remembered ${subview} subview resolves the bare intent to week and is rewritten in storage`, async () => {
+      storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
       storage.set(DASHBOARD_CALENDAR_SUBVIEW_KEY, subview);
       storage.set(DASHBOARD_CALENDAR_LAST_DATE_KEY, date);
       await renderAt("/?view=calendar");
@@ -87,26 +108,21 @@ describe("Calendar renderer flag — day/days coercion (#222)", () => {
     });
   }
 
-  it("flag on: a sub=day URL is left alone", async () => {
-    storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "event-calendar");
-    const location = `/?view=calendar&date=${date}&sub=day&layers=project%2Cchecklist`;
-    await renderAt(location);
-    expect(currentLocation()).toBe(location);
-    // Step 7: with the flag on the event-calendar renderer (mocked here) draws, so `day` reaching
-    // the renderer is asserted on its props, not on a FullCalendar fetch.
-    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe("day");
-  });
-
-  it("flag off (the default): the FullCalendar renderer draws, never the event calendar", async () => {
+  it("opted out: the FullCalendar renderer draws, never the event calendar", async () => {
+    storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
     await renderAt(`/?view=calendar&date=${date}&sub=month&layers=project%2Cchecklist`);
     expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeTruthy();
     expect(host.querySelector('[data-testid="dashboard-event-calendar"]')).toBeNull();
   });
 
-  it("flag on: the event-calendar renderer draws with the URL's state, never FullCalendar", async () => {
-    storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "event-calendar");
-    await renderAt(`/?view=calendar&date=${date}&sub=days&layers=project%2Cchecklist`);
-    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe("days");
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
-  });
+  for (const stored of [null, "event-calendar", "FULLCALENDAR", " fullcalendar", "", "1"]) {
+    it(`stored ${JSON.stringify(stored)}: the event-calendar renderer draws with the URL's state, never FullCalendar`, async () => {
+      if (stored !== null) storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, stored);
+      const location = `/?view=calendar&date=${date}&sub=days&layers=project%2Cchecklist`;
+      await renderAt(location);
+      expect(currentLocation()).toBe(location);
+      expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe("days");
+      expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    });
+  }
 });

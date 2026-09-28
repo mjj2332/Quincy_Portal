@@ -102,6 +102,7 @@ import App from "./App";
 import { readDashboardView, subscribeDashboardView } from "./lib/dashboard-view-store";
 import { locationStore, staffPathFor } from "./lib/router";
 import { confirmStore } from "./lib/confirm";
+import { DASHBOARD_CALENDAR_RENDERER_KEY } from "./screens/dashboard-helpers";
 
 let root: Root | null = null;
 
@@ -210,6 +211,10 @@ beforeEach(async () => {
   installLocalStorageShim();
   installMatchMediaShim();
   window.localStorage.clear();
+  // #224: port to event-calendar-fake. This file drives the FullCalendar surface mock's `eventDrop`,
+  // so it pins the per-browser FullCalendar opt-out (#223) before any render -- `Dashboard.tsx`
+  // reads the renderer once per mount.
+  window.localStorage.setItem(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
   setViewportWidth(1024);
   apiGetMock.mockReset();
   apiPutMock.mockReset();

@@ -6,6 +6,7 @@ import { Dashboard } from "./Dashboard";
 import { readDashboardView, subscribeDashboardView } from "../lib/dashboard-view-store";
 import { ApiError } from "../lib/api";
 import { __resetDashboardSearchStoreForTest, setDashboardSearchDraft } from "../lib/dashboard-search-store";
+import { DASHBOARD_CALENDAR_RENDERER_KEY, type CalendarRenderer } from "./dashboard-helpers";
 
 /**
  * A mounted `Dashboard` losing `viewProductionCalendar` while still showing Calendar — #119.
@@ -25,6 +26,23 @@ vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => sta
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: () => <div data-testid="dashboard-calendar-surface" /> }));
+// #223: the event calendar is the default renderer, so this suite runs on both. The event-calendar
+// leg draws through the shared vendor fake (`testing/event-calendar-fake.tsx`); FullCalendar never
+// imports `reui/event-calendar/`, so these mocks leave its leg untouched.
+vi.mock("../components/reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
+vi.mock("../components/reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
+vi.mock("../components/reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
+vi.mock("../components/reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
+
+/**
+ * #223: each renderer and the testid of its drawn surface in this harness. Both appear only once a
+ * range has loaded (neither is drawn while "Loading calendar…" shows): FullCalendar's mocked
+ * `ProductionCalendarSurface`, and the event calendar's `event-calendar-body`.
+ */
+const RENDERERS: ReadonlyArray<{ renderer: CalendarRenderer; surface: string }> = [
+  { renderer: "fullcalendar", surface: "dashboard-calendar-surface" },
+  { renderer: "event-calendar", surface: "event-calendar-body" },
+];
 
 const editorId = "22222222-2222-4222-8222-222222222222";
 const routeCalendar: DashboardCalendarState = {
@@ -61,16 +79,19 @@ async function settle() {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
 }
 
-describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
+describe.each(RENDERERS)("a mounted Dashboard losing the Calendar capability (#119) ($renderer)", ({ renderer, surface }) => {
   let host: HTMLDivElement;
   let root: Root;
 
   beforeEach(async () => {
     await import("../components/ProductionCalendar");
+    await import("../components/ProductionEventCalendar");
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => path.startsWith("/api/production-calendar") ? Promise.resolve(calendarResponse()) : Promise.resolve(projectResponse()));
     const storage = new Map<string, string>();
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
+    // #223: the FullCalendar leg is the explicit per-browser opt-out; the event-calendar leg is the default (no value).
+    if (renderer === "fullcalendar") storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
     window.history.replaceState(null, "", "/");
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
@@ -84,7 +105,7 @@ describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
     await act(async () => { root.render(<DashboardHarness role="admin" />); await Promise.resolve(); await Promise.resolve(); });
     await settle();
 
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).not.toBeNull();
+    expect(host.querySelector(`[data-testid="${surface}"]`)).not.toBeNull();
     expect(readDashboardView()).toBe("calendar");
 
     const published: Array<ReturnType<typeof readDashboardView>> = [];
@@ -104,7 +125,7 @@ describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
 
       expect(published).not.toContain("calendar");
       expect(published).toContain("none");
-      expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+      expect(host.querySelector(`[data-testid="${surface}"]`)).toBeNull();
       const settled = readDashboardView();
       expect(settled === "list" || settled === "kanban").toBe(true);
       expect(dashboardViewControlActive(host)).toBe(settled === "list" ? "List" : "Kanban");
@@ -117,7 +138,7 @@ describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
     await act(async () => { root.render(<DashboardHarness role="admin" />); await Promise.resolve(); await Promise.resolve(); });
     await settle();
 
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).not.toBeNull();
+    expect(host.querySelector(`[data-testid="${surface}"]`)).not.toBeNull();
     expect(readDashboardView()).toBe("calendar");
     expect(dashboardViewControlActive(host)).toBe("Calendar");
   });
@@ -129,16 +150,19 @@ describe("a mounted Dashboard losing the Calendar capability (#119)", () => {
  * dropping any committed `q` the Calendar facet URL carried, since `staffPathFor` was never
  * consulted for the fallback destination.
  */
-describe("Dashboard's Calendar access-loss fallback preserves a committed q (#217 fix round 8, item 3)", () => {
+describe.each(RENDERERS)("Dashboard's Calendar access-loss fallback preserves a committed q (#217 fix round 8, item 3) ($renderer)", ({ renderer, surface }) => {
   let host: HTMLDivElement;
   let root: Root;
 
   beforeEach(async () => {
     await import("../components/ProductionCalendar");
+    await import("../components/ProductionEventCalendar");
     apiGetMock.mockReset();
     __resetDashboardSearchStoreForTest();
     const storage = new Map<string, string>();
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
+    // #223: the FullCalendar leg is the explicit per-browser opt-out; the event-calendar leg is the default (no value).
+    if (renderer === "fullcalendar") storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
 
@@ -161,7 +185,7 @@ describe("Dashboard's Calendar access-loss fallback preserves a committed q (#21
     await act(async () => { root.render(<DashboardHarness role="admin" />); await Promise.resolve(); await Promise.resolve(); });
     await settle();
 
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(host.querySelector(`[data-testid="${surface}"]`)).toBeNull();
     expect(`${window.location.pathname}${window.location.search}`).toBe("/?q=smith");
   });
 
@@ -181,7 +205,7 @@ describe("Dashboard's Calendar access-loss fallback preserves a committed q (#21
     await act(async () => { root.render(<DashboardHarness role="admin" />); await Promise.resolve(); await Promise.resolve(); });
     await settle();
 
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(host.querySelector(`[data-testid="${surface}"]`)).toBeNull();
     expect(`${window.location.pathname}${window.location.search}`).toBe("/?q=smith");
   });
 });

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
+import { DASHBOARD_CALENDAR_RENDERER_KEY } from "./dashboard-helpers";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
@@ -90,6 +91,10 @@ describe("Dashboard Calendar routing", () => {
       }, params.get("date") ?? routeCalendar.date));
     });
     const storage = new Map<string, string>();
+    // #224: port to event-calendar-fake. This suite drives the FullCalendar surface mock's internals
+    // (`eventDrop`, `eventContent`, `initialView`), so it pins the per-browser FullCalendar opt-out
+    // (#223) before any render -- `Dashboard.tsx` reads the renderer once per mount.
+    storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
     window.history.replaceState(null, "", "/");
     __resetDashboardSearchStoreForTest();

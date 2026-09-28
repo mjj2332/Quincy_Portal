@@ -4014,3 +4014,21 @@ different copy). The same drag warned on one surface and not the other.
 - **The wire decoder is strict**, so an already-open tab on the event-calendar renderer that predates
   this change errors on its `bounds=1` response (unknown `createdAt` key) until it reloads. Old bundles
   that never send `bounds=1` are unaffected.
+
+## Flipping a renderer default strands the old path unless its value is honoured explicitly (#223, 2026-09-28)
+
+#222 read the Calendar renderer as "exactly `"event-calendar"` opts in; anything else is the default".
+Flipping `CALENDAR_RENDERER_DEFAULT` alone would have made FullCalendar unreachable: no stored value
+could select it any more, so the promised per-browser opt-out would not exist.
+
+- **Honour every renderer name explicitly before flipping the default.** `readCalendarRenderer` now
+  returns the stored value when it is exactly `"fullcalendar"` or `"event-calendar"` and the default
+  otherwise. That change ships first, on its own, with no behaviour change, so the flip is a
+  one-line constant change that can be reverted by itself.
+- **The event calendar makes two range requests per load, not one**: the `bounds=1` main range and the
+  up-next agenda. Both poll. Tests from the FullCalendar era that pinned request counts silently
+  measured nothing after the flip. In `Dashboard-search-request-stability` the lazy
+  `ProductionEventCalendar` chunk was never preloaded before fake timers, so it made zero requests
+  and passed every `<=` ceiling. Before trusting a pinned count after a renderer change, assert that the
+  renderer actually drew. Give each renderer its own derived count (FullCalendar 2, event calendar 4:
+  identity × StrictMode replay per query).
