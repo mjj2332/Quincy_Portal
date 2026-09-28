@@ -49,7 +49,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type Point
 import {
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
   formatSydneyCivilMinute,
-  resolveSydneyCivilMinute,
   type CalendarEventDto,
   type CalendarUnscheduledEntryDto,
   type ChecklistCalendarUnscheduledEntryDto,
@@ -65,6 +64,8 @@ import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib
 import { unscheduledChecklistDraggable, unscheduledProjectDraggable } from "../lib/production-calendar-unscheduled";
 import {
   calendarViewToSubview,
+  PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
+  productionEventCalendarAnchor,
   productionEventCalendarEventClassName,
   subviewToCalendarView,
   toProductionEventCalendarEvents,
@@ -85,6 +86,7 @@ import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { Notice } from "./quincy/Notice";
+import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditor";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
 import { ProductionEventCalendarFacets } from "./ProductionEventCalendarFacets";
@@ -113,6 +115,7 @@ const EMPTY_FACETS = { project: { matched: 0, returned: 0, truncated: false }, c
 /** An unscheduled item dropped on a minute column lands as a one-hour block. */
 const EXTERNAL_DROP_MINUTES = 60;
 const NEEDS_ATTENTION = "Schedule data needs attention. Repair is unavailable in Calendar.";
+const OVERLAP = "Overlaps another task";
 
 type PendingRange = { eventId: string; start: Date; end: Date; allDay: boolean };
 
@@ -126,12 +129,6 @@ function errorDetail(error: unknown, key: "code" | "refinement"): string | undef
 
 function sameFilters(left: ProductionCalendarFilters, right: ProductionCalendarFilters): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-/** The controlled `date`: Sydney noon of the civil date, clear of any midnight edge. */
-function sydneyNoon(civilDate: string): Date {
-  const resolved = resolveSydneyCivilMinute(`${civilDate}T12:00`, "earlier");
-  return resolved.ok ? new Date(resolved.value.instant) : new Date(`${civilDate}T02:00:00.000Z`);
 }
 
 function sydneyCivilDate(instant: Date): string {
@@ -160,9 +157,11 @@ function ChipContent({ data, title, needsAttention }: { data: ProductionEventCal
   const dto = data?.dto;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
   const assignee = dto?.kind === "checklist" ? dto.assignee : null;
+  const overlap = dto?.kind === "checklist" && dto.status.sameAssigneeOverlap === true;
   return (
     <span className="flex w-full min-w-0 items-center gap-[var(--space-1)]" data-testid="event-calendar-chip">
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {overlap && <span className="sr-only">{OVERLAP}</span>}
       {needsAttention && <span className="sr-only">{NEEDS_ATTENTION}</span>}
       {assignee && <InitialsAvatar name={assignee.name} className="size-4 shrink-0 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)]" />}
     </span>
@@ -179,15 +178,19 @@ function UnscheduledDragSource({ dragEnabled, canDrop, onDrop, ...list }: Omit<P
   onDrop: (entry: CalendarUnscheduledEntryDto, target: EventCalendarDropTargetLike) => void;
 }): JSX.Element {
   const { begin } = useEventCalendarExternalDrop<ProductionEventCalendarData, CalendarUnscheduledEntryDto>();
+  // A drag outlives the render that started it: read the CURRENT gate at every hover and at drop,
+  // never the one captured at pointer-down (a command started mid-drag must refuse the drop).
+  const latest = useRef({ canDrop, onDrop });
+  latest.current = { canDrop, onDrop };
   const beginDrag = useCallback((event: ReactPointerEvent<HTMLElement>, entry: CalendarUnscheduledEntryDto) => {
     begin(event, {
       payload: entry,
       durationMinutes: EXTERNAL_DROP_MINUTES,
       preferAllDay: true,
-      canDrop: (_target, payload) => canDrop(payload),
-      onDrop: (target, payload) => onDrop(payload, target),
+      canDrop: (_target, payload) => latest.current.canDrop(payload),
+      onDrop: (target, payload) => latest.current.onDrop(payload, target),
     });
-  }, [begin, canDrop, onDrop]);
+  }, [begin]);
   return <ProductionEventCalendarUnscheduledList {...list} beginDrag={dragEnabled ? beginDrag : undefined} />;
 }
 
@@ -332,6 +335,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   useEffect(() => { setSelectedId(null); }, [resetKey, identity.principalId, identity.role, identity.authorizationEpoch]);
   const selected = selectedId ? dtoById.get(selectedId) ?? null : null;
   const selectedNeedsAttention = selected ? commands.checklistNeedsAttention.has(selected.id) : false;
+  const selectedHref = selected ? projectHrefFor?.(selected.project.id) : undefined;
   const selectedAction = (() => {
     if (!selected || !live) return null;
     if (selected.kind === "project_deadline") return selected.permissions.canDrag ? { label: "Reschedule…", run: () => commands.openMoveDialog(selected) } : null;
@@ -374,7 +378,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // Render.
   // ---------------------------------------------------------------------------------------------
 
-  const date = useMemo(() => sydneyNoon(calendar.date), [calendar.date]);
+  const date = useMemo(() => productionEventCalendarAnchor(calendar.date), [calendar.date]);
   // Always a defined object: toggling between an object and `undefined` would flip the vendor
   // between controlled and uncontrolled interactions.
   const interactions = useMemo(() => ({ drag: !gated, resize: !gated, selectSlot: false }), [gated]);
@@ -448,11 +452,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           view={subviewToCalendarView(calendar.subview)}
           date={date}
           views={[...CALENDAR_VIEWS]}
-          timeZone="Australia/Sydney"
-          weekStartsOn={1}
-          fixedWeeks
-          agendaDayCount={14}
-          dayCount={3}
+          {...PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS}
           loading={!source}
           interactions={interactions}
           onEventUpdate={handleEventUpdate}
@@ -477,8 +477,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
               {selected && (
                 <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)] border-b border-border px-[var(--space-2)] py-[var(--space-2)] text-[length:var(--text-xs)]" data-testid="event-calendar-selected">
                   <span className="min-w-0 flex-1 truncate text-foreground">
-                    {selected.kind === "project_deadline" ? `Deadline · ${selected.project.street}` : `${selected.title} · ${selected.project.street}`}
+                    {selected.kind === "project_deadline" ? "Deadline" : selected.title}
+                    {" · "}
+                    {selectedHref ? <ProjectCalendarAnchor href={selectedHref} onOpenProject={() => onOpenProject?.(selected.project.id)}>{selected.project.street}</ProjectCalendarAnchor> : selected.project.street}
                   </span>
+                  {selected.kind === "checklist" && selected.status.sameAssigneeOverlap === true && <span className="text-signal-caution-text">{OVERLAP}</span>}
                   {selectedNeedsAttention && <span className="text-signal-critical" role="status">{NEEDS_ATTENTION}</span>}
                   {selectedAction && (
                     <Button type="button" variant="outline" size="sm" className="max-[721px]:min-h-[44px]" data-focus-key={`calendar-move:${selected.id}`} onClick={selectedAction.run}>

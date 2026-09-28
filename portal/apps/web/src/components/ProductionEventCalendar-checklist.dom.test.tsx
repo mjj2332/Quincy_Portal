@@ -17,6 +17,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ChecklistCalendarUnscheduledEntryDto, type ChecklistScheduleDto } from "@quincy/shared";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
+import { ProductionEventCalendarScheduleEditorSheet } from "./ProductionEventCalendarDialogs";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import {
   ASSIGNEE,
@@ -54,6 +55,12 @@ import {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
+// The inert describe below turns the build flag off; a getter keeps the import live per test.
+const rangesFlag = vi.hoisted(() => ({ enabled: true }));
+vi.mock("@quincy/shared", async () => {
+  const actual = await vi.importActual<typeof import("@quincy/shared")>("@quincy/shared");
+  return { ...actual, get CHECKLIST_SCHEDULE_RANGES_ENABLED() { return rangesFlag.enabled; } };
+});
 vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
@@ -65,7 +72,7 @@ const at = (civil: string) => new Date(instantOf(civil));
 const day = (date: string) => at(`${date}T00:00`);
 
 let h: Harness;
-beforeEach(() => { h = createHarness(); });
+beforeEach(() => { rangesFlag.enabled = true; h = createHarness(); });
 afterEach(() => { h.teardown(); });
 
 function scheduleOf(call: { body: unknown }) {
@@ -608,5 +615,74 @@ describe("ProductionEventCalendar checklist writes", () => {
     await flush(5);
     const active = document.activeElement as HTMLElement | null;
     expect(active?.getAttribute("data-ec-event-id") ?? active?.getAttribute("data-focus-key")).toMatch(new RegExp(`${ID}$`));
+  });
+});
+
+/**
+ * Ported from `ProductionCalendar-checklist-inert.dom.test.tsx` (5): the build flag
+ * `CHECKLIST_SCHEDULE_RANGES_ENABLED` off. FullCalendar's start-edge lock becomes "no grips on
+ * either edge, and a keyboard/pointer resize proposal is refused".
+ */
+describe("ProductionEventCalendar checklist inert mode (ranges disabled)", () => {
+  beforeEach(() => { rangesFlag.enabled = false; });
+
+  it("makes range drag and both-edge resize inert: no grips, and every proposal is refused", async () => {
+    const event = rangeEvent(dated("2026-08-12"), dated("2026-08-13"));
+    const fetch = await mount([event]);
+    const rendered = eventCalendarFake.event(ID) as { draggable?: boolean; resizable?: boolean; resizableEdges?: { start?: boolean; end?: boolean } } | undefined;
+    expect(rendered?.draggable).toBe(false);
+    expect(rendered?.resizable).toBe(false);
+    expect(rendered?.resizableEdges ?? { start: false, end: false }).toEqual({ start: false, end: false });
+    expect(await proposeUpdate(ID, { start: day("2026-08-15"), end: day("2026-08-17"), allDay: true })).toBe(false);
+    expect(await proposeUpdate(ID, { start: day("2026-08-11"), end: day("2026-08-14"), allDay: true, source: "resize-start" })).toBe(false);
+    expect(await proposeUpdate(ID, { start: day("2026-08-12"), end: day("2026-08-15"), allDay: true, source: "resize-end" })).toBe(false);
+    expect(await proposeUpdate(ID, { start: day("2026-08-12"), end: day("2026-08-15"), allDay: true, source: "keyboard" })).toBe(false);
+    expect(fetch.patches()).toHaveLength(0);
+  });
+
+  it("keeps due-only drag and replacement scheduling available when ranges are inert", async () => {
+    const event = dueEvent(dated("2026-08-12"));
+    const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, dueSchedule(dated("2026-08-13"), 3))) });
+    expect(await proposeUpdate(ID, { start: day("2026-08-13"), allDay: true })).toBe("deferred");
+    await flush(5);
+    expect(fetch.patches()).toHaveLength(1);
+    expect((fetch.patches()[0]!.body as { schedule: { schedule: { state: string } } }).schedule.schedule.state).toBe("due_only");
+  });
+
+  it("disables Range in the editor and never renders an invalid-entry action", async () => {
+    const event = rangeEvent(dated("2026-08-12"), dated("2026-08-13"));
+    const invalid = {
+      id: "checklist:55555555-5555-4555-8555-555555555555", kind: "checklist", reason: "schedule_needs_attention", attentionReason: "invalid", title: "Broken", project: event.project, assignee: null,
+      schedule: { state: "invalid", version: 4, zone: null, start: null, end: null, due: null, error: { code: "subtask_schedule_storage_invalid", reason: "shape_mismatch" } },
+      permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false },
+    } as ChecklistCalendarUnscheduledEntryDto;
+    stubCalendarFetch({ range: rangeResponse({ events: [event], unscheduled: [invalid] }) });
+    await h.render(calendarState("month"));
+    await openReschedule(ID);
+    const selector = byLabel<HTMLSelectElement>("Checklist schedule state");
+    expect(selector).not.toBeNull();
+    expect([...selector!.options].find((option) => option.value === "range")?.disabled).toBe(true);
+    expect(h.host.querySelector(`[data-unscheduled-id="${invalid.id}"] button`)).toBeNull();
+  });
+
+  it("handles a defensive 503 once without retrying the PATCH", async () => {
+    const event = dueEvent(dated("2026-08-12"));
+    const fetch = await mount([event], { patch: () => json({ code: "subtask_schedule_ranges_disabled", message: "disabled" }, 503) });
+    await proposeUpdate(ID, { start: day("2026-08-13"), allDay: true });
+    await flush(10);
+    expect(fetch.patches()).toHaveLength(1);
+    expect(liveRegion()).toContain("Range scheduling is unavailable");
+  });
+
+  it("renders the editor Range option disabled even when the sheet is mounted directly", async () => {
+    const event = dueEvent(dated("2026-08-12"));
+    stubCalendarFetch({ range: rangeResponse() });
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(h.host);
+    await act(async () => { root.render(<ProductionEventCalendarScheduleEditorSheet open event={event} rangesEnabled={false} onSubmit={vi.fn()} onCancel={vi.fn()} />); await Promise.resolve(); });
+    const option = byLabel<HTMLSelectElement>("Checklist schedule state")?.querySelector<HTMLOptionElement>('option[value="range"]');
+    expect(option).not.toBeNull();
+    expect(option!.disabled).toBe(true);
+    await act(async () => { root.unmount(); });
   });
 });

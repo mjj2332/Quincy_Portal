@@ -18,6 +18,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
 import type { DashboardCalendarState, ProductionCalendarRangeResponse } from "@quincy/shared";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
+import { ProjectQueryRuntimeProvider, type ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ProductionEventCalendar } from "../components/ProductionEventCalendar";
 import { PROJECT_ID } from "./production-calendar-fixtures";
 import { eventCalendarFake } from "./event-calendar-fake";
@@ -71,6 +72,10 @@ export type SurfaceProps = {
   onAcceptGateChange?: (blocked: boolean) => void;
   onSettleStateChange?: (state: CalendarSettleState) => void;
   onAccessLoss?: () => void;
+  projectHrefFor?: (projectId: string) => string | undefined;
+  onOpenProject?: (projectId: string) => void;
+  /** Wraps the surface in a `ProjectQueryRuntimeProvider` (cross-tab invalidation tests). */
+  runtime?: ProjectQueryRuntime;
 };
 
 export type Harness = {
@@ -103,7 +108,8 @@ export function createHarness(): Harness {
   eventCalendarFake.reset();
   let mounted = false;
 
-  const element = (calendar: DashboardCalendarState, props: SurfaceProps = {}) => (
+  const element = (calendar: DashboardCalendarState, props: SurfaceProps = {}) => {
+    const page = (
     <QueryClientProvider client={client}>
       <ProductionEventCalendar
         identity={{ principalId: PROJECT_ID, role: props.role ?? "admin", authorizationEpoch: 0 }}
@@ -112,9 +118,13 @@ export function createHarness(): Harness {
         onAcceptGateChange={props.onAcceptGateChange}
         onSettleStateChange={props.onSettleStateChange}
         onAccessLoss={props.onAccessLoss}
+        projectHrefFor={props.projectHrefFor}
+        onOpenProject={props.onOpenProject}
       />
     </QueryClientProvider>
-  );
+    );
+    return props.runtime ? <ProjectQueryRuntimeProvider runtime={props.runtime}>{page}</ProjectQueryRuntimeProvider> : page;
+  };
 
   return {
     host,
@@ -202,4 +212,23 @@ export function mainRangeQuery(client: QueryClient) {
   const main = queries.find((query) => JSON.stringify(query.queryKey).includes("bounds")) ?? queries[0];
   if (!main) throw new Error("Calendar query was not created");
   return main;
+}
+
+/**
+ * Drags an unscheduled row onto `target` through the fake external-drop hook: a primary
+ * `pointerdown` on the row calls the surface's `beginDrag`, and the fake runs `canDrop` → `onDrop`
+ * at once. Returns the fake's verdict (`null` = the row never started a drag: no drag source).
+ */
+export async function dropUnscheduled(entryId: string, target: { start: Date; dayGranular: boolean }): Promise<boolean | null> {
+  const row = document.querySelector<HTMLElement>(`[data-unscheduled-id="${entryId}"]`);
+  if (!row) throw new Error(`no unscheduled row ${entryId}`);
+  eventCalendarFake.lastDropAccepted = null;
+  eventCalendarFake.nextDropTarget = { start: target.start, end: new Date(target.start.getTime() + 3_600_000), allDay: target.dayGranular, view: target.dayGranular ? "month" : "week", dayGranular: target.dayGranular };
+  await act(async () => {
+    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  eventCalendarFake.nextDropTarget = null;
+  return eventCalendarFake.lastDropAccepted;
 }

@@ -27,6 +27,26 @@ import {
   type ProductionCalendarSubview,
 } from "@quincy/shared";
 
+/**
+ * The fixed view settings `ProductionEventCalendar` hands `<EventCalendar>`. One constant so the
+ * surface and `production-event-calendar-window.test.ts` (vendor visible range ⊆ server window)
+ * cannot drift apart. Kept in step with `deriveProductionCalendarWindow`: Monday weeks, six fixed
+ * month rows (42 days), a 3-day `days` view and a 14-day agenda.
+ */
+export const PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS = {
+  timeZone: "Australia/Sydney",
+  weekStartsOn: 1,
+  fixedWeeks: true,
+  agendaDayCount: 14,
+  dayCount: 3,
+} as const;
+
+/** The controlled `date`: Sydney noon of the civil date, clear of any midnight / DST edge. */
+export function productionEventCalendarAnchor(civilDate: string): Date {
+  const resolved = resolveSydneyCivilMinute(`${civilDate}T12:00`, "earlier");
+  return resolved.ok ? new Date(resolved.value.instant) : new Date(`${civilDate}T02:00:00.000Z`);
+}
+
 /** Display length of a timed Deadline / timed due-only chip. Synthetic — never written anywhere. */
 export const PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES = 30;
 

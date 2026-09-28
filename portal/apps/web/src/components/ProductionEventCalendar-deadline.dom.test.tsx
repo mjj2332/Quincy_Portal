@@ -78,6 +78,16 @@ describe("ProductionEventCalendar Project Deadline writes", () => {
     expect(fetch.puts().map((call) => [call.url, call.body])).toEqual([[DEADLINE_URL, { expectedVersion: 3, deadline: { localCivil: "2026-08-20T09:00" }, reminderOffsetsMinutes: OFFSETS }]]);
   });
 
+  it("keeps a timed Deadline's wall time when moved in Month, whatever instant the day cell reports", async () => {
+    // A day-granular drop carries only the target DAY; the source's 09:00 wall time survives, also
+    // across the spring-forward week (4 Oct 2026: +10 → +11).
+    const fetch = await mount({ date: "2026-09-30", range: rangeResponse({ events: [source("2026-09-30T09:00")], date: "2026-09-30" }), put: () => json(deadlineSaveBody("2026-10-06T09:00", 4, OFFSETS)) });
+    await proposeUpdate(ID, { start: at("2026-10-06T00:00"), allDay: false, granularity: "day" });
+    await clickTestId("gantt-deadline-confirm-action");
+    await flush(10);
+    expect(fetch.puts()[0]?.body).toEqual({ expectedVersion: 3, deadline: { localCivil: "2026-10-06T09:00" }, reminderOffsetsMinutes: OFFSETS });
+  });
+
   it("snaps a Week target to a 15-minute Sydney civil slot", async () => {
     const fetch = await mount({ subview: "week" });
     await proposeUpdate(ID, { start: at("2026-08-20T10:07"), allDay: false, granularity: "minute" });
