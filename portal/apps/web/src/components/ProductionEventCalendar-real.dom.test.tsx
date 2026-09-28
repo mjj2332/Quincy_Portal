@@ -69,5 +69,13 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     expect(checklistClass).toContain("data-selected:inset-ring-(--ink-700)");
     expect(checklistClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
     expect(checklistClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
+    // Same for a Deadline: it owns its selected state too (held ink inside an ink-then-paper double
+    // keyline), or the vendor's ink-900/30 wash would sit under paper text.
+    const deadlineClass = deadline!.closest("button")!.className.split(/\s+/);
+    for (const utility of ["data-selected:bg-(--ink-900)", "data-selected:hover:bg-(--ink-700)", "data-selected:inset-ring-4", "data-selected:inset-ring-(--paper-050)", "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]"]) {
+      expect(deadlineClass).toContain(utility);
+    }
+    expect(deadlineClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
+    expect(deadlineClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
   });
 });

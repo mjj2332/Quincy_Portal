@@ -180,17 +180,59 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
  * done items dimmed with the hue-independent `--border` wash (see the harness's `dimDoneChip`).
  * Minimal and token-only; the design review owns the final look.
  *
- * Checklist chips also own their selected state. The vendor's `data-selected:bg-(--ec-event-color)/30`
- * over the `--ink-700` accent turned a tall timed range into a flat mid-grey slab; these
- * same-variant utilities replace it (the vendor runs the consumer class through `cn()` after its
- * own, so tailwind-merge drops the vendor pair): paper with a light ink wash and one ink ring.
+ * Every branch must override EVERY state the vendor tints — rest, `hover:` and `data-selected:`.
+ * The vendor runs the consumer class through `cn()` after its own, and tailwind-merge drops a
+ * vendor utility only when the consumer supplies the SAME variant; any state left out keeps the
+ * vendor's `--ec-event-color` wash under this branch's text colour.
+ *
+ * Checklist chips: the vendor's `data-selected:bg-(--ec-event-color)/30` over the `--ink-700`
+ * accent turned a tall timed range into a flat mid-grey slab; paper with a light ink wash and one
+ * ink ring replaces it.
+ *
+ * Deadlines: left to the vendor, a selected Deadline was ink-900/30 under paper text (2.03:1).
+ * Selected holds the ink fill and draws a double keyline INSIDE the chip: 2px ink at the edge, then
+ * 2px paper, then the fill. That is a 4px paper inset ring with a 2px ink inset shadow on top
+ * (Tailwind composes `box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), …`, and the
+ * first layer paints on top). A plain paper ring touched the chip edge and merged into the paper
+ * page, so the chip only looked 2px smaller: a shrink, not a mark. The ink outer line keeps the
+ * chip's edge where it was, and the paper line inside it is the mark. A fill step is no cue either
+ * (ink-700 vs ink-900 is 1.26:1). An outer `ring` would collide with the global focus outline.
+ *
+ * Hover is `--ink-700`, the Portal's primary-hover step: ink-800 on ink-900 was 1.08:1 and
+ * invisible. The raw ramp, not `bg-primary-hover`: an inverse surface redefines that role to
+ * greige-100, which would put paper text on a light fill.
+ *
+ * Agenda hover: the vendored agenda row passes `hover:bg-muted` after this class, so
+ * tailwind-merge drops our `hover:` and the row went paper-on-paper (1.07:1);
+ * `data-[view=agenda]:hover:` wins on specificity (0,3,0 vs 0,2,0), not source order. It couples
+ * to the vendor chip's `data-view` attribute.
+ *
+ * The Deadline chip is a dark surface, so it re-scopes `--muted-foreground` the way
+ * `tokens/inverse.css` does for `[data-surface="inverse"]` (greige-300; inverse.css has no named
+ * role for it, so the raw step mirrors that file). `text-muted-foreground` is an `@theme inline`
+ * role that compiles to `color: var(--muted-foreground)`, so the re-scope reaches the vendored
+ * agenda time column inside the chip without a selector on that span: greige-400 read 4.41:1 on
+ * the ink-700 hover; greige-300 reads 6.8:1 there and 8.6:1 at rest.
  */
 const CHECKLIST_SELECTED = "data-selected:bg-(--ink-700)/10 data-selected:inset-ring-(--ink-700)";
+const DEADLINE_SELECTED =
+  "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]";
+export const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-700)";
+/** Mirrors `tokens/inverse.css`'s `--muted-foreground` for a dark surface. */
+const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
+/**
+ * Hides the vendored agenda row's colour dot on a Deadline, keeping its box so titles stay aligned
+ * with checklist rows. The ink fill already carries the Deadline's colour; the dot is ink-on-ink,
+ * invisible at rest and a black smudge on the ink-700 hover. `--ec-event-color` stays ink (it also
+ * colours the drag ghost). Couples to the vendor's `data-slot`, as the agenda hover couples to
+ * `data-view`.
+ */
+export const DEADLINE_AGENDA_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
 
 export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
-  if (data.shape === "deadline") return "bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900)";
-  if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-muted-foreground ${CHECKLIST_SELECTED}`;
+  if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES} ${DEADLINE_AGENDA_DOT}`;
+  if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-foreground-secondary ${CHECKLIST_SELECTED}`;
   return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }
 

@@ -60,6 +60,9 @@
  *    re-renders it elsewhere), `data-adjusting`, `aria-keyshortcuts="Space"`, and an `onKeyDown`
  *    that hands Space to `beginKeyboardAdjust` with the SAME move / resize-edge gates the grips
  *    use. Enter and click are untouched. Previews and agenda rows never open a session.
+ * 5. 2026-09-28 — `isSelected` is also false in the agenda view, not only for previews. The
+ *    agenda is read-only (a click never selects there, `aria-pressed` is already undefined), but a
+ *    chip selected in a grid view kept `data-selected` on its agenda row after a view switch.
  */
 import {
   createContext,
@@ -248,7 +251,9 @@ function EventCalendarEvent<TData = unknown>({
   )
   // A preview clone must never inherit the source's selected/dragging state
   // (the drag key matches, which would dim the clone itself).
-  const isSelected = preview ? false : isSelectedRaw
+  // QUINCY (2026-09-28): nor an agenda row — the agenda is read-only, yet a grid selection
+  // survived a view switch and drew the row with the consumer's `data-selected:` styling.
+  const isSelected = preview || view === "agenda" ? false : isSelectedRaw
   const isDragging = preview ? false : isDraggingRaw
   // QUINCY (#240): a keyboard Adjust session previews through the same drag state
   const isAdjusting = useEventCalendarSelector<TData, boolean>(

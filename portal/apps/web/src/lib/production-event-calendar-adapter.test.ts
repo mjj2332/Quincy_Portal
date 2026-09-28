@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { cn } from "@/lib/utils";
 import {
+  DEADLINE_AGENDA_DOT,
+  DEADLINE_AGENDA_HOVER,
   PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES,
   PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
   assigneeInitials,
@@ -92,7 +98,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(range.data.done).toBe(false);
     const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
     expect(done.data.done).toBe(true);
-    expect(productionEventCalendarEventClassName(done.data)).toContain("text-muted-foreground");
+    expect(productionEventCalendarEventClassName(done.data)).toContain("text-foreground-secondary");
   });
 
   it("carries assignee initials for checklist items and none for Deadlines", () => {
@@ -127,7 +133,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.scrollToHour).toBe(8);
   });
 
-  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; the Deadline class is unchanged", () => {
+  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; a selected Deadline holds its ink inside a double keyline", () => {
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
     const paper = productionEventCalendarEventClassName(range.data)!;
     expect(paper).toContain("data-selected:bg-(--ink-700)/10");
@@ -135,6 +141,119 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
     expect(productionEventCalendarEventClassName(done.data)).toContain("data-selected:bg-(--ink-700)/10");
     const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data)!;
-    expect(deadline).toBe("bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900)");
+    expect(deadline).toBe(
+      "bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) " +
+        "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) " +
+        "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)] data-[view=agenda]:hover:bg-(--ink-700) " +
+        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible",
+    );
+  });
+
+  // Mirrors the vendor's grid-chip tint in components/reui/event-calendar/event-calendar-event.tsx
+  // (~L603-607). A copy, so it can drift; ProductionEventCalendar-real.dom.test.tsx checks the real one.
+  const VENDOR_GRID =
+    "bg-(--ec-event-color)/15 hover:bg-(--ec-event-color)/25 inset-ring inset-ring-(--ec-event-color)/15 " +
+    "data-selected:bg-(--ec-event-color)/30 data-selected:inset-ring-(--ec-event-color)/40";
+
+  it("every branch that sets a fill also owns its selected fill and ring, so no vendor --ec-event-color tint survives the merge", () => {
+    const branches = {
+      deadline: toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!,
+      "active checklist range": toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!,
+      "active due": toProductionEventCalendarEvent(dueEvent(dated("2026-08-27")))!,
+      done: toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!,
+    };
+    for (const [branch, event] of Object.entries(branches)) {
+      const consumer = productionEventCalendarEventClassName(event.data)!;
+      const tokens = consumer.split(/\s+/);
+      if (!tokens.some((token) => token.startsWith("bg-"))) continue;
+      expect(tokens.some((token) => token.startsWith("data-selected:bg-")), `${branch}: no data-selected:bg-`).toBe(true);
+      expect(tokens.some((token) => token.startsWith("data-selected:inset-ring-")), `${branch}: no data-selected:inset-ring-`).toBe(true);
+      const survivors = cn(VENDOR_GRID, consumer)
+        .split(/\s+/)
+        .filter((token) => token.includes("--ec-event-color") && (/(^|:)(data-selected|hover):/.test(token) || token.startsWith("bg-(--ec-event-color)")));
+      expect(survivors, `${branch}: vendor tint survives the merge`).toEqual([]);
+    }
+  });
+
+  // The Deadline class reaches into the vendored agenda row through two vendor attributes: the
+  // dot's `data-slot` (DEADLINE_AGENDA_DOT) and the chip's `data-view` (DEADLINE_AGENDA_HOVER). If a
+  // re-vendor renames either, those selectors silently stop matching and every rendered test still
+  // passes; this reads the vendored source, as event-calendar-skin.guard.test.ts does, and notices.
+
+  /**
+   * Strip JS/TSX comments so markup quoted in prose cannot satisfy — or break — any assertion.
+   * Block comments (which cover JSX `{/* … }` comments too) and `// …` line comments; a quoted
+   * string or template literal is copied through untouched, so a `//` inside one (a URL) is not a
+   * comment.
+   */
+  function stripTsComments(source: string): string {
+    let out = "";
+    let i = 0;
+    while (i < source.length) {
+      const char = source[i]!;
+      const next = source[i + 1];
+      if (char === "/" && next === "*") {
+        const close = source.indexOf("*/", i + 2);
+        i = close === -1 ? source.length : close + 2;
+      } else if (char === "/" && next === "/") {
+        const newline = source.indexOf("\n", i + 2);
+        i = newline === -1 ? source.length : newline;
+      } else if (char === '"' || char === "'" || char === "`") {
+        let j = i + 1;
+        while (j < source.length && source[j] !== char) j += source[j] === "\\" ? 2 : 1;
+        out += source.slice(i, j + 1);
+        i = j + 1;
+      } else {
+        out += char;
+        i += 1;
+      }
+    }
+    return out;
+  }
+
+  /** Every way `source` (comments stripped) no longer carries what the Deadline class targets. */
+  function vendoredPinFailures(source: string): string[] {
+    const code = stripTsComments(source);
+    const failures: string[] = [];
+    const slot = /\[data-slot=([\w-]+)\]/.exec(DEADLINE_AGENDA_DOT)?.[1];
+    if (!slot) return ["DEADLINE_AGENDA_DOT names no data-slot"];
+    const dot = new RegExp(`data-slot="${slot}"[^>]*?className="([^"]*)"`).exec(code);
+    if (!dot) failures.push(`the vendored chip no longer authors data-slot="${slot}"`);
+    else if (!dot[1]!.split(/\s+/).includes("bg-(--ec-event-color)")) failures.push("the vendored agenda dot no longer paints --ec-event-color");
+    const [, attribute, value] = /^data-\[([\w-]+)=([\w-]+)\]:/.exec(DEADLINE_AGENDA_HOVER) ?? [];
+    if (!attribute) return [...failures, "DEADLINE_AGENDA_HOVER names no data-* attribute"];
+    if (!new RegExp(`"data-${attribute}":\\s*view,`).test(code)) failures.push(`the vendored chip no longer sets "data-${attribute}": view`);
+    if (!code.includes(`view === "${value}"`)) failures.push(`the vendored chip no longer has a "${value}" view`);
+    return failures;
+  }
+
+  it("the vendored chip still authors the agenda dot and data-view the Deadline class targets", () => {
+    const vendored = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../components/reui/event-calendar/event-calendar-event.tsx"), "utf8");
+    const failures = vendoredPinFailures(vendored);
+    expect(failures, failures.join("\n")).toEqual([]);
+    // Every QUINCY note in that file is a comment, so none survives a stripper that stayed in step
+    // with the file's strings from start to end.
+    expect(stripTsComments(vendored)).not.toContain("QUINCY");
+  });
+
+  it("the vendored-source pin ignores markup that survives only in comments", () => {
+    const fixture = [
+      'const url = "https://example.test/a//b"; // a URL string is not a comment',
+      "const agendaDefaultContent = (",
+      "  <>",
+      '    {/* <span aria-hidden data-slot="event-calendar-agenda-dot" className="size-2 shrink-0 rounded-full bg-(--ec-event-color)" /> */}',
+      '    <span aria-hidden data-slot="event-calendar-agenda-badge" className="size-2 shrink-0 rounded-full bg-(--ec-event-color)" />',
+      "  </>",
+      ")",
+      "const defaultProps = {",
+      '  // "data-view": view,',
+      '  "data-kind": view,',
+      "}",
+      'const agenda = view === "agenda"',
+    ].join("\n");
+    const failures = vendoredPinFailures(fixture);
+    expect(failures).toContain('the vendored chip no longer authors data-slot="event-calendar-agenda-dot"');
+    expect(failures).toContain('the vendored chip no longer sets "data-view": view');
+    expect(stripTsComments(fixture)).toContain('"https://example.test/a//b"');
   });
 });
