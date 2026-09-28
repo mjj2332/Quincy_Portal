@@ -94,13 +94,16 @@ jobs:
 
   deploy:
     needs: [typecheck, test, build-web]
+    # Production deploy: main only (a merge, or "Run workflow" on main), after every check passes.
+    # One deploy at a time; a running deploy is never cancelled half-way through its Workers.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # TODO: enable after the production Cloudflare resources are provisioned.
-    # Note: the `secrets` context is not permitted in job-level `if:` conditionals
-    # (GitHub Actions rejects the whole workflow file if it's used there), so the
-    # CLOUDFLARE_API_TOKEN presence check has to move to a step-level check when
-    # this job is actually enabled.
-    if: false
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 5649541c0660b8c9b45d114a868ebc13
     defaults:
       run:
         working-directory: portal
@@ -112,13 +115,26 @@ jobs:
           cache: npm
           cache-dependency-path: portal/package-lock.json
       - run: npm ci
+      # The `secrets` context is not allowed in a job-level `if:`, so the token check is a step.
+      - name: Require the Cloudflare API token
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::The CLOUDFLARE_API_TOKEN repository secret is not set. See docs/Guides/CI-Deploy.md."
+            exit 1
+          fi
+      # CI never applies migrations. New code that needs a migration production lacks would break
+      # the live site, so the deploy stops until a human applies it (docs/Guides/CI-Deploy.md).
+      - name: Stop if production has unapplied D1 migrations
+        run: |
+          out=$(npx wrangler d1 migrations list DB --remote --config workers/app/wrangler.jsonc 2>&1) || true
+          echo "$out"
+          if ! echo "$out" | grep -q "No migrations to apply"; then
+            echo "::error::Production D1 has unapplied migrations (or the check failed). Apply them by hand, then re-run this job."
+            exit 1
+          fi
+      # The app Worker serves apps/web/dist, and jobs don't share a filesystem.
+      - run: npm run build -w @quincy/web
       # Service bindings resolve when a Worker is deployed, so deploy their target first.
       - run: npx wrangler deploy --config workers/background/wrangler.jsonc
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - run: npx wrangler deploy --config workers/webhook-ingress/wrangler.jsonc
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - run: npx wrangler deploy --config workers/app/wrangler.jsonc
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
