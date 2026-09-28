@@ -20,6 +20,7 @@ import {
 } from "@quincy/shared";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
 import { ProductionEventCalendar } from "./ProductionEventCalendar";
+import { Sheet } from "./reui/sheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,11 +73,13 @@ describe("ProductionEventCalendar container", () => {
   });
   afterEach(() => { act(() => root.unmount()); host.remove(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
-  async function renderCalendar(value: DashboardCalendarState, body: unknown, status = 200, options: { role?: "admin" | "external_editor"; onNavigate?: (next: DashboardCalendarState) => void; onOpenProject?: (id: string) => void } = {}) {
+  async function renderCalendar(value: DashboardCalendarState, body: unknown, status = 200, options: { role?: "admin" | "external_editor"; onNavigate?: (next: DashboardCalendarState) => void; onOpenProject?: (id: string) => void; inShellSheet?: boolean } = {}) {
     fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     await act(async () => {
-      root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={{ principalId: principal, role: options.role ?? "admin", authorizationEpoch: 0 }} calendar={value} onNavigate={options.onNavigate ?? (() => undefined)} onOpenProject={options.onOpenProject} /></QueryClientProvider>);
+      const surface = <ProductionEventCalendar identity={{ principalId: principal, role: options.role ?? "admin", authorizationEpoch: 0 }} calendar={value} onNavigate={options.onNavigate ?? (() => undefined)} onOpenProject={options.onOpenProject} />;
+      // `inShellSheet`: every page sits inside RailedShell's (closed) Sheet Root, as in the app.
+      root.render(<QueryClientProvider client={client}>{options.inShellSheet ? <Sheet open={false}>{surface}</Sheet> : surface}</QueryClientProvider>);
       await Promise.resolve();
     });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); await Promise.resolve(); });
@@ -110,7 +113,14 @@ describe("ProductionEventCalendar container", () => {
     (empty as { unscheduled: unknown[] }).unscheduled = [{ id: "unscheduled", kind: "project_deadline", reason: "unscheduled", title: "Hidden", project: { id: principal, street: "Hidden Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false }, permissions: { canDrag: true, canResize: false }, deadlineVersion: 1, reminderOffsetsMinutes: [] }];
     empty.filterFacets.unscheduled.project = { matched: 1, returned: 1, truncated: false };
     await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(empty));
-    expect(host.querySelector('[data-testid="event-calendar-empty"]')?.textContent).toContain("No scheduled work in this range.");
+    const status = host.querySelector<HTMLElement>('[data-testid="event-calendar-empty"]')!;
+    expect(status.textContent).toBe("No scheduled work in this range.");
+    expect(status.getAttribute("role")).toBe("status");
+    // A quiet one-line status in the toolbar row, not a serif EmptyState heading above the grid.
+    expect(status.querySelector("h1, h2, h3, h4")).toBeNull();
+    expect(status.className).toContain("text-[length:var(--text-xs)]");
+    expect(status.className).toContain("text-muted-foreground");
+    expect(status.parentElement).toBe(host.querySelector('[data-testid="event-calendar-fake-nav"]')?.parentElement ?? null);
     const rail = host.querySelector('[data-testid="event-calendar-rail"]')!;
     expect(rail.textContent).toContain("Hidden Street");
     expect(rail.textContent).toContain("Unscheduled projects");
@@ -127,6 +137,7 @@ describe("ProductionEventCalendar container", () => {
     expect(props.fixedWeeks).toBe(true);
     expect(props.agendaDayCount).toBe(14);
     expect(props.dayCount).toBe(3);
+    expect(props.dayCountPresets).toEqual([3]);
     expect(props.views).toEqual(["month", "week", "day", "days", "agenda"]);
     // Sydney noon of the civil date: 12:00 AEST = 02:00Z.
     expect((props.date as Date).toISOString()).toBe("2026-08-12T02:00:00.000Z");
@@ -184,6 +195,30 @@ describe("ProductionEventCalendar container", () => {
     }
     await renderCalendar(calendar("month"), parsed);
     expect(eventCalendarFake.lastProps?.interactions).toEqual({ drag: true, resize: true, selectSlot: false });
+  });
+
+  it("bounds the rail + grid row to the content height, so the rail scrolls inside its column", async () => {
+    await renderCalendar(calendar("month"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+    const body = host.querySelector<HTMLElement>('[data-testid="event-calendar-body"]')!;
+    expect(body).not.toBeNull();
+    expect(body.querySelector('[data-testid="event-calendar-rail"]')).not.toBeNull();
+    // jsdom cannot lay out: pin the class contract. A definite height on the grid plus a
+    // `minmax(0,1fr)` row, so a long rail cannot grow the row (an `auto` row would).
+    const classes = body.className.split(/\s+/);
+    expect(classes).toContain("h-[min(760px,calc(100svh-220px))]");
+    expect(classes).toContain("min-h-[480px]");
+    expect(classes).toContain("grid-rows-[minmax(0,1fr)]");
+    expect(host.querySelector<HTMLElement>('[data-testid="event-calendar-rail"]')!.className.split(/\s+/)).toContain("min-h-0");
+  });
+
+  it("the narrow rail sheet renders the Portal scrim even inside the shell's Sheet", async () => {
+    stubMedia(["(max-width: 1100px)"]);
+    await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")), 200, { inShellSheet: true });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-toggle"]')!.click(); await Promise.resolve(); });
+    const scrim = document.querySelector<HTMLElement>('[data-testid="event-calendar-rail-sheet-scrim"]');
+    expect(scrim).not.toBeNull();
+    expect(scrim!.className).toContain("bg-[var(--scrim-overlay)]");
+    expect(document.querySelector<HTMLElement>('[data-testid="event-calendar-rail-sheet"]')!.className).toContain("z-[var(--z-dialog)]");
   });
 
   it("moves the rail into a sheet below the rail breakpoint", async () => {

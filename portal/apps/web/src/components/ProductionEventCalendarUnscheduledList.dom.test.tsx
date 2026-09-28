@@ -112,6 +112,9 @@ describe("ProductionEventCalendarUnscheduledList", () => {
     expect(host.textContent).toContain("This checklist schedule needs repair. Repair is unavailable in Calendar.");
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-unscheduled-id="checklist:legacy"] [data-testid="event-calendar-unscheduled-action"]')!.click(); });
     expect(onScheduleChecklist).toHaveBeenCalledWith(expect.objectContaining({ id: "checklist:legacy" }));
+    // The action sits on its own full-width line under the meta lines, never beside the title.
+    const repair = host.querySelector<HTMLButtonElement>('[data-unscheduled-id="checklist:legacy"] [data-testid="event-calendar-unscheduled-action"]')!;
+    expect(repair.parentElement!.className.split(/\s+/)).toContain("basis-full");
 
     await render(listProps({ subview: "agenda", projectEntries: [projectEntry()], checklistEntries: [checklistEntry(), legacyEntry()], onScheduleChecklist }));
     expect(draggable()).toHaveLength(0);
@@ -130,6 +133,7 @@ describe("ProductionEventCalendarUnscheduledList", () => {
     expect(draggable()).toHaveLength(0);
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-unscheduled-id="project-deadline:one"] [data-testid="event-calendar-unscheduled-action"]')!.click(); });
     expect(onScheduleProject).toHaveBeenCalledWith(expect.objectContaining({ id: "project-deadline:one" }));
+    expect(host.querySelector<HTMLButtonElement>('[data-unscheduled-id="project-deadline:one"] [data-testid="event-calendar-unscheduled-action"]')!.parentElement!.className.split(/\s+/)).toContain("basis-full");
 
     await render(listProps({ beginDrag: undefined }));
     expect(draggable()).toHaveLength(0);

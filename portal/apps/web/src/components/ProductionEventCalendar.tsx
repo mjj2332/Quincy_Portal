@@ -464,7 +464,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data)}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} needsAttention={commands.checklistNeedsAttention.has(String(occurrence.event.id))} />}
         >
-          <div className={cn("grid min-h-0 items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")}>
+          {/* One definite height for rail + grid, and a `minmax(0,1fr)` row: an `auto` row grows to
+              the rail's content (52 unscheduled rows → 5.6k px), which stretched the month rows and
+              kept the rail's ScrollArea from ever scrolling. Bounded, the rail scrolls inside its
+              column and the content fills the rest of the column. */}
+          <div className={cn("grid h-[min(760px,calc(100svh-220px))] min-h-[480px] grid-rows-[minmax(0,1fr)] items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")} data-testid="event-calendar-body">
             {!narrow && rail}
             <div className="flex min-h-0 min-w-0 flex-col">
               <div className="flex min-w-0 items-center gap-[var(--space-2)]">
@@ -474,6 +478,10 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   </Button>
                 )}
                 <EventCalendarNav showViewSwitcher className="min-w-0 flex-1" />
+                {empty && (
+                  // Quiet, in the toolbar row: an empty range never pushes the grid down.
+                  <p className="m-0 me-[var(--space-2)] min-w-0 shrink truncate text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
+                )}
               </div>
               {selected && (
                 <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)] border-b border-border px-[var(--space-2)] py-[var(--space-2)] text-[length:var(--text-xs)]" data-testid="event-calendar-selected">
@@ -492,15 +500,23 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   <Button type="button" variant="ghost" size="sm" className="max-[721px]:min-h-[44px]" data-testid="event-calendar-selected-clear" onClick={() => setSelectedId(null)}>Close</Button>
                 </div>
               )}
-              {empty && (
-                <EmptyState title="No scheduled work in this range." role="status" className="py-[var(--space-4)]" data-testid="event-calendar-empty" />
-              )}
-              <EventCalendarContent className="h-[min(760px,calc(100svh-220px))] min-h-[480px]" />
+              <EventCalendarContent className="min-h-0 flex-1" />
             </div>
           </div>
           {narrow && (
             <Sheet open={railOpen} onOpenChange={setRailOpen}>
-              <SheetContent side="left" className="w-[320px] max-w-[90vw] gap-0 p-0" data-testid="event-calendar-rail-sheet">
+              <SheetContent
+                side="left"
+                className="z-[var(--z-dialog)] w-[320px] max-w-[90vw] gap-0 p-0"
+                data-testid="event-calendar-rail-sheet"
+                overlayProps={{
+                  "data-testid": "event-calendar-rail-sheet-scrim",
+                  // Every page sits inside RailedShell's Sheet Root, so this Sheet is nested and Base
+                  // UI skips its Backdrop without `forceRender` — the schedule editor sheet's pattern.
+                  forceRender: true,
+                  className: "z-[var(--z-dialog)] bg-[var(--scrim-overlay)] backdrop-blur-[3px]",
+                }}
+              >
                 <SheetHeader className="border-b border-border">
                   <SheetTitle>Calendar</SheetTitle>
                   <SheetDescription className="sr-only">Mini month, up next, filters and unscheduled work.</SheetDescription>

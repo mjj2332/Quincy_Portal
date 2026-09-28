@@ -62,5 +62,12 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     expect(deadline!.closest("button")?.className).toContain("bg-(--ink-900)");
     expect(checklist!.closest("button")?.className).toContain("bg-(--paper-000)");
     expect(checklist!.textContent).toContain("ME");
+    // The consumer's selected state replaces the vendor's (tailwind-merge drops the vendor's
+    // same-variant utilities), so a selected checklist chip keeps paper + a light wash + one ring.
+    const checklistClass = checklist!.closest("button")!.className.split(/\s+/);
+    expect(checklistClass).toContain("data-selected:bg-(--ink-700)/10");
+    expect(checklistClass).toContain("data-selected:inset-ring-(--ink-700)");
+    expect(checklistClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
+    expect(checklistClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
   });
 });

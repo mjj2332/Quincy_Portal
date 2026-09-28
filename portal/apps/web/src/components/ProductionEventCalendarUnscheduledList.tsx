@@ -61,6 +61,7 @@ const ROW_DRAG = "cursor-grab active:cursor-grabbing touch-none select-none";
 const META = "text-foreground-secondary text-[length:var(--text-2xs)]";
 const ATTENTION_TEXT = "m-0 text-signal-critical text-[length:var(--text-2xs)]";
 const ACTION = "h-auto px-0 max-[721px]:min-h-[44px]";
+const ACTION_LINE = "basis-full";
 
 function CountLine({ facet }: { facet: UnscheduledFacet }) {
   return (
@@ -120,7 +121,9 @@ function ProjectRow({ entry, actionMode, disabled, beginDrag, onSchedule, projec
         {!eligible && <ItemDescription className={META}>Deadline is read-only</ItemDescription>}
       </ItemContent>
       {eligible && !canDrag && (
-        <ItemActions>
+        // Own full-width line under the meta lines: inline, the action took ~40% of the row and
+        // wrapped the title to three lines.
+        <ItemActions className={ACTION_LINE}>
           <Button type="button" variant="link" size="sm" className={ACTION} disabled={disabled} data-testid="event-calendar-unscheduled-action" onClick={() => onSchedule(entry)}>Schedule Deadline</Button>
         </ItemActions>
       )}
@@ -162,7 +165,7 @@ function ChecklistRow({ entry, actionMode, rangesEnabled, disabled, beginDrag, o
         {invalid && <p className={ATTENTION_TEXT} role="status">This checklist schedule needs repair. Repair is unavailable in Calendar.</p>}
       </ItemContent>
       {!invalid && showAction && (
-        <ItemActions>
+        <ItemActions className={ACTION_LINE}>
           <Button type="button" variant="link" size="sm" className={ACTION} disabled={disabled} data-testid="event-calendar-unscheduled-action" onClick={() => onSchedule(entry)}>{legacy ? "Repair schedule" : "Schedule"}</Button>
         </ItemActions>
       )}

@@ -31,7 +31,9 @@ import {
  * The fixed view settings `ProductionEventCalendar` hands `<EventCalendar>`. One constant so the
  * surface and `production-event-calendar-window.test.ts` (vendor visible range ⊆ server window)
  * cannot drift apart. Kept in step with `deriveProductionCalendarWindow`: Monday weeks, six fixed
- * month rows (42 days), a 3-day `days` view and a 14-day agenda.
+ * month rows (42 days), a 3-day `days` view and a 14-day agenda. `dayCountPresets` is the view
+ * menu's "N days" list: the vendor default is `[5]`, which would offer a 5-day view the server window
+ * is not derived for — so the menu offers exactly the 3-day view.
  */
 export const PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS = {
   timeZone: "Australia/Sydney",
@@ -39,6 +41,8 @@ export const PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS = {
   fixedWeeks: true,
   agendaDayCount: 14,
   dayCount: 3,
+  // Mutable on purpose: the vendor prop is `number[]`, which a `readonly [3]` does not satisfy.
+  dayCountPresets: [3] as number[],
 } as const;
 
 /** The controlled `date`: Sydney noon of the civil date, clear of any midnight / DST edge. */
@@ -171,12 +175,19 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
  * The chip class for the vendor's `eventClassName`: Deadlines solid ink, checklist items paper,
  * done items dimmed with the hue-independent `--border` wash (see the harness's `dimDoneChip`).
  * Minimal and token-only; the design review owns the final look.
+ *
+ * Checklist chips also own their selected state. The vendor's `data-selected:bg-(--ec-event-color)/30`
+ * over the `--ink-700` accent turned a tall timed range into a flat mid-grey slab; these
+ * same-variant utilities replace it (the vendor runs the consumer class through `cn()` after its
+ * own, so tailwind-merge drops the vendor pair): paper with a light ink wash and one ink ring.
  */
+const CHECKLIST_SELECTED = "data-selected:bg-(--ink-700)/10 data-selected:inset-ring-(--ink-700)";
+
 export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
   if (data.shape === "deadline") return "bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900)";
-  if (data.done) return "bg-border/25 hover:bg-border/35 inset-ring-border/25 text-muted-foreground";
-  return "bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground";
+  if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-muted-foreground ${CHECKLIST_SELECTED}`;
+  return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }
 
 export function subviewToCalendarView(subview: ProductionCalendarSubview): CalendarViewName {

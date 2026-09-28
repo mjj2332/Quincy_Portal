@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES,
+  PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
   assigneeInitials,
   calendarViewToSubview,
   productionEventCalendarEventClassName,
@@ -114,5 +115,21 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
       expect(calendarViewToSubview(subviewToCalendarView(subview))).toBe(subview);
     }
     expect(calendarViewToSubview("resource")).toBeNull();
+  });
+
+  it("offers only the 3-day preset, matching the 3-day `days` view", () => {
+    expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.dayCount).toBe(3);
+    expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.dayCountPresets).toEqual([3]);
+  });
+
+  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; the Deadline class is unchanged", () => {
+    const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
+    const paper = productionEventCalendarEventClassName(range.data)!;
+    expect(paper).toContain("data-selected:bg-(--ink-700)/10");
+    expect(paper).toContain("data-selected:inset-ring-(--ink-700)");
+    const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
+    expect(productionEventCalendarEventClassName(done.data)).toContain("data-selected:bg-(--ink-700)/10");
+    const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data)!;
+    expect(deadline).toBe("bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900)");
   });
 });
