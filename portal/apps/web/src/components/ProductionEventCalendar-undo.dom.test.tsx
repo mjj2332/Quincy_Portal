@@ -147,11 +147,16 @@ function checklistServer(initial: ChecklistScheduleDto, options: { projectBounds
 const DEADLINE_ID = `project-deadline:${PROJECT_ID}`;
 const OFFSETS = [1440, 60];
 
-/** A stateful Deadline server: a PUT at the current version moves it to version + 1. */
+/** A stateful Deadline server: a PUT at the current version moves it to version + 1.
+ * `fail(status)` answers every later main-range GET with that error status. */
 function deadlineServer(civil: string, version: number) {
   const server = { civil, version };
+  let failStatus: number | null = null;
   const fetch = stubCalendarFetch({
-    range: () => json(rangeResponse({ events: [deadlineEvent(server.civil, { version: server.version, offsets: OFFSETS })] })),
+    range: (url) => {
+      if (failStatus !== null && url.includes("bounds=1")) return json({ error: "failed" }, failStatus);
+      return json(rangeResponse({ events: [deadlineEvent(server.civil, { version: server.version, offsets: OFFSETS })] }));
+    },
     put: (_url, body) => {
       const request = body as { expectedVersion: number; deadline: { localCivil: string } };
       if (request.expectedVersion !== server.version) return json({ error: "changed", code: "project_deadline_version_conflict" }, 409);
@@ -160,7 +165,7 @@ function deadlineServer(civil: string, version: number) {
       return json(deadlineSaveBody(server.civil, server.version, OFFSETS));
     },
   });
-  return { server, fetch };
+  return { server, fetch, fail: (status: number | null) => { failStatus = status; } };
 }
 
 describe("ProductionEventCalendar Undo toast (#291)", () => {
@@ -339,6 +344,28 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
     expect(liveRegion()).not.toContain("Change undone.");
     expect(liveRegion()).toBe("The schedule was saved, but the latest Calendar could not be loaded. Refresh to continue.");
     expect(settle.at(-1)).toEqual({ pending: true, recoveryReason: "The latest Calendar could not be loaded." });
+  });
+
+  it("7b. a failed refetch after a successful Deadline Undo enters settle recovery with the Deadline's settle-failed copy", async () => {
+    const settle: Array<{ pending: boolean; recoveryReason: string | null }> = [];
+    const { server, fetch, fail } = deadlineServer("2026-08-12T09:00", 3);
+    await h.render(calendarState("month"), { onSettleStateChange: (state) => settle.push(state) });
+    await proposeUpdate(DEADLINE_ID, { start: at("2026-08-20T09:00"), allDay: false, granularity: "day" });
+    await clickTestId("gantt-deadline-confirm-action");
+    await flush(20);
+    expect(settle.at(-1)).toEqual({ pending: false, recoveryReason: null });
+
+    // A 4xx that is neither auth nor retried (`projectQueryRetry` retries a 5xx with backoff).
+    fail(404);
+    await click(undoButtons()[0]!);
+    await flush(20);
+    expect(fetch.puts()).toHaveLength(2);
+    expect(server.civil).toBe("2026-08-12T09:00");
+    expect(liveRegion()).not.toContain("Change undone.");
+    // Owner decision (2026-09-28): the Deadline keeps the forward path's settle-failed wording.
+    expect(liveRegion()).toBe("The move was saved, but the latest Calendar could not be loaded. Refresh to continue.");
+    expect(settle.at(-1)).toEqual({ pending: true, recoveryReason: "The latest Calendar could not be loaded." });
+    expect(document.querySelector('[data-focus-key="calendar-recovery"]')).not.toBeNull();
   });
 
   it("8. an undecodable Undo response whose refetch then fails enters settle recovery, never \"Reloaded the latest\"", async () => {
