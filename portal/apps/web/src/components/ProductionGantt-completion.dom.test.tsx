@@ -313,3 +313,82 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     expect(outsideOccurrences.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * #258 — a hollow-start or completed bar's inline time label is the vendor's own
+ * `formatEventTime` string (dated on both ends for a multi-day timed bar, upper-case AM/PM), not a
+ * Quincy lookalike. `Date` alone is pinned (never `setTimeout`: `render` awaits real timeouts) so
+ * the Gantt's month view — seeded from `new Date()` — always shows these fixed fixture dates. Both
+ * bars sit inside September 2026 and before Sydney's DST start (Sun 4 Oct), so every instant is +10.
+ */
+describe("ProductionGantt — hollow/completed bars use the vendor's dated time label (#258)", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    host.remove();
+    vi.useRealTimers();
+  });
+
+  function fixedProject(overrides: Partial<GanttProjectRowDto> & { id: string; street: string }): GanttProjectRowDto {
+    return makeProject({
+      shootDate: "2026-09-08",
+      shootDateCivil: "2026-09-08",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      barStartDate: "2026-09-08",
+      deadline: { at: "2026-09-18T07:00:00.000Z", localCivil: "2026-09-18T17:00", version: 1, reminderOffsetsMinutes: [], overdue: false },
+      ...overrides,
+    });
+  }
+
+  function timeLabelOf(bar: HTMLElement): string {
+    const label = bar.querySelector<HTMLElement>('[data-testid="gantt-event-time"]');
+    if (!label) throw new Error("bar has no inline time label");
+    return label.textContent ?? "";
+  }
+
+  it("a WIDE hollow-start bar's time label is the vendor's dated string, and is part of its aria-label", async () => {
+    const project = fixedProject({
+      id: WIDE_HOLLOW_PROJECT_ID,
+      street: WIDE_HOLLOW_STREET,
+      shootDate: null,
+      shootDateCivil: null,
+      // Sep 11, 00:00 Sydney (+10) — the hollow bar starts at `createdAt`.
+      createdAt: "2026-09-10T14:00:00.000Z",
+      barStartDate: "2026-09-11",
+      deadline: { at: "2026-09-25T07:00:00.000Z", localCivil: "2026-09-25T17:00", version: 1, reminderOffsetsMinutes: [], overdue: false },
+    });
+    await render(host, root, [project]);
+    const bar = findByAriaLabelIncluding(host, WIDE_HOLLOW_STREET);
+    expect(bar.querySelector('[data-testid="gantt-hollow-start"]')).not.toBeNull();
+    const label = timeLabelOf(bar);
+    expect(label).toBe("Sep 11, 12:00 AM - Sep 25, 5:00 PM");
+    expect(bar.getAttribute("aria-label")).toContain(label);
+  });
+
+  it("a fully-complete bar's time label is the vendor's dated string, and is part of its aria-label", async () => {
+    const project = fixedProject({
+      id: COMPLETED_BAR_PROJECT_ID,
+      street: COMPLETED_BAR_STREET,
+      checklist: { completed: 4, total: 4 },
+    });
+    await render(host, root, [project]);
+    const bar = findByAriaLabelIncluding(host, COMPLETED_BAR_STREET);
+    expect(bar.querySelector('[data-testid="gantt-done-mark"]')).not.toBeNull();
+    const label = timeLabelOf(bar);
+    expect(label).toBe("Sep 8, 12:00 AM - Sep 18, 5:00 PM");
+    expect(bar.getAttribute("aria-label")).toContain(label);
+  });
+});
