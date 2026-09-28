@@ -21,7 +21,8 @@
  * ## #221 — writes
  * Checklist (subtask) schedules are writable here: move and resize a scheduled task bar (pointer
  * or keyboard Adjust), and place an unscheduled task by clicking or dragging on its row. Undo is a
- * toast action (one live Undo at a time).
+ * toast action (one live Undo at a time), raised by the shared wrapper
+ * (`useSchedulingControllerWithUndoToast`, `lib/use-scheduling-undo-toast.ts` — #291).
  *
  * How: the shared scheduling controller (`useSchedulingController`, `lib/use-scheduling-commands`)
  * runs every write — command lock, accept gate, token fencing, settle refetch, access loss,
@@ -111,11 +112,10 @@ import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ApiError } from "../lib/api";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
-import { useSchedulingController, type ChecklistFoldState, type MoveDialogState, type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
+import { type ChecklistFoldState, type MoveDialogState, type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
+import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
 import type { ChecklistMutationResult } from "../lib/scheduling-types";
-import { buildChecklistUndoTicket, buildDeadlineUndoTicket, type UndoTicket } from "../lib/scheduling-undo";
 import type { ChecklistSource } from "../lib/scheduling-policy";
-import { dismissToast, pushToast, type ToastTone } from "../lib/toast-store";
 import {
   applyGanttOptimisticOverlay,
   ganttChecklistSource,
@@ -588,9 +588,6 @@ function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"])
   ]);
 }
 
-/** #221: how long the Undo toast stays up (paused while hovered/focused — `toast-store`). */
-const UNDO_TOAST_TTL_MS = 10_000;
-
 /** #221: the range a just-released bar shows until the controller's optimistic overlay lands. */
 type GanttPendingRange = { eventId: string; start: Date; end: Date; allDay: boolean };
 /** #221 PR C: an open Deadline confirmation — what it shows, how it settles, and where focus lands after. */
@@ -963,39 +960,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const [pending, setPending] = useState<GanttPendingRange | null>(null);
   // #221 PR C: the project bar's end while its Deadline awaits confirmation (before any overlay).
   const [pendingDeadline, setPendingDeadline] = useState<{ projectId: string; end: Date } | null>(null);
-  const undoToastIdRef = useRef<number | null>(null);
-  const unmountedRef = useRef(false);
-  const dismissUndoToast = useCallback(() => {
-    if (undoToastIdRef.current !== null) dismissToast(undoToastIdRef.current);
-    undoToastIdRef.current = null;
-  }, []);
-  // The controller is created below with `onCommitted`, which needs the controller's own `runUndo`
-  // and the latest projects: both reach it through refs, refreshed every render.
-  const runUndoRef = useRef<((ticket: UndoTicket) => Promise<{ ok: boolean; reason?: string }>) | null>(null);
-
-  const pushUndoToast = useCallback((message: string, tone: ToastTone, ticket: UndoTicket | null) => {
-    dismissUndoToast();
-    undoToastIdRef.current = pushToast(message, tone, {
-      ttlMs: UNDO_TOAST_TTL_MS,
-      announcedElsewhere: true,
-      ...(ticket
-        ? {
-            action: {
-              label: "Undo",
-              onAction: () => {
-                undoToastIdRef.current = null;
-                void runUndoRef.current?.(ticket).then((outcome) => {
-                  // The viewport already dismissed the toast. "busy" (the post-save refetch has
-                  // not settled yet, or another command is open) ran nothing — offer it again
-                  // rather than silently dropping the Undo.
-                  if (!outcome.ok && outcome.reason === "busy" && !unmountedRef.current) pushUndoToast(message, tone, ticket);
-                });
-              },
-            },
-          }
-        : {}),
-    });
-  }, [dismissUndoToast]);
 
   // Page-2+ rows live only in `childState` (the documented gap in
   // `computeEmbeddedChildSignature`'s header), which the settle refetch never returns: patch the
@@ -1019,22 +983,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (info.checklistResult) patchChildRow(info.projectId, info.checklistResult);
   }, [patchChildRow]);
 
+  // The wrapper raises the Undo toast after this runs. A Deadline needs no row patch: the settle
+  // refetch returns the project row itself.
   const handleCommitted = useCallback((info: SchedulingCommittedInfo) => {
-    if (info.kind === "deadline") {
-      // A Deadline Undo needs no row patch: the settle refetch returns the project row itself.
-      pushUndoToast("Deadline saved.", "success", buildDeadlineUndoTicket(info.before, info.deadlineResult.current));
-      return;
-    }
-    patchChildRow(info.projectId, info.checklistResult);
-    // `warningText` is the shared rule's text over the saved schedule (the controller runs
-    // `scheduleWindowWarnings` with the port's `boundsFor`) — the exact text its live announcement
-    // carries (this toast is `announcedElsewhere`).
-    const { warningText } = info;
-    pushUndoToast(warningText ? `Schedule saved. ${warningText}` : "Schedule saved.", warningText ? "caution" : "success", buildChecklistUndoTicket(info.before, info.checklistResult));
-  }, [patchChildRow, pushUndoToast]);
+    if (info.kind === "checklist") patchChildRow(info.projectId, info.checklistResult);
+  }, [patchChildRow]);
 
-  const commands = useSchedulingController({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone });
-  runUndoRef.current = commands.runUndo;
+  const commands = useSchedulingControllerWithUndoToast({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone });
   const live = !commands.interactionBlocked && !commands.settle.pending && !commands.accessLost;
 
   // Accept-gate freeze: while an interaction is open the controller holds its accepted baseline and
@@ -1057,24 +1012,16 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
   }, [commands.interactionBlocked, commands.settle.pending]);
 
-  // One live Undo: gone on unmount, on a generation change (identity/filters), and on access loss.
+  // The wrapper dismisses the live Undo on unmount, a generation change and access loss; the
+  // local pending holds reset with them.
   useEffect(() => {
-    unmountedRef.current = false;
-    return () => {
-      unmountedRef.current = true;
-      dismissUndoToast();
-    };
-  }, [dismissUndoToast]);
-  useEffect(() => {
-    dismissUndoToast();
     setPending(null);
     setPendingDeadline(null);
-  }, [generationKey, dismissUndoToast]);
+  }, [generationKey]);
   useEffect(() => {
     if (!commands.accessLost) return;
-    dismissUndoToast();
     setPendingDeadline(null);
-  }, [commands.accessLost, dismissUndoToast]);
+  }, [commands.accessLost]);
 
   const baseModel = useMemo(() => buildProductionGanttModel(displayProjects, { now, interactive: true, deadlineInteractive: true }), [displayProjects, now]);
   const model = useMemo(

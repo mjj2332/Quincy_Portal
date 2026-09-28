@@ -68,6 +68,8 @@ export function stubCalendarFetch(handlers: { range: Handler | ProductionCalenda
 
 export type SurfaceProps = {
   role?: "admin" | "editor" | "external_editor";
+  /** The identity's `authorizationEpoch` (default 0) — a change resets the controller (#291). */
+  authorizationEpoch?: number;
   onNavigate?: (next: DashboardCalendarState) => void;
   onAcceptGateChange?: (blocked: boolean) => void;
   onSettleStateChange?: (state: CalendarSettleState) => void;
@@ -112,7 +114,7 @@ export function createHarness(): Harness {
     const page = (
     <QueryClientProvider client={client}>
       <ProductionEventCalendar
-        identity={{ principalId: PROJECT_ID, role: props.role ?? "admin", authorizationEpoch: 0 }}
+        identity={{ principalId: PROJECT_ID, role: props.role ?? "admin", authorizationEpoch: props.authorizationEpoch ?? 0 }}
         calendar={calendar}
         onNavigate={props.onNavigate ?? (() => undefined)}
         onAcceptGateChange={props.onAcceptGateChange}

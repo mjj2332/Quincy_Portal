@@ -1371,6 +1371,31 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (!canStartCommand()) return { ok: false, reason: "busy" };
     const token = operationTokenRef.current;
     const fenced = () => accessLostRef.current || token !== operationTokenRef.current;
+    // #291: a successful Undo's refetch is a settle refetch, exactly like a forward save's — the
+    // lock and accept gate are released and settle is pending (which `canStartCommand` refuses)
+    // while it runs, and a failure enters settle recovery (`refreshRecovery`) rather than announcing
+    // over a surface still drawing the forward state. `true` when the caller may announce success.
+    const settleUndo = async (beforeRefetch?: () => Promise<void>): Promise<boolean> => {
+      setAcceptGate(false);
+      setSettle({ type: "winner" });
+      commandLockRef.current.active = false;
+      if (beforeRefetch) {
+        await beforeRefetch();
+        if (fenced()) return false;
+      }
+      settleRefetchInFlightRef.current = true;
+      const settled = await refetchAuthoritative();
+      if (fenced()) return false;
+      settleRefetchInFlightRef.current = false;
+      if (settled.ok) {
+        setSettle({ type: "refetch-succeeded" });
+        return true;
+      }
+      setSettle({ type: "refetch-failed", reason: portRef.current.settleFailedReason });
+      if (ticket.kind === "checklist") announceChecklistLifecycle("settle-failed", {});
+      else announceLifecycle("settle-failed", { entity: "deadline" });
+      return false;
+    };
     commandLockRef.current.active = true;
     setAcceptGate(true);
     const outcome = await applyUndo(ticket);
@@ -1389,21 +1414,18 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         // The write happened but its body is unreadable — reported, never hidden: no row patch,
         // the refetch converges the surface on server truth, and the outcome is "failed" (final,
         // like the forward path's undecodable save, which also rolls back to a refetch).
-        commandLockRef.current.active = false;
-        setAcceptGate(false);
-        await refetchAuthoritative();
         const failed: UndoOutcome = { ok: false, reason: "failed" };
-        if (fenced()) return failed;
+        if (!(await settleUndo())) return failed;
         setAnnouncement("Undo result could not be read. Reloaded the latest.");
+        flushQueuedRefetch();
         return failed;
       }
       onUndoneRef.current?.({ kind: ticket.kind, projectId: ticket.projectId, ...(checklistResult ? { checklistResult } : {}) });
-      if (queryClient) await invalidateProjectSurfaces(queryClient, portRef.current.invalidation(ticket.kind, ticket.projectId));
-      if (fenced()) return outcome;
-      await refetchAuthoritative();
-      if (fenced()) return outcome;
-      commandLockRef.current.active = false;
-      setAcceptGate(false);
+      // invalidateProjectSurfaces owns the surface broadcast (the port's `producer`).
+      const invalidate = async () => {
+        if (queryClient) await invalidateProjectSurfaces(queryClient, portRef.current.invalidation(ticket.kind, ticket.projectId));
+      };
+      if (!(await settleUndo(invalidate))) return outcome;
       setAnnouncement("Change undone.");
       flushQueuedRefetch();
       return outcome;
@@ -1414,7 +1436,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (fenced()) return outcome;
     setAnnouncement(outcome.reason === "conflict" ? "Undo failed — the item changed since." : "Undo failed.");
     return outcome;
-  }, [canStartCommand, flushQueuedRefetch, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate]);
+  }, [announceChecklistLifecycle, announceLifecycle, canStartCommand, flushQueuedRefetch, handleAccessLoss, identity.role, queryClient, refetchAuthoritative, setAcceptGate, setSettle]);
 
   useEffect(() => () => {
     operationTokenRef.current += 1;

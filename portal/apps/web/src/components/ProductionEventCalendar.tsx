@@ -15,7 +15,9 @@
  * (the `ProductionGanttDeadlineDialog`, `preview: null`) and `boundsFor` (`calendarScheduleBounds`
  * of the `bounds=1` response's `projectBounds`; the controller runs the same out-of-range rule as the
  * Gantt, `schedule-bounds.ts` — out-of-range checklist writes WARN, never block).
- * No DST / settle / reconcile / lock rule is copied here.
+ * No DST / settle / reconcile / lock rule is copied here. #291: the controller is composed through
+ * `useSchedulingControllerWithUndoToast` (`lib/use-scheduling-undo-toast.ts`), the Gantt's wrapper —
+ * each saved checklist schedule or Deadline raises one live Undo toast.
  *
  * - `onEventUpdate`: `eventCalendarUpdateToProposal` → `commands.submitProposal(proposal,
  *   { revertable })` → `"deferred"`: the vendor neither mutates nor announces; the controller owns
@@ -76,7 +78,8 @@ import {
 } from "../lib/production-event-calendar-adapter";
 import { eventCalendarDropToProposal, eventCalendarUpdateToProposal, type EventCalendarDropTargetLike, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
 import { calendarScheduleBounds, type ScheduleBounds } from "../lib/schedule-bounds";
-import { useCalendarSchedulingPort, useSchedulingController, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
+import { useCalendarSchedulingPort, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
+import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
 import { useMediaQuery } from "../lib/use-media-query";
 import { productionCalendarZoneLabel } from "../lib/sydney-time-labels";
 import { cn } from "@/lib/utils";
@@ -254,7 +257,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     confirmDeadline: openDeadlineConfirm,
     boundsFor: (projectId: string) => boundsRef.current.get(projectId) ?? null,
   };
-  const commands = useSchedulingController<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss });
+  const commands = useSchedulingControllerWithUndoToast<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss });
   const blocked = commands.interactionBlocked;
   const settling = commands.settle.pending;
   const live = !blocked && !settling && !commands.accessLost;

@@ -4060,3 +4060,23 @@ error: React 19's default `onCaughtError` still logs it.
 - `Dashboard-view-load-error.dom.test.tsx` pins it through the real lazy path: the mocked module's
   export is a getter that throws the chunk-load `TypeError`, so the Dashboard's own
   `import(...).then(...)` rejects.
+
+## An Undo's refetch is a settle refetch: a failure must enter recovery, not announce success (#291, 2026-09-28)
+
+`runUndo` in `lib/use-scheduling-commands.tsx` awaited `refetchAuthoritative()` after a successful
+compensating write, ignored the result, and announced "Change undone.". On the Gantt this was hidden:
+`onUndone` patches the row locally. The event calendar draws only from the controller-owned
+`acceptedResponse`, so a failed refetch left the forward-saved chip on screen under a success message.
+
+- **Bracket the Undo refetch exactly like a forward save's**: release the accept gate and command lock,
+  `setSettle({ type: "winner" })`, the in-flight flag, then `refetch-succeeded` + "Change undone." or
+  `refetch-failed` + the settle-failed announcement. `refetch-failed` is inert unless settle is already
+  pending, so the `winner` step is not optional, and pending settle is what `canStartCommand` refuses,
+  so releasing the gate early does not let a second command in. Holding the gate through the refetch
+  instead disabled the Dashboard's view buttons for as long as the refetch took. The undecodable-body
+  branch gets the same bracket. Every Undo now reports a settle cycle through `onSettleStateChange`.
+- **Test a failed refetch with a 4xx, not a 5xx.** `projectQueryRetry` retries 5xx with backoff, so a
+  503 fixture hangs past the test instead of failing the refetch.
+- **The Undo toast lives in `lib/use-scheduling-undo-toast.ts`** (`useSchedulingControllerWithUndoToast`),
+  not in a surface. Its dismiss effect keys on the controller's full reset deps (`resetKey` plus
+  identity), because the Calendar's `calendarResetKey` has no identity in it.
