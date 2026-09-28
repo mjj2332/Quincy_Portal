@@ -12,7 +12,8 @@ export type ProductionCalendarFoldChoiceProps = {
   onCancel: () => void;
 };
 
-function offsetLabel(minutes: number): string {
+/** #222: shared with the event-calendar renderer's fold choice (`ProductionEventCalendarDialogs.tsx`). */
+export function offsetLabel(minutes: number): string {
   const sign = minutes < 0 ? "−" : "+";
   const absolute = Math.abs(minutes);
   return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;

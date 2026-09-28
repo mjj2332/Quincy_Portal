@@ -21,12 +21,13 @@ export type ProductionCalendarMoveDialogProps = {
   onCancel: () => void;
 };
 
-function civilParts(value: string): { date: string; time: string } {
+/** #222: shared with the event-calendar renderer's move dialog (`ProductionEventCalendarDialogs.tsx`). */
+export function civilParts(value: string): { date: string; time: string } {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(value);
   return match ? { date: match[1] ?? "", time: match[2] ?? "" } : { date: "", time: "" };
 }
 
-function validCivil(value: string): boolean {
+export function validCivil(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
   if (!match) return false;
   const year = Number(match[1]);
@@ -40,7 +41,7 @@ function validCivil(value: string): boolean {
   return day >= 1 && day <= daysInMonth;
 }
 
-function utcOffsetLabel(minutes: number): string {
+export function utcOffsetLabel(minutes: number): string {
   const sign = minutes < 0 ? "-" : "+";
   const absolute = Math.abs(minutes);
   return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;

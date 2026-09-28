@@ -112,6 +112,19 @@ describe("ProductionGanttDeadlineDialog", () => {
     expect(byTestId("gantt-deadline-confirm-action")!.textContent).toBe("Schedule Deadline");
   });
 
+  // #222: the event-calendar renderer has no loaded checklist rows to preview, so it passes
+  // `preview: null` — the from → to block and the reminders still render, the three preview
+  // sections do not.
+  it("hides every preview section when preview is null (#222)", async () => {
+    await render({ state: state({ preview: null }), onResolve: vi.fn() });
+    expect(byTestId("gantt-deadline-confirm")).not.toBeNull();
+    expect(byTestId("calendar-move-confirmation")!.textContent).toContain("2026-08-12 15:00");
+    expect(byTestId("gantt-deadline-confirm-affected")).toBeNull();
+    expect(byTestId("gantt-deadline-confirm-clashes")).toBeNull();
+    expect(byTestId("gantt-deadline-confirm-truncated")).toBeNull();
+    expect(byTestId("gantt-deadline-confirm-action")!.textContent).toBe("Move Deadline");
+  });
+
   it("says the preview is partial when the checklist is truncated", async () => {
     await render({ state: state({ preview: { ...basePreview, loaded: 4, total: 9, truncated: true } }), onResolve: vi.fn() });
     expect(byTestId("gantt-deadline-confirm-truncated")!.textContent).toBe("Based on 4 of 9 checklist items loaded.");
