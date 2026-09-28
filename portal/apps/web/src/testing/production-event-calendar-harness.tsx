@@ -7,7 +7,8 @@
  * routes `fetch`:
  *
  * - GET `/api/production-calendar?…bounds=1…` is the surface's MAIN range query; the Up next rail
- *   query never sends `bounds`, so `rangeGets()` counts only the main one (the old suites' `getCount`).
+ *   query never sends `bounds`, so `rangeGets()` counts only the main one (the old suites' `getCount`)
+ *   and `upNextGets()` only the rail's (#295).
  * - PATCH (checklist) and PUT (Deadline) are recorded with their parsed bodies.
  *
  * Guard F: helpers select Quincy `data-testid` / `data-focus-key` / `aria-label` hooks only.
@@ -209,6 +210,11 @@ export async function proposeUpdate(eventId: string, input: Parameters<typeof ev
 }
 
 /** The chip's displayed start (ISO), from the fake's rendered event list. */
+/** The Up next rail's items, as rendered text (title, then "Wed 12 Aug · 09:00 · detail"). */
+export function upNextItems(): string[] {
+  return [...document.querySelectorAll<HTMLElement>('[data-testid="event-calendar-up-next-item"]')].map((item) => item.textContent ?? "");
+}
+
 export function chipStart(eventId: string): string | undefined {
   return eventCalendarFake.event(eventId)?.start.toISOString();
 }

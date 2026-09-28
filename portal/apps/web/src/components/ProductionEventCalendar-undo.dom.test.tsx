@@ -43,8 +43,11 @@ import {
   liveRegion,
   proposeUpdate,
   stubCalendarFetch,
+  upNextItems,
+  type CalendarFetch,
   type Harness,
 } from "../testing/production-event-calendar-harness";
+import { ProjectQueryRuntime } from "../lib/project-query-sync";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -413,11 +416,17 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
 /**
  * #295 — the Up next rail is a second range query (agenda, from today, no `bounds`). A Calendar
  * save calls `invalidateProjectSurfaces(..., producer: "calendar")`, which skips every in-tab
- * `production-calendar` query, and the controller's settle refetch covers only the main range — so
- * the Calendar's port must refresh the rail itself. "Now" is pinned before the fixture dates while
- * mounting: the rail captures it once, and drops everything already past.
+ * `production-calendar` query, and the settle refetch covers only the main range — so the surface
+ * refreshes the rail at commit (`onCommitted` / `onUndone`). A `ProjectQueryRuntime` is live in
+ * every case, so the producer skip really runs: each save must cost exactly one main-range GET and
+ * one rail GET. "Now" is pinned before the fixture dates while mounting: the rail captures it once
+ * and drops everything already past.
  */
 describe("ProductionEventCalendar Up next rail after a save or Undo (#295)", () => {
+  let runtime: ProjectQueryRuntime;
+  beforeEach(() => { runtime = new ProjectQueryRuntime(h.client, "event-calendar-up-next-tab"); });
+  afterEach(() => { runtime.dispose(); });
+
   async function renderBeforeFixtures(): Promise<void> {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-08-10T00:00:00.000Z"));
@@ -428,40 +437,79 @@ describe("ProductionEventCalendar Up next rail after a save or Undo (#295)", () 
     }
   }
 
-  function upNextLabels(): string[] {
-    return [...document.querySelectorAll<HTMLElement>('[data-testid="event-calendar-up-next-item"]')].map((item) => item.textContent ?? "");
+  function counts(fetch: CalendarFetch) {
+    return { main: fetch.rangeGets().length, rail: fetch.upNextGets().length };
   }
 
-  it("a checklist save and its Undo each refresh the rail, with one main-range refetch apiece", async () => {
+  it("a checklist save and its Undo each refresh the rail once, and the main range once", async () => {
     const { fetch } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
     await renderBeforeFixtures();
-    expect(upNextLabels()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
+    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
 
-    let mainBefore = fetch.rangeGets().length;
+    let before = counts(fetch);
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
-    expect(fetch.rangeGets().length).toBe(mainBefore + 1);
-    expect(upNextLabels()).toEqual([expect.stringContaining("Sat 15 Aug · All day")]);
+    expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
+    expect(upNextItems()).toEqual([expect.stringContaining("Sat 15 Aug · All day")]);
 
-    mainBefore = fetch.rangeGets().length;
+    before = counts(fetch);
     await click(undoButtons()[0]!);
     await flush(20);
-    expect(fetch.rangeGets().length).toBe(mainBefore + 1);
-    expect(upNextLabels()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
+    expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
+    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
   });
 
-  it("a confirmed Deadline save refreshes the rail, with one main-range refetch", async () => {
+  it("placing an unscheduled item refreshes the rail once", async () => {
+    const { fetch } = checklistServer({ state: "unscheduled", version: 4, zone: "Australia/Sydney", start: null, end: null, due: null } as ChecklistScheduleDto);
+    await renderBeforeFixtures();
+    expect(upNextItems()).toEqual([]);
+
+    const before = counts(fetch);
+    expect(await dropUnscheduled(ID, { start: day("2026-08-20"), dayGranular: true })).toBe(true);
+    await flush(20);
+    expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
+    expect(upNextItems()).toEqual([expect.stringContaining("Thu 20 Aug · All day")]);
+  });
+
+  it("a confirmed Deadline save and its Undo each refresh the rail once; a no-op does not", async () => {
     const { fetch } = deadlineServer("2026-08-12T09:00", 3);
     await renderBeforeFixtures();
-    expect(upNextLabels()).toEqual([expect.stringContaining("Wed 12 Aug · 09:00")]);
+    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · 09:00")]);
 
-    const mainBefore = fetch.rangeGets().length;
-    const railBefore = fetch.upNextGets().length;
+    let before = counts(fetch);
+    expect(await proposeUpdate(DEADLINE_ID, { start: at("2026-08-12T09:00"), allDay: false, granularity: "minute" })).toBe(false);
+    await flush(10);
+    expect(counts(fetch)).toEqual(before);
+
     await proposeUpdate(DEADLINE_ID, { start: at("2026-08-20T09:00"), allDay: false, granularity: "day" });
     await clickTestId("gantt-deadline-confirm-action");
     await flush(20);
-    expect(fetch.rangeGets().length).toBe(mainBefore + 1);
-    expect(fetch.upNextGets().length).toBe(railBefore + 1);
-    expect(upNextLabels()).toEqual([expect.stringContaining("Thu 20 Aug · 09:00")]);
+    expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
+    expect(upNextItems()).toEqual([expect.stringContaining("Thu 20 Aug · 09:00")]);
+
+    before = counts(fetch);
+    await click(undoButtons()[0]!);
+    await flush(20);
+    expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
+    expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · 09:00")]);
+  });
+
+  it("navigating while a save's broadcast is pending skips the settle refetch but still refreshes the rail", async () => {
+    deadlineServer("2026-08-12T09:00", 3);
+    await renderBeforeFixtures();
+    // Hold the in-tab invalidation `invalidateProjectSurfaces` awaits, so a navigation lands between
+    // the commit and the controller's operation-token check.
+    const held: Array<() => void> = [];
+    const request = vi.spyOn(runtime, "requestInvalidation").mockImplementation(() => new Promise<void>((resolve) => { held.push(resolve); }));
+    await proposeUpdate(DEADLINE_ID, { start: at("2026-08-20T09:00"), allDay: false, granularity: "day" });
+    await clickTestId("gantt-deadline-confirm-action");
+    await flush(20);
+    expect(held.length).toBeGreaterThan(0);
+
+    await h.rerender(calendarState("month", "2026-09-12"));
+    request.mockRestore();
+    for (const resume of held) resume();
+    await flush(20);
+    expect(upNextItems()).toEqual([expect.stringContaining("Thu 20 Aug · 09:00")]);
   });
 });

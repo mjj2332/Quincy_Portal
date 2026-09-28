@@ -356,7 +356,7 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
    * refetchAuthoritative). Its in-tab query is NOT invalidated here (that would
    * double-refetch a drag), but its cross-tab broadcast still fires so other tabs converge.
    * The skip covers EVERY in-tab query on the surface's prefix, so a producer that owns more than
-   * one must refetch the rest itself (the event calendar's Up next rail, #295).
+   * one must refresh the rest itself, at commit (the event calendar's Up next rail, #295).
    */
   producer?: "dashboard" | "calendar" | "gantt";
   /**

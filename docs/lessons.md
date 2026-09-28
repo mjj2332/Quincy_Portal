@@ -4114,15 +4114,21 @@ compensating write, ignored the result, and announced "Change undone.". On the G
 `invalidateProjectSurfaces(..., producer: "calendar")` skips in-tab invalidation of every query on
 the `production-calendar` prefix, on the assumption that the producing surface refetches its own
 data. The event calendar owns two such queries — the main range (`bounds=1`) and the Up next rail
-(agenda from today, no `bounds`) — but its port's `refetch` covered only the main one, so the rail
-kept an item's old time after a save or an Undo until its own 30s interval or a remount.
+(agenda from today, no `bounds`) — but only the main one was refetched, so the rail kept an item's
+old time after a save or an Undo until its own 30s interval or a remount.
 
-- **A surface that owns more than one query under its producer prefix refreshes the others through
-  its own port** (`ProductionEventCalendar.tsx` overrides `refetch` to also kick the rail). Narrowing
-  the skip to the producing query's exact key would do nothing without a `ProjectQueryRuntime`
-  (`invalidateProjectSurfaces` returns before `converge`), and changes every producer at once.
-- **Don't await the secondary refetch in the settle path.** The rail sits outside the accept gate
-  and renders its own error state; gating settle on it would let a rail failure put the main
-  surface into recovery.
-- `ProductionEventCalendar-undo.dom.test.tsx` pins it: "now" is faked only during mount (the rail
-  captures it once and drops past events), and `rangeGets()` still grows by exactly one per save.
+- **Refresh the secondary query at commit, from `onCommitted` / `onUndone`, not from the port's
+  `refetch`.** The first fix hung it off `port.refetch`, and review found the hole: the settle
+  refetch runs after the awaited `invalidateProjectSurfaces` and behind an operation-token check,
+  so a navigation during that await skips it. The main range recovers (its key changes); the rail's
+  key does not (its date and subview are fixed), so it stayed stale. The commit hooks fire
+  synchronously before any await, and only for a real save — not for a no-op, a rollback, recovery
+  or a queued cross-tab refetch.
+- **Known gap:** the undecodable-body branches (a write that happened but whose response no decoder
+  accepts) return before either hook, so the rail waits for its interval there.
+- **Don't await the rail refresh.** It sits outside the accept gate and renders its own error state.
+- **Narrowing the skip to the producing key was rejected**: without a `ProjectQueryRuntime`,
+  `invalidateProjectSurfaces` returns before `converge`, and it changes every producer at once.
+- **A "not double-fetched" test needs a live runtime**, or the producer skip never runs and the
+  assertion proves nothing. The #295 block in `ProductionEventCalendar-undo.dom.test.tsx` constructs
+  one and asserts exactly one main-range GET and one rail GET per save; turning the skip off fails it.

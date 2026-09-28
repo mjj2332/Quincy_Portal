@@ -254,17 +254,14 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const calendarPort = useCalendarSchedulingPort(calendar, query, identity.principalId);
   const port = {
     ...calendarPort,
-    // #295: a save's `producer: "calendar"` skips every in-tab `production-calendar` query, and
-    // the settle refetch covers only the main range — so refresh the Up next rail here too. Not
-    // awaited: the rail sits outside any gate and shows its own error state.
-    refetch: () => {
-      void upNextQuery.refetch();
-      return calendarPort.refetch();
-    },
     confirmDeadline: openDeadlineConfirm,
     boundsFor: (projectId: string) => boundsRef.current.get(projectId) ?? null,
   };
-  const commands = useSchedulingControllerWithUndoToast<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss });
+  // #295: a save's `producer: "calendar"` skips every in-tab `production-calendar` query, and the
+  // settle refetch covers only the main range (and is skipped if the user navigates mid-save), so
+  // the rail refreshes at commit. Not awaited: the rail sits outside any gate.
+  const refreshUpNext = () => { void upNextQuery.refetch(); };
+  const commands = useSchedulingControllerWithUndoToast<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: refreshUpNext, onUndone: refreshUpNext });
   const blocked = commands.interactionBlocked;
   const settling = commands.settle.pending;
   const live = !blocked && !settling && !commands.accessLost;
