@@ -87,6 +87,10 @@ describe("ProductionEventCalendarFacets — Layers", () => {
   it("shows a chip per selected layer and emits a canonical payload when one is removed", async () => {
     const onChange = await renderFacets();
     expect(chipIds("event-calendar-layer-")).toEqual(["event-calendar-layer-project", "event-calendar-layer-checklist"]);
+    // Issue #222's copy: the Layers combobox reads "Project deadlines / Checklist tasks".
+    expect(host.querySelector('[data-testid="event-calendar-layer-project"]')?.textContent).toBe("Project deadlines");
+    expect(host.querySelector('[data-testid="event-calendar-layer-checklist"]')?.textContent).toBe("Checklist tasks");
+    expect(host.querySelector('[aria-label="Remove Checklist tasks"]')).not.toBeNull();
     await removeChip("event-calendar-layer-checklist");
     expectCanonical(onChange, { layers: ["project"] });
     expect(chipIds("event-calendar-layer-")).toEqual(["event-calendar-layer-project"]);
@@ -102,7 +106,7 @@ describe("ProductionEventCalendarFacets — Layers", () => {
   it("adds a layer back from the list, in canonical order", async () => {
     const onChange = await renderFacets({ ...defaults, layers: ["checklist"] });
     await openPicker("Add layer");
-    await act(async () => { option("Projects").click(); await Promise.resolve(); });
+    await act(async () => { option("Project deadlines").click(); await Promise.resolve(); });
     expectCanonical(onChange, { layers: ["project", "checklist"] });
   });
 });

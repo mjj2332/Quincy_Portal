@@ -15,6 +15,8 @@
  * `ItemTitle`/`ItemDescription` + `ItemActions`, the c-item status-list composition the Deadline
  * confirm already uses); actions `reui/button` `variant="link"`; the project link
  * `ProjectCalendarAnchor` (InternalLink under the hood). The rail supplies the `reui/scroll-area`.
+ * Section headings are `<h3>` around the installed `quincy/Eyebrow`; row rule colours are the
+ * FullCalendar panel's (`UNSCHEDULED_ROW_KIND` / `UNSCHEDULED_ROW_ATTENTION`).
  */
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type {
@@ -26,6 +28,8 @@ import type {
 import { cn } from "@/lib/utils";
 import { unscheduledChecklistDraggable, unscheduledProjectDraggable, unscheduledStageLabel } from "../lib/production-calendar-unscheduled";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
+import { UNSCHEDULED_ROW_ATTENTION, UNSCHEDULED_ROW_KIND } from "./production-calendar-classes";
+import { Eyebrow } from "./quincy/Eyebrow";
 import { Button } from "./reui/button";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "./reui/item";
 
@@ -50,14 +54,9 @@ export type ProductionEventCalendarUnscheduledListProps = {
 
 const SECTION = "grid gap-[var(--space-2)] min-w-0";
 const SECTION_HEAD = "grid gap-[var(--space-1)]";
-const SECTION_LABEL = "m-0 text-foreground-secondary [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)]";
+const SECTION_HEADING = "m-0";
 const COUNT = "flex flex-wrap gap-x-[var(--space-2)] text-muted-foreground text-[length:var(--text-2xs)]";
-const ROW = "min-w-0 rounded-[var(--radius-card)] bg-background";
-const ROW_KIND: Record<"project" | "checklist", string> = {
-  project: "border-l-[3px] border-l-signal-positive",
-  checklist: "border-l-[3px] border-l-signal-info",
-};
-const ROW_ATTENTION = "border-l-signal-critical bg-[color-mix(in_srgb,var(--signal-critical)_5%,var(--bg-canvas))]";
+const ROW = "min-w-0 rounded-[var(--radius-card)] border-l-[length:var(--border-width-rule)] bg-background";
 const ROW_DRAG = "cursor-grab active:cursor-grabbing touch-none select-none";
 const META = "text-foreground-secondary text-[length:var(--text-2xs)]";
 const ATTENTION_TEXT = "m-0 text-signal-critical text-[length:var(--text-2xs)]";
@@ -108,7 +107,7 @@ function ProjectRow({ entry, actionMode, disabled, beginDrag, onSchedule, projec
       role="listitem"
       variant="outline"
       size="xs"
-      className={cn(ROW, ROW_KIND.project, canDrag && ROW_DRAG)}
+      className={cn(ROW, UNSCHEDULED_ROW_KIND.project, canDrag && ROW_DRAG)}
       data-unscheduled-id={entry.id}
       data-unscheduled-kind="project"
       aria-disabled={!eligible || undefined}
@@ -149,7 +148,7 @@ function ChecklistRow({ entry, actionMode, rangesEnabled, disabled, beginDrag, o
       role="listitem"
       variant="outline"
       size="xs"
-      className={cn(ROW, ROW_KIND.checklist, attention && ROW_ATTENTION, canDrag && ROW_DRAG)}
+      className={cn(ROW, UNSCHEDULED_ROW_KIND.checklist, attention && UNSCHEDULED_ROW_ATTENTION, canDrag && ROW_DRAG)}
       data-unscheduled-id={entry.id}
       data-unscheduled-kind="checklist"
       data-attention={attention ? "true" : undefined}
@@ -175,7 +174,7 @@ function Section({ label, facet, empty, children }: { label: string; facet: Unsc
   return (
     <section className={SECTION} aria-label={label}>
       <header className={SECTION_HEAD}>
-        <h3 className={SECTION_LABEL}>{label}</h3>
+        <h3 className={SECTION_HEADING}><Eyebrow>{label}</Eyebrow></h3>
         <CountLine facet={facet} />
       </header>
       {empty

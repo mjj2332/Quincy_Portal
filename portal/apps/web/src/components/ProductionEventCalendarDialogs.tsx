@@ -26,6 +26,7 @@
 import { useId, useRef, useState, type JSX } from "react";
 import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation, InitialChecklistScheduleInput } from "@quincy/shared";
 import type { SchedulingController } from "../lib/use-scheduling-commands";
+import { useOpenToken } from "../lib/use-open-token";
 import { civilParts, utcOffsetLabel, validCivil } from "./ProductionCalendarMoveDialog";
 import { offsetLabel as foldOffsetLabel } from "./ProductionCalendarFoldChoice";
 import {
@@ -122,13 +123,13 @@ export type ProductionEventCalendarFoldChoiceProps = {
   open: boolean;
   eyebrow?: string;
   endpoint: "start" | "end";
-  choices: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }>;
-  onSubmit: (choice: "earlier" | "later") => void;
+  choices: FoldChoice[];
+  onSubmit: (choice: ProjectDeadlineDisambiguation) => void;
   onCancel: () => void;
 };
 
 export function ProductionEventCalendarFoldChoice({ open, eyebrow, endpoint, choices, onSubmit, onCancel }: ProductionEventCalendarFoldChoiceProps): JSX.Element {
-  const [choice, setChoice] = useState<"earlier" | "later" | undefined>();
+  const [choice, setChoice] = useState<ProjectDeadlineDisambiguation | undefined>();
   const name = useId();
   return (
     <AlertDialog open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
@@ -223,21 +224,6 @@ export type ProductionEventCalendarDialogsProps = {
   rangesEnabled: boolean;
   deadlineConfirm: ProductionEventCalendarDeadlineConfirm | null;
 };
-
-/**
- * Bumps once per null → non-null transition (React's "adjust state while rendering" pattern). A
- * local copy of `ProductionCalendar.tsx` / `ProductionGantt.tsx`'s `useOpenToken`: sharing it would
- * mean editing the Gantt file, which another branch owns.
- */
-function useOpenToken(isOpen: boolean): number {
-  const [token, setToken] = useState(0);
-  const [wasOpen, setWasOpen] = useState(false);
-  if (isOpen !== wasOpen) {
-    setWasOpen(isOpen);
-    if (isOpen) setToken((current) => current + 1);
-  }
-  return token;
-}
 
 export function ProductionEventCalendarDialogs({ commands, rangesEnabled, deadlineConfirm }: ProductionEventCalendarDialogsProps): JSX.Element {
   const { moveDialog, scheduleEditor, checklistFold } = commands;

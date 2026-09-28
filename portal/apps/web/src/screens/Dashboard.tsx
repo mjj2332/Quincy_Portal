@@ -214,6 +214,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // `week` — memoised so the reconciliation effect below sees a stable object, and rewritten in
   // the address bar there.
   const [calendarRenderer] = useState(() => readCalendarRenderer({ read: (key) => window.localStorage.getItem(key) }));
+  // #222: both renderers take the same props; pick one here and render it once below.
+  const CalendarRenderer = calendarRenderer === "event-calendar" ? ProductionEventCalendar : ProductionCalendar;
   const effectiveRouteCalendar = useMemo(() => {
     if (!rawRouteCalendar) return rawRouteCalendar;
     const subview = coerceCalendarSubviewForRenderer(rawRouteCalendar.subview, calendarRenderer);
@@ -1481,31 +1483,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
       {isCalendarView && (
         <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
-          {calendarRenderer === "event-calendar" ? (
-            <ProductionEventCalendar
-              identity={identity}
-              calendar={calendarState && { ...calendarState, search: committedQuery }}
-              onNavigate={(next) => navigateCalendar(next)}
-              onAppliedFilters={reconcileAppliedCalendarFilters}
-              onAcceptGateChange={setCalendarInteractionBlocked}
-              onSettleStateChange={setCalendarSettle}
-              onAccessLoss={handleCalendarAccessLoss}
-              projectHrefFor={projectHrefFor}
-              onOpenProject={openCalendarProject}
-            />
-          ) : (
-            <ProductionCalendar
-              identity={identity}
-              calendar={calendarState && { ...calendarState, search: committedQuery }}
-              onNavigate={(next) => navigateCalendar(next)}
-              onAppliedFilters={reconcileAppliedCalendarFilters}
-              onAcceptGateChange={setCalendarInteractionBlocked}
-              onSettleStateChange={setCalendarSettle}
-              onAccessLoss={handleCalendarAccessLoss}
-              projectHrefFor={projectHrefFor}
-              onOpenProject={openCalendarProject}
-            />
-          )}
+          <CalendarRenderer
+            identity={identity}
+            calendar={calendarState && { ...calendarState, search: committedQuery }}
+            onNavigate={(next) => navigateCalendar(next)}
+            onAppliedFilters={reconcileAppliedCalendarFilters}
+            onAcceptGateChange={setCalendarInteractionBlocked}
+            onSettleStateChange={setCalendarSettle}
+            onAccessLoss={handleCalendarAccessLoss}
+            projectHrefFor={projectHrefFor}
+            onOpenProject={openCalendarProject}
+          />
         </Suspense>
       )}
 

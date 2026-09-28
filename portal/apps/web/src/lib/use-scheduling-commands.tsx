@@ -142,7 +142,8 @@ export type ChecklistProposal = {
    */
   edge?: "start" | "end";
   /** #221: the plan's bounds warnings (`planSchedulingProposal`). Only set when non-empty, and only
-   * the Gantt supplies bounds (`SchedulingPort.boundsFor`) — always absent for the Calendar. */
+   * when the port supplies bounds (`SchedulingPort.boundsFor`): the Gantt and, since #222, the
+   * event-calendar renderer (from its `bounds=1` response) do; the FullCalendar renderer does not. */
   warnings?: SchedulingWarning[];
 };
 export type ChecklistFoldState = {

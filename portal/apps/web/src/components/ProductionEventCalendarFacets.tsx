@@ -5,7 +5,8 @@
  * (`productionCalendarFiltersSchema.parse`, `search` passed through untouched — `q` belongs to the
  * shell search, never a second input here), exactly as the FullCalendar renderer's panel does.
  *
- * - Layers — `reui/combobox` multi-select chips (base-nova `c-combobox` chips composition, as
+ * - Section labels — the installed `quincy/Eyebrow`.
+ * - Layers ("Project deadlines" / "Checklist tasks", issue #222's copy) — `reui/combobox` multi-select chips (base-nova `c-combobox` chips composition, as
  *   `ProjectTeamCombobox.tsx`). At least one layer stays selected: an empty result is refused.
  * - People — `reui/combobox` chips + `reui/avatar` initials, the `ProjectTeamCombobox` chip
  *   presentation (`TEAM_CHIP`), none of its mutations. Options come ONLY from the response's
@@ -28,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/initials";
 import { TEAM_CHIP, TEAM_CHIP_REMOVE_HIT_AREA } from "./ProjectTeamCombobox";
+import { Eyebrow } from "./quincy/Eyebrow";
 import { Avatar, AvatarFallback } from "./reui/avatar";
 import { Button } from "./reui/button";
 import {
@@ -53,13 +55,12 @@ export type ProductionEventCalendarFacetsProps = {
 type LayerOption = { key: ProductionCalendarLayer; label: string };
 type PersonOption = { key: string; name: string; detail: string; unassigned: boolean };
 
-const LAYER_LABELS: Record<ProductionCalendarLayer, string> = { project: "Projects", checklist: "Checklist" };
+const LAYER_LABELS: Record<ProductionCalendarLayer, string> = { project: "Project deadlines", checklist: "Checklist tasks" };
 const LAYER_OPTIONS: LayerOption[] = PRODUCTION_CALENDAR_LAYERS.map((key) => ({ key, label: LAYER_LABELS[key] }));
 const UNASSIGNED_KEY = "unassigned";
 const UNASSIGNED: PersonOption = { key: UNASSIGNED_KEY, name: "Unassigned", detail: "No assignee", unassigned: true };
 
 const SECTION = "grid gap-[var(--space-2)]";
-const SECTION_LABEL = "text-foreground-secondary [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)]";
 const CHIPS_BOX = "w-full rounded-[var(--radius-sm)] max-[721px]:min-h-[44px]";
 const CHIPS_INPUT = "min-w-[6ch] flex-1";
 const HIDDEN_FILTERS = "flex flex-wrap items-center gap-x-[var(--space-2)] text-foreground-secondary text-[length:var(--text-xs)]";
@@ -135,7 +136,7 @@ export function ProductionEventCalendarFacets({ filters, facetPeople, disabled =
   return (
     <div className="grid gap-[var(--space-4)]" data-testid="event-calendar-facets" aria-disabled={disabled || undefined}>
       <section className={SECTION} aria-labelledby={layersLabel}>
-        <span id={layersLabel} className={SECTION_LABEL}>Layers</span>
+        <Eyebrow id={layersLabel}>Layers</Eyebrow>
         <Combobox
           multiple
           disabled={disabled}
@@ -172,7 +173,7 @@ export function ProductionEventCalendarFacets({ filters, facetPeople, disabled =
       </section>
 
       <section className={SECTION} aria-labelledby={peopleLabel}>
-        <span id={peopleLabel} className={SECTION_LABEL}>People</span>
+        <Eyebrow id={peopleLabel}>People</Eyebrow>
         <Combobox
           multiple
           disabled={disabled}

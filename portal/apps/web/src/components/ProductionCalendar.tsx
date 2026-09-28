@@ -35,6 +35,7 @@ import {
   type MoveDialogState,
   type ScheduleEditorState,
 } from "../lib/use-scheduling-commands";
+import { useOpenToken } from "../lib/use-open-token";
 import { ProductionCalendarSurface } from "./ProductionCalendarSurface";
 import { ProductionCalendarToolbar } from "./ProductionCalendarToolbar";
 import { ProductionCalendarEvent } from "./ProductionCalendarEvent";
@@ -121,33 +122,6 @@ function durationNonZero(value: CalendarResizeInfo["startDelta"]): boolean {
   return (value.milliseconds ?? 0) !== 0 || (value.days ?? 0) !== 0 || (value.months ?? 0) !== 0;
 }
 
-/**
- * An identity token for a retained dialog's re-mount `key` (§6.0 retention). Bumps once per
- * null→non-null (`isOpen`) transition, using React's own documented "adjust state while
- * rendering" pattern — conditional `setState` calls made during render, not a ref mutated during
- * render (react.dev/reference/react/useState#storing-information-from-previous-renders).
- *
- * This matters specifically under React 19's concurrent rendering: React may start a render,
- * abandon it before it commits (an interruption, a discarded speculative render), and retry.
- * A ref mutated unconditionally during render carries that abandoned attempt's write forward —
- * the retry then sees an "already open" ref that was never actually committed, and can skip a
- * token bump it should make. `setState` calls made *during* render are a first-class operation
- * React itself owns: calling it re-runs the component synchronously with the updated state
- * *before* anything commits, so an abandoned render's state update can never leak into a later,
- * genuinely different render's decision the way a raw ref write can. It still updates the
- * SAME render's `key=` read (the whole reason the original `useEffect`-based version was wrong,
- * per round 1) — React re-invokes the function body immediately, not on a later tick.
- */
-function useOpenToken(isOpen: boolean): number {
-  const [token, setToken] = useState(0);
-  const [wasOpen, setWasOpen] = useState(false);
-  if (isOpen !== wasOpen) {
-    setWasOpen(isOpen);
-    if (isOpen) setToken((current) => current + 1);
-  }
-  return token;
-}
-
 export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject }: ProductionCalendarProps) {
   const range = useMemo(() => deriveProductionCalendarWindow(calendar.date, calendar.subview), [calendar.date, calendar.subview]);
   const query = useProductionCalendarRange({ identity, calendar, enabled: true });
@@ -213,7 +187,7 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
   // and the `key`, never the live (possibly-null) state.
   const moveDialogRetained = useRef<MoveDialogState | null>(null);
   if (moveDialog) moveDialogRetained.current = moveDialog;
-  // Re-mount key: an open-token (`useOpenToken`, above), not a data value. Bumped once per
+  // Re-mount key: an open-token (`lib/use-open-token.ts`), not a data value. Bumped once per
   // null→non-null transition only, so a fold retry on the *same* open dialog (which sets a new
   // `initialCivil`/`foldChoices` without closing) does not remount and re-seed it — matching
   // today's no-remount behavior — while a fresh open (or a reopen after close) does.
