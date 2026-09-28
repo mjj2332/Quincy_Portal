@@ -47,7 +47,7 @@ export function stagePatternFor(stageKey: ProjectStageKey | null | undefined): S
  * #257: the hatch itself — a `background-image`-only Tailwind arbitrary class, so it layers over
  * whatever tint the bar shell or swatch already paints (`background-color` is untouched). Modelled
  * on the Gantt's own off-day hatch (`gantt-view.tsx`): 135° stripes 2px wide every 6px, drawn from
- * the element's `--gantt-event-color` at 40% so they read clearly while a bar's title stays
+ * the element's `--gantt-event-color` at 30% so they read clearly without competing with the 40% progress fill, while a bar's title stays
  * legible over them. `data-completed:bg-none` drops it on a completed bar, which stays neutral
  * (`gantt-bar.tsx`'s own completed treatment), and `data-milestone:bg-none` on a zero-length bar,
  * whose transparent shell would otherwise paint stripes behind the milestone diamond. No colour literal (gantt-skin guard Detector 3), and
@@ -55,4 +55,4 @@ export function stagePatternFor(stageKey: ProjectStageKey | null | undefined): S
  * defined in `styles/` (the design-system guard would read it as a phantom token).
  */
 export const STAGE_HATCH_CLASS =
-  "bg-[repeating-linear-gradient(135deg,transparent,transparent_4px,color-mix(in_oklab,var(--gantt-event-color)_40%,transparent)_4px,color-mix(in_oklab,var(--gantt-event-color)_40%,transparent)_6px)] data-completed:bg-none data-milestone:bg-none";
+  "bg-[repeating-linear-gradient(135deg,transparent,transparent_4px,color-mix(in_oklab,var(--gantt-event-color)_30%,transparent)_4px,color-mix(in_oklab,var(--gantt-event-color)_30%,transparent)_6px)] data-completed:bg-none data-milestone:bg-none";

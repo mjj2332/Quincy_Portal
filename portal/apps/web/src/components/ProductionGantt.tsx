@@ -438,7 +438,7 @@ function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRende
        */}
       <span className="truncate font-medium group-data-[label-outside]/gantt-bar-group:hidden">{occurrence.event.title}</span>
       {timeLabel && (
-        <span data-testid="gantt-event-time" className="text-muted-foreground hidden truncate @[8rem]:inline group-data-[label-outside]/gantt-bar-group:hidden">
+        <span data-testid="gantt-event-time" className="text-foreground-secondary hidden truncate @[8rem]:inline group-data-[label-outside]/gantt-bar-group:hidden">
           {timeLabel}
         </span>
       )}

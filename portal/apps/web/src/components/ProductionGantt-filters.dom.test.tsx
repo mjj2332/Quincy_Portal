@@ -19,7 +19,6 @@ import { ApiError } from "../lib/api";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 import { ProductionGantt } from "./ProductionGantt";
-import { STAGE_HATCH_CLASS } from "../lib/stage-colors";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -381,12 +380,10 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     // `text-muted-foreground` (greige-400) read too faint beside the swatches at 11px.
     expect(tokens(legend)).toContain("text-foreground-secondary");
     expect(tokens(legend)).not.toContain("text-muted-foreground");
-    const hatchTokens = STAGE_HATCH_CLASS.split(/\s+/);
     const hatched = [...legend.querySelectorAll("[data-stage-key]")].filter((entry) => {
       const swatch = entry.querySelector('[data-testid="stage-swatch"]');
       expect(swatch, entry.getAttribute("data-stage-key")!).not.toBeNull();
-      const swatchTokens = tokens(swatch!);
-      return hatchTokens.every((token) => swatchTokens.includes(token));
+      return swatch!.getAttribute("data-pattern") === "hatch";
     });
     expect(hatched.map((entry) => entry.getAttribute("data-stage-key"))).toEqual(["edited_review"]);
   });
