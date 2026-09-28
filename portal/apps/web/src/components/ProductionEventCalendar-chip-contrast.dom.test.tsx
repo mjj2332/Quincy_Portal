@@ -257,6 +257,17 @@ describe("Production chip contrast through the real vendored calendar", () => {
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
+  it("a chip selected in week is not drawn selected once the view switches to the read-only agenda", async () => {
+    await renderView("week");
+    const [weekChip] = chipsFor("project-deadline:project", "week");
+    await act(async () => { weekChip!.click(); await Promise.resolve(); });
+    expect(chipsFor("project-deadline:project", "week")[0]!.hasAttribute("data-selected"), "the week click did not select the chip").toBe(true);
+    await renderView("agenda");
+    const rows = chipsFor("project-deadline:project", "agenda");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.hasAttribute("data-selected"), "an agenda row carries data-selected").toBe(false);
+  });
+
   it("the resolver fails the pre-fix Deadline classes it replaced", () => {
     // Selected, grid: the old consumer class plus the vendor's surviving selected wash.
     const selected = contrastFailures(
