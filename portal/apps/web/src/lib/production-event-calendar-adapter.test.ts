@@ -179,16 +179,81 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
   // dot's `data-slot` (DEADLINE_AGENDA_DOT) and the chip's `data-view` (DEADLINE_AGENDA_HOVER). If a
   // re-vendor renames either, those selectors silently stop matching and every rendered test still
   // passes; this reads the vendored source, as event-calendar-skin.guard.test.ts does, and notices.
+
+  /**
+   * Strip JS/TSX comments so markup quoted in prose cannot satisfy — or break — any assertion.
+   * Block comments (which cover JSX `{/* … }` comments too) and `// …` line comments; a quoted
+   * string or template literal is copied through untouched, so a `//` inside one (a URL) is not a
+   * comment.
+   */
+  function stripTsComments(source: string): string {
+    let out = "";
+    let i = 0;
+    while (i < source.length) {
+      const char = source[i]!;
+      const next = source[i + 1];
+      if (char === "/" && next === "*") {
+        const close = source.indexOf("*/", i + 2);
+        i = close === -1 ? source.length : close + 2;
+      } else if (char === "/" && next === "/") {
+        const newline = source.indexOf("\n", i + 2);
+        i = newline === -1 ? source.length : newline;
+      } else if (char === '"' || char === "'" || char === "`") {
+        let j = i + 1;
+        while (j < source.length && source[j] !== char) j += source[j] === "\\" ? 2 : 1;
+        out += source.slice(i, j + 1);
+        i = j + 1;
+      } else {
+        out += char;
+        i += 1;
+      }
+    }
+    return out;
+  }
+
+  /** Every way `source` (comments stripped) no longer carries what the Deadline class targets. */
+  function vendoredPinFailures(source: string): string[] {
+    const code = stripTsComments(source);
+    const failures: string[] = [];
+    const slot = /\[data-slot=([\w-]+)\]/.exec(DEADLINE_AGENDA_DOT)?.[1];
+    if (!slot) return ["DEADLINE_AGENDA_DOT names no data-slot"];
+    const dot = new RegExp(`data-slot="${slot}"[^>]*?className="([^"]*)"`).exec(code);
+    if (!dot) failures.push(`the vendored chip no longer authors data-slot="${slot}"`);
+    else if (!dot[1]!.split(/\s+/).includes("bg-(--ec-event-color)")) failures.push("the vendored agenda dot no longer paints --ec-event-color");
+    const [, attribute, value] = /^data-\[([\w-]+)=([\w-]+)\]:/.exec(DEADLINE_AGENDA_HOVER) ?? [];
+    if (!attribute) return [...failures, "DEADLINE_AGENDA_HOVER names no data-* attribute"];
+    if (!new RegExp(`"data-${attribute}":\\s*view,`).test(code)) failures.push(`the vendored chip no longer sets "data-${attribute}": view`);
+    if (!code.includes(`view === "${value}"`)) failures.push(`the vendored chip no longer has a "${value}" view`);
+    return failures;
+  }
+
   it("the vendored chip still authors the agenda dot and data-view the Deadline class targets", () => {
     const vendored = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../components/reui/event-calendar/event-calendar-event.tsx"), "utf8");
-    const slot = /\[data-slot=([\w-]+)\]/.exec(DEADLINE_AGENDA_DOT)?.[1];
-    expect(slot, "DEADLINE_AGENDA_DOT names no data-slot").toBeDefined();
-    const dot = new RegExp(`data-slot="${slot}"[^>]*?className="([^"]*)"`).exec(vendored);
-    expect(dot, `the vendored chip no longer authors data-slot="${slot}"`).not.toBeNull();
-    expect(dot![1]!.split(/\s+/), "the vendored agenda dot no longer paints --ec-event-color").toContain("bg-(--ec-event-color)");
-    const [, attribute, value] = /^data-\[([\w-]+)=([\w-]+)\]:/.exec(DEADLINE_AGENDA_HOVER) ?? [];
-    expect(attribute, "DEADLINE_AGENDA_HOVER names no data-* attribute").toBeDefined();
-    expect(vendored, `the vendored chip no longer sets "data-${attribute}": view`).toMatch(new RegExp(`"data-${attribute}":\\s*view,`));
-    expect(vendored, `the vendored chip no longer has a "${value}" view`).toContain(`view === "${value}"`);
+    const failures = vendoredPinFailures(vendored);
+    expect(failures, failures.join("\n")).toEqual([]);
+    // Every QUINCY note in that file is a comment, so none survives a stripper that stayed in step
+    // with the file's strings from start to end.
+    expect(stripTsComments(vendored)).not.toContain("QUINCY");
+  });
+
+  it("the vendored-source pin ignores markup that survives only in comments", () => {
+    const fixture = [
+      'const url = "https://example.test/a//b"; // a URL string is not a comment',
+      "const agendaDefaultContent = (",
+      "  <>",
+      '    {/* <span aria-hidden data-slot="event-calendar-agenda-dot" className="size-2 shrink-0 rounded-full bg-(--ec-event-color)" /> */}',
+      '    <span aria-hidden data-slot="event-calendar-agenda-badge" className="size-2 shrink-0 rounded-full bg-(--ec-event-color)" />',
+      "  </>",
+      ")",
+      "const defaultProps = {",
+      '  // "data-view": view,',
+      '  "data-kind": view,',
+      "}",
+      'const agenda = view === "agenda"',
+    ].join("\n");
+    const failures = vendoredPinFailures(fixture);
+    expect(failures).toContain('the vendored chip no longer authors data-slot="event-calendar-agenda-dot"');
+    expect(failures).toContain('the vendored chip no longer sets "data-view": view');
+    expect(stripTsComments(fixture)).toContain('"https://example.test/a//b"');
   });
 });
