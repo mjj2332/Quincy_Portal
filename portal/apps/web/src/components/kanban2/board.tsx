@@ -455,7 +455,7 @@ export function ProjectKanbanBoard2({
         <ScrollAreaPrimitive.Viewport
           data-slot="scroll-area-viewport"
           data-testid="kanban2-scroll-viewport"
-          className="w-full outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-[var(--focus-ring)] focus-visible:outline-offset-[-2px]"
+          className="w-full focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="w-max min-w-full">
             <div
