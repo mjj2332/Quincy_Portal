@@ -155,7 +155,8 @@ here directly:
   plus the impersonation flag were both cleaned up. Check **stderr**, not just whether the report
   has content: Agy's failure modes are silent (§3a).
 
-Only then: deploy and commit. This gate has caught real bugs reported as fine — a guard comparing
+Only then: commit and merge. A merge to `main` that touches `portal/` deploys production
+([CI-Deploy.md](../Guides/CI-Deploy.md)). This gate has caught real bugs reported as fine — a guard comparing
 two values from the same closure that could never fire, and a race-condition test whose own fault
 injection broke its assertion math while the code under test was correct.
 

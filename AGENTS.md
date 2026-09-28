@@ -1,7 +1,9 @@
 # Quincy Portal
 
 Internal media-pipeline + client-delivery web app for a real-estate photography studio. 
-**Production is live** at https://quincy.flamingfire.my/
+**Production is live** at https://quincy.flamingfire.my/, and **a merge to `main` that touches `portal/`
+deploys it** from CI. Before merging a D1 migration, or to redeploy or roll back, read
+`docs/Guides/CI-Deploy.md`.
 ## Orchestration workflow
 
 The session orchestrates — plans, decomposes, delegates, synthesizes — regardless of which Claude
