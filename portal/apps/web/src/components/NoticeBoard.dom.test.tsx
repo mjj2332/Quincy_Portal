@@ -318,6 +318,31 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(apiPatchMock).not.toHaveBeenCalled();
   });
 
+  it("hides Edit/Delete on the post being edited, keeps them on other posts, and restores them on Cancel", async () => {
+    apiGetMock.mockResolvedValue({ posts: [{ ...newPost, authorId: "user-a" }, oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    // located by author name (A = oldPost, B = newPost), which stays rendered while the body is being edited
+    const postFor = (id: string) => [...host.querySelectorAll<HTMLElement>('[data-slot="notice-board-post"]')]
+      .find((article) => article.querySelector("header span")?.textContent === (id === oldPost.id ? oldPost.authorName : newPost.authorName))!;
+    const buttonsIn = (article: HTMLElement) => [...article.querySelectorAll<HTMLButtonElement>("button")].map((button) => button.textContent);
+    await click(postFor(oldPost.id).querySelector('[data-slot="notice-board-edit"]')!);
+    const editing = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"]')!.closest<HTMLElement>('[data-slot="notice-board-post"]')!;
+    expect(editing.querySelector('[data-slot="notice-board-edit"]')).toBeNull();
+    expect(editing.querySelector('[data-slot="notice-board-delete"]')).toBeNull();
+    expect(buttonsIn(editing)).toEqual(expect.arrayContaining(["Cancel", "Save"]));
+    // the other authored post keeps its own actions
+    expect(postFor(newPost.id).querySelector('[data-slot="notice-board-edit"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-slot="notice-board-edit"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-slot="notice-board-delete"]')).toHaveLength(1);
+    await click([...editing.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
+    const restored = postFor(oldPost.id);
+    expect(restored.querySelector('[data-slot="notice-board-edit"]')).not.toBeNull();
+    expect(restored.querySelector('[data-slot="notice-board-delete"]')).not.toBeNull();
+    expect(buttonsIn(restored)).not.toContain("Save");
+    expect(host.querySelectorAll('[data-slot="notice-board-edit"]')).toHaveLength(2);
+  });
+
   it("renders rich lists and safe external links", async () => {
     const formatted: NoticeBoardPost = {
       ...oldPost,

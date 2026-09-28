@@ -205,7 +205,9 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
                concatenation — no `cn()`, so no twMerge — which is fine here: `mt-` conflicts with nothing
                in `.rich-text`. */
             : <RichTextContent content={post.content} className="mt-[var(--space-2)] max-w-[var(--container-sm)]" />}
-          {post.authorId === currentUserId && (
+          {/* Hidden while this post is being edited: the composer's Cancel/Save replace them, so Edit
+              is never offered mid-edit and Delete never sits beside Save. */}
+          {post.authorId === currentUserId && editingId !== post.id && (
             <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)] max-w-[var(--container-sm)]">
               <button type="button" className={EDIT_ACTION} data-slot="notice-board-edit" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button>
               <button type="button" className={DELETE_ACTION} data-slot="notice-board-delete" onClick={() => void deletePost(post.id)}>Delete</button>
