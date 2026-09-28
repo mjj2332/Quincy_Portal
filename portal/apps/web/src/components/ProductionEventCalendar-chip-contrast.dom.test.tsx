@@ -13,10 +13,13 @@
  *
  * WHAT IS MEASURED. Every element inside the chip (the chip included) that owns a non-empty text
  * node: its surviving `text-*` colour utility, inherited from the nearest ancestor within the chip
- * when it has none, against the chip's effective fill for each state over each paper ground (in the
- * agenda, where a row is never selected, rest and hover only). An element with its own opaque fill
- * (the assignee avatar) is measured against that fill instead. Known failures that are NOT this chip's to fix sit in `CONTRAST_BASELINE`, keyed narrowly; the
- * baseline may only shrink, and Deadline chips may never appear in it.
+ * when it has none, and resolved through any custom-property re-scope on the chip or an ancestor
+ * within it (the Deadline's dark-surface `--muted-foreground`). It is measured against the chip's
+ * effective fill for each state over each paper ground (in the agenda, where a row is never
+ * selected, rest and hover only). An element with its own opaque fill (the assignee avatar) is
+ * measured against that fill instead. Known failures that are NOT this chip's to fix sit in
+ * `CONTRAST_BASELINE`, keyed narrowly; the baseline may only shrink, and Deadline chips may never
+ * appear in it.
  *
  * happy-dom computes no real colour, so the resolver models the cascade from the class list (the
  * rules are spelled out in `effectiveBackgrounds`) and composites alpha in sRGB — an approximation
@@ -170,15 +173,34 @@ function descriptorOf(el: HTMLElement, chip: HTMLElement): string {
 }
 
 /**
+ * Custom-property re-scopes (`[--muted-foreground:var(--greige-300)]`) on the chip and on the
+ * element's ancestors within it, nearer overriding farther — how a role like
+ * `text-muted-foreground` (`color: var(--muted-foreground)`) resolves at that element.
+ */
+function scopedExtra(el: HTMLElement, chip: HTMLElement, base: Map<string, string>): Map<string, string> {
+  const chain: HTMLElement[] = [];
+  for (let at: HTMLElement | null = el; at; at = at === chip ? null : at.parentElement) chain.unshift(at);
+  const extra = new Map(base);
+  for (const at of chain) {
+    for (const token of classesOf(at)) {
+      const match = /^\[(--[\w-]+):(var\(--[\w-]+\))\]$/.exec(token);
+      if (match) extra.set(match[1]!, match[2]!);
+    }
+  }
+  return extra;
+}
+
+/**
  * Every element in the chip that owns a non-empty text node. Text colour: its own surviving
  * `text-*` colour utility, else the nearest ancestor's within the chip. Own fill: the nearest
  * unprefixed `bg-*` on it or an ancestor BELOW the chip (the chip's fill is per state, resolved
  * separately).
  */
-function textElements(chip: HTMLElement, extra: Map<string, string>): TextElement[] {
+function textElements(chip: HTMLElement, base: Map<string, string>): TextElement[] {
   const out: TextElement[] = [];
   for (const el of [chip, ...chip.querySelectorAll<HTMLElement>("*")]) {
     if (![...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim())) continue;
+    const extra = scopedExtra(el, chip, base);
     let text: Paint | null = null;
     let ownFill: Paint | null = null;
     for (let at: HTMLElement | null = el; at; at = at === chip ? null : at.parentElement) {
@@ -237,24 +259,42 @@ const CONTRAST_BASELINE: Record<string, string> = {
   "done checklist × agenda × span.text-muted-foreground.w-40.shrink-0": "--text-muted on the done wash: 2.86–3.16:1 rest, 3.13:1 hover — follow-up",
 };
 
-/** Selected must read as selected: a ring that contrasts ≥ 3:1 with the selected fill, or a different fill. */
+/**
+ * Selected must read as selected, two ways:
+ *   1. against the chip: a selected keyline that contrasts ≥ 3:1 with the selected fill, or a
+ *      different fill;
+ *   2. against the PAGE: the outermost selected keyline contrasts ≥ 3:1 with `--paper-050`. A
+ *      paper-only ring touching the chip edge passes (1) and merges into the page, so the chip only
+ *      looks smaller — the Deadline's first selected look.
+ * Keylines: `data-selected:inset-ring-(--x)`, and `data-selected:inset-shadow-[0_0_0_Npx_var(--x)]`,
+ * which Tailwind composes FIRST in `box-shadow` and so paints on top, at the edge.
+ */
 function selectionIndistinct(label: string, className: string, view: View, eventColor: string | null): string[] {
   const extra = extraFor(eventColor);
   const classes = className.split(/\s+/).filter(Boolean);
   const backgrounds = effectiveBackgrounds(classes, view, extra);
   let ring: Paint | null = null;
+  let shadow: Paint | null = null;
   for (const token of classes) {
-    const match = /^data-selected:inset-ring-\((--[\w-]+)\)(?:\/(\d+))?$/.exec(token);
-    if (match) ring = { rgb: resolveVar(match[1]!, extra), alpha: match[2] ? Number(match[2]) / 100 : 1 };
+    const ringMatch = /^data-selected:inset-ring-\((--[\w-]+)\)(?:\/(\d+))?$/.exec(token);
+    if (ringMatch) ring = { rgb: resolveVar(ringMatch[1]!, extra), alpha: ringMatch[2] ? Number(ringMatch[2]) / 100 : 1 };
+    const shadowMatch = /^data-selected:inset-shadow-\[0_0_0_\d+px_var\((--[\w-]+)\)\]$/.exec(token);
+    if (shadowMatch) shadow = { rgb: resolveVar(shadowMatch[1]!, extra), alpha: 1 };
   }
+  const keylines = [shadow, ring].filter((paint): paint is Paint => paint !== null);
+  const outermost = keylines[0] ?? null;
+  const page = resolveVar("--paper-050", extra);
   const failures: string[] = [];
+  if (!outermost || contrast(over(outermost, page), page) < 3) {
+    failures.push(`${label} × ${view}: no selected keyline visible against the page (--paper-050)${outermost ? ` — ${contrast(over(outermost, page), page).toFixed(2)}:1` : ""}`);
+  }
   for (const groundName of GROUNDS) {
     const ground = resolveVar(groundName, extra);
     const rest = backgrounds.rest ? over(backgrounds.rest, ground) : ground;
     const selected = backgrounds.selected ? over(backgrounds.selected, ground) : ground;
-    const ringOk = ring !== null && contrast(over(ring, selected), selected) >= 3;
+    const keylineOk = keylines.some((keyline) => contrast(over(keyline, selected), selected) >= 3);
     const fillDiffers = rest.some((c, i) => Math.abs(c - selected[i]!) > 1e-6);
-    if (!ringOk && !fillDiffers) failures.push(`${label} × ${view} × ${groundName}: selected looks exactly like rest`);
+    if (!keylineOk && !fillDiffers) failures.push(`${label} × ${view} × ${groundName}: selected looks exactly like rest`);
   }
   return failures;
 }
@@ -386,5 +426,22 @@ describe("Production chip contrast through the real vendored calendar", () => {
 
   it("the distinctness check fails a selected state that only repeats rest", () => {
     expect(selectionIndistinct("fake", "bg-(--ink-900) text-(--paper-050) data-selected:bg-(--ink-900)", "week", null)).not.toEqual([]);
+  });
+
+  it("the page-visibility check fails the previous paper-only Deadline ring and passes the double keyline", () => {
+    const paperOnly = selectionIndistinct(
+      "previous Deadline",
+      "bg-(--ink-900) text-(--paper-050) data-selected:bg-(--ink-900) data-selected:inset-ring-2 data-selected:inset-ring-(--paper-050)",
+      "week",
+      null,
+    );
+    expect(paperOnly.some((failure) => failure.includes("visible against the page")), paperOnly.join("\n")).toBe(true);
+    const doubleKeyline = selectionIndistinct(
+      "Deadline",
+      "bg-(--ink-900) text-(--paper-050) data-selected:bg-(--ink-900) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]",
+      "week",
+      null,
+    );
+    expect(doubleKeyline).toEqual([]);
   });
 });

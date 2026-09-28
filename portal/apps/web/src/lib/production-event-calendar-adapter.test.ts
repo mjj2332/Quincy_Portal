@@ -128,7 +128,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.scrollToHour).toBe(8);
   });
 
-  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; a selected Deadline holds its ink with a paper ring", () => {
+  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; a selected Deadline holds its ink inside a double keyline", () => {
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
     const paper = productionEventCalendarEventClassName(range.data)!;
     expect(paper).toContain("data-selected:bg-(--ink-700)/10");
@@ -137,9 +137,10 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(productionEventCalendarEventClassName(done.data)).toContain("data-selected:bg-(--ink-700)/10");
     const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data)!;
     expect(deadline).toBe(
-      "bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900) " +
-        "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-800) data-selected:inset-ring-2 data-selected:inset-ring-(--paper-050) " +
-        "data-[view=agenda]:hover:bg-(--ink-800)",
+      "bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) " +
+        "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) " +
+        "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)] data-[view=agenda]:hover:bg-(--ink-700) " +
+        "[--muted-foreground:var(--greige-300)]",
     );
   });
 
