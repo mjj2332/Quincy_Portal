@@ -10,6 +10,13 @@ import { ProjectKanbanBoard2 } from "./board";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 
+// happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
+// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dnd = vi.hoisted(() => ({

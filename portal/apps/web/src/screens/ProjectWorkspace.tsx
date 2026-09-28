@@ -57,6 +57,10 @@ export function computeBulkDeleteOutcome(assetIds: string[], results: PromiseSet
   return { succeededIds: [...succeededSet], failedIds, dropboxCleanupWarnings };
 }
 
+// Loading, unavailable and error states span the full width like the ready workspace (`.work`);
+// the collaboration-only views keep the capped `.page` frame. page-frame.guard.test.ts pins the split.
+const FULL_PAGE = "page page--full";
+
 type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; collaborationOpenSignal?: number; onCollaborationOpenSignalConsumed?: (signal: number) => void };
 type TerminalState = { projectId: string; scope: "principal" | "project"; message: string };
 type AccessFailureResource = "detail" | "activity" | "assets" | "comments" | "comment-read-marker" | "nested-comment" | "collaboration-summary";
@@ -324,7 +328,7 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   if (!projectId || viewState === "unavailable") return <UnavailableProject message={currentTerminal?.message ?? "Project unavailable."} />;
   if (viewState === "collaboration-only") return <CollaborationOnlyView projectId={projectId} onAccessFailure={accessFailure} />;
   if (viewState === "collaboration-unavailable") return <CollaborationOnlyUnavailable />;
-  if (initialDetailProbe) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
+  if (initialDetailProbe) return <main className={FULL_PAGE}><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
   return <>
     <ProjectWorkspaceQueryOwner projectId={projectId} role={role ?? "photographer"} run={run} activeTab={activeTab} collectionDenied={collectionDenied} workspaceReady={workspaceReady} collaborationUnavailable={collaborationUnavailable} canViewEdited={canViewEdited} canAdminBackend={canAdminBackend} onDetailReady={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); startCompanionBatch(ownerRun); }} onDetailStage={(ownerRun, stageKey) => { if (ownerRun !== runRef.current) return; setStageKeyForManual(stageKey); }} onQueryReady={(ownerRun, defaultEdited) => { if (ownerRun !== runRef.current) return; setQueryReadyFor(ownerRun); if (defaultEdited && initialTabHandledRef.current !== ownerRun) { initialTabHandledRef.current = ownerRun; setActiveTab("edited"); } }} onAccessFailure={accessFailure} onCollectionDenied={(kind) => { setCollectionDenied((current) => current.has(kind) ? current : new Set(current).add(kind)); if (activeTab === kind) setActiveTab(kind === "raw" && canViewEdited ? "edited" : "raw"); }} activeTabChange={setActiveTab} openAssetId={openAssetId} setOpenAssetId={setOpenAssetId} lightboxOrderIds={lightboxOrderIds} setLightboxOrderIds={setLightboxOrderIds} ingest={ingest} jobs={jobs} autohdrStatus={autohdrStatus} isSyncing={isSyncing} isSending={isSending} onSyncDropbox={() => void syncDropbox()} onSendToAutoHdr={() => void sendToAutoHdr()} onRetryAutoHdr={(jobId) => void retryAutoHdr(jobId)} onUploadComplete={onUploadComplete} onDocumentsChanged={onDocumentsChanged} onLinksChanged={onLinksChanged} onInvalidate={invalidate} onRefreshDetail={forceDetailRead} canReadCollection={canReadCollection} />
     {viewState === "full-workspace" && (collaborationUnavailable ? <CollaborationOnlyUnavailable /> : <ProjectCollaborationPanel projectId={projectId} openSignal={collaborationOpenSignal} onOpenSignalConsumed={onCollaborationOpenSignalConsumed} onAccessFailure={accessFailure} />)}
@@ -358,7 +362,7 @@ function CollaborationOnlyUnavailable() {
   return <main className="page grid gap-[var(--space-5)]" data-testid="project-collaboration-only"><div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">Project collaboration</h1></div><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div><section className="grid content-start p-[var(--space-5)] bg-card [border-style:solid] border-[length:var(--border-width-hair)] border-border" aria-label="Project collaboration"><EmptyState tone="error" title="Collaboration unavailable.">This project discussion is no longer available.</EmptyState></section></main>;
 }
 
-function UnavailableProject({ message }: { message: string }) { return <main className="page"><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div></main>; }
+function UnavailableProject({ message }: { message: string }) { return <main className={FULL_PAGE}><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div></main>; }
 
 type QueryOwnerProps = {
   projectId: string; role: Role; run: number; activeTab: CollectionKind; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;
@@ -381,7 +385,7 @@ function ProjectWorkspaceQueryOwner(props: QueryOwnerProps) {
   const initialCollaborationProbe = !detail.data && detail.error instanceof ApiError && detail.error.status === 403;
   if ((detailClassification?.scope === "principal" || detailClassification?.scope === "project") && !initialCollaborationProbe) return <UnavailableProject message={detail.error instanceof Error ? detail.error.message : "Project unavailable."} />;
   if (collaborationClassification?.scope === "principal" || collaborationClassification?.scope === "project") return <UnavailableProject message={collaborationSummary.error instanceof Error ? collaborationSummary.error.message : "Project unavailable."} />;
-  if (!detail.data) return <main className="page"><div className="empty">{detail.error && !initialCollaborationProbe ? <><span className="serif">Project data could not be loaded.</span><div role="alert">{detail.error.message}</div><button className={buttonClasses()} type="button" onClick={() => void detail.refetch()}>Retry</button></> : <><span className="serif">Loading project.</span>Preparing the workspace.</>}</div></main>;
+  if (!detail.data) return <main className={FULL_PAGE}><div className="empty">{detail.error && !initialCollaborationProbe ? <><span className="serif">Project data could not be loaded.</span><div role="alert">{detail.error.message}</div><button className={buttonClasses()} type="button" onClick={() => void detail.refetch()}>Retry</button></> : <><span className="serif">Loading project.</span>Preparing the workspace.</>}</div></main>;
   if (props.collectionDenied.size > 0 && props.collectionDenied.has(props.activeTab)) return <WorkspaceBody detail={detail.data} detailReady={detail.isSuccess} assets={[]} rawAssets={[]} assetsPending={false} {...props} />;
   return <ActiveAssetsObserver detail={detail.data} detailReady={detail.isSuccess} {...props} />;
 }
@@ -395,7 +399,7 @@ function ActiveAssetsObserver(props: ActiveAssetsProps) {
   useEffect(() => { if (!assetsQuery.error) return; if (classification?.scope === "collection") props.onCollectionDenied(props.activeTab); else props.onAccessFailure(assetsQuery.error, "assets", props.activeTab, !assetsQuery.data); }, [assetsQuery.error, assetsQuery.data, classification, props]);
   const assets = projectAssetsForRender(assetsQuery.data, assetsQuery.error, props.activeTab);
   if (classification?.scope === "principal" || classification?.scope === "project") return <UnavailableProject message={assetsQuery.error instanceof Error ? assetsQuery.error.message : "Project unavailable."} />;
-  if (!props.workspaceReady) return <main className="page"><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
+  if (!props.workspaceReady) return <main className={FULL_PAGE}><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>;
   if (props.activeTab !== "raw") return <NonRawWorkspaceBody {...props} assets={assets} assetsPending={assetsQuery.isPending && !assetsQuery.data} />;
   return <WorkspaceBody {...props} assets={assets} rawAssets={assets} assetsPending={assetsQuery.isPending && !assetsQuery.data} />;
 }

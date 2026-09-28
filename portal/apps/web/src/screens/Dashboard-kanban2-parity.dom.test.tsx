@@ -18,6 +18,13 @@ import { createDashboardBoardInvalidatedMessage, ProjectQueryRuntime, ProjectQue
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { ApiError } from "../lib/api";
 
+// happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
+// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
+
 // Captures the `DndContext` props the vendored ReUI Kanban renders, so a drop can be driven without
 // a real pointer. Same technique as `Dashboard-stage-interactions.dom.test.tsx` and
 // `components/kanban2/board.dom.test.tsx`; ReUI's Kanban resolves the move from its own internal
