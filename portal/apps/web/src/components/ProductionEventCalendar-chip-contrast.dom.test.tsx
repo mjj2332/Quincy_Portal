@@ -215,6 +215,7 @@ const response = adminProductionCalendarRangeResponseSchema.parse({
 const CHIPS = [
   { id: "project-deadline:project", label: "Deadline" },
   { id: "checklist:active", label: "active checklist" },
+  { id: "checklist:done", label: "done checklist" },
 ] as const;
 const VIEWS: View[] = ["week", "month", "agenda"];
 

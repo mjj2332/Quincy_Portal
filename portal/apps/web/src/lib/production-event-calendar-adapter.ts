@@ -203,7 +203,7 @@ const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-800)";
 export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
   if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER}`;
-  if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-muted-foreground ${CHECKLIST_SELECTED}`;
+  if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-foreground-secondary ${CHECKLIST_SELECTED}`;
   return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }
 

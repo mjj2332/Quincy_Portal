@@ -93,7 +93,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(range.data.done).toBe(false);
     const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
     expect(done.data.done).toBe(true);
-    expect(productionEventCalendarEventClassName(done.data)).toContain("text-muted-foreground");
+    expect(productionEventCalendarEventClassName(done.data)).toContain("text-foreground-secondary");
   });
 
   it("carries assignee initials for checklist items and none for Deadlines", () => {
