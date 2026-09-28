@@ -4032,3 +4032,31 @@ could select it any more, so the promised per-browser opt-out would not exist.
   and passed every `<=` ceiling. Before trusting a pinned count after a renderer change, assert that the
   renderer actually drew. Give each renderer its own derived count (FullCalendar 2, event calendar 4:
   identity × StrictMode replay per query).
+
+## A stale lazy chunk after a deploy took down the whole shell; every `lazy()` view needs a boundary (#292, 2026-09-28)
+
+**Symptom:** a tab left open across a deploy (or a rollback) switched to the Gantt or Calendar and the
+entire app shell was replaced by TanStack's error screen: rail, header and view switcher all gone.
+
+**Cause:** the old tab asked for the old hashed chunk (`ProductionGantt-<oldhash>.js`). That file no
+longer exists, and the asset layer's SPA fallback answered with `200 text/html` (index.html), so the
+dynamic `import()` rejected — `Failed to fetch dynamically imported module` in Chromium, `Importing a
+module script failed` in Safari, `error loading dynamically imported module` in Firefox. React `lazy`
+caches that rejection, and so does the browser's module map, so retrying the import in place cannot
+recover; only a full reload fetches the new index.html and its new hashes. With no error boundary
+around the lazy view, the rejection climbed to TanStack's global CatchBoundary, which replaced the shell.
+
+**Fix:** `components/ViewLoadBoundary.tsx` wraps each lazy view in `screens/Dashboard.tsx`, outside its
+`<Suspense>`. A chunk-load error (`lib/chunk-load-error.ts`) shows a caution notice — "The Portal was
+updated. Reload to open the …" — with a Reload button; any other error shows the error empty state
+with the same button. The switcher stays usable, leaving the view unmounts (resets) the boundary, and
+returning shows the notice again because the rejection is cached. The boundary does not swallow the
+error: React 19's default `onCaughtError` still logs it.
+
+- **Rule: every `lazy()` view sits inside a `ViewLoadBoundary`.**
+- **Recovery is a user-initiated reload, never an automatic one** (no `vite:preloadError` listener, no
+  reload-on-error). There is no global write-in-flight signal — scheduling writes are raw
+  `apiPut`/`apiPatch` — so an automatic reload could discard a write the user just made.
+- `Dashboard-view-load-error.dom.test.tsx` pins it through the real lazy path: the mocked module's
+  export is a getter that throws the chunk-load `TypeError`, so the Dashboard's own
+  `import(...).then(...)` rejects.
