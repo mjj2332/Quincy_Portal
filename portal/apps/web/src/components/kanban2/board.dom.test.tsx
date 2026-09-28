@@ -243,6 +243,22 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(root!.getAttribute("aria-label")).toBe("Project pipeline board");
   });
 
+  // Full-width Dashboard: columns cap at 360px, left-aligned, and the root shrinks to its columns
+  // (`w-fit max-w-full`) so leftover width never paints the `bg-border` track background as a grey
+  // slab. `overflow-x-auto` keeps horizontal scrolling once the columns exceed the available width.
+  it("caps column tracks at 360px and sizes the Board root to its columns", async () => {
+    await renderBoard();
+    const root = host.querySelector('[data-focus-key="board"]');
+    expect(root, "no Board root rendered — the assertions below would be vacuous").not.toBeNull();
+    const classes = [...root!.classList];
+    for (const token of ["w-fit", "max-w-full", "overflow-x-auto"]) expect(classes).toContain(token);
+    expect(classes.filter((token) => token.includes("auto-cols-")).sort()).toEqual([
+      "auto-cols-[minmax(244px,360px)]",
+      "max-[641px]:auto-cols-[minmax(252px,360px)]",
+      "pointer-coarse:auto-cols-[minmax(252px,360px)]",
+    ]);
+  });
+
   it("renders the Admin ghost star row on an unset Project, reaching the coordinator on commit (#81)", async () => {
     const props = await renderBoard({ canPrioritize: true });
     const cardGroup = host.querySelector('[role="radiogroup"]');

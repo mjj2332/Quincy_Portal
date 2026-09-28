@@ -433,7 +433,7 @@ export function ProjectKanbanBoard2({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
       accessibility={accessibility}
-      className="kanban2 grid grid-flow-col auto-cols-[minmax(244px,1fr)] max-[641px]:auto-cols-[minmax(252px,1fr)] pointer-coarse:auto-cols-[minmax(252px,1fr)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
+      className="kanban2 grid grid-flow-col w-fit max-w-full auto-cols-[minmax(244px,360px)] max-[641px]:auto-cols-[minmax(252px,360px)] pointer-coarse:auto-cols-[minmax(252px,360px)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
       aria-label="Project pipeline board"
       // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
       // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
