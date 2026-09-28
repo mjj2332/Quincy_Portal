@@ -206,7 +206,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
                in `.rich-text`. */
             : <RichTextContent content={post.content} className="mt-[var(--space-2)] max-w-[72ch]" />}
           {post.authorId === currentUserId && (
-            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)]">
+            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)] max-w-[72ch]">
               <button type="button" className={EDIT_ACTION} data-slot="notice-board-edit" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button>
               <button type="button" className={DELETE_ACTION} data-slot="notice-board-delete" onClick={() => void deletePost(post.id)}>Delete</button>
             </div>

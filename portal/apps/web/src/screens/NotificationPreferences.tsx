@@ -7,8 +7,9 @@ import { cn } from "@/lib/utils";
 
 type NotificationPreferencesValue = { projectDeadlineReminderEmails: boolean };
 
-// The page frame. `.page` is unlayered app.css (max-width 1480px), so the narrower measure this
-// single-column screen wants must be `!`-prefixed to beat it — same device as Admin.tsx:431.
+// The page frame. `.page` is unlayered app.css (capped at `--container-page`, 1480px), so the
+// narrower measure this single-column screen wants must be `!`-prefixed to beat it — same device as
+// Admin.tsx:431.
 const PAGE = "page !max-w-[var(--container-md)]";
 
 // The page head, matched to the app's shipped pattern (Admin.tsx:432-437).

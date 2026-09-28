@@ -6,17 +6,21 @@
  * (16px) at ≤720px. The Dashboard and ProjectWorkspace's loading/unavailable/error states are full
  * width; every other `.page` stays capped. This guard pins:
  *
- *   (a) `--container-page` is defined in `tokens/spacing.css`, and the `.page` rule reads it with no
- *       px `max-width` literal;
+ *   (a) `--container-page` is declared exactly once in `tokens/spacing.css`, as a px length in a
+ *       top-level `:root` rule (not inside `@media` or on any other selector), and the `.page` rule
+ *       reads it with no px `max-width` literal;
  *   (b) `.page--full`'s declarations exactly, after `.page` (equal specificity, so source order is
  *       what lets its `padding-inline` beat the `padding` shorthand), and the ≤720 override exactly,
  *       after the phone `.page` rule in the same `@media (max-width: 720px)` block;
- *   (c) a split manifest: per non-test `.tsx` under `src`, how many className string literals and
- *       `const` string initialisers carry the full frame (`page page--full`) vs the capped frame
- *       (`page` alone). An unlisted file using either class, or a count mismatch, fails.
+ *   (c) a split manifest: per non-test `.tsx` under `src`, how many className string literals,
+ *       `const` string initialisers and `cn(…)`/`clsx(…)`/`twMerge(…)` calls inside a className
+ *       expression carry the full frame (`page page--full`) vs the capped frame (`page` alone). An
+ *       unlisted file using either class, or a count mismatch, fails.
  *
- * Blind spot, by design: (c) reads only `className="…"`, `className={"…"}`, `` className={`…`} ``
- * and `const X = "…"` literals. A frame class passed through `cn("page", …)` is not counted.
+ * Blind spot, by design: (c) reads only `className="…"`, `className={"…"}`, `` className={`…`} ``,
+ * `const X = "…"` literals, and the string-literal arguments of a `cn`/`clsx`/`twMerge` call written
+ * inside `className={…}`. A frame class reaching className any other way (a ternary of bare
+ * literals, `const X = cn("page")`, a prop) is not counted.
  *
  * Per `docs/lessons.md` — "a grep gate that cannot fail is not a gate" — every detector is a pure
  * function over injected text, proven against planted fixtures that must fail, alongside the real
@@ -104,10 +108,21 @@ function show(declarations: Declaration[]): string {
 // ---------------------------------------------------------------------------------------------
 
 export function findContainerTokenErrors(spacingCss: string): string[] {
-  const defined = parseCssRules(spacingCss).some((rule) =>
-    rule.declarations.some(([p, v]) => p === "--container-page" && /^\d+px$/.test(v)),
+  const declarations = parseCssRules(spacingCss).flatMap((rule) =>
+    rule.declarations.filter(([p]) => p === "--container-page").map(([, v]) => ({ rule, value: v })),
   );
-  return defined ? [] : ["tokens/spacing.css must define `--container-page` as a px length."];
+  const [only] = declarations;
+  if (declarations.length !== 1 || !only) {
+    return [`tokens/spacing.css must declare \`--container-page\` exactly once; found ${declarations.length}.`];
+  }
+  const errors: string[] = [];
+  if (only.rule.ancestors.length !== 0 || only.rule.selector !== ":root") {
+    errors.push(
+      `\`--container-page\` must be declared in a top-level \`:root\` rule; found in \`${only.rule.selector}\` under ${JSON.stringify(only.rule.ancestors)}.`,
+    );
+  }
+  if (!/^\d+px$/.test(only.value)) errors.push(`\`--container-page\` must be a px length; found \`${only.value}\`.`);
+  return errors;
 }
 
 export function findPageCapErrors(appCss: string): string[] {
@@ -177,22 +192,58 @@ export type FrameCounts = { full: number; capped: number };
 const CLASS_NAME_LITERAL = /\bclassName\s*=\s*(?:\{\s*)?(["'`])((?:(?!\1)[\s\S])*)\1/g;
 const CONST_LITERAL = /\bconst\s+[A-Za-z_$][\w$]*\s*=\s*(["'`])((?:(?!\1)[\s\S])*)\1/g;
 
-/** Counts className/const string literals carrying the page frame class. A literal with `page--full`
- * is a full frame; `page` without it is capped; `page--full` without `page` has no frame at all
- * and is reported as an error. */
+const CLASS_NAME_EXPRESSION = /\bclassName\s*=\s*\{/g;
+const CLASS_MERGE_CALL = /\b(?:cn|clsx|twMerge)\s*\(/g;
+const STRING_LITERAL = /(["'`])((?:(?!\1)[\s\S])*)\1/g;
+
+/** The text between the opener at `open` (`{` or `(`) and its matching closer. */
+function balancedBody(source: string, open: number): string {
+  const opener = source[open];
+  const closer = opener === "{" ? "}" : ")";
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === opener) depth++;
+    else if (source[i] === closer && --depth === 0) return source.slice(open + 1, i);
+  }
+  return source.slice(open + 1);
+}
+
+/** The class tokens of one literal; a template literal's `${…}` holes are dropped. */
+function literalTokens(quote: string | undefined, body: string): string[] {
+  return (quote === "`" ? body.replace(/\$\{[^}]*\}/g, " ") : body).split(/\s+/);
+}
+
+/** Every class-token set to classify: each className/const literal on its own, and each
+ * `cn`/`clsx`/`twMerge` call inside a `className={…}` expression as the union of its string-literal
+ * arguments (a nested merge call is folded into its outermost call). */
+function frameTokenSets(source: string): string[][] {
+  const sets: string[][] = [];
+  for (const pattern of [CLASS_NAME_LITERAL, CONST_LITERAL]) {
+    for (const [, quote, body = ""] of source.matchAll(pattern)) sets.push(literalTokens(quote, body));
+  }
+  for (const expression of source.matchAll(CLASS_NAME_EXPRESSION)) {
+    const text = balancedBody(source, expression.index + expression[0].length - 1);
+    const call = new RegExp(CLASS_MERGE_CALL);
+    for (let match = call.exec(text); match; match = call.exec(text)) {
+      const args = balancedBody(text, match.index + match[0].length - 1);
+      sets.push([...args.matchAll(STRING_LITERAL)].flatMap(([, quote, body = ""]) => literalTokens(quote, body)));
+      call.lastIndex = match.index + match[0].length + args.length + 1;
+    }
+  }
+  return sets;
+}
+
+/** Counts className/const string literals, and className merge calls, carrying the page frame
+ * class. A set with `page--full` is a full frame; `page` without it is capped; `page--full` without
+ * `page` has no frame at all and is reported as an error. */
 export function countFrameClasses(source: string): FrameCounts & { orphans: number } {
   const counts = { full: 0, capped: 0, orphans: 0 };
-  for (const pattern of [CLASS_NAME_LITERAL, CONST_LITERAL]) {
-    for (const match of source.matchAll(pattern)) {
-      const [, quote, body = ""] = match;
-      const text = quote === "`" ? body.replace(/\$\{[^}]*\}/g, " ") : body;
-      const tokens = text.split(/\s+/);
-      const hasPage = tokens.includes("page");
-      const hasFull = tokens.includes("page--full");
-      if (hasFull && hasPage) counts.full++;
-      else if (hasFull) counts.orphans++;
-      else if (hasPage) counts.capped++;
-    }
+  for (const tokens of frameTokenSets(source)) {
+    const hasPage = tokens.includes("page");
+    const hasFull = tokens.includes("page--full");
+    if (hasFull && hasPage) counts.full++;
+    else if (hasFull) counts.orphans++;
+    else if (hasPage) counts.capped++;
   }
   return counts;
 }
@@ -267,6 +318,21 @@ describe("page frame detectors (planted fixtures)", () => {
   it("(a) fail on a missing token and on a px cap", () => {
     expect(findContainerTokenErrors(":root { --container-xl: 1320px; }")).not.toEqual([]);
     expect(findContainerTokenErrors("/* --container-page: 1480px; */ :root { --x: 1px; }")).not.toEqual([]);
+    expect(findContainerTokenErrors(":root { --container-page: var(--container-xl); }")).not.toEqual([]);
+  });
+
+  it("(a) fail when --container-page is not a single top-level :root declaration", () => {
+    const planted = [
+      // Only inside a media query.
+      ":root { --container-xl: 1320px; }\n@media (max-width: 720px) { :root { --container-page: 1480px; } }",
+      // On another selector.
+      ":root { --container-xl: 1320px; }\n.foo { --container-page: 1480px; }",
+      // Twice: the top-level one plus a media override.
+      ":root { --container-page: 1480px; }\n@media (max-width: 720px) { :root { --container-page: 1200px; } }",
+      // Twice at top level.
+      ":root { --container-page: 1480px; }\n:root { --container-page: 1400px; }",
+    ];
+    for (const css of planted) expect(findContainerTokenErrors(css)).not.toEqual([]);
     expect(findPageCapErrors(GOOD_CSS.replace("max-width: var(--container-page)", "max-width: 1480px"))).not.toEqual([]);
     expect(findPageCapErrors(GOOD_CSS.replace("max-width: var(--container-page); ", ""))).not.toEqual([]);
   });
@@ -310,6 +376,9 @@ describe("page frame detectors (planted fixtures)", () => {
       `const LABEL = "pagehead page-title";`,
       `if (scale === "page") return null;`,
       `type Scale = "panel" | "page";`,
+    `<div className={cn("pagehead", x)} />`,
+    `<div className={cn(active && "page-x", "grid")} />`,
+    `const merged = cn("grid", "gap-2");`,
     ].join("\n");
     expect(countFrameClasses(falsePositives)).toEqual({ full: 0, capped: 0, orphans: 0 });
 
@@ -320,6 +389,17 @@ describe("page frame detectors (planted fixtures)", () => {
     expect(countFrameClasses(`<main className={"page grid"}>`)).toEqual({ full: 0, capped: 1, orphans: 0 });
     expect(countFrameClasses("<main className={`page ${x}`}>")).toEqual({ full: 0, capped: 1, orphans: 0 });
     expect(countFrameClasses(`<main className="page--full">`)).toEqual({ full: 0, capped: 0, orphans: 1 });
+  });
+
+  it("(c) count frame classes passed through cn/clsx/twMerge in a className expression", () => {
+    expect(countFrameClasses(`<main className={cn("page", "page--full")}>`)).toEqual({ full: 1, capped: 0, orphans: 0 });
+    expect(countFrameClasses(`<main className={cn("page", x)}>`)).toEqual({ full: 0, capped: 1, orphans: 0 });
+    expect(countFrameClasses(`<main className={clsx("page", wide && "page--full")}>`)).toEqual({ full: 1, capped: 0, orphans: 0 });
+    expect(countFrameClasses(`<main className={twMerge("page grid", x)}>`)).toEqual({ full: 0, capped: 1, orphans: 0 });
+    expect(countFrameClasses(`<main className={cn("page", cn("page--full", y))}>`)).toEqual({ full: 1, capped: 0, orphans: 0 });
+    expect(countFrameClasses(`<main className={cn("grid", "page--full")}>`)).toEqual({ full: 0, capped: 0, orphans: 1 });
+    // A multi-line call in a real-file shape.
+    expect(countFrameClasses(`<main\n  className={cn(\n    "page",\n    { x: y },\n  )}\n>`)).toEqual({ full: 0, capped: 1, orphans: 0 });
   });
 
   it("(c) fail on an unlisted file, a count mismatch, an orphan and a stale entry", () => {

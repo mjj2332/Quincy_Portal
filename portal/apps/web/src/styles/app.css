@@ -466,6 +466,9 @@ button { font-family: var(--font-sans); }
 /* empty states */
 .empty { padding: var(--space-9) var(--space-6); text-align: center; color: var(--text-secondary); }
 .empty .serif { font: var(--type-h2); color: var(--text-secondary); display: block; margin-bottom: var(--space-3); }
+/* In the full-width frame the frame stays edge to edge, but an `.empty` message keeps a readable
+   measure: the block is capped and centred (it has no border or fill, so only the text moves). */
+.page--full .empty { max-width: var(--container-md); margin-inline: auto; }
 
 /* animations */
 @keyframes fade { from { opacity: 0; } }
