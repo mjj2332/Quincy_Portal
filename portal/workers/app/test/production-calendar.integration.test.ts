@@ -416,6 +416,72 @@ describe("TB5C production Calendar range endpoint", () => {
     if (dateRange?.kind === "checklist") expect(dateRange.timing).toMatchObject({ allDay: true, start: "2026-08-26", end: "2026-08-28" });
   });
 
+  it("#222: serves the day and days subviews over the same bounded window and echoes them back", async () => {
+    const dayRange = "start=2026-08-27&end=2026-08-28&date=2026-08-27&sub=day&scope=active&layers=project,checklist&q=Boundary";
+    const day = await adminCalendar(`/api/production-calendar?${dayRange}`);
+    expect(day.range).toMatchObject({ start: "2026-08-27", end: "2026-08-28", date: "2026-08-27", subview: "day" });
+    // a day window returns exactly what the same one-day agenda window returns
+    const agenda = await adminCalendar(`/api/production-calendar?${dayRange.replace("sub=day", "sub=agenda")}`);
+    expect(day.events.map((event) => event.id).sort()).toEqual(agenda.events.map((event) => event.id).sort());
+
+    const days = await adminCalendar("/api/production-calendar?start=2026-08-27&end=2026-08-30&date=2026-08-27&sub=days&scope=active&layers=project,checklist");
+    expect(days.range.subview).toBe("days");
+
+    const unknown = await request("/api/production-calendar?start=2026-08-27&end=2026-08-28&date=2026-08-27&sub=year&scope=active&layers=project", tokens.admin);
+    expect(unknown.status).toBe(400);
+  });
+
+  it("#222: bounds=1 adds access-scoped project bounds; without it the key is absent", async () => {
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-08-20' WHERE id = ?").bind(memberProjectId).run();
+    await database.DB.prepare("UPDATE projects SET shoot_date = 'Tuesday arvo' WHERE id = ?").bind(editorOnlyProjectId).run();
+    const referenced = (body: { events: Array<{ project: { id: string } }>; unscheduled: Array<{ project: { id: string } }> }) =>
+      new Set([...body.events, ...body.unscheduled].map((item) => item.project.id));
+
+    // Without the param (every old bundle): the key is absent from the JSON, not merely undefined.
+    const plain = await (await request(`/api/production-calendar?${range}`, tokens.admin)).json() as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(plain, "projectBounds")).toBe(false);
+
+    const admin = await adminCalendar(`/api/production-calendar?${range}&bounds=1`);
+    expect(admin.projectBounds).toBeDefined();
+    const adminIds = referenced(admin);
+    expect(admin.projectBounds!.every((bound) => adminIds.has(bound.projectId))).toBe(true);
+    expect(new Set(admin.projectBounds!.map((bound) => bound.projectId))).toEqual(adminIds);
+    expect(admin.projectBounds!.find((bound) => bound.projectId === memberProjectId)).toEqual({ projectId: memberProjectId, shootDate: "2026-08-20", deadlineLocalCivil: "2026-08-27T09:00" });
+    // a non-canonical free-text shoot date is not a bound; a project with no deadline has none
+    expect(admin.projectBounds!.find((bound) => bound.projectId === editorOnlyProjectId)).toEqual({ projectId: editorOnlyProjectId, shootDate: null, deadlineLocalCivil: null });
+    // the rest of the response is unchanged by the param
+    expect({ ...admin, projectBounds: undefined }).toEqual({ ...adminProductionCalendarRangeResponseSchema.parse(plain), projectBounds: undefined });
+
+    // External: only projects already in the External response
+    const external = EXTERNAL_API_RESPONSE_SCHEMAS.calendar.parse(await (await request(`/api/production-calendar?${range}&bounds=1`, tokens.external)).json());
+    const externalIds = referenced(external);
+    expect(external.projectBounds!.length).toBeGreaterThan(0);
+    expect(external.projectBounds!.every((bound) => externalIds.has(bound.projectId))).toBe(true);
+    expect(external.projectBounds!.some((bound) => bound.projectId === editorOnlyProjectId)).toBe(false);
+
+    for (const bad of ["bounds=0", "bounds=true", "bounds=", "bounds=1&bounds=1"]) {
+      const response = await request(`/api/production-calendar?${range}&${bad}`, tokens.admin);
+      expect(response.status, bad).toBe(400);
+    }
+  });
+
+  it("#222: bounds=1 adds exactly one more read, access-scoped like the other two", async () => {
+    const url = `https://portal.test/api/production-calendar?${range}&bounds=1`;
+    const allStatements: string[] = [];
+    const fakeDb = { prepare(sql: string) { return { bind() { return { all: async () => { allStatements.push(sql); return { results: [] }; } }; } }; } };
+    const context = {
+      req: { url, query: () => Object.fromEntries(new URL(url).searchParams.entries()) },
+      env: { DB: fakeDb },
+      get: (key: string) => key === "user" ? { id: adminId, role: "admin" } : undefined,
+      json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }),
+    } as unknown as Context<AppEnv>;
+    const response = await productionCalendarHandler(context);
+    expect(response.status).toBe(200);
+    expect(allStatements).toHaveLength(3);
+    expect(allStatements.every((sql) => sql.includes("authorized_projects_base"))).toBe(true);
+    expect(await response.json()).toMatchObject({ projectBounds: [] });
+  });
+
   it("sanitizes inaccessible Editor IDs, keeps partial validity, and applies checklist assignees independently of project membership", async () => {
     const fakeId = "80777777-7777-4777-8777-777777777777";
     const noFilter = await adminCalendar(`/api/production-calendar?${range}&q=Calendar`);

@@ -95,6 +95,16 @@
  *    `date-fns` import gained `differenceInMinutes` and `format`, and the drag hook's returned
  *    object gained `beginAdjust` (its gated wrapper around `beginKeyboardAdjust`).
  *    Cover: `event-calendar-keyboard.test.ts`, `event-calendar-keyboard-adjust.dom.test.tsx`.
+ * 7. 2026-09-28, #222 — ADDED, additive (no `"deferred"` returned leaves every announcement
+ *    unchanged; a field nobody reads changes nothing). (1) Both commit sites test
+ *    `applyProposedUpdate`'s new `"deferred"` answer BEFORE their truthiness checks: the pointer
+ *    commit returns without announcing; the keyboard commit ends the session through `finish(null,
+ *    false)` — `finish` now takes a nullable message and skips `announce` for null — keeps the
+ *    followed view like a real commit, and still refocuses the chip. (2) Every proposal this file
+ *    builds carries `granularity`: the pointer preview (handed to `canDropEvent`) from
+ *    `proposal.dayGranular`, the pointer commit from `drag.proposedDayGranular`, the keyboard
+ *    `toUpdate` from the same expression its `proposedDayGranular` already used.
+ *    Cover: `event-calendar-deferred.dom.test.tsx`.
  */
 import { useCallback, useEffect, useMemo } from "react"
 import {
@@ -804,6 +814,7 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       occurrence: occurrence!,
       ...proposal,
       source: kind as "drag" | "resize-start" | "resize-end",
+      granularity: proposal.dayGranular ? "day" : "minute",
     }
     if (kind === "move") update.source = "drag"
     const valid = settings.canDropEvent ? settings.canDropEvent(update) : true
@@ -1050,7 +1061,11 @@ function beginGesture<TData>(config: BeginGestureConfig<TData>) {
       resourceId: drag.proposedResourceId,
       source:
         kind === "move" ? "drag" : (kind as "resize-start" | "resize-end"),
+      granularity: drag.proposedDayGranular ? "day" : "minute",
     })
+    // QUINCY (#222): accept-and-defer - the consumer owns what happens next (and speaks for it).
+    // Must precede the truthiness check below: "deferred" is a truthy string.
+    if (accepted === "deferred") return
     // the polite live region is the only feedback a screen-reader user gets
     // that the drop landed, and on what; a vetoed commit stays silent
     if (accepted && announcer) {
@@ -1552,6 +1567,9 @@ function beginKeyboardAdjust<TData>(
     return parts.join(", ")
   }
 
+  const isDayGranular = (w: AdjustWindow) =>
+    geometry === "month" || geometry === "day-bar" || w.allDay
+
   const toUpdate = (w: AdjustWindow): EventCalendarProposedUpdate<TData> => ({
     event: occurrence.event,
     occurrence,
@@ -1560,6 +1578,7 @@ function beginKeyboardAdjust<TData>(
     allDay: w.allDay,
     resourceId: w.resourceId,
     source: "keyboard",
+    granularity: isDayGranular(w) ? "day" : "minute",
   })
 
   /** Returns the title of the range the view turned to, when this preview had to follow. */
@@ -1571,7 +1590,7 @@ function beginKeyboardAdjust<TData>(
       proposedStart: current.start,
       proposedEnd: current.end,
       proposedAllDay: current.allDay,
-      proposedDayGranular: geometry === "month" || geometry === "day-bar" || current.allDay,
+      proposedDayGranular: isDayGranular(current),
       proposedResourceId: current.resourceId,
       valid,
       keyboard: true,
@@ -1602,7 +1621,8 @@ function beginKeyboardAdjust<TData>(
 
   let finished = false
   let unsubscribe: (() => void) | null = null
-  const finish = (message: string, restoreView: boolean) => {
+  // QUINCY (#222): a null message ends the session silently (a deferred commit - the consumer speaks next)
+  const finish = (message: string | null, restoreView: boolean) => {
     if (finished) return
     finished = true
     activeGestureCancels.delete(onCalendarTeardown)
@@ -1612,7 +1632,7 @@ function beginKeyboardAdjust<TData>(
     unsubscribe?.()
     internals.setDrag(null)
     if (restoreView && followed) api.goTo(originDate)
-    announce(message)
+    if (message !== null) announce(message)
   }
   /**
    * After the commit/cancel re-render: the event's chip may be a different element now. It may
@@ -1684,7 +1704,11 @@ function beginKeyboardAdjust<TData>(
     unsubscribe?.()
     unsubscribe = null
     const accepted = internals.applyProposedUpdate(toUpdate(current))
-    if (accepted) {
+    // QUINCY (#222): accept-and-defer - no announcement (the consumer speaks next), keep the
+    // followed view like a real commit. Must precede the truthiness check: "deferred" is truthy.
+    if (accepted === "deferred") {
+      finish(null, false)
+    } else if (accepted) {
       finish(labels.committed(occurrence.event.title, describe(current)), false)
     } else {
       finish(labels.rejected, true)

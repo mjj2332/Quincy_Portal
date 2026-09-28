@@ -142,7 +142,8 @@ export type ChecklistProposal = {
    */
   edge?: "start" | "end";
   /** #221: the plan's bounds warnings (`planSchedulingProposal`). Only set when non-empty, and only
-   * the Gantt supplies bounds (`SchedulingPort.boundsFor`) — always absent for the Calendar. */
+   * when the port supplies bounds (`SchedulingPort.boundsFor`): the Gantt and, since #222, the
+   * event-calendar renderer (from its `bounds=1` response) do; the FullCalendar renderer does not. */
   warnings?: SchedulingWarning[];
 };
 export type ChecklistFoldState = {
@@ -590,7 +591,12 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         ? document.querySelector<HTMLElement>('.button[data-focus-key="calendar-recovery"]') ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-recovery"]')
         : focusKey ? document.querySelector<HTMLElement>(`[data-focus-key="${focusKey}"]`) : null;
       const eventElement = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === descriptor.eventId);
-      (byKey ?? eventElement)?.focus();
+      // #222: the FullCalendar card is itself focusable (`tabIndex={-1}`) and is focused as before.
+      // The event-calendar renderer tags its chip CONTENT; the focusable element is the vendor's chip
+      // `<button>` around it (whose own `data-ec-*` attributes are vendor-internal —
+      // `event-calendar-skin.guard.test.ts`, detector 9).
+      const eventTarget = eventElement && !eventElement.matches("button, [tabindex]") ? eventElement.closest<HTMLElement>("button") ?? eventElement : eventElement;
+      (byKey ?? eventTarget)?.focus();
     }, 0);
   }, []);
 

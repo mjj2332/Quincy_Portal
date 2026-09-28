@@ -1,6 +1,7 @@
 import { useId, useState, type JSX } from "react";
 import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
+import { utcOffsetLabel } from "../lib/sydney-time-labels";
 
 export type ProductionCalendarFoldChoiceProps = {
   open: boolean;
@@ -11,12 +12,6 @@ export type ProductionCalendarFoldChoiceProps = {
   onSubmit: (choice: "earlier" | "later") => void;
   onCancel: () => void;
 };
-
-function offsetLabel(minutes: number): string {
-  const sign = minutes < 0 ? "−" : "+";
-  const absolute = Math.abs(minutes);
-  return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
-}
 
 export function ProductionCalendarFoldChoice({ open, title = "Choose Sydney time", eyebrow, endpoint, choices, onSubmit, onCancel }: ProductionCalendarFoldChoiceProps): JSX.Element {
   const [choice, setChoice] = useState<"earlier" | "later" | undefined>();
@@ -29,7 +24,7 @@ export function ProductionCalendarFoldChoice({ open, title = "Choose Sydney time
       <legend>{endpoint === "start" ? "Start" : "End"} occurs twice in Sydney</legend>
       {choices.map((item) => <label key={item.disambiguation}>
         <input aria-label={`${endpoint} ${item.disambiguation} occurrence`} type="radio" name={name} value={item.disambiguation} checked={choice === item.disambiguation} onChange={() => setChoice(item.disambiguation)} />
-        {item.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({offsetLabel(item.utcOffsetMinutes)})
+        {item.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({utcOffsetLabel(item.utcOffsetMinutes)})
       </label>)}
     </fieldset>
   </Modal>;

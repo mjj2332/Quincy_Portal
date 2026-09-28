@@ -3,7 +3,8 @@
  * were byte-identical (or near-identical) across ProductionCalendarEvent.tsx,
  * ProductionCalendarUnscheduledPanel.tsx, ProductionCalendarToolbar.tsx,
  * ProductionCalendarFilters.tsx, ProductionCalendar.tsx, ProductionCalendarMoveDialog.tsx,
- * ProductionCalendarScheduleEditor.tsx and screens/Dashboard.tsx. This module keeps one copy so a
+ * ProductionCalendarScheduleEditor.tsx, ProductionEventCalendarUnscheduledList.tsx (#222) and
+ * screens/Dashboard.tsx. This module keeps one copy so a
  * metric change does not have to be made in several places at once.
  */
 
@@ -43,3 +44,14 @@ export const CALENDAR_STATE_BOX = "min-h-[180px] grid place-content-center gap-[
 // coarse-pointer half of the 44px floor that several calendar dialogs layer on top of it.
 export const FIELD_COMPACT =
   "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+
+// Unscheduled rows' left-rule colour by kind, and the needs-attention override, shared by the
+// FullCalendar renderer's ProductionCalendarUnscheduledPanel.tsx and the event-calendar renderer's
+// ProductionEventCalendarUnscheduledList.tsx (#222). Colour only: each row carries its own rule width.
+export const UNSCHEDULED_ROW_KIND: Record<"project" | "checklist", string> = {
+  project: "border-l-signal-positive",
+  checklist: "border-l-signal-info",
+};
+
+export const UNSCHEDULED_ROW_ATTENTION =
+  "border-l-signal-critical bg-[color-mix(in_srgb,var(--signal-critical)_5%,var(--bg-canvas))]";

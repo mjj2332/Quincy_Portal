@@ -2,10 +2,10 @@ import { buttonClasses } from "./quincy/Button";
 import { SEGMENT_GROUP, SEGMENT_BUTTON } from "./quincy/segment";
 import { COARSE_TAP_TARGET } from "./production-calendar-classes";
 import { cn } from "@/lib/utils";
+import { productionCalendarZoneLabel, type SydneyCalendarRange } from "../lib/sydney-time-labels";
 import {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
-  resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
   type DashboardCalendarState,
   type ProductionCalendarSubview,
@@ -32,7 +32,7 @@ const TOOLBAR_BUTTON = COARSE_TAP_TARGET;
 // `.qc-cal-toolbar__views button { min-width: 72px }`, and `flex: 1` under 720px.
 const TOOLBAR_VIEW_BUTTON = "min-w-[72px] max-[721px]:flex-1";
 
-type CalendarRange = { start: string; end: string };
+type CalendarRange = SydneyCalendarRange;
 
 export type ProductionCalendarToolbarProps = {
   calendar: DashboardCalendarState;
@@ -71,20 +71,6 @@ function todayFor(now: Date | number | string): string {
   const value = formatSydneyCivilMinute(now instanceof Date ? now.getTime() : now).slice(0, 10);
   if (!isSydneyCalendarDate(value)) throw new RangeError("Could not resolve Sydney today.");
   return value;
-}
-
-function zoneAbbreviation(range: CalendarRange): string {
-  const endDay = shiftSydneyCalendarDate(range.end, -1);
-  if (!endDay.ok) return "Sydney time";
-  const start = resolveSydneyCivilMinute(`${range.start}T12:00`);
-  const end = resolveSydneyCivilMinute(`${endDay.value}T12:00`);
-  const names = [start, end].flatMap((value) => value.ok ? [value.value.utcOffsetMinutes === 600 ? "AEST" : value.value.utcOffsetMinutes === 660 ? "AEDT" : `UTC${value.value.utcOffsetMinutes >= 0 ? "+" : ""}${value.value.utcOffsetMinutes / 60}`] : []);
-  if (names.length === 0) return "Sydney time";
-  return new Set(names).size === 1 ? names[0]! : "AEST/AEDT";
-}
-
-export function productionCalendarZoneLabel(range: CalendarRange): string {
-  return `Sydney time · ${zoneAbbreviation(range)}`;
 }
 
 function periodLabel(calendar: DashboardCalendarState, range: CalendarRange): string {

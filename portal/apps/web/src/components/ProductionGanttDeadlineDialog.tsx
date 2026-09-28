@@ -43,7 +43,11 @@ export type ProductionGanttDeadlineConfirmState = {
   /** Placing a Deadline that was not set: "Schedule" copy instead of "Move". */
   scheduling: boolean;
   consequences: ProjectDeadlineReminderConsequence[];
-  preview: DeadlineEffectsPreview;
+  /**
+   * #222: optional. `null`/absent hides the affected list, the clashes and the truncation caveat —
+   * the event-calendar renderer confirms a Deadline without loaded checklist rows to preview.
+   */
+  preview?: DeadlineEffectsPreview | null;
 };
 
 export type ProductionGanttDeadlineDialogProps = {
@@ -72,8 +76,8 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve, finalFoc
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const { preview } = state;
   const verb = state.scheduling ? "Schedule" : "Move";
-  const startClashes = preview.clashes.filter((clash) => clash.kind === "deadline-before-start");
-  const subtaskClashCount = preview.clashes.filter((clash) => clash.kind === "subtask-after-deadline").length;
+  const startClashes = preview?.clashes.filter((clash) => clash.kind === "deadline-before-start") ?? [];
+  const subtaskClashCount = preview?.clashes.filter((clash) => clash.kind === "subtask-after-deadline").length ?? 0;
   const hasClashes = startClashes.length > 0 || subtaskClashCount > 0;
 
   return (
@@ -100,7 +104,7 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve, finalFoc
           <AlertDialogDescription className="sr-only" data-testid="gantt-deadline-confirm-description">{state.street}</AlertDialogDescription>
         </AlertDialogHeader>
         <ProductionCalendarMoveConfirmation street={state.street} oldCivil={state.oldCivil} newCivil={state.newCivil} consequences={state.consequences} showStreet={false} />
-        {preview.affected.length > 0 && (
+        {preview && preview.affected.length > 0 && (
           <section className={SECTION} aria-label="Affected checklist items" data-testid="gantt-deadline-confirm-affected">
             <h3 className={SECTION_HEADING}><Eyebrow>Affected checklist items</Eyebrow></h3>
             <ItemGroup className="gap-[var(--space-1)]">
@@ -127,7 +131,7 @@ export function ProductionGanttDeadlineDialog({ open, state, onResolve, finalFoc
             {subtaskClashCount > 0 && <p className="m-0">{pluralItems(subtaskClashCount)} would end after the deadline.</p>}
           </Notice>
         )}
-        {preview.truncated && (
+        {preview?.truncated && (
           <p className="m-0 text-[length:var(--text-xs)] text-foreground-secondary" data-testid="gantt-deadline-confirm-truncated">
             Based on {preview.loaded} of {preview.total} checklist items loaded.
           </p>

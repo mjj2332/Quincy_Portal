@@ -9,7 +9,8 @@ import { cn } from "@/lib/utils";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
-import { CAL_PILL, CARD_ACTION, CARD_ATTENTION, CARD_HEADING, CARD_META, CARD_SUBTITLE } from "./production-calendar-classes";
+import { unscheduledChecklistDraggable, unscheduledProjectDraggable, unscheduledStageLabel } from "../lib/production-calendar-unscheduled";
+import { CAL_PILL, CARD_ACTION, CARD_ATTENTION, CARD_HEADING, CARD_META, CARD_SUBTITLE, UNSCHEDULED_ROW_ATTENTION, UNSCHEDULED_ROW_KIND } from "./production-calendar-classes";
 
 type UnscheduledFacet = { matched: number; returned: number; truncated: boolean };
 
@@ -27,17 +28,10 @@ export type ProductionCalendarUnscheduledPanelProps = {
   onOpenProject?: (projectId: string) => void;
 };
 
-const STAGE_LABELS: Record<string, string> = {
-  awaiting_raw: "Awaiting RAW",
-  raw_review: "RAW review",
-  editing_autohdr: "Editing · autoHDR",
-  editing: "Editing",
-  edited_review: "Edited review",
-  delivered: "Delivered",
-};
-
+// #222: the label map and the two draggable predicates moved to `lib/production-calendar-unscheduled.ts`
+// (shared with the event-calendar renderer, which must not import this FullCalendar module).
 function stageLabel(stageKey: string): string {
-  return STAGE_LABELS[stageKey] ?? stageKey;
+  return unscheduledStageLabel(stageKey);
 }
 
 const PANEL = "grid gap-[16px] min-w-0";
@@ -48,12 +42,6 @@ const PANEL_COUNT = "flex flex-wrap gap-x-[10px] gap-y-[4px] text-muted-foregrou
 const PANEL_ROWS = "grid gap-[8px]";
 const PANEL_ROW =
   "min-w-0 p-[10px] border border-solid border-border border-l-[3px] bg-background text-foreground text-left";
-const PANEL_ROW_KIND: Record<"project" | "checklist", string> = {
-  project: "border-l-signal-positive",
-  checklist: "border-l-signal-info",
-};
-const PANEL_ROW_ATTENTION =
-  "border-l-signal-critical bg-[color-mix(in_srgb,var(--signal-critical)_5%,var(--bg-canvas))]";
 const PANEL_FACTS =
   "flex flex-wrap items-center gap-x-[9px] gap-y-[5px] mt-[7px] text-foreground-secondary [font:400_10px/1.35_var(--font-sans)]";
 const PANEL_READONLY = "block mt-[9px] text-muted-foreground text-[10px]";
@@ -108,13 +96,7 @@ function externalEventData(title: string, id: string, kind: "project" | "checkli
   return JSON.stringify({ title, extendedProps: { unscheduledId: id, unscheduledKind: kind } });
 }
 
-export function unscheduledProjectDraggable(entry: ProjectCalendarUnscheduledEntryDto): boolean {
-  return !entry.project.delivered && entry.permissions.canDrag;
-}
-
-export function unscheduledChecklistDraggable(entry: ChecklistCalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
-  return rangesEnabled && entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
-}
+export { unscheduledChecklistDraggable, unscheduledProjectDraggable };
 
 function projectCanDrag(entry: ProjectCalendarUnscheduledEntryDto, disabled: boolean): boolean {
   return !disabled && unscheduledProjectDraggable(entry);
@@ -142,14 +124,14 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   const content = <ProjectContent entry={entry} projectHrefFor={eligible ? projectHrefFor : undefined} onOpenProject={onOpenProject} />;
 
   if (!eligible) {
-    return <button type="button" className={cn(PANEL_ROW, PANEL_ROW_KIND.project, "cursor-default")} disabled aria-label={`${entry.project.street}: Deadline is read-only`} data-unscheduled-id={entry.id} data-testid="calendar-unscheduled-readonly-row">
+    return <button type="button" className={cn(PANEL_ROW, UNSCHEDULED_ROW_KIND.project, "cursor-default")} disabled aria-label={`${entry.project.street}: Deadline is read-only`} data-unscheduled-id={entry.id} data-testid="calendar-unscheduled-readonly-row">
       {content}
       <span className={PANEL_READONLY}>Deadline is read-only</span>
     </button>;
   }
 
   if (actionMode) {
-    return <article className={cn(PANEL_ROW, PANEL_ROW_KIND.project)} data-unscheduled-id={entry.id}>
+    return <article className={cn(PANEL_ROW, UNSCHEDULED_ROW_KIND.project)} data-unscheduled-id={entry.id}>
       {content}
       <button className={buttonClasses("text", { className: PANEL_ACTION })} type="button" disabled={disabled} onClick={() => onSchedule(entry)} data-testid="calendar-unscheduled-action">Schedule Deadline</button>
     </article>;
@@ -159,7 +141,7 @@ function ProjectRow({ entry, subview, onSchedule, disabled, dragSuppressed, proj
   // via the data-event attribute — no HTML5 `draggable` attribute (that adds a
   // second native drag ghost and fights FC's pointer dragging).
   return <article
-    className={cn(PANEL_ROW, PANEL_ROW_KIND.project, "cursor-grab active:cursor-grabbing")}
+    className={cn(PANEL_ROW, UNSCHEDULED_ROW_KIND.project, "cursor-grab active:cursor-grabbing")}
     data-unscheduled-id={entry.id}
     data-unscheduled-kind="project"
     data-event={externalEventData(entry.title, entry.id, "project")}
@@ -186,7 +168,7 @@ function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dra
 
   if (canDrag) {
     return <article
-      className={cn(PANEL_ROW, PANEL_ROW_KIND.checklist, "cursor-grab active:cursor-grabbing")}
+      className={cn(PANEL_ROW, UNSCHEDULED_ROW_KIND.checklist, "cursor-grab active:cursor-grabbing")}
       data-unscheduled-id={entry.id}
       data-unscheduled-kind="checklist"
       data-event={externalEventData(entry.title, entry.id, "checklist")}
@@ -195,7 +177,7 @@ function ChecklistRow({ entry, subview, rangesEnabled, onSchedule, disabled, dra
     </article>;
   }
 
-  return <article className={cn(PANEL_ROW, PANEL_ROW_KIND.checklist, attention && PANEL_ROW_ATTENTION)} data-unscheduled-id={entry.id} data-attention={attention ? "true" : undefined}>
+  return <article className={cn(PANEL_ROW, UNSCHEDULED_ROW_KIND.checklist, attention && UNSCHEDULED_ROW_ATTENTION)} data-unscheduled-id={entry.id} data-attention={attention ? "true" : undefined}>
     {content}
     {invalid ? <p className={PANEL_ATTENTION_TEXT} role="status">This checklist schedule needs repair. Repair is unavailable in Calendar.</p> : showAction && <button className={buttonClasses("text", { className: PANEL_ACTION })} type="button" disabled={disabled} onClick={() => onSchedule(entry)} data-testid="calendar-unscheduled-action">{legacy ? "Repair schedule" : "Schedule"}</button>}
   </article>;

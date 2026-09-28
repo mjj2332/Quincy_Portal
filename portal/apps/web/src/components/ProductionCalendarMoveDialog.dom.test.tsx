@@ -46,6 +46,13 @@ describe("ProductionCalendarMoveDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith("2026-08-11T09:30", "later");
   });
 
+  it("labels a negative occurrence offset with U+2212, like the fold choice (#222)", async () => {
+    await render({ foldChoices: [{ disambiguation: "earlier", utcOffsetMinutes: -240 }, { disambiguation: "later", utcOffsetMinutes: -300 }] });
+    expect(document.body.textContent).toContain("Earlier occurrence (UTC−04:00)");
+    expect(document.body.textContent).toContain("Later occurrence (UTC−05:00)");
+    expect(document.body.textContent).not.toContain("UTC-");
+  });
+
   it("cancels through the modal action", async () => {
     const onCancel = vi.fn();
     await render({ onCancel });

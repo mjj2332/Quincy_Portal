@@ -74,7 +74,8 @@ const PROJECT_TEAM_MESSAGE =
   "col-span-full [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] " +
   "text-[color:var(--signal-critical)]";
 
-const TEAM_CHIP_REMOVE_HIT_AREA =
+/** #222: also the event-calendar People/Layers chips' remove hit area (`ProductionEventCalendarFacets.tsx`). */
+export const TEAM_CHIP_REMOVE_HIT_AREA =
   // 44px touch target — WCAG 2.5.5 Enhanced / HIG, not a spacing token. The visible icon-xs
   // button is 24px (`size-6`); a transparent pseudo-element extends the hit area to 44px
   // (24 + 10 + 10) without growing the chip itself.
@@ -86,7 +87,8 @@ const TEAM_CHIP_REMOVE_HIT_AREA =
  *  two hand-duplicated class strings (review fix #204). `has-disabled:*` and
  *  `has-data-[slot=combobox-chip-remove]:pr-0` are dead weight on the read-only span (it has
  *  neither a disabled descendant nor a chip-remove child) but harmless there. */
-const TEAM_CHIP =
+/** #222: exported — the event-calendar People/Layers chips use the same presentation. */
+export const TEAM_CHIP =
   "flex h-[calc(--spacing(5.25))] w-fit items-center justify-center gap-1.5 rounded-[var(--radius-pill)] " +
   "bg-muted px-1.5 text-xs font-medium whitespace-nowrap text-foreground has-disabled:pointer-events-none " +
   "has-disabled:cursor-not-allowed has-disabled:opacity-50 has-data-[slot=combobox-chip-remove]:pr-0 " +

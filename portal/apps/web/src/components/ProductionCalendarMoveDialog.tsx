@@ -4,6 +4,7 @@ import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
 import { Input } from "./reui/input";
 import { FIELD_COMPACT } from "./production-calendar-classes";
+import { utcOffsetLabel } from "../lib/sydney-time-labels";
 
 const MOVE_INPUTS = "grid grid-cols-2 gap-[12px]";
 const MOVE_INPUT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
@@ -21,12 +22,13 @@ export type ProductionCalendarMoveDialogProps = {
   onCancel: () => void;
 };
 
-function civilParts(value: string): { date: string; time: string } {
+/** #222: shared with the event-calendar renderer's move dialog (`ProductionEventCalendarDialogs.tsx`). */
+export function civilParts(value: string): { date: string; time: string } {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(value);
   return match ? { date: match[1] ?? "", time: match[2] ?? "" } : { date: "", time: "" };
 }
 
-function validCivil(value: string): boolean {
+export function validCivil(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
   if (!match) return false;
   const year = Number(match[1]);
@@ -38,12 +40,6 @@ function validCivil(value: string): boolean {
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const daysInMonth = month === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
   return day >= 1 && day <= daysInMonth;
-}
-
-function utcOffsetLabel(minutes: number): string {
-  const sign = minutes < 0 ? "-" : "+";
-  const absolute = Math.abs(minutes);
-  return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
 }
 
 export function ProductionCalendarMoveDialog({ open, event, initialCivil, foldChoices, onSubmit, onCancel }: ProductionCalendarMoveDialogProps): JSX.Element {

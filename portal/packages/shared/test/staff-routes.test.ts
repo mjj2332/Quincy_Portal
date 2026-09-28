@@ -85,6 +85,17 @@ describe("shared staff route contract", () => {
     expect(safeStaffDestination(location)).toBe(location);
   });
 
+  it("#222: round-trips the day and days subviews and still rejects an unknown one", () => {
+    for (const subview of ["day", "days"] as const) {
+      const location = calendarUrl(`view=calendar&date=2026-08-30&sub=${subview}&layers=project%2Cchecklist`);
+      const route = { kind: "dashboard", calendar: calendar({ subview }) } satisfies StaffRoute;
+      expect(parseStaffLocation(location), location).toEqual(route);
+      expect(staffPathFor(route), location).toBe(location);
+      expect(safeStaffDestination(location), location).toBe(location);
+    }
+    expect(parseStaffLocation(calendarUrl("view=calendar&date=2026-08-30&sub=year&layers=project"))).toEqual({ kind: "not-found" });
+  });
+
   it("round-trips every Calendar filter and canonicalizes list order", () => {
     const route = {
       kind: "dashboard",

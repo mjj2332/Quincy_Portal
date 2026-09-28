@@ -17,6 +17,7 @@ import {
   previewProjectDeadlineReminderConsequences,
   productionCalendarFiltersSchema,
   PRODUCTION_CALENDAR_MAX_RANGE_DAYS,
+  PRODUCTION_CALENDAR_SUBVIEWS,
   productionCalendarRangeQuerySchema,
   PRODUCTION_CALENDAR_ZONE,
   shiftSydneyCalendarDate,
@@ -162,6 +163,29 @@ describe("production Calendar civil windows", () => {
     }
   });
 
+  it("#222: day is the focused date alone and days is the focused date plus the next two", () => {
+    expect(deriveProductionCalendarWindow("2026-08-12", "day")).toEqual({ start: "2026-08-12", end: "2026-08-13" });
+    expect(deriveProductionCalendarWindow("2026-08-12", "days")).toEqual({ start: "2026-08-12", end: "2026-08-15" });
+    // month and year boundaries stay in civil-date space
+    expect(deriveProductionCalendarWindow("2026-08-31", "day")).toEqual({ start: "2026-08-31", end: "2026-09-01" });
+    expect(deriveProductionCalendarWindow("2026-12-30", "days")).toEqual({ start: "2026-12-30", end: "2027-01-02" });
+  });
+
+  it("#222: day and days windows across both 2026 Sydney DST transitions stay whole civil days", () => {
+    // 2026-04-05: clocks fall back (25-hour day). 2026-10-04: clocks spring forward (23-hour day).
+    expect(deriveProductionCalendarWindow("2026-04-05", "day")).toEqual({ start: "2026-04-05", end: "2026-04-06" });
+    expect(deriveProductionCalendarWindow("2026-10-04", "day")).toEqual({ start: "2026-10-04", end: "2026-10-05" });
+    expect(deriveProductionCalendarWindow("2026-04-04", "days")).toEqual({ start: "2026-04-04", end: "2026-04-07" });
+    expect(deriveProductionCalendarWindow("2026-10-03", "days")).toEqual({ start: "2026-10-03", end: "2026-10-06" });
+    // the DST weeks themselves, Monday-anchored, for the views that already existed
+    expect(deriveProductionCalendarWindow("2026-04-05", "week")).toEqual({ start: "2026-03-30", end: "2026-04-06" });
+    expect(deriveProductionCalendarWindow("2026-10-04", "week")).toEqual({ start: "2026-09-28", end: "2026-10-05" });
+  });
+
+  it("#222: the subview list is additive — the original three keep their order", () => {
+    expect(PRODUCTION_CALENDAR_SUBVIEWS).toEqual(["month", "week", "day", "days", "agenda"]);
+  });
+
   it("rejects non-canonical focused dates", () => {
     expect(() => deriveProductionCalendarWindow("2026-2-01", "month")).toThrow(RangeError);
     expect(() => deriveProductionCalendarWindow("2026-02-29", "month")).toThrow(RangeError);
@@ -179,6 +203,26 @@ describe("TB5C strict role-safe DTOs", () => {
     expect(externalCalendarRangeSchema.safeParse({ ...response(EDITOR_STAGE), events: [{ ...response(EDITOR_STAGE).events[0], project: { ...response(EDITOR_STAGE).events[0]!.project, email: "private@example.com" } }] }).success).toBe(false);
     expect(externalCalendarRangeSchema.safeParse({ ...response(EDITOR_STAGE), events: [{ ...response(EDITOR_STAGE).events[0], provider: "raw-provider" }] }).success).toBe(false);
     expect(externalCalendarRangeSchema.safeParse({ ...response(EDITOR_STAGE), events: [{ ...response(EDITOR_STAGE).events[0], boardPosition: 1 }] }).success).toBe(false);
+  });
+
+  it("#222: accepts OPTIONAL strict projectBounds on every role's response", () => {
+    const projectId = "123e4567-e89b-42d3-a456-426614174000";
+    const bounds = [
+      { projectId, shootDate: "2026-08-20", deadlineLocalCivil: "2026-08-27T09:00" },
+      { projectId: "223e4567-e89b-42d3-a456-426614174000", shootDate: null, deadlineLocalCivil: null },
+    ];
+    for (const [schema, stage] of [[adminProductionCalendarRangeResponseSchema, ADMIN_STAGE], [editorProductionCalendarRangeResponseSchema, EDITOR_STAGE], [externalCalendarRangeSchema, EDITOR_STAGE]] as const) {
+      // absent (what every request without bounds=1 receives) and present both parse
+      expect(schema.safeParse(response(stage)).success).toBe(true);
+      const parsed = schema.parse({ ...response(stage), projectBounds: bounds });
+      expect(parsed.projectBounds).toEqual(bounds);
+      expect("projectBounds" in schema.parse(response(stage))).toBe(false);
+      // strict entries: no extra fields, canonical dates only, lowercase-uuid project ids
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], street: "private" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], shootDate: "Tuesday" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], projectId: "not-a-uuid" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: null }).success).toBe(false);
+    }
   });
 
   it("accepts every checklist source state only in its matching projection branch", () => {

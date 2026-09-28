@@ -56,7 +56,13 @@ function assertCanonicalFilters(calendar: DashboardCalendarState, filters: Produ
  * Build the API query from the exact route serializer, retaining its fixed
  * field order while adding the server-only bounded window and active scope.
  */
-export function buildProductionCalendarQuery(calendar: DashboardCalendarState, window = deriveProductionCalendarWindow(calendar.date, calendar.subview)): string {
+export function buildProductionCalendarQuery(
+  calendar: DashboardCalendarState,
+  window = deriveProductionCalendarWindow(calendar.date, calendar.subview),
+  // #222: `bounds=1` asks for `projectBounds` (the event-calendar renderer). Off by default — the
+  // FullCalendar build never sends it, so its strict decoders never see the key.
+  { bounds = false }: { bounds?: boolean } = {},
+): string {
   const filters = productionCalendarFiltersFor(calendar);
   // Mirror calendarPathFor's serialization-side guard: the server's unsafeText
   // check rejects a backslash / C0 char with 400, so strip on the API path too
@@ -74,6 +80,7 @@ export function buildProductionCalendarQuery(calendar: DashboardCalendarState, w
   params.set("start", window.start);
   params.set("end", window.end);
   params.set("scope", "active");
+  if (bounds) params.set("bounds", "1");
   return params.toString();
 }
 
@@ -201,8 +208,11 @@ export function productionCalendarKey(
   window: { start: string; end: string },
   subview: DashboardCalendarState["subview"],
   filters: ProductionCalendarFilters,
+  { bounds = false }: { bounds?: boolean } = {},
 ) {
-  return ["production-calendar", identity.principalId, identity.role, identity.authorizationEpoch, scope, window.start, window.end, subview, filters] as const;
+  const key = ["production-calendar", identity.principalId, identity.role, identity.authorizationEpoch, scope, window.start, window.end, subview, filters] as const;
+  // #222: a bounds response carries a field the plain one lacks — never share a cache entry.
+  return bounds ? [...key, { bounds: true }] as const : key;
 }
 
 export function removeProductionCalendarQueries(client: QueryClient, principalId: string): void {
@@ -211,18 +221,24 @@ export function removeProductionCalendarQueries(client: QueryClient, principalId
   client.removeQueries({ queryKey });
 }
 
-export type ProductionCalendarRangeQueryOptionsInput = { identity: DashboardIdentity; calendar: DashboardCalendarState | null; enabled: boolean };
+export type ProductionCalendarRangeQueryOptionsInput = {
+  identity: DashboardIdentity;
+  calendar: DashboardCalendarState | null;
+  enabled: boolean;
+  /** #222: request `projectBounds` (`bounds=1`). Off by default; the old calendar never sets it. */
+  bounds?: boolean;
+};
 
-export function productionCalendarRangeQueryOptions({ identity, calendar, enabled }: ProductionCalendarRangeQueryOptionsInput) {
+export function productionCalendarRangeQueryOptions({ identity, calendar, enabled, bounds = false }: ProductionCalendarRangeQueryOptionsInput) {
   const window = calendar ? deriveProductionCalendarWindow(calendar.date, calendar.subview) : DEFAULT_WINDOW;
   const filters = calendar ? productionCalendarFiltersFor(calendar) : DEFAULT_FILTERS;
   const subview = calendar?.subview ?? "month";
   return {
-    queryKey: productionCalendarKey(identity, "active", window, subview, filters),
+    queryKey: productionCalendarKey(identity, "active", window, subview, filters, { bounds }),
     enabled: enabled && calendar !== null,
     queryFn: async ({ signal }: QueryFunctionContext) => {
       if (calendar === null) throw new Error("A Calendar route is required before fetching production Calendar data.");
-      const path = `/api/production-calendar?${buildProductionCalendarQuery(calendar, window)}`;
+      const path = `/api/production-calendar?${buildProductionCalendarQuery(calendar, window, { bounds })}`;
       const response = identity.role === "external_editor"
         ? await externalApiGet("calendar", path, signal)
         : await apiGet<unknown>(path, { signal });

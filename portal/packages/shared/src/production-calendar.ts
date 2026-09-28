@@ -28,7 +28,12 @@ import {
 import { STAGE_KEYS, type StageKey } from "./stages";
 
 export const PRODUCTION_CALENDAR_ZONE = SYDNEY_TIME_ZONE;
-export const PRODUCTION_CALENDAR_SUBVIEWS = ["month", "week", "agenda"] as const;
+/**
+ * #222 added `day` and `days` (additive — the original three keep their positions' meaning). They
+ * are UI views of the new event-calendar renderer only: the drag/drop/resize mappers below take a
+ * GRANULARITY subview (`month` = day-cell, `week` = minute column) and never a UI view name.
+ */
+export const PRODUCTION_CALENDAR_SUBVIEWS = ["month", "week", "day", "days", "agenda"] as const;
 export const PRODUCTION_CALENDAR_LAYERS = ["project", "checklist"] as const;
 export const PRODUCTION_CALENDAR_MAX_RANGE_DAYS = 42;
 export const PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND = 50;
@@ -265,6 +270,11 @@ export function deriveProductionCalendarWindow(
     if (!shifted.ok) throw new RangeError("Could not derive the production Calendar week start.");
     start = shifted.value;
     duration = 7;
+  } else if (subview === "day") {
+    duration = 1;
+  } else if (subview === "days") {
+    // #222: the event-calendar "days" view is fixed at three days from the focused date.
+    duration = 3;
   }
 
   const shiftedEnd = shiftDateValue(start, duration);
@@ -423,6 +433,18 @@ export type ChecklistCalendarUnscheduledEntryDto<TStage extends StageTransportKe
 
 export type CalendarUnscheduledEntryDto<TStage extends StageTransportKey = StageTransportKey> = ProjectCalendarUnscheduledEntryDto<TStage> | ChecklistCalendarUnscheduledEntryDto<TStage>;
 
+/**
+ * #222: one project's advisory scheduling window, the Calendar's counterpart of the Gantt's
+ * `ganttScheduleBounds` inputs. `shootDate` is the project's shoot date only when it is a canonical
+ * Sydney calendar date (the Gantt's `shootDateCivil` rule), `deadlineLocalCivil` the project's
+ * Deadline when one is set. Feeds `checkScheduleBounds` (warn, never block).
+ */
+export type ProductionCalendarProjectBounds = {
+  projectId: string;
+  shootDate: string | null;
+  deadlineLocalCivil: string | null;
+};
+
 export type ProductionCalendarRangeResponse<TStage extends StageTransportKey = StageTransportKey> = {
   range: {
     start: string;
@@ -443,6 +465,12 @@ export type ProductionCalendarRangeResponse<TStage extends StageTransportKey = S
       checklist: { matched: number; returned: number; truncated: boolean };
     };
   };
+  /**
+   * #222, request-gated: present ONLY when the request carried `bounds=1` (the event-calendar
+   * renderer), one entry per project referenced by `events`/`unscheduled`. Old bundles never send
+   * the param, so their `.strict()` decoders never see the key.
+   */
+  projectBounds?: ProductionCalendarProjectBounds[];
 };
 
 const calendarEventTimingSchema = z.union([
@@ -578,6 +606,10 @@ const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
   overdueOnly: z.boolean(), search: z.string().max(200), myTasks: z.boolean(),
 }).strict();
 
+const projectBoundsSchema: z.ZodType<ProductionCalendarProjectBounds> = z.object({
+  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), deadlineLocalCivil: z.string().min(1).max(32).nullable(),
+}).strict();
+
 const responseSchemaFor = <TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<ProductionCalendarRangeResponse<TStage>> => z.object({
   range: z.object({ start: calendarDateSchema, end: calendarDateSchema, date: calendarDateSchema, subview: z.enum(PRODUCTION_CALENDAR_SUBVIEWS), zone: z.literal(PRODUCTION_CALENDAR_ZONE), appliedFilters: dtoFiltersSchema }).strict(),
   events: z.array(calendarEventSchemaFor(stageSchema)), unscheduled: z.array(calendarUnscheduledEntrySchemaFor(stageSchema)),
@@ -589,6 +621,7 @@ const responseSchemaFor = <TStage extends StageTransportKey>(stageSchema: z.ZodT
       checklist: z.object({ matched: z.number().int().nonnegative(), returned: z.number().int().nonnegative(), truncated: z.boolean() }).strict(),
     }).strict(),
   }).strict(),
+  projectBounds: z.array(projectBoundsSchema).optional(),
 }).strict();
 
 export const adminProductionCalendarRangeResponseSchema: z.ZodType<ProductionCalendarRangeResponse<StageKey>> = responseSchemaFor(z.enum(STAGE_KEYS));

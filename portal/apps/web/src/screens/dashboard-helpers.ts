@@ -31,7 +31,19 @@ export type DashboardCalendarInitialState = DashboardCalendarState;
 export type DashboardCalendarInitializationOptions = {
   now: Date | number | string;
   isPhone: boolean;
+  /** #222: which renderer will draw the state; defaults to `CALENDAR_RENDERER_DEFAULT`. */
+  renderer?: CalendarRenderer;
 };
+
+/**
+ * #222: which component renders the Dashboard Calendar. A RENDERER preference — not a route, not a
+ * capability: both renderers read the same URL facet and the same `/api/production-calendar`. The
+ * new ReUI event-calendar is opt-in per browser via `localStorage[DASHBOARD_CALENDAR_RENDERER_KEY]
+ * = "event-calendar"`; #223 flips `CALENDAR_RENDERER_DEFAULT`.
+ */
+export type CalendarRenderer = "fullcalendar" | "event-calendar";
+export const CALENDAR_RENDERER_DEFAULT: CalendarRenderer = "fullcalendar";
+export const DASHBOARD_CALENDAR_RENDERER_KEY = "quincy:dashboard:calendar:renderer";
 
 export type DashboardPreferenceStorage = {
   read: () => string | null;
@@ -156,6 +168,28 @@ function writeCalendarPreference(storage: DashboardCalendarPreferenceStorage, ke
   }
 }
 
+/** #222: only the exact opt-in value selects the new renderer; anything else (or a throwing read) is the default. */
+export function readCalendarRenderer(storage: DashboardCalendarPreferenceStorage): CalendarRenderer {
+  return readCalendarPreference(storage, DASHBOARD_CALENDAR_RENDERER_KEY) === "event-calendar" ? "event-calendar" : CALENDAR_RENDERER_DEFAULT;
+}
+
+/** #222: best-effort, like every other Calendar preference write. */
+export function writeCalendarRenderer(storage: DashboardCalendarPreferenceStorage, renderer: CalendarRenderer): void {
+  writeCalendarPreference(storage, DASHBOARD_CALENDAR_RENDERER_KEY, renderer);
+}
+
+/**
+ * #222: FullCalendar has no `day`/`days` view (its `viewForSubview` would fall through to a list),
+ * so with the flag off those two subviews — from a URL shared by an opted-in browser, or a
+ * remembered preference — read as `week`, the nearest view it does draw.
+ */
+export function coerceCalendarSubviewForRenderer(
+  subview: DashboardCalendarState["subview"],
+  renderer: CalendarRenderer,
+): DashboardCalendarState["subview"] {
+  return renderer === "fullcalendar" && (subview === "day" || subview === "days") ? "week" : subview;
+}
+
 /** Sydney's civil date (`YYYY-MM-DD`) at `now`. */
 export function sydneyToday(now: Date | number | string): string {
   const value = formatSydneyCivilMinute(now instanceof Date ? now.getTime() : now).slice(0, 10);
@@ -171,14 +205,17 @@ export function sydneyToday(now: Date | number | string): string {
 export function initializeDashboardCalendarState(
   route: StaffRoute | DashboardCalendarFacetRoute,
   storage: DashboardCalendarPreferenceStorage,
-  { now, isPhone }: DashboardCalendarInitializationOptions,
+  { now, isPhone, renderer = CALENDAR_RENDERER_DEFAULT }: DashboardCalendarInitializationOptions,
 ): DashboardCalendarInitialState {
   const calendar = route.kind === "dashboard" && "calendar" in route ? route.calendar : undefined;
-  if (calendar) return calendar;
+  if (calendar) {
+    const subview = coerceCalendarSubviewForRenderer(calendar.subview, renderer);
+    return subview === calendar.subview ? calendar : { ...calendar, subview };
+  }
 
   const savedSubview = normalizeDashboardCalendarSubview(readCalendarPreference(storage, DASHBOARD_CALENDAR_SUBVIEW_KEY));
   const savedDate = readCalendarPreference(storage, DASHBOARD_CALENDAR_LAST_DATE_KEY);
-  const subview = savedSubview ?? (isPhone ? "agenda" : "month");
+  const subview = savedSubview ? coerceCalendarSubviewForRenderer(savedSubview, renderer) : (isPhone ? "agenda" : "month");
   const date = isCanonicalCalendarDate(savedDate) ? savedDate : sydneyToday(now);
   writeCalendarPreference(storage, DASHBOARD_CALENDAR_SUBVIEW_KEY, subview);
   writeCalendarPreference(storage, DASHBOARD_CALENDAR_LAST_DATE_KEY, date);

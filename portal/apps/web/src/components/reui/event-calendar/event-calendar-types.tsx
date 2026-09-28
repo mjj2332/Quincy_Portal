@@ -51,6 +51,13 @@
  *    `event-calendar-event.tsx` entry 1.
  * 2. 2026-09-21, #240 — ADDED `keyboard?: boolean` to the drag state and `"keyboard"` is now a
  *    `source` the tree actually emits. Additive and optional; see `event-calendar-dnd.tsx` entry 6.
+ * 3. 2026-09-28, #222 — ADDED, both additive (a result nobody returns / a field nobody reads changes
+ *    nothing): `EventCalendarUpdateResult` gained `"deferred"` (accept-and-defer, the Gantt's #221
+ *    PR A contract spelled identically — the calendar neither mutates `events` nor announces; the
+ *    consumer owns what happens next and speaks for it), and `EventCalendarProposedUpdate` gained
+ *    OPTIONAL `granularity: "day" | "minute"` — present on every drag / resize-* / keyboard
+ *    proposal, absent on `source: "api"`. See `event-calendar.tsx` entry 4 and
+ *    `event-calendar-dnd.tsx` entry 7. Cover: `event-calendar-deferred.dom.test.tsx`.
  */
 type EventCalendarEventId = string
 
@@ -251,12 +258,25 @@ interface EventCalendarProposedUpdate<TData = unknown> {
   allDay: boolean
   resourceId?: string
   source: "drag" | "resize-start" | "resize-end" | "keyboard" | "api"
+  /**
+   * QUINCY (#222), additive: `"day"` when the proposal came from a day CELL (month grid, all-day
+   * lane, a day-granular keyboard geometry), `"minute"` when from a minute-precise column. Set on
+   * every drag / resize-* / keyboard proposal; absent on `source: "api"`, which has no geometry.
+   */
+  granularity?: "day" | "minute"
 }
 
-/** false = reject/revert; void or true = accept; object = accept with adjustment. */
+/**
+ * false = reject/revert; void or true = accept; object = accept with adjustment.
+ *
+ * QUINCY (#222), additive: `"deferred"` = accept-and-defer — the consumer took the proposal and
+ * owns what happens next (e.g. a confirmation dialog or a server round-trip); the calendar neither
+ * mutates `events` nor announces anything. Distinct from `false` (reject → announces rejected).
+ */
 type EventCalendarUpdateResult =
   | boolean
   | void
+  | "deferred"
   | { start?: Date; end?: Date; allDay?: boolean }
 
 /** A click is a point, not a range; `end` is present for timed slots. */
