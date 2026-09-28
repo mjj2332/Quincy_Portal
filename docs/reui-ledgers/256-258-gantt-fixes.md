@@ -19,3 +19,12 @@ Searches ran against the local `tmp/ReUI_Full_Source_Code/` copy: the ReUI MCP w
 - `ganttFormatEventTime` matches the live `<Gantt>` settings only while `<Gantt>` receives exactly `GANTT_I18N`, `timeZone={GANTT_TIME_ZONE}` and no `locale`. The completion DOM test's aria-label containment check catches drift.
 - The name cell's floor is 180px, the splitter minimum. In a container narrower than that, the vendor's `clampContainer` can shrink the pane below 180px, and the name cell then overflows instead of shrinking. Confirmed at 390px: a 180px cell in a 157px pane. Before this change it was 208px, and #221 already records sideways tree scroll at 390px. Letting the cell shrink would squeeze the street and the Set/Fix deadline button, so this stays as is.
 - A time label inside a bar's 100% progress fill with the hatch reaches only about 3.55:1. The progress fill already lowered label contrast before #257, so this needs its own ticket.
+
+## Browser pass (2026-09-28)
+
+- Stage 1 (Agy) and stage 2 (design-reviewer): **Fix first** on two #257 defects, both fixed in `53da1725`:
+  1. In-bar time label was `text-muted-foreground` (1.73:1 over stripes). Now `text-foreground-secondary`; bar stripes 40% → 30% (~5:1 over stripes).
+  2. Hatched swatch read as a paler, different hue (1.38:1). Now solid `--gantt-event-color` with light `--bg-surface` stripes.
+  Session re-check: `qa-evidence/pass256-258/screens/1440-r7-edited-hatched-simulated-v2.png`, `1440-r7-edited-bar-zoom-v2.png`.
+- **Known gap, accepted:** at 390px the 180px name floor overflows a 157px tree pane by 23px (was 208px before this change). Sideways tree scroll at phone width is #221's recorded behaviour, and shrinking the cell would squeeze the street and the Set/Fix deadline control.
+- **Known gap:** drag ghost and off-screen chip paint colour only, no hatch.
