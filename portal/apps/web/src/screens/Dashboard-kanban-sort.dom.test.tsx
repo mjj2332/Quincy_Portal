@@ -4,6 +4,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 
+// happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
+// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
+// With `getAnimations` defined, Base UI's `useAnimationsFinished` stops unmounting a closing popup
+// synchronously and waits on the (empty) animation list asynchronously, which the Sort Select's
+// close assertions below do not flush. Base UI's own switch keeps closes synchronous, exactly as they
+// were when `getAnimations` was missing.
+(globalThis as { BASE_UI_ANIMATIONS_DISABLED?: boolean }).BASE_UI_ANIMATIONS_DISABLED = true;
+
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {

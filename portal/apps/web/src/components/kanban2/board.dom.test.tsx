@@ -12,6 +12,13 @@ import { KanbanCard2 } from "./card";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 
+// happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
+// scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
+// animations"; see `reui/gantt/gantt-adjust-ghost-marker.dom.test.tsx` for the same polyfill.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
+
 const dnd = vi.hoisted(() => ({
   // The whole props object, not just `onDragEnd`: #98 asserts the `accessibility` contract the Board
   // hands dnd-kit, which is only observable here.
@@ -246,20 +253,50 @@ describe("ProjectKanbanBoard2 (#80)", () => {
   // Tempo layout (ReUI `tempo-tasks` Kanban board): every column is one fixed 280px track
   // (`auto-cols-[17.5rem]`, no minmax and no mobile/coarse variants), columns are separate
   // bordered surfaces with a `--space-4` gap between them (not a joined `bg-border` grid), and the
-  // root is a full-width horizontal scroll area the Board sits left-aligned in, so spare width is
-  // page background.
-  it("lays the Board out as fixed 280px, separated, bordered columns in a full-width scroller", async () => {
+  // grid is a `w-max min-w-full` content box inside a Base UI scroll area (tempo's
+  // `BoardScrollArea`), so it sits left-aligned and spare width is page background. The scroll area's
+  // Viewport scrolls, not the grid.
+  it("lays the Board out as fixed 280px, separated, bordered columns in a full-width scroll area", async () => {
     await renderBoard();
     const root = host.querySelector('[data-focus-key="board"]');
     expect(root, "no Board root rendered — the assertions below would be vacuous").not.toBeNull();
     const classes = [...root!.classList];
-    for (const token of ["auto-cols-[17.5rem]", "gap-[var(--space-4)]", "w-full", "overflow-x-auto"]) expect(classes).toContain(token);
+    for (const token of ["auto-cols-[17.5rem]", "gap-[var(--space-4)]", "w-max", "min-w-full"]) expect(classes).toContain(token);
+    expect(classes.filter((token) => token.startsWith("overflow"))).toEqual([]);
     expect(classes.filter((token) => token.includes("auto-cols-"))).toEqual(["auto-cols-[17.5rem]"]);
+    // grid -> Content -> Viewport -> Root, and the horizontal bar is the Viewport's sibling (not inside
+    // it), so `position: sticky` resolves against the page rather than the Viewport's own overflow.
+    const viewport = root!.closest<HTMLElement>('[data-testid="kanban2-scroll-viewport"]');
+    expect(viewport, "the grid is not inside the scroll area's viewport").not.toBeNull();
+    expect(root!.parentElement!.getAttribute("data-slot")).toBe("scroll-area-content");
+    expect(viewport!.parentElement!.getAttribute("data-slot")).toBe("scroll-area");
     expect(classes).not.toContain("bg-border");
     expect(classes).not.toContain("w-fit");
     const columns = [...host.querySelectorAll('[data-testid="kanban2-column"]')];
     expect(columns.length, "no columns rendered — the per-column assertion would be vacuous").toBeGreaterThan(0);
     for (const column of columns) expect([...column.classList]).toContain("border-border");
+  });
+
+  // happy-dom has no layout, so Base UI sees no overflow and never mounts the bar (it is not
+  // `keepMounted`, deliberately: a wide screen with nothing to scroll gets no empty track). Stub the
+  // Viewport's metrics to overflow sideways and fire `scroll`, which re-runs Base UI's measurement.
+  it("mounts one sticky horizontal scrollbar beside the viewport once the Board overflows sideways", async () => {
+    await renderBoard();
+    const viewport = host.querySelector<HTMLElement>('[data-testid="kanban2-scroll-viewport"]');
+    expect(viewport, "no scroll-area viewport rendered").not.toBeNull();
+    expect(host.querySelector('[data-testid="kanban2-scrollbar"]'), "bar mounted with no overflow").toBeNull();
+    const metrics = { scrollWidth: 2000, clientWidth: 800, scrollHeight: 600, clientHeight: 600 };
+    for (const [key, value] of Object.entries(metrics)) Object.defineProperty(viewport!, key, { configurable: true, get: () => value });
+    const { act } = await import("react");
+    await act(async () => { viewport!.dispatchEvent(new Event("scroll")); await Promise.resolve(); await Promise.resolve(); });
+    const bars = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-scrollbar"]')];
+    expect(bars.map((bar) => bar.getAttribute("data-orientation"))).toEqual(["horizontal"]);
+    const bar = bars[0]!;
+    expect(bar.style.position).toBe("sticky");
+    expect(bar.style.bottom).toBe("0px");
+    expect(bar.parentElement).toBe(viewport!.parentElement);
+    expect(viewport!.contains(bar)).toBe(false);
+    expect([...bar.classList]).toContain("bg-[var(--bg-canvas)]");
   });
 
   it("renders the Admin ghost star row on an unset Project, reaching the coordinator on commit (#81)", async () => {
