@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cn } from "@/lib/utils";
 import {
   PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES,
   PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
@@ -127,7 +128,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.scrollToHour).toBe(8);
   });
 
-  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; the Deadline class is unchanged", () => {
+  it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; a selected Deadline holds its ink with a paper ring", () => {
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
     const paper = productionEventCalendarEventClassName(range.data)!;
     expect(paper).toContain("data-selected:bg-(--ink-700)/10");
@@ -135,6 +136,36 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!;
     expect(productionEventCalendarEventClassName(done.data)).toContain("data-selected:bg-(--ink-700)/10");
     const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data)!;
-    expect(deadline).toBe("bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900)");
+    expect(deadline).toBe(
+      "bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900) " +
+        "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-800) data-selected:inset-ring-2 data-selected:inset-ring-(--paper-050) " +
+        "data-[view=agenda]:hover:bg-(--ink-800)",
+    );
+  });
+
+  // Mirrors the vendor's grid-chip tint in components/reui/event-calendar/event-calendar-event.tsx
+  // (~L603-607). A copy, so it can drift; ProductionEventCalendar-real.dom.test.tsx checks the real one.
+  const VENDOR_GRID =
+    "bg-(--ec-event-color)/15 hover:bg-(--ec-event-color)/25 inset-ring inset-ring-(--ec-event-color)/15 " +
+    "data-selected:bg-(--ec-event-color)/30 data-selected:inset-ring-(--ec-event-color)/40";
+
+  it("every branch that sets a fill also owns its selected fill and ring, so no vendor --ec-event-color tint survives the merge", () => {
+    const branches = {
+      deadline: toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!,
+      "active checklist range": toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!,
+      "active due": toProductionEventCalendarEvent(dueEvent(dated("2026-08-27")))!,
+      done: toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!,
+    };
+    for (const [branch, event] of Object.entries(branches)) {
+      const consumer = productionEventCalendarEventClassName(event.data)!;
+      const tokens = consumer.split(/\s+/);
+      if (!tokens.some((token) => token.startsWith("bg-"))) continue;
+      expect(tokens.some((token) => token.startsWith("data-selected:bg-")), `${branch}: no data-selected:bg-`).toBe(true);
+      expect(tokens.some((token) => token.startsWith("data-selected:inset-ring-")), `${branch}: no data-selected:inset-ring-`).toBe(true);
+      const survivors = cn(VENDOR_GRID, consumer)
+        .split(/\s+/)
+        .filter((token) => token.includes("--ec-event-color") && (/(^|:)(data-selected|hover):/.test(token) || token.startsWith("bg-(--ec-event-color)")));
+      expect(survivors, `${branch}: vendor tint survives the merge`).toEqual([]);
+    }
   });
 });

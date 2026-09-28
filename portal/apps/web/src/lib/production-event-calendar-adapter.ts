@@ -180,16 +180,29 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
  * done items dimmed with the hue-independent `--border` wash (see the harness's `dimDoneChip`).
  * Minimal and token-only; the design review owns the final look.
  *
- * Checklist chips also own their selected state. The vendor's `data-selected:bg-(--ec-event-color)/30`
- * over the `--ink-700` accent turned a tall timed range into a flat mid-grey slab; these
- * same-variant utilities replace it (the vendor runs the consumer class through `cn()` after its
- * own, so tailwind-merge drops the vendor pair): paper with a light ink wash and one ink ring.
+ * Every branch must override EVERY state the vendor tints — rest, `hover:` and `data-selected:`.
+ * The vendor runs the consumer class through `cn()` after its own, and tailwind-merge drops a
+ * vendor utility only when the consumer supplies the SAME variant; any state left out keeps the
+ * vendor's `--ec-event-color` wash under this branch's text colour.
+ *
+ * Checklist chips: the vendor's `data-selected:bg-(--ec-event-color)/30` over the `--ink-700`
+ * accent turned a tall timed range into a flat mid-grey slab; paper with a light ink wash and one
+ * ink ring replaces it.
+ *
+ * Deadlines: left to the vendor, a selected Deadline was ink-900/30 under paper text (2.03:1).
+ * Selected holds the ink fill and adds a 2px paper inset ring — a fill step (ink-700 vs ink-900 is
+ * 1.26:1) is not a usable cue. Agenda hover: the vendored agenda row passes `hover:bg-muted`
+ * after this class, so tailwind-merge drops our `hover:` and the row went paper-on-paper (1.07:1);
+ * `data-[view=agenda]:hover:` wins on specificity (0,3,0 vs 0,2,0), not source order. It couples
+ * to the vendor chip's `data-view` attribute.
  */
 const CHECKLIST_SELECTED = "data-selected:bg-(--ink-700)/10 data-selected:inset-ring-(--ink-700)";
+const DEADLINE_SELECTED = "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-800) data-selected:inset-ring-2 data-selected:inset-ring-(--paper-050)";
+const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-800)";
 
 export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
-  if (data.shape === "deadline") return "bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900)";
+  if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER}`;
   if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-muted-foreground ${CHECKLIST_SELECTED}`;
   return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }

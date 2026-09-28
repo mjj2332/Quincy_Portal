@@ -3630,6 +3630,29 @@ cheaper check passes.
 `VIEW_CONFIG_KEYS` directly so the next person does not have to rediscover the mechanism. Deleting
 the key from the list turns three of its five cases red.
 
+## A consumer `eventClassName` must override every state the vendor tints; tailwind-merge only drops same-variant utilities (2026-09-28)
+
+**Symptom.** A selected Deadline chip drew ink-900/30 under paper-050 text (2.03:1), and a hovered
+Deadline row in the agenda went paper-050 on paper-100 (1.07:1). Both class strings looked right
+on their own.
+
+**Cause.** The vendored chip builds its class as `cn(vendor tint, eventClassName(...), row class)`.
+tailwind-merge drops a vendor utility only when a later class supplies the SAME variant: the
+Deadline branch set rest and `hover:` but no `data-selected:`, so the vendor's
+`data-selected:bg-(--ec-event-color)/30` survived. In the agenda the row's own `hover:bg-muted`
+comes AFTER the consumer class, so it dropped the Deadline's `hover:bg-(--ink-800)` instead.
+
+**Rule.** A consumer branch that sets a fill owns every state the vendor tints — rest, `hover:`,
+`data-selected:` (fill and ring). Where a later vendor class wins on source order, win on
+specificity instead (`data-[view=agenda]:hover:` is 0,3,0 against 0,2,0) and note the coupling to
+the vendor attribute. Read the MERGED class off the rendered chip; the consumer's string alone
+cannot show the defect.
+
+**Pinned by** `components/ProductionEventCalendar-chip-contrast.dom.test.tsx`, which resolves the
+real merged class of every chip × view × state against the token files and asserts 4.5:1 (its
+self-test fails the pre-fix classes), and the pattern test in
+`lib/production-event-calendar-adapter.test.ts`.
+
 ## A consumer allow-list keyed only on path, over a restricted set with more than one member, grants ALL of them (#220, 2026-09-21)
 
 `harness-reachability.guard.test.ts`'s detector (ii) polices two vendored trees at once
