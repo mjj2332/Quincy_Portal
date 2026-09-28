@@ -1350,7 +1350,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   return (
-    <main className="page [overflow-x:clip]">
+    <main className="page page--full [overflow-x:clip]">
       <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-6)] gap-y-[var(--space-5)] pb-[var(--space-4)]">
         <div>
           <Eyebrow className="mb-[var(--space-3)]">Quincy Portal · production desk</Eyebrow>
