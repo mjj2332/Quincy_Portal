@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
+import { unscheduledChecklistDraggable, unscheduledProjectDraggable, unscheduledStageLabel } from "../lib/production-calendar-unscheduled";
 import { CAL_PILL, CARD_ACTION, CARD_ATTENTION, CARD_HEADING, CARD_META, CARD_SUBTITLE } from "./production-calendar-classes";
 
 type UnscheduledFacet = { matched: number; returned: number; truncated: boolean };
@@ -27,17 +28,10 @@ export type ProductionCalendarUnscheduledPanelProps = {
   onOpenProject?: (projectId: string) => void;
 };
 
-const STAGE_LABELS: Record<string, string> = {
-  awaiting_raw: "Awaiting RAW",
-  raw_review: "RAW review",
-  editing_autohdr: "Editing · autoHDR",
-  editing: "Editing",
-  edited_review: "Edited review",
-  delivered: "Delivered",
-};
-
+// #222: the label map and the two draggable predicates moved to `lib/production-calendar-unscheduled.ts`
+// (shared with the event-calendar renderer, which must not import this FullCalendar module).
 function stageLabel(stageKey: string): string {
-  return STAGE_LABELS[stageKey] ?? stageKey;
+  return unscheduledStageLabel(stageKey);
 }
 
 const PANEL = "grid gap-[16px] min-w-0";
@@ -108,13 +102,7 @@ function externalEventData(title: string, id: string, kind: "project" | "checkli
   return JSON.stringify({ title, extendedProps: { unscheduledId: id, unscheduledKind: kind } });
 }
 
-export function unscheduledProjectDraggable(entry: ProjectCalendarUnscheduledEntryDto): boolean {
-  return !entry.project.delivered && entry.permissions.canDrag;
-}
-
-export function unscheduledChecklistDraggable(entry: ChecklistCalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
-  return rangesEnabled && entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
-}
+export { unscheduledChecklistDraggable, unscheduledProjectDraggable };
 
 function projectCanDrag(entry: ProjectCalendarUnscheduledEntryDto, disabled: boolean): boolean {
   return !disabled && unscheduledProjectDraggable(entry);
