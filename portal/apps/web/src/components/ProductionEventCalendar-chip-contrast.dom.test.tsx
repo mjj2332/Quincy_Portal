@@ -430,6 +430,25 @@ describe("Production chip contrast through the real vendored calendar", () => {
     expect(Object.keys(CONTRAST_BASELINE).filter((key) => key.startsWith("Deadline ×"))).toEqual([]);
   });
 
+  it("an agenda Deadline row hides the vendor's colour dot; checklist rows keep theirs", async () => {
+    await renderView("agenda");
+    const HIDE_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
+    // Located structurally and matched by attribute, not by a vendor-slot selector (guard F).
+    const dotsIn = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>("*")].filter((el) => el.getAttribute("data-slot") === "event-calendar-agenda-dot");
+    for (const row of chipsFor("project-deadline:project", "agenda")) {
+      expect(dotsIn(row), "the Deadline row renders no vendor dot — the variant targets nothing").toHaveLength(1);
+      expect(classesOf(row)).toContain(HIDE_DOT);
+    }
+    for (const id of ["checklist:active", "checklist:done"]) {
+      const rows = chipsFor(id, "agenda");
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(dotsIn(row)).toHaveLength(1);
+        expect(classesOf(row)).not.toContain(HIDE_DOT);
+      }
+    }
+  });
+
   it("a chip selected in week is not drawn selected once the view switches to the read-only agenda", async () => {
     await renderView("week");
     const [weekChip] = chipsFor("project-deadline:project", "week");

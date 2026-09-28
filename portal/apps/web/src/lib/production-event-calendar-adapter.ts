@@ -220,10 +220,18 @@ const DEADLINE_SELECTED =
 const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-700)";
 /** Mirrors `tokens/inverse.css`'s `--muted-foreground` for a dark surface. */
 const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
+/**
+ * Hides the vendored agenda row's colour dot on a Deadline, keeping its box so titles stay aligned
+ * with checklist rows. The ink fill already carries the Deadline's colour; the dot is ink-on-ink,
+ * invisible at rest and a black smudge on the ink-700 hover. `--ec-event-color` stays ink (it also
+ * colours the drag ghost). Couples to the vendor's `data-slot`, as the agenda hover couples to
+ * `data-view`.
+ */
+const DEADLINE_AGENDA_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
 
 export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;
-  if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES}`;
+  if (data.shape === "deadline") return `bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES} ${DEADLINE_AGENDA_DOT}`;
   if (data.done) return `bg-border/25 hover:bg-border/35 inset-ring-border/25 text-foreground-secondary ${CHECKLIST_SELECTED}`;
   return `bg-(--paper-000) hover:bg-(--paper-100) inset-ring-(--border-hairline) text-foreground ${CHECKLIST_SELECTED}`;
 }

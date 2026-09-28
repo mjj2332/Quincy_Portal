@@ -140,7 +140,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
       "bg-(--ink-900) hover:bg-(--ink-700) text-(--paper-050) inset-ring-(--ink-900) " +
         "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) " +
         "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)] data-[view=agenda]:hover:bg-(--ink-700) " +
-        "[--muted-foreground:var(--greige-300)]",
+        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible",
     );
   });
 
