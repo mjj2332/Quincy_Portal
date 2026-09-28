@@ -22,6 +22,7 @@ import { Badge } from "../components/reui/badge";
 import { XIcon } from "lucide-react";
 import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
+import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
 import { cn } from "../lib/utils";
 import { CALENDAR_STATE_BOX } from "../components/production-calendar-classes";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
@@ -1481,20 +1482,24 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
       )}
 
+      {/* #292: a boundary around each lazy view, outside its Suspense, so a stale chunk after a
+          deploy stays inside the view region instead of replacing the whole shell. */}
       {isCalendarView && (
-        <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
-          <CalendarRenderer
-            identity={identity}
-            calendar={calendarState && { ...calendarState, search: committedQuery }}
-            onNavigate={(next) => navigateCalendar(next)}
-            onAppliedFilters={reconcileAppliedCalendarFilters}
-            onAcceptGateChange={setCalendarInteractionBlocked}
-            onSettleStateChange={setCalendarSettle}
-            onAccessLoss={handleCalendarAccessLoss}
-            projectHrefFor={projectHrefFor}
-            onOpenProject={openCalendarProject}
-          />
-        </Suspense>
+        <ViewLoadBoundary viewLabel="calendar">
+          <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
+            <CalendarRenderer
+              identity={identity}
+              calendar={calendarState && { ...calendarState, search: committedQuery }}
+              onNavigate={(next) => navigateCalendar(next)}
+              onAppliedFilters={reconcileAppliedCalendarFilters}
+              onAcceptGateChange={setCalendarInteractionBlocked}
+              onSettleStateChange={setCalendarSettle}
+              onAccessLoss={handleCalendarAccessLoss}
+              projectHrefFor={projectHrefFor}
+              onOpenProject={openCalendarProject}
+            />
+          </Suspense>
+        </ViewLoadBoundary>
       )}
 
       {/* #221 PR B2: the Gantt writes checklist schedules through the shared scheduling
@@ -1502,17 +1507,19 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           Calendar. The Calendar and the Gantt are never mounted together, so they share the
           Dashboard's one scheduling gate. */}
       {isGanttView && (
-        <Suspense fallback={<div className="empty" role="status">Loading gantt…</div>}>
-          <ProductionGantt
-            identity={identity}
-            q={committedQuery}
-            filters={ganttFilters}
-            onFiltersChange={navigateGantt}
-            onAcceptGateChange={setCalendarInteractionBlocked}
-            onSettleStateChange={setCalendarSettle}
-            onAccessLoss={handleCalendarAccessLoss}
-          />
-        </Suspense>
+        <ViewLoadBoundary viewLabel="Gantt">
+          <Suspense fallback={<div className="empty" role="status">Loading gantt…</div>}>
+            <ProductionGantt
+              identity={identity}
+              q={committedQuery}
+              filters={ganttFilters}
+              onFiltersChange={navigateGantt}
+              onAcceptGateChange={setCalendarInteractionBlocked}
+              onSettleStateChange={setCalendarSettle}
+              onAccessLoss={handleCalendarAccessLoss}
+            />
+          </Suspense>
+        </ViewLoadBoundary>
       )}
 
       {!isCalendarView && !isGanttView && isLoading && (
