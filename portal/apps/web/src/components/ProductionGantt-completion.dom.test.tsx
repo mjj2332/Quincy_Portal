@@ -392,3 +392,37 @@ describe("ProductionGantt — hollow/completed bars use the vendor's dated time 
     expect(bar.getAttribute("aria-label")).toContain(label);
   });
 });
+
+/**
+ * #256 — the tree panel's name column fills the panel, and its header names what the rows are.
+ * Lives here for this file's render helper; the vendor-level fill contract itself is pinned by
+ * `reui/gantt/gantt-tree-name-fill.dom.test.tsx`.
+ */
+describe("ProductionGantt — tree header says Projects and the name column fills (#256)", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    host.remove();
+  });
+
+  it("the tree header reads Projects, not Resources, and grows to fill the panel", async () => {
+    await render(host, root, [makeProject({ id: PARTIAL_PROGRESS_PROJECT_ID, street: PARTIAL_PROGRESS_STREET })]);
+    const header = host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-header"]');
+    expect(header).not.toBeNull();
+    expect(header!.textContent?.trim()).toBe("Projects");
+    expect(header!.textContent).not.toContain("Resources");
+    expect(header!.style.flexGrow).toBe("1");
+    expect(header!.style.width).toBe("180px");
+  });
+});

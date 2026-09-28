@@ -101,7 +101,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
-import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
+import { Gantt, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
@@ -197,6 +197,8 @@ const GANTT_I18N: GanttI18nOverrides = { labels: { resources: "Projects" } };
  * `GANTT_I18N`, `timeZone={GANTT_TIME_ZONE}` and no `locale`.
  */
 const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTime;
+/** #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. */
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
@@ -1454,6 +1456,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             scale={scale}
             onScaleChange={setScale}
             timeZone={GANTT_TIME_ZONE}
+            i18n={GANTT_I18N}
+            // #256: the name column fills the tree panel; 180 = the vendor splitter's minWidth, so
+            // the column never floors wider than the narrowest the panel can be dragged to.
+            treePanel={GANTT_TREE_PANEL}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
             dropWarning={dropWarning}

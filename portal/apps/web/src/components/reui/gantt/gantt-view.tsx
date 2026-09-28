@@ -198,6 +198,14 @@
  *     scrollLeft/scrollTop read or write in this file targets those viewports, so nothing relied on
  *     this box scrolling. Pinned by `gantt-view-overflow-clip.dom.test.tsx`, which selects the
  *     wrapper through a new additive `data-testid="gantt-view"` (test-seam guard F).
+ *
+ * 2026-09-28, #256 — ADDED, additive (off by default): `treePanel.nameColumnFill`
+ * (`DEFAULT_TREE_PANEL.nameColumnFill = false`). When on, the tree header's name cell and every
+ * `GanttTreeRow` name cell keep their inline `width: nameColumnWidth` as a floor and add
+ * `flexGrow: 1`, and the trailing `min-w-0 flex-1` spacer is dropped from both (kept, it would
+ * split the slack 50/50 with the name cell). `GanttTreeRow` takes a new memoised `nameFill` prop.
+ * Both cells gained additive test seams, `data-testid="gantt-tree-name-header"` /
+ * `"gantt-tree-name-cell"`. Covered by `gantt-tree-name-fill.dom.test.tsx`.
  */
 
 import {
@@ -438,6 +446,7 @@ const DEFAULT_TREE_PANEL = {
   maxWidth: 640,
   resizable: true,
   nameColumnWidth: 208,
+  nameColumnFill: false,
 }
 const DEFAULT_COLUMN_WIDTH = 96
 const DEFAULT_ZOOM_RANGE = { min: 0.5, max: 3 }
@@ -2447,9 +2456,12 @@ function GanttView({
         <div className="border-border flex h-8 border-b">
           <div className="flex h-full min-w-0 flex-1">
             <div
+              data-testid="gantt-tree-name-header"
               className="flex h-full shrink-0 items-center"
               style={{
                 width: treeConfig.nameColumnWidth,
+                // Quincy #256: grow past the width (now a floor) to fill the panel
+                ...(treeConfig.nameColumnFill ? { flexGrow: 1 } : {}),
                 paddingInlineStart: namePaddingStart,
               }}
             >
@@ -2473,7 +2485,8 @@ function GanttView({
                 <span className="truncate">{column.title ?? column.id}</span>
               </div>
             ))}
-            <div className="min-w-0 flex-1" />
+            {/* Quincy #256: in fill mode the name cell takes the slack; a spacer would split it */}
+            {!treeConfig.nameColumnFill && <div className="min-w-0 flex-1" />}
           </div>
           {viewConfig.columnsMenu && (
             <div
@@ -2496,6 +2509,7 @@ function GanttView({
             bandRem={rowBars.get(row.resource.id)?.bandRem ?? minRowRem}
             columns={columns}
             nameWidth={treeConfig.nameColumnWidth}
+            nameFill={treeConfig.nameColumnFill}
             dimmed={reorder?.resourceId === row.resource.id}
             selected={selectedSet.has(row.resource.id)}
             onSelectedChange={row.isGroup ? undefined : toggleRowSelected}
@@ -3396,6 +3410,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
   bandRem,
   columns,
   nameWidth,
+  nameFill,
   dimmed,
   selected,
   onSelectedChange,
@@ -3407,6 +3422,8 @@ const GanttTreeRow = memo(function GanttTreeRow({
   bandRem: number
   columns: GanttColumn[]
   nameWidth: number
+  /** Quincy #256: the name cell grows to fill the row (`nameWidth` is its floor), no spacer. */
+  nameFill: boolean
   dimmed: boolean
   selected: boolean
   onSelectedChange?: (id: string, checked: boolean) => void
@@ -3468,6 +3485,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
           row-level hover/selected tints show through the transparent cell */}
         <div
           data-slot="gantt-tree-cell"
+          data-testid="gantt-tree-name-cell"
           className={cn(
             // ps-3 keeps the row toggles off the left edge (kept in sync with
             // namePaddingStart above so headers stay aligned with row titles)
@@ -3475,7 +3493,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
             alignStart ? "items-start" : "items-center",
             row.isGroup && "font-medium"
           )}
-          style={{ width: nameWidth }}
+          style={{ width: nameWidth, ...(nameFill ? { flexGrow: 1 } : {}) }}
         >
           {/* exactly the band the first schedule occupies: same height, both
             top-anchored, so the label and that schedule share a centerline */}
@@ -3575,7 +3593,8 @@ const GanttTreeRow = memo(function GanttTreeRow({
             </div>
           </div>
         ))}
-        <div className="min-w-0 flex-1" />
+        {/* Quincy #256: see the tree header's own spacer */}
+        {!nameFill && <div className="min-w-0 flex-1" />}
       </div>
     </div>
   )
