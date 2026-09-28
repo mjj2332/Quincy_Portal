@@ -2118,6 +2118,40 @@ describe("staff app API", () => {
     for (const key of [...projectKeys, ...renditionKeys]) expect(await media.MEDIA.get(key)).toBeNull();
   });
 
+  it("deletes an archived project's notification outbox, delivery ledger and rendition DLQ rows without touching another project's", async () => {
+    const cookie = await sessionCookie(adminToken); const now = Date.now();
+    const create = async (street: string, extra: Record<string, unknown> = {}) => {
+      const response = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street, orderedServices: [], ...extra }) });
+      expect(response.status).toBe(201); const project = await response.json() as { id: string };
+      const raw = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'raw'").bind(project.id).first<{ id: string }>(); const assetId = crypto.randomUUID();
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(assetId, raw!.id, `projects/${project.id}/originals/${assetId}.jpg`, "orphan.jpg", 1, "upload", now, now).run();
+      return { id: project.id, assetId };
+    };
+    const doomed = await create("Delete outbox", { editorUserIds: [editorId] }); const retained = await create("Retain outbox");
+    expect((await SELF.fetch(`https://portal.test/api/projects/${doomed.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(doomed.id).first<{ count: number }>())!.count).toBeGreaterThan(0);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id = ?)").bind(doomed.id).first<{ count: number }>())!.count).toBeGreaterThan(0);
+    const insertOutbox = (id: string, projectId: string, status: string, lease: boolean) => database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, lease_token, lease_expires_at, created_at, updated_at) VALUES (?, 1, 'test.delete_orphans', ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?)").bind(id, id, projectId, seedAdminId, editorId, status, now, lease ? crypto.randomUUID() : null, lease ? now + 60_000 : null, now, now);
+    const processingOutboxId = crypto.randomUUID(); const retainedOutboxId = crypto.randomUUID(); const doomedDlqId = crypto.randomUUID(); const retainedDlqId = crypto.randomUUID();
+    await database.DB.batch([
+      insertOutbox(processingOutboxId, doomed.id, "processing", true),
+      database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at) VALUES (?, ?, 'test.delete_orphans', ?, ?, 'email', 'processing', ?, ?)").bind(crypto.randomUUID(), processingOutboxId, processingOutboxId, editorId, now, now),
+      insertOutbox(retainedOutboxId, retained.id, "completed", false),
+      database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(doomedDlqId, doomed.assetId, now),
+      database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(retainedDlqId, retained.assetId, now),
+    ]);
+    const outboxIds = (await database.DB.prepare("SELECT id FROM notification_outbox WHERE project_id = ?").bind(doomed.id).all<{ id: string }>()).results.map((row) => row.id);
+    expect(outboxIds).toContain(processingOutboxId);
+
+    const response = await SELF.fetch(`https://portal.test/api/projects/${doomed.id}`, { method: "DELETE", headers: { cookie } });
+    expect(response.status).toBe(200);
+    await expect(database.DB.prepare(`SELECT count(*) AS count FROM notification_delivery_ledger WHERE outbox_id IN (${outboxIds.map(() => "?").join(", ")})`).bind(...outboxIds).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(doomed.id).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM rendition_dlq_events WHERE asset_id = ?").bind(doomed.assetId).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(retainedOutboxId).first()).resolves.toEqual({ status: "completed" });
+    await expect(database.DB.prepare("SELECT asset_id FROM rendition_dlq_events WHERE id = ?").bind(retainedDlqId).first()).resolves.toEqual({ asset_id: retained.assetId });
+  });
+
   it("does not purge another project's asset renditions", async () => {
     const cookie = await sessionCookie(adminToken);
     const create = async (street: string) => {

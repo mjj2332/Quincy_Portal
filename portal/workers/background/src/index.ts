@@ -815,10 +815,18 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         const fallbackAssetId = rawBody && typeof rawBody === "object" && typeof (rawBody as { assetId?: unknown }).assetId === "string"
           ? (rawBody as { assetId: string }).assetId
           : "unparseable-dlq-body";
-        const assetId = parsed && parsed.body.type === "generate_renditions" ? parsed.body.assetId : fallbackAssetId;
-        if (!parsed || parsed.body.type !== "generate_renditions") {
-          console.error("Rendition DLQ message has an unrecognized body", { queue: batch.queue, assetId });
+        if (parsed && parsed.body.type === "generate_renditions") {
+          const assetId = parsed.body.assetId;
+          // A deleted asset has nothing to replay, and rendition_dlq_events has no FK to assets, so a late
+          // arrival after DELETE /projects/:id would recreate the orphan it just cleared. Insert only while
+          // the asset still exists, atomically.
+          const inserted = await this.env.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) SELECT ?, ?, 'open', ? WHERE EXISTS (SELECT 1 FROM assets WHERE id = ?)").bind(crypto.randomUUID(), assetId, Date.now(), assetId).run();
+          if (inserted.meta.changes === 0) console.warn("Rendition DLQ message for a deleted asset; not recorded", { queue: batch.queue, assetId });
+          message.ack();
+          continue;
         }
+        const assetId = fallbackAssetId;
+        console.error("Rendition DLQ message has an unrecognized body", { queue: batch.queue, assetId });
         await db.insert(renditionDlqEvents).values({
           id: crypto.randomUUID(),
           assetId,

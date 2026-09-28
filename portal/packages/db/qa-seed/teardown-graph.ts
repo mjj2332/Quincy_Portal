@@ -73,7 +73,10 @@ export type NoFkColumn = {
  * column holds a captured row's id is itself captured — and each is swept after deletion. Every entry
  * cites where the app reads or writes the column as that reference. Kept small and named; the
  * schema-scan guard fails on any `*_id`/`*Id` column in `schema.ts` without `.references()` that is
- * neither here nor in that guard's justified "not an entity reference" allowlist.
+ * neither here nor in that guard's justified "not an entity reference" allowlist. An entry whose rows a
+ * project owns (today `notification_outbox.project_id` and `rendition_dlq_events.asset_id`) must also be
+ * deleted explicitly by `DELETE /projects/:id` in `workers/app/src/routes/projects.ts`, since no cascade
+ * reaches it.
  */
 export const NO_FK_ID_COLUMNS: readonly NoFkColumn[] = [
   { table: "audit_log", column: "target_id", references: "*", evidence: "polymorphic by target_type — every audit(...) / INSERT INTO audit_log in workers/" },
