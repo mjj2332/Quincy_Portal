@@ -28,7 +28,12 @@ import {
 import { STAGE_KEYS, type StageKey } from "./stages";
 
 export const PRODUCTION_CALENDAR_ZONE = SYDNEY_TIME_ZONE;
-export const PRODUCTION_CALENDAR_SUBVIEWS = ["month", "week", "agenda"] as const;
+/**
+ * #222 added `day` and `days` (additive — the original three keep their positions' meaning). They
+ * are UI views of the new event-calendar renderer only: the drag/drop/resize mappers below take a
+ * GRANULARITY subview (`month` = day-cell, `week` = minute column) and never a UI view name.
+ */
+export const PRODUCTION_CALENDAR_SUBVIEWS = ["month", "week", "day", "days", "agenda"] as const;
 export const PRODUCTION_CALENDAR_LAYERS = ["project", "checklist"] as const;
 export const PRODUCTION_CALENDAR_MAX_RANGE_DAYS = 42;
 export const PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND = 50;
@@ -265,6 +270,11 @@ export function deriveProductionCalendarWindow(
     if (!shifted.ok) throw new RangeError("Could not derive the production Calendar week start.");
     start = shifted.value;
     duration = 7;
+  } else if (subview === "day") {
+    duration = 1;
+  } else if (subview === "days") {
+    // #222: the event-calendar "days" view is fixed at three days from the focused date.
+    duration = 3;
   }
 
   const shiftedEnd = shiftDateValue(start, duration);

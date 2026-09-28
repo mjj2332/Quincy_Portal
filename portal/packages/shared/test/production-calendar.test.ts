@@ -17,6 +17,7 @@ import {
   previewProjectDeadlineReminderConsequences,
   productionCalendarFiltersSchema,
   PRODUCTION_CALENDAR_MAX_RANGE_DAYS,
+  PRODUCTION_CALENDAR_SUBVIEWS,
   productionCalendarRangeQuerySchema,
   PRODUCTION_CALENDAR_ZONE,
   shiftSydneyCalendarDate,
@@ -160,6 +161,29 @@ describe("production Calendar civil windows", () => {
       expect(difference).toBeGreaterThan(0);
       expect(difference).toBeLessThanOrEqual(PRODUCTION_CALENDAR_MAX_RANGE_DAYS);
     }
+  });
+
+  it("#222: day is the focused date alone and days is the focused date plus the next two", () => {
+    expect(deriveProductionCalendarWindow("2026-08-12", "day")).toEqual({ start: "2026-08-12", end: "2026-08-13" });
+    expect(deriveProductionCalendarWindow("2026-08-12", "days")).toEqual({ start: "2026-08-12", end: "2026-08-15" });
+    // month and year boundaries stay in civil-date space
+    expect(deriveProductionCalendarWindow("2026-08-31", "day")).toEqual({ start: "2026-08-31", end: "2026-09-01" });
+    expect(deriveProductionCalendarWindow("2026-12-30", "days")).toEqual({ start: "2026-12-30", end: "2027-01-02" });
+  });
+
+  it("#222: day and days windows across both 2026 Sydney DST transitions stay whole civil days", () => {
+    // 2026-04-05: clocks fall back (25-hour day). 2026-10-04: clocks spring forward (23-hour day).
+    expect(deriveProductionCalendarWindow("2026-04-05", "day")).toEqual({ start: "2026-04-05", end: "2026-04-06" });
+    expect(deriveProductionCalendarWindow("2026-10-04", "day")).toEqual({ start: "2026-10-04", end: "2026-10-05" });
+    expect(deriveProductionCalendarWindow("2026-04-04", "days")).toEqual({ start: "2026-04-04", end: "2026-04-07" });
+    expect(deriveProductionCalendarWindow("2026-10-03", "days")).toEqual({ start: "2026-10-03", end: "2026-10-06" });
+    // the DST weeks themselves, Monday-anchored, for the views that already existed
+    expect(deriveProductionCalendarWindow("2026-04-05", "week")).toEqual({ start: "2026-03-30", end: "2026-04-06" });
+    expect(deriveProductionCalendarWindow("2026-10-04", "week")).toEqual({ start: "2026-09-28", end: "2026-10-05" });
+  });
+
+  it("#222: the subview list is additive — the original three keep their order", () => {
+    expect(PRODUCTION_CALENDAR_SUBVIEWS).toEqual(["month", "week", "day", "days", "agenda"]);
   });
 
   it("rejects non-canonical focused dates", () => {

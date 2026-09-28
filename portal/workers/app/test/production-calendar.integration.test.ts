@@ -416,6 +416,21 @@ describe("TB5C production Calendar range endpoint", () => {
     if (dateRange?.kind === "checklist") expect(dateRange.timing).toMatchObject({ allDay: true, start: "2026-08-26", end: "2026-08-28" });
   });
 
+  it("#222: serves the day and days subviews over the same bounded window and echoes them back", async () => {
+    const dayRange = "start=2026-08-27&end=2026-08-28&date=2026-08-27&sub=day&scope=active&layers=project,checklist&q=Boundary";
+    const day = await adminCalendar(`/api/production-calendar?${dayRange}`);
+    expect(day.range).toMatchObject({ start: "2026-08-27", end: "2026-08-28", date: "2026-08-27", subview: "day" });
+    // a day window returns exactly what the same one-day agenda window returns
+    const agenda = await adminCalendar(`/api/production-calendar?${dayRange.replace("sub=day", "sub=agenda")}`);
+    expect(day.events.map((event) => event.id).sort()).toEqual(agenda.events.map((event) => event.id).sort());
+
+    const days = await adminCalendar("/api/production-calendar?start=2026-08-27&end=2026-08-30&date=2026-08-27&sub=days&scope=active&layers=project,checklist");
+    expect(days.range.subview).toBe("days");
+
+    const unknown = await request("/api/production-calendar?start=2026-08-27&end=2026-08-28&date=2026-08-27&sub=year&scope=active&layers=project", tokens.admin);
+    expect(unknown.status).toBe(400);
+  });
+
   it("sanitizes inaccessible Editor IDs, keeps partial validity, and applies checklist assignees independently of project membership", async () => {
     const fakeId = "80777777-7777-4777-8777-777777777777";
     const noFilter = await adminCalendar(`/api/production-calendar?${range}&q=Calendar`);
