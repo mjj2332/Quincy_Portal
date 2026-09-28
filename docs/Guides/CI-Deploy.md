@@ -53,6 +53,23 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 Pages → the Worker → **Deployments**. A rollback holds only until the next merge to `main`
 redeploys, so follow it with a revert PR or a fix.
 
+### Calendar renderer (until #224)
+
+Since #223 the Dashboard Calendar draws with the ReUI event calendar by default; FullCalendar stays in
+the bundle for one release as an opt-out. Pick the narrowest lever:
+
+- **Per browser** (one person, nothing deployed): in devtools on the Portal, run
+  `localStorage.setItem("quincy:dashboard:calendar:renderer", "fullcalendar")` and reload.
+  `localStorage.removeItem("quincy:dashboard:calendar:renderer")` and a reload return that browser to
+  the default. Only the exact value `"fullcalendar"` opts out; anything else reads as the default.
+- **Global, emergency**: `npx wrangler rollback <version-id>` to the app Worker version deployed
+  before the flip. It holds only until the next merge to `main`, and it rolls back everything else
+  in that deploy too.
+- **Global, durable**: revert the flip commit — "the event calendar is the Dashboard's default
+  renderer (#223)" — on its own, in a PR. The opt-out commit before it can stay.
+
+#224 deletes the opt-out and FullCalendar; after it, only a Worker rollback or a revert applies.
+
 ## One-time setup: the Cloudflare API token
 
 The owner creates it and adds it to GitHub; an agent never handles the token.

@@ -38,11 +38,12 @@ export type DashboardCalendarInitializationOptions = {
 /**
  * #222: which component renders the Dashboard Calendar. A RENDERER preference — not a route, not a
  * capability: both renderers read the same URL facet and the same `/api/production-calendar`. The
- * new ReUI event-calendar is opt-in per browser via `localStorage[DASHBOARD_CALENDAR_RENDERER_KEY]
- * = "event-calendar"`; #223 flips `CALENDAR_RENDERER_DEFAULT`.
+ * ReUI event-calendar has been the default since #223; for one release
+ * `localStorage["quincy:dashboard:calendar:renderer"] = "fullcalendar"` (`DASHBOARD_CALENDAR_RENDERER_KEY`)
+ * opts a browser back to FullCalendar. #224 deletes that opt-out and FullCalendar with it.
  */
 export type CalendarRenderer = "fullcalendar" | "event-calendar";
-export const CALENDAR_RENDERER_DEFAULT: CalendarRenderer = "fullcalendar";
+export const CALENDAR_RENDERER_DEFAULT: CalendarRenderer = "event-calendar";
 export const DASHBOARD_CALENDAR_RENDERER_KEY = "quincy:dashboard:calendar:renderer";
 
 export type DashboardPreferenceStorage = {
@@ -171,7 +172,8 @@ function writeCalendarPreference(storage: DashboardCalendarPreferenceStorage, ke
 /**
  * #222/#223: only an exact stored renderer name (`"fullcalendar"` or `"event-calendar"`) is honoured;
  * anything else — absent, differently cased, padded, or a throwing read — is the default. Honouring
- * `"fullcalendar"` explicitly is what keeps the old renderer reachable once the default flips.
+ * `"fullcalendar"` explicitly is what keeps FullCalendar reachable now that the event calendar is the
+ * default (the per-browser opt-out, until #224 removes it).
  */
 export function readCalendarRenderer(storage: DashboardCalendarPreferenceStorage): CalendarRenderer {
   const stored = readCalendarPreference(storage, DASHBOARD_CALENDAR_RENDERER_KEY);
@@ -185,8 +187,9 @@ export function writeCalendarRenderer(storage: DashboardCalendarPreferenceStorag
 
 /**
  * #222: FullCalendar has no `day`/`days` view (its `viewForSubview` would fall through to a list),
- * so with the flag off those two subviews — from a URL shared by an opted-in browser, or a
- * remembered preference — read as `week`, the nearest view it does draw.
+ * so in a browser opted out to FullCalendar (#223) those two subviews — from a URL shared by a
+ * browser on the default event calendar, or a remembered preference — read as `week`, the nearest
+ * view it does draw.
  */
 export function coerceCalendarSubviewForRenderer(
   subview: DashboardCalendarState["subview"],

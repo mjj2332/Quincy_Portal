@@ -50,8 +50,8 @@ import {
 } from "../lib/kanban-interaction";
 import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // Code-split: FullCalendar + its deps (~84 kB gzip) load only when a capable
-// principal opens the Calendar view, never on the sign-in screen or a
-// Photographer dashboard.
+// principal opens the Calendar view in a browser opted out to FullCalendar (#223),
+// never on the sign-in screen or a Photographer dashboard.
 const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
 // #220: same code-split shape as Calendar above — the vendored ReUI Gantt tree loads only when a
 // capable principal opens the Gantt view. `ProductionGantt.tsx` is the ONLY app file allowed to
@@ -60,8 +60,8 @@ const ProductionCalendar = lazy(() => import("../components/ProductionCalendar")
 // template string — is what lets that guard's dynamic-import detector keep pinning this exact
 // site as the vendored tree's one production entry point.
 const ProductionGantt = lazy(() => import("../components/ProductionGantt").then((module) => ({ default: module.ProductionGantt })));
-// #222: the ReUI event-calendar renderer, opt-in per browser (`readCalendarRenderer`) until #223
-// flips the default. Same code-split shape and the same literal `import(...)` as the Gantt above:
+// #222: the ReUI event-calendar renderer — the Calendar's default since #223 (a browser can opt back
+// to FullCalendar via `readCalendarRenderer` until #224). Same code-split shape and the same literal `import(...)` as the Gantt above:
 // `ProductionEventCalendar.tsx` is the ONLY app file allowed to import
 // `components/reui/event-calendar/`, and this lazy import is that tree's one production entry.
 const ProductionEventCalendar = lazy(() => import("../components/ProductionEventCalendar").then((module) => ({ default: module.ProductionEventCalendar })));
@@ -209,9 +209,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // excludes the one arm -- the facet -- that has no `search` field at all).
   const routeDashboardSearch = currentDashboardRoute && !isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.search : undefined;
   const rawRouteCalendar = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.calendar : routeCalendar;
-  // #222: the renderer preference, read once per mount (a renderer flag, not a route or a
-  // capability). With FullCalendar (the default) a `day`/`days` subview from the URL reads as
-  // `week` — memoised so the reconciliation effect below sees a stable object, and rewritten in
+  // #222: the renderer preference, read once per mount (a renderer preference, not a route or a
+  // capability). The event calendar is the default since #223; in a browser opted out to
+  // FullCalendar a `day`/`days` subview from the URL reads as `week` — memoised so the reconciliation effect below sees a stable object, and rewritten in
   // the address bar there.
   const [calendarRenderer] = useState(() => readCalendarRenderer({ read: (key) => window.localStorage.getItem(key) }));
   // #222: both renderers take the same props; pick one here and render it once below.
@@ -602,7 +602,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     if (effectiveRouteCalendar) {
       calendarFallbackLocationRef.current = false;
-      // #222: a coerced subview (flag off, `sub=day|days`) is written back to the address bar.
+      // #222: a coerced subview (opted out to FullCalendar, `sub=day|days`) is written back to the address bar.
       if (effectiveRouteCalendar !== rawRouteCalendar && locationHasCalendar) history.replace(staffPathFor({ kind: "dashboard", calendar: effectiveRouteCalendar }));
       setCalendarState(effectiveRouteCalendar);
       setView("calendar");

@@ -12,7 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE } from "@quincy/shared";
 import { Dashboard } from "./Dashboard";
-import { DASHBOARD_VIEW_KEY } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_RENDERER_KEY, DASHBOARD_VIEW_KEY, type CalendarRenderer } from "./dashboard-helpers";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,6 +29,14 @@ vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div 
 // `useProductionCalendarRange` query -- and so the real `/api/production-calendar` fetch this
 // file needs to count -- intact.
 vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: () => <div data-testid="dashboard-calendar-surface" /> }));
+// #223: the event calendar is the default renderer, so this suite runs on both. The event-calendar
+// leg draws through the shared vendor fake (`testing/event-calendar-fake.tsx`) -- only the vendor
+// tree is faked, so `ProductionEventCalendar`'s real range queries (and their fetches) stay intact.
+// FullCalendar never imports `reui/event-calendar/`, so these mocks leave its leg untouched.
+vi.mock("../components/reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
+vi.mock("../components/reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
+vi.mock("../components/reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
+vi.mock("../components/reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 // `filterFacets.myTasksUserId` is `z.string().uuid()`, NOT nullable
 // (`packages/shared/src/production-calendar.ts:586`) -- a real UUID here, not `null`
@@ -55,6 +63,8 @@ let pushSpy: ReturnType<typeof vi.spyOn>;
 let replaceSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
+  // #223: preloaded BEFORE fake timers, for the same reason as `ProductionCalendar` below.
+  await import("../components/ProductionEventCalendar");
   vi.useFakeTimers({ now: new Date("2026-08-27T00:00:00.000Z") });
   // Preloaded, mirroring `Dashboard-calendar-intent.dom.test.tsx`'s own harness: `Dashboard.tsx`
   // reaches this module through `lazy(() => import(...))`, and letting that dynamic import resolve
@@ -172,8 +182,11 @@ async function mountAt(location: string) {
  * render. Ceiling is 2, same derivation as Calendar: identity × StrictMode replay, and every
  * request checked to carry `q=Probe`.
  */
-async function assertIdleAfterSettling(location: string, calendarCeiling: number, projectsCeiling: number) {
+async function assertIdleAfterSettling(location: string, calendarCeiling: number, projectsCeiling: number, calendarSurface?: string) {
   const stableChecks = await mountAt(location);
+  // #223: when a Calendar is expected, prove its renderer actually drew -- a lazy chunk stuck in
+  // Suspense makes zero requests, which every ceiling below would wave through.
+  if (calendarSurface) expect(host.querySelector(`[data-testid="${calendarSurface}"]`), `${calendarSurface} never drew`).not.toBeNull();
   expect(stableChecks, "fetch counts never reached two consecutive stable 1s checks within the 8s settle cap — that is the loop").toBe(2);
 
   expect(window.location.search, "q missing from the URL right after settling — the assertion below would be vacuous").toContain("q=Probe");
@@ -204,12 +217,29 @@ async function assertIdleAfterSettling(location: string, calendarCeiling: number
   expect(window.location.search).toContain("q=Probe");
 }
 
-describe("Dashboard search + Calendar request stability (#217 design-review, item 10; hardened #217 design-fix round 2, item 1)", () => {
+/**
+ * #223: both renderers. `calendarColdLoad` is each renderer's own production-calendar ceiling for
+ * scenario (a). FullCalendar's is unchanged: one range query, identity × StrictMode replay = 2.
+ * The event calendar issues TWO range queries per load -- the `bounds=1` main range and the
+ * up-next agenda -- each identity × StrictMode replay, so 4.
+ */
+const RENDERERS: ReadonlyArray<{ renderer: CalendarRenderer; surface: string; calendarColdLoad: number }> = [
+  { renderer: "fullcalendar", surface: "dashboard-calendar-surface", calendarColdLoad: 2 },
+  { renderer: "event-calendar", surface: "event-calendar-body", calendarColdLoad: 4 },
+];
+
+describe.each(RENDERERS)("Dashboard search + Calendar request stability (#217 design-review, item 10; hardened #217 design-fix round 2, item 1) ($renderer)", ({ renderer, surface, calendarColdLoad }) => {
+  beforeEach(() => {
+    // #223: the FullCalendar leg is the explicit per-browser opt-out; the event-calendar leg is the default (no value).
+    if (renderer === "fullcalendar") window.localStorage.setItem(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
+  });
+
   it("(a) the bare Calendar intent + q, from an EMPTY store -- the canonicalising rewrite runs once on settle, then stays idle", async () => {
-    // calendar: 2, projects: 2 -- both identity × StrictMode replay, every request on either
-    // endpoint already carrying q=Probe (design-fix round 2 item 1 for the calendar state,
-    // URL-authoritative render-derived `committedQuery` for projects).
-    await assertIdleAfterSettling("/?view=calendar&q=Probe", 2, 2);
+    // calendar: 2 on FullCalendar (4 on the event calendar, see RENDERERS), projects: 2 -- both
+    // identity × StrictMode replay, every request on either endpoint already carrying q=Probe
+    // (design-fix round 2 item 1 for the calendar state, URL-authoritative render-derived
+    // `committedQuery` for projects).
+    await assertIdleAfterSettling("/?view=calendar&q=Probe", calendarColdLoad, 2, surface);
   });
 
   it("(b) no `view` param at all, a remembered kanban preference, + q", async () => {

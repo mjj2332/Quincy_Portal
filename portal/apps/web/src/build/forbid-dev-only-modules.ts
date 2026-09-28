@@ -66,7 +66,7 @@ import type { Plugin } from "vite";
  * `src/components/reui/event-calendar/` — vendored ReUI event-calendar primitives (#219 PR B) — came
  * OFF this list in #222, the slice that gives it a real production consumer
  * (`components/ProductionEventCalendar.tsx`, reached from `screens/Dashboard.tsx` through a lazy
- * import behind the per-browser renderer flag). Same rule as the Gantt: the allowlist in
+ * import, the Dashboard's default Calendar renderer since #223). Same rule as the Gantt: the allowlist in
  * `harness-reachability.guard.test.ts` now polices which file may import it.
  */
 export const RESTRICTED_MODULE_PREFIXES = [
