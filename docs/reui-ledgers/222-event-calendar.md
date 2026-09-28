@@ -28,4 +28,4 @@ each needs its `mcp__ReUI__search` confirmation before the PR merges.
 | Settle-recovery notice + Refresh | `components/quincy/Notice` `tone="caution"` + `components/reui/button` | Same contract as `ProductionCalendar.tsx` (`data-focus-key="calendar-recovery"`). |
 | Empty / error / loading | `components/quincy/EmptyState`, `components/reui/skeleton` | Skeleton first-load only. |
 | Live region | `sr-only` `aria-live` bound to the controller's `announcement` (`data-testid="dashboard-live-region"`) | Same pattern as the FullCalendar renderer. |
-| Toasts | `lib/toast-store` | Undo toast is a follow-up issue. |
+| Save / Undo toast (#291) | Installed `components/quincy/ToastViewport` + `lib/toast-store` action slot, raised by `lib/use-scheduling-undo-toast.ts` (shared with the Gantt) | No new UI element. Caution tone for an out-of-range warning; `announcedElsewhere` (the live region carries the text). |
