@@ -195,3 +195,26 @@ What was new this time:
   real-browser pass is still where chip, trigger and Clear heights (all three on the button's
   38px / 44px-at-≤721px contract since browser pass F) and the `outline-hidden` + ring focus
   treatment in the cascader get judged.
+
+## Addendum: retiring what the block replaced (FullCalendar, #224)
+
+The event calendar (#219 → #222 → #223) finished with a deletion slice. What it actually cost:
+
+| | |
+|---|---|
+| Deleted | 33 files, ~5,340 lines: the FullCalendar renderer (10 components, 2 libs, `production-calendar.css`), its 18 test files, and `ProductionCalendarChrome.guard` |
+| Moved first (own commit) | `ProjectCalendarAnchor`, the schedule-editor button label, `civilParts`/`validCivil`, `FIELD_COMPACT`/fold classes, two row classes and `COARSE_TAP_TARGET` — all live code in files named for the old renderer |
+| Kept despite the name | `ProductionCalendarMoveConfirmation` (body of two live confirm dialogs), `ProductionCalendarScheduleEditorFields`, `lib/production-calendar-*` (the domain name, not the renderer) |
+| Dependencies removed | `@fullcalendar/core`, `@fullcalendar/react`, `temporal-polyfill` (only FullCalendar needed it), and the `@fullcalendar` key in `components.json` |
+| Gantt | Now renders the shared `ProductionEventCalendarDialogs` instead of the old Modal move/fold dialogs; its copied `useOpenToken` went with them |
+| Test legs | Every two-renderer `describe.each` collapsed to one; two FullCalendar-driven suites ported to `testing/event-calendar-fake.tsx` |
+| Bundle after (`vite build`, raw / gzip, all JS) | 2,363 kB / 708 kB; FullCalendar only ever lived in its own lazy chunk, so the entry chunk barely moves |
+
+What was new:
+
+- **Budget a relocation commit before the deletion.** The parity work leaves shared helpers where
+  they were first written. See `docs/lessons.md`, "Retiring a renderer".
+- **Check where a shared component's CSS is imported.** The old renderer's lazy stylesheet was the
+  only styling for pieces the new Calendar and the Gantt also rendered.
+- **Replace a surface-named guard with one pinned to what the new surface relies on** before
+  deleting it, never in a later slice.

@@ -1355,8 +1355,8 @@ The failure is not that people did not read the lesson. It is that a lesson has 
 2. **A `text-[length:…]` beside a `[font:…]` shorthand.** Tailwind emits the arbitrary-property
    rule later at equal specificity, so the shorthand always wins and the `text-[length:]` is dead
    — regardless of the order the classes appear in the class string.
-3. **`outline: none | 0 | transparent` in unlayered CSS.** `app.css` and `production-calendar.css`
-   are imported outside every cascade layer, so such a rule beats any utility and, on a specificity
+3. **`outline: none | 0 | transparent` in unlayered CSS.** `app.css` (and, until #224,
+   `production-calendar.css`) are imported outside every cascade layer, so such a rule beats any utility and, on a specificity
    tie, also beats the global `:focus-visible` in `tokens/base.css`.
 
 Two things are worth carrying forward beyond the guards themselves.
@@ -4132,3 +4132,38 @@ old time after a save or an Undo until its own 30s interval or a remount.
 - **A "not double-fetched" test needs a live runtime**, or the producer skip never runs and the
   assertion proves nothing. The #295 block in `ProductionEventCalendar-undo.dom.test.tsx` constructs
   one and asserts exactly one main-range GET and one rail GET per save; turning the skip off fails it.
+
+## Retiring a renderer: its files were still load-bearing, and its stylesheet was never loaded (#224, 2026-09-29)
+
+Deleting FullCalendar looked like `rm` plus test legs. Three things made it a two-commit job.
+
+- **"Old" files still exported live code.** The ReUI Calendar and the Gantt imported
+  `ProjectCalendarAnchor`, the schedule-editor button label, `civilParts`/`validCivil`, the
+  compact-field class and `COARSE_TAP_TARGET` from files named for FullCalendar, and
+  `ProductionCalendarMoveConfirmation` is the body of two live confirmation dialogs. So the first
+  commit moved every survivor to a home that outlives the deletion (old files re-importing from
+  it, so the old guard stayed green), and only the second deleted anything. Grep the importers of a
+  module before trusting a delete list, including one written in the issue.
+- **A lazily imported stylesheet only styles what loads its chunk.** `production-calendar.css` was
+  imported by the lazy `ProductionCalendarSurface` alone, and Vite code-splits CSS with the chunk.
+  Since #223 made the event calendar the default, the schedule editor's fold fieldset and the
+  Gantt's Modal dialogs had been unstyled in production for everyone who never opened
+  FullCalendar. The fold now uses reui `FieldSet`/`FieldLegend`; the Gantt renders the shared
+  `ProductionEventCalendarDialogs`. When a surface shares components with a lazy one, check where
+  their CSS is actually imported.
+- **Retire a guard only after its replacement exists.** `ProductionCalendarChrome.guard` pinned
+  focus rings and reduced motion by the old surface's class names. Its replacement pins what the
+  event calendar actually relies on: Guard 3b/3c in `design-system-guards.test.ts` (the unlayered
+  global `:focus-visible` and `prefers-reduced-motion` rules) and
+  `ProductionEventCalendar.focus-motion.guard.test.ts` (no `!important` outline or motion
+  utilities on the Calendar surfaces). Each has a planted-fixture self-test. happy-dom resolves
+  neither cascade layers nor media queries, so the runtime check stays in the browser pass.
+- **Porting a FullCalendar-driven DOM test to `testing/event-calendar-fake.tsx`**: the default
+  test viewport draws the Calendar's narrow layout, so the facets rail sits behind the Filters
+  toggle and must be opened first; Base UI's ScrollArea needs the `Element.getAnimations` polyfill
+  other suites already carry; and request counts are re-derived per the #223 entry (main range
+  plus Up next), not copied.
+- **Base UI's default focus restoration was enough for the Gantt.** Moving the Gantt from the old
+  Modal move dialog to the ReUI alert-dialog needed no `finalFocus`: 6c pins focus arriving in the
+  confirmation and 6e pins Cancel returning it to Set deadline.
+
