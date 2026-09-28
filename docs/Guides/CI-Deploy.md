@@ -50,8 +50,8 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 ## Rolling back
 
 `npx wrangler rollback <version-id>` in that Worker's folder, or Cloudflare dashboard → Workers &
-Pages → the Worker → **Deployments**. A rollback holds only until the next merge to `main`
-redeploys, so follow it with a revert PR or a fix.
+Pages → the Worker → **Deployments**. A rollback holds only until the next deploy (a merge to
+`main` that touches `portal/`, or a manual **Run workflow**), so follow it with a revert PR or a fix.
 
 ### Calendar renderer (until #224)
 
@@ -63,8 +63,8 @@ the bundle for one release as an opt-out. Pick the narrowest lever:
   `localStorage.removeItem("quincy:dashboard:calendar:renderer")` and a reload return that browser to
   the default. Only the exact value `"fullcalendar"` opts out; anything else reads as the default.
 - **Global, emergency**: `npx wrangler rollback <version-id>` to the app Worker version deployed
-  before the flip. It holds only until the next merge to `main`, and it rolls back everything else
-  in that deploy too.
+  before the flip. It holds only until the next deploy (a merge to `main` that touches `portal/`,
+  or a manual **Run workflow**), and it rolls back everything else in that deploy too.
 - **Global, durable**: revert the flip commit — "the event calendar is the Dashboard's default
   renderer (#223)" — on its own, in a PR. The opt-out commit before it can stay.
 
