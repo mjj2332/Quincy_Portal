@@ -50,9 +50,10 @@ const EDITOR_ENDPOINTS = "grid grid-cols-2 gap-[16px] max-[721px]:grid-cols-1";
 const EDITOR_ENDPOINT = "grid gap-[10px] min-w-0 m-0 p-[14px] border border-solid border-border";
 const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibold";
 const EDITOR_ENDPOINT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
-// #224: was `.qc-calendar-schedule-editor__fold` in the retired `production-calendar.css` — a
-// hairline above the radios, inside the endpoint's own fieldset.
-const EDITOR_FOLD = "gap-[var(--space-1)] pt-[var(--space-3)] border-t border-solid border-border";
+// #224: was `.qc-calendar-schedule-editor__fold` in the retired `production-calendar.css`. No
+// hairline: a `<fieldset>` border runs through its `<legend>`, which drew a rule beside the text,
+// and the endpoint's own fieldset already frames it. Matches the move dialog's fold.
+const EDITOR_FOLD = "gap-[var(--space-1)]";
 const EDITOR_INPUT = FIELD_COMPACT;
 const EDITOR_ERROR =
   "px-[12px] py-[10px] border-l-[3px] [border-left-style:solid] border-l-signal-critical " +
