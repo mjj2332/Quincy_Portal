@@ -270,6 +270,12 @@
  * `visibility` during a resize (either input) or a keyboard move, whose ghost draws its own title
  * ~6px off and read as a doubled label; the progress fill, done mark, grips and sr-only Adjust
  * text stay outside it. Covered by `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #257 — ADDED, additive: the bar shell's `cn()` includes `event.className`
+ * (`GanttEvent.className`, new) immediately before `viewConfig.classNames?.event`. Production
+ * passes Edited review's hatch through it. Only the bar shell reads it: the drag ghost and the
+ * offscreen chip in `gantt-view.tsx` still paint colour only. Covered by
+ * `gantt-bar-event-classname.dom.test.tsx`.
  */
 
 import {
@@ -1074,6 +1080,8 @@ function GanttBar<TData = unknown>({
         "justify-center bg-transparent px-0 hover:bg-transparent data-selected:bg-transparent",
       segment.continuesBefore && "rounded-s-none",
       segment.continuesAfter && "rounded-e-none",
+      // Quincy #257: the event's own class (e.g. a stage hatch), before the view-wide override
+      event.className,
       viewConfig.classNames?.event,
       className
     ),

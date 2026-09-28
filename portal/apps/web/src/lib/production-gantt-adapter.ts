@@ -17,7 +17,7 @@
  * pass may not touch `harness-reachability.guard.test.ts`. So `ProductionGanttResource` and
  * `ProductionGanttEvent<TData>` below are LOCAL types, not imports: every field pass A populates
  * is a subset of `GanttResource`/`GanttEvent<TData>`'s own fields (id/title/color/children for a
- * resource; id/title/start/end/allDay/color/readOnly/resourceId/data for an event), every field
+ * resource; id/title/start/end/allDay/color/className/readOnly/resourceId/data for an event), every field
  * `GanttResource`/`GanttEvent` declare beyond that subset is optional there, so pass B can assign
  * this module's output directly to a `GanttResource[]` / `GanttEvent<ProductionGanttRowData>[]`
  * — TypeScript's structural typing accepts it with no cast. If a future pass widens
@@ -43,7 +43,7 @@ import {
   type GanttChecklistRowDto,
   type GanttProjectRowDto,
 } from "@quincy/shared";
-import { stageColorFor } from "./stage-colors";
+import { STAGE_HATCH_CLASS, stageColorFor, stagePatternFor } from "./stage-colors";
 
 // ---------------------------------------------------------------------------
 // Local, structurally-`GanttResource`/`GanttEvent`-compatible shapes — see header.
@@ -75,6 +75,10 @@ export interface ProductionGanttEvent<TData = unknown> {
   draggable?: boolean;
   resizable?: boolean;
   resizableEdges?: { start?: boolean; end?: boolean };
+  /** #257 — the stage pattern class (`STAGE_HATCH_CLASS` for Edited review), mirroring
+   * `GanttEvent.className`; omitted (never `undefined`) when the stage has no pattern, so every
+   * other stage's output stays byte-identical. */
+  className?: string;
   data?: TData;
 }
 
@@ -163,7 +167,7 @@ function taskInteraction(row: GanttChecklistRowDto, dueOnly: boolean): Pick<Prod
   return { readOnly: !(canDrag || canResize), draggable: canDrag, resizable: canResize };
 }
 
-function buildTaskResult(row: GanttChecklistRowDto, color: string, interactive: boolean): RowBuildResult {
+function buildTaskResult(row: GanttChecklistRowDto, color: string, className: string | undefined, interactive: boolean): RowBuildResult {
   const schedule = row.schedule;
   const resourceId = `task:${row.id}`;
   const attentionFor = (reason: ProductionGanttAttentionReason): ProductionGanttAttention => ({
@@ -192,6 +196,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, interactive: 
         end: resolved.date,
         allDay: end.kind === "date",
         color,
+        ...(className ? { className } : {}),
         readOnly: true,
         resourceId,
         // fix-220-sol1 #4: a task carries no partial-progress field, only `done` — map it to the
@@ -222,6 +227,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, interactive: 
       end: endResolved.date,
       allDay: start.kind === "date",
       color,
+      ...(className ? { className } : {}),
       readOnly: true,
       resourceId,
       ...(row.done ? { progress: 100 } : {}),
@@ -232,7 +238,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, interactive: 
   };
 }
 
-function buildProjectBar(project: GanttProjectRowDto, color: string, interactive: boolean): RowBuildResult {
+function buildProjectBar(project: GanttProjectRowDto, color: string, className: string | undefined, interactive: boolean): RowBuildResult {
   const resourceId = `project:${project.id}`;
 
   if (!project.deadline) {
@@ -329,6 +335,7 @@ function buildProjectBar(project: GanttProjectRowDto, color: string, interactive
     end: endDate,
     allDay: false,
     color,
+    ...(className ? { className } : {}),
     readOnly: true,
     resourceId,
     ...(progress !== undefined ? { progress } : {}),
@@ -396,20 +403,22 @@ export function buildProductionGanttModel(
     includedProjectIds.add(project.id);
 
     const color = stageColorFor(project.stageKey);
+    // #257: the stage's secondary cue, on the project bar and every checklist child bar alike.
+    const className = stagePatternFor(project.stageKey) === "hatch" ? STAGE_HATCH_CLASS : undefined;
     const projectResourceId = `project:${project.id}`;
     const childResources: ProductionGanttResource[] = [];
 
     for (const row of sortedChildren) {
       const taskResourceId = `task:${row.id}`;
       childResources.push({ id: taskResourceId, title: row.title, color });
-      const result = buildTaskResult(row, color, interactive);
+      const result = buildTaskResult(row, color, className, interactive);
       if (result.event) events.push(result.event);
       if (result.attention) attention.push(result.attention);
     }
 
     resources.push({ id: projectResourceId, title: project.street, color, children: childResources });
 
-    const barResult = buildProjectBar(project, color, deadlineInteractive);
+    const barResult = buildProjectBar(project, color, className, deadlineInteractive);
     if (barResult.event) events.push(barResult.event);
     if (barResult.attention) attention.push(barResult.attention);
   }

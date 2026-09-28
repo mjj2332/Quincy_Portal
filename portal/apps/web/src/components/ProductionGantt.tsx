@@ -458,11 +458,13 @@ function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
       role="group"
       aria-label="Stage legend"
       data-testid="production-gantt-legend"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground"
+      // #257: the secondary text role — `text-muted-foreground` read too faint at 11px (same
+      // reasoning as the filters bar's chip operator, `ProductionGanttFiltersBar.dom.test.tsx`).
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-foreground-secondary"
     >
       {entries.map((entry) => (
         <span key={entry.key} className="inline-flex items-center gap-1.5" data-stage-key={entry.key}>
-          <StageSwatch color={entry.color} />
+          <StageSwatch color={entry.color} pattern={entry.pattern} />
           {entry.label}
         </span>
       ))}

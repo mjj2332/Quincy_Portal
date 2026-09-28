@@ -19,6 +19,7 @@ import type {
 } from "@quincy/shared";
 import { PRODUCTION_GANTT_DRAW_CAP } from "@quincy/shared";
 import { buildProductionGanttModel, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
+import { STAGE_HATCH_CLASS } from "./stage-colors";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -689,5 +690,39 @@ describe("interactive option (#221)", () => {
     const inverted = makeProject({ shootDateCivil: "2026-07-01" });
     const [bar] = eventsFor(buildProductionGanttModel([inverted], { now: NOW, interactive: true, deadlineInteractive: true }), `project:${inverted.id}`);
     expect(bar!.readOnly).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #257: Edited review bars carry the hatch (a secondary cue beside the shared caution colour)
+// ---------------------------------------------------------------------------
+
+describe("#257: stage pattern class", () => {
+  function projectWithChildren(stageKey: GanttProjectRowDto["stageKey"]) {
+    const projectId = `11111111-1111-4111-8111-${stageKey === "edited_review" ? "000000000257" : "000000000258"}`;
+    const rows = [
+      makeTask({ projectId, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-04")) }),
+      makeTask({ projectId, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) }),
+    ];
+    return makeProject({
+      id: projectId,
+      stageKey,
+      shootDateCivil: "2026-03-01",
+      children: { rows, total: rows.length, returned: rows.length, truncated: false, nextCursor: null },
+    });
+  }
+
+  it("an edited_review project bar AND each of its child task events carry the hatch class", () => {
+    const project = projectWithChildren("edited_review");
+    const model = buildProductionGanttModel([project], { now: NOW });
+    expect(model.events).toHaveLength(3);
+    for (const event of model.events) expect(event.className, event.id).toBe(STAGE_HATCH_CLASS);
+  });
+
+  it("a raw_review project (same caution colour) carries no class on the bar or its children", () => {
+    const project = projectWithChildren("raw_review");
+    const model = buildProductionGanttModel([project], { now: NOW });
+    expect(model.events).toHaveLength(3);
+    for (const event of model.events) expect(event.className, event.id).toBeUndefined();
   });
 });

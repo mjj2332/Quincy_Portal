@@ -29,3 +29,30 @@ export const stageColors: Record<ProjectStageKey, string> = {
 export function stageColorFor(stageKey: ProjectStageKey | null | undefined): string {
   return (stageKey !== null && stageKey !== undefined ? stageColors[stageKey] : undefined) ?? stageColors.awaiting_raw;
 }
+
+/** A stage's secondary visual cue beside its colour, or `null` for a plain solid swatch/bar. */
+export type StagePattern = "hatch";
+
+/**
+ * #257: Raw review and Edited review deliberately share `var(--signal-caution)` (owner decision —
+ * both are "a review is waiting"), so colour alone cannot tell them apart. Edited review carries a
+ * diagonal hatch as the second cue; every other stage is solid. Same key handling as
+ * `stageColorFor`: an unknown or absent key is the fallback stage's pattern (none).
+ */
+export function stagePatternFor(stageKey: ProjectStageKey | null | undefined): StagePattern | null {
+  return stageKey === "edited_review" ? "hatch" : null;
+}
+
+/**
+ * #257: the hatch itself — a `background-image`-only Tailwind arbitrary class, so it layers over
+ * whatever tint the bar shell or swatch already paints (`background-color` is untouched). Modelled
+ * on the Gantt's own off-day hatch (`gantt-view.tsx`): 135° stripes 2px wide every 6px, drawn from
+ * the element's `--gantt-event-color` at 40% so they read clearly while a bar's title stays
+ * legible over them. `data-completed:bg-none` drops it on a completed bar, which stays neutral
+ * (`gantt-bar.tsx`'s own completed treatment), and `data-milestone:bg-none` on a zero-length bar,
+ * whose transparent shell would otherwise paint stripes behind the milestone diamond. No colour literal (gantt-skin guard Detector 3), and
+ * kept here in TS rather than CSS because `--gantt-event-color` is set inline by the Gantt, not
+ * defined in `styles/` (the design-system guard would read it as a phantom token).
+ */
+export const STAGE_HATCH_CLASS =
+  "bg-[repeating-linear-gradient(135deg,transparent,transparent_4px,color-mix(in_oklab,var(--gantt-event-color)_40%,transparent)_4px,color-mix(in_oklab,var(--gantt-event-color)_40%,transparent)_6px)] data-completed:bg-none data-milestone:bg-none";

@@ -122,7 +122,7 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
         options: stageOptionsWithColor(stageOptions).map((option) => ({
           value: option.key,
           label: option.label,
-          icon: <StageSwatch color={option.color} />,
+          icon: <StageSwatch color={option.color} pattern={option.pattern} />,
         })),
       },
       {
