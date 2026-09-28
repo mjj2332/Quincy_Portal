@@ -108,6 +108,10 @@
  * `consumeFollowFocus(eventId)`, instance-scoped like the keyboard-focus token - an event-keyed
  * claim that `gantt-bar.tsx` makes when a focused bar unmounts and its replacement consumes in the
  * same commit; an unconsumed claim is dropped in a microtask. See the interface doc comment.
+ *
+ * 2026-09-28, #256 — ADDED, additive (default false changes nothing): `GanttTreePanelConfig.
+ * nameColumnFill`, which lets the tree's name column grow to fill the panel with `nameColumnWidth`
+ * as its floor. Rendered by `gantt-view.tsx`; covered by `gantt-tree-name-fill.dom.test.tsx`.
  */
 
 import {
@@ -2269,6 +2273,11 @@ interface GanttTreePanelConfig {
   resizable?: boolean
   /** Width of the sticky name column in px. Default 208. */
   nameColumnWidth?: number
+  /**
+   * When true, the name column grows to fill the panel (the trailing spacer is dropped) and
+   * `nameColumnWidth` becomes its floor. Default false: a fixed-width column. Quincy, #256.
+   */
+  nameColumnFill?: boolean
   /** Fires after any user resize (drag release, keyboard, double-click reset). */
   onWidthChange?: (width: number) => void
 }

@@ -92,11 +92,18 @@
  * (`isSelected && "ring-ring/50 ring-2"`) that the plain reproduction above used to drop. A bar that
  * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
  * the stock-fallthrough guarantee above for the common case.
+ *
+ * #258: that reproduced time label used to be a Quincy `Intl` lookalike (`12:00 am – 5:00 pm`, no
+ * dates, lower-case) because `GanttRenderEventProps` carries no `settings`. It is now the vendor's
+ * own `formatEventTime` (`ganttFormatEventTime`, merged from the same `GANTT_I18N` `<Gantt>` gets),
+ * so a hollow/done bar reads exactly like a stock bar and like its own aria-label.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
-import { Gantt, type GanttRenderEventProps } from "@/components/reui/gantt/gantt";
+import { Gantt, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
+import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
+import { toZoned } from "@/components/reui/gantt/gantt-lib";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttProposedUpdate, GanttResource, GanttScale, GanttSlotDraft, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
@@ -178,6 +185,20 @@ export type ProductionGanttProps = {
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
+/**
+ * The vendor i18n this Gantt runs with, passed to `<Gantt i18n>`: the tree header names what its
+ * rows are ("Projects", not the vendor's generic "Resources" — #256).
+ */
+const GANTT_I18N: GanttI18nOverrides = { labels: { resources: "Projects" } };
+/**
+ * #258: the SAME `formatEventTime` the vendor's own bars and aria-labels use, merged from the same
+ * overrides `<Gantt>` gets. `GanttRenderEventProps` carries no `settings`, so `renderEvent` cannot
+ * read the live one; this module-level copy is identical to it because `<Gantt>` is passed exactly
+ * `GANTT_I18N`, `timeZone={GANTT_TIME_ZONE}` and no `locale`.
+ */
+const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTime;
+/** #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. */
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
@@ -339,21 +360,6 @@ function GanttResourceLabel({
 }
 
 /**
- * A standalone `h:mm a`-shaped time label, Sydney-zoned, independent of the vendor's own
- * `settings.i18n.functions.formatEventTime` — `GanttRenderEventProps` (this file's own import)
- * carries no `settings`, only `occurrence`/`segment`/`isDragging`/`isSelected`
- * (`gantt.tsx`'s own `GanttRenderEventProps` — checked before writing this), so a `renderEvent`
- * callback structurally cannot reach the vendor's locale/format config to reproduce its exact
- * string. This is deliberately NOT byte-identical to that string (no locale threading, no
- * `date-fns` format-string parity) — it carries the same information (a Sydney wall-clock time),
- * which is what fix-220-sol1 #4 asked restored, not pixel-for-pixel vendor parity that the API does
- * not expose a way to achieve.
- */
-function formatGanttEventTimeLabel(date: Date): string {
-  return new Intl.DateTimeFormat("en-AU", { timeZone: GANTT_TIME_ZONE, hour: "numeric", minute: "2-digit" }).format(date);
-}
-
-/**
  * See this file's own header for the vendor contract this works around. Returns `undefined` — not
  * a reproduction — for any bar it does not customise, so `gantt-bar.tsx`'s own `??` fallthrough
  * renders its stock `defaultContent` (title, inline time label, recurring icon) exactly as if no
@@ -402,8 +408,12 @@ function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRende
 
   // fix-220-sol1 #4: only the FIRST segment of a (potentially view-boundary-split) bar carries the
   // inline time label, matching gantt-bar.tsx's own `defaultContent` (`segment.isStart`) — an
-  // interior/trailing segment repeating it would read like a data bug.
-  const timeLabel = !occurrence.allDay && segment.isStart ? `${formatGanttEventTimeLabel(occurrence.start)} – ${formatGanttEventTimeLabel(occurrence.end)}` : undefined;
+  // interior/trailing segment repeating it would read like a data bug. #258: the vendor's own
+  // string (dated on both ends for a multi-day timed bar), zoned the way `gantt-bar.tsx` zones it.
+  const timeLabel =
+    !occurrence.allDay && segment.isStart
+      ? ganttFormatEventTime(toZoned(occurrence.start, GANTT_TIME_ZONE), toZoned(occurrence.end, GANTT_TIME_ZONE), occurrence.allDay, undefined)
+      : undefined;
 
   return (
     <span className="flex min-w-0 items-center gap-1 truncate" title={hollowStart ? "No shoot date" : undefined}>
@@ -428,7 +438,7 @@ function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRende
        */}
       <span className="truncate font-medium group-data-[label-outside]/gantt-bar-group:hidden">{occurrence.event.title}</span>
       {timeLabel && (
-        <span className="text-muted-foreground hidden truncate @[8rem]:inline group-data-[label-outside]/gantt-bar-group:hidden">
+        <span data-testid="gantt-event-time" className="text-foreground-secondary hidden truncate @[8rem]:inline group-data-[label-outside]/gantt-bar-group:hidden">
           {timeLabel}
         </span>
       )}
@@ -448,11 +458,13 @@ function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
       role="group"
       aria-label="Stage legend"
       data-testid="production-gantt-legend"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground"
+      // #257: the secondary text role — `text-muted-foreground` read too faint at 11px (same
+      // reasoning as the filters bar's chip operator, `ProductionGanttFiltersBar.dom.test.tsx`).
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-foreground-secondary"
     >
       {entries.map((entry) => (
         <span key={entry.key} className="inline-flex items-center gap-1.5" data-stage-key={entry.key}>
-          <StageSwatch color={entry.color} />
+          <StageSwatch color={entry.color} pattern={entry.pattern} />
           {entry.label}
         </span>
       ))}
@@ -1446,6 +1458,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             scale={scale}
             onScaleChange={setScale}
             timeZone={GANTT_TIME_ZONE}
+            i18n={GANTT_I18N}
+            // #256: the name column fills the tree panel; 180 = the vendor splitter's minWidth, so
+            // the column never floors wider than the narrowest the panel can be dragged to.
+            treePanel={GANTT_TREE_PANEL}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
             dropWarning={dropWarning}

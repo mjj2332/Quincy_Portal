@@ -14,6 +14,7 @@ import {
   ganttRouteFor,
   productionStageFilterOptions,
   queryToGanttFacet,
+  stageOptionsWithColor,
   type ProductionGanttFacetFilters,
 } from "./production-gantt-filters";
 import { stageColors } from "./stage-colors";
@@ -69,6 +70,19 @@ describe("ganttLegendEntries", () => {
   it("colours each entry from the stage colour map", () => {
     const entries = ganttLegendEntries({ stageOptions: editorOptions, filters: { stageKeys: [], delivered: true } });
     for (const entry of entries) expect(entry.color).toBe(stageColors[entry.key]);
+  });
+
+  it("#257: marks only Edited review as hatched, beside its colour", () => {
+    const entries = ganttLegendEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: true } });
+    expect(entries.map((entry) => [entry.key, entry.pattern])).toEqual([
+      ["awaiting_raw", null],
+      ["raw_review", null],
+      ["editing", null],
+      ["edited_review", "hatch"],
+      ["delivered", null],
+    ]);
+    // the Stage filter options carry the same field, from the same function
+    expect(stageOptionsWithColor(adminOptions).find((option) => option.key === "edited_review")?.pattern).toBe("hatch");
   });
 
   it("never labels an entry with a raw stage key, for either role", () => {

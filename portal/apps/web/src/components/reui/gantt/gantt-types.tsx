@@ -82,6 +82,10 @@
  * proposal, driving `data-drop-warning`); `warning` on `GanttAdjustStepResult`,
  * `GanttAdjustCommitResult` and `GanttNudgeResult`; `deferred` on the last two. Covered by
  * `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #257 — ADDED, additive (an omitted field changes nothing): `GanttEvent.className`, a
+ * per-event class `gantt-bar.tsx` puts on the bar shell. Production uses it for Edited review's
+ * hatch. Covered by `gantt-bar-event-classname.dom.test.tsx`.
  */
 
 type GanttBarId = string
@@ -178,6 +182,11 @@ interface GanttEvent<TData = unknown> {
    * `resizable: false` wins over this regardless of what it says.
    */
   resizableEdges?: { start?: boolean; end?: boolean }
+  /**
+   * Per-event class on the bar shell, additive: merged after the shell's own
+   * classes and before `classNames.event`. Omitted changes nothing.
+   */
+  className?: string
   /** Feeds the default getEventPriority; higher orders and packs first. */
   priority?: number
   /** Completion 0-100, not 0-1. */

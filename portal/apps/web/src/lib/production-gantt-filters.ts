@@ -22,7 +22,7 @@ import {
 } from "@quincy/shared";
 import type { FilterOperator, FilterQuery, FilterRule } from "../components/reui/filters/filters-types";
 import type { ProductionGanttFilters } from "./production-gantt-query";
-import { stageColorFor } from "./stage-colors";
+import { stageColorFor, stagePatternFor, type StagePattern } from "./stage-colors";
 import { presentationStages, type PipelineStage } from "./stages";
 
 /** The Gantt facets the Dashboard hands the surface — everything but the search, which the
@@ -31,7 +31,8 @@ export type ProductionGanttFacetFilters = Omit<ProductionGanttFilters, "q" | "li
 
 export type StageFilterOption = { key: StagePresentationKey; label: string };
 
-export type GanttLegendEntry = StageFilterOption & { color: string };
+/** `pattern` (#257): the stage's secondary cue beside its colour — `"hatch"` for Edited review, else `null`. */
+export type GanttLegendEntry = StageFilterOption & { color: string; pattern: StagePattern | null };
 
 export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editorIds: [], stageKeys: [], delivered: false, completed: false };
 
@@ -244,8 +245,8 @@ export function ganttLegendEntries({ stageOptions, filters }: { stageOptions: re
   );
 }
 
-/** Each stage option with its swatch colour: the one place a legend entry or a Stage filter option
- * takes its colour from the stage colour map. */
+/** Each stage option with its swatch colour and pattern: the one place a legend entry or a Stage
+ * filter option takes its colour (and, #257, its hatch) from the stage colour map. */
 export function stageOptionsWithColor(stageOptions: readonly StageFilterOption[]): GanttLegendEntry[] {
-  return stageOptions.map((option) => ({ ...option, color: stageColorFor(option.key) }));
+  return stageOptions.map((option) => ({ ...option, color: stageColorFor(option.key), pattern: stagePatternFor(option.key) }));
 }

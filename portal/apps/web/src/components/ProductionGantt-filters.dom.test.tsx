@@ -373,6 +373,21 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(chipNames(host)).toEqual(["Stage is any of 2 selected", "Show includes Delivered projects"]);
   });
 
+  it("#257: draws legend labels in the secondary text role, and hatches only the Edited review swatch", async () => {
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, delivered: true });
+    const legend = host.querySelector<HTMLElement>('[data-testid="production-gantt-legend"]')!;
+    const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
+    // `text-muted-foreground` (greige-400) read too faint beside the swatches at 11px.
+    expect(tokens(legend)).toContain("text-foreground-secondary");
+    expect(tokens(legend)).not.toContain("text-muted-foreground");
+    const hatched = [...legend.querySelectorAll("[data-stage-key]")].filter((entry) => {
+      const swatch = entry.querySelector('[data-testid="stage-swatch"]');
+      expect(swatch, entry.getAttribute("data-stage-key")!).not.toBeNull();
+      return swatch!.getAttribute("data-pattern") === "hatch";
+    });
+    expect(hatched.map((entry) => entry.getAttribute("data-stage-key"))).toEqual(["edited_review"]);
+  });
+
   it("labels every legend entry with a real stage label, never a raw key", async () => {
     await render({ ...DEFAULT_GANTT_FACET_FILTERS, delivered: true });
     const labels = legendLabels(host);

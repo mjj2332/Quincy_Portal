@@ -270,6 +270,16 @@
  * `visibility` during a resize (either input) or a keyboard move, whose ghost draws its own title
  * ~6px off and read as a doubled label; the progress fill, done mark, grips and sr-only Adjust
  * text stay outside it. Covered by `gantt-drop-warning.dom.test.tsx`.
+ *
+ * 2026-09-28, #257 — ADDED, additive: the bar shell's `cn()` includes `event.className`
+ * (`GanttEvent.className`, new) immediately before `viewConfig.classNames?.event`. Production
+ * passes Edited review's hatch through it. Only the bar shell reads it: the drag ghost and the
+ * offscreen chip in `gantt-view.tsx` still paint colour only. Covered by
+ * `gantt-bar-event-classname.dom.test.tsx`.
+ *
+ * 2026-09-28, #257 design review — CHANGED: the default content's inline time label moves from
+ * `text-muted-foreground` (2.76:1 on the 20% stage tint, 1.73:1 on a hatch stripe) to
+ * `text-foreground-secondary` (7.1:1 / 5.05:1). Title and layout unchanged.
  */
 
 import {
@@ -612,7 +622,7 @@ function GanttBar<TData = unknown>({
       )}
       <span className="truncate font-medium">{event.title}</span>
       {!occurrence.allDay && segment.isStart && (
-        <span className="text-muted-foreground hidden truncate @[8rem]:inline">
+        <span className="text-foreground-secondary hidden truncate @[8rem]:inline">
           {settings.i18n.functions.formatEventTime(
             toZoned(occurrence.start, settings.timeZone),
             toZoned(occurrence.end, settings.timeZone),
@@ -1074,6 +1084,8 @@ function GanttBar<TData = unknown>({
         "justify-center bg-transparent px-0 hover:bg-transparent data-selected:bg-transparent",
       segment.continuesBefore && "rounded-s-none",
       segment.continuesAfter && "rounded-e-none",
+      // Quincy #257: the event's own class (e.g. a stage hatch), before the view-wide override
+      event.className,
       viewConfig.classNames?.event,
       className
     ),
