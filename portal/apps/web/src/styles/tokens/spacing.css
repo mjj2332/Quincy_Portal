@@ -54,6 +54,7 @@
   --container-md:  860px;
   --container-lg: 1100px;
   --container-xl: 1320px;
+  --container-page: 1480px;
   --gutter:       var(--space-6);
 
   /* ---- Overlay stacking — see TB8-02 §4.2 for which of these are traced and which are new ---- */

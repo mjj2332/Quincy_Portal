@@ -134,7 +134,7 @@ button { font-family: var(--font-sans); }
 /* ---------------------------------------------------------------------
    Page scaffolding
    --------------------------------------------------------------------- */
-.page { width: 100%; max-width: 1480px; margin: 0 auto; padding: var(--space-7) var(--space-7) var(--space-10); }
+.page { width: 100%; max-width: var(--container-page); margin: 0 auto; padding: var(--space-7) var(--space-7) var(--space-10); }
 .pagehead { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-6); margin-bottom: var(--space-6); flex-wrap: wrap; }
 .pagehead h1 { font: var(--type-h1); letter-spacing: var(--tracking-tight); }
 .toolbar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
