@@ -103,7 +103,7 @@ export function createHarness(): Harness {
   stubMedia([]);
   const host = document.createElement("div");
   document.body.append(host);
-  let root: Root = createRoot(host);
+  let root: Root | null = null;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   eventCalendarFake.reset();
   let mounted = false;
@@ -131,20 +131,23 @@ export function createHarness(): Harness {
     client,
     async render(calendar, props) {
       if (!mounted) { root = createRoot(host); mounted = true; }
-      await act(async () => { root.render(element(calendar, props)); await Promise.resolve(); });
+      const live = root!;
+      await act(async () => { live.render(element(calendar, props)); await Promise.resolve(); });
       await flush(10);
       await flush(0);
     },
     async rerender(calendar, props) {
-      await act(async () => { root.render(element(calendar, props)); await Promise.resolve(); });
+      await act(async () => { root!.render(element(calendar, props)); await Promise.resolve(); });
     },
     async unmount() {
       if (!mounted) return;
       mounted = false;
-      await act(async () => { root.unmount(); await Promise.resolve(); });
+      const live = root!; root = null;
+      await act(async () => { live.unmount(); await Promise.resolve(); });
     },
     teardown() {
-      if (mounted) act(() => root.unmount());
+      if (mounted && root) { const live = root; act(() => live.unmount()); }
+      root = null;
       mounted = false;
       host.remove();
       document.body.replaceChildren();

@@ -131,7 +131,14 @@ describe("ProductionEventCalendar container", () => {
     // Sydney noon of the civil date: 12:00 AEST = 02:00Z.
     expect((props.date as Date).toISOString()).toBe("2026-08-12T02:00:00.000Z");
     expect(props.interactions).toEqual({ drag: true, resize: true, selectSlot: false });
-    expect(typeof props.onEventUpdate).toBe("function");
+    // A write for an event that isn't rendered is refused synchronously, with no request.
+    const unknown = { id: "not-rendered", title: "x", start: new Date("2026-08-12T00:00:00Z"), end: new Date("2026-08-12T01:00:00Z") };
+    const callsBefore = fetchMock.mock.calls.length;
+    const refused = (props.onEventUpdate as (update: unknown) => unknown)({
+      event: unknown, start: new Date("2026-08-13T00:00:00Z"), end: new Date("2026-08-13T01:00:00Z"), allDay: false, source: "drag", granularity: "minute",
+    });
+    expect(refused).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
     expect("onEventsChange" in props).toBe(false);
     expect("canDropEvent" in props).toBe(false);
     expect("enforceCanDrop" in props).toBe(false);
