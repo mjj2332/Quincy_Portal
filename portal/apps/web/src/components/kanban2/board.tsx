@@ -451,11 +451,11 @@ export function ProjectKanbanBoard2({
           `position: absolute` inline and merges the consumer's `style` last. The DndContext (the
           `Kanban` root above) still wraps the scroll area and `KanbanOverlay`; dnd-kit auto-scroll
           finds the Viewport as a scrollable ancestor. */}
-      <ScrollAreaPrimitive.Root data-slot="scroll-area" className="relative w-full min-w-0">
+      <ScrollAreaPrimitive.Root data-slot="scroll-area" className="relative w-full min-w-0 has-[[data-slot=scroll-area-viewport]:focus-visible]:outline has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[length:var(--border-width-bold)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-[var(--focus-ring)] has-[[data-slot=scroll-area-viewport]:focus-visible]:outline-offset-0">
         <ScrollAreaPrimitive.Viewport
           data-slot="scroll-area-viewport"
           data-testid="kanban2-scroll-viewport"
-          className="w-full focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
+          className="w-full outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="w-max min-w-full">
             <div
