@@ -17,6 +17,7 @@ import {
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ApiError } from "../lib/api";
 import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib/production-calendar-query";
+import { effectiveCalendarEventPermissions, type CalendarPermissionContext } from "../lib/production-calendar-permissions";
 import { fullCalendarCallbackToSydneyCivil } from "../lib/production-calendar-fullcalendar";
 import { checklistCurrentCivil, projectDeadlinePlaceholder, proposedCivilForAllDay } from "../lib/scheduling-policy";
 import type { CalendarDropInfo, CalendarResizeInfo } from "../lib/scheduling-types";
@@ -237,24 +238,20 @@ export function ProductionCalendar({ identity, calendar, onNavigate, onAppliedFi
 
   const sourceEvents = acceptedResponse?.events ?? (!calendarInteractionBlocked ? query.data?.events ?? [] : []);
   const rangesEnabled = CHECKLIST_SCHEDULE_RANGES_ENABLED && !checklistRangeSchedulingDisabled;
-  const renderEvents = useMemo<CalendarEventDto[]>(() => sourceEvents.map((event): CalendarEventDto => {
-    if (event.kind === "checklist") {
-      const attention = checklistNeedsAttention.has(event.id);
-      const interactionAllowed = calendar.subview !== "agenda" && !calendarInteractionBlocked && !calendarSettle.pending && !attention;
-      const rangeAllowed = event.schedule.state !== "range" || (rangesEnabled && event.permissions.canScheduleRange);
-      const canDrag = event.permissions.canDrag && interactionAllowed && rangeAllowed;
-      const canResize = event.permissions.canResize && interactionAllowed && rangesEnabled && event.permissions.canScheduleRange;
-      const canOpenScheduleEditor = event.permissions.canOpenScheduleEditor && !calendarInteractionBlocked && !calendarSettle.pending && !attention;
-      if (canDrag === event.permissions.canDrag && canResize === event.permissions.canResize && canOpenScheduleEditor === event.permissions.canOpenScheduleEditor) return event;
-      return { ...event, permissions: { ...event.permissions, canDrag, canResize, canOpenScheduleEditor } } as CalendarEventDto;
-    }
-    const canDrag = identity.role === "admin"
-      && event.permissions.canDrag
-      && !deadlineMovementDisabled
-      && !calendarInteractionBlocked
-      && !calendarSettle.pending;
-    return canDrag === event.permissions.canDrag ? event : { ...event, permissions: { ...event.permissions, canDrag } } as CalendarEventDto;
-  }), [calendar.subview, calendarInteractionBlocked, calendarSettle.pending, checklistNeedsAttention, deadlineMovementDisabled, identity.role, rangesEnabled, sourceEvents]);
+  // #222: the effective-permission rules live in `lib/production-calendar-permissions.ts`, shared
+  // with the event-calendar renderer. The context is built inside this memo so its deps are unchanged.
+  const renderEvents = useMemo<CalendarEventDto[]>(() => {
+    const permissionContext: CalendarPermissionContext = {
+      subview: calendar.subview,
+      role: identity.role,
+      interactionBlocked: calendarInteractionBlocked,
+      settlePending: calendarSettle.pending,
+      checklistNeedsAttention,
+      rangesEnabled,
+      deadlineMovementDisabled,
+    };
+    return sourceEvents.map((event) => effectiveCalendarEventPermissions(event, permissionContext));
+  }, [calendar.subview, calendarInteractionBlocked, calendarSettle.pending, checklistNeedsAttention, deadlineMovementDisabled, identity.role, rangesEnabled, sourceEvents]);
   const displayEvents = useMemo(() => applyOptimisticOverlay(renderEvents, optimisticOverlay), [optimisticOverlay, renderEvents]);
   const mappedEvents = useMemo(() => mapCalendarEventsToFullCalendar(displayEvents, { actionOnly: actionOnlyWeek }), [actionOnlyWeek, displayEvents]);
   const sourceUnscheduled = acceptedResponse?.unscheduled ?? (!calendarInteractionBlocked ? query.data?.unscheduled ?? [] : []);
