@@ -13,6 +13,7 @@ import {
 // shared with the event-calendar renderer's sheet; this file is the FullCalendar renderer's Modal
 // frame around them, unchanged in behaviour.
 export type { ProductionCalendarScheduleEditorError } from "./ProductionCalendarScheduleEditorFields";
+export { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditorFields";
 
 type ScheduleEvent = ChecklistScheduleEditorEvent;
 
@@ -27,11 +28,6 @@ export type ProductionCalendarScheduleEditorProps = {
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
-function entryLabel(event: ScheduleEvent): string {
-  if ("reason" in event && event.reason === "schedule_needs_attention" && event.attentionReason === "legacy_unresolved") return "Repair schedule";
-  return event.schedule.state === "unscheduled" ? "Schedule" : "Reschedule";
-}
-
 export function ProductionCalendarScheduleEditor({ open, event, rangesEnabled, onSubmit, onCancel, initialSchedule, validationError }: ProductionCalendarScheduleEditorProps): JSX.Element | null {
   const state = useChecklistScheduleDraft({ event, rangesEnabled, onSubmit, initialSchedule, validationError });
 
@@ -43,8 +39,4 @@ export function ProductionCalendarScheduleEditor({ open, event, rangesEnabled, o
   </>}>
     <ProductionCalendarScheduleEditorFields rangesEnabled={rangesEnabled} state={state} />
   </Modal>;
-}
-
-export function checklistScheduleEditorButtonLabel(event: ScheduleEvent): string {
-  return entryLabel(event);
 }

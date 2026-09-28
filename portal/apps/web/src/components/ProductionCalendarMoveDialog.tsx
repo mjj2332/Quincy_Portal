@@ -3,7 +3,8 @@ import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation } f
 import { Modal } from "./Modal";
 import { buttonClasses } from "./quincy/Button";
 import { Input } from "./reui/input";
-import { FIELD_COMPACT } from "./production-calendar-classes";
+import { civilParts, validCivil } from "./ProductionEventCalendarDialogs";
+import { FIELD_COMPACT } from "./ProductionCalendarScheduleEditorFields";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
 
 const MOVE_INPUTS = "grid grid-cols-2 gap-[12px]";
@@ -21,26 +22,6 @@ export type ProductionCalendarMoveDialogProps = {
   onSubmit: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => void;
   onCancel: () => void;
 };
-
-/** #222: shared with the event-calendar renderer's move dialog (`ProductionEventCalendarDialogs.tsx`). */
-export function civilParts(value: string): { date: string; time: string } {
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(value);
-  return match ? { date: match[1] ?? "", time: match[2] ?? "" } : { date: "", time: "" };
-}
-
-export function validCivil(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  if (month < 1 || month > 12 || hour > 23 || minute > 59) return false;
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const daysInMonth = month === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
-  return day >= 1 && day <= daysInMonth;
-}
 
 export function ProductionCalendarMoveDialog({ open, event, initialCivil, foldChoices, onSubmit, onCancel }: ProductionCalendarMoveDialogProps): JSX.Element {
   const initial = civilParts(initialCivil ?? event.deadlineLocalCivil);

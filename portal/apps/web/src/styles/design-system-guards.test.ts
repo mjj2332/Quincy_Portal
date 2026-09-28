@@ -345,6 +345,115 @@ describe("guard: no focus ring is suppressed in unlayered CSS", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Guard 3b/3c — the two global rules every surface's focus ring and reduced motion rest on
+// ---------------------------------------------------------------------------
+/**
+ * #224 retired `production-calendar.css` and, with it, the Calendar's own `:focus-visible` and
+ * reduced-motion blocks (and `ProductionCalendarChrome.guard.test.ts`, which pinned their hooks).
+ * The ReUI Calendar, the Gantt and their dialogs carry no focus or motion CSS of their own: their
+ * focus ring IS `tokens/base.css`'s `:focus-visible { outline: … solid var(--focus-ring) }`, and
+ * their reduced motion IS `app.css`'s `@media (prefers-reduced-motion: reduce) { * { … } }`.
+ *
+ * Both only work because they are UNLAYERED — `index.css` imports both files without `layer()` —
+ * so a Tailwind utility (`outline-none`, `transition-*`, `duration-*`, all in `@layer utilities`)
+ * cannot beat them. Nothing pinned either rule before this. Moving one into `@layer base`, or
+ * deleting it as dead-looking, would leave every DOM test green (happy-dom resolves neither cascade
+ * layers nor media queries) while silently removing the focus indicator from, or restoring motion
+ * to, every screen at once.
+ *
+ * The complement — a calendar-scoped `!important` utility that WOULD beat these rules — is pinned
+ * by `components/ProductionEventCalendar.focus-motion.guard.test.ts`.
+ */
+
+/** Top-level (depth-0) blocks of a stylesheet: `{ prelude, body }`, by brace matching. */
+function topLevelBlocks(css: string): { prelude: string; body: string }[] {
+  const blocks: { prelude: string; body: string }[] = [];
+  let depth = 0;
+  let preludeStart = 0;
+  let bodyStart = 0;
+  for (let index = 0; index < css.length; index++) {
+    const char = css[index];
+    if (char === "{") {
+      if (depth === 0) bodyStart = index + 1;
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        const head = css.slice(preludeStart, bodyStart - 1);
+        // A preceding `@import …;` / `@layer a, b;` statement shares the stretch before the brace.
+        blocks.push({ prelude: head.slice(head.lastIndexOf(";") + 1).trim(), body: css.slice(bodyStart, index) });
+        preludeStart = index + 1;
+      }
+    }
+  }
+  return blocks;
+}
+
+const GLOBAL_FOCUS_OUTLINE = /(?:^|;)\s*outline\s*:[^;]*\bsolid\b[^;]*var\(--focus-ring\)/;
+
+function hasUnlayeredFocusVisible(css: string): boolean {
+  return topLevelBlocks(stripComments(css)).some(({ prelude, body }) => prelude === ":focus-visible" && GLOBAL_FOCUS_OUTLINE.test(body));
+}
+
+const REDUCED_MOTION_MEDIA = /^@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)$/;
+
+function hasUnlayeredReducedMotion(css: string): boolean {
+  return topLevelBlocks(stripComments(css)).some(({ prelude, body }) => {
+    if (!REDUCED_MOTION_MEDIA.test(prelude)) return false;
+    return topLevelBlocks(body).some(({ prelude: selector, body: declarations }) =>
+      selector === "*"
+      && /animation-duration\s*:[^;]*!important/.test(declarations)
+      && /transition-duration\s*:[^;]*!important/.test(declarations));
+  });
+}
+
+describe("guard: the global focus ring and reduced-motion rule stay unlayered", () => {
+  it("tokens/base.css keeps an unlayered `:focus-visible { outline: … solid var(--focus-ring) }`", () => {
+    expect(
+      hasUnlayeredFocusVisible(readFileSync(join(stylesDir, "tokens", "base.css"), "utf8")),
+      [
+        "tokens/base.css no longer carries a top-level (unlayered) `:focus-visible` rule painting",
+        "`outline: <width> solid var(--focus-ring)`. It is the only focus indicator the Calendar, the",
+        "Gantt and their dialogs have. Restore it OUTSIDE any @layer — inside `@layer base` every",
+        "`outline-none` utility would beat it.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  it("app.css keeps an unlayered `@media (prefers-reduced-motion: reduce) { * { …!important } }`", () => {
+    expect(
+      hasUnlayeredReducedMotion(readFileSync(join(stylesDir, "app.css"), "utf8")),
+      [
+        "app.css no longer carries a top-level `@media (prefers-reduced-motion: reduce)` block with a",
+        "`*` rule forcing `animation-duration` and `transition-duration` `!important`. It is the only",
+        "reduced-motion rule the Calendar, the Gantt and their dialogs have.",
+      ].join("\n"),
+    ).toBe(true);
+  });
+
+  it("proves both detectors on planted fixtures", () => {
+    expect(hasUnlayeredFocusVisible(":focus-visible {\n  outline: var(--border-width-bold) solid var(--focus-ring);\n}")).toBe(true);
+    expect(hasUnlayeredFocusVisible("@import \"./x.css\";\n:focus-visible { outline: 2px solid var(--focus-ring); }")).toBe(true);
+    // moved into a layer: utilities would beat it
+    expect(hasUnlayeredFocusVisible("@layer base { :focus-visible { outline: 2px solid var(--focus-ring); } }")).toBe(false);
+    // a literal colour, or no longer a visible outline
+    expect(hasUnlayeredFocusVisible(":focus-visible { outline: 2px solid #2f3b4d; }")).toBe(false);
+    expect(hasUnlayeredFocusVisible(":focus-visible { outline: 2px solid transparent; outline-color: var(--focus-ring); }")).toBe(false);
+    // scoped to one surface instead of global
+    expect(hasUnlayeredFocusVisible(".page :focus-visible { outline: 2px solid var(--focus-ring); }")).toBe(false);
+    // quoted in a comment only
+    expect(hasUnlayeredFocusVisible("/* :focus-visible { outline: 2px solid var(--focus-ring); } */")).toBe(false);
+
+    const motion = "@media (prefers-reduced-motion: reduce) { * { animation-duration: .001ms !important; transition-duration: .001ms !important; } }";
+    expect(hasUnlayeredReducedMotion(motion)).toBe(true);
+    expect(hasUnlayeredReducedMotion(`@layer base { ${motion} }`)).toBe(false);
+    expect(hasUnlayeredReducedMotion("@media (prefers-reduced-motion: reduce) { * { animation-duration: .001ms !important; transition-duration: .001ms; } }")).toBe(false);
+    expect(hasUnlayeredReducedMotion("@media (prefers-reduced-motion: reduce) { .tile { animation-duration: .001ms !important; transition-duration: .001ms !important; } }")).toBe(false);
+    expect(hasUnlayeredReducedMotion(`/* ${motion} */`)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Guard 4 — a star painted from a literal instead of its token
 // ---------------------------------------------------------------------------
 /**

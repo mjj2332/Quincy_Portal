@@ -5,7 +5,7 @@
  *
  * - Move / Reschedule Deadline — `reui/alert-dialog` shell; date + time inputs (`reui/input`) and,
  *   when the controller hands `foldChoices`, the Sydney occurrence radios. Validation is
- *   `ProductionCalendarMoveDialog`'s (`validCivil`/`civilParts`, now exported); the occurrence offset
+ *   `validCivil`/`civilParts` below (moved here from the FullCalendar `ProductionCalendarMoveDialog`); the occurrence offset
  *   copy is `lib/sydney-time-labels.ts`'s `utcOffsetLabel`.
  * - Fold choice (a checklist endpoint that occurs twice) — `reui/alert-dialog` shell, rendered from
  *   `commands.checklistFold`; the FoldChoice logic lives here now. Offset copy is the same shared
@@ -29,8 +29,11 @@ import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation, In
 import type { SchedulingController } from "../lib/use-scheduling-commands";
 import { useOpenToken } from "../lib/use-open-token";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
-import { civilParts, validCivil } from "./ProductionCalendarMoveDialog";
 import {
+  FIELD_COMPACT,
+  FOLD_LEGEND as LEGEND,
+  FOLD_RADIO as RADIO,
+  FOLD_RADIO_ROW as RADIO_ROW,
   ProductionCalendarScheduleEditorFields,
   useChecklistScheduleDraft,
   type ChecklistScheduleEditorEvent,
@@ -51,16 +54,31 @@ import {
   AlertDialogTitle,
 } from "./reui/alert-dialog";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "./reui/sheet";
-import { FIELD_COMPACT } from "./production-calendar-classes";
 
 type FoldChoice = { disambiguation: ProjectDeadlineDisambiguation; utcOffsetMinutes: number };
+
+export function civilParts(value: string): { date: string; time: string } {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(value);
+  return match ? { date: match[1] ?? "", time: match[2] ?? "" } : { date: "", time: "" };
+}
+
+export function validCivil(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = month === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
+  return day >= 1 && day <= daysInMonth;
+}
 
 const INPUTS = "grid grid-cols-2 gap-[var(--space-3)]";
 const INPUT_LABEL = "grid gap-[var(--space-1)] text-muted-foreground text-[length:var(--text-2xs)]";
 const HINT = "m-0 text-foreground-secondary text-[length:var(--text-xs)]";
-const RADIO_ROW = "flex items-center gap-[var(--space-2)] text-foreground text-[length:var(--text-xs)] max-[721px]:min-h-[44px]";
-const RADIO = "size-[16px] accent-[var(--accent)]";
-const LEGEND = "mb-[var(--space-2)] text-foreground text-[length:var(--text-xs)] font-semibold";
 
 /** Header shared by the two alert-dialog shells: street eyebrow (aria-hidden), title, sr-only description. */
 function DialogHeading({ eyebrow, title }: { eyebrow?: string; title: string }) {

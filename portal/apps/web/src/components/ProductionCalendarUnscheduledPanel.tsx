@@ -6,7 +6,7 @@ import type {
 import { useEffect, useRef, type ReactNode } from "react";
 import { Draggable } from "@fullcalendar/react/interaction";
 import { cn } from "@/lib/utils";
-import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
+import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill } from "./quincy/StatusPill";
 import { unscheduledChecklistDraggable, unscheduledProjectDraggable, unscheduledStageLabel } from "../lib/production-calendar-unscheduled";

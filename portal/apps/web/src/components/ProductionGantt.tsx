@@ -45,14 +45,15 @@
  * port's `confirmDeadline`, which opens `ProductionGanttDeadlineDialog` (reui alert-dialog) with
  * `previewDeadlineEffects` — Cancel/Escape reverts with zero writes, confirm saves and offers Undo.
  * A project with no Deadline ("Deadline not set") gets a label-side "Set deadline" button, and an
- * inverted bar a "Fix deadline" one; both open the shared `ProductionCalendarMoveDialog`, whose
- * submit flows into the same confirmation.
+ * inverted bar a "Fix deadline" one; both open the shared move dialog
+ * (`ProductionEventCalendarMoveDialog`), whose submit flows into the same confirmation.
  *
  * Reuse ledger (PR C UI): Deadline confirmation — `components/reui/alert-dialog.tsx` via
  * `ProductionGanttDeadlineDialog` (its own ledger lists the rest); Set/Fix deadline —
  * `components/reui/button.tsx` `size="sm" variant="ghost"` (ghost, not outline: a row label is
  * dense and the button sits beside a quiet attention badge, so it must not read as a primary box);
- * the move dialog — `components/ProductionCalendarMoveDialog.tsx`, reused unchanged.
+ * the move dialog and the checklist fold choice — `ProductionEventCalendarDialogs` (the Calendar's
+ * `reui/alert-dialog` shells, rendered whole; #224 retired the old Modal presentations).
  *
  * Still read-only: `legacy_unresolved` / `invalid` rows, which the adapter
  * routes to `attention` with no event at all. `interactions` stays CONTROLLED and is switched off
@@ -112,7 +113,7 @@ import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ApiError } from "../lib/api";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
-import { type ChecklistFoldState, type MoveDialogState, type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
+import { type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
 import type { ChecklistMutationResult } from "../lib/scheduling-types";
 import type { ChecklistSource } from "../lib/scheduling-policy";
@@ -155,10 +156,8 @@ import {
 } from "../lib/production-gantt-filters";
 import { useStages } from "../lib/stages";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
-import { ProductionCalendarFoldChoice } from "./ProductionCalendarFoldChoice";
-import { ProductionCalendarMoveDialog } from "./ProductionCalendarMoveDialog";
-import { ProductionGanttDeadlineDialog, type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
-import { COARSE_TAP_TARGET } from "./production-calendar-classes";
+import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
+import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
@@ -201,6 +200,9 @@ const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTim
 const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
+
+/** A real 44px hit area on coarse pointers and phones, compact on desktop. */
+const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]";
 
 /**
  * fix-220-sol1 #3: the pure decision behind the panel's scroll-driven project pagination, exported
@@ -627,20 +629,6 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
   return { ...model, events };
 }
 
-/**
- * #221: the retained-dialog re-mount token, copied from `ProductionCalendar.tsx`'s `useOpenToken`
- * (see its header there): bumps once per null→non-null transition, via React's "adjust state while
- * rendering" pattern rather than a ref written during render.
- */
-function useOpenToken(isOpen: boolean): number {
-  const [token, setToken] = useState(0);
-  const [wasOpen, setWasOpen] = useState(false);
-  if (isOpen !== wasOpen) {
-    setWasOpen(isOpen);
-    if (isOpen) setToken((current) => current + 1);
-  }
-  return token;
-}
 
 export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss }: ProductionGanttProps) {
   const { stages } = useStages();
@@ -1330,20 +1318,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
 
-  // Fold dialog, retained through its close animation (ProductionCalendar.tsx's pattern).
-  const checklistFoldRetained = useRef<ChecklistFoldState | null>(null);
-  if (commands.checklistFold) checklistFoldRetained.current = commands.checklistFold;
-  const checklistFoldToken = useOpenToken(commands.checklistFold !== null);
-  // #221 PR C: the shared Deadline move dialog ("Set deadline" / "Fix deadline") and the Deadline
-  // confirmation, both retained through their close animation the same way.
-  const moveDialogRetained = useRef<MoveDialogState | null>(null);
-  if (commands.moveDialog) moveDialogRetained.current = commands.moveDialog;
-  const moveDialogToken = useOpenToken(commands.moveDialog !== null);
-  // The whole open record, not only `state`: `finalFocus` must still be there on the render where
-  // `open` flips false (and `deadlineConfirm` is already null), which is when base-ui reads it.
-  const deadlineConfirmRetained = useRef<DeadlineConfirmOpen | null>(null);
-  if (deadlineConfirm) deadlineConfirmRetained.current = deadlineConfirm;
-  const deadlineConfirmToken = useOpenToken(deadlineConfirm !== null);
 
   // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
@@ -1452,37 +1426,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       )}
       {body}
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      {checklistFoldRetained.current && (
-        <ProductionCalendarFoldChoice
-          key={`checklist-fold:${checklistFoldToken}`}
-          open={!!commands.checklistFold}
-          endpoint={checklistFoldRetained.current.endpoint}
-          choices={checklistFoldRetained.current.choices}
-          eyebrow={checklistFoldRetained.current.proposal.source.project.street}
-          onSubmit={commands.submitChecklistFold}
-          onCancel={commands.cancelChecklistFold}
-        />
-      )}
-      {moveDialogRetained.current && (
-        <ProductionCalendarMoveDialog
-          key={`move-dialog:${moveDialogToken}`}
-          open={!!commands.moveDialog}
-          event={moveDialogRetained.current.event}
-          initialCivil={moveDialogRetained.current.initialCivil}
-          foldChoices={moveDialogRetained.current.foldChoices}
-          onSubmit={commands.submitMoveDialog}
-          onCancel={commands.cancelMoveDialog}
-        />
-      )}
-      {deadlineConfirmRetained.current && (
-        <ProductionGanttDeadlineDialog
-          key={`deadline-confirm:${deadlineConfirmToken}`}
-          open={deadlineConfirm !== null}
-          state={deadlineConfirmRetained.current.state}
-          finalFocus={deadlineConfirmRetained.current.finalFocus}
-          onResolve={(ok) => deadlineConfirm?.resolve(ok)}
-        />
-      )}
+      {/* The Gantt never opens the checklist schedule editor, so the sheet's `rangesEnabled` is moot. */}
+      <ProductionEventCalendarDialogs commands={commands} rangesEnabled={false} deadlineConfirm={deadlineConfirm} />
     </div>
   );
 }

@@ -22,10 +22,22 @@ import {
   type InitialChecklistScheduleInput,
 } from "@quincy/shared";
 import { cn } from "@/lib/utils";
+import { FieldLegend, FieldSet } from "./reui/field";
 import { Input } from "./reui/input";
 import { NativeSelect } from "./quincy/NativeSelect";
-import { FIELD_COMPACT } from "./production-calendar-classes";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
+
+// FIELD_BOX (shared by NativeSelect / reui/input) already carries the border, radius, field
+// background and the `max-[721px]:min-h-[44px]` floor. This is the compact type/padding plus the
+// coarse-pointer half of the 44px floor that the calendar dialogs layer on top of it.
+export const FIELD_COMPACT =
+  "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+
+// The Sydney-occurrence radios, shared with the Calendar's move and fold dialogs
+// (`ProductionEventCalendarDialogs.tsx`) so every fold choice reads the same.
+export const FOLD_RADIO_ROW = "flex items-center gap-[var(--space-2)] text-foreground text-[length:var(--text-xs)] max-[721px]:min-h-[44px]";
+export const FOLD_RADIO = "size-[16px] accent-[var(--accent)]";
+export const FOLD_LEGEND = "mb-[var(--space-2)] text-foreground text-[length:var(--text-xs)] font-semibold";
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
@@ -37,6 +49,9 @@ const EDITOR_ENDPOINTS = "grid grid-cols-2 gap-[16px] max-[721px]:grid-cols-1";
 const EDITOR_ENDPOINT = "grid gap-[10px] min-w-0 m-0 p-[14px] border border-solid border-border";
 const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibold";
 const EDITOR_ENDPOINT_LABEL = "grid gap-[5px] text-muted-foreground text-[11px]";
+// #224: was `.qc-calendar-schedule-editor__fold` in the retired `production-calendar.css` — a
+// hairline above the radios, inside the endpoint's own fieldset.
+const EDITOR_FOLD = "gap-[var(--space-1)] pt-[var(--space-3)] border-t border-solid border-border";
 const EDITOR_INPUT = FIELD_COMPACT;
 const EDITOR_ERROR =
   "px-[12px] py-[10px] border-l-[3px] [border-left-style:solid] border-l-signal-critical " +
@@ -171,13 +186,13 @@ export function ProductionCalendarScheduleEditorFields({ rangesEnabled, state }:
       const localCivil = `${value.date}T${value.time}`;
       const resolved = draft.kind === "timed" && value.date && value.time ? resolveSydneyCivilMinute(localCivil) : null;
       const choices = error?.endpoint === which && error.choices?.length ? error.choices : resolved && !resolved.ok && resolved.code === "repeated_local_time" ? resolved.choices : undefined;
-      return choices && choices.length > 0 ? <fieldset className="qc-calendar-schedule-editor__fold">
-      <legend>Choose the Sydney occurrence</legend>
-      {choices.map((choice) => <label key={`${which}-${choice.disambiguation}`}>
-        <input type="radio" name={`${groupId}-${which}-fold`} value={choice.disambiguation} checked={value.disambiguation === choice.disambiguation} onChange={() => setEndpoint(which, { disambiguation: choice.disambiguation })} />
+      return choices && choices.length > 0 ? <FieldSet className={EDITOR_FOLD}>
+      <FieldLegend className={FOLD_LEGEND}>Choose the Sydney occurrence</FieldLegend>
+      {choices.map((choice) => <label key={`${which}-${choice.disambiguation}`} className={FOLD_RADIO_ROW}>
+        <input className={FOLD_RADIO} type="radio" name={`${groupId}-${which}-fold`} value={choice.disambiguation} checked={value.disambiguation === choice.disambiguation} onChange={() => setEndpoint(which, { disambiguation: choice.disambiguation })} />
         {choice.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({utcOffsetLabel(choice.utcOffsetMinutes)})
       </label>)}
-    </fieldset> : null;
+    </FieldSet> : null;
     })()}
   </fieldset>;
 
@@ -201,4 +216,13 @@ export function ProductionCalendarScheduleEditorFields({ rangesEnabled, state }:
     </>}
     {error && <div className={EDITOR_ERROR} role="alert">{errorText(error)}</div>}
   </div>;
+}
+
+function entryLabel(event: ChecklistScheduleEditorEvent): string {
+  if ("reason" in event && event.reason === "schedule_needs_attention" && event.attentionReason === "legacy_unresolved") return "Repair schedule";
+  return event.schedule.state === "unscheduled" ? "Schedule" : "Reschedule";
+}
+
+export function checklistScheduleEditorButtonLabel(event: ChecklistScheduleEditorEvent): string {
+  return entryLabel(event);
 }

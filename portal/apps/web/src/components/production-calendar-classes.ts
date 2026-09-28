@@ -39,12 +39,6 @@ export const COARSE_TAP_TARGET =
 
 export const CALENDAR_STATE_BOX = "min-h-[180px] grid place-content-center gap-[4px]";
 
-// FIELD_BOX (shared by NativeSelect / reui/input) already carries the border, radius, field
-// background and the `max-[721px]:min-h-[44px]` floor. This is the compact type/padding plus the
-// coarse-pointer half of the 44px floor that several calendar dialogs layer on top of it.
-export const FIELD_COMPACT =
-  "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
-
 // Unscheduled rows' left-rule colour by kind, and the needs-attention override, shared by the
 // FullCalendar renderer's ProductionCalendarUnscheduledPanel.tsx and the event-calendar renderer's
 // ProductionEventCalendarUnscheduledList.tsx (#222). Colour only: each row carries its own rule width.

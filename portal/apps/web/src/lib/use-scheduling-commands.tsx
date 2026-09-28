@@ -76,7 +76,7 @@ import {
   type CalendarSettleState,
 } from "./production-calendar-interaction";
 import { ProductionCalendarMoveConfirmation } from "../components/ProductionCalendarMoveConfirmation";
-import type { ProductionCalendarScheduleEditorError } from "../components/ProductionCalendarScheduleEditor";
+import type { ProductionCalendarScheduleEditorError } from "../components/ProductionCalendarScheduleEditorFields";
 import type {
   CalendarDropInfo,
   CalendarRevertable,

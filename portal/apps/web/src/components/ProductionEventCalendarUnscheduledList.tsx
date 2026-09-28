@@ -15,8 +15,8 @@
  * `ItemTitle`/`ItemDescription` + `ItemActions`, the c-item status-list composition the Deadline
  * confirm already uses); actions `reui/button` `variant="link"`; the project link
  * `ProjectCalendarAnchor` (InternalLink under the hood). The rail supplies the `reui/scroll-area`.
- * Section headings are `<h3>` around the installed `quincy/Eyebrow`; row rule colours are the
- * FullCalendar panel's (`UNSCHEDULED_ROW_KIND` / `UNSCHEDULED_ROW_ATTENTION`).
+ * Section headings are `<h3>` around the installed `quincy/Eyebrow`; row rule colours match the
+ * FullCalendar panel's.
  */
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type {
@@ -27,8 +27,7 @@ import type {
 } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { unscheduledChecklistDraggable, unscheduledProjectDraggable, unscheduledStageLabel } from "../lib/production-calendar-unscheduled";
-import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
-import { UNSCHEDULED_ROW_ATTENTION, UNSCHEDULED_ROW_KIND } from "./production-calendar-classes";
+import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { Eyebrow } from "./quincy/Eyebrow";
 import { Button } from "./reui/button";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "./reui/item";
@@ -58,6 +57,13 @@ const SECTION_HEADING = "m-0";
 const COUNT = "flex flex-wrap gap-x-[var(--space-2)] text-muted-foreground text-[length:var(--text-2xs)]";
 const ROW = "min-w-0 rounded-[var(--radius-card)] border-l-[length:var(--border-width-rule)] bg-background";
 const ROW_DRAG = "cursor-grab active:cursor-grabbing touch-none select-none";
+// Rule colour by kind and the needs-attention override (colour only: ROW carries the width).
+const UNSCHEDULED_ROW_KIND: Record<"project" | "checklist", string> = {
+  project: "border-l-signal-positive",
+  checklist: "border-l-signal-info",
+};
+const UNSCHEDULED_ROW_ATTENTION =
+  "border-l-signal-critical bg-[color-mix(in_srgb,var(--signal-critical)_5%,var(--bg-canvas))]";
 const META = "text-foreground-secondary text-[length:var(--text-2xs)]";
 const ATTENTION_TEXT = "m-0 text-signal-critical text-[length:var(--text-2xs)]";
 const ACTION = "h-auto px-0 max-[721px]:min-h-[44px]";

@@ -1,7 +1,7 @@
-import { useRef, type ReactNode } from "react";
 import type { CalendarEventDto, CalendarUnscheduledEntryDto, ChecklistCalendarEventDto, ChecklistCalendarUnscheduledEntryDto, ProductionCalendarSubview, ProjectDeadlineCalendarEventDto } from "@quincy/shared";
 import { cn } from "@/lib/utils";
-import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditor";
+import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditorFields";
+import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { buttonClasses } from "./quincy/Button";
 import { StatusPill, type StatusTone } from "./quincy/StatusPill";
 import { CAL_PILL, CARD_ACTION, CARD_ATTENTION, CARD_HEADING, CARD_META, CARD_SUBTITLE } from "./production-calendar-classes";
@@ -14,7 +14,6 @@ const EVENT_CARD_KIND: Record<"project_deadline" | "checklist", string> = {
 const EVENT_CARD_COMPACT =
   "px-[8px] py-[6px] border border-solid border-border border-l-[3px] bg-background";
 const EVENT_CARD_STAGE = "max-w-[55%] overflow-hidden text-ellipsis whitespace-nowrap text-foreground-secondary";
-const EVENT_CARD_LINK = "text-inherit no-underline hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2";
 const EVENT_CARD_DETAILS = "grid gap-[2px] mt-[5px] mb-0 text-[11px]";
 const EVENT_CARD_DETAILS_ROW = "flex gap-[4px]";
 const EVENT_CARD_PILLS = "flex flex-wrap gap-[4px] mt-[6px]";
@@ -31,75 +30,6 @@ const EVENT_CARD_MOVE = cn("mt-[8px]", CARD_ACTION);
  */
 export function eventCardClassName(kind: "project_deadline" | "checklist", compact = false): string {
   return cn("qc-cal-event-card", EVENT_CARD, compact && EVENT_CARD_COMPACT, EVENT_CARD_KIND[kind]);
-}
-
-export type ProjectCalendarAnchorProps = {
-  href: string;
-  onOpenProject?: () => void;
-  children: ReactNode;
-};
-
-/**
- * A real project anchor that can live inside FullCalendar's draggable event
- * content. Native modified clicks keep their browser behavior; an ordinary
- * click or keyboard activation is enhanced by the Calendar route owner. The
- * small movement threshold prevents FullCalendar's pointer drag from turning
- * its terminating click into a sheet open.
- */
-export function ProjectCalendarAnchor({ href, onOpenProject, children }: ProjectCalendarAnchorProps) {
-  const originRef = useRef<{ x: number; y: number } | null>(null);
-  const suppressClickRef = useRef(false);
-  const resetSuppression = () => {
-    if (!suppressClickRef.current) return;
-    window.setTimeout(() => { suppressClickRef.current = false; }, 0);
-  };
-  const startPointer = (x: number, y: number) => {
-    originRef.current = { x, y };
-    suppressClickRef.current = false;
-  };
-  const movePointer = (x: number, y: number) => {
-    const origin = originRef.current;
-    if (!origin) return;
-    // FullCalendar's default eventDragMinDistance is 5px — suppress strictly
-    // below that so a gesture FullCalendar recognizes as a drag can never
-    // also open the sheet via this anchor's terminating click.
-    if (Math.hypot(x - origin.x, y - origin.y) >= 4) suppressClickRef.current = true;
-  };
-  const endPointer = () => {
-    originRef.current = null;
-    resetSuppression();
-  };
-  return <a
-    className={EVENT_CARD_LINK}
-    data-testid="calendar-project-link"
-    href={href}
-    onMouseDown={(event) => startPointer(event.clientX, event.clientY)}
-    onMouseMove={(event) => movePointer(event.clientX, event.clientY)}
-    onMouseUp={endPointer}
-    onTouchStart={(event) => { const point = event.touches[0]; if (point) startPointer(point.clientX, point.clientY); }}
-    onTouchMove={(event) => { const point = event.touches[0]; if (point) movePointer(point.clientX, point.clientY); }}
-    onTouchEnd={endPointer}
-    onDragStart={(event) => event.preventDefault()}
-    onKeyDown={(event) => {
-      // Space deliberately keeps native anchor behavior (page scroll, no
-      // activation) per the approved plan — only Enter is synthesized here.
-      if (event.key !== "Enter" || event.repeat) return;
-      event.preventDefault();
-      event.currentTarget.click();
-    }}
-    onClick={(event) => {
-      if (suppressClickRef.current) {
-        event.preventDefault();
-        event.stopPropagation();
-        suppressClickRef.current = false;
-        return;
-      }
-      if (!onOpenProject || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onOpenProject();
-    }}
-  >{children}</a>;
 }
 
 function StageBadge({ stageKey }: { stageKey: string }) {
