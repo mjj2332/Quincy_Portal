@@ -8,12 +8,11 @@
  * child pages the component walked). The controller clones it on accept and adopts mutation results
  * into the clone; the component renders from that accepted clone while an interaction is open.
  *
- * Warnings: the planner (`planSchedulingProposal`) checks `ScheduleBounds` with
- * `checkScheduleBounds`, whose copy differs from B1's `scheduleWindowWarnings` and has no created-at
- * lower bound. So this port supplies NO `boundsFor` (plan warnings stay empty) and the Gantt's
- * warnings come from `scheduleWindowWarnings` alone — `ganttEditWarnings` (the drop hint) and
- * `ganttCommittedWarnings` (the saved announcement and toast, via `committedWarningText`) below, so
- * the hint, the live announcement and the toast always agree.
+ * Warnings (#288): one shared out-of-range rule, `scheduleWindowWarnings` (`schedule-bounds.ts`),
+ * the same one the Calendar runs. This port supplies `boundsFor` (`ganttScheduleBounds` of the
+ * project); the controller runs the rule over the SAVED schedule for the saved announcement and the
+ * toast's `warningText`, and `ganttEditWarnings` below runs it through the planner for the drop
+ * hint — so the hint, the live announcement and the toast always agree.
  *
  * Import boundary: like `production-gantt-adapter.ts` and `production-gantt-scheduling.ts`, never
  * import `@/components/reui/gantt/**` here, not even `import type`.
@@ -29,16 +28,14 @@ import {
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
 import type { ChecklistMutationResult } from "./scheduling-types";
-import { checklistInputFromSchedule, planSchedulingProposal, type SchedulingWarning } from "./scheduling-policy";
+import { planSchedulingProposal, type SchedulingWarning } from "./scheduling-policy";
 import {
   ganttChecklistSource,
   ganttDeadlineEntry,
   ganttDeadlineEvent,
-  ganttDropWarningText,
   ganttEditToProposal,
   ganttScheduleBounds,
   PROJECT_DEADLINE_ID_PREFIX,
-  scheduleWindowWarnings,
   type GanttEdit,
 } from "./production-gantt-scheduling";
 import { removeProductionGanttQueries } from "./production-gantt-query";
@@ -140,14 +137,9 @@ function defaultCalendarFilters(): ProductionCalendarFilters {
 export function ganttEditWarnings(project: GanttProjectRowDto, source: ChecklistCalendarEventDto, edit: GanttEdit): SchedulingWarning[] {
   const proposal = ganttEditToProposal(source, edit);
   if (!proposal) return [];
-  const planned = planSchedulingProposal(proposal, { bounds: null });
+  const planned = planSchedulingProposal(proposal, { bounds: ganttScheduleBounds(project) });
   if (!planned.ok || planned.value.kind !== "checklist") return [];
-  return scheduleWindowWarnings(planned.value.schedule, ganttScheduleBounds(project));
-}
-
-/** The same window check over the schedule the server actually saved. */
-export function ganttCommittedWarnings(project: GanttProjectRowDto, result: ChecklistMutationResult): SchedulingWarning[] {
-  return scheduleWindowWarnings(checklistInputFromSchedule(result.schedule), ganttScheduleBounds(project));
+  return planned.value.warnings;
 }
 
 type GanttQuery = {
@@ -239,9 +231,9 @@ export function useGanttSchedulingPort({ identity, projects, query, purgeChildre
     invalidation: ganttInvalidation,
     defaultPlacementDate: () => sydneyToday(Date.now()),
     settleFailedReason: "The latest Gantt could not be loaded.",
-    committedWarningText: (projectId, result) => {
+    boundsFor: (projectId) => {
       const project = projects.find((candidate) => candidate.id === projectId);
-      return project ? ganttDropWarningText(ganttCommittedWarnings(project, result)) : null;
+      return project ? ganttScheduleBounds(project) : null;
     },
     ...(openDeadlineConfirm ? { confirmDeadline: openDeadlineConfirm } : {}),
   };

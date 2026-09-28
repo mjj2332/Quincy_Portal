@@ -56,6 +56,7 @@ import {
   type SchedulingProposal,
   type SchedulingWarning,
 } from "./scheduling-policy";
+import { scheduleWarningText, scheduleWindowWarnings } from "./schedule-bounds";
 import { applyUndo, type UndoOutcome, type UndoTicket } from "./scheduling-undo";
 import {
   applyOptimisticOverlay,
@@ -141,9 +142,10 @@ export type ChecklistProposal = {
    * `undefined`, so this changes no existing behaviour.
    */
   edge?: "start" | "end";
-  /** #221: the plan's bounds warnings (`planSchedulingProposal`). Only set when non-empty, and only
-   * when the port supplies bounds (`SchedulingPort.boundsFor`): the Gantt and, since #222, the
-   * event-calendar renderer (from its `bounds=1` response) do; the FullCalendar renderer does not. */
+  /** #221: the plan's bounds warnings (`planSchedulingProposal` → the shared `scheduleWindowWarnings`,
+   * `schedule-bounds.ts`). Only set when non-empty, and only when the port supplies bounds
+   * (`SchedulingPort.boundsFor`): the Gantt and, since #222, the event-calendar renderer (from its
+   * `bounds=1` response) do; the FullCalendar renderer does not. */
   warnings?: SchedulingWarning[];
 };
 export type ChecklistFoldState = {
@@ -215,7 +217,15 @@ export type SchedulingPort<TBaseline> = {
   invalidation: (kind: "checklist" | "deadline", projectId: string) => Parameters<typeof invalidateProjectSurfaces>[1];
   defaultPlacementDate: () => string;
   settleFailedReason: string;
-  boundsFor?: (projectId: string) => ScheduleBounds;
+  /**
+   * #288: the project's advisory scheduling window, or `null` when unknown. The controller runs the
+   * ONE shared out-of-range rule (`scheduleWindowWarnings`, `schedule-bounds.ts`) over it twice: in
+   * the plan (`ChecklistProposal.warnings`), and over the schedule the server actually SAVED — that
+   * text is appended to the "saved" announcement (` Warning: <text>`, the vendor's
+   * `dropWarningSuffix` wording) and handed to `onCommitted` as `warningText`. Absent (the
+   * FullCalendar renderer): no warnings, and the announcement is unchanged.
+   */
+  boundsFor?: (projectId: string) => ScheduleBounds | null;
   /**
    * #221 PR C: a surface-owned Deadline confirmation. When present, `runConfirmedProposal` awaits
    * this instead of the shared `confirm()` modal; absent (the Calendar), behaviour is unchanged.
@@ -223,13 +233,6 @@ export type SchedulingPort<TBaseline> = {
    * the surface must close its dialog and resolve `false`.
    */
   confirmDeadline?: (input: SchedulingDeadlineConfirmInput) => Promise<boolean>;
-  /**
-   * #221: the advisory warning a COMMITTED checklist save carries, as one sentence (e.g. "Ends
-   * after the project deadline."), or `null`. The controller appends it to its own "saved"
-   * announcement (` Warning: <text>`, the vendor's `dropWarningSuffix` wording) and hands it to
-   * `onCommitted` as `warningText`. Absent (the Calendar): the announcement is unchanged.
-   */
-  committedWarningText?: (projectId: string, result: ChecklistMutationResult) => string | null;
 };
 
 /** #221 PR C: the public shape of a Deadline awaiting confirmation (`SchedulingPort.confirmDeadline`). */
@@ -257,7 +260,8 @@ export type SchedulingCommittedInfo =
       before: ChecklistSource;
       checklistResult: ChecklistMutationResult;
       warnings: SchedulingWarning[];
-      /** The port's `committedWarningText` — the same text the live announcement carries. */
+      /** The shared rule's text over the SAVED schedule and `boundsFor` — the same text the live
+       * announcement carries; `null` when in range or the port has no `boundsFor`. */
       warningText: string | null;
     }
   | {
@@ -1105,7 +1109,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         return;
       }
 
-      const warningText = portRef.current.committedWarningText?.(proposal.source.project.id, result) ?? null;
+      const warningText = scheduleWarningText(scheduleWindowWarnings(checklistInputFromSchedule(result.schedule), portRef.current.boundsFor?.(proposal.source.project.id) ?? null));
       onCommittedRef.current?.({ kind: "checklist", projectId: proposal.source.project.id, before: proposal.source, checklistResult: result, warnings: proposal.warnings ?? [], warningText });
       setScheduleEditor(null);
       setChecklistFold(null);

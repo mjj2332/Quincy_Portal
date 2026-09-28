@@ -184,23 +184,23 @@ describe("useSchedulingController (generic port)", () => {
     expect(spies.refetch).toHaveBeenCalled();
     expect(controllerRef!.settle.pending).toBe(false);
     expect(controllerRef!.canStartCommand()).toBe(true);
-    // No `committedWarningText` on the port (the Calendar): the plain saved announcement.
+    // No `boundsFor` on the port (the FullCalendar renderer): the plain saved announcement.
     expect(info.warningText ?? null).toBeNull();
     expect(controllerRef!.announcement).toBe("Saved the checklist schedule for 12 Harbour Street.");
   });
 
-  it("appends the port's committedWarningText to the saved announcement after settle, and hands the same text to onCommitted", async () => {
+  it("runs the shared rule over the SAVED schedule and boundsFor: appends the warning to the saved announcement after settle, and hands the same text to onCommitted", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
-    const committedWarningText = vi.fn(() => "Ends after the project deadline.");
-    const { port } = makePort({ checklists: [source], deadlines: [] }, { committedWarningText });
+    const boundsFor = vi.fn(() => ({ lower: null, deadlineLocalCivil: "2026-08-27T12:00" }));
+    const { port } = makePort({ checklists: [source], deadlines: [] }, { boundsFor });
     await render(port);
     reply = { status: 200, body: mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-28T09:00"), end: timedEndpoint("2026-08-28T11:00"), due: "2026-08-28T11:00" }) };
     await act(async () => { controllerRef!.submitProposal({ kind: "move", entity: "checklist", source, target: { subview: "month", targetDate: "2026-08-28" } }); await Promise.resolve(); });
     await settle();
 
-    expect(committedWarningText).toHaveBeenCalledTimes(1);
-    expect(committedWarningText).toHaveBeenCalledWith(projectId, expect.objectContaining({ scheduleVersion: 5 }));
-    expect(committedWarningText.mock.invocationCallOrder[0]!).toBeLessThan(onCommitted.mock.invocationCallOrder[0]!);
+    expect(mutations()).toHaveLength(1);
+    expect(mutations()[0]!.method).toBe("PATCH");
+    expect(boundsFor).toHaveBeenCalledWith(projectId);
     const info = onCommitted.mock.calls[0]![0];
     if (info.kind !== "checklist") throw new Error("expected a checklist commit");
     expect(info.warningText).toBe("Ends after the project deadline.");
@@ -208,9 +208,27 @@ describe("useSchedulingController (generic port)", () => {
     expect(controllerRef!.announcement).toBe("Saved the checklist schedule for 12 Harbour Street. Warning: Ends after the project deadline.");
   });
 
+  it("derives warningText from what the server SAVED, not the plan", async () => {
+    const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
+    const boundsFor = vi.fn(() => ({ lower: null, deadlineLocalCivil: "2026-08-27T12:00" }));
+    const { port } = makePort({ checklists: [source], deadlines: [] }, { boundsFor });
+    await render(port);
+    // The plan moves to the 28th (after the deadline); the server saves an in-range schedule.
+    reply = { status: 200, body: mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-27T10:00"), end: timedEndpoint("2026-08-27T11:30"), due: "2026-08-27T11:30" }) };
+    await act(async () => { controllerRef!.submitProposal({ kind: "move", entity: "checklist", source, target: { subview: "month", targetDate: "2026-08-28" } }); await Promise.resolve(); });
+    await settle();
+
+    expect(mutations()).toHaveLength(1);
+    const info = onCommitted.mock.calls[0]![0];
+    if (info.kind !== "checklist") throw new Error("expected a checklist commit");
+    expect(info.warnings).toEqual([expect.objectContaining({ code: "subtask_after_project_deadline" })]);
+    expect(info.warningText).toBeNull();
+    expect(controllerRef!.announcement).toBe("Saved the checklist schedule for 12 Harbour Street.");
+  });
+
   it("feeds boundsFor into the plan, so an out-of-bounds move surfaces its warnings on onCommitted", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
-    const boundsFor = vi.fn(() => ({ shootDate: null, deadlineLocalCivil: "2026-08-27T12:00" }));
+    const boundsFor = vi.fn(() => ({ lower: null, deadlineLocalCivil: "2026-08-27T12:00" }));
     const { port } = makePort({ checklists: [source], deadlines: [] }, { boundsFor });
     await render(port);
     reply = { status: 200, body: mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-28T09:00"), end: timedEndpoint("2026-08-28T11:00"), due: "2026-08-28T11:00" }) };

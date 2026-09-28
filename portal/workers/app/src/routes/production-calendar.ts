@@ -95,6 +95,7 @@ type CalendarFacetRow = {
 type CalendarBoundsRow = {
   project_id: string;
   shoot_date: string | null;
+  created_at: number;
   deadline_local_civil: string | null;
 };
 
@@ -514,7 +515,7 @@ bounds_projects AS (
   UNION
   SELECT project_id FROM candidate_subtasks_unfiltered
 )
-SELECT bp.project_id, bounds_project.shoot_date,
+SELECT bp.project_id, bounds_project.shoot_date, bounds_project.created_at,
   CASE WHEN ap.deadline_at IS NOT NULL THEN ap.deadline_local_civil ELSE NULL END AS deadline_local_civil
 FROM bounds_projects bp
 INNER JOIN authorized_projects_base ap ON ap.project_id = bp.project_id
@@ -530,6 +531,7 @@ function projectBoundsFor(response: ProductionCalendarRangeResponse, rows: Calen
       projectId: row.project_id,
       // the Gantt's `shootDateCivil` rule: free-text shoot dates are not a bound
       shootDate: row.shoot_date !== null && isSydneyCalendarDate(row.shoot_date) ? row.shoot_date : null,
+      createdAt: new Date(row.created_at).toISOString(),
       deadlineLocalCivil: row.deadline_local_civil,
     });
   }

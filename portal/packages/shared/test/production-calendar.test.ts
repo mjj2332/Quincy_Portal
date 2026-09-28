@@ -208,8 +208,8 @@ describe("TB5C strict role-safe DTOs", () => {
   it("#222: accepts OPTIONAL strict projectBounds on every role's response", () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const bounds = [
-      { projectId, shootDate: "2026-08-20", deadlineLocalCivil: "2026-08-27T09:00" },
-      { projectId: "223e4567-e89b-42d3-a456-426614174000", shootDate: null, deadlineLocalCivil: null },
+      { projectId, shootDate: "2026-08-20", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-27T09:00" },
+      { projectId: "223e4567-e89b-42d3-a456-426614174000", shootDate: null, createdAt: "2026-07-02T03:04:05.678Z", deadlineLocalCivil: null },
     ];
     for (const [schema, stage] of [[adminProductionCalendarRangeResponseSchema, ADMIN_STAGE], [editorProductionCalendarRangeResponseSchema, EDITOR_STAGE], [externalCalendarRangeSchema, EDITOR_STAGE]] as const) {
       // absent (what every request without bounds=1 receives) and present both parse
@@ -222,6 +222,12 @@ describe("TB5C strict role-safe DTOs", () => {
       expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], shootDate: "Tuesday" }] }).success).toBe(false);
       expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], projectId: "not-a-uuid" }] }).success).toBe(false);
       expect(schema.safeParse({ ...response(stage), projectBounds: null }).success).toBe(false);
+      // #288: createdAt is REQUIRED (the created-at lower-bound fallback) — missing, null or malformed rejected
+      const { createdAt: _createdAt, ...withoutCreatedAt } = bounds[0]!;
+      expect(schema.safeParse({ ...response(stage), projectBounds: [withoutCreatedAt] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: null }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: "" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: 1_780_000_000_000 }] }).success).toBe(false);
     }
   });
 

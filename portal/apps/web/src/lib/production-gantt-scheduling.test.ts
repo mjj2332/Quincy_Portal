@@ -26,13 +26,10 @@ import {
   ganttDeadlineEditToProposal,
   ganttDeadlineEntry,
   ganttDeadlineEvent,
-  ganttDropWarningText,
   ganttEditToProposal,
   ganttPlacementToProposal,
   ganttDeadlineDropWarning,
-  ganttScheduleBounds,
   previewDeadlineEffects,
-  scheduleWindowWarnings,
   type GanttEdit,
 } from "./production-gantt-scheduling";
 
@@ -226,93 +223,7 @@ describe("ganttDeadlineEvent / ganttDeadlineEntry", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Bounds + warnings
-// ---------------------------------------------------------------------------
-
-describe("ganttScheduleBounds", () => {
-  it("prefers the shoot date as the lower bound", () => {
-    expect(ganttScheduleBounds(makeProject())).toEqual({ lower: { civilDate: "2026-05-01", kind: "shoot" }, deadlineLocalCivil: "2026-06-01T15:00" });
-  });
-
-  it("falls back to the Sydney civil date of createdAt (not the UTC date)", () => {
-    // 2026-01-01T14:00Z is 2026-01-02T01:00 in Sydney (AEDT, +11).
-    const bounds = ganttScheduleBounds(makeProject({ shootDateCivil: null, createdAt: "2026-01-01T14:00:00.000Z" }));
-    expect(bounds.lower).toEqual({ civilDate: "2026-01-02", kind: "created" });
-  });
-
-  it("has a null lower bound when createdAt is unparseable, and a null deadline when there is none", () => {
-    expect(ganttScheduleBounds(makeProject({ shootDateCivil: null, createdAt: "garbage", deadline: null }))).toEqual({ lower: null, deadlineLocalCivil: null });
-  });
-});
-
-describe("scheduleWindowWarnings", () => {
-  const shoot = { lower: { civilDate: "2026-05-01", kind: "shoot" as const }, deadlineLocalCivil: "2026-06-01T15:00" };
-  const created = { lower: { civilDate: "2026-05-01", kind: "created" as const }, deadlineLocalCivil: null };
-
-  it("warns on a range that starts before the shoot date", () => {
-    expect(scheduleWindowWarnings({ state: "range", start: { kind: "date", localCivil: "2026-04-30" }, end: { kind: "date", localCivil: "2026-05-02" } }, shoot)).toEqual([
-      { code: "subtask_before_project_shoot", message: "Starts before the shoot date.", endpoint: "start" },
-    ]);
-  });
-
-  it("compares the lower bound by date only (same day, earlier time is fine)", () => {
-    expect(scheduleWindowWarnings({ state: "range", start: { kind: "timed", localCivil: "2026-05-01T00:15" }, end: { kind: "timed", localCivil: "2026-05-01T02:00" } }, shoot)).toEqual([]);
-  });
-
-  it("warns on a due_only before the shoot date at the end endpoint", () => {
-    expect(scheduleWindowWarnings({ state: "due_only", end: { kind: "timed", localCivil: "2026-04-30T23:59" } }, shoot)).toEqual([
-      { code: "subtask_before_project_shoot", message: "Due before the shoot date.", endpoint: "end" },
-    ]);
-  });
-
-  it("uses the created-date wording and code for a created lower bound", () => {
-    expect(scheduleWindowWarnings({ state: "range", start: { kind: "date", localCivil: "2026-04-01" }, end: { kind: "date", localCivil: "2026-04-02" } }, created)).toEqual([
-      { code: "subtask_before_project_created", message: "Starts before the project was created.", endpoint: "start" },
-    ]);
-    expect(scheduleWindowWarnings({ state: "due_only", end: { kind: "date", localCivil: "2026-04-01" } }, created)).toEqual([
-      { code: "subtask_before_project_created", message: "Due before the project was created.", endpoint: "end" },
-    ]);
-  });
-
-  it("timed end strictly after the deadline minute warns; equal is fine", () => {
-    expect(scheduleWindowWarnings({ state: "range", start: { kind: "timed", localCivil: "2026-05-10T09:00" }, end: { kind: "timed", localCivil: "2026-06-01T15:00" } }, shoot)).toEqual([]);
-    expect(scheduleWindowWarnings({ state: "range", start: { kind: "timed", localCivil: "2026-05-10T09:00" }, end: { kind: "timed", localCivil: "2026-06-01T15:15" } }, shoot)).toEqual([
-      { code: "subtask_after_project_deadline", message: "Ends after the project deadline.", endpoint: "end" },
-    ]);
-    expect(scheduleWindowWarnings({ state: "due_only", end: { kind: "timed", localCivil: "2026-06-01T15:01" } }, shoot)).toEqual([
-      { code: "subtask_after_project_deadline", message: "Due after the project deadline.", endpoint: "end" },
-    ]);
-  });
-
-  it("date-kind end compares by date: the deadline's own day is fine, the next day warns", () => {
-    expect(scheduleWindowWarnings({ state: "due_only", end: { kind: "date", localCivil: "2026-06-01" } }, shoot)).toEqual([]);
-    expect(scheduleWindowWarnings({ state: "range", start: { kind: "date", localCivil: "2026-05-10" }, end: { kind: "date", localCivil: "2026-06-02" } }, shoot)).toEqual([
-      { code: "subtask_after_project_deadline", message: "Ends after the project deadline.", endpoint: "end" },
-    ]);
-  });
-
-  it("no deadline → no upper warning; no lower bound → no lower warning; unscheduled → nothing", () => {
-    expect(scheduleWindowWarnings({ state: "due_only", end: { kind: "date", localCivil: "2030-01-01" } }, created)).toEqual([]);
-    expect(scheduleWindowWarnings({ state: "due_only", end: { kind: "date", localCivil: "2000-01-01" } }, { lower: null, deadlineLocalCivil: null })).toEqual([]);
-    expect(scheduleWindowWarnings({ state: "unscheduled" }, shoot)).toEqual([]);
-  });
-
-  it("can warn on both ends at once", () => {
-    const warnings = scheduleWindowWarnings({ state: "range", start: { kind: "date", localCivil: "2026-04-01" }, end: { kind: "date", localCivil: "2026-07-01" } }, shoot);
-    expect(warnings.map((warning) => warning.endpoint)).toEqual(["start", "end"]);
-  });
-});
-
-describe("ganttDropWarningText", () => {
-  it("joins messages with a space, or returns null for none", () => {
-    expect(ganttDropWarningText([])).toBeNull();
-    expect(ganttDropWarningText([
-      { code: "subtask_before_project_shoot", message: "Starts before the shoot date.", endpoint: "start" },
-      { code: "subtask_after_project_deadline", message: "Ends after the project deadline.", endpoint: "end" },
-    ])).toBe("Starts before the shoot date. Ends after the project deadline.");
-  });
-});
+// Bounds + the out-of-range rule: `schedule-bounds.test.ts` (#288 — one table, both surfaces).
 
 // ---------------------------------------------------------------------------
 // ganttEditToProposal

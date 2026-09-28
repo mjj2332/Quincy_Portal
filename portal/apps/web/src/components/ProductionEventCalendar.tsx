@@ -11,8 +11,9 @@
  * Writes (round 3): the shared scheduling controller (`useSchedulingController`,
  * `lib/use-scheduling-commands.tsx`) owns every write, exactly as `ProductionGantt.tsx` composes it —
  * over the Calendar's own port (`useCalendarSchedulingPort`) plus this surface's `confirmDeadline`
- * (the `ProductionGanttDeadlineDialog`, `preview: null`), `boundsFor` and `committedWarningText`
- * (from the `bounds=1` response's `projectBounds` — out-of-range checklist writes WARN, never block).
+ * (the `ProductionGanttDeadlineDialog`, `preview: null`) and `boundsFor` (`calendarScheduleBounds`
+ * of the `bounds=1` response's `projectBounds`; the controller runs the same out-of-range rule as the
+ * Gantt, `schedule-bounds.ts` — out-of-range checklist writes WARN, never block).
  * No DST / settle / reconcile / lock rule is copied here.
  *
  * - `onEventUpdate`: `eventCalendarUpdateToProposal` → `commands.submitProposal(proposal,
@@ -73,7 +74,7 @@ import {
   type ProductionEventCalendarData,
 } from "../lib/production-event-calendar-adapter";
 import { eventCalendarDropToProposal, eventCalendarUpdateToProposal, type EventCalendarDropTargetLike, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
-import { checkScheduleBounds, checklistInputFromSchedule, type ScheduleBounds } from "../lib/scheduling-policy";
+import { calendarScheduleBounds, type ScheduleBounds } from "../lib/schedule-bounds";
 import { useCalendarSchedulingPort, useSchedulingController, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useMediaQuery } from "../lib/use-media-query";
 import { productionCalendarZoneLabel } from "../lib/sydney-time-labels";
@@ -151,11 +152,6 @@ function canDragUnscheduledEntry(entry: CalendarUnscheduledEntryDto, rangesEnabl
   return entry.kind === "project_deadline" ? unscheduledProjectDraggable(entry) : unscheduledChecklistDraggable(entry, rangesEnabled);
 }
 
-function boundsWarningText(bounds: ScheduleBounds, schedule: Parameters<typeof checkScheduleBounds>[0]): string | null {
-  const warnings = checkScheduleBounds(schedule, bounds);
-  return warnings.length === 0 ? null : warnings.map((warning) => warning.message).join(" ");
-}
-
 function ChipContent({ id, data, title, needsAttention }: { id: string; data: ProductionEventCalendarData | undefined; title: string; needsAttention: boolean }): JSX.Element {
   const dto = data?.dto;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
@@ -222,7 +218,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // ---------------------------------------------------------------------------------------------
 
   // Project bounds by id from the latest bounds=1 response; refreshed every render below, read by
-  // the port's `boundsFor` / `committedWarningText` at call time.
+  // the port's `boundsFor` at call time.
   const boundsRef = useRef<Map<string, ScheduleBounds>>(new Map());
 
   // The Deadline confirmation the controller is awaiting (`SchedulingPort.confirmDeadline`).
@@ -256,8 +252,6 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     ...calendarPort,
     confirmDeadline: openDeadlineConfirm,
     boundsFor: (projectId: string) => boundsRef.current.get(projectId) ?? null,
-    committedWarningText: (projectId: string, result: { schedule: Parameters<typeof checklistInputFromSchedule>[0] }) =>
-      boundsWarningText(boundsRef.current.get(projectId) ?? null, checklistInputFromSchedule(result.schedule)),
   };
   const commands = useSchedulingController<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss });
   const blocked = commands.interactionBlocked;
@@ -266,7 +260,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
 
   // Draw from the accepted baseline; the live query only while nothing holds the gate.
   const source: ProductionCalendarRangeResponse | null = commands.acceptedResponse ?? (!blocked ? query.data ?? null : null);
-  boundsRef.current = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, { shootDate: bound.shootDate, deadlineLocalCivil: bound.deadlineLocalCivil }])), [source?.projectBounds, query.data?.projectBounds]);
+  boundsRef.current = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, calendarScheduleBounds(bound)])), [source?.projectBounds, query.data?.projectBounds]);
 
   // First-load skeleton only: once a range has drawn, a new range key keeps the grid mounted.
   const [everLoaded, setEverLoaded] = useState(false);

@@ -123,13 +123,13 @@ import {
   ganttDeadlineEditToProposal,
   ganttDeadlineEntry,
   ganttDeadlineEvent,
-  ganttDropWarningText,
   ganttEditToProposal,
   ganttPlacementToProposal,
   previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
 import { adoptGanttChecklistRow, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { scheduleWarningText } from "../lib/schedule-bounds";
 import {
   fetchGanttChildPage,
   mergeGanttChildPage,
@@ -1026,8 +1026,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       return;
     }
     patchChildRow(info.projectId, info.checklistResult);
-    // `warningText` is the port's `committedWarningText` — the exact text the controller's live
-    // announcement carries (this toast is `announcedElsewhere`).
+    // `warningText` is the shared rule's text over the saved schedule (the controller runs
+    // `scheduleWindowWarnings` with the port's `boundsFor`) — the exact text its live announcement
+    // carries (this toast is `announcedElsewhere`).
     const { warningText } = info;
     pushUndoToast(warningText ? `Schedule saved. ${warningText}` : "Schedule saved.", warningText ? "caution" : "success", buildChecklistUndoTicket(info.before, info.checklistResult));
   }, [patchChildRow, pushUndoToast]);
@@ -1357,7 +1358,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
     const target = editFor(update);
     if (!target || target.kind === "none" || target.kind === null) return null;
-    return ganttDropWarningText(ganttEditWarnings(target.project, target.source, ganttEditFor(update, target.kind, scale)));
+    return scheduleWarningText(ganttEditWarnings(target.project, target.source, ganttEditFor(update, target.kind, scale)));
   }, [deadlineEditFor, editFor, scale]);
 
   // Placement: only an unscheduled task row whose permissions allow `canDrag` takes a slot.

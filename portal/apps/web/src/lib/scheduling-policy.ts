@@ -32,6 +32,7 @@ import {
 } from "@quincy/shared";
 import { ApiError } from "./api";
 import { cloneSource } from "./production-calendar-interaction";
+import { scheduleWindowWarnings, type ScheduleBounds, type SchedulingWarning } from "./schedule-bounds";
 import type { ChecklistMutationResult, SaveResponse } from "./scheduling-types";
 
 export type ChecklistSource = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
@@ -43,9 +44,8 @@ export type SchedulingProposal =
   | { kind: "place"; entity: "project_deadline"; entry: ProjectCalendarUnscheduledEntryDto; target: CalendarManipulationTarget; disambiguation?: ProjectDeadlineDisambiguation }
   | { kind: "deadline"; entity: "project_deadline"; event: ProjectDeadlineCalendarEventDto; target: CalendarManipulationTarget; disambiguation?: ProjectDeadlineDisambiguation };
 
-export type SchedulingWarningCode = "subtask_before_project_shoot" | "subtask_before_project_created" | "subtask_after_project_deadline";
-export type SchedulingWarning = { code: SchedulingWarningCode; message: string; endpoint: "start" | "end" };
-export type ScheduleBounds = { shootDate: string | null; deadlineLocalCivil: string | null } | null;
+// #288: the out-of-range rule and its types live in `schedule-bounds.ts`; re-exported for importers.
+export type { ScheduleBounds, SchedulingWarning, SchedulingWarningCode } from "./schedule-bounds";
 
 export type SchedulingPlan =
   | { kind: "checklist"; request: SaveChecklistScheduleRequest; schedule: InitialChecklistScheduleInput; timing: CalendarEventTiming | null; warnings: SchedulingWarning[] }
@@ -294,36 +294,6 @@ function civilDateOnly(value: string): string {
   return value.slice(0, 10);
 }
 
-/**
- * Advisory-only, never `ok:false`: compares a checklist schedule's civil start/end against the
- * project's shoot date (lower bound) and deadline (upper bound) in Sydney civil-string space —
- * lexicographic on `YYYY-MM-DD[THH:MM]`, collapsing to the date portion when either side of a
- * comparison is date-kind. `bounds === null` (no data source yet — see #216 §0.1) yields `[]`.
- */
-export function checkScheduleBounds(schedule: InitialChecklistScheduleInput, bounds: ScheduleBounds): SchedulingWarning[] {
-  if (!bounds) return [];
-  const warnings: SchedulingWarning[] = [];
-  const start = schedule.state === "range" ? schedule.start : null;
-  const end = schedule.state === "range" || schedule.state === "due_only" ? schedule.end : null;
-
-  if (bounds.shootDate && start) {
-    if (civilDateOnly(start.localCivil) < bounds.shootDate) {
-      warnings.push({ code: "subtask_before_project_shoot", message: "This subtask starts before the shoot date.", endpoint: "start" });
-    }
-  }
-
-  if (bounds.deadlineLocalCivil && end) {
-    const dateOnly = end.kind === "date";
-    const endCivil = dateOnly ? civilDateOnly(end.localCivil) : end.localCivil;
-    const boundCivil = dateOnly ? civilDateOnly(bounds.deadlineLocalCivil) : bounds.deadlineLocalCivil;
-    if (endCivil > boundCivil) {
-      warnings.push({ code: "subtask_after_project_deadline", message: "This subtask ends after the project deadline.", endpoint: "end" });
-    }
-  }
-
-  return warnings;
-}
-
 function deadlineTimingFromLocalCivil(deadline: { localCivil: string; disambiguation?: ProjectDeadlineDisambiguation }, allDay: boolean): CalendarMappingResult<CalendarEventTiming> {
   const resolved = resolveSydneyCivilMinute(deadline.localCivil, deadline.disambiguation);
   if (!resolved.ok) {
@@ -338,8 +308,10 @@ function deadlineTimingFromLocalCivil(deadline: { localCivil: string; disambigua
  * `mapAndRunUnscheduledProjectProposal` do today, then folds in `normalizeChecklistSchedule` +
  * `timingFromChecklistSchedule` (checklist) or a civil-minute resolution (deadline) to build the
  * `SchedulingPlan`. Mapper errors pass through unchanged (same `code`/`endpoint`/`choices`).
+ * A checklist plan's `warnings` are the shared out-of-range rule (`scheduleWindowWarnings`) over
+ * `options.bounds`; no bounds → `[]`.
  */
-export function planSchedulingProposal(proposal: SchedulingProposal, options?: { bounds?: ScheduleBounds }): CalendarMappingResult<SchedulingPlan> {
+export function planSchedulingProposal(proposal: SchedulingProposal, options?: { bounds?: ScheduleBounds | null }): CalendarMappingResult<SchedulingPlan> {
   const bounds = options?.bounds ?? null;
 
   if (proposal.entity === "checklist") {
@@ -354,7 +326,7 @@ export function planSchedulingProposal(proposal: SchedulingProposal, options?: {
     const normalized = normalizeChecklistSchedule(mapped.value.schedule, mapped.value.expectedVersion);
     if (!normalized.ok) return { ok: false, error: normalized.error };
     const timing = timingFromChecklistSchedule(checklistScheduleToDto(normalized.value));
-    const warnings = checkScheduleBounds(mapped.value.schedule, bounds);
+    const warnings = scheduleWindowWarnings(mapped.value.schedule, bounds);
     return { ok: true, value: { kind: "checklist", request: mapped.value, schedule: mapped.value.schedule, timing, warnings } };
   }
 
