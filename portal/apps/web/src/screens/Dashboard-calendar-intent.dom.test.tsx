@@ -5,7 +5,7 @@ import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTI
 import { Dashboard } from "./Dashboard";
 import { confirmStore } from "../lib/confirm";
 import { parseStaffLocation } from "../lib/router";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_RENDERER_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, type CalendarRenderer } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
 import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,24 +18,15 @@ vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
-vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: () => <div data-testid="dashboard-calendar-surface" /> }));
-// #223: the event calendar is the default renderer, so this suite runs on both. The event-calendar
-// leg draws through the shared vendor fake (`testing/event-calendar-fake.tsx`); FullCalendar never
-// imports `reui/event-calendar/`, so these mocks leave its leg untouched.
+// The event calendar is the only renderer (#224). It draws through the shared vendor fake
+// (`testing/event-calendar-fake.tsx`).
 vi.mock("../components/reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("../components/reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("../components/reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
 vi.mock("../components/reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
-/**
- * #223: each renderer and the testid of its drawn surface in this harness. Both appear only once a
- * range has loaded (neither is drawn while "Loading calendar…" shows): FullCalendar's mocked
- * `ProductionCalendarSurface`, and the event calendar's `event-calendar-body`.
- */
-const RENDERERS: ReadonlyArray<{ renderer: CalendarRenderer; surface: string }> = [
-  { renderer: "fullcalendar", surface: "dashboard-calendar-surface" },
-  { renderer: "event-calendar", surface: "event-calendar-body" },
-];
+/** The testid of the drawn surface in this harness: the event calendar's `event-calendar-body`, present only once a range has loaded (not while "Loading calendar…" shows). */
+const surface = "event-calendar-body";
 
 const rememberedDate = "2026-08-30";
 const rememberedSubview = "week";
@@ -71,7 +62,7 @@ function projectResponse() {
  * mount. These tests pin the consequence of that decision — arriving on the bare URL must leave the
  * address bar holding the full facet URL, built from those remembered values.
  */
-describe.each(RENDERERS)("the bare Calendar intent, on arrival ($renderer)", ({ renderer, surface }) => {
+describe("the bare Calendar intent, on arrival", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -87,12 +78,9 @@ describe.each(RENDERERS)("the bare Calendar intent, on arrival ($renderer)", ({ 
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
     window.localStorage.setItem(DASHBOARD_CALENDAR_SUBVIEW_KEY, rememberedSubview);
     window.localStorage.setItem(DASHBOARD_CALENDAR_LAST_DATE_KEY, rememberedDate);
-    // #223: the FullCalendar leg is the explicit per-browser opt-out; the event-calendar leg is the default (no value).
-    if (renderer === "fullcalendar") window.localStorage.setItem(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
     window.history.replaceState(null, "", "/");
     __resetDashboardSearchStoreForTest();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
-    await import("../components/ProductionCalendar");
     await import("../components/ProductionEventCalendar");
   });
   afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });

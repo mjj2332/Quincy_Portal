@@ -8,7 +8,7 @@
  * called INSIDE `<EventCalendar>` — which is why this component takes the callback rather than
  * calling the hook. No `beginDrag` (not wired, or the rail is in the narrow sheet), Agenda, a phone
  * gate (`dragSuppressed`) or a blocked calendar (`disabled`) all put the list in action mode:
- * Schedule buttons, no drag affordance. Same eligibility rules as the FullCalendar panel
+ * Schedule buttons, no drag affordance. Same eligibility rules as the retired FullCalendar panel
  * (`lib/production-calendar-unscheduled.ts`).
  *
  * Reuse: rows are `reui/item` (`ItemGroup` > `Item variant="outline" size="xs"` > `ItemContent`
@@ -16,7 +16,7 @@
  * confirm already uses); actions `reui/button` `variant="link"`; the project link
  * `ProjectCalendarAnchor` (InternalLink under the hood). The rail supplies the `reui/scroll-area`.
  * Section headings are `<h3>` around the installed `quincy/Eyebrow`; row rule colours match the
- * FullCalendar panel's.
+ * retired FullCalendar panel's.
  */
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type {

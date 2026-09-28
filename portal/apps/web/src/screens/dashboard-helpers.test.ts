@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readRememberedDashboardView, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, CALENDAR_RENDERER_DEFAULT, DASHBOARD_CALENDAR_RENDERER_KEY, readCalendarRenderer, writeCalendarRenderer, coerceCalendarSubviewForRenderer, type CalendarRenderer } from "./dashboard-helpers";
+import { readRememberedDashboardView, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY } from "./dashboard-helpers";
 
 describe("dashboard view preferences", () => {
   it("keeps supported views and migrates grid, missing, and invalid values to kanban", () => {
@@ -163,95 +163,33 @@ describe("readRememberedDashboardView", () => {
   });
 });
 
-describe("#222 Calendar renderer preference", () => {
-  it("defaults to the event calendar under the documented key (#223)", () => {
-    expect(CALENDAR_RENDERER_DEFAULT).toBe("event-calendar");
-    expect(DASHBOARD_CALENDAR_RENDERER_KEY).toBe("quincy:dashboard:calendar:renderer");
-    const read = vi.fn(() => null);
-    expect(readCalendarRenderer({ read })).toBe("event-calendar");
-    expect(read).toHaveBeenCalledWith(DASHBOARD_CALENDAR_RENDERER_KEY);
-  });
-
-  const THROWS = Symbol("throwing read");
-  const cases: Array<[label: string, stored: string | null | typeof THROWS, expected: CalendarRenderer]> = [
-    ["absent", null, CALENDAR_RENDERER_DEFAULT],
-    ["throwing", THROWS, CALENDAR_RENDERER_DEFAULT],
-    ["\"event-calendar\"", "event-calendar", "event-calendar"],
-    ["\"fullcalendar\"", "fullcalendar", "fullcalendar"],
-    ["\"FULLCALENDAR\"", "FULLCALENDAR", CALENDAR_RENDERER_DEFAULT],
-    ["\" fullcalendar\"", " fullcalendar", CALENDAR_RENDERER_DEFAULT],
-    ["\"EVENT-CALENDAR\"", "EVENT-CALENDAR", CALENDAR_RENDERER_DEFAULT],
-    ["\" event-calendar\"", " event-calendar", CALENDAR_RENDERER_DEFAULT],
-    ["\"\"", "", CALENDAR_RENDERER_DEFAULT],
-    ["\"1\"", "1", CALENDAR_RENDERER_DEFAULT],
-  ];
-  it.each(cases)("stored %s reads as the expected renderer", (_label, stored, expected) => {
-    const read = (): string | null => {
-      if (stored === THROWS) throw new Error("disabled");
-      return stored;
-    };
-    expect(readCalendarRenderer({ read })).toBe(expected);
-  });
-
-  it("writes through the injected storage and swallows a throwing write", () => {
-    const write = vi.fn();
-    writeCalendarRenderer({ read: () => null, write }, "event-calendar");
-    expect(write).toHaveBeenCalledWith(DASHBOARD_CALENDAR_RENDERER_KEY, "event-calendar");
-    expect(() => writeCalendarRenderer({ read: () => null, write: () => { throw new Error("quota"); } }, "fullcalendar")).not.toThrow();
-    expect(() => writeCalendarRenderer({ read: () => null }, "fullcalendar")).not.toThrow();
-  });
-});
-
-describe("#222 opted-out (FullCalendar) subview coercion", () => {
-  it("coerces day/days to week only for the FullCalendar renderer", () => {
-    expect(coerceCalendarSubviewForRenderer("day", "fullcalendar")).toBe("week");
-    expect(coerceCalendarSubviewForRenderer("days", "fullcalendar")).toBe("week");
-    for (const subview of ["month", "week", "agenda"] as const) {
-      expect(coerceCalendarSubviewForRenderer(subview, "fullcalendar")).toBe(subview);
-    }
-    for (const subview of ["month", "week", "day", "days", "agenda"] as const) {
-      expect(coerceCalendarSubviewForRenderer(subview, "event-calendar")).toBe(subview);
-    }
-  });
-
+describe("Calendar day/days subviews are kept as-is (#224)", () => {
   const route = { kind: "dashboard" as const };
   const now = "2026-08-30T12:00:00.000Z";
 
-  it("coerces a remembered day/days subview and writes the coerced value back (opted out to FullCalendar)", () => {
+  it("uses a remembered day/days subview as-is and writes it back unchanged", () => {
     for (const remembered of ["day", "days"]) {
       const values = new Map([[DASHBOARD_CALENDAR_SUBVIEW_KEY, remembered], [DASHBOARD_CALENDAR_LAST_DATE_KEY, "2026-09-03"]]);
       const writes: Array<[string, string]> = [];
       const storage = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => writes.push([key, value]) };
-      expect(initializeDashboardCalendarState(route, storage, { now, isPhone: false, renderer: "fullcalendar" })).toMatchObject({ subview: "week", date: "2026-09-03" });
-      expect(writes).toContainEqual([DASHBOARD_CALENDAR_SUBVIEW_KEY, "week"]);
+      expect(initializeDashboardCalendarState(route, storage, { now, isPhone: false })).toMatchObject({ subview: remembered, date: "2026-09-03" });
+      expect(writes).toContainEqual([DASHBOARD_CALENDAR_SUBVIEW_KEY, remembered]);
+      expect(writes).not.toContainEqual([DASHBOARD_CALENDAR_SUBVIEW_KEY, "week"]);
     }
   });
 
-  it("keeps a remembered day/days subview when the new renderer is selected", () => {
-    const values = new Map([[DASHBOARD_CALENDAR_SUBVIEW_KEY, "days"]]);
-    const storage = { read: (key: string) => values.get(key) ?? null, write: vi.fn() };
-    expect(initializeDashboardCalendarState(route, storage, { now, isPhone: false, renderer: "event-calendar" })).toMatchObject({ subview: "days" });
-  });
-
-  it("keeps a remembered day/days subview under the default options (#223: event calendar)", () => {
-    const values = new Map([[DASHBOARD_CALENDAR_SUBVIEW_KEY, "days"]]);
-    const writes: Array<[string, string]> = [];
-    const storage = { read: (key: string) => values.get(key) ?? null, write: (key: string, value: string) => writes.push([key, value]) };
-    expect(initializeDashboardCalendarState(route, storage, { now, isPhone: false })).toMatchObject({ subview: "days" });
-    expect(writes).not.toContainEqual([DASHBOARD_CALENDAR_SUBVIEW_KEY, "week"]);
-  });
-
-  it("coerces a URL day/days subview (opted out to FullCalendar) without touching storage", () => {
-    const read = vi.fn(() => null);
-    const write = vi.fn();
-    const calendar = {
-      view: "calendar" as const, date: "2026-08-31", subview: "day" as const, layers: ["project" as const], editorIds: [],
-      includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false,
-      overdueOnly: false, search: "", myTasks: false,
-    };
-    expect(initializeDashboardCalendarState({ kind: "dashboard", calendar }, { read, write }, { now, isPhone: false, renderer: "fullcalendar" })).toEqual({ ...calendar, subview: "week" });
-    expect(initializeDashboardCalendarState({ kind: "dashboard", calendar }, { read, write }, { now, isPhone: false, renderer: "event-calendar" })).toEqual(calendar);
-    expect(read).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
+  it("returns a route calendar with a day/days subview unchanged, without touching storage", () => {
+    for (const subview of ["day", "days"] as const) {
+      const read = vi.fn(() => null);
+      const write = vi.fn();
+      const calendar = {
+        view: "calendar" as const, date: "2026-08-31", subview, layers: ["project" as const], editorIds: [],
+        includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false,
+        overdueOnly: false, search: "", myTasks: false,
+      };
+      expect(initializeDashboardCalendarState({ kind: "dashboard", calendar }, { read, write }, { now, isPhone: false })).toEqual(calendar);
+      expect(read).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    }
   });
 });

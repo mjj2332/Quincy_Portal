@@ -4,12 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, dashboardSearchOf, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState, type ProductionCalendarFilters } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { Dashboard } from "./Dashboard";
-import { DASHBOARD_CALENDAR_RENDERER_KEY } from "./dashboard-helpers";
+import { eventCalendarFake } from "../testing/event-calendar-fake";
 import { locationStore, parseStaffLocation, safeStaffDestination } from "../lib/router";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest, __getDashboardSearchSnapshotForTest, setDashboardSearchDraft, syncDashboardSearchDraftFromLocation } from "../lib/dashboard-search-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Calendar rail's
+// scroller, opened in the Filters sheet below) calls from a timer.
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -22,10 +27,12 @@ vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: (props: Record<string, any>) => { boardPropsState.value = props; const project = Array.isArray(props.projects) ? props.projects.find((candidate: any) => typeof candidate?.id === "string") : undefined; return <div data-testid="dashboard-board">{project && props.projectHrefFor && <a className="mock-kanban-project-link" data-testid="mock-kanban-project-link" href={props.projectHrefFor(project)}>{project.street}</a>}</div>; } }));
-vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: (props: any) => <div data-testid="dashboard-calendar-surface" data-initial-view={props.initialView}>
-  {props.eventContent?.({ event: { extendedProps: props.events?.[0]?.extendedProps } })}
-  <button type="button" data-testid="dashboard-calendar-drop" onClick={() => props.eventDrop?.({ event: { allDay: true, start: new Date("2026-08-20T00:00:00.000Z"), startStr: "2026-08-20", extendedProps: props.events?.[0]?.extendedProps }, revert: vi.fn() })}>Drop Deadline</button>
-</div> }));
+// #224: the Calendar is the ReUI event calendar only; it draws through the shared vendor fake
+// (`testing/event-calendar-fake.tsx`), which the drop / selection helpers below drive.
+vi.mock("../components/reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
+vi.mock("../components/reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
+vi.mock("../components/reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
+vi.mock("../components/reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const editorId = "22222222-2222-4222-8222-222222222222";
@@ -90,11 +97,8 @@ describe("Dashboard Calendar routing", () => {
         myTasks: params.get("mine") === "1",
       }, params.get("date") ?? routeCalendar.date));
     });
+    eventCalendarFake.reset();
     const storage = new Map<string, string>();
-    // #224: port to event-calendar-fake. This suite drives the FullCalendar surface mock's internals
-    // (`eventDrop`, `eventContent`, `initialView`), so it pins the per-browser FullCalendar opt-out
-    // (#223) before any render -- `Dashboard.tsx` reads the renderer once per mount.
-    storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } });
     window.history.replaceState(null, "", "/");
     __resetDashboardSearchStoreForTest();
@@ -102,9 +106,9 @@ describe("Dashboard Calendar routing", () => {
   });
   afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
 
-  // Dashboard code-splits ProductionCalendar behind React.lazy; warm the dynamic
+  // Dashboard code-splits ProductionEventCalendar behind React.lazy; warm the dynamic
   // import so the Suspense boundary resolves within the render helper's ticks.
-  beforeEach(async () => { await import("../components/ProductionCalendar"); });
+  beforeEach(async () => { await import("../components/ProductionEventCalendar"); });
 
   async function render(value: { role?: typeof authRole.value; calendar?: DashboardCalendarState | null } = {}) {
     authRole.value = value.role ?? "admin";
@@ -116,6 +120,41 @@ describe("Dashboard Calendar routing", () => {
   // #217: the Dashboard no longer owns a search field -- the rail's `ShellSearch` does, and
   // neither `render()` nor `DashboardRouteHarness` mount the rail. Drives the shared store
   // directly, exactly as `ShellSearch`'s own `onChange` would.
+  /** The route fixture's one Deadline, selected so the rail shows its project anchor. */
+  async function selectedProjectAnchor(): Promise<HTMLAnchorElement> {
+    await act(async () => { eventCalendarFake.click("project-deadline:one"); await Promise.resolve(); });
+    return host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
+  }
+
+  /** A Month drag of the Deadline to 2026-08-20 (it keeps its 09:00 Sydney wall time); opens the confirm. */
+  async function dropDeadline() {
+    await act(async () => {
+      eventCalendarFake.update("project-deadline:one", { start: new Date("2026-08-19T23:00:00.000Z"), allDay: false, granularity: "day" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  /**
+   * Adds the Unassigned chip through the People combobox, as a user would. This harness has no
+   * `matchMedia`, so the Calendar draws its narrow layout: the rail (and its combobox) opens in a
+   * sheet from the Filters toggle once the lazy Calendar and its first range have settled.
+   */
+  async function pickUnassigned() {
+    for (let tick = 0; tick < 20 && !host.querySelector('[data-testid="event-calendar-rail-toggle"]'); tick += 1) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-rail-toggle"]');
+    expect(toggle, "no Filters toggle rendered").not.toBeNull();
+    await act(async () => { toggle!.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Filter people"]');
+    expect(input, "no People combobox rendered").not.toBeNull();
+    await act(async () => { input!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); input!.focus(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.includes("Unassigned"));
+    expect(option, "no Unassigned option in the People combobox").toBeDefined();
+    await act(async () => { option!.click(); await Promise.resolve(); });
+  }
+
   async function typeSearch(value: string) {
     await act(async () => {
       setDashboardSearchDraft(value, "user-1");
@@ -126,8 +165,12 @@ describe("Dashboard Calendar routing", () => {
   it("shows Calendar only for a capable role and mounts a route-owned range once", async () => {
     await render({ calendar: routeCalendar });
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(true);
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeTruthy();
-    expect(apiGetMock.mock.calls.filter(([path]) => path.startsWith("/api/production-calendar"))).toHaveLength(1);
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeTruthy();
+    // The event calendar asks for two ranges per load (docs/lessons.md, #223): the `bounds=1` main
+    // range and the Up next agenda. The route-owned main range is requested exactly once.
+    const calendarCalls = apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.startsWith("/api/production-calendar"));
+    expect(calendarCalls.filter((path) => new URLSearchParams(path.split("?", 2)[1]).get("bounds") === "1")).toHaveLength(1);
+    expect(calendarCalls).toHaveLength(2);
   });
 
   it("coerces and repairs a stored Calendar preference for a Photographer", async () => {
@@ -136,7 +179,7 @@ describe("Dashboard Calendar routing", () => {
     expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Calendar")).toBe(false);
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Kanban")?.getAttribute("data-active")).toBe("true");
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("kanban");
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/production-calendar"))).toBe(false);
   });
 
@@ -208,7 +251,7 @@ describe("Dashboard Calendar routing", () => {
 
   it("opens scheduled Calendar project anchors on the Full Workspace", async () => {
     await render({ calendar: routeCalendar });
-    const anchor = host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
+    const anchor = await selectedProjectAnchor();
     expect(anchor.getAttribute("href")).toBe("/projects/" + projectId);
     await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
@@ -216,7 +259,7 @@ describe("Dashboard Calendar routing", () => {
 
   it("leaves a modified Calendar project click to native navigation", async () => {
     await render({ calendar: routeCalendar });
-    const anchor = host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
+    const anchor = await selectedProjectAnchor();
     await act(async () => { anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1, metaKey: true })); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
@@ -224,7 +267,7 @@ describe("Dashboard Calendar routing", () => {
   it("opens a keyboard-activated (Enter) Calendar anchor on the Full Workspace", async () => {
     window.history.replaceState(null, "", "/?view=calendar&date=" + routeCalendar.date + "&sub=month&layers=project%2Cchecklist&editors=" + editorId);
     await render({ calendar: routeCalendar });
-    const anchor = host.querySelector<HTMLAnchorElement>('a[data-testid="calendar-project-link"]')!;
+    const anchor = await selectedProjectAnchor();
     await act(async () => { anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/projects/" + projectId);
   });
@@ -348,7 +391,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     const lengthBefore = window.history.length;
-    await act(async () => { [...host.querySelectorAll("label")].find((label) => label.textContent?.includes("Unassigned"))?.querySelector<HTMLInputElement>("input")?.click(); await Promise.resolve(); });
+    await pickUnassigned();
     expect(window.history.length).toBe(lengthBefore + 1);
     expect(window.location.search).toContain("unassigned=1");
     await typeSearch("a b ");
@@ -403,7 +446,7 @@ describe("Dashboard Calendar routing", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await typeSearch("smith");
     // Toggled BEFORE the 300ms debounce elapses.
-    await act(async () => { [...host.querySelectorAll("label")].find((label) => label.textContent?.includes("Unassigned"))?.querySelector<HTMLInputElement>("input")?.click(); await Promise.resolve(); });
+    await pickUnassigned();
     expect(window.location.search).toContain("unassigned=1");
     expect(window.location.search).toContain("q=smith");
   });
@@ -431,7 +474,7 @@ describe("Dashboard Calendar routing", () => {
     const summary = host.querySelector('[data-testid="dashboard-search-summary"]');
     const chip = host.querySelector('[data-testid="dashboard-search-chip"]');
     const newShootLink = [...host.querySelectorAll("a")].find((node) => node.textContent === "New shoot");
-    const calendarSurface = host.querySelector('[data-testid="dashboard-calendar-surface"]');
+    const calendarSurface = host.querySelector('[data-testid="event-calendar-body"]');
 
     expect(toolbar, "no toolbar rendered — the assertions below would be vacuous").not.toBeNull();
     expect(summary, "no search summary rendered — the assertions below would be vacuous").not.toBeNull();
@@ -457,7 +500,7 @@ describe("Dashboard Calendar routing", () => {
     await render({ calendar: routeCalendar });
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
     expect(`${window.location.pathname}${window.location.search}`).toBe("/?view=list");
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
     expect(host.textContent).toContain("Archived projects");
   });
 
@@ -500,9 +543,10 @@ describe("Dashboard Calendar routing", () => {
     await render({ calendar: routeCalendar });
     const list = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;
     expect(list().disabled).toBe(false);
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="dashboard-calendar-drop"]')!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await dropDeadline();
+    expect(document.querySelector('[data-testid="gantt-deadline-confirm"]'), "the drop never opened the confirm").not.toBeNull();
     expect(list().disabled).toBe(true);
-    await act(async () => { confirmStore.resolve(false); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="gantt-deadline-confirm-cancel"]')!.click(); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(list().disabled).toBe(false);
   });
 
@@ -517,8 +561,8 @@ describe("Dashboard Calendar routing", () => {
 
     apiPutMock.mockResolvedValueOnce({ changed: true, current: { version: 2, deadline: { localCivil: "2026-08-20T09:00", instant: "2026-08-19T23:00:00.000Z" }, reminderOffsetsMinutes: [] }, eventIntent: null, publicationIds: [] });
     calendarRefetchFails.value = true;
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="dashboard-calendar-drop"]')!.click(); await Promise.resolve(); });
-    confirmStore.resolve(true);
+    await dropDeadline();
+    await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="gantt-deadline-confirm-action"]')!.click(); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); await Promise.resolve(); });
 
     const list = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "List")!;

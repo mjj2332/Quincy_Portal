@@ -31,7 +31,6 @@ export type ModalProps = {
   describedBy?: string;
   returnFocus?: boolean;
   testId?: string;
-  variant?: string;
   initialFocus?: MutableRefObject<HTMLElement | null> | number;
 };
 
@@ -111,7 +110,6 @@ export function Modal({
   describedBy,
   returnFocus = true,
   testId,
-  variant,
   initialFocus,
 }: ModalProps): JSX.Element | null {
   const titleId = `modal-title-${useId()}`;
@@ -155,7 +153,6 @@ export function Modal({
             aria-describedby={describedBy}
             tabIndex={-1}
             data-testid={testId}
-            data-modal-variant={variant}
             data-open={dataOpen}
             onClick={(event) => event.stopPropagation()}
             onKeyDown={handleKeyDown}

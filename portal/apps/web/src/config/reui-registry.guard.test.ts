@@ -14,10 +14,9 @@
  * `styles/design-system-guards.test.ts`, there is no pre-existing instance of this defect to
  * grandfather. Any occurrence of the vendor URL is a fresh regression, full stop.
  *
- * As of this writing, `components.json` has no `@reui` entry yet (see issue #49) — only
- * `@fullcalendar`. Assertion 1 and 2 hold unconditionally today. Assertions 3 and 4 are written
- * to pass vacuously while `@reui` is absent, and to bite the moment it is added with the wrong
- * URL or an inlined license key.
+ * `components.json`'s only registry is `@reui` (#224 removed the `@fullcalendar` entry along with
+ * FullCalendar). Assertions 3 and 4 were written to pass vacuously while `@reui` was absent (#49),
+ * and now bite on a wrong URL or an inlined license key.
  */
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "node:fs";

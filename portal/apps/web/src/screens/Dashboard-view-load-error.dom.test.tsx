@@ -15,7 +15,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
-import { DASHBOARD_CALENDAR_RENDERER_KEY } from "./dashboard-helpers";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,12 +36,6 @@ vi.mock("../components/ProductionGantt", () => ({
     throw new TypeError("Failed to fetch dynamically imported module: https://quincy.test/assets/ProductionGantt-OLD.js");
   },
 }));
-vi.mock("../components/ProductionCalendar", () => ({
-  get ProductionCalendar(): never {
-    throw new TypeError("Failed to fetch dynamically imported module: https://quincy.test/assets/ProductionCalendar-OLD.js");
-  },
-}));
-// #223 made the event calendar the default renderer; FullCalendar is the per-browser opt-out.
 vi.mock("../components/ProductionEventCalendar", () => ({
   get ProductionEventCalendar(): never {
     throw new TypeError("Failed to fetch dynamically imported module: https://quincy.test/assets/ProductionEventCalendar-OLD.js");
@@ -124,11 +117,9 @@ describe("Dashboard contains a stale lazy view chunk (#292)", () => {
   }
 
   it.each([
-    ["Gantt", null, "ProductionGantt-OLD.js", "Reload to open the Gantt."],
-    ["Calendar", null, "ProductionEventCalendar-OLD.js", "Reload to open the calendar."],
-    ["Calendar", "fullcalendar", "ProductionCalendar-OLD.js", "Reload to open the calendar."],
-  ])("keeps a stale %s chunk (stored renderer %s) inside the view region, and shows it again on return", async (label, renderer, chunk, copy) => {
-    if (renderer) window.localStorage.setItem(DASHBOARD_CALENDAR_RENDERER_KEY, renderer);
+    ["Gantt", "ProductionGantt-OLD.js", "Reload to open the Gantt."],
+    ["Calendar", "ProductionEventCalendar-OLD.js", "Reload to open the calendar."],
+  ])("keeps a stale %s chunk inside the view region, and shows it again on return", async (label, chunk, copy) => {
     await render();
     expect(switcherButton("Kanban")?.getAttribute("data-active")).toBe("true");
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeTruthy();
@@ -139,7 +130,7 @@ describe("Dashboard contains a stale lazy view chunk (#292)", () => {
     expect(switcherButton(label)?.getAttribute("data-active")).toBe("true");
     expectShellIntact();
     expect(consoleError).toHaveBeenCalled();
-    // The renderer this browser resolves to is the chunk that failed, not the other one.
+    // The chunk that failed is the one named in the error.
     expect(consoleError.mock.calls.flat().map(String).join("\n")).toContain(chunk);
 
     await clickView("Kanban");

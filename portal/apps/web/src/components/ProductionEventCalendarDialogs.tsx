@@ -5,13 +5,13 @@
  *
  * - Move / Reschedule Deadline — `reui/alert-dialog` shell; date + time inputs (`reui/input`) and,
  *   when the controller hands `foldChoices`, the Sydney occurrence radios. Validation is
- *   `validCivil`/`civilParts` below (moved here from the FullCalendar `ProductionCalendarMoveDialog`); the occurrence offset
+ *   `validCivil`/`civilParts` below (moved here from the retired FullCalendar `ProductionCalendarMoveDialog`); the occurrence offset
  *   copy is `lib/sydney-time-labels.ts`'s `utcOffsetLabel`.
  * - Fold choice (a checklist endpoint that occurs twice) — `reui/alert-dialog` shell, rendered from
  *   `commands.checklistFold`; the FoldChoice logic lives here now. Offset copy is the same shared
  *   `utcOffsetLabel` (U+2212 minus), so every Calendar dialog labels an offset identically.
  * - Schedule checklist item — `reui/sheet`, body `ProductionCalendarScheduleEditorFields` (shared
- *   with the FullCalendar renderer's Modal).
+ *   with the retired FullCalendar renderer's Modal until #224).
  * - Deadline confirm — `ProductionGanttDeadlineDialog` (`reui/alert-dialog`), with `preview: null`;
  *   its from → to + reminder body is `ProductionCalendarMoveConfirmation`, reused unchanged.
  *
@@ -290,7 +290,7 @@ export function ProductionEventCalendarDialogs({ commands, rangesEnabled, deadli
       )}
       {editor && (
         // The old calendar's composite key: a failed save re-seeds the SAME open session with a new
-        // `initialSchedule`, which must remount the draft (see `ProductionCalendar.tsx`).
+        // `initialSchedule`, which must remount the draft (as the retired `ProductionCalendar.tsx` did).
         <ProductionEventCalendarScheduleEditorSheet
           key={`schedule-editor:${editorToken}:${editor.source.id}:${JSON.stringify(editor.initialSchedule ?? null)}`}
           open={scheduleEditor !== null}

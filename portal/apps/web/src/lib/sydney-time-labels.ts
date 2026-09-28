@@ -5,8 +5,8 @@ import { resolveSydneyCivilMinute, shiftSydneyCalendarDate } from "@quincy/share
  *
  * - `utcOffsetLabel`: an occurrence's UTC offset (`UTC+11:00`). A negative offset uses U+2212 `−`,
  *   the typographic minus, never an ASCII hyphen. Sydney's own offsets are always positive; the
- *   sign branch still has to be right. Used by the FullCalendar move / fold dialogs, the schedule
- *   editor fields, and the event-calendar dialogs.
+ *   sign branch still has to be right. Used by the schedule editor fields and the event-calendar
+ *   dialogs (and, until #224, the FullCalendar move / fold dialogs).
  * - `productionCalendarZoneLabel`: `Sydney time · AEST`, `· AEDT`, or `· AEST/AEDT` when the
  *   visible range crosses a DST change. Used under both toolbars' period titles.
  */

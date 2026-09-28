@@ -1,8 +1,8 @@
 /**
  * #222 — the checklist schedule editor's field body and draft logic, extracted from
- * `ProductionCalendarScheduleEditor.tsx` so two shells can render it: the FullCalendar renderer's
- * `Modal` (`ProductionCalendarScheduleEditor`, unchanged behaviour) and the event-calendar
- * renderer's `reui/sheet` (`ProductionEventCalendarDialogs.tsx`).
+ * `ProductionCalendarScheduleEditor.tsx` so two shells could render it: the FullCalendar renderer's
+ * `Modal` (`ProductionCalendarScheduleEditor`, deleted in #224) and the event-calendar
+ * renderer's `reui/sheet` (`ProductionEventCalendarDialogs.tsx`), now its only shell.
  *
  * A pure move: the draft/seed/normalise/validate code and every DOM hook the old tests select
  * (`aria-label="Checklist … date|time"`, `Checklist schedule state`, `Checklist endpoint mode`,

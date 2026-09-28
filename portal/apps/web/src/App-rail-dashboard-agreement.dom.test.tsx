@@ -87,11 +87,12 @@ vi.mock("./components/kanban2/board", async (importOriginal) => {
       : <div data-testid="dashboard-board">{(props.projects as Array<{ street?: string }> | undefined)?.map((project) => project.street).join(", ")}</div>,
   };
 });
-vi.mock("./components/ProductionCalendarSurface", () => ({
-  ProductionCalendarSurface: (props: { eventDrop?: (arg: unknown) => void; events?: Array<{ extendedProps?: unknown }> }) => <div data-testid="dashboard-calendar-surface">
-    <button type="button" data-testid="dashboard-calendar-drop" onClick={() => props.eventDrop?.({ event: { allDay: true, start: new Date("2026-09-20T00:00:00.000Z"), startStr: "2026-09-20", extendedProps: props.events?.[0]?.extendedProps }, revert: vi.fn() })}>Drop Deadline</button>
-  </div>,
-}));
+// #224: the Calendar is the ReUI event calendar only; it draws through the shared vendor fake
+// (`testing/event-calendar-fake.tsx`), which `dropDeadline` below drives.
+vi.mock("./components/reui/event-calendar/event-calendar", async () => (await import("./testing/event-calendar-fake")).eventCalendarModule);
+vi.mock("./components/reui/event-calendar/event-calendar-nav", async () => (await import("./testing/event-calendar-fake")).eventCalendarNavModule);
+vi.mock("./components/reui/event-calendar/event-calendar-content", async () => (await import("./testing/event-calendar-fake")).eventCalendarContentModule);
+vi.mock("./components/reui/event-calendar/event-calendar-dnd", async () => (await import("./testing/event-calendar-fake")).eventCalendarDndModule);
 vi.mock("./components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 // `Dashboard` navigates to a project by pushing a location; the real `ProjectWorkspace` fetches
 // its own project graph, which is out of scope for a rail/Dashboard agreement check — a stub with
@@ -102,7 +103,7 @@ import App from "./App";
 import { readDashboardView, subscribeDashboardView } from "./lib/dashboard-view-store";
 import { locationStore, staffPathFor } from "./lib/router";
 import { confirmStore } from "./lib/confirm";
-import { DASHBOARD_CALENDAR_RENDERER_KEY } from "./screens/dashboard-helpers";
+import { eventCalendarFake } from "./testing/event-calendar-fake";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -124,7 +125,7 @@ function projectsResponse(street: string, id: string) {
 }
 
 /**
- * `ProductionCalendar`'s own accept effect (`components/ProductionCalendar.tsx`) refuses a
+ * The Calendar's own accept effect (`components/ProductionEventCalendar.tsx`) refuses a
  * response whose echoed `range.date` does not match the request's `calendar.date` — a late
  * observer outliving a route-key change must never accept data for the wrong range. So the mock
  * echoes the REQUESTED date/window straight back, the way the real API does, rather than a fixed
@@ -218,10 +219,7 @@ beforeEach(async () => {
   installLocalStorageShim();
   installMatchMediaShim();
   window.localStorage.clear();
-  // #224: port to event-calendar-fake. This file drives the FullCalendar surface mock's `eventDrop`,
-  // so it pins the per-browser FullCalendar opt-out (#223) before any render -- `Dashboard.tsx`
-  // reads the renderer once per mount.
-  window.localStorage.setItem(DASHBOARD_CALENDAR_RENDERER_KEY, "fullcalendar");
+  eventCalendarFake.reset();
   setViewportWidth(1024);
   apiGetMock.mockReset();
   apiPutMock.mockReset();
@@ -237,9 +235,9 @@ beforeEach(async () => {
     if (path.startsWith("/api/projects")) return Promise.resolve(path.includes("archived=1") ? projectsResponse("9 Archived Street", ARCHIVED_PROJECT_ID) : projectsResponse("1 Active Street", ACTIVE_PROJECT_ID));
     return Promise.reject(new Error(`unhandled apiGet path in App-rail-dashboard-agreement.dom.test.tsx: ${path}`));
   });
-  // Dashboard code-splits ProductionCalendar behind React.lazy; warm the dynamic import so the
+  // Dashboard code-splits ProductionEventCalendar behind React.lazy; warm the dynamic import so the
   // Suspense boundary resolves within this file's own render/settle ticks.
-  await import("./components/ProductionCalendar");
+  await import("./components/ProductionEventCalendar");
 });
 
 afterEach(async () => {
@@ -291,7 +289,7 @@ async function renderAppFirstCommit(path: string, strict = false) {
 function renderedDashboardBranch(host: ParentNode): "list" | "kanban" | "calendar" | "none" {
   if (host.querySelector('[aria-label="Projects list"]')) return "list";
   if (host.querySelector('[data-testid="dashboard-board"]')) return "kanban";
-  if (host.querySelector('[data-testid="dashboard-calendar-surface"]')
+  if (host.querySelector('[data-testid="event-calendar-body"]')
     || [...host.querySelectorAll('[role="status"]')].some((node) => node.textContent === "Loading calendar…")) return "calendar";
   return "none";
 }
@@ -310,6 +308,20 @@ function dashboardViewControlActive(host: ParentNode): string | null {
  * `App-navigation-rail-shell.dom.test.tsx`'s own `click()`, which explains the same thing at
  * greater length.
  */
+/** The Calendar's Deadline confirmation (a portaled `reui/alert-dialog`), or null. */
+function deadlineConfirm(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-testid="gantt-deadline-confirm"]');
+}
+
+/** A Month drag of the fixture Deadline to 2026-09-20 (it keeps its 09:00 Sydney wall time). */
+async function dropDeadline() {
+  if (!eventCalendarFake.event("project-deadline:one")) throw new Error("No calendar Deadline rendered to drop");
+  await act(async () => {
+    eventCalendarFake.update("project-deadline:one", { start: new Date("2026-09-19T23:00:00.000Z"), allDay: false, granularity: "day" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 async function click(element: Element) {
   await act(async () => {
     (element as HTMLElement).focus?.();
@@ -411,7 +423,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(currentUrl().startsWith("/?view=calendar")).toBe(true);
     expect(activeRailChild(host)).toBe("Calendar");
     expect(lastBreadcrumbSegment(host)).toBe("Calendar");
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Archived projects");
   });
 
@@ -653,19 +665,17 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     calendarEventFixture.enabled = true;
     const host = await renderApp("/?view=list");
     await clickRailChild(host, "Calendar");
-    const drop = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-calendar-drop"]');
-    if (!drop) throw new Error("No calendar drop trigger rendered");
-    await click(drop);
+    await dropDeadline();
 
     // Preconditions: the drop opened the confirm and the accept gate is blocking navigation.
     expect(viewButton(host, "List")?.disabled).toBe(true);
-    expect(confirmStore.getSnapshot()).not.toBeNull();
+    expect(deadlineConfirm()).not.toBeNull();
 
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
-    expect(confirmStore.getSnapshot()).toBeNull();
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).toBeNull();
+    expect(deadlineConfirm()).toBeNull();
     expect(viewButton(host, "List")?.disabled).toBe(false);
     expect(viewButton(host, "Kanban")?.disabled).toBe(false);
     expect(viewButton(host, "Calendar")?.disabled).toBe(false);
@@ -693,10 +703,10 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
 
     const host = await renderApp("/?view=list");
     await clickRailChild(host, "Calendar");
-    await click(host.querySelector<HTMLButtonElement>('[data-testid="dashboard-calendar-drop"]')!);
+    await dropDeadline();
     expect(viewButton(host, "List")?.disabled).toBe(true);
 
-    await act(async () => { confirmStore.resolve(true); await Promise.resolve(); });
+    await click(document.querySelector('[data-testid="gantt-deadline-confirm-action"]')!);
     await settle();
     // The accepted write is now in flight, held open by the deferred `apiPutMock` above.
     expect(apiPutMock).toHaveBeenCalledTimes(1);

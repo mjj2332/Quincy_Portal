@@ -6,7 +6,8 @@
  * S9 asks for — this is not a re-test of `ProductionGantt.tsx` itself
  * (`ProductionGantt-readonly.dom.test.tsx` and `production-gantt-adapter.test.ts` own that), so
  * `../components/ProductionGantt` is mocked at the surface, the same way this file's Calendar
- * sibling mocks `ProductionCalendarSurface` rather than exercising FullCalendar end to end.
+ * sibling (`Dashboard-calendar.dom.test.tsx`) fakes the event-calendar vendor tree rather than
+ * exercising it end to end.
  */
 import { act, useLayoutEffect, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -38,8 +39,8 @@ vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
-// #220: the same "mock at the surface" boundary `Dashboard-calendar.dom.test.tsx` draws for
-// `ProductionCalendarSurface` — this suite owns Dashboard's routing/URL/rail contract, not the
+// #220: the same "mock at the boundary" idea `Dashboard-calendar.dom.test.tsx` applies to the
+// event-calendar vendor tree (`testing/event-calendar-fake.tsx`) — this suite owns Dashboard's routing/URL/rail contract, not the
 // Gantt surface's own rendering (`ProductionGantt-readonly.dom.test.tsx` owns that).
 vi.mock("../components/ProductionGantt", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../components/ProductionGantt")>();
@@ -111,7 +112,7 @@ describe("Dashboard Gantt routing", () => {
 
   // Dashboard code-splits ProductionGantt behind React.lazy; warm the (mocked) dynamic import so
   // the Suspense boundary resolves within the render helper's own ticks — same reasoning as the
-  // Calendar suite's identical `beforeEach` for `../components/ProductionCalendar`.
+  // Calendar suite's identical `beforeEach` for `../components/ProductionEventCalendar`.
   beforeEach(async () => { await import("../components/ProductionGantt"); });
 
   async function render(value: { role?: typeof authRole.value } = {}) {

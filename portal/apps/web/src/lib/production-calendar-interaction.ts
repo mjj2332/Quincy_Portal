@@ -303,14 +303,6 @@ export function calendarAnnouncement(kind: CalendarAnnouncementKind, ctx: Calend
   }
 }
 
-/**
- * FullCalendar's drop announcement is intentionally left enabled for now. If
- * real VoiceOver/NVDA testing finds it pre-empts this Calendar's polite
- * settled result, Slice 11 may enable the scoped suppression seam in the
- * FullCalendar surface (TB5C accessibility checklist line 972).
- */
-export const SUPPRESS_FULLCALENDAR_DROP_ANNOUNCEMENT = false;
-
 export type CalendarCommandLock = { active: boolean };
 
 export function canStartCalendarCommand(lock: CalendarCommandLock): boolean {

@@ -1,8 +1,7 @@
 /**
  * #222 — the Production Calendar on the vendored ReUI event calendar, the Dashboard's default
- * Calendar renderer since #223. A browser can opt back to the FullCalendar renderer
- * (`ProductionCalendar.tsx`) via `DASHBOARD_CALENDAR_RENDERER_KEY` (`screens/dashboard-helpers.ts`)
- * until #224 deletes it.
+ * Calendar renderer since #223, and the only one since #224 deleted the FullCalendar renderer and
+ * its per-browser opt-out.
  *
  * The ONLY app file that imports `components/reui/event-calendar/` — pinned by
  * `harness-reachability.guard.test.ts` (`ALLOWED_VENDOR_SCHEDULING_CONSUMERS`, an exact-file entry

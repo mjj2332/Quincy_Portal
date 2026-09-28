@@ -277,8 +277,7 @@ describe("guard: no dead `text-[length:…]` beside a `[font:…]` shorthand", (
 // Guard 3 — a suppressed focus ring in unlayered CSS
 // ---------------------------------------------------------------------------
 /**
- * `index.css` imports `app.css` outside any cascade layer, and `production-calendar.css` is
- * imported the same way from JS at `ProductionCalendarSurface.tsx:8`, so a rule in either beats an
+ * `index.css` imports `app.css` outside any cascade layer, so a rule there beats an
  * ordinary Tailwind utility regardless of specificity — and on an equal specificity tie it also
  * beats the global `:focus-visible` in `tokens/base.css`, because that is imported first. An
  * `outline: none | 0 | transparent` there is therefore not a suggestion; it removes the focus
@@ -303,7 +302,7 @@ describe("guard: no focus ring is suppressed in unlayered CSS", () => {
   const findSuppressions = () => {
     const found: { selector: string; file: string; line: number }[] = [];
     // Only the unlayered files can win this fight; the token files are imported into layers.
-    const unlayered = cssFiles().filter((file) => /(?:app|production-calendar)\.css$/.test(file));
+    const unlayered = cssFiles().filter((file) => /app\.css$/.test(file));
     for (const file of unlayered) {
       const lines = stripCssComments(readFileSync(file, "utf8")).split("\n");
       // Track the selector of the rule currently open. A declaration-only line carries no `{`,
