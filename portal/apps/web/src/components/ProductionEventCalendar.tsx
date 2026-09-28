@@ -257,7 +257,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     confirmDeadline: openDeadlineConfirm,
     boundsFor: (projectId: string) => boundsRef.current.get(projectId) ?? null,
   };
-  const commands = useSchedulingControllerWithUndoToast<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss });
+  // #295: a save's `producer: "calendar"` skips every in-tab `production-calendar` query, and the
+  // settle refetch covers only the main range (and is skipped if the user navigates mid-save), so
+  // the rail refreshes at commit. Not awaited: the rail sits outside any gate.
+  const refreshUpNext = () => { void upNextQuery.refetch(); };
+  const commands = useSchedulingControllerWithUndoToast<ProductionCalendarRangeResponse>({ identity, resetKey: calendarResetKey(calendar), port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: refreshUpNext, onUndone: refreshUpNext });
   const blocked = commands.interactionBlocked;
   const settling = commands.settle.pending;
   const live = !blocked && !settling && !commands.accessLost;
