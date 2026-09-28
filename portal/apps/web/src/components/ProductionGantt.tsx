@@ -629,7 +629,6 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
   return { ...model, events };
 }
 
-
 export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
@@ -1317,7 +1316,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, [commands, placeableEntryByResourceId, scale]);
 
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
-
 
   // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used

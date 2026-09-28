@@ -62,8 +62,6 @@ const ProductionGantt = lazy(() => import("../components/ProductionGantt").then(
 // `ProductionEventCalendar.tsx` is the ONLY app file allowed to import
 // `components/reui/event-calendar/`, and this lazy import is that tree's one production entry.
 const ProductionEventCalendar = lazy(() => import("../components/ProductionEventCalendar").then((module) => ({ default: module.ProductionEventCalendar })));
-/** The Calendar's loading / empty state box (was `production-calendar-classes.ts`, retired in #224). */
-const CALENDAR_STATE_BOX = "min-h-[180px] grid place-content-center gap-[4px]";
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
   clearDashboardSearch,
@@ -75,6 +73,9 @@ import {
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { ganttFiltersFromRoute, ganttRouteFor, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+
+/** The Calendar's loading / empty state box (was `production-calendar-classes.ts`, retired in #224). */
+const CALENDAR_STATE_BOX = "min-h-[180px] grid place-content-center gap-[4px]";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";

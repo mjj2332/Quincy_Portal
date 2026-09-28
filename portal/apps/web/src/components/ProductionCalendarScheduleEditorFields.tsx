@@ -4,10 +4,11 @@
  * `Modal` (`ProductionCalendarScheduleEditor`, deleted in #224) and the event-calendar
  * renderer's `reui/sheet` (`ProductionEventCalendarDialogs.tsx`), now its only shell.
  *
- * A pure move: the draft/seed/normalise/validate code and every DOM hook the old tests select
+ * The draft/seed/normalise/validate code and every DOM hook the tests select
  * (`aria-label="Checklist … date|time"`, `Checklist schedule state`, `Checklist endpoint mode`,
- * the fold radios and the `role="alert"` error) are byte-for-byte what the Modal rendered. Each
- * shell owns only its frame and its footer (Cancel / Save schedule), which call `submit` from
+ * the fold radios and the `role="alert"` error) moved unchanged; #224 re-framed the fold radios
+ * in `reui/field` `FieldSet`/`FieldLegend`, because their only styling lived in the retired
+ * `production-calendar.css`. The shell owns only its frame and its footer (Cancel / Save schedule), which call `submit` from
  * `useChecklistScheduleDraft`.
  */
 import { useId, useState, type JSX } from "react";

@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from "react";
 
-const EVENT_CARD_LINK = "text-inherit no-underline hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2";
+const PROJECT_ANCHOR_LINK = "text-inherit no-underline hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2";
 
 export type ProjectCalendarAnchorProps = {
   href: string;
@@ -40,7 +40,7 @@ export function ProjectCalendarAnchor({ href, onOpenProject, children }: Project
     resetSuppression();
   };
   return <a
-    className={EVENT_CARD_LINK}
+    className={PROJECT_ANCHOR_LINK}
     data-testid="calendar-project-link"
     href={href}
     onMouseDown={(event) => startPointer(event.clientX, event.clientY)}
