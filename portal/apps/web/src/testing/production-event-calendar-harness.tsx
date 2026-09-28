@@ -38,6 +38,8 @@ export type CalendarFetch = {
   calls: RecordedCall[];
   /** GETs of the main (bounds=1) range. */
   rangeGets: () => RecordedCall[];
+  /** GETs of the Up next rail's range (agenda, no bounds) — #295. */
+  upNextGets: () => RecordedCall[];
   patches: () => RecordedCall[];
   puts: () => RecordedCall[];
 };
@@ -61,6 +63,7 @@ export function stubCalendarFetch(handlers: { range: Handler | ProductionCalenda
   return {
     calls,
     rangeGets: () => calls.filter((call) => call.method === "GET" && call.url.includes("bounds=1")),
+    upNextGets: () => calls.filter((call) => call.method === "GET" && call.url.includes("sub=agenda") && !call.url.includes("bounds=1")),
     patches: () => calls.filter((call) => call.method === "PATCH"),
     puts: () => calls.filter((call) => call.method === "PUT"),
   };

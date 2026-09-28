@@ -4108,3 +4108,21 @@ compensating write, ignored the result, and announced "Change undone.". On the G
 - **The Undo toast lives in `lib/use-scheduling-undo-toast.ts`** (`useSchedulingControllerWithUndoToast`),
   not in a surface. Its dismiss effect keys on the controller's full reset deps (`resetKey` plus
   identity), because the Calendar's `calendarResetKey` has no identity in it.
+
+## The `producer` skip covers a surface's every in-tab query, not just the one it refetches (#295, 2026-09-29)
+
+`invalidateProjectSurfaces(..., producer: "calendar")` skips in-tab invalidation of every query on
+the `production-calendar` prefix, on the assumption that the producing surface refetches its own
+data. The event calendar owns two such queries — the main range (`bounds=1`) and the Up next rail
+(agenda from today, no `bounds`) — but its port's `refetch` covered only the main one, so the rail
+kept an item's old time after a save or an Undo until its own 30s interval or a remount.
+
+- **A surface that owns more than one query under its producer prefix refreshes the others through
+  its own port** (`ProductionEventCalendar.tsx` overrides `refetch` to also kick the rail). Narrowing
+  the skip to the producing query's exact key would do nothing without a `ProjectQueryRuntime`
+  (`invalidateProjectSurfaces` returns before `converge`), and changes every producer at once.
+- **Don't await the secondary refetch in the settle path.** The rail sits outside the accept gate
+  and renders its own error state; gating settle on it would let a rail failure put the main
+  surface into recovery.
+- `ProductionEventCalendar-undo.dom.test.tsx` pins it: "now" is faked only during mount (the rail
+  captures it once and drops past events), and `rangeGets()` still grows by exactly one per save.

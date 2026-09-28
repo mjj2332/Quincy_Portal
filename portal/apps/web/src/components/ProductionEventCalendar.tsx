@@ -254,6 +254,13 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const calendarPort = useCalendarSchedulingPort(calendar, query, identity.principalId);
   const port = {
     ...calendarPort,
+    // #295: a save's `producer: "calendar"` skips every in-tab `production-calendar` query, and
+    // the settle refetch covers only the main range — so refresh the Up next rail here too. Not
+    // awaited: the rail sits outside any gate and shows its own error state.
+    refetch: () => {
+      void upNextQuery.refetch();
+      return calendarPort.refetch();
+    },
     confirmDeadline: openDeadlineConfirm,
     boundsFor: (projectId: string) => boundsRef.current.get(projectId) ?? null,
   };
