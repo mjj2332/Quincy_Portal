@@ -1,0 +1,3 @@
+# Gitignored files Claude Code copies from the main checkout into each new worktree
+# (.gitignore syntax). Secrets (.env.local, .dev.vars, .mcp.json) are deliberately not listed.
+.claude/settings.local.json

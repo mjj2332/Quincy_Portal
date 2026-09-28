@@ -2,7 +2,16 @@
 .DS_Store
 
 # Editor / tooling
-.claude/
+# Claude Code: the shared project config is tracked so every worktree gets it; the rest of
+# .claude/ stays local — worktrees/ (full checkouts, hundreds of MB) and settings.local.json
+# (the owner's per-machine permission allowlist, copied into new worktrees by .worktreeinclude).
+# Skills are opted in one by one; the rest are user-level symlinks into ~/.cc-switch.
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/reui/
 .vscode/
 .idea/
 
