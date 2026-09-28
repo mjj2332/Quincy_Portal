@@ -244,6 +244,31 @@ describe("event-calendar scheduling: DST (both 2026 Sydney transitions)", () => 
     expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-10-04" }, end: { localCivil: "2026-10-05" } });
   });
 
+  // Keyboard Adjust in month view shifts each endpoint by calendar days on its own, so when only one
+  // endpoint crosses the transition the two millisecond deltas differ by an hour. That is still a
+  // move, not a compound edit.
+  it("fall-back: a keyboard +1 day on a dated range whose END crosses the 25h day is a move", () => {
+    const dto = rangeEvent(dated("2026-04-03"), dated("2026-04-04"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", start: at("2026-04-04T00:00"), end: at("2026-04-06T00:00") })));
+    expect(p.kind).toBe("move");
+    const command = checklistCommand(p);
+    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-04-04" }, end: { localCivil: "2026-04-05" } });
+  });
+
+  it("spring-forward: a keyboard +1 day on a dated range whose END crosses the 23h day is a move", () => {
+    const dto = rangeEvent(dated("2026-10-02"), dated("2026-10-03"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", start: at("2026-10-03T00:00"), end: at("2026-10-05T00:00") })));
+    expect(p.kind).toBe("move");
+    const command = checklistCommand(p);
+    expect(command.ok && command.value.schedule).toMatchObject({ start: { localCivil: "2026-10-03" }, end: { localCivil: "2026-10-04" } });
+  });
+
+  it("fall-back: a keyboard END-only +1 day across the 25h day is still an end resize", () => {
+    const dto = rangeEvent(dated("2026-04-03"), dated("2026-04-04"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", granularity: "day", end: at("2026-04-06T00:00") })));
+    expect(p).toMatchObject({ kind: "resize", edge: "end" });
+  });
+
   it("never derives fold disambiguation from the dropped instant (lesson #241): the second-pass 02:30 still asks", () => {
     const secondPass = resolveSydneyCivilMinute("2026-04-05T02:30", "later");
     if (!secondPass.ok) throw new Error("fixture");

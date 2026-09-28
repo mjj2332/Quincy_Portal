@@ -93,13 +93,29 @@ function nextDate(date: string): string | null {
 // Edge classification
 // ---------------------------------------------------------------------------
 
-/** Pointer sources name the edge; a keyboard commit is classified from its deltas. */
-function editKind(update: EventCalendarUpdateLike, pointOnly: boolean): EditKind | "none" | "compound" | "resize_unsupported" {
+/** Whole Sydney calendar days from `from` to `to`, or null for an invalid instant. */
+function civilDayDelta(from: Date, to: Date): number | null {
+  const a = civilMinute(from);
+  const b = civilMinute(to);
+  if (!a || !b) return null;
+  return (Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86_400_000;
+}
+
+/**
+ * Pointer sources name the edge; a keyboard commit is classified from its deltas. At day
+ * granularity the deltas are counted in Sydney calendar days, not milliseconds: keyboard Adjust
+ * shifts each endpoint by calendar days on its own, so an endpoint that crosses a DST transition
+ * moves 23h or 25h while the other moves 24h — still one move, not a compound edit.
+ */
+function editKind(update: EventCalendarUpdateLike, pointOnly: boolean, granularity: Granularity): EditKind | "none" | "compound" | "resize_unsupported" {
   if (update.source === "drag") return "move";
   if (update.source === "resize-start" || update.source === "resize-end") return pointOnly ? "resize_unsupported" : update.source;
-  const startDelta = update.start.getTime() - update.event.start.getTime();
+  const delta = (from: Date, to: Date) => (granularity === "day" ? civilDayDelta(from, to) : to.getTime() - from.getTime());
+  const startDelta = delta(update.event.start, update.start);
+  if (startDelta === null) return "compound";
   if (pointOnly) return startDelta === 0 ? "none" : "move";
-  const endDelta = update.end.getTime() - update.event.end.getTime();
+  const endDelta = delta(update.event.end, update.end);
+  if (endDelta === null) return "compound";
   if (startDelta === 0 && endDelta === 0) return "none";
   if (startDelta === endDelta) return "move";
   if (endDelta === 0) return "resize-start";
@@ -192,7 +208,7 @@ export function eventCalendarUpdateToProposal(dto: CalendarEventDto, update: Eve
   if (granularity !== "day" && granularity !== "minute") return invalid("missing_granularity");
 
   const pointOnly = dto.kind === "project_deadline" || dto.schedule.state === "due_only";
-  const kind = editKind(update, pointOnly);
+  const kind = editKind(update, pointOnly, granularity);
   if (kind === "none") return NOOP;
   if (kind === "compound") return invalid("compound_edit");
   if (kind === "resize_unsupported") return invalid("resize_unsupported");
