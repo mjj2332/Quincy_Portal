@@ -1483,10 +1483,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {/* #292: a boundary around each lazy view, outside its Suspense, so a stale chunk after a
-          deploy stays inside the view region instead of replacing the whole shell. The Calendar's
-          is keyed by renderer so a renderer change starts it fresh. */}
+          deploy stays inside the view region instead of replacing the whole shell. */}
       {isCalendarView && (
-        <ViewLoadBoundary key={calendarRenderer} viewLabel="calendar">
+        <ViewLoadBoundary viewLabel="calendar">
           <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
             <CalendarRenderer
               identity={identity}
