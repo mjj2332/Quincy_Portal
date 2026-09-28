@@ -38,7 +38,10 @@ export const FIELD_COMPACT =
 // (`ProductionEventCalendarDialogs.tsx`) so every fold choice reads the same.
 export const FOLD_RADIO_ROW = "flex items-center gap-[var(--space-2)] text-foreground text-[length:var(--text-xs)] max-[721px]:min-h-[44px]";
 export const FOLD_RADIO = "size-[16px] accent-[var(--accent)]";
-export const FOLD_LEGEND = "mb-[var(--space-2)] text-foreground text-[length:var(--text-xs)] font-semibold";
+// `FieldLegend`'s own `data-[variant=legend]:text-base` outranks a plain size class (an attribute
+// selector adds specificity, and tailwind-merge does not see the two as conflicting), so the size
+// is set under the same variant.
+export const FOLD_LEGEND = "mb-[var(--space-2)] text-foreground data-[variant=legend]:text-[length:var(--text-xs)] font-semibold";
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
