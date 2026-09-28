@@ -60,6 +60,11 @@ const ProductionCalendar = lazy(() => import("../components/ProductionCalendar")
 // template string — is what lets that guard's dynamic-import detector keep pinning this exact
 // site as the vendored tree's one production entry point.
 const ProductionGantt = lazy(() => import("../components/ProductionGantt").then((module) => ({ default: module.ProductionGantt })));
+// #222: the ReUI event-calendar renderer, opt-in per browser (`readCalendarRenderer`) until #223
+// flips the default. Same code-split shape and the same literal `import(...)` as the Gantt above:
+// `ProductionEventCalendar.tsx` is the ONLY app file allowed to import
+// `components/reui/event-calendar/`, and this lazy import is that tree's one production entry.
+const ProductionEventCalendar = lazy(() => import("../components/ProductionEventCalendar").then((module) => ({ default: module.ProductionEventCalendar })));
 import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
 import {
   clearDashboardSearch,
@@ -1476,17 +1481,31 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
       {isCalendarView && (
         <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
-          <ProductionCalendar
-            identity={identity}
-            calendar={calendarState && { ...calendarState, search: committedQuery }}
-            onNavigate={(next) => navigateCalendar(next)}
-            onAppliedFilters={reconcileAppliedCalendarFilters}
-            onAcceptGateChange={setCalendarInteractionBlocked}
-            onSettleStateChange={setCalendarSettle}
-            onAccessLoss={handleCalendarAccessLoss}
-            projectHrefFor={projectHrefFor}
-            onOpenProject={openCalendarProject}
-          />
+          {calendarRenderer === "event-calendar" ? (
+            <ProductionEventCalendar
+              identity={identity}
+              calendar={calendarState && { ...calendarState, search: committedQuery }}
+              onNavigate={(next) => navigateCalendar(next)}
+              onAppliedFilters={reconcileAppliedCalendarFilters}
+              onAcceptGateChange={setCalendarInteractionBlocked}
+              onSettleStateChange={setCalendarSettle}
+              onAccessLoss={handleCalendarAccessLoss}
+              projectHrefFor={projectHrefFor}
+              onOpenProject={openCalendarProject}
+            />
+          ) : (
+            <ProductionCalendar
+              identity={identity}
+              calendar={calendarState && { ...calendarState, search: committedQuery }}
+              onNavigate={(next) => navigateCalendar(next)}
+              onAppliedFilters={reconcileAppliedCalendarFilters}
+              onAcceptGateChange={setCalendarInteractionBlocked}
+              onSettleStateChange={setCalendarSettle}
+              onAccessLoss={handleCalendarAccessLoss}
+              projectHrefFor={projectHrefFor}
+              onOpenProject={openCalendarProject}
+            />
+          )}
         </Suspense>
       )}
 

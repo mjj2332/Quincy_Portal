@@ -22,9 +22,10 @@
  *       Gantt — `components/ProductionGantt.tsx` is now that tree's real production consumer, an
  *       exact-file-path entry on the allow list below, reached from `screens/Dashboard.tsx` only
  *       through a literal `lazy(() => import(...))` that never itself imports the vendored tree.
- *       #222 has not yet done the same for `event-calendar/`; when it does, it adds its own
- *       consumer to the same list with its own comment, the same way, rather than widening the
- *       prefix match.
+ *       #222 did the same for `event-calendar/`: `components/ProductionEventCalendar.tsx` is its
+ *       one production consumer, its own exact-file entry scoped to that tree alone, reached from
+ *       `screens/Dashboard.tsx` through a literal `lazy(() => import(...))` behind the renderer
+ *       flag — no prefix was widened.
  * (iii) No non-test production source file hides a NEW non-literal `import()` call that could,
  *       at runtime, resolve to the harness or the vendored trees. A fixed, exact baseline
  *       (file + count) whitelists what is already on `main`; anything beyond that baseline fails.
@@ -569,6 +570,13 @@ const ALLOWED_VENDOR_SCHEDULING_CONSUMERS: readonly AllowedVendorSchedulingConsu
   // literal `lazy(() => import("../components/ProductionGantt"))`, never a direct import of
   // `components/reui/gantt/`, so it stays outside detector (ii) entirely, same as it always has.
   { kind: "exact", matchValue: "components/ProductionGantt.tsx", allowedVendorPrefixes: ["components/reui/gantt/"] },
+  // #222 — the production event-calendar surface, on exactly the Gantt entry's terms: an EXACT file
+  // path (never a prefix), scoped to `["components/reui/event-calendar/"]` alone, so this file
+  // importing `components/reui/gantt/` still fires. The rail, facets, unscheduled list, dialogs and
+  // `lib/production-event-calendar-*.ts` are NOT on this list — they never import the tree, not even
+  // a type. `screens/Dashboard.tsx` reaches this file only through a literal
+  // `lazy(() => import("../components/ProductionEventCalendar"))`.
+  { kind: "exact", matchValue: "components/ProductionEventCalendar.tsx", allowedVendorPrefixes: ["components/reui/event-calendar/"] },
 ];
 
 function findVendorSchedulingImportersOutsideAllowed(files: FileNode[]): string[] {
@@ -619,6 +627,24 @@ describe("guard: no production consumer of components/reui/gantt or components/r
     expect(findVendorSchedulingImportersOutsideAllowed(gantAndEventCalendar)).toEqual(["components/ProductionGantt.tsx"]);
   });
 
+  it("allows components/ProductionEventCalendar.tsx to import components/reui/event-calendar/, but STILL fires if it imports components/reui/gantt/ too (#222, the Gantt entry's mirror)", () => {
+    const eventCalendarOnly: FileNode[] = [
+      { path: "components/ProductionEventCalendar.tsx", isTest: false, importTargets: ["components/reui/event-calendar/event-calendar.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(eventCalendarOnly)).toEqual([]);
+
+    const eventCalendarAndGantt: FileNode[] = [
+      { path: "components/ProductionEventCalendar.tsx", isTest: false, importTargets: ["components/reui/event-calendar/event-calendar.tsx", "components/reui/gantt/gantt.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(eventCalendarAndGantt)).toEqual(["components/ProductionEventCalendar.tsx"]);
+
+    // Exact-file, not prefix: a sibling whose path merely starts with the entry is not granted it.
+    const nearCollision: FileNode[] = [
+      { path: "components/ProductionEventCalendarRail.tsx", isTest: false, importTargets: ["components/reui/event-calendar/event-calendar.tsx"], nonLiteralDynamicImportCount: 0 },
+    ];
+    expect(findVendorSchedulingImportersOutsideAllowed(nearCollision)).toEqual(["components/ProductionEventCalendarRail.tsx"]);
+  });
+
   // fix-220-sol1 #5: the `components/ProductionGantt.tsx` allow-list entry promises an EXACT-file
   // exemption, not a directory prefix — before this fix it was matched with the same
   // `startsWith` rule as every directory entry, so a near-collision file whose path merely STARTS
@@ -651,8 +677,8 @@ describe("guard: no production consumer of components/reui/gantt or components/r
       "A non-test source file outside src/harness/, outside the vendored tree itself, and outside",
       "ALLOWED_VENDOR_SCHEDULING_CONSUMERS imports from components/reui/gantt or",
       "components/reui/event-calendar. #220 gave the Gantt tree its first real production consumer",
-      "(components/ProductionGantt.tsx, added to the allow-list with its own comment); #222 has not",
-      "yet done the same for event-calendar. Add any new consumer to",
+      "(components/ProductionGantt.tsx, added to the allow-list with its own comment); #222 did the",
+      "same for event-calendar (components/ProductionEventCalendar.tsx). Add any new consumer to",
       "ALLOWED_VENDOR_SCHEDULING_CONSUMERS with an exact file path and a comment naming the issue —",
       "never widen the prefix match.",
       ...offenders.map((path) => `  ${path}`),
@@ -667,7 +693,8 @@ describe("guard: no production consumer of components/reui/gantt or components/r
 /**
  * Exact baseline of non-test production files with a non-literal `import()` call, as of this
  * guard landing. Empty today — the repo's only dynamic imports are literal
- * (`Dashboard.tsx`'s `lazy(() => import("../components/ProductionCalendar"))`,
+ * (`Dashboard.tsx`'s `lazy(() => import("../components/ProductionCalendar"))`, and since #220/#222
+ * its `ProductionGantt` / `ProductionEventCalendar` twins,
  * `harness/reui-scheduling/main.tsx`'s `lazy(() => import("./GanttPreview"))`). A new non-literal
  * `import()` anywhere not already listed here fails closed, because it could be the harness.
  */

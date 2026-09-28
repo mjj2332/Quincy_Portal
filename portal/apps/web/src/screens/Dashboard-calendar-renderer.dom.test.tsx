@@ -18,6 +18,7 @@ vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => sta
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 vi.mock("../components/ProductionCalendarSurface", () => ({ ProductionCalendarSurface: () => <div data-testid="dashboard-calendar-surface" /> }));
+vi.mock("../components/ProductionEventCalendar", () => ({ ProductionEventCalendar: (props: { calendar: { subview: string } }) => <div data-testid="dashboard-event-calendar" data-subview={props.calendar.subview} /> }));
 
 const noOneId = "00000000-0000-4000-8000-000000000000";
 const date = "2026-08-27";
@@ -51,6 +52,7 @@ describe("Calendar renderer flag — day/days coercion (#222)", () => {
     __resetDashboardSearchStoreForTest();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await import("../components/ProductionCalendar");
+    await import("../components/ProductionEventCalendar");
   });
   afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
 
@@ -90,6 +92,21 @@ describe("Calendar renderer flag — day/days coercion (#222)", () => {
     const location = `/?view=calendar&date=${date}&sub=day&layers=project%2Cchecklist`;
     await renderAt(location);
     expect(currentLocation()).toBe(location);
-    expect(calendarSubviewsRequested()).toContain("day");
+    // Step 7: with the flag on the event-calendar renderer (mocked here) draws, so `day` reaching
+    // the renderer is asserted on its props, not on a FullCalendar fetch.
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe("day");
+  });
+
+  it("flag off (the default): the FullCalendar renderer draws, never the event calendar", async () => {
+    await renderAt(`/?view=calendar&date=${date}&sub=month&layers=project%2Cchecklist`);
+    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="dashboard-event-calendar"]')).toBeNull();
+  });
+
+  it("flag on: the event-calendar renderer draws with the URL's state, never FullCalendar", async () => {
+    storage.set(DASHBOARD_CALENDAR_RENDERER_KEY, "event-calendar");
+    await renderAt(`/?view=calendar&date=${date}&sub=days&layers=project%2Cchecklist`);
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-event-calendar"]')?.dataset.subview).toBe("days");
+    expect(host.querySelector('[data-testid="dashboard-calendar-surface"]')).toBeNull();
   });
 });
