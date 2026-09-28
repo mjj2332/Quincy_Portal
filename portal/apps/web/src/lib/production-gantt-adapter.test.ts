@@ -725,4 +725,12 @@ describe("#257: stage pattern class", () => {
     expect(model.events).toHaveLength(3);
     for (const event of model.events) expect(event.className, event.id).toBeUndefined();
   });
+
+  it("the hatch sheds itself on completed and zero-length (diamond) bars", () => {
+    // The due_only child above is a milestone; without the opt-out the stripes
+    // would paint the transparent shell behind its diamond.
+    expect(STAGE_HATCH_CLASS.split(" ")).toEqual(
+      expect.arrayContaining(["data-completed:bg-none", "data-milestone:bg-none"]),
+    );
+  });
 });
