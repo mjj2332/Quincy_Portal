@@ -1188,6 +1188,10 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     c.env.DB.prepare("DELETE FROM autohdr_handoffs WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM raw_reconciliation_claims WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM jobs WHERE project_id = ?").bind(id),
+    // No FK to projects/assets, so the cascade below misses these (orphans swept by hand 2026-09-28).
+    c.env.DB.prepare("DELETE FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id = ?)").bind(id),
+    c.env.DB.prepare("DELETE FROM notification_outbox WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM rendition_dlq_events WHERE asset_id IN (SELECT assets.id FROM assets INNER JOIN collections ON collections.id = assets.collection_id WHERE collections.project_id = ?)").bind(id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
   return c.json({ ok: true, deletedObjects: keys.length });

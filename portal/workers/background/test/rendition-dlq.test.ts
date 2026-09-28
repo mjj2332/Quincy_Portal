@@ -33,9 +33,19 @@ async function openEvents(assetId: string) {
     .all<{ status: string }>();
 }
 
+async function seedAsset(): Promise<string> {
+  const projectId = crypto.randomUUID(); const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+  await database.DB.batch([
+    database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Rendition DLQ', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
+    database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, created_at, updated_at) VALUES (?, ?, 'raw', 'received', ?, ?)").bind(collectionId, projectId, now, now),
+    database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'dlq.jpg', 3, 'upload', ?, ?)").bind(assetId, collectionId, `tests/${assetId}.jpg`, now, now),
+  ]);
+  return assetId;
+}
+
 describe("rendition dead-letter queue consumer", () => {
   it("records an open backlog row and acks a message that exhausted its retries", async () => {
-    const assetId = crypto.randomUUID();
+    const assetId = await seedAsset();
     const ack = vi.fn();
     const retry = vi.fn();
 
@@ -48,6 +58,28 @@ describe("rendition dead-letter queue consumer", () => {
     expect(retry).not.toHaveBeenCalled();
     const rows = await openEvents(assetId);
     expect(rows.results).toEqual([{ status: "open" }]);
+  });
+
+  it("acks without recording a parsed message whose asset no longer exists", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const assetId = crypto.randomUUID();
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    try {
+      await service().queue({
+        queue: "quincy-renditions-dlq",
+        messages: [{ body: { type: "generate_renditions", assetId }, ack, retry }],
+      } as never);
+
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("Rendition DLQ message for a deleted asset; not recorded", { queue: "quincy-renditions-dlq", assetId });
+      const rows = await openEvents(assetId);
+      expect(rows.results).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("still records and acks an unrecognized DLQ body, rather than dropping it silently", async () => {

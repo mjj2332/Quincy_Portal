@@ -3947,3 +3947,28 @@ The Gantt's `gantt-view` wrapper measured 145–445px wider in `scrollWidth` tha
 - **Finding what overflows:** a bounding-rect scan misses it when the culprit is transformed or
   sits inside another scroll container. Hiding each child in turn (`display: none`) and re-reading
   the ancestor's `scrollWidth` finds it in one pass.
+
+## A cascade-only delete misses every table whose id column has no FK (2026-09-28)
+
+**Symptom:** after the late-September bulk archive-then-delete, D1 held 349 `notification_delivery_ledger`,
+322 `notification_outbox` and 527 `rendition_dlq_events` rows for projects and assets that no longer
+existed. They had to be swept by hand.
+
+**Cause:** `DELETE /projects/:id` deletes the project row and relies on FK cascades.
+`notification_outbox.project_id` and `rendition_dlq_events.asset_id` have no FK, so no cascade reaches
+them. Archive guarantees the outbox orphans, because its own batch enqueues `project.archived` broadcast
+rows. There was a second way back in: the rendition DLQ consumer recorded any asset id it received,
+so a late dead letter could recreate an orphan after the delete.
+
+**Fix:** the route's final batch now deletes ledger rows, then outbox rows, then DLQ rows. The order
+matters: `ledger.outbox_id` is `ON DELETE RESTRICT`, and SQLite checks RESTRICT immediately. All three
+deletes run before `DELETE FROM projects`, and the DLQ delete uses a subquery over the project's assets
+rather than bound ids, because D1 caps bound parameters per statement. Outbox rows are deleted in every
+status. The delivery worker acks a row that has disappeared, and email admission requires
+`archived_at IS NULL`. The DLQ consumer now inserts only `WHERE EXISTS` the asset.
+`project_board_order_0037_rollback` was left alone: it is migration 0037's inert snapshot.
+
+**Rule:** `NO_FK_ID_COLUMNS` in `packages/db/qa-seed/teardown-graph.ts` lists every id column without an
+FK. When you add a project-owned entry there, add its delete to `DELETE /projects/:id` too. A regression
+test for a delete path has to create the orphan through the real producer (archive, in this case), or
+it proves nothing.
