@@ -104,7 +104,7 @@ type Paint = { rgb: Rgb; alpha: number };
  * → a colour, or null for a non-colour utility (`text-sm`, `text-[length:12px]`). An arbitrary
  * value this cannot read throws rather than being skipped.
  */
-function paintOf(utility: string, kind: "bg" | "text", extra: Map<string, string>): Paint | null {
+function paintOf(utility: string, kind: "bg" | "text" | "inset-ring", extra: Map<string, string>): Paint | null {
   const match = new RegExp(`^${kind}-(.+?)(?:/(\\d+))?$`).exec(utility);
   if (!match) return null;
   const alpha = match[2] ? Number(match[2]) / 100 : 1;
@@ -133,7 +133,7 @@ type State = (typeof STATES)[number];
 type View = "month" | "week" | "day" | "days" | "agenda";
 
 /** The last utility with exactly this variant prefix that resolves to a colour. */
-function lastPaint(classes: string[], prefix: string, kind: "bg" | "text", extra: Map<string, string>): Paint | null {
+function lastPaint(classes: string[], prefix: string, kind: "bg" | "text" | "inset-ring", extra: Map<string, string>): Paint | null {
   let found: Paint | null = null;
   for (const token of classes) {
     if (!token.startsWith(prefix)) continue;
@@ -259,42 +259,73 @@ const CONTRAST_BASELINE: Record<string, string> = {
   "done checklist × agenda × span.text-muted-foreground.w-40.shrink-0": "--text-muted on the done wash: 2.86–3.16:1 rest, 3.13:1 hover — follow-up",
 };
 
+type Band = { paint: Paint; width: number };
+
 /**
- * Selected must read as selected, two ways:
- *   1. against the chip: a selected keyline that contrasts ≥ 3:1 with the selected fill, or a
- *      different fill;
- *   2. against the PAGE: the outermost selected keyline contrasts ≥ 3:1 with `--paper-050`. A
- *      paper-only ring touching the chip edge passes (1) and merges into the page, so the chip only
- *      looks smaller — the Deadline's first selected look.
- * Keylines: `data-selected:inset-ring-(--x)`, and `data-selected:inset-shadow-[0_0_0_Npx_var(--x)]`,
- * which Tailwind composes FIRST in `box-shadow` and so paints on top, at the edge.
+ * The selected state's inset keyline bands actually EXPOSED, from the chip edge inwards. Tailwind
+ * composes `box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), …`; the first layer
+ * paints on top, and every inset layer starts at the edge, so a lower layer shows only for the
+ * width by which it exceeds the layers above it.
+ *   inset shadow: `data-selected:inset-shadow-[0_0_0_Npx_var(--x)]`
+ *   inset ring:   width `data-selected:inset-ring-N` ?? `inset-ring-N` ?? `inset-ring` (1px) ?? none;
+ *                 colour `data-selected:inset-ring-<colour>` ?? `inset-ring-<colour>`.
+ */
+function exposedBands(classes: string[], extra: Map<string, string>): Band[] {
+  let shadow: Band | null = null;
+  for (const token of classes) {
+    const match = /^data-selected:inset-shadow-\[0_0_0_(\d+(?:\.\d+)?)px_var\((--[\w-]+)\)\]$/.exec(token);
+    if (match) shadow = { paint: { rgb: resolveVar(match[2]!, extra), alpha: 1 }, width: Number(match[1]) };
+  }
+  const ringWidth = (prefix: string): number | null => {
+    let width: number | null = null;
+    for (const token of classes) {
+      if (!token.startsWith(prefix)) continue;
+      const rest = token.slice(prefix.length);
+      if (rest === "inset-ring") width = 1;
+      const match = /^inset-ring-(\d+)$/.exec(rest);
+      if (match) width = Number(match[1]);
+    }
+    return width;
+  };
+  const width = ringWidth("data-selected:") ?? ringWidth("") ?? 0;
+  const colour = lastPaint(classes, "data-selected:", "inset-ring", extra) ?? lastPaint(classes, "", "inset-ring", extra);
+  const layers: Band[] = [...(shadow ? [shadow] : []), ...(colour ? [{ paint: colour, width }] : [])];
+  const bands: Band[] = [];
+  let covered = 0;
+  for (const layer of layers) {
+    if (layer.width > covered) bands.push({ paint: layer.paint, width: layer.width - covered });
+    covered = Math.max(covered, layer.width);
+  }
+  return bands;
+}
+
+/**
+ * Selected must read as selected, two ways, measured on the EXPOSED keyline bands:
+ *   1. against the PAGE: the outermost exposed band is wider than 0px and contrasts ≥ 3:1 with
+ *      `--paper-050`. A paper-only ring touching the chip edge merges into the page, so the chip
+ *      only looks smaller — the Deadline's first selected look;
+ *   2. against the chip: an exposed band wider than 0px contrasts ≥ 3:1 with the selected fill (the
+ *      Deadline's paper band between its ink edge and ink fill), or the selected fill differs from
+ *      rest.
  */
 function selectionIndistinct(label: string, className: string, view: View, eventColor: string | null): string[] {
   const extra = extraFor(eventColor);
   const classes = className.split(/\s+/).filter(Boolean);
   const backgrounds = effectiveBackgrounds(classes, view, extra);
-  let ring: Paint | null = null;
-  let shadow: Paint | null = null;
-  for (const token of classes) {
-    const ringMatch = /^data-selected:inset-ring-\((--[\w-]+)\)(?:\/(\d+))?$/.exec(token);
-    if (ringMatch) ring = { rgb: resolveVar(ringMatch[1]!, extra), alpha: ringMatch[2] ? Number(ringMatch[2]) / 100 : 1 };
-    const shadowMatch = /^data-selected:inset-shadow-\[0_0_0_\d+px_var\((--[\w-]+)\)\]$/.exec(token);
-    if (shadowMatch) shadow = { rgb: resolveVar(shadowMatch[1]!, extra), alpha: 1 };
-  }
-  const keylines = [shadow, ring].filter((paint): paint is Paint => paint !== null);
-  const outermost = keylines[0] ?? null;
+  const bands = exposedBands(classes, extra);
+  const outermost = bands[0] ?? null;
   const page = resolveVar("--paper-050", extra);
   const failures: string[] = [];
-  if (!outermost || contrast(over(outermost, page), page) < 3) {
-    failures.push(`${label} × ${view}: no selected keyline visible against the page (--paper-050)${outermost ? ` — ${contrast(over(outermost, page), page).toFixed(2)}:1` : ""}`);
+  if (!outermost || contrast(over(outermost.paint, page), page) < 3) {
+    failures.push(`${label} × ${view}: no exposed selected keyline visible against the page (--paper-050)${outermost ? ` — ${outermost.width}px at ${contrast(over(outermost.paint, page), page).toFixed(2)}:1` : ""}`);
   }
   for (const groundName of GROUNDS) {
     const ground = resolveVar(groundName, extra);
     const rest = backgrounds.rest ? over(backgrounds.rest, ground) : ground;
     const selected = backgrounds.selected ? over(backgrounds.selected, ground) : ground;
-    const keylineOk = keylines.some((keyline) => contrast(over(keyline, selected), selected) >= 3);
+    const bandOk = bands.some(({ paint }) => contrast(over(paint, selected), selected) >= 3);
     const fillDiffers = rest.some((c, i) => Math.abs(c - selected[i]!) > 1e-6);
-    if (!keylineOk && !fillDiffers) failures.push(`${label} × ${view} × ${groundName}: selected looks exactly like rest`);
+    if (!bandOk && !fillDiffers) failures.push(`${label} × ${view} × ${groundName}: no exposed band marks the selected fill, and it matches rest`);
   }
   return failures;
 }
@@ -428,20 +459,21 @@ describe("Production chip contrast through the real vendored calendar", () => {
     expect(selectionIndistinct("fake", "bg-(--ink-900) text-(--paper-050) data-selected:bg-(--ink-900)", "week", null)).not.toEqual([]);
   });
 
-  it("the page-visibility check fails the previous paper-only Deadline ring and passes the double keyline", () => {
-    const paperOnly = selectionIndistinct(
-      "previous Deadline",
-      "bg-(--ink-900) text-(--paper-050) data-selected:bg-(--ink-900) data-selected:inset-ring-2 data-selected:inset-ring-(--paper-050)",
-      "week",
-      null,
-    );
-    expect(paperOnly.some((failure) => failure.includes("visible against the page")), paperOnly.join("\n")).toBe(true);
-    const doubleKeyline = selectionIndistinct(
-      "Deadline",
-      "bg-(--ink-900) text-(--paper-050) data-selected:bg-(--ink-900) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]",
-      "week",
-      null,
-    );
-    expect(doubleKeyline).toEqual([]);
+  it("the keyline check measures exposed bands: it fails a 0px ink edge, an ink edge that hides the paper band, and the old paper-only ring", () => {
+    const fill = "bg-(--ink-900) text-(--paper-050) inset-ring inset-ring-(--ink-900) data-selected:bg-(--ink-900)";
+    const paperRing = "data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050)";
+    const cases = {
+      "0px ink edge": `${fill} ${paperRing} data-selected:inset-shadow-[0_0_0_0px_var(--ink-900)]`,
+      "ink edge as wide as the paper ring": `${fill} ${paperRing} data-selected:inset-shadow-[0_0_0_4px_var(--ink-900)]`,
+      "old paper-only 2px ring": `${fill} data-selected:inset-ring-2 data-selected:inset-ring-(--paper-050)`,
+    };
+    for (const [name, className] of Object.entries(cases)) {
+      expect(selectionIndistinct(name, className, "week", null), `${name} should fail the keyline check`).not.toEqual([]);
+    }
+    expect(selectionIndistinct("Deadline", `${fill} ${paperRing} data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]`, "week", null)).toEqual([]);
+    // The ink edge hides nothing it should not: 2px ink, then 2px paper, then the fill.
+    const bands = exposedBands(`${fill} ${paperRing} data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]`.split(" "), new Map());
+    expect(bands.map(({ width }) => width)).toEqual([2, 2]);
   });
+
 });
