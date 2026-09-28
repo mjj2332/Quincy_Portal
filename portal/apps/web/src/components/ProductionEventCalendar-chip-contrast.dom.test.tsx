@@ -1,6 +1,7 @@
 /**
- * Every Production chip stays readable in every state it can be drawn in — rest, hover, selected,
- * selected + hover — in week, month and agenda, through the REAL vendored event calendar.
+ * Every piece of text inside every Production chip stays readable in every state the chip can be
+ * drawn in — rest, hover, selected, selected + hover — in all five Production views (month, week,
+ * day, 3-day `days`, agenda), through the REAL vendored event calendar.
  *
  * WHY. The chip's class is `cn(vendor tint, eventClassName)`, and tailwind-merge drops a vendor
  * utility only when the consumer supplies the SAME variant. A state the consumer forgets keeps the
@@ -10,10 +11,18 @@
  * own; only the MERGED class shows the defect, so this reads the real merged `className` off the
  * rendered chip and resolves it against the live token files.
  *
+ * WHAT IS MEASURED. Every element inside the chip (the chip included) that owns a non-empty text
+ * node: its surviving `text-*` colour utility, inherited from the nearest ancestor within the chip
+ * when it has none, against the chip's effective fill for each state over each paper ground (in the
+ * agenda, where a row is never selected, rest and hover only). An element with its own opaque fill
+ * (the assignee avatar) is measured against that fill instead. Known failures that are NOT this chip's to fix sit in `CONTRAST_BASELINE`, keyed narrowly; the
+ * baseline may only shrink, and Deadline chips may never appear in it.
+ *
  * happy-dom computes no real colour, so the resolver models the cascade from the class list (the
  * rules are spelled out in `effectiveBackgrounds`) and composites alpha in sRGB — an approximation
  * of Tailwind v4's `color-mix(in oklab)`, but every margin here is far from the 4.5:1 threshold.
- * The self-tests at the bottom feed it the pre-fix classes and require it to fail them.
+ * Opacity utilities are not modelled. The self-tests at the bottom feed it the pre-fix classes and
+ * require it to fail them.
  *
  * SELECTOR NOTE. Chips are located by `data-ec-event-id`, a Quincy-added attribute on the vendored
  * chip (QUINCY EDIT LOG #4 in `event-calendar-event.tsx`), not by the vendor's own `data-slot`
@@ -87,13 +96,20 @@ function resolveVar(name: string, extra: Map<string, string>, seen: string[] = [
 
 type Paint = { rgb: Rgb; alpha: number };
 
-/** `bg-(--x)/NN`, `bg-muted`, `text-foreground-secondary`… → a colour, or null for a non-colour utility (`text-sm`). */
+/**
+ * `bg-(--x)/NN`, `bg-[var(--x)]`, `text-[color:var(--x)]`, `bg-muted`, `text-foreground-secondary`…
+ * → a colour, or null for a non-colour utility (`text-sm`, `text-[length:12px]`). An arbitrary
+ * value this cannot read throws rather than being skipped.
+ */
 function paintOf(utility: string, kind: "bg" | "text", extra: Map<string, string>): Paint | null {
   const match = new RegExp(`^${kind}-(.+?)(?:/(\\d+))?$`).exec(utility);
   if (!match) return null;
   const alpha = match[2] ? Number(match[2]) / 100 : 1;
-  const arbitrary = /^\((--[\w-]+)\)$/.exec(match[1]!);
-  const name = arbitrary ? arbitrary[1]! : `--color-${match[1]}`;
+  const value = match[1]!;
+  if (value.startsWith("[length:")) return null;
+  const arbitrary = /^\((--[\w-]+)\)$/.exec(value) ?? /^\[(?:color:)?var\((--[\w-]+)\)\]$/.exec(value);
+  if (!arbitrary && value.startsWith("[")) throw new Error(`cannot read the arbitrary value in ${kind}-${value}`);
+  const name = arbitrary ? arbitrary[1]! : `--color-${value}`;
   if (!arbitrary && !TOKENS.has(name)) return null;
   return { rgb: resolveVar(name, extra), alpha };
 }
@@ -111,7 +127,7 @@ const contrast = (a: Rgb, b: Rgb) => {
 const GROUNDS = ["--paper-000", "--paper-050", "--paper-100"] as const;
 const STATES = ["rest", "hover", "selected", "selected+hover"] as const;
 type State = (typeof STATES)[number];
-type View = "week" | "month" | "agenda";
+type View = "month" | "week" | "day" | "days" | "agenda";
 
 /** The last utility with exactly this variant prefix that resolves to a colour. */
 function lastPaint(classes: string[], prefix: string, kind: "bg" | "text", extra: Map<string, string>): Paint | null {
@@ -139,29 +155,91 @@ function effectiveBackgrounds(classes: string[], view: View, extra: Map<string, 
   return { rest, hover, selected, "selected+hover": selectedHover };
 }
 
-/** Every (state × ground) whose text contrast is under 4.5:1, as readable tuples. */
-function contrastFailures(label: string, className: string, view: View, eventColor: string | null): string[] {
-  const extra = new Map<string, string>(eventColor ? [["--ec-event-color", eventColor]] : []);
-  const classes = className.split(/\s+/).filter(Boolean);
-  const text = lastPaint(classes, "", "text", extra);
-  if (!text) return [`${label} × ${view}: no text colour utility survives the merge`];
+const classesOf = (el: Element) => (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
+const extraFor = (eventColor: string | null) => new Map<string, string>(eventColor ? [["--ec-event-color", eventColor]] : []);
+
+type TextElement = { descriptor: string; text: Paint | null; ownFill: Paint | null };
+type Measurement = { key: string; tuple: string; ratio: number };
+
+/** A stable, narrow name for a text element: `chip`, its testid, or its tag plus first three classes. */
+function descriptorOf(el: HTMLElement, chip: HTMLElement): string {
+  if (el === chip) return "chip";
+  const testid = el.getAttribute("data-testid");
+  if (testid) return `[data-testid=${testid}]`;
+  return [el.tagName.toLowerCase(), ...classesOf(el).slice(0, 3)].join(".");
+}
+
+/**
+ * Every element in the chip that owns a non-empty text node. Text colour: its own surviving
+ * `text-*` colour utility, else the nearest ancestor's within the chip. Own fill: the nearest
+ * unprefixed `bg-*` on it or an ancestor BELOW the chip (the chip's fill is per state, resolved
+ * separately).
+ */
+function textElements(chip: HTMLElement, extra: Map<string, string>): TextElement[] {
+  const out: TextElement[] = [];
+  for (const el of [chip, ...chip.querySelectorAll<HTMLElement>("*")]) {
+    if (![...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim())) continue;
+    let text: Paint | null = null;
+    let ownFill: Paint | null = null;
+    for (let at: HTMLElement | null = el; at; at = at === chip ? null : at.parentElement) {
+      text ??= lastPaint(classesOf(at), "", "text", extra);
+      if (at !== chip) ownFill ??= lastPaint(classesOf(at), "", "bg", extra);
+    }
+    out.push({ descriptor: descriptorOf(el, chip), text, ownFill });
+  }
+  return out;
+}
+
+/**
+ * The text contrast of every text element × state × ground. A class string (the self-tests) is
+ * measured as a chip whose only text is its own.
+ */
+function measure(label: string, chip: HTMLElement | string, view: View, eventColor: string | null): Measurement[] {
+  const extra = extraFor(eventColor);
+  const classes = typeof chip === "string" ? chip.split(/\s+/).filter(Boolean) : classesOf(chip);
   const backgrounds = effectiveBackgrounds(classes, view, extra);
-  const failures: string[] = [];
-  for (const state of STATES) {
-    for (const groundName of GROUNDS) {
-      const ground = resolveVar(groundName, extra);
-      const paint = backgrounds[state];
-      const fill = paint ? over(paint, ground) : ground;
-      const ratio = contrast(over(text, fill), fill);
-      if (ratio < 4.5) failures.push(`${label} × ${view} × ${state} × ${groundName}: ${ratio.toFixed(2)}:1`);
+  const elements = typeof chip === "string" ? [{ descriptor: "chip", text: lastPaint(classes, "", "text", extra), ownFill: null }] : textElements(chip, extra);
+  if (elements.length === 0) throw new Error(`${label} × ${view}: the chip renders no text`);
+  const out: Measurement[] = [];
+  for (const { descriptor, text, ownFill } of elements) {
+    const key = `${label} × ${view} × ${descriptor}`;
+    if (!text) throw new Error(`${key}: no text colour utility on the element or any ancestor within the chip`);
+    // An agenda row is never selected (the vendor's `isSelected` is false there — pinned by the
+    // week → agenda test below), so only rest and hover are reachable in the agenda.
+    for (const state of view === "agenda" ? (["rest", "hover"] as const) : STATES) {
+      for (const groundName of GROUNDS) {
+        const ground = resolveVar(groundName, extra);
+        const paint = backgrounds[state];
+        const chipFill = paint ? over(paint, ground) : ground;
+        const fill = ownFill ? over(ownFill, chipFill) : chipFill;
+        out.push({ key, tuple: `${key} × ${state} × ${groundName}`, ratio: contrast(over(text, fill), fill) });
+      }
     }
   }
-  return failures;
+  return out;
 }
+
+const failuresOf = (measurements: Measurement[]) => measurements.filter(({ ratio }) => ratio < 4.5);
+const describeFailure = ({ tuple, ratio }: Measurement) => `${tuple}: ${ratio.toFixed(2)}:1`;
+
+/**
+ * Known failures, NOT fixed by this chip's class and not to be fixed here. Keyed
+ * `<chip> × <view> × <element>`; every state and ground of that key is covered. Deadline chips may
+ * never appear here.
+ *
+ * The vendored agenda row's time column (`event-calendar-event.tsx`, the `agendaDefaultContent`
+ * span) is `text-muted-foreground`, which is the app-wide `--text-muted` token (greige-400). On a
+ * paper checklist row it measures under 4.5:1. That is a token-level decision for the whole app,
+ * not this chip, and is tracked as a follow-up.
+ */
+const CONTRAST_BASELINE: Record<string, string> = {
+  "active checklist × agenda × span.text-muted-foreground.w-40.shrink-0": "--text-muted on a paper agenda row: 3.57:1 rest, 3.13:1 hover — follow-up",
+  "done checklist × agenda × span.text-muted-foreground.w-40.shrink-0": "--text-muted on the done wash: 2.86–3.16:1 rest, 3.13:1 hover — follow-up",
+};
 
 /** Selected must read as selected: a ring that contrasts ≥ 3:1 with the selected fill, or a different fill. */
 function selectionIndistinct(label: string, className: string, view: View, eventColor: string | null): string[] {
-  const extra = new Map<string, string>(eventColor ? [["--ec-event-color", eventColor]] : []);
+  const extra = extraFor(eventColor);
   const classes = className.split(/\s+/).filter(Boolean);
   const backgrounds = effectiveBackgrounds(classes, view, extra);
   let ring: Paint | null = null;
@@ -194,8 +272,8 @@ const calendarFor = (subview: DashboardCalendarState["subview"]): DashboardCalen
 });
 const checklistItem = (id: string, title: string, completed: boolean) => ({
   id, kind: "checklist", title, project, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
-  timing: { allDay: true, start: "2026-08-13", end: null }, status: { overdue: false, delivered: false, completed, sameAssigneeOverlap: false },
-  schedule: { state: "due_only", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-13" },
+  timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed, sameAssigneeOverlap: false },
+  schedule: { state: "due_only", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date", localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-12" },
   permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
 });
 const response = adminProductionCalendarRangeResponseSchema.parse({
@@ -217,7 +295,7 @@ const CHIPS = [
   { id: "checklist:active", label: "active checklist" },
   { id: "checklist:done", label: "done checklist" },
 ] as const;
-const VIEWS: View[] = ["week", "month", "agenda"];
+const VIEWS: View[] = ["month", "week", "day", "days", "agenda"];
 
 let host: HTMLDivElement;
 let root: Root;
@@ -243,19 +321,42 @@ function chipsFor(id: string, view: View): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>(`[data-ec-event-id="${id}"]`)].filter((el) => el.getAttribute("data-view") === view);
 }
 
-describe("Production chip contrast through the real vendored calendar", () => {
-  it.each(VIEWS)("every chip clears 4.5:1 in every state over every paper ground — %s", async (view) => {
-    await renderView(view);
-    const failures: string[] = [];
-    for (const { id, label } of CHIPS) {
-      const chips = chipsFor(id, view);
-      expect(chips.length, `${label} did not render in ${view}`).toBeGreaterThan(0);
-      for (const chip of chips) {
-        failures.push(...contrastFailures(label, chip.className, view, chip.style.getPropertyValue("--ec-event-color") || null));
-        if (view !== "agenda") failures.push(...selectionIndistinct(label, chip.className, view, chip.style.getPropertyValue("--ec-event-color") || null));
-      }
+/** Every text measurement for every chip in one view; also fails when a chip or its selection cue is missing. */
+async function measureView(view: View): Promise<{ measurements: Measurement[]; indistinct: string[] }> {
+  await renderView(view);
+  const measurements: Measurement[] = [];
+  const indistinct: string[] = [];
+  for (const { id, label } of CHIPS) {
+    const chips = chipsFor(id, view);
+    expect(chips.length, `${label} did not render in ${view}`).toBeGreaterThan(0);
+    for (const chip of chips) {
+      const eventColor = chip.style.getPropertyValue("--ec-event-color") || null;
+      measurements.push(...measure(label, chip, view, eventColor));
+      if (view !== "agenda") indistinct.push(...selectionIndistinct(label, chip.className, view, eventColor));
     }
+  }
+  return { measurements, indistinct };
+}
+
+describe("Production chip contrast through the real vendored calendar", () => {
+  it.each(VIEWS)("has no chip text under 4.5:1 beyond the recorded baseline, and selected reads as selected — %s", async (view) => {
+    const { measurements, indistinct } = await measureView(view);
+    const failures = failuresOf(measurements).filter(({ key }) => !(key in CONTRAST_BASELINE)).map(describeFailure);
     expect(failures, failures.join("\n")).toEqual([]);
+    expect(indistinct, indistinct.join("\n")).toEqual([]);
+  });
+
+  it("keeps the baseline honest — every entry is still a real failure", async () => {
+    // If an entry has been fixed, this fails and the entry must be deleted, so the list only shrinks.
+    const failing = new Set<string>();
+    const views = [...new Set(Object.keys(CONTRAST_BASELINE).map((key) => key.split(" × ")[1] as View))];
+    for (const view of views) for (const { key } of failuresOf((await measureView(view)).measurements)) failing.add(key);
+    const fixed = Object.keys(CONTRAST_BASELINE).filter((key) => !failing.has(key));
+    expect(fixed, `Fixed — delete from CONTRAST_BASELINE: ${fixed.join(", ")}`).toEqual([]);
+  });
+
+  it("never baselines a Deadline chip", () => {
+    expect(Object.keys(CONTRAST_BASELINE).filter((key) => key.startsWith("Deadline ×"))).toEqual([]);
   });
 
   it("a chip selected in week is not drawn selected once the view switches to the read-only agenda", async () => {
@@ -271,17 +372,16 @@ describe("Production chip contrast through the real vendored calendar", () => {
 
   it("the resolver fails the pre-fix Deadline classes it replaced", () => {
     // Selected, grid: the old consumer class plus the vendor's surviving selected wash.
-    const selected = contrastFailures(
+    const selected = failuresOf(measure(
       "pre-fix Deadline",
       "bg-(--ink-900) hover:bg-(--ink-800) text-(--paper-050) inset-ring-(--ink-900) data-selected:bg-(--ec-event-color)/30",
       "week",
       "var(--ink-900)",
-    );
-    expect(selected.some((failure) => failure.includes("× selected ×")), selected.join("\n")).toBe(true);
-    expect(selected.every((failure) => Number(failure.split(": ").pop()!.replace(":1", "")) < 4.5)).toBe(true);
+    ));
+    expect(selected.some(({ tuple }) => tuple.includes("× selected ×")), selected.map(describeFailure).join("\n")).toBe(true);
     // Hover, agenda: the old merged row class, whose `hover:bg-(--ink-800)` lost to the row's `hover:bg-muted`.
-    const agenda = contrastFailures("pre-fix Deadline", "bg-(--ink-900) text-(--paper-050) inset-ring-(--ink-900) hover:bg-muted", "agenda", "var(--ink-900)");
-    expect(agenda.some((failure) => failure.includes("× hover ×")), agenda.join("\n")).toBe(true);
+    const agenda = failuresOf(measure("pre-fix Deadline", "bg-(--ink-900) text-(--paper-050) inset-ring-(--ink-900) hover:bg-muted", "agenda", "var(--ink-900)"));
+    expect(agenda.some(({ tuple }) => tuple.includes("× hover ×")), agenda.map(describeFailure).join("\n")).toBe(true);
   });
 
   it("the distinctness check fails a selected state that only repeats rest", () => {

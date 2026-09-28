@@ -3648,10 +3648,15 @@ specificity instead (`data-[view=agenda]:hover:` is 0,3,0 against 0,2,0) and not
 the vendor attribute. Read the MERGED class off the rendered chip; the consumer's string alone
 cannot show the defect.
 
-**Pinned by** `components/ProductionEventCalendar-chip-contrast.dom.test.tsx`, which resolves the
-real merged class of every chip × view × state against the token files and asserts 4.5:1 (its
-self-test fails the pre-fix classes), and the pattern test in
-`lib/production-event-calendar-adapter.test.ts`.
+**Pinned by** `components/ProductionEventCalendar-chip-contrast.dom.test.tsx`. It reads the real
+merged class of every Deadline, active and done checklist chip in all five Production views (month,
+week, day, 3-day, agenda), and resolves it against the token files. It then asserts 4.5:1 for every
+element inside the chip that renders text, in every reachable state (the agenda has no selected
+state) over each paper ground. Its self-test fails the pre-fix classes. One named baseline records
+a failure that is not the chip's own: the vendored agenda time column is `text-muted-foreground`
+(the app-wide `--text-muted`), 2.86–3.57:1 on checklist rows, tracked as a follow-up. Deadline
+chips may never be baselined. The pattern test in `lib/production-event-calendar-adapter.test.ts`
+covers the class strings themselves.
 
 ## A consumer allow-list keyed only on path, over a restricted set with more than one member, grants ALL of them (#220, 2026-09-21)
 
