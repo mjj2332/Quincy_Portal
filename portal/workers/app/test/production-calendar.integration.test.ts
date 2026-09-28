@@ -434,6 +434,9 @@ describe("TB5C production Calendar range endpoint", () => {
   it("#222: bounds=1 adds access-scoped project bounds; without it the key is absent", async () => {
     await database.DB.prepare("UPDATE projects SET shoot_date = '2026-08-20' WHERE id = ?").bind(memberProjectId).run();
     await database.DB.prepare("UPDATE projects SET shoot_date = 'Tuesday arvo' WHERE id = ?").bind(editorOnlyProjectId).run();
+    // #288: known creation instants, emitted as ISO (the Calendar's created-at lower-bound fallback)
+    await database.DB.prepare("UPDATE projects SET created_at = ? WHERE id = ?").bind(Date.UTC(2026, 6, 1, 2, 3, 4, 567), memberProjectId).run();
+    await database.DB.prepare("UPDATE projects SET created_at = ? WHERE id = ?").bind(Date.UTC(2026, 7, 11, 14, 0, 0, 0), editorOnlyProjectId).run();
     const referenced = (body: { events: Array<{ project: { id: string } }>; unscheduled: Array<{ project: { id: string } }> }) =>
       new Set([...body.events, ...body.unscheduled].map((item) => item.project.id));
 
@@ -446,9 +449,9 @@ describe("TB5C production Calendar range endpoint", () => {
     const adminIds = referenced(admin);
     expect(admin.projectBounds!.every((bound) => adminIds.has(bound.projectId))).toBe(true);
     expect(new Set(admin.projectBounds!.map((bound) => bound.projectId))).toEqual(adminIds);
-    expect(admin.projectBounds!.find((bound) => bound.projectId === memberProjectId)).toEqual({ projectId: memberProjectId, shootDate: "2026-08-20", deadlineLocalCivil: "2026-08-27T09:00" });
+    expect(admin.projectBounds!.find((bound) => bound.projectId === memberProjectId)).toEqual({ projectId: memberProjectId, shootDate: "2026-08-20", createdAt: "2026-07-01T02:03:04.567Z", deadlineLocalCivil: "2026-08-27T09:00" });
     // a non-canonical free-text shoot date is not a bound; a project with no deadline has none
-    expect(admin.projectBounds!.find((bound) => bound.projectId === editorOnlyProjectId)).toEqual({ projectId: editorOnlyProjectId, shootDate: null, deadlineLocalCivil: null });
+    expect(admin.projectBounds!.find((bound) => bound.projectId === editorOnlyProjectId)).toEqual({ projectId: editorOnlyProjectId, shootDate: null, createdAt: "2026-08-11T14:00:00.000Z", deadlineLocalCivil: null });
     // the rest of the response is unchanged by the param
     expect({ ...admin, projectBounds: undefined }).toEqual({ ...adminProductionCalendarRangeResponseSchema.parse(plain), projectBounds: undefined });
 

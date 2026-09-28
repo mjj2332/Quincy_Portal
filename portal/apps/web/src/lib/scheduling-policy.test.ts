@@ -13,13 +13,12 @@ import {
   type CalendarMappingResult,
   type ChecklistCalendarEventDto,
   type ChecklistCalendarUnscheduledEntryDto,
-  type InitialChecklistScheduleInput,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type SaveChecklistScheduleRequest,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
-import { checkScheduleBounds, planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
+import { planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
 
 /** Independently recomputes the timing a checklist plan should carry, from the SAME public
  * helpers `planSchedulingProposal` itself uses — so the assertion below is not tautological. */
@@ -181,16 +180,16 @@ describe("planSchedulingProposal", () => {
     const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-27" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
-    const plan = planSchedulingProposal(proposal, { bounds: { shootDate: null, deadlineLocalCivil: "2026-08-28T17:00" } });
+    const plan = planSchedulingProposal(proposal, { bounds: { lower: null, deadlineLocalCivil: "2026-08-28T17:00" } });
     expect(plan.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist") expect(plan.value.warnings).toEqual([{ code: "subtask_after_project_deadline", message: "This subtask ends after the project deadline.", endpoint: "end" }]);
+    if (plan.ok && plan.value.kind === "checklist") expect(plan.value.warnings).toEqual([{ code: "subtask_after_project_deadline", message: "Ends after the project deadline.", endpoint: "end" }]);
   });
 
-  it("never warns before the shoot when shootDate is null", () => {
+  it("never warns before a lower bound when there is none", () => {
     const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-01" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
-    const plan = planSchedulingProposal(proposal, { bounds: { shootDate: null, deadlineLocalCivil: null } });
+    const plan = planSchedulingProposal(proposal, { bounds: { lower: null, deadlineLocalCivil: null } });
     expect(plan.ok).toBe(true);
     if (plan.ok && plan.value.kind === "checklist") expect(plan.value.warnings).toEqual([]);
   });
@@ -199,75 +198,31 @@ describe("planSchedulingProposal", () => {
     const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-01" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
-    const plan = planSchedulingProposal(proposal, { bounds: { shootDate: "2026-08-10", deadlineLocalCivil: null } });
+    const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: null } });
     expect(plan.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist") expect(plan.value.warnings).toEqual([{ code: "subtask_before_project_shoot", message: "This subtask starts before the shoot date.", endpoint: "start" }]);
+    if (plan.ok && plan.value.kind === "checklist") expect(plan.value.warnings).toEqual([{ code: "subtask_before_project_shoot", message: "Starts before the shoot date.", endpoint: "start" }]);
+  });
+
+  it("warns on a due_only placed before the shoot date, at the end endpoint", () => {
+    const entry = checklistUnscheduledEntry();
+    const target = { subview: "month" as const, targetDate: "2026-08-09" };
+    const proposal: SchedulingProposal = { kind: "place", entity: "checklist", entry, target };
+    const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: null } });
+    expect(plan.ok).toBe(true);
+    if (plan.ok && plan.value.kind === "checklist") {
+      expect(plan.value.schedule).toEqual({ state: "due_only", end: { kind: "date", localCivil: "2026-08-09" } });
+      expect(plan.value.warnings).toEqual([{ code: "subtask_before_project_shoot", message: "Due before the shoot date.", endpoint: "end" }]);
+    }
   });
 
   it("a warning is never a rejection (ok stays true)", () => {
     const source = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
     const target = { subview: "month" as const, targetDate: "2026-08-01" };
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target };
-    const plan = planSchedulingProposal(proposal, { bounds: { shootDate: "2026-08-10", deadlineLocalCivil: "2026-08-15T09:00" } });
+    const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: "2026-08-15T09:00" } });
     expect(plan.ok).toBe(true);
   });
 });
 
-describe("checkScheduleBounds", () => {
-  it("returns [] for null bounds", () => {
-    expect(checkScheduleBounds({ state: "unscheduled" }, null)).toEqual([]);
-  });
-
-  const afterDeadlineWarning = { code: "subtask_after_project_deadline" as const, message: "This subtask ends after the project deadline.", endpoint: "end" as const };
-  const beforeShootWarning = { code: "subtask_before_project_shoot" as const, message: "This subtask starts before the shoot date.", endpoint: "start" as const };
-
-  it("a timed end exactly at the deadline minute does not warn", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "due_only", end: { kind: "timed", localCivil: "2026-08-28T17:00" } };
-    expect(checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil: "2026-08-28T17:00" })).toEqual([]);
-  });
-
-  it("a timed end one minute after the deadline warns", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "due_only", end: { kind: "timed", localCivil: "2026-08-28T17:01" } };
-    expect(checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil: "2026-08-28T17:00" })).toEqual([afterDeadlineWarning]);
-  });
-
-  it("a date-only end on the deadline's own date does not warn", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "due_only", end: { kind: "date", localCivil: "2026-08-28" } };
-    expect(checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil: "2026-08-28T17:00" })).toEqual([]);
-  });
-
-  it("a date-only end the day after the deadline's date warns", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } };
-    expect(checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil: "2026-08-28T17:00" })).toEqual([afterDeadlineWarning]);
-  });
-
-  it("a date-only start on the shoot date does not warn (shootDate is date-only — no timed-exact case applies)", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "range", start: { kind: "date", localCivil: "2026-08-10" }, end: { kind: "date", localCivil: "2026-08-12" } };
-    expect(checkScheduleBounds(schedule, { shootDate: "2026-08-10", deadlineLocalCivil: null })).toEqual([]);
-  });
-
-  it("a timed start on the shoot date does not warn (compares dates only, never the time)", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "range", start: { kind: "timed", localCivil: "2026-08-10T00:01" }, end: { kind: "timed", localCivil: "2026-08-10T01:00" } };
-    expect(checkScheduleBounds(schedule, { shootDate: "2026-08-10", deadlineLocalCivil: null })).toEqual([]);
-  });
-
-  it("a start the day before the shoot date warns", () => {
-    const schedule: InitialChecklistScheduleInput = { state: "range", start: { kind: "date", localCivil: "2026-08-09" }, end: { kind: "date", localCivil: "2026-08-12" } };
-    expect(checkScheduleBounds(schedule, { shootDate: "2026-08-10", deadlineLocalCivil: null })).toEqual([beforeShootWarning]);
-  });
-
-  it("compares lexicographically across the April Sydney DST fold, not chronologically (2026-04-05T02:30)", () => {
-    // Lexicographic string comparison, per the function's own contract — it never resolves the
-    // civil string to an instant, so an ambiguous (repeated) Sydney civil time is handled exactly
-    // like any other string, with no fold/gap resolution involved.
-    const schedule: InitialChecklistScheduleInput = { state: "due_only", end: { kind: "timed", localCivil: "2026-04-05T02:31" } };
-    expect(checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil: "2026-04-05T02:30" })).toEqual([afterDeadlineWarning]);
-  });
-
-  it("compares lexicographically across the October Sydney DST gap, not chronologically (2026-10-04T02:30)", () => {
-    // 2026-10-04T02:30 never occurs on a real Sydney clock (the gap), but the bounds check works
-    // on the plain civil string, so a nonexistent local time is still valid input here.
-    const schedule: InitialChecklistScheduleInput = { state: "due_only", end: { kind: "timed", localCivil: "2026-10-04T02:29" } };
-    expect(checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil: "2026-10-04T02:30" })).toEqual([]);
-  });
-});
+// The old planner-local bounds rule's cases now live in
+// `schedule-bounds.test.ts` (#288), run through both the Gantt and the Calendar bounds paths.

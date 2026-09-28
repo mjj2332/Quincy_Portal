@@ -3994,3 +3994,23 @@ scroll and focus. The FullCalendar renderer never had this because it drew from 
 - **`"deferred"` is silent by design**: the vendor neither moves the chip nor announces, so the surface
   must hold the dropped chip itself (a local `pending` range until the controller's overlay lands —
   a Deadline has none before its confirmation) and the controller owns every announcement.
+
+## Two surfaces, one advisory rule: the out-of-range schedule warning lives only in `lib/schedule-bounds.ts` (#288, 2026-09-28)
+
+The Gantt and the event-calendar renderer each had their own "outside the project window" check:
+the Gantt's `scheduleWindowWarnings` (shoot date, else the Sydney created date; a `due_only` checked at
+its end) and the Calendar's `checkScheduleBounds` (shoot date only, no `due_only` lower bound,
+different copy). The same drag warned on one surface and not the other.
+
+- **The rule lives only in `portal/apps/web/src/lib/schedule-bounds.ts`.** Each surface builds a
+  `ScheduleBounds` through `scheduleBoundsFrom` (`ganttScheduleBounds`, `calendarScheduleBounds`), the
+  controller runs `scheduleWindowWarnings` over the port's `boundsFor` — in the plan and over the
+  server-SAVED schedule for the announcement — and `scheduleWarningText` renders it. There is no
+  per-port `committedWarningText` any more. `schedule-bounds.test.ts` runs one table through both
+  surface paths; add a case there, never a second rule beside it.
+- **Calendar bounds carry `createdAt`** (`ProductionCalendarProjectBounds`, ISO instant, required) so
+  the created-at fallback works on the Calendar too. The Sydney civil DATE of that instant is the
+  bound, not the UTC date.
+- **The wire decoder is strict**, so an already-open tab on the event-calendar renderer that predates
+  this change errors on its `bounds=1` response (unknown `createdAt` key) until it reloads. Old bundles
+  that never send `bounds=1` are unaffected.

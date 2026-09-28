@@ -15,7 +15,7 @@ if (!Element.prototype.getAnimations) {
 }
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ChecklistCalendarUnscheduledEntryDto, type ChecklistScheduleDto } from "@quincy/shared";
+import { PRODUCTION_CALENDAR_ZONE, type ChecklistCalendarEventDto, type ChecklistCalendarUnscheduledEntryDto, type ChecklistScheduleDto, type ProductionCalendarProjectBounds } from "@quincy/shared";
 import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ProductionEventCalendarScheduleEditorSheet } from "./ProductionEventCalendarDialogs";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
@@ -79,7 +79,7 @@ function scheduleOf(call: { body: unknown }) {
   return (call.body as { schedule: { expectedVersion: number; schedule: unknown } }).schedule;
 }
 
-async function mount(events: ChecklistCalendarEventDto[], options: { subview?: "month" | "week" | "day" | "days" | "agenda"; role?: "admin" | "external_editor"; patch?: (url: string, body: unknown) => Response | Promise<Response>; onAccessLoss?: () => void; onSettleStateChange?: (state: { pending: boolean; recoveryReason: string | null }) => void; projectBounds?: Array<{ projectId: string; shootDate: string | null; deadlineLocalCivil: string | null }> } = {}) {
+async function mount(events: ChecklistCalendarEventDto[], options: { subview?: "month" | "week" | "day" | "days" | "agenda"; role?: "admin" | "external_editor"; patch?: (url: string, body: unknown) => Response | Promise<Response>; onAccessLoss?: () => void; onSettleStateChange?: (state: { pending: boolean; recoveryReason: string | null }) => void; projectBounds?: ProductionCalendarProjectBounds[] } = {}) {
   const subview = options.subview ?? "month";
   const range = rangeResponse({ events, subview, role: options.role, projectBounds: options.projectBounds });
   const fetch = stubCalendarFetch({ range, patch: options.patch ?? (() => json(checklistMutationBody(events[0]!))) });
@@ -261,13 +261,38 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("warns (never blocks) when an out-of-range move is saved: the PATCH is sent and the saved announcement carries the warning", async () => {
     const event = dueEvent(dated("2026-08-12"));
     const fetch = await mount([event], {
-      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", deadlineLocalCivil: "2026-08-14T17:00" }],
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00" }],
       patch: () => json(checklistMutationBody(event, dueSchedule(dated("2026-08-20"), 3))),
     });
     expect(await proposeUpdate(ID, { start: day("2026-08-20"), allDay: true })).toBe("deferred");
     await flush(20);
     expect(fetch.patches()).toHaveLength(1);
-    expect(liveRegion()).toContain("Warning: This subtask ends after the project deadline.");
+    expect(liveRegion()).toContain("Warning: Due after the project deadline.");
+  });
+
+  it("#288: warns when a due_only is moved before the shoot date (the Gantt's rule), and still sends the PATCH", async () => {
+    const event = dueEvent(dated("2026-08-12"));
+    const fetch = await mount([event], {
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-11", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: null }],
+      patch: () => json(checklistMutationBody(event, dueSchedule(dated("2026-08-10"), 3))),
+    });
+    expect(await proposeUpdate(ID, { start: day("2026-08-10"), allDay: true })).toBe("deferred");
+    await flush(20);
+    expect(fetch.patches()).toHaveLength(1);
+    expect(liveRegion()).toContain("Warning: Due before the shoot date.");
+  });
+
+  it("#288: with no shoot date, falls back to the Sydney created date as the lower bound, and still sends the PATCH", async () => {
+    const event = dueEvent(dated("2026-08-12"));
+    const fetch = await mount([event], {
+      // 2026-08-11T14:00Z is 2026-08-12T00:00 in Sydney (AEST, +10): the lower bound is the 12th.
+      projectBounds: [{ projectId: PROJECT_ID, shootDate: null, createdAt: "2026-08-11T14:00:00.000Z", deadlineLocalCivil: null }],
+      patch: () => json(checklistMutationBody(event, dueSchedule(dated("2026-08-11"), 3))),
+    });
+    expect(await proposeUpdate(ID, { start: day("2026-08-11"), allDay: true })).toBe("deferred");
+    await flush(20);
+    expect(fetch.patches()).toHaveLength(1);
+    expect(liveRegion()).toContain("Warning: Due before the project was created.");
   });
 
   it("keeps checklist collaboration role-based on server permissions, not admin-only", async () => {

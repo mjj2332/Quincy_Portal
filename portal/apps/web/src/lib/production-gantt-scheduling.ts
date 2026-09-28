@@ -4,8 +4,9 @@
  * The Gantt reads `GanttProjectRowDto` / `GanttChecklistRowDto`; the controller speaks the
  * Calendar's DTOs and `SchedulingProposal`. Everything here is a pure transform: Gantt row → the
  * Calendar-shaped source the controller expects, a Gantt drag/resize/drop → a `SchedulingProposal`
- * the shared mappers plan, the advisory shoot/deadline window check, and the optimistic overlay
- * back onto the Gantt model.
+ * the shared mappers plan, the Gantt's `ScheduleBounds` (the advisory window rule itself lives in
+ * `schedule-bounds.ts`, shared with the Calendar), and the optimistic overlay back onto the Gantt
+ * model.
  *
  * Time rule: every civil value is Sydney civil, derived through the shared Sydney helpers. A day
  * delta is `Math.round(ms / 86_400_000)` — the rounding absorbs the 23h/25h DST days — and is then
@@ -19,8 +20,6 @@
 
 import {
   calendarChecklistEntityId,
-  formatSydneyCivilMinute,
-  isSydneyCalendarDate,
   shiftSydneyCalendarDate,
   subtaskIdFromCalendarEntityId,
   type CalendarEventTiming,
@@ -31,7 +30,6 @@ import {
   type DueOnlyChecklistScheduleDto,
   type GanttChecklistRowDto,
   type GanttProjectRowDto,
-  type InitialChecklistScheduleInput,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type RangeChecklistScheduleDto,
@@ -45,10 +43,17 @@ import {
   type ProductionGanttRowData,
 } from "./production-gantt-adapter";
 import {
+  beforeLowerBound,
+  endsAfterDeadline,
+  scheduleBoundsFrom,
+  sydneyCivilDate,
+  sydneyCivilMinute,
+  type ScheduleBounds,
+} from "./schedule-bounds";
+import {
   timingFromChecklistSchedule,
   type ChecklistSource,
   type SchedulingProposal,
-  type SchedulingWarning,
 } from "./scheduling-policy";
 
 const DAY_MS = 86_400_000;
@@ -67,25 +72,12 @@ export type GanttEdit = {
   scale: GanttScale;
 };
 
-export type GanttScheduleBounds = {
-  /** `kind: "created"` is display-only — never written anywhere. */
-  lower: { civilDate: string; kind: "shoot" | "created" } | null;
-  deadlineLocalCivil: string | null;
-};
-
 // ---------------------------------------------------------------------------
 // Sydney civil helpers
 // ---------------------------------------------------------------------------
 
-/** "YYYY-MM-DDTHH:mm" in Sydney, or null for an invalid instant. */
-function sydneyCivilMinute(instant: Date | string): string | null {
-  const value = formatSydneyCivilMinute(instant instanceof Date ? instant.getTime() : instant);
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && isSydneyCalendarDate(value.slice(0, 10)) ? value : null;
-}
-
-function sydneyCivilDate(instant: Date | string): string | null {
-  return sydneyCivilMinute(instant)?.slice(0, 10) ?? null;
-}
+// `sydneyCivilMinute` / `sydneyCivilDate` live in `schedule-bounds.ts` (the created-at lower bound
+// needs them too).
 
 function shiftDate(date: string, delta: number): string | null {
   const shifted = shiftSydneyCalendarDate(date, delta);
@@ -174,55 +166,9 @@ export function ganttDeadlineEntry(project: GanttProjectRowDto): ProjectCalendar
 // Advisory schedule window
 // ---------------------------------------------------------------------------
 
-export function ganttScheduleBounds(project: GanttProjectRowDto): GanttScheduleBounds {
-  let lower: GanttScheduleBounds["lower"] = null;
-  if (project.shootDateCivil) {
-    lower = { civilDate: project.shootDateCivil, kind: "shoot" };
-  } else {
-    const created = sydneyCivilDate(project.createdAt);
-    lower = created ? { civilDate: created, kind: "created" } : null;
-  }
-  return { lower, deadlineLocalCivil: project.deadline?.localCivil ?? null };
-}
-
-/**
- * Advisory only. Standalone rather than an extension of `checkScheduleBounds`
- * (scheduling-policy.ts): that function's copy differs and it has no due_only lower-bound branch,
- * so reusing it would change what its own tests pin.
- */
-export function scheduleWindowWarnings(schedule: InitialChecklistScheduleInput, bounds: GanttScheduleBounds): SchedulingWarning[] {
-  if (schedule.state === "unscheduled") return [];
-  const dueOnly = schedule.state === "due_only";
-  const warnings: SchedulingWarning[] = [];
-
-  if (bounds.lower) {
-    const endpoint = dueOnly ? schedule.end : schedule.start;
-    if (endpoint.localCivil.slice(0, 10) < bounds.lower.civilDate) {
-      const shoot = bounds.lower.kind === "shoot";
-      warnings.push({
-        code: shoot ? "subtask_before_project_shoot" : "subtask_before_project_created",
-        message: `${dueOnly ? "Due" : "Starts"} before ${shoot ? "the shoot date" : "the project was created"}.`,
-        endpoint: dueOnly ? "end" : "start",
-      });
-    }
-  }
-
-  if (bounds.deadlineLocalCivil) {
-    const end = schedule.end;
-    const deadlineIsDate = !bounds.deadlineLocalCivil.includes("T");
-    const byDate = end.kind === "date" || deadlineIsDate;
-    const endCivil = byDate ? end.localCivil.slice(0, 10) : end.localCivil;
-    const boundCivil = byDate ? bounds.deadlineLocalCivil.slice(0, 10) : bounds.deadlineLocalCivil;
-    if (endCivil > boundCivil) {
-      warnings.push({ code: "subtask_after_project_deadline", message: `${dueOnly ? "Due" : "Ends"} after the project deadline.`, endpoint: "end" });
-    }
-  }
-
-  return warnings;
-}
-
-export function ganttDropWarningText(warnings: SchedulingWarning[]): string | null {
-  return warnings.length === 0 ? null : warnings.map((warning) => warning.message).join(" ");
+/** The Gantt's input to the shared rule (`scheduleWindowWarnings`, `schedule-bounds.ts`). */
+export function ganttScheduleBounds(project: GanttProjectRowDto): ScheduleBounds {
+  return scheduleBoundsFrom({ shootDateCivil: project.shootDateCivil, createdAt: project.createdAt, deadlineLocalCivil: project.deadline?.localCivil ?? null });
 }
 
 // ---------------------------------------------------------------------------
@@ -321,15 +267,6 @@ export type DeadlineEffectsPreview = {
   truncated: boolean;
 };
 
-/** `scheduleWindowWarnings`' upper-bound rule: by date when either side is a date, else by minute. */
-function endIsAfterDeadline(end: { kind: string; localCivil: string }, deadlineLocalCivil: string | null): boolean {
-  if (!deadlineLocalCivil) return false;
-  const byDate = end.kind === "date" || !deadlineLocalCivil.includes("T");
-  const endCivil = byDate ? end.localCivil.slice(0, 10) : end.localCivil;
-  const boundCivil = byDate ? deadlineLocalCivil.slice(0, 10) : deadlineLocalCivil;
-  return endCivil > boundCivil;
-}
-
 /**
  * The new deadline's civil DATE before the project's lower bound (`ganttScheduleBounds` — the
  * shoot date, else the Sydney creation date). Same civil-date rule as `scheduleWindowWarnings`'
@@ -339,7 +276,7 @@ function endIsAfterDeadline(end: { kind: string; localCivil: string }, deadlineL
  */
 export function deadlineStartClash(project: GanttProjectRowDto, newLocalCivil: string): DeadlineStartClash | null {
   const lower = ganttScheduleBounds(project).lower;
-  if (!lower || newLocalCivil.slice(0, 10) >= lower.civilDate) return null;
+  if (!lower || !beforeLowerBound(newLocalCivil, lower)) return null;
   return { kind: "deadline-before-start", boundKind: lower.kind };
 }
 
@@ -361,8 +298,8 @@ export function previewDeadlineEffects(project: GanttProjectRowDto, newDeadline:
     if (schedule.state !== "range" && schedule.state !== "due_only") continue;
     const end = schedule.end;
     if (!end) continue;
-    const before: DeadlineEffectStatus = endIsAfterDeadline(end, oldCivil) ? "after" : "on-time";
-    const after: DeadlineEffectStatus = endIsAfterDeadline(end, newDeadline.localCivil) ? "after" : "on-time";
+    const before: DeadlineEffectStatus = endsAfterDeadline(end, oldCivil) ? "after" : "on-time";
+    const after: DeadlineEffectStatus = endsAfterDeadline(end, newDeadline.localCivil) ? "after" : "on-time";
     if (before === after) continue;
     affected.push({ id: row.id, title: row.title, before, after });
     if (after === "after") clashes.push({ kind: "subtask-after-deadline", id: row.id, title: row.title });

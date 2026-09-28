@@ -8,7 +8,8 @@ import {
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
-import { checkScheduleBounds, planSchedulingProposal, type SchedulingProposal } from "./scheduling-policy";
+import { planSchedulingProposal, type SchedulingProposal } from "./scheduling-policy";
+import { scheduleWindowWarnings } from "./schedule-bounds";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const project = { id: PROJECT_ID, street: "1 Example Street", stageKey: "editing" as const, checklist: { completed: 0, total: 1 }, delivered: false };
@@ -80,7 +81,7 @@ describe("scheduling policy adversarial boundaries", () => {
       [{ state: "due_only", end: { kind: "date", localCivil: "2026-04-06" } }, "2026-04-05T02:30", true],
     ];
     for (const [schedule, deadlineLocalCivil, shouldWarn] of cases) {
-      const warnings = checkScheduleBounds(schedule, { shootDate: null, deadlineLocalCivil });
+      const warnings = scheduleWindowWarnings(schedule, { lower: null, deadlineLocalCivil });
       expect(warnings.some((warning) => warning.code === "subtask_after_project_deadline"), `${JSON.stringify(schedule)} against ${deadlineLocalCivil}`).toBe(shouldWarn);
     }
   });

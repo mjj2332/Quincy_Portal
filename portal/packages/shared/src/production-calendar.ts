@@ -319,6 +319,8 @@ export function shiftSydneyCivilPreservingWallTime(localCivil: string, deltaDays
 }
 
 const isoStringSchema = z.string().min(1).max(128);
+/** #288: a canonical `Date#toISOString()` instant — what the Worker emits for `projects.created_at`. */
+const isoInstantSchema = isoStringSchema.refine((value) => { const ms = Date.parse(value); return !Number.isNaN(ms) && new Date(ms).toISOString() === value; }, "Expected an ISO instant");
 const opaqueIdSchema = z.string().min(1).max(256);
 const calendarPersonSchema = z.object({
   id: z.string().uuid(),
@@ -436,12 +438,15 @@ export type CalendarUnscheduledEntryDto<TStage extends StageTransportKey = Stage
 /**
  * #222: one project's advisory scheduling window, the Calendar's counterpart of the Gantt's
  * `ganttScheduleBounds` inputs. `shootDate` is the project's shoot date only when it is a canonical
- * Sydney calendar date (the Gantt's `shootDateCivil` rule), `deadlineLocalCivil` the project's
- * Deadline when one is set. Feeds `checkScheduleBounds` (warn, never block).
+ * Sydney calendar date (the Gantt's `shootDateCivil` rule), `createdAt` the project's creation
+ * instant (ISO; the lower bound when there is no shoot date), `deadlineLocalCivil` the project's
+ * Deadline when one is set. #288: feeds the web's shared out-of-range rule
+ * (`calendarScheduleBounds` → `scheduleWindowWarnings` in `lib/schedule-bounds.ts`) — warn, never block.
  */
 export type ProductionCalendarProjectBounds = {
   projectId: string;
   shootDate: string | null;
+  createdAt: string;
   deadlineLocalCivil: string | null;
 };
 
@@ -607,7 +612,7 @@ const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
 }).strict();
 
 const projectBoundsSchema: z.ZodType<ProductionCalendarProjectBounds> = z.object({
-  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), deadlineLocalCivil: z.string().min(1).max(32).nullable(),
+  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), createdAt: isoInstantSchema, deadlineLocalCivil: z.string().min(1).max(32).nullable(),
 }).strict();
 
 const responseSchemaFor = <TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<ProductionCalendarRangeResponse<TStage>> => z.object({

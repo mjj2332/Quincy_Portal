@@ -81,11 +81,11 @@ describe("production calendar query family", () => {
     expect(bounded.queryKey.slice(0, 2)).toEqual(["production-calendar", principal]);
 
     const api = await import("./api");
-    const apiGet = vi.spyOn(api, "apiGet").mockResolvedValue({ ...response("editing_autohdr"), projectBounds: [{ projectId: principal, shootDate: "2026-08-10", deadlineLocalCivil: "2026-08-12T10:00" }] });
+    const apiGet = vi.spyOn(api, "apiGet").mockResolvedValue({ ...response("editing_autohdr"), projectBounds: [{ projectId: principal, shootDate: "2026-08-10", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-12T10:00" }] });
     try {
       const decoded = await bounded.queryFn({ signal: new AbortController().signal } as never);
       expect(apiGet.mock.calls[0]![0]).toMatch(/&bounds=1$/u);
-      expect(decoded.projectBounds).toEqual([{ projectId: principal, shootDate: "2026-08-10", deadlineLocalCivil: "2026-08-12T10:00" }]);
+      expect(decoded.projectBounds).toEqual([{ projectId: principal, shootDate: "2026-08-10", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-12T10:00" }]);
       apiGet.mockResolvedValue(response("editing_autohdr"));
       await plain.queryFn({ signal: new AbortController().signal } as never);
       expect(apiGet.mock.calls[1]![0]).not.toContain("bounds");
