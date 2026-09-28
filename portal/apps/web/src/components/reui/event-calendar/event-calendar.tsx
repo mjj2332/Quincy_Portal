@@ -57,6 +57,11 @@
  *
  * 3. 2026-09-21, #241 — comment only: `renderDayColumnBackground`'s docstring now says its
  *    minutes are ELAPSED and how to convert them for the wall-clock-painted column.
+ * 4. 2026-09-28, #222 — ADDED, additive (no `"deferred"` returned changes nothing):
+ *    `applyProposedUpdate` (and its `EventCalendarInternals` signature) now returns
+ *    `boolean | "deferred"`, answering the literal `"deferred"` BEFORE any `setField` when
+ *    `onEventUpdate` defers — the Gantt's #221 PR A shape. Callers must test for it before their
+ *    truthiness checks (the string is truthy). See `event-calendar-dnd.tsx` entry 7.
  */
 import {
   createContext,
@@ -344,7 +349,7 @@ interface EventCalendarInternals<TData = unknown> {
   applyProposedUpdate(
     update: EventCalendarProposedUpdate<TData>,
     extraPatch?: Partial<CalendarEvent<TData>>
-  ): boolean
+  ): boolean | "deferred"
   getSettingsVersion(): number
   /** The rendered calendar root element, or null before mount. */
   getRootEl(): HTMLElement | null
@@ -625,9 +630,11 @@ function createEventCalendarStore<TData>(
   const applyProposedUpdate = (
     update: EventCalendarProposedUpdate<TData>,
     extraPatch?: Partial<CalendarEvent<TData>>
-  ): boolean => {
+  ): boolean | "deferred" => {
     const result = settings.onEventUpdate?.(update)
     if (result === false) return false
+    // QUINCY (#222): accept-and-defer - the consumer owns what happens next; never mutate here.
+    if (result === "deferred") return "deferred"
     const adjusted: Partial<CalendarEvent<TData>> =
       result && typeof result === "object"
         ? {
