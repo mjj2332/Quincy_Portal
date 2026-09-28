@@ -607,14 +607,15 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(h.host.querySelector('[data-testid="event-calendar-fake"]')).not.toBeNull();
   });
 
-  it("returns focus to the chip (data-ec-event-id) after a cancelled command", async () => {
+  it("returns focus to the chip button around the chip content after a cancelled command", async () => {
     const event = dueEvent(dated("2026-08-12"));
     await mount([event]);
     await openReschedule(ID);
     await clickTestId("event-calendar-schedule-cancel");
     await flush(5);
     const active = document.activeElement as HTMLElement | null;
-    expect(active?.getAttribute("data-ec-event-id") ?? active?.getAttribute("data-focus-key")).toMatch(new RegExp(`${ID}$`));
+    expect(active?.tagName).toBe("BUTTON");
+    expect(active?.querySelector("[data-event-id]")?.getAttribute("data-event-id")).toBe(ID);
   });
 });
 

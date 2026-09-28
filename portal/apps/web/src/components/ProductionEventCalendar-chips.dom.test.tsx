@@ -42,7 +42,7 @@ async function mount(events: CalendarEventDto[], props: { projectHrefFor?: (id: 
 }
 
 function chip(id: string): HTMLElement {
-  const element = h.host.querySelector<HTMLElement>(`[data-ec-event-id="${id}"]`);
+  const element = h.host.querySelector<HTMLElement>(`[data-event-id="${id}"]`)?.closest<HTMLElement>("button") ?? null;
   if (!element) throw new Error(`no chip ${id}`);
   return element;
 }

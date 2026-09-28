@@ -3972,3 +3972,25 @@ status. The delivery worker acks a row that has disappeared, and email admission
 FK. When you add a project-owned entry there, add its delete to `DELETE /projects/:id` too. A regression
 test for a delete path has to create the orphan through the real producer (archive, in this case), or
 it proves nothing.
+
+## A controlled calendar drawn from `query.data` unmounts on every navigation; draw from the accepted baseline (#222, 2026-09-28)
+
+Round 2 of the event-calendar renderer mounted `<EventCalendar>` only when `query.data` existed. Every
+prev / next / view / filter change is a new query key, so `query.data` went `undefined` for one fetch
+and the whole grid fell back to the skeleton — a full-page flash per click, and the vendor lost its
+scroll and focus. The FullCalendar renderer never had this because it drew from the controller's
+`acceptedResponse`, which survives a key change.
+
+- **Draw from `commands.acceptedResponse ?? (!interactionBlocked ? query.data : null)`**, and once
+  anything has loaded keep the grid mounted with `loading` on the vendor; the skeleton is first-load only.
+- **Focus return needs a Quincy hook on the new renderer's chip.** The shared controller looked chips up
+  by `[data-event-id]` (FullCalendar's card), so a cancelled command dropped focus to the page. Matching
+  the vendor's `data-ec-event-id` from `lib/` trips the skin guard (`data-ec-*` is vendor-internal), so
+  the chip CONTENT carries `data-event-id` and `focusDescriptor` climbs from a non-focusable match to
+  its enclosing `<button>` (the FullCalendar card is focusable and is still focused itself).
+- **A drag outlives the render that started it.** `useEventCalendarExternalDrop().begin(e, { canDrop,
+  onDrop })` keeps the callbacks from pointer-down, so a command that starts mid-drag was not seen by
+  `canDrop`. Pass stable wrappers that read a ref refreshed every render.
+- **`"deferred"` is silent by design**: the vendor neither moves the chip nor announces, so the surface
+  must hold the dropped chip itself (a local `pending` range until the controller's overlay lands —
+  a Deadline has none before its confirmation) and the controller owns every announcement.

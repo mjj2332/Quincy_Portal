@@ -589,9 +589,13 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       const byKey = focusKey === "calendar-recovery"
         ? document.querySelector<HTMLElement>('.button[data-focus-key="calendar-recovery"]') ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-recovery"]')
         : focusKey ? document.querySelector<HTMLElement>(`[data-focus-key="${focusKey}"]`) : null;
-      // #222: `data-ec-event-id` is the event-calendar renderer's chip (a focusable button).
-      const eventElement = [...document.querySelectorAll<HTMLElement>("[data-event-id], [data-ec-event-id]")].find((element) => (element.getAttribute("data-event-id") ?? element.getAttribute("data-ec-event-id")) === descriptor.eventId);
-      (byKey ?? eventElement)?.focus();
+      const eventElement = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === descriptor.eventId);
+      // #222: the FullCalendar card is itself focusable (`tabIndex={-1}`) and is focused as before.
+      // The event-calendar renderer tags its chip CONTENT; the focusable element is the vendor's chip
+      // `<button>` around it (whose own `data-ec-*` attributes are vendor-internal —
+      // `event-calendar-skin.guard.test.ts`, detector 9).
+      const eventTarget = eventElement && !eventElement.matches("button, [tabindex]") ? eventElement.closest<HTMLElement>("button") ?? eventElement : eventElement;
+      (byKey ?? eventTarget)?.focus();
     }, 0);
   }, []);
 

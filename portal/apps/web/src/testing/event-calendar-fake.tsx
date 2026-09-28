@@ -13,9 +13,10 @@
  * `eventCalendarFake.lastProps` records the props of the most recent `<EventCalendar>` render, so a
  * test can assert the controlled view/date/interactions and invoke a callback (`onSlotClick`,
  * `onDateChange`, …) with a crafted argument inside `act`. The fake renders each event through the
- * consumer's `renderEvent` with the consumer's `eventClassName`, inside a focusable
- * `<button data-ec-event-id>` like the vendor chip (so the controller's focus return finds it),
- * under Quincy `data-testid`s only — never a vendor `data-slot` (Guard F).
+ * consumer's `renderEvent` with the consumer's `eventClassName`, inside a focusable `<button>` like
+ * the vendor chip (the controller's focus return climbs to it from the chip content's
+ * `data-event-id`), under Quincy `data-testid`s only — never a vendor `data-slot` (Guard F) nor a
+ * vendor `data-ec-*` attribute (skin guard, detector 9).
  *
  * Writes (round 3):
  * - `eventCalendarFake.update(id, { start, end?, allDay?, source?, granularity? })` calls
@@ -124,7 +125,7 @@ function FakeEventCalendar(props: FakeCalendarProps) {
           const occurrence = { key: event.id, event };
           return (
             <li key={event.id} data-testid="event-calendar-fake-event" data-event-start={event.start.toISOString()} data-draggable={String(event.draggable ?? true)} className={props.eventClassName?.(occurrence)}>
-              <button type="button" data-ec-event-id={event.id} onClick={(e) => props.onEventClick?.(occurrence, e)}>
+              <button type="button" data-testid="event-calendar-fake-chip" onClick={(e) => props.onEventClick?.(occurrence, e)}>
                 {props.renderEvent ? props.renderEvent({ occurrence, segment: {}, view, isDragging: false, isSelected: false }) : event.title}
               </button>
             </li>

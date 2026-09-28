@@ -153,13 +153,14 @@ function boundsWarningText(bounds: ScheduleBounds, schedule: Parameters<typeof c
   return warnings.length === 0 ? null : warnings.map((warning) => warning.message).join(" ");
 }
 
-function ChipContent({ data, title, needsAttention }: { data: ProductionEventCalendarData | undefined; title: string; needsAttention: boolean }): JSX.Element {
+function ChipContent({ id, data, title, needsAttention }: { id: string; data: ProductionEventCalendarData | undefined; title: string; needsAttention: boolean }): JSX.Element {
   const dto = data?.dto;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
   const assignee = dto?.kind === "checklist" ? dto.assignee : null;
   const overlap = dto?.kind === "checklist" && dto.status.sameAssigneeOverlap === true;
   return (
-    <span className="flex w-full min-w-0 items-center gap-[var(--space-1)]" data-testid="event-calendar-chip">
+    // `data-event-id` is the controller's focus-return hook (it focuses the vendor chip button around it).
+    <span className="flex w-full min-w-0 items-center gap-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {overlap && <span className="sr-only">{OVERLAP}</span>}
       {needsAttention && <span className="sr-only">{NEEDS_ATTENTION}</span>}
@@ -461,7 +462,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data)}
-          renderEvent={({ occurrence }) => <ChipContent data={occurrence.event.data} title={occurrence.event.title} needsAttention={commands.checklistNeedsAttention.has(String(occurrence.event.id))} />}
+          renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} needsAttention={commands.checklistNeedsAttention.has(String(occurrence.event.id))} />}
         >
           <div className={cn("grid min-h-0 items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")}>
             {!narrow && rail}
