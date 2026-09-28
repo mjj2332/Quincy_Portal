@@ -62,9 +62,12 @@ function DropIndicator({ className }: { className: string }) {
  * `onInteractionStateChange` and `onAnnounce` as of #98, and `sameStageReorderEnabled`,
  * `onBoardPosition` (the arrows), `onMoveStage` and `onMoveToProposalChange` (Move to…) as of #99.
  *
- * The coarse-pointer column track is widened to 252px (#81): five 44px star targets need 220px,
- * and a 244px track leaves a 220px card — exactly zero slack — while the old 240px mobile track
- * overflowed by 4px. Mouse geometry is untouched, and 252px still fits five columns at 1280px.
+ * Layout follows ReUI's `tempo-tasks` Kanban board: every column is one fixed 280px track
+ * (`auto-cols-[17.5rem]`) at every viewport and pointer type, each column is its own bordered
+ * surface separated by a `--space-4` gap, and the Board sits left-aligned in a full-width
+ * horizontal scroll area — spare width is page background. 280px also clears #81's touch
+ * constraint: five 44px star targets need 220px, and a 280px track leaves a 254px card (two 1px
+ * column borders, two 12px content paddings).
  */
 export function ProjectKanbanBoard2({
   projects,
@@ -433,7 +436,7 @@ export function ProjectKanbanBoard2({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
       accessibility={accessibility}
-      className="kanban2 grid grid-flow-col w-fit max-w-full auto-cols-[minmax(244px,360px)] max-[641px]:auto-cols-[minmax(252px,360px)] pointer-coarse:auto-cols-[minmax(252px,360px)] gap-[var(--border-width-hair)] bg-border border border-[length:var(--border-width-hair)] border-border overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable]"
+      className="kanban2 grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-full overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable] pb-[var(--space-2)]"
       aria-label="Project pipeline board"
       // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
       // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
@@ -458,7 +461,7 @@ export function ProjectKanbanBoard2({
           // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
           // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
           // through to the Board root. The Board this replaced keyed its headings the same way.
-          <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 opacity-100" data-testid="kanban2-column">
+          <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="kanban2-column">
             <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
               <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
               <StatusBadge stageKey={stage.key} />
