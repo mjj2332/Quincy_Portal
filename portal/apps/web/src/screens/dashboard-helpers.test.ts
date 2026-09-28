@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readRememberedDashboardView, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, CALENDAR_RENDERER_DEFAULT, DASHBOARD_CALENDAR_RENDERER_KEY, readCalendarRenderer, writeCalendarRenderer, coerceCalendarSubviewForRenderer } from "./dashboard-helpers";
+import { readRememberedDashboardView, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, isCanonicalCalendarDate, isCanonicalShootDate, normalizeDashboardCalendarSearch, normalizeDashboardCalendarSubview, normalizeDashboardView, normalizeKanbanSortMode, sanitizeDashboardCalendarSearch, DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, CALENDAR_RENDERER_DEFAULT, DASHBOARD_CALENDAR_RENDERER_KEY, readCalendarRenderer, writeCalendarRenderer, coerceCalendarSubviewForRenderer, type CalendarRenderer } from "./dashboard-helpers";
 
 describe("dashboard view preferences", () => {
   it("keeps supported views and migrates grid, missing, and invalid values to kanban", () => {
@@ -172,15 +172,25 @@ describe("#222 Calendar renderer preference", () => {
     expect(read).toHaveBeenCalledWith(DASHBOARD_CALENDAR_RENDERER_KEY);
   });
 
-  it("reads only the exact opt-in value; anything else is the default", () => {
-    expect(readCalendarRenderer({ read: () => "event-calendar" })).toBe("event-calendar");
-    for (const value of ["fullcalendar", "EVENT-CALENDAR", " event-calendar", "", "1"]) {
-      expect(readCalendarRenderer({ read: () => value }), value).toBe("fullcalendar");
-    }
-  });
-
-  it("falls back to the default when storage throws on read", () => {
-    expect(readCalendarRenderer({ read: () => { throw new Error("disabled"); } })).toBe("fullcalendar");
+  const THROWS = Symbol("throwing read");
+  const cases: Array<[label: string, stored: string | null | typeof THROWS, expected: CalendarRenderer]> = [
+    ["absent", null, CALENDAR_RENDERER_DEFAULT],
+    ["throwing", THROWS, CALENDAR_RENDERER_DEFAULT],
+    ["\"event-calendar\"", "event-calendar", "event-calendar"],
+    ["\"fullcalendar\"", "fullcalendar", "fullcalendar"],
+    ["\"FULLCALENDAR\"", "FULLCALENDAR", CALENDAR_RENDERER_DEFAULT],
+    ["\" fullcalendar\"", " fullcalendar", CALENDAR_RENDERER_DEFAULT],
+    ["\"EVENT-CALENDAR\"", "EVENT-CALENDAR", CALENDAR_RENDERER_DEFAULT],
+    ["\" event-calendar\"", " event-calendar", CALENDAR_RENDERER_DEFAULT],
+    ["\"\"", "", CALENDAR_RENDERER_DEFAULT],
+    ["\"1\"", "1", CALENDAR_RENDERER_DEFAULT],
+  ];
+  it.each(cases)("stored %s reads as the expected renderer", (_label, stored, expected) => {
+    const read = (): string | null => {
+      if (stored === THROWS) throw new Error("disabled");
+      return stored;
+    };
+    expect(readCalendarRenderer({ read })).toBe(expected);
   });
 
   it("writes through the injected storage and swallows a throwing write", () => {

@@ -168,9 +168,14 @@ function writeCalendarPreference(storage: DashboardCalendarPreferenceStorage, ke
   }
 }
 
-/** #222: only the exact opt-in value selects the new renderer; anything else (or a throwing read) is the default. */
+/**
+ * #222/#223: only an exact stored renderer name (`"fullcalendar"` or `"event-calendar"`) is honoured;
+ * anything else — absent, differently cased, padded, or a throwing read — is the default. Honouring
+ * `"fullcalendar"` explicitly is what keeps the old renderer reachable once the default flips.
+ */
 export function readCalendarRenderer(storage: DashboardCalendarPreferenceStorage): CalendarRenderer {
-  return readCalendarPreference(storage, DASHBOARD_CALENDAR_RENDERER_KEY) === "event-calendar" ? "event-calendar" : CALENDAR_RENDERER_DEFAULT;
+  const stored = readCalendarPreference(storage, DASHBOARD_CALENDAR_RENDERER_KEY);
+  return stored === "fullcalendar" || stored === "event-calendar" ? stored : CALENDAR_RENDERER_DEFAULT;
 }
 
 /** #222: best-effort, like every other Calendar preference write. */
