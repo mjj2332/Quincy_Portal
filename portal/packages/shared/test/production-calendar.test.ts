@@ -228,6 +228,8 @@ describe("TB5C strict role-safe DTOs", () => {
       expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: null }] }).success).toBe(false);
       expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: "" }] }).success).toBe(false);
       expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: 1_780_000_000_000 }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: "garbage" }] }).success).toBe(false);
+      expect(schema.safeParse({ ...response(stage), projectBounds: [{ ...bounds[0], createdAt: "2026-07-01" }] }).success).toBe(false);
     }
   });
 

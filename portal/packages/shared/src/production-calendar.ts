@@ -319,6 +319,8 @@ export function shiftSydneyCivilPreservingWallTime(localCivil: string, deltaDays
 }
 
 const isoStringSchema = z.string().min(1).max(128);
+/** #288: a canonical `Date#toISOString()` instant — what the Worker emits for `projects.created_at`. */
+const isoInstantSchema = isoStringSchema.refine((value) => { const ms = Date.parse(value); return !Number.isNaN(ms) && new Date(ms).toISOString() === value; }, "Expected an ISO instant");
 const opaqueIdSchema = z.string().min(1).max(256);
 const calendarPersonSchema = z.object({
   id: z.string().uuid(),
@@ -610,7 +612,7 @@ const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
 }).strict();
 
 const projectBoundsSchema: z.ZodType<ProductionCalendarProjectBounds> = z.object({
-  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), createdAt: isoStringSchema, deadlineLocalCivil: z.string().min(1).max(32).nullable(),
+  projectId: lowercaseUuidSchema, shootDate: calendarDateSchema.nullable(), createdAt: isoInstantSchema, deadlineLocalCivil: z.string().min(1).max(32).nullable(),
 }).strict();
 
 const responseSchemaFor = <TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<ProductionCalendarRangeResponse<TStage>> => z.object({
