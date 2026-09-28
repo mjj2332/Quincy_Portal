@@ -44,6 +44,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState } from "@quincy/shared";
 import { ProductionEventCalendar } from "./ProductionEventCalendar";
+import { DEADLINE_AGENDA_DOT } from "../lib/production-event-calendar-adapter";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -432,19 +433,16 @@ describe("Production chip contrast through the real vendored calendar", () => {
 
   it("an agenda Deadline row hides the vendor's colour dot; checklist rows keep theirs", async () => {
     await renderView("agenda");
-    const HIDE_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
-    // Located structurally and matched by attribute, not by a vendor-slot selector (guard F).
-    const dotsIn = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>("*")].filter((el) => el.getAttribute("data-slot") === "event-calendar-agenda-dot");
-    for (const row of chipsFor("project-deadline:project", "agenda")) {
-      expect(dotsIn(row), "the Deadline row renders no vendor dot — the variant targets nothing").toHaveLength(1);
-      expect(classesOf(row)).toContain(HIDE_DOT);
-    }
+    // That the variant targets a real vendored element is pinned against the vendored source in
+    // lib/production-event-calendar-adapter.test.ts, not by selecting the vendor's slot here (guard F).
+    const deadlineRows = chipsFor("project-deadline:project", "agenda");
+    expect(deadlineRows.length).toBeGreaterThan(0);
+    for (const row of deadlineRows) expect(classesOf(row)).toContain(DEADLINE_AGENDA_DOT);
     for (const id of ["checklist:active", "checklist:done"]) {
       const rows = chipsFor(id, "agenda");
       expect(rows.length).toBeGreaterThan(0);
       for (const row of rows) {
-        expect(dotsIn(row)).toHaveLength(1);
-        expect(classesOf(row)).not.toContain(HIDE_DOT);
+        expect(classesOf(row)).not.toContain(DEADLINE_AGENDA_DOT);
       }
     }
   });

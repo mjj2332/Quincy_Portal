@@ -217,7 +217,7 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
 const CHECKLIST_SELECTED = "data-selected:bg-(--ink-700)/10 data-selected:inset-ring-(--ink-700)";
 const DEADLINE_SELECTED =
   "data-selected:bg-(--ink-900) data-selected:hover:bg-(--ink-700) data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]";
-const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-700)";
+export const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ink-700)";
 /** Mirrors `tokens/inverse.css`'s `--muted-foreground` for a dark surface. */
 const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
 /**
@@ -227,7 +227,7 @@ const DEADLINE_INVERSE_ROLES = "[--muted-foreground:var(--greige-300)]";
  * colours the drag ghost). Couples to the vendor's `data-slot`, as the agenda hover couples to
  * `data-view`.
  */
-const DEADLINE_AGENDA_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
+export const DEADLINE_AGENDA_DOT = "[&_[data-slot=event-calendar-agenda-dot]]:invisible";
 
 export function productionEventCalendarEventClassName(data: ProductionEventCalendarData | undefined): string | undefined {
   if (!data) return undefined;

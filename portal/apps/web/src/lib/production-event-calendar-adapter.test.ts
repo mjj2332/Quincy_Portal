@@ -1,6 +1,11 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { cn } from "@/lib/utils";
 import {
+  DEADLINE_AGENDA_DOT,
+  DEADLINE_AGENDA_HOVER,
   PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES,
   PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
   assigneeInitials,
@@ -168,5 +173,22 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
         .filter((token) => token.includes("--ec-event-color") && (/(^|:)(data-selected|hover):/.test(token) || token.startsWith("bg-(--ec-event-color)")));
       expect(survivors, `${branch}: vendor tint survives the merge`).toEqual([]);
     }
+  });
+
+  // The Deadline class reaches into the vendored agenda row through two vendor attributes: the
+  // dot's `data-slot` (DEADLINE_AGENDA_DOT) and the chip's `data-view` (DEADLINE_AGENDA_HOVER). If a
+  // re-vendor renames either, those selectors silently stop matching and every rendered test still
+  // passes; this reads the vendored source, as event-calendar-skin.guard.test.ts does, and notices.
+  it("the vendored chip still authors the agenda dot and data-view the Deadline class targets", () => {
+    const vendored = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../components/reui/event-calendar/event-calendar-event.tsx"), "utf8");
+    const slot = /\[data-slot=([\w-]+)\]/.exec(DEADLINE_AGENDA_DOT)?.[1];
+    expect(slot, "DEADLINE_AGENDA_DOT names no data-slot").toBeDefined();
+    const dot = new RegExp(`data-slot="${slot}"[^>]*?className="([^"]*)"`).exec(vendored);
+    expect(dot, `the vendored chip no longer authors data-slot="${slot}"`).not.toBeNull();
+    expect(dot![1]!.split(/\s+/), "the vendored agenda dot no longer paints --ec-event-color").toContain("bg-(--ec-event-color)");
+    const [, attribute, value] = /^data-\[([\w-]+)=([\w-]+)\]:/.exec(DEADLINE_AGENDA_HOVER) ?? [];
+    expect(attribute, "DEADLINE_AGENDA_HOVER names no data-* attribute").toBeDefined();
+    expect(vendored, `the vendored chip no longer sets "data-${attribute}": view`).toMatch(new RegExp(`"data-${attribute}":\\s*view,`));
+    expect(vendored, `the vendored chip no longer has a "${value}" view`).toContain(`view === "${value}"`);
   });
 });
