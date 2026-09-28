@@ -48,6 +48,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from "react";
 import {
   CHECKLIST_SCHEDULE_RANGES_ENABLED,
+  deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
   type CalendarEventDto,
   type CalendarUnscheduledEntryDto,
@@ -75,6 +76,7 @@ import { eventCalendarDropToProposal, eventCalendarUpdateToProposal, type EventC
 import { checkScheduleBounds, checklistInputFromSchedule, type ScheduleBounds } from "../lib/scheduling-policy";
 import { useCalendarSchedulingPort, useSchedulingController, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useMediaQuery } from "../lib/use-media-query";
+import { productionCalendarZoneLabel } from "../lib/sydney-time-labels";
 import { cn } from "@/lib/utils";
 import { EventCalendar } from "./reui/event-calendar/event-calendar";
 import { EventCalendarNav } from "./reui/event-calendar/event-calendar-nav";
@@ -84,6 +86,7 @@ import { Button } from "./reui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
+import { Eyebrow } from "./quincy/Eyebrow";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { Notice } from "./quincy/Notice";
 import { ProjectCalendarAnchor } from "./ProductionCalendarEvent";
@@ -421,6 +424,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const refinement = errorDetail(query.error, "refinement") ?? "Refine the date range, Stage, Editor, layer, or search filters.";
   const showGrid = everLoaded && !commands.accessLost && !(query.error && !source && !query.isFetching);
   const empty = source !== null && source.events.length === 0;
+  // The FullCalendar toolbar's "Sydney time · AEST/AEDT", for the window the server is asked for.
+  const zoneLabel = useMemo(() => productionCalendarZoneLabel(deriveProductionCalendarWindow(calendar.date, calendar.subview)), [calendar.date, calendar.subview]);
 
   return (
     <section className="min-w-0" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-testid="event-calendar-screen">
@@ -478,6 +483,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   </Button>
                 )}
                 <EventCalendarNav showViewSwitcher className="min-w-0 flex-1" />
+                <Eyebrow className="shrink-0 whitespace-nowrap last:me-[var(--space-2)] text-muted-foreground" data-testid="event-calendar-zone">{zoneLabel}</Eyebrow>
                 {empty && (
                   // Quiet, in the toolbar row: an empty range never pushes the grid down.
                   <p className="m-0 me-[var(--space-2)] min-w-0 shrink truncate text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>

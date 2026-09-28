@@ -122,6 +122,11 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.dayCountPresets).toEqual([3]);
   });
 
+  it("opens the time-grid views (week, day, 3-day) scrolled to 8 AM, not midnight", () => {
+    // The vendor's `scrollToHour` is an hour number (vendor default 7); it only affects time grids.
+    expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.scrollToHour).toBe(8);
+  });
+
   it("a selected checklist chip keeps its paper fill with a light ink wash and one ink ring; the Deadline class is unchanged", () => {
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
     const paper = productionEventCalendarEventClassName(range.data)!;

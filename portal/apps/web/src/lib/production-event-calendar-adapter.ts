@@ -33,7 +33,8 @@ import {
  * cannot drift apart. Kept in step with `deriveProductionCalendarWindow`: Monday weeks, six fixed
  * month rows (42 days), a 3-day `days` view and a 14-day agenda. `dayCountPresets` is the view
  * menu's "N days" list: the vendor default is `[5]`, which would offer a 5-day view the server window
- * is not derived for — so the menu offers exactly the 3-day view.
+ * is not derived for — so the menu offers exactly the 3-day view. `scrollToHour` is view-layer only
+ * (the time grids' initial scroll), not part of the visible-range contract.
  */
 export const PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS = {
   timeZone: "Australia/Sydney",
@@ -43,6 +44,9 @@ export const PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS = {
   dayCount: 3,
   // Mutable on purpose: the vendor prop is `number[]`, which a `readonly [3]` does not satisfy.
   dayCountPresets: [3] as number[],
+  // Week, Day and 3-day open scrolled to 08:00 Sydney (the working day), not midnight. The vendor
+  // prop is an hour number; month and agenda ignore it.
+  scrollToHour: 8,
 } as const;
 
 /** The controlled `date`: Sydney noon of the civil date, clear of any midnight / DST edge. */

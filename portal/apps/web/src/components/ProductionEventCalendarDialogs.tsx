@@ -5,10 +5,11 @@
  *
  * - Move / Reschedule Deadline — `reui/alert-dialog` shell; date + time inputs (`reui/input`) and,
  *   when the controller hands `foldChoices`, the Sydney occurrence radios. Validation is
- *   `ProductionCalendarMoveDialog`'s (`validCivil`/`civilParts`/`utcOffsetLabel`, now exported).
+ *   `ProductionCalendarMoveDialog`'s (`validCivil`/`civilParts`, now exported); the occurrence offset
+ *   copy is `lib/sydney-time-labels.ts`'s `utcOffsetLabel`.
  * - Fold choice (a checklist endpoint that occurs twice) — `reui/alert-dialog` shell, rendered from
- *   `commands.checklistFold`; the FoldChoice logic lives here now. Offset copy is
- *   `ProductionCalendarFoldChoice`'s own `offsetLabel`.
+ *   `commands.checklistFold`; the FoldChoice logic lives here now. Offset copy is the same shared
+ *   `utcOffsetLabel` (U+2212 minus), so every Calendar dialog labels an offset identically.
  * - Schedule checklist item — `reui/sheet`, body `ProductionCalendarScheduleEditorFields` (shared
  *   with the FullCalendar renderer's Modal).
  * - Deadline confirm — `ProductionGanttDeadlineDialog` (`reui/alert-dialog`), with `preview: null`;
@@ -27,8 +28,8 @@ import { useId, useRef, useState, type JSX } from "react";
 import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation, InitialChecklistScheduleInput } from "@quincy/shared";
 import type { SchedulingController } from "../lib/use-scheduling-commands";
 import { useOpenToken } from "../lib/use-open-token";
-import { civilParts, utcOffsetLabel, validCivil } from "./ProductionCalendarMoveDialog";
-import { offsetLabel as foldOffsetLabel } from "./ProductionCalendarFoldChoice";
+import { utcOffsetLabel } from "../lib/sydney-time-labels";
+import { civilParts, validCivil } from "./ProductionCalendarMoveDialog";
 import {
   ProductionCalendarScheduleEditorFields,
   useChecklistScheduleDraft,
@@ -140,7 +141,7 @@ export function ProductionEventCalendarFoldChoice({ open, eyebrow, endpoint, cho
           {choices.map((item) => (
             <label key={item.disambiguation} className={RADIO_ROW}>
               <input className={RADIO} aria-label={`${endpoint} ${item.disambiguation} occurrence`} type="radio" name={name} value={item.disambiguation} checked={choice === item.disambiguation} onChange={() => setChoice(item.disambiguation)} />
-              {item.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({foldOffsetLabel(item.utcOffsetMinutes)})
+              {item.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({utcOffsetLabel(item.utcOffsetMinutes)})
             </label>
           ))}
         </FieldSet>

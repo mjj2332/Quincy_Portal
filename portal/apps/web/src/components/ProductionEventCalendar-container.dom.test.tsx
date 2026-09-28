@@ -32,8 +32,8 @@ vi.mock("./reui/event-calendar/event-calendar-dnd", async () => (await import(".
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
-const calendar = (subview: DashboardCalendarState["subview"] = "month"): DashboardCalendarState => ({
-  view: "calendar", date: "2026-08-12", subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [],
+const calendar = (subview: DashboardCalendarState["subview"] = "month", date = "2026-08-12"): DashboardCalendarState => ({
+  view: "calendar", date, subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [],
   showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 });
 
@@ -126,6 +126,34 @@ describe("ProductionEventCalendar container", () => {
     expect(rail.textContent).toContain("Unscheduled projects");
   });
 
+  it.each([
+    ["week", "2026-10-14", "AEDT"],
+    ["day", "2026-10-14", "AEDT"],
+    ["week", "2026-07-15", "AEST"],
+    ["day", "2026-07-15", "AEST"],
+    ["month", "2026-10-14", "AEST/AEDT"],
+  ] as const)("labels the visible %s of %s as Sydney time · %s, beside the nav (#222)", async (subview, date, expected) => {
+    await renderCalendar(calendar(subview, date), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+    const zone = host.querySelector<HTMLElement>('[data-testid="event-calendar-zone"]')!;
+    expect(zone.textContent).toBe(`Sydney time · ${expected}`);
+    // The FullCalendar toolbar's eyebrow treatment, in the same toolbar row as the nav.
+    expect(zone.className).toContain("[font:var(--type-eyebrow)]");
+    expect(zone.className).toContain("text-muted-foreground");
+    expect(zone.parentElement).toBe(host.querySelector('[data-testid="event-calendar-fake-nav"]')?.parentElement ?? null);
+  });
+
+  it("keeps the zone label and the quiet empty status side by side in the toolbar row", async () => {
+    await renderCalendar(calendar("week", "2026-07-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr", false)));
+    const zone = host.querySelector<HTMLElement>('[data-testid="event-calendar-zone"]')!;
+    const status = host.querySelector<HTMLElement>('[data-testid="event-calendar-empty"]')!;
+    expect(zone.textContent).toBe("Sydney time · AEST");
+    expect(status.textContent).toBe("No scheduled work in this range.");
+    expect(zone.parentElement).toBe(status.parentElement);
+    // The zone never shrinks away; the empty status is the one that truncates.
+    expect(zone.className).toContain("shrink-0");
+    expect(zone.className).toContain("whitespace-nowrap");
+  });
+
   it("requests bounds, maps the subview to the controlled view and Sydney date, and defers writes", async () => {
     const parsed = adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr"));
     await renderCalendar(calendar("month"), parsed);
@@ -138,6 +166,8 @@ describe("ProductionEventCalendar container", () => {
     expect(props.agendaDayCount).toBe(14);
     expect(props.dayCount).toBe(3);
     expect(props.dayCountPresets).toEqual([3]);
+    // Week / Day / 3-day open scrolled to the working day (8 AM Sydney), not midnight.
+    expect(props.scrollToHour).toBe(8);
     expect(props.views).toEqual(["month", "week", "day", "days", "agenda"]);
     // Sydney noon of the civil date: 12:00 AEST = 02:00Z.
     expect((props.date as Date).toISOString()).toBe("2026-08-12T02:00:00.000Z");

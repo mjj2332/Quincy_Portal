@@ -158,7 +158,9 @@ function ChecklistRow({ entry, actionMode, rangesEnabled, disabled, beginDrag, o
       {...dragHandlers(canDrag, entry, beginDrag)}
     >
       <ItemContent>
-        <ItemDescription className={META}>Checklist · {attention ? "Needs attention" : "Unscheduled"}</ItemDescription>
+        {/* No per-row "Checklist · Unscheduled": the section heading already says it. Only a row
+            that needs attention carries an eyebrow. */}
+        {attention && <ItemDescription className={META}>Needs attention</ItemDescription>}
         <ItemTitle className="[overflow-wrap:anywhere]">{entry.title}</ItemTitle>
         <ItemDescription className={META}>{projectLink(entry, projectHrefFor, onOpenProject)}</ItemDescription>
         <ItemDescription className={META}>Assignee: {entry.assignee?.name ?? "Unassigned"} · Stage: {unscheduledStageLabel(entry.project.stageKey)}</ItemDescription>

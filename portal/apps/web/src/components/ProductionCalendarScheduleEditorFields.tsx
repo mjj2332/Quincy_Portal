@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { Input } from "./reui/input";
 import { NativeSelect } from "./quincy/NativeSelect";
 import { FIELD_COMPACT } from "./production-calendar-classes";
+import { utcOffsetLabel } from "../lib/sydney-time-labels";
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
@@ -92,12 +93,6 @@ function scheduleInput(value: ChecklistScheduleDraft): InitialChecklistScheduleI
   const end = toEndpointInput(value.end, value.kind);
   if (value.state === "due_only") return { state: value.state, end };
   return { state: value.state, start: toEndpointInput(value.start, value.kind), end };
-}
-
-function offsetLabel(minutes: number): string {
-  const sign = minutes < 0 ? "−" : "+";
-  const absolute = Math.abs(minutes);
-  return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
 }
 
 function errorText(error: ProductionCalendarScheduleEditorError): string {
@@ -180,7 +175,7 @@ export function ProductionCalendarScheduleEditorFields({ rangesEnabled, state }:
       <legend>Choose the Sydney occurrence</legend>
       {choices.map((choice) => <label key={`${which}-${choice.disambiguation}`}>
         <input type="radio" name={`${groupId}-${which}-fold`} value={choice.disambiguation} checked={value.disambiguation === choice.disambiguation} onChange={() => setEndpoint(which, { disambiguation: choice.disambiguation })} />
-        {choice.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({offsetLabel(choice.utcOffsetMinutes)})
+        {choice.disambiguation === "earlier" ? "Earlier" : "Later"} occurrence ({utcOffsetLabel(choice.utcOffsetMinutes)})
       </label>)}
     </fieldset> : null;
     })()}

@@ -127,6 +127,23 @@ describe("ProductionEventCalendarUnscheduledList", () => {
     expect(inert.querySelector('[data-testid="event-calendar-unscheduled-action"]')?.textContent).toBe("Schedule");
   });
 
+  it("an ordinary checklist row does not repeat the section heading; only an attention row carries an eyebrow (#222)", async () => {
+    await render(listProps({ checklistEntries: [checklistEntry(), legacyEntry(), invalidEntry()] }));
+    // The section heading still says it, once.
+    expect(section("Unscheduled checklist items").querySelector("h3")?.textContent).toBe("Unscheduled checklist items");
+    const ordinary = host.querySelector<HTMLElement>('[data-unscheduled-id="checklist:one"]')!;
+    expect(ordinary.textContent).not.toContain("Checklist ·");
+    expect(ordinary.textContent).not.toContain("Unscheduled");
+    expect(ordinary.textContent).not.toContain("Needs attention");
+    // Title first: nothing sits above it.
+    expect(ordinary.textContent!.startsWith("Select hero images")).toBe(true);
+    for (const id of ["checklist:legacy", "checklist:invalid"]) {
+      const row = host.querySelector<HTMLElement>(`[data-unscheduled-id="${id}"]`)!;
+      expect(row.textContent!.startsWith("Needs attention")).toBe(true);
+      expect(row.textContent).not.toContain("Checklist ·");
+    }
+  });
+
   it("action mode (drag suppressed, or no drag source wired) shows Schedule buttons instead", async () => {
     const onScheduleProject = vi.fn();
     await render(listProps({ dragSuppressed: true, onScheduleProject }));
