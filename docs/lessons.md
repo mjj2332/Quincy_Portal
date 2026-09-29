@@ -4270,7 +4270,7 @@ freezing the whole Board.
   Do not add a second animation to `KanbanItem`. happy-dom has no layout, so the geometry is
   checked in the browser pass.
 
-## #266 — every staff URL write scrolled the page to the top
+## TanStack resets the scroll after every notified render, even with restoration off (#266, 2026-09-29)
 
 - **Symptom:** on a phone, changing a Gantt or Calendar filter, or committing a search, threw the
   reader back to the top of the Dashboard (`scrollY` 433 → 0). The #255 empty-state Clear focused
