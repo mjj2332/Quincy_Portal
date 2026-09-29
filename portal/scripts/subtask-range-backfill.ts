@@ -12,11 +12,12 @@
 //   2. Dry-run with subtask-range-backfill-dryrun.sql through `--command`, then `prepare`.
 //   3. The owner reads review.md and approves it. Only then generate apply.sql from that manifest, on the same
 //      Sydney day (the reminder cut-off is that day).
-//   4. apply.sql is idempotent: if a run is interrupted, re-run the SAME file. Never regenerate mid-run.
+//   4. apply.sql is idempotent: if a run is interrupted, re-run the SAME file on the same Sydney day. Run on any
+//      other Sydney day it changes nothing; start again from the dry run.
 //
 // This script performs no database IO. It reads JSON and writes text files; the operator runs wrangler by hand.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -27,6 +28,7 @@ import {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
   normalizeChecklistSchedule,
+  resolveSydneyCivilMinute,
   serializeChecklistSchedule,
   type ChecklistScheduleDto,
   type ChecklistScheduleEndpointInput,
@@ -74,10 +76,12 @@ export type RangeBackfillManifestRow = {
   projectId: string;
   /** Review context only. Never written into apply.sql. */
   street: string;
+  archived: boolean;
+  /** Reviewed by the owner and part of the apply guard. The title reaches apply.sql only hex-encoded. */
   title: string;
   done: boolean;
   assigned: boolean;
-  archived: boolean;
+  assigneeId: string | null;
   dueReminderSentAt: number | null;
   fromState: FromState;
   fromReason: string | null;
@@ -103,6 +107,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 // Evaluated by D1 when the apply file runs (precedent: default-editors-backfill.mjs).
 const NOW_MS_SQL = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
 const SAFE_TEXT_RE = /^[0-9A-Za-z_:./ -]*$/;
+// UUIDv5 namespace for the audit ids (fixed for #341; never change it, or a regenerated file could audit twice).
+const AUDIT_ID_NAMESPACE = "3c5f8a3e-6f0d-4b8e-9a51-7d2c1e0b9f41";
 
 const STORAGE_COLUMNS: Array<[keyof ChecklistScheduleStorage, string]> = [
   ["dueDate", "due_date"],
@@ -140,6 +146,36 @@ function nullableText(value: unknown, label: string): string | null {
 }
 
 /** A SQL literal. Text outside a small safe alphabet is hex-encoded, so no stored value can break out of the statement. */
+/** Always hex-encoded: free text (a title) never appears readable in apply.sql. */
+function hexText(value: string): string {
+  return `CAST(X'${Buffer.from(value, "utf8").toString("hex")}' AS TEXT)`;
+}
+
+/**
+ * The audit id of one conversion: a UUIDv5 of (subtask id, old schedule_version). Every apply file generated for
+ * the same conversion carries the same id, so NOT EXISTS on it writes the audit at most once across files.
+ */
+export function rangeBackfillAuditId(subtaskId: string, oldScheduleVersion: number): string {
+  const namespace = Buffer.from(AUDIT_ID_NAMESPACE.replaceAll("-", ""), "hex");
+  const hash = Buffer.from(createHash("sha1").update(namespace).update(`${subtaskId}:${oldScheduleVersion}`, "utf8").digest("hex"), "hex");
+  hash[6] = (hash[6]! & 0x0f) | 0x50;
+  hash[8] = (hash[8]! & 0x3f) | 0x80;
+  const hex = hash.toString("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** [start, end) of a Sydney calendar day in epoch ms. Sydney midnight always exists once (DST moves 02:00/03:00). */
+export function sydneyDayWindowMs(sydneyDate: string): { startMs: number; endMs: number } {
+  const [year, month, day] = requireSydneyDate(sydneyDate, "Sydney date").split("-").map(Number) as [number, number, number];
+  const nextDate = new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+  const midnight = (date: string) => {
+    const resolved = resolveSydneyCivilMinute(`${date}T00:00`);
+    if (!resolved.ok) throw new Error(`Cannot resolve Sydney midnight of ${date} (${resolved.code}).`);
+    return resolved.value.epochMs;
+  };
+  return { startMs: midnight(sydneyDate), endMs: midnight(nextDate) };
+}
+
 function sqlLiteral(value: string | number | null): string {
   if (value === null) return "NULL";
   if (typeof value === "number") {
@@ -147,7 +183,7 @@ function sqlLiteral(value: string | number | null): string {
     return String(value);
   }
   if (SAFE_TEXT_RE.test(value) && !value.includes("--")) return `'${value}'`;
-  return `CAST(X'${Buffer.from(value, "utf8").toString("hex")}' AS TEXT)`;
+  return hexText(value);
 }
 
 function storageFromRow(row: DryrunRow): ChecklistScheduleStorage {
@@ -221,8 +257,11 @@ function endChanged(old: ChecklistScheduleStorage, next: ChecklistScheduleStorag
 function reminderFor(fromState: FromState, old: ChecklistScheduleStorage, next: ChecklistScheduleStorage, sydneyToday: string): ReminderAction {
   // Due-only keeps the Worker's rule: re-arm only when the end changes (it never does here: the due is kept).
   if (fromState === "due_only") return endChanged(old, next) ? "armed" : "unchanged";
+  // The 08:00 scan keys on substr(due_date, 1, 10). Same date: keep whatever claim the scan made.
+  const nextDate = (next.dueDate ?? "").slice(0, 10);
+  if ((old.dueDate ?? "").slice(0, 10) === nextDate) return "unchanged";
   // A row gaining its first readable end in the past would otherwise get a stale "due today" at the next 08:00 scan.
-  return (next.dueDate ?? "").slice(0, 10) < sydneyToday ? "suppressed" : "armed";
+  return nextDate < sydneyToday ? "suppressed" : "armed";
 }
 
 function requireSydneyDate(value: string, label: string): string {
@@ -319,9 +358,10 @@ export function prepareRangeBackfill(rows: DryrunRow[], options: { sydneyToday: 
       projectId,
       street: String(row.street ?? ""),
       title: String(row.title ?? ""),
+      archived: row.archived_at !== null && row.archived_at !== undefined,
       done: Boolean(row.done),
       assigned: row.assignee_id !== null && row.assignee_id !== undefined,
-      archived: row.archived_at !== null && row.archived_at !== undefined,
+      assigneeId: nullableText(row.assignee_id, "assignee_id"),
       dueReminderSentAt: nullableInteger(row.due_reminder_sent_at, "due_reminder_sent_at"),
       fromState: conversion.fromState,
       fromReason: conversion.fromReason,
@@ -356,9 +396,12 @@ export const RANGE_BACKFILL_SQL_HEADER = [
   "--   2. Run only after the owner approved the review.md this file was generated from.",
   "--   3. This file assumes the dry run was already reviewed; it does not re-run it.",
   "--   4. Idempotent: if interrupted partway through, re-run this SAME file again. Never regenerate it mid-run.",
-  "--   Each UPDATE is guarded by the row's full old schedule and version plus the Project inputs, so a row",
-  "--   edited after the dry run is skipped. Each audit INSERT has a fixed id and is written only once the",
-  "--   row holds exactly its new schedule. No notification, activity or outbox rows.",
+  "--   5. Every statement only acts during the Sydney day the manifest was prepared on. Run on any other day,",
+  "--      this file changes nothing: redo the dry run, review, approval and generation.",
+  "--   Per row, the audit INSERT comes first, then the UPDATE. Both are guarded by the row's full reviewed",
+  "--   snapshot (schedule, version, title, done, assignee, reminder stamp) and the Project inputs, so a row",
+  "--   edited after the dry run gets neither. The audit id is derived from the subtask id and old version, so",
+  "--   it is written at most once; the UPDATE also requires it. No notification, activity or outbox rows.",
 ].join("\n");
 
 /**
@@ -367,15 +410,23 @@ export const RANGE_BACKFILL_SQL_HEADER = [
  */
 export function buildRangeBackfillSql(
   manifest: RangeBackfillManifest,
-  options: { sydneyToday: string; newId?: () => string },
+  options: {
+    sydneyToday: string;
+    newId?: () => string;
+    /** Tests only: the SQL expression D1 evaluates as "now" in epoch ms. Defaults to D1's clock. */
+    nowSql?: string;
+  },
 ): { sql: string; converting: number } {
   const newId = options.newId ?? randomUUID;
+  const now = options.nowSql ?? NOW_MS_SQL;
   const sydneyToday = requireSydneyDate(options.sydneyToday, "sydneyToday");
   if (manifest?.kind !== "subtask_range_backfill" || !Array.isArray(manifest.rows)) throw new Error("Not a subtask range backfill manifest.");
   if (manifest.sydneyToday !== sydneyToday) {
     throw new Error(`The manifest was prepared on ${manifest.sydneyToday} (Sydney) but today is ${sydneyToday}. Re-run the dry run and prepare, and have the owner review again.`);
   }
   const runId = requireUuid(newId(), "runId (newId must return a UUID)");
+  const day = sydneyDayWindowMs(manifest.sydneyToday);
+  const onPreparationDay = `${now} >= ${day.startMs} AND ${now} < ${day.endMs}`;
   const blocks: string[] = [];
   const byState: Record<string, number> = {};
   for (const row of manifest.rows) {
@@ -386,6 +437,10 @@ export function buildRangeBackfillSql(
       const value = old[key];
       if (value !== null && typeof value !== "string" && !Number.isSafeInteger(value)) throw new Error(`Subtask ${subtaskId}: invalid old ${key}.`);
     }
+    if (typeof row.title !== "string") throw new Error(`Subtask ${subtaskId}: invalid title.`);
+    if (typeof row.done !== "boolean") throw new Error(`Subtask ${subtaskId}: invalid done.`);
+    const assigneeId = nullableText(row.assigneeId, "assigneeId");
+    const dueReminderSentAt = nullableInteger(row.dueReminderSentAt, "dueReminderSentAt");
     const project: ProjectInputs = {
       shootDate: nullableText(row.project?.shootDate, "project.shootDate"),
       createdAt: requireInteger(row.project?.createdAt, "project.createdAt"),
@@ -409,25 +464,32 @@ export function buildRangeBackfillSql(
     byState[row.fromState] = (byState[row.fromState] ?? 0) + 1;
 
     const sets = STORAGE_COLUMNS.map(([key, column]) => `${column}=${sqlLiteral(next[key] as string | number | null)}`);
-    if (reminder === "suppressed") sets.push(`due_reminder_sent_at=COALESCE(due_reminder_sent_at, ${NOW_MS_SQL})`);
+    if (reminder === "suppressed") sets.push(`due_reminder_sent_at=COALESCE(due_reminder_sent_at, ${now})`);
     if (reminder === "armed") sets.push("due_reminder_sent_at=NULL");
-    sets.push(`updated_at=${NOW_MS_SQL}`);
-    blocks.push(
-      `UPDATE project_subtasks SET ${sets.join(", ")}\n` +
-      `WHERE id=${sqlLiteral(subtaskId)} AND project_id=${sqlLiteral(projectId)}\n` +
-      `  AND ${columnsEqual(old)}\n` +
-      `  AND EXISTS (SELECT 1 FROM projects WHERE id=${sqlLiteral(projectId)} AND shoot_date IS ${sqlLiteral(project.shootDate)} AND created_at IS ${sqlLiteral(project.createdAt)} AND deadline_at IS ${sqlLiteral(project.deadlineAt)} AND deadline_local_civil IS ${sqlLiteral(project.deadlineLocalCivil)});`,
-    );
+    sets.push(`updated_at=${now}`);
 
-    const auditId = requireUuid(newId(), "audit id (newId must return a UUID)");
+    // The reviewed snapshot: a row or Project changed after the dry run matches nothing below.
+    const reviewed =
+      `id=${sqlLiteral(subtaskId)} AND project_id=${sqlLiteral(projectId)}\n` +
+      `  AND ${columnsEqual(old)}\n` +
+      `  AND title IS ${hexText(row.title)} AND done IS ${row.done ? 1 : 0} AND assignee_id IS ${sqlLiteral(assigneeId)} AND due_reminder_sent_at IS ${sqlLiteral(dueReminderSentAt)}\n` +
+      `  AND EXISTS (SELECT 1 FROM projects WHERE id=${sqlLiteral(projectId)} AND shoot_date IS ${sqlLiteral(project.shootDate)} AND created_at IS ${sqlLiteral(project.createdAt)} AND deadline_at IS ${sqlLiteral(project.deadlineAt)} AND deadline_local_civil IS ${sqlLiteral(project.deadlineLocalCivil)})\n` +
+      `  AND ${onPreparationDay}`;
+
+    const auditId = rangeBackfillAuditId(subtaskId, old.scheduleVersion);
     const meta = `json_object('actor','system','source','subtask_range_backfill','issue',341,'runId',${sqlLiteral(runId)},'projectId',${sqlLiteral(projectId)},'fromState',${sqlLiteral(row.fromState)},'fromVersion',${sqlLiteral(old.scheduleVersion)},'fields',json('["schedule"]'),'scheduleState','range','scheduleVersion',${sqlLiteral(next.scheduleVersion)},'reminder',${sqlLiteral(reminder)})`;
+    // Audit first, while the row still holds its reviewed snapshot. If the run stops before the UPDATE, a re-run
+    // skips this (the id exists) and the UPDATE still applies (the row is unchanged).
     blocks.push(
       `INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)\n` +
-      `SELECT ${sqlLiteral(auditId)}, NULL, 'project_subtask.update', 'project_subtask', ${sqlLiteral(subtaskId)}, ${meta}, ${NOW_MS_SQL}\n` +
-      // Tied to the winning UPDATE by the row's exact new state (not changes(), which a re-run after an interruption
-      // between the two statements would see as 0), and written once by its fixed id.
-      `WHERE EXISTS (SELECT 1 FROM project_subtasks WHERE id=${sqlLiteral(subtaskId)} AND project_id=${sqlLiteral(projectId)} AND ${columnsEqual(next)})\n` +
+      `SELECT ${sqlLiteral(auditId)}, NULL, 'project_subtask.update', 'project_subtask', ${sqlLiteral(subtaskId)}, ${meta}, ${now}\n` +
+      `WHERE EXISTS (SELECT 1 FROM project_subtasks WHERE ${reviewed})\n` +
       `  AND NOT EXISTS (SELECT 1 FROM audit_log WHERE id=${sqlLiteral(auditId)});`,
+    );
+    blocks.push(
+      `UPDATE project_subtasks SET ${sets.join(", ")}\n` +
+      `WHERE ${reviewed}\n` +
+      `  AND EXISTS (SELECT 1 FROM audit_log WHERE id=${sqlLiteral(auditId)});`,
     );
   }
   const summary = Object.entries(byState).map(([state, n]) => `${state} ${n}`).join(", ") || "none";

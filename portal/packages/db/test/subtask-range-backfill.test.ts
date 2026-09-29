@@ -5,6 +5,8 @@ import {
   buildRangeBackfillSql,
   extractDryrunRows,
   prepareRangeBackfill,
+  rangeBackfillAuditId,
+  sydneyDayWindowMs,
   type DryrunRow,
   type RangeBackfillManifest,
 } from "../../../scripts/subtask-range-backfill";
@@ -29,6 +31,10 @@ const DRYRUN_SQL = readFileSync(new URL("../../../scripts/subtask-range-backfill
 const VERIFY_SQL = readFileSync(new URL("../../../scripts/subtask-range-backfill-verify.sql", import.meta.url), "utf8");
 
 const TODAY = "2026-09-29";
+// A faked D1 clock inside TODAY's Sydney day (AEST, +10): [2026-09-28T14:00Z, 2026-09-29T14:00Z).
+const DAY_START = Date.UTC(2026, 8, 28, 14);
+const DAY_END = Date.UTC(2026, 8, 29, 14);
+const CLOCK = String(Date.UTC(2026, 8, 29, 2));
 const STAMP = 1_780_000_000_000;
 const NOW = Date.UTC(2026, 8, 1);
 const USER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -139,11 +145,11 @@ function sequentialIds(): () => string {
   return () => `bbbbbbbb-0000-4000-8000-${(++idCounter).toString(16).padStart(12, "0")}`;
 }
 
-function generate(db: SqliteDatabase): { manifest: RangeBackfillManifest; sql: string; review: string } {
+function generate(db: SqliteDatabase, nowSql = CLOCK): { manifest: RangeBackfillManifest; sql: string; review: string } {
   const prepared = prepareRangeBackfill(extractDryrunRows([{ results: runDryrun(db) }]), { sydneyToday: TODAY });
   // The manifest is written to disk and read back by the apply step.
   const manifest = JSON.parse(JSON.stringify(prepared.manifest)) as RangeBackfillManifest;
-  const { sql } = buildRangeBackfillSql(manifest, { sydneyToday: TODAY, newId: sequentialIds() });
+  const { sql } = buildRangeBackfillSql(manifest, { sydneyToday: TODAY, newId: sequentialIds(), nowSql });
   return { manifest, sql, review: prepared.review };
 }
 
@@ -302,16 +308,115 @@ describe("subtask range backfill (#341)", () => {
     db.close();
   });
 
-  it("finishes an interrupted run: UPDATEs applied without their audits get them on the re-run", () => {
+  it("finishes an interrupted run: audits written before their UPDATEs are not duplicated on the re-run", () => {
     const db = freshDb();
     const { sql } = generate(db);
-    for (const statement of statementsOf(sql).filter((s) => s.startsWith("UPDATE"))) db.exec(statement);
-    expect(backfillAudits(db)).toHaveLength(0);
-    const converted = subtasks(db);
+    const reference = freshDb();
+    reference.exec(generate(reference).sql);
+    // Interrupted after each audit INSERT, before its UPDATE.
+    for (const statement of statementsOf(sql).filter((s) => s.startsWith("INSERT"))) db.exec(statement);
+    expect(backfillAudits(db)).toHaveLength(CONVERTING.length);
+    expect(verifyCount(db)).toBe(CONVERTING.length);
     db.exec(sql);
     expect(backfillAudits(db)).toHaveLength(CONVERTING.length);
-    // The re-run does not touch rows the interrupted run already converted.
-    expect(subtasks(db)).toEqual(converted);
+    expect(verifyCount(db)).toBe(0);
+    // Same fixed clock, so the result matches an uninterrupted run exactly.
+    expect(subtasks(db)).toEqual(subtasks(reference));
+    reference.close();
+    db.close();
+  });
+
+  it("an UPDATE never runs without its audit (UPDATEs alone change nothing)", () => {
+    const db = freshDb();
+    const before = subtasks(db);
+    const { sql } = generate(db);
+    for (const statement of statementsOf(sql).filter((s) => s.startsWith("UPDATE"))) db.exec(statement);
+    expect(subtasks(db)).toEqual(before);
+    expect(backfillAudits(db)).toHaveLength(0);
+    db.close();
+  });
+
+  it("writes no audit for a row the user saved to the same range after the dry run", () => {
+    const db = freshDb();
+    const { sql, manifest } = generate(db);
+    const row = manifest.rows.find((r) => r.subtaskId === SUBTASK.unscheduledV0)!;
+    const next = row.proposed.storage;
+    db.prepare(
+      "UPDATE project_subtasks SET due_date=?, schedule_start_kind=?, schedule_start_civil=?, schedule_start_at=?, schedule_start_utc_offset_minutes=?, schedule_start_fold=?, schedule_end_kind=?, schedule_end_at=?, schedule_end_utc_offset_minutes=?, schedule_end_fold=?, schedule_zone=?, schedule_version=? WHERE id=?",
+    ).run(next.dueDate, next.scheduleStartKind, next.scheduleStartCivil, next.scheduleStartAt, next.scheduleStartUtcOffsetMinutes, next.scheduleStartFold, next.scheduleEndKind, next.scheduleEndAt, next.scheduleEndUtcOffsetMinutes, next.scheduleEndFold, next.scheduleZone, next.scheduleVersion, SUBTASK.unscheduledV0);
+    const saved = subtasks(db).get(SUBTASK.unscheduledV0);
+    db.exec(sql);
+    expect(subtasks(db).get(SUBTASK.unscheduledV0)).toEqual(saved);
+    const audited = backfillAudits(db).map((a) => a.target_id);
+    expect(audited).not.toContain(SUBTASK.unscheduledV0);
+    expect(audited).toHaveLength(CONVERTING.length - 1);
+    db.close();
+  });
+
+  it("two apply files generated from one manifest write one audit per conversion", () => {
+    const db = freshDb();
+    const { manifest, sql } = generate(db);
+    const second = buildRangeBackfillSql(manifest, { sydneyToday: TODAY, newId: sequentialIds(), nowSql: CLOCK }).sql;
+    const auditIds = (text: string) => statementsOf(text).filter((s) => s.startsWith("INSERT")).map((s) => /SELECT '([0-9a-f-]{36})'/.exec(s)?.[1]);
+    expect(auditIds(second)).toEqual(auditIds(sql));
+    expect(new Set(auditIds(sql)).size).toBe(CONVERTING.length);
+    db.exec(sql);
+    db.exec(second);
+    expect(backfillAudits(db)).toHaveLength(CONVERTING.length);
+    db.close();
+  });
+
+  it("changes nothing when run on a Sydney day other than the manifest's", () => {
+    for (const clock of [DAY_END, DAY_START - 1, Date.UTC(2026, 8, 30, 2)]) {
+      const db = freshDb();
+      const before = subtasks(db);
+      db.exec(generate(db, String(clock)).sql);
+      expect(subtasks(db), String(clock)).toEqual(before);
+      expect(backfillAudits(db), String(clock)).toHaveLength(0);
+      db.close();
+    }
+    for (const clock of [DAY_START, DAY_END - 1]) {
+      const db = freshDb();
+      db.exec(generate(db, String(clock)).sql);
+      expect(verifyCount(db), String(clock)).toBe(0);
+      db.close();
+    }
+  });
+
+  it("guards on the reviewed reminder stamp, title, done and assignee: a change after the dry run skips the row", () => {
+    const db = freshDb();
+    const { sql } = generate(db);
+    const OTHER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    db.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Other', 'other@example.test', 1, 'editor', 1, ?, ?)").run(OTHER, NOW, NOW);
+    db.prepare("UPDATE project_subtasks SET due_reminder_sent_at = ? WHERE id = ?").run(STAMP, SUBTASK.dueDateV0); // the 08:00 scan claimed it
+    db.prepare("UPDATE project_subtasks SET title = 'Renamed' WHERE id = ?").run(SUBTASK.unscheduledV0);
+    db.prepare("UPDATE project_subtasks SET done = 1 WHERE id = ?").run(SUBTASK.invalidShape);
+    db.prepare("UPDATE project_subtasks SET assignee_id = ? WHERE id = ?").run(OTHER, SUBTASK.legacyNonexistent);
+    const skipped = [SUBTASK.dueDateV0, SUBTASK.unscheduledV0, SUBTASK.invalidShape, SUBTASK.legacyNonexistent];
+    const before = subtasks(db);
+    db.exec(sql);
+    const after = subtasks(db);
+    for (const id of skipped) expect(after.get(id), id).toEqual(before.get(id));
+    const audited = backfillAudits(db).map((a) => a.target_id);
+    for (const id of skipped) expect(audited).not.toContain(id);
+    expect(audited).toHaveLength(CONVERTING.length - skipped.length);
+    expect(verifyCount(db)).toBe(skipped.length);
+    expect(prepareRangeBackfill(runDryrun(db), { sydneyToday: TODAY }).manifest.rows.map((r) => r.subtaskId).sort()).toEqual([...skipped].sort());
+    db.close();
+  });
+
+  it("keeps the reminder stamp when the conversion leaves the due date unchanged", () => {
+    const db = freshDb();
+    db.prepare("UPDATE project_subtasks SET due_date = '2026-09-20', due_reminder_sent_at = ? WHERE id = ?").run(STAMP, SUBTASK.invalidShape);
+    const { sql, manifest } = generate(db);
+    const row = manifest.rows.find((r) => r.subtaskId === SUBTASK.invalidShape)!;
+    expect(row.fromState).not.toBe("due_only");
+    expect(row.proposed.storage.dueDate?.slice(0, 10)).toBe("2026-09-20");
+    expect(row.reminder).toBe("unchanged");
+    db.exec(sql);
+    const after = subtasks(db).get(SUBTASK.invalidShape)!;
+    expect(serializeChecklistSchedule(storage(after)).state).toBe("range");
+    expect(after.due_reminder_sent_at).toBe(STAMP);
     db.close();
   });
 
@@ -399,5 +504,22 @@ describe("subtask range backfill generator (pure)", () => {
     const inserts = statementsOf(sql).filter((s) => s.startsWith("INSERT INTO audit_log"));
     expect(inserts).toHaveLength(11);
     expect(() => buildRangeBackfillSql(manifest, { sydneyToday: TODAY, newId: () => "nope" })).toThrow(/UUID/);
+  });
+
+  it("computes the Sydney day window across DST changes", () => {
+    expect(sydneyDayWindowMs(TODAY)).toEqual({ startMs: DAY_START, endMs: DAY_END });
+    // 4 Oct 2026: clocks go forward at 02:00 (23-hour day); 5 Apr 2026: back at 03:00 (25-hour day).
+    expect(sydneyDayWindowMs("2026-10-04")).toEqual({ startMs: Date.UTC(2026, 9, 3, 14), endMs: Date.UTC(2026, 9, 4, 13) });
+    expect(sydneyDayWindowMs("2026-04-05")).toEqual({ startMs: Date.UTC(2026, 3, 4, 13), endMs: Date.UTC(2026, 3, 5, 14) });
+    expect(sydneyDayWindowMs("2026-12-31").endMs).toBe(Date.UTC(2026, 11, 31, 13));
+    expect(() => sydneyDayWindowMs("2026-02-30")).toThrow();
+  });
+
+  it("derives a stable UUIDv5 audit id from the subtask id and old version", () => {
+    const id = rangeBackfillAuditId(SUBTASK.unscheduledV0, 0);
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 0)).toBe(id);
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 1)).not.toBe(id);
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV2, 0)).not.toBe(id);
   });
 });

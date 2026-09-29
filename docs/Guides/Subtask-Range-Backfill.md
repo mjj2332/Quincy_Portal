@@ -40,8 +40,8 @@ the repository**, because they hold Subtask titles and street names.
    `npx --no-install tsx scripts/subtask-range-backfill.ts prepare --dryrun <scratch>/subtask-ranges-dryrun.json --manifest <scratch>/subtask-ranges-manifest.json --review <scratch>/subtask-ranges-review.md`
    Each row is classified by the shared `serializeChecklistSchedule`, not by SQL, which cannot see DST
    resolution mismatches, non-calendar dates or cleared versioned rows. `review.md` lists only the rows to
-   convert: street, title, old state and literal, old version, the Project inputs, the new range, the new
-   version, and what happens to the due reminder.
+   convert: street, title, done/assigned, old state and literal, old version, the Project inputs, the new
+   range, the new version, and what happens to the due reminder.
 5. **The owner reads `review.md` and approves it in chat.** Do not go further without that approval.
 6. Generate the apply file from that approved manifest, **on the same Sydney day as step 4**:
    `npx --no-install tsx scripts/subtask-range-backfill.ts apply --manifest <scratch>/subtask-ranges-manifest.json --out <scratch>/subtask-ranges-apply.sql`
@@ -57,9 +57,15 @@ the repository**, because they hold Subtask titles and street names.
    #341 PR: applied twice, the second run changed nothing, and verify returned 0. If you want a rehearsal
    on the export, first prove that a converted export imports into
    `--local --persist-to <scratch>/rehearsal`. Do not rely on this step until then.
-8. Apply:
+8. Apply, **on the same Sydney day as step 4**:
    `npx wrangler d1 execute quincy-portal --remote --file <scratch>/subtask-ranges-apply.sql --config workers/app/wrangler.jsonc`
-   If it is interrupted, re-run **the same file**. Never regenerate it mid-run.
+   If it is interrupted, re-run **the same file** that day. Never regenerate it mid-run.
+
+   Every statement in the file also checks D1's clock against the preparation day (Sydney midnight to
+   the next Sydney midnight, DST-aware). **Run on any other Sydney day, the file is a no-op**: it reports
+   success and changes nothing. In that case redo the whole cycle: dry run (step 3) → prepare (4) →
+   owner review and approval (5) → generate (6) → apply. If an earlier run had stopped partway, the new
+   file skips the audits already written (same audit ids) and applies the pending conversions.
 9. Verify, and paste both outputs into the #341 PR:
    - `npx wrangler d1 execute quincy-portal --remote --json --config workers/app/wrangler.jsonc --command "$(grep -v '^--' scripts/subtask-range-backfill-verify.sql)"`
      must return `without_complete_range: 0`.
@@ -90,26 +96,39 @@ otherwise get a "due today" email for work that ended weeks ago. So, per row:
 
 - **Due-only:** the Worker's rule. The end is unchanged, so `due_reminder_sent_at` is left alone
   (`unchanged`).
+- **Other states, due date unchanged** (the first 10 characters of the old `due_date`, which the scan
+  keys on, equal the new end's date): left alone (`unchanged`), so a claim the 08:00 scan already made
+  is never cleared.
 - **Other states, new end before the Sydney date of step 4:** `due_reminder_sent_at =
   COALESCE(due_reminder_sent_at, <apply time>)`, so no stale email fires (`suppressed`). An existing
   stamp is kept, because notification joins read it as a claim key.
 - **Other states, new end on or after that date:** cleared to NULL, as the Worker does whenever an end
   changes, so the real reminder fires on the due date (`armed`).
 
+Only a stamp the owner reviewed is ever changed: the guard below includes `due_reminder_sent_at`, so a
+row the 08:00 scan claims after the dry run is skipped.
+
 ## Safety properties
 
-- Each UPDATE is guarded by the Subtask's id and Project, its full old schedule (every schedule column
-  and `due_date`, compared with `IS`) and its old `schedule_version`, plus the Project inputs the range
-  was computed from (shoot date, creation time, Deadline). A row or Project edited after the dry run is
-  skipped rather than overwritten.
-- Each audit INSERT has a fixed UUID baked into the file and is guarded by `NOT EXISTS` on that id. It
-  is written only when the Subtask holds exactly its new schedule and version. This ties it to the
-  winning UPDATE, as `changes() = 1` does in the Worker, but it also completes the audit when a run
-  that stopped between an UPDATE and its INSERT is re-run.
+- **The reviewed snapshot.** Each row's statements are guarded by the Subtask's id and Project, its full
+  old schedule (every schedule column and `due_date`, compared with `IS`), its old `schedule_version`,
+  its `title`, `done`, `assignee_id` and `due_reminder_sent_at` (all as reviewed in `review.md`), plus the
+  Project inputs the range was computed from (shoot date, creation time, Deadline). A row or Project
+  edited after the dry run, including a user saving the very same range, gets neither an audit nor an
+  update.
+- **Same day only.** Every statement also requires D1's clock to be inside the preparation Sydney day,
+  `[start, end)` in epoch ms, computed by the generator with DST handled. See step 8.
+- **Audit first, once.** Per row the audit INSERT runs first, then the UPDATE. The audit id is a UUIDv5
+  of the subtask id and its old `schedule_version`, so every file generated for that conversion carries
+  the same id, and `NOT EXISTS` on it writes the audit at most once, even across two files from one
+  manifest. The UPDATE additionally requires that audit to exist, so no row converts unaudited. A run
+  that stopped between the two is completed by a re-run: the audit is skipped (it exists) and the
+  UPDATE applies (the row is still old).
 - A second run matches nothing: every converted row has moved to its new version.
-- Free text (titles, streets) never appears in `apply.sql`. Stored values outside a small safe alphabet
-  are written as hex literals.
-- `updated_at`, and any reminder stamp, are computed by D1 when the file runs, not when it was generated.
+- Streets never appear in `apply.sql`. Titles appear only hex-encoded (they are part of the guard).
+  Other stored values outside a small safe alphabet are written as hex literals.
+- `updated_at`, the audit time and any reminder stamp are computed by D1 when the file runs, not when it
+  was generated.
 
 ## Limits
 
