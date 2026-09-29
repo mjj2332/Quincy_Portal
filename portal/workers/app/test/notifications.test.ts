@@ -169,21 +169,74 @@ describe("notifications API and recipient selection", () => {
     expect(row?.email_error).toContain("mock email unavailable");
   });
 
-  it("uses collaboration-open links for subtask assignments", async () => {
+  // #141: a staff assignment is a durable occurrence now, like the external one: an outbox row
+  // carrying the assigner as actor_id plus in_app/email ledgers, delivered by the background
+  // consumer. The read-time resolver names the actor from that ledger. The collaboration-open
+  // email link moved to the consumer's integration test.
+  async function seedSubtaskAssignment(assigneeRole: "editor" | "admin", member: boolean) {
     const now = Date.now();
     const projectId = crypto.randomUUID();
     const actorId = crypto.randomUUID();
     const assigneeId = crypto.randomUUID();
+    const subtaskId = crypto.randomUUID();
     await database.DB.batch([
-      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Mention actor', ?, 1, 'editor', 1, ?, ?), (?, 'Mention assignee', ?, 1, 'editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, assigneeId, `${assigneeId}@example.test`, now, now),
-      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Collaboration links', 'edited_review', ?, ?)").bind(projectId, now, now),
-      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, actorId, now, crypto.randomUUID(), projectId, assigneeId, now),
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Assigning actor', ?, 1, 'editor', 1, ?, ?), (?, 'Subtask assignee', ?, 1, ?, 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, assigneeId, `${assigneeId}@example.test`, assigneeRole, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Staff assigner street', 'edited_review', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, actorId, now),
+      ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
     ]);
-    const send = vi.fn().mockResolvedValue({ messageId: "collaboration-link" });
-    const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
-    await notifySubtaskAssignee(testEnv, { projectId, actorId, assigneeId, subtaskId: crypto.randomUUID(), assignmentVersion: 1 });
-    expect(send).toHaveBeenCalledTimes(1);
-    for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?collaboration=open`) });
+    return { projectId, actorId, assigneeId, subtaskId };
+  }
+
+  async function occurrence(sourceKey: string) {
+    const outbox = await database.DB.prepare("SELECT id, event_type AS eventType, actor_id AS actorId, recipient_id AS recipientId, recipient_membership_cycle_id AS cycle, recipient_authorization_epoch AS epoch, payload_json AS payload FROM notification_outbox WHERE source_key = ?").bind(sourceKey).all<{ id: string; eventType: string; actorId: string; recipientId: string; cycle: string | null; epoch: number | null; payload: string }>();
+    const ledgers = await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE source_key = ? ORDER BY channel").bind(sourceKey).all<{ channel: string; status: string }>();
+    const direct = await database.DB.prepare("SELECT COUNT(*) AS n FROM notifications WHERE type = 'subtask_assigned' AND source_key = ?").bind(sourceKey).first<{ n: number }>();
+    return { outbox: outbox.results, ledgers: ledgers.results, direct: direct?.n ?? 0 };
+  }
+
+  for (const [label, assigneeRole, member] of [["a staff member", "editor", true], ["an admin with no membership", "admin", false]] as const) {
+    it(`writes ${label}'s subtask assignment to the outbox with the assigner as actor, and no direct row (#141)`, async () => {
+      const { projectId, actorId, assigneeId, subtaskId } = await seedSubtaskAssignment(assigneeRole, member);
+      const send = vi.fn().mockResolvedValue({ messageId: "unused" });
+      const testEnv = { DB: database.DB, EMAIL: { send }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
+      await notifySubtaskAssignee(testEnv, { projectId, actorId, assigneeId, subtaskId, assignmentVersion: 1 });
+      const sourceKey = `subtask-assignment:${subtaskId}:1`;
+      const found = await occurrence(sourceKey);
+      expect(found.direct).toBe(0);
+      expect(send).not.toHaveBeenCalled();
+      expect(found.outbox).toHaveLength(1);
+      expect(found.outbox[0]).toMatchObject({ eventType: "project.subtask.assigned", actorId, recipientId: assigneeId, cycle: null });
+      expect(JSON.parse(found.outbox[0]!.payload)).toEqual({
+        schemaVersion: 1,
+        event: { type: "project.subtask.assigned", sourceKey, recipientId: assigneeId },
+        assignment: { projectId, subtaskId, assigneeId, assignmentVersion: 1 },
+      });
+      expect(found.ledgers).toEqual([{ channel: "email", status: "pending" }, { channel: "in_app", status: "pending" }]);
+    });
+  }
+
+  it("writes nothing for a stale assignment version, a self-assignment, or a staff user with no access to the project (#141)", async () => {
+    const stale = await seedSubtaskAssignment("editor", true);
+    const outsider = await seedSubtaskAssignment("editor", false);
+    const testEnv = { DB: database.DB, EMAIL: { send: vi.fn() }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
+    await notifySubtaskAssignee(testEnv, { ...stale, assignmentVersion: 2 });
+    await notifySubtaskAssignee(testEnv, { ...stale, assigneeId: stale.actorId, assignmentVersion: 1 });
+    await notifySubtaskAssignee(testEnv, { ...outsider, assignmentVersion: 1 });
+    for (const key of [`subtask-assignment:${stale.subtaskId}:2`, `subtask-assignment:${stale.subtaskId}:1`, `subtask-assignment:${outsider.subtaskId}:1`]) {
+      expect(await occurrence(key)).toEqual({ outbox: [], ledgers: [], direct: 0 });
+    }
+  });
+
+  it("repeats nothing when the same assignment version is emitted twice (#141)", async () => {
+    const seeded = await seedSubtaskAssignment("editor", true);
+    const testEnv = { DB: database.DB, EMAIL: { send: vi.fn() }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test", APP_ORIGIN: "https://portal.test" } as unknown as Env;
+    await notifySubtaskAssignee(testEnv, { ...seeded, assignmentVersion: 1 });
+    await notifySubtaskAssignee(testEnv, { ...seeded, assignmentVersion: 1 });
+    const found = await occurrence(`subtask-assignment:${seeded.subtaskId}:1`);
+    expect(found.outbox).toHaveLength(1);
+    expect(found.ledgers).toHaveLength(2);
   });
 });
 

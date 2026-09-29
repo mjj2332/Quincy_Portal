@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { NOTIFICATION_OUTBOX_EVENT_TYPE, NOTIFICATION_OUTBOX_EVENT_TYPES, type NotificationOutboxMessage } from "@quincy/shared";
+import { emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification } from "@quincy/db";
 import QuincyBackground from "../src";
 import type { Env } from "../src/env";
 import {
@@ -742,3 +743,106 @@ async function publishWith(envValue: Env, outboxId: string): Promise<void> {
   const { publishNotificationOutbox } = await import("@quincy/shared");
   await publishNotificationOutbox(envValue.NOTIFICATION_QUEUE, database.DB, [outboxId], Date.now());
 }
+
+describe("#141 staff subtask assignment through the durable consumer", () => {
+  beforeAll(async () => {
+    await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  type StaffAssignmentFixture = { projectId: string; actorId: string; assigneeId: string; subtaskId: string; sourceKey: string; outboxIds: string[] };
+
+  async function seedStaffSubtaskAssignment(options: { assigneeRole?: "editor" | "admin" | "external_editor"; member?: boolean } = {}): Promise<StaffAssignmentFixture> {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const actorId = crypto.randomUUID();
+    const assigneeId = crypto.randomUUID();
+    const subtaskId = crypto.randomUUID();
+    const assigneeRole = options.assigneeRole ?? "editor";
+    const member = options.member !== false;
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Assigning Actor', ?, 1, 'editor', 1, ?, ?), (?, 'Subtask Assignee', ?, 1, ?, 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, assigneeId, `${assigneeId}@example.test`, assigneeRole, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Subtask Assigner Street', 'editing', ?, ?)").bind(projectId, now, now),
+      ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
+    ]);
+    const sourceKey = `subtask-assignment:${subtaskId}:1`;
+    const occurrence = { projectId, actorId, assigneeId, subtaskId, assignmentVersion: 1, sourceKey };
+    const outboxIds = assigneeRole === "external_editor"
+      ? await emitExternalSubtaskNotification(database.DB, { ...occurrence, kind: "assigned" })
+      : await emitStaffSubtaskAssignedNotification(database.DB, occurrence);
+    return { projectId, actorId, assigneeId, subtaskId, sourceKey, outboxIds };
+  }
+
+  async function delivered(fixture: StaffAssignmentFixture) {
+    const rows = await database.DB.prepare("SELECT id, type, title, body, email_sent_at AS emailSentAt FROM notifications WHERE source_key = ? AND user_id = ?").bind(fixture.sourceKey, fixture.assigneeId).all<{ id: string; type: string; title: string; body: string; emailSentAt: number | null }>();
+    const ledgers = await database.DB.prepare("SELECT channel, status, notification_id AS notificationId FROM notification_delivery_ledger WHERE source_key = ? ORDER BY channel").bind(fixture.sourceKey).all<{ channel: string; status: string; notificationId: string | null }>();
+    const outbox = await database.DB.prepare("SELECT status, actor_id AS actorId FROM notification_outbox WHERE source_key = ?").bind(fixture.sourceKey).first<{ status: string; actorId: string }>();
+    return { rows: rows.results, ledgers: ledgers.results, outbox };
+  }
+
+  for (const [label, assigneeRole, member] of [["a staff editor", "editor", true], ["an admin with no membership", "admin", false]] as const) {
+    it(`delivers ${label}'s assignment once, with the staff copy, the collaboration link and a sent in_app ledger`, async () => {
+      const fixture = await seedStaffSubtaskAssignment({ assigneeRole, member });
+      expect(fixture.outboxIds).toHaveLength(1);
+      const send = vi.fn().mockResolvedValue({ messageId: "staff-subtask" });
+      await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
+      await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
+      const found = await delivered(fixture);
+      expect(found.rows).toHaveLength(1);
+      expect(found.rows[0]).toMatchObject({ type: "subtask_assigned", title: "Subtask assigned", body: "You have been assigned a project subtask." });
+      expect(found.ledgers).toEqual([
+        { channel: "email", status: "sent", notificationId: null },
+        { channel: "in_app", status: "sent", notificationId: found.rows[0]!.id },
+      ]);
+      expect(found.outbox).toEqual({ status: "completed", actorId: fixture.actorId });
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]![0]).toMatchObject({
+        to: `${fixture.assigneeId}@example.test`,
+        subject: "Subtask assigned",
+        text: expect.stringContaining(`https://portal.test/projects/${fixture.projectId}?collaboration=open`),
+      });
+    });
+  }
+
+  it("suppresses the occurrence when the subtask is reassigned before delivery", async () => {
+    const fixture = await seedStaffSubtaskAssignment();
+    await database.DB.prepare("UPDATE project_subtasks SET assignment_version = 2 WHERE id = ?").bind(fixture.subtaskId).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "unused" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
+    const found = await delivered(fixture);
+    expect(found.rows).toEqual([]);
+    expect(found.outbox?.status).toBe("suppressed");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the occurrence when the assignee has become an external editor before delivery", async () => {
+    const fixture = await seedStaffSubtaskAssignment();
+    await database.DB.prepare("UPDATE user SET role = 'external_editor' WHERE id = ?").bind(fixture.assigneeId).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "unused" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
+    const found = await delivered(fixture);
+    expect(found.rows).toEqual([]);
+    expect(found.outbox?.status).toBe("suppressed");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the occurrence when the assignee has lost access to the project before delivery", async () => {
+    const fixture = await seedStaffSubtaskAssignment();
+    await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(fixture.projectId, fixture.assigneeId).run();
+    const send = vi.fn().mockResolvedValue({ messageId: "unused" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
+    expect((await delivered(fixture)).outbox?.status).toBe("suppressed");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("still delivers an external editor's assignment with the external-safe copy (control)", async () => {
+    const fixture = await seedStaffSubtaskAssignment({ assigneeRole: "external_editor" });
+    expect(fixture.outboxIds).toHaveLength(1);
+    const send = vi.fn().mockResolvedValue({ messageId: "external-subtask" });
+    await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
+    const found = await delivered(fixture);
+    expect(found.rows).toHaveLength(1);
+    expect(found.rows[0]!.type).toBe("subtask_assigned");
+    expect(found.outbox?.status).toBe("completed");
+  });
+});

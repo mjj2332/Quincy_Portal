@@ -1,6 +1,7 @@
 import {
   emitExternalSafeLegacyNotification,
   emitExternalSubtaskNotification,
+  emitStaffSubtaskAssignedNotification,
   emitNotifications,
   notificationCopy,
   projectNotificationRecipients,
@@ -110,19 +111,15 @@ export async function notifySubtaskAssignee(
 ): Promise<void> {
   if (!input.assigneeId || input.assigneeId === input.actorId) return;
   try {
-    const db = createDb(env.DB);
-    // Project recipients includes active current members and active admins, so
-    // this is also the required emission-time eligibility re-check.
-    const recipient = (await projectNotificationRecipients(db, input.projectId, { excludeUserId: input.actorId }))
-      .find((candidate) => candidate.userId === input.assigneeId);
-    const route = projectNotificationRoute(input.projectId, "subtask_assigned");
-    const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     const sourceKey = `subtask-assignment:${input.subtaskId}:${input.assignmentVersion}`;
-    if (recipient) {
-      await emitNotifications(db, { projectId: input.projectId, type: "subtask_assigned", recipients: [recipient], title: "Subtask assigned", body: "You have been assigned a project subtask.", sourceKey, link, email: env.EMAIL, fromAddress: env.NOTIFICATIONS_FROM_ADDRESS });
-    }
-    const externalIds = await emitExternalSubtaskNotification(env.DB, { ...input, assigneeId: input.assigneeId, sourceKey, kind: "assigned" });
-    if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds);
+    const occurrence = { ...input, assigneeId: input.assigneeId, sourceKey };
+    // #141: both arms are durable occurrences delivered by the background consumer, so the
+    // outbox names the assigner. Each producer re-checks its own role in SQL, so at most one of
+    // them writes for a given assignee; a staff assignee gets no direct `notifications` row.
+    const staffIds = await emitStaffSubtaskAssignedNotification(env.DB, occurrence);
+    const externalIds = await emitExternalSubtaskNotification(env.DB, { ...occurrence, kind: "assigned" });
+    const outboxIds = [...staffIds, ...externalIds];
+    if (outboxIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, outboxIds);
   } catch (error) {
     console.error("Subtask assignment notification emission failed", { projectId: input.projectId, error });
   }

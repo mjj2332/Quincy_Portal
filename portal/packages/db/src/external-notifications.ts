@@ -138,3 +138,58 @@ export async function emitExternalSubtaskNotification(db: D1Database, input: Ext
   await insertLedgers(db, outboxIds, externalNotificationChannels(policyType), now);
   return outboxIds;
 }
+
+export type StaffSubtaskAssignedInput = {
+  projectId: string;
+  actorId: string;
+  assigneeId: string;
+  subtaskId: string;
+  assignmentVersion: number;
+  sourceKey: string;
+  now?: number;
+};
+
+/**
+ * #141: the staff counterpart of `emitExternalSubtaskNotification`'s "assigned" arm, and the ONLY
+ * producer of a staff `subtask_assigned` notification (`emitNotifications` refuses the type).
+ * It writes a durable occurrence (outbox row + in_app/email ledgers) instead of a direct
+ * `notifications` row, so the outbox carries the assigner as `actor_id` and the read-time resolver
+ * can name them. Eligibility is today's staff set, re-checked in the same INSERT ... SELECT: an
+ * active non-external user who is an admin or a member of the project, not the actor, and still
+ * the assignee at this exact assignment version. Like the old direct path, and unlike the
+ * external arm, it does not require `done = 0` or an unarchived project. The payload has no
+ * `authorizationAtOccurrence`: that is the external authorization contract (ADR 0007), and the
+ * background consumer parses this shape with its own strict staff parser.
+ */
+export async function emitStaffSubtaskAssignedNotification(db: D1Database, input: StaffSubtaskAssignedInput): Promise<string[]> {
+  const eventType = EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned;
+  const now = input.now ?? Date.now();
+  const rows = await db.prepare(`
+    INSERT INTO notification_outbox (
+      id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
+      recipient_authorization_epoch, payload_json, status, available_at,
+      recipient_membership_cycle_id, created_at, updated_at
+    )
+    SELECT ${uuidSql()}, 1, ?, ?, s.project_id, ?, recipient.id, recipient.authorization_epoch,
+      json_object(
+        'schemaVersion', 1,
+        'event', json_object('type', ?, 'sourceKey', ?, 'recipientId', recipient.id),
+        'assignment', json_object('projectId', s.project_id, 'subtaskId', s.id, 'assigneeId', s.assignee_id, 'assignmentVersion', s.assignment_version)
+      ), 'pending', ?, NULL, ?, ?
+    FROM project_subtasks s
+    INNER JOIN user recipient ON recipient.id = s.assignee_id
+    WHERE s.id = ? AND s.project_id = ? AND s.assignee_id = ? AND s.assignment_version = ?
+      AND recipient.active = 1 AND recipient.role <> 'external_editor' AND recipient.id <> ?
+      AND (recipient.role = 'admin' OR EXISTS (
+        SELECT 1 FROM project_members member WHERE member.project_id = s.project_id AND member.user_id = recipient.id
+      ))
+    ON CONFLICT(event_type, source_key, recipient_id) DO NOTHING
+    RETURNING id
+  `).bind(
+    eventType, input.sourceKey, input.actorId, eventType, input.sourceKey, now, now, now,
+    input.subtaskId, input.projectId, input.assigneeId, input.assignmentVersion, input.actorId,
+  ).all<InsertedOutbox>();
+  const outboxIds = rows.results.map((row) => row.id);
+  await insertLedgers(db, outboxIds, ["in_app", "email"], now);
+  return outboxIds;
+}

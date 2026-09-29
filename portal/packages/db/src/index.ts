@@ -14,7 +14,7 @@ export {
   type BoardSchemaVariant
 } from "./board-schema-variant";
 export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-projections";
-export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput } from "./external-notifications";
+export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput, type StaffSubtaskAssignedInput } from "./external-notifications";
 export { appendToStageBottomExpr, computeInsertPosition } from "./board-position";
 export { dashboardProjectOrder, orderDashboardStreetTies } from "./dashboard-order";
 export { rollbackBoardOrder0037PreEnable } from "./board-order-rollback-0037";
