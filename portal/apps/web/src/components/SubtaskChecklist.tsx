@@ -8,6 +8,7 @@ import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
 import { invalidateProjectSurfaces, projectDataKeys, projectCollaborationDataGeneration, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { foldToDisambiguation } from "../lib/fold-disambiguation";
 import { CHECKLIST_SCHEDULE_ZONE, oneDaySubtaskRange, type ChecklistScheduleDto, type InitialChecklistScheduleInput, type RangeChecklistScheduleInput } from "@quincy/shared";
 import { initials } from "../lib/initials";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
@@ -109,7 +110,9 @@ const BLANK_DRAFT: ScheduleDraft = { kind: "date", start: endpointDraft(null), e
 function scheduleDraft(value: ChecklistScheduleDto): ScheduleDraft {
   if (value.state === "invalid" || value.state === "unscheduled") return BLANK_DRAFT;
   if (value.state === "range") return { kind: value.end?.kind ?? "date", start: endpointDraft(value.start, value.end?.kind ?? "date"), end: endpointDraft(value.end, value.end?.kind ?? "date") };
-  const due = value.state === "legacy_unresolved" ? { kind: value.due.includes("T") ? "timed" as const : "date" as const, localCivil: value.due } : value.end ? { kind: value.end.kind, localCivil: value.end.localCivil } : null;
+  const dueEnd = value.state === "legacy_unresolved" ? null : value.end;
+  const disambiguation = dueEnd?.kind === "timed" ? foldToDisambiguation(dueEnd.fold) : undefined;
+  const due = value.state === "legacy_unresolved" ? { kind: value.due.includes("T") ? "timed" as const : "date" as const, localCivil: value.due } : dueEnd ? (dueEnd.kind === "timed" ? { kind: "timed" as const, localCivil: dueEnd.localCivil, ...(disambiguation ? { disambiguation } : {}) } : { kind: "date" as const, localCivil: dueEnd.localCivil }) : null;
   const seeded = due ? oneDaySubtaskRange(due) : null;
   return seeded ? draftFromRange(seeded) : BLANK_DRAFT;
 }

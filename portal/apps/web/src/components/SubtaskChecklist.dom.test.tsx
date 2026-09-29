@@ -241,13 +241,26 @@ describe("SubtaskChecklist", () => {
     expect(item(host, "Late version 2")).not.toBeNull();
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: versionTwo.schedule }));
     await click(saveButton(portal("subtask-popover-task-1-schedule")));
-    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: `${year}-06-01T00:00` }, end: { kind: "timed", localCivil: `${year}-06-01T10:00` } } } });
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: `${year}-06-01T00:00` }, end: { kind: "timed", localCivil: `${year}-06-01T10:00`, disambiguation: "earlier" } } } });
     await flush();
     await click(item(host, "Late version 2").querySelector<HTMLButtonElement>('[aria-label="Schedule for Late version 2"]')!);
     const conflict = portal("subtask-popover-task-1-schedule");
     expect(conflict.textContent).toContain("Latest schedule · v2");
     expect(timeInputs(conflict)[1]?.value).toBe("10:00");
     runtime.dispose(); queryClient.clear();
+  });
+
+  it.each([[0 as const, "earlier", 660], [1 as const, "later", 600]])("seeds a due-only timed endpoint's stored fold %s into the popover as the %s Sydney occurrence", async (fold, disambiguation, offset) => {
+    // 02:30 on 2026-04-05 happens twice in Sydney (DST ends): fold 0 is +11:00, fold 1 is +10:00.
+    const repeated = { ...task, dueDate: "2026-04-05T02:30", schedule: { state: "due_only" as const, version: 1, zone: "Australia/Sydney" as const, start: null, end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: null, utcOffsetMinutes: offset, fold, resolution: "stored" as const }, due: "2026-04-05T02:30" } };
+    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }] }) : Promise.resolve({ subtasks: [repeated, second] }));
+    const host = mount(); await render();
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const editor = portal("subtask-popover-task-1-schedule");
+    expect(dateInputs(editor).map((input) => input.value)).toEqual(["2026-04-05", "2026-04-05"]);
+    expect(timeInputs(editor).map((input) => input.value)).toEqual(["00:00", "02:30"]);
+    await click(saveButton(editor));
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation } } } });
   });
 
   it("uses one canonical schedule POST from the compact composer and preserves a failed draft", async () => {

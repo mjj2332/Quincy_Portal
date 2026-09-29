@@ -11,6 +11,7 @@
  * `production-calendar.css`. The shell owns only its frame and its footer (Cancel / Save schedule), which call `submit` from
  * `useChecklistScheduleDraft`.
  */
+import { foldToDisambiguation } from "../lib/fold-disambiguation";
 import { useId, useState, type JSX } from "react";
 import {
   normalizeChecklistSchedule,
@@ -47,7 +48,7 @@ export const FOLD_LEGEND = "mb-[var(--space-2)] text-foreground data-[variant=le
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
-const EDITOR_STATE = "grid gap-[6px] text-muted-foreground text-[11px] tracking-[.04em]";
+const ENDPOINT_MODE_LABEL = "grid gap-[6px] text-muted-foreground text-[11px] tracking-[.04em]";
 // FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background and the
 // `max-[721px]:min-h-[44px]` floor. `max-w-[360px]` overrides its `w-full`.
 const EDITOR_SELECT = cn("max-w-[360px]", FIELD_COMPACT);
@@ -81,9 +82,7 @@ function endpointDraft(value: ChecklistScheduleEndpointInput | { kind: EndpointK
   const parts = civilParts(value?.localCivil ?? "");
   const disambiguation = value && "disambiguation" in value
     ? value.disambiguation
-    : value && "fold" in value && (value.fold === 0 || value.fold === 1)
-      ? value.fold === 0 ? "earlier" : "later"
-      : undefined;
+    : value && "fold" in value ? foldToDisambiguation(value.fold) : undefined;
   return { date: parts.date, time: parts.time, disambiguation };
 }
 
@@ -109,7 +108,7 @@ function scheduleDraft(value: ChecklistScheduleDto): ChecklistScheduleDraft {
     const end = value.end;
     if (!end) return blankDraft();
     // Keep a stored fold as the end's occurrence, as a range end would.
-    const disambiguation = end.kind === "timed" && (end.fold === 0 || end.fold === 1) ? (end.fold === 0 ? "earlier" as const : "later" as const) : undefined;
+    const disambiguation = end.kind === "timed" ? foldToDisambiguation(end.fold) : undefined;
     return seedFromDue(end.kind === "timed" ? { kind: "timed", localCivil: end.localCivil, ...(disambiguation ? { disambiguation } : {}) } : { kind: "date", localCivil: end.localCivil });
   }
   const kind = value.end?.kind ?? value.start?.kind ?? "date";
@@ -213,7 +212,7 @@ export function ProductionCalendarScheduleEditorFields({ state }: ProductionCale
 
   return <div className={EDITOR}>
     <p className={EDITOR_INTRO}>Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>
-    <label className={EDITOR_STATE} htmlFor={`${groupId}-mode`}>Endpoint mode
+    <label className={ENDPOINT_MODE_LABEL} htmlFor={`${groupId}-mode`}>Endpoint mode
       <NativeSelect className={EDITOR_SELECT} id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
         <option value="date">Date</option>
         <option value="timed">Timed · Australia/Sydney</option>
