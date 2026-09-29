@@ -172,8 +172,9 @@ describe("a completed bar's fill is hue-independent, not a per-hue alpha step (#
     expect(oliveBar.className).not.toMatch(/data-completed:(?:hover:)?bg-\(--gantt-event-color\)/);
     expect(greigeBar.className).not.toMatch(/data-completed:(?:hover:)?bg-\(--gantt-event-color\)/);
     // Both bars carry the IDENTICAL fixed hue-independent treatment regardless of event.color.
-    expect(oliveBar.className).toContain("data-completed:bg-border");
-    expect(greigeBar.className).toContain("data-completed:bg-border");
+    // #247 design review: done rests as an outline (no fill), the same for every hue.
+    expect(oliveBar.className).toContain("data-completed:bg-transparent");
+    expect(greigeBar.className).toContain("data-completed:bg-transparent");
 
     const oliveFill = findProgressFill(oliveBar);
     const greigeFill = findProgressFill(greigeBar);
@@ -183,8 +184,8 @@ describe("a completed bar's fill is hue-independent, not a per-hue alpha step (#
     expect(greigeFill.className).not.toMatch(
       /group-data-completed\/gantt-bar-group:(?:border|bg)-\(--gantt-event-color\)/,
     );
-    expect(oliveFill.className).toContain("group-data-completed/gantt-bar-group:border-border");
-    expect(oliveFill.className).toContain("group-data-completed/gantt-bar-group:bg-border");
+    expect(oliveFill.className).toContain("group-data-completed/gantt-bar-group:border-e-0");
+    expect(oliveFill.className).toContain("group-data-completed/gantt-bar-group:bg-transparent");
     expect(greigeFill.className).toBe(oliveFill.className);
   });
 
@@ -264,7 +265,7 @@ describe("a completed bar that is ALSO selected keeps the neutral completed back
     // attributes: this bar has only one of them, so it can never match a
     // `data-completed:data-selected:…` rule.
     const unselectedClassName = bar.className;
-    expect(unselectedClassName).toMatch(/data-completed:data-selected:bg-border\/15/);
+    expect(unselectedClassName).toMatch(/data-completed:data-selected:bg-transparent/);
 
     await act(async () => {
       bar.click();
@@ -279,8 +280,8 @@ describe("a completed bar that is ALSO selected keeps the neutral completed back
     // the plain `data-completed` rule already uses, at a selector Tailwind compiles with strictly
     // higher specificity (two attribute selectors) than the single-attribute `data-selected`
     // background rule below it, so it wins regardless of which of the two was emitted last.
-    expect(bar.className).toContain("data-completed:bg-border/15");
-    expect(bar.className).toMatch(/data-completed:data-selected:bg-border\/15/);
+    expect(bar.className).toContain("data-completed:bg-transparent");
+    expect(bar.className).toMatch(/data-completed:data-selected:bg-transparent/);
     expect(bar.className).toContain("data-selected:bg-(--gantt-event-color)/30");
 
     // Selection must still be visible on a completed bar, by some means OTHER than the
@@ -335,8 +336,9 @@ describe("a completed bar gets an explicit border hairline, distinct from its ow
     expect(bar.className.split(/\s+/)).toContain("border");
     expect(bar.className).toContain("data-completed:border-muted-foreground");
     expect(bar.className).not.toContain("data-completed:border-border ");
-    // MEDIUM #5's own hue-independent rule stays untouched - do not raise the fill.
-    expect(bar.className).toContain("data-completed:bg-border/15");
+    // #247 design review: done rests as an outline, so an active Awaiting RAW bar (same
+    // greige-400 border, but with a wash) stays distinguishable.
+    expect(bar.className).toContain("data-completed:bg-transparent");
   });
 
   it("the border's RESOLVED paint colour is distinct from the completed shell's own fill - not just a different class name", () => {

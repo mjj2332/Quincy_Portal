@@ -746,6 +746,29 @@ describe("guard: a Gantt bar's boundary clears 3:1 against the timeline (#247)",
       }
     }
   });
+
+  // #247 design review: a segment cut off by the visible period used to show that only through its
+  // square corner. With a full border it drew a hard edge on the cut side, reading as a real start
+  // or end date, so the cut side drops its border as well as its radius.
+  it("a segment that continues past the period has no border on the cut side", () => {
+    const bar = stripComments(readFileSync(join(ganttDir, "gantt-bar.tsx"), "utf8"));
+    expect(bar).toContain('segment.continuesBefore && "rounded-s-none border-s-0"');
+    expect(bar).toContain('segment.continuesAfter && "rounded-e-none border-e-0"');
+  });
+
+  // #247 design review: `--text-muted` IS `--greige-400`, the Awaiting RAW hue, so a done bar and an
+  // active Awaiting RAW bar drew the same border over fills 1.07:1 apart. Nothing lighter than
+  // greige-400 clears 3:1, so done differs by FILL instead: an outline with no resting wash,
+  // against every active bar's wash plus outline.
+  it("a done bar rests as an outline: no fill on the shell or its full-width progress span", () => {
+    const bar = stripComments(readFileSync(join(ganttDir, "gantt-bar.tsx"), "utf8"));
+    const shell = barShellClasses();
+    expect(shell).toContain("data-completed:bg-transparent");
+    expect(shell).toContain("data-completed:data-selected:bg-transparent");
+    expect(shell).not.toMatch(/data-completed:bg-border\//);
+    expect(bar).toContain("group-data-completed/gantt-bar-group:bg-transparent");
+    expect(bar).not.toContain("group-data-completed/gantt-bar-group:bg-border/");
+  });
 });
 
 // ---------------------------------------------------------------------------

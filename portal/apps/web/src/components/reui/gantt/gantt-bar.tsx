@@ -1022,7 +1022,11 @@ function GanttBar<TData = unknown>({
       // its unchanged `/20` - a comfortable ~30% margin, for every stage in
       // `harness/reui-scheduling/fixtures.ts`'s `STAGE_COLORS`, not just the quietest one. The
       // label stays `text-foreground` (see this file's header) either way - only the tint changed.
-      "data-completed:bg-border/15 data-completed:hover:bg-border/20",
+      // #247 design review: `--text-muted` (the done border) IS `--greige-400`, the Awaiting RAW
+      // hue, so a done bar and an active Awaiting RAW bar drew the same border over fills 1.07:1
+      // apart. Nothing lighter than greige-400 clears 3:1, so done now differs by FILL: it rests
+      // as an outline, with a wash only on hover, against every active bar's wash plus outline.
+      "data-completed:bg-transparent data-completed:hover:bg-border/15",
       // #219 PR A fix (dr2-219a MEDIUM #3): the fill above measured 1.18:1 against the canvas -
       // the r6 HIGH #1 fix above already gives the shell a border-WIDTH tool for completed+selected
       // (the ring), but a merely-completed, unselected bar had no boundary of its own at all. An
@@ -1058,7 +1062,7 @@ function GanttBar<TData = unknown>({
       // - so the neutral completed background wins by CSS SPECIFICITY, independent of source
       // order, and cannot be flipped back by reordering. Selection stays visible on a completed
       // bar through the border-colour swap below instead of the background.
-      "data-completed:data-selected:bg-border/15",
+      "data-completed:data-selected:bg-transparent",
       // #219 PR A fix (Sol round-7 MEDIUM #2a): a `ring-ring/50 ring-2` used to carry this cue,
       // gated `not-focus-visible:` (dr2-219a MEDIUM #4) because it shared the global focus
       // outline's footprint and doubled up when a completed+selected bar was ALSO the focused
@@ -1098,8 +1102,8 @@ function GanttBar<TData = unknown>({
          tinted fill and centers the glyph on the instant */
       milestone &&
         "justify-center bg-transparent px-0 hover:bg-transparent data-selected:bg-transparent",
-      segment.continuesBefore && "rounded-s-none",
-      segment.continuesAfter && "rounded-e-none",
+      segment.continuesBefore && "rounded-s-none border-s-0",
+      segment.continuesAfter && "rounded-e-none border-e-0",
       // Quincy #257: the event's own class (e.g. a stage hatch), before the view-wide override
       event.className,
       viewConfig.classNames?.event,
@@ -1151,7 +1155,7 @@ function GanttBar<TData = unknown>({
               // SAME fixed `--color-border` token every stage shares, read off the ancestor's
               // `data-completed` (this span carries no attribute of its own) via the shell's named
               // group, exactly as before.
-              "group-data-completed/gantt-bar-group:border-border group-data-completed/gantt-bar-group:bg-border/20"
+              "group-data-completed/gantt-bar-group:border-e-0 group-data-completed/gantt-bar-group:bg-transparent"
             )}
             data-full={progress === 100 || undefined}
             style={{ width: `${progress}%` }}
