@@ -170,3 +170,31 @@ and behaviour are unchanged. `gantt-drop-warning.dom.test.tsx` covers both.
 
 The #219 comment inherited on #221 pointed at the event-calendar tree and ADR 0010 for this; that
 was a mistake — the Gantt's seams are recorded here, not in 0010.
+
+## Addendum (2026-09-29, #344)
+
+#344 gives every expanded Project its own "+ Add task" row, which the vendored tree's single root
+create-task button could not do. Two additive seams, again in this tree, because the row must sit
+between the tree's own rows and be paired with a timeline spacer of the same height:
+
+- **`onCreateGroupTask({ parentId, index, title })`** (presence opts in), gated per group by the
+  existing `canCreateTask({ parentId })`. The row appears after each EXPANDED group's last
+  descendant. A resource that declares a `children` array, even an empty one, counts as a group, so
+  a Project with no Subtasks can be expanded and given its first. The callback resolves
+  `{ ok: true }` (the row closes) or `{ ok: false, message }` (the typed title stays, the input is
+  marked invalid and the message is announced from a polite status node in the row). The row keeps
+  one fixed height in the tree, the timeline spacer and the dependency layer, so it never grows or
+  overlays to show a message (an overlay was clipped by the tree's scroll edge): the vendor's own
+  empty-title refusal shows as the empty input's placeholder, and the consumer makes a failed
+  write's message visible (Quincy: a toast). The root-level `onCreateTask` / `displayCreateTaskHint`
+  affordance is unchanged.
+- **Up/Down focus movement** between the tree's row focus targets (group toggle, row checkbox, the
+  create row), in DOM order. It is a small extension of this layer, not a change to the bar
+  Adjust keyboard: bars are in the timeline pane and are untouched. Enter or Space on the row opens
+  the input; Enter in the input submits; Esc cancels and returns focus to the row.
+
+What stays OUT of the vendor tree: the write itself (`POST /api/projects/:id/subtasks`, title only,
+the server applies the default range), the permission (`permissions.canEditChildren`), the error
+copy, the hidden-by-filters pin and its toast. The vendor renders the row and its input and reports
+what was typed. `gantt-create-task.dom.test.tsx` covers the seam; `ProductionGantt.writes.dom.test.tsx`
+covers the consumer.

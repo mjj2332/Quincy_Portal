@@ -80,6 +80,10 @@
  * range whose end is exactly midnight now names the last day it covers, without a time
  * ("Oct 3, 9:00 AM - Oct 8", was "... - Oct 9, 12:00 AM"): the end is exclusive, so the old text
  * named the wrong day. Every other branch is unchanged. Covered by `gantt-i18n.test.ts`.
+ *
+ * 2026-09-29, #344 — ADDED, additive: `labels.createTaskEmpty` and `functions.addTaskIn` /
+ * `createTaskTitleIn` (the per-group "+ Add task" row's accessible names). Covered by
+ * `gantt-i18n.test.ts`.
  */
 
 import type {
@@ -102,6 +106,8 @@ interface GanttI18nConfig {
     addEvent: string
     /** "Add task" hint at the foot of the tree. */
     addTask: string
+    /** #344 — announced/shown when a per-group create-task title is empty. */
+    createTaskEmpty: string
     allDay: string
     loading: string
     event: string
@@ -210,6 +216,10 @@ interface GanttI18nConfig {
       plannedLabel?: string
       continues: boolean
     }) => string
+    /** #344 — accessible name of a group's "+ Add task" row, naming its group. */
+    addTaskIn: (groupTitle: string) => string
+    /** #344 — accessible name of the group's inline new-task title input. */
+    createTaskTitleIn: (groupTitle: string) => string
   }
 }
 
@@ -219,6 +229,7 @@ const DEFAULT_LABELS: GanttI18nConfig["labels"] = {
   next: "Next",
   addEvent: "Add event",
   addTask: "Add task",
+  createTaskEmpty: "Enter a task title.",
   allDay: "All day",
   loading: "Loading events",
   event: "event",
@@ -375,6 +386,8 @@ function makeDefaultGanttFunctions(
       ]
         .filter(Boolean)
         .join(", "),
+    addTaskIn: (groupTitle) => `${cfg.labels.addTask} in ${groupTitle}`,
+    createTaskTitleIn: (groupTitle) => `New task title in ${groupTitle}`,
   }
 }
 

@@ -214,12 +214,29 @@
  * split the slack 50/50 with the name cell). `GanttTreeRow` takes a new memoised `nameFill` prop.
  * Both cells gained additive test seams, `data-testid="gantt-tree-name-header"` /
  * `"gantt-tree-name-cell"`. Covered by `gantt-tree-name-fill.dom.test.tsx`.
+ *
+ * 2026-09-29, #344 — ADDED, additive (off unless `settings.onCreateGroupTask` is set): the
+ * per-group "+ Add task" row (`GanttGroupCreateRow`) after each expanded group's last descendant,
+ * its matching-height timeline spacer, the dependency layer's matching row offset, and Up/Down focus
+ * movement across `[data-gantt-tree-focus]` targets (ADR 0009 addendum). ERROR SURFACE (fix round):
+ * the row never grows and never overlays — its height is `minRowRem` in the tree, the spacer and the
+ * dependency offset alike, so an in-flow message would have to resize all three, and the earlier
+ * absolutely positioned message was clipped by the tree's scroll edge. Instead the typed title stays,
+ * the input is `aria-invalid` and `aria-describedby` an always-mounted, visually hidden
+ * `role="status"` (polite) node carrying the message; the vendor's own empty-title refusal
+ * (`labels.createTaskEmpty`) shows as the empty input's placeholder, and a failed write's message is
+ * made visible by the consumer (Quincy: the toast store, `announcedElsewhere`). DESIGN (fix round):
+ * focus moves with `preventScroll` (a phone's tree pane would scroll sideways); the row button fits
+ * the row (no negative-margin bleed) with an inward focus ring, since the pane clips an outward one;
+ * the input is `h-7` so its ring stays inside the row; an invalid input's placeholder is
+ * `text-destructive`. Covered by `gantt-create-task.dom.test.tsx`.
  */
 
 import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -294,6 +311,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/reui/button"
+import { Input } from "@/components/reui/input"
 import { Checkbox } from "@/components/reui/checkbox"
 import {
   ContextMenu,
@@ -667,24 +685,43 @@ function GanttView({
   // without the whole grid re-rendering on the 30s now tick
   const todayDayKey = useTodayKey(timeZone)
 
-  const rows = useMemo(() => {
+  // #344: per-group "+ Add task" rows. `createAfter` maps the id of the LAST visible row of an
+  // expanded group's subtree to the groups whose create row follows it (inner before outer).
+  const groupCreateEnabled = !!settings.onCreateGroupTask
+  const canCreateTask = settings.canCreateTask
+  const { rows, createAfter } = useMemo(() => {
     const result: TimelineRow[] = []
+    const createAfter = new Map<string, TimelineRow[]>()
     const walk = (
       resources: GanttResource[],
       depth: number,
       parentId: string | null
     ) => {
       for (const resource of resources) {
-        const isGroup = !!resource.children?.length
+        // A resource that declares `children` (even empty) is a group when its create row is on,
+        // so its first child can be added.
+        const createRow =
+          groupCreateEnabled &&
+          Array.isArray(resource.children) &&
+          (canCreateTask?.({ parentId: resource.id }) ?? true)
+        const isGroup = !!resource.children?.length || createRow
         const collapsed = collapsedGroups.has(resource.id)
-        result.push({ resource, parentId, depth, isGroup, collapsed })
-        if (isGroup && !collapsed)
-          walk(resource.children!, depth + 1, resource.id)
+        const row: TimelineRow = { resource, parentId, depth, isGroup, collapsed }
+        result.push(row)
+        if (isGroup && !collapsed) {
+          walk(resource.children ?? [], depth + 1, resource.id)
+          if (createRow) {
+            const lastId = result[result.length - 1]!.resource.id
+            const list = createAfter.get(lastId)
+            if (list) list.push(row)
+            else createAfter.set(lastId, [row])
+          }
+        }
       }
     }
     walk(settings.resources, 0, null)
-    return result
-  }, [settings.resources, collapsedGroups])
+    return { rows: result, createAfter }
+  }, [settings.resources, collapsedGroups, groupCreateEnabled, canCreateTask])
 
   // Header model: bottom row = units, top row = grouping sectors.
   // Weights are proportional to REAL duration (a 23h/25h DST day differs from
@@ -1467,6 +1504,8 @@ function GanttView({
         }
       }
       topRem += bars?.heightRem ?? minRowRem
+      // #344: each group create row after this one takes a minimum-height row
+      topRem += (createAfter.get(row.resource.id)?.length ?? 0) * minRowRem
     }
     if (pending.length === 0) return none
     const edges: DependencyEdge[] = []
@@ -1489,6 +1528,7 @@ function GanttView({
     return { edges, totalRem: topRem }
   }, [
     rows,
+    createAfter,
     rowBars,
     rangeStartMs,
     rangeEndMs,
@@ -2439,6 +2479,24 @@ function GanttView({
   // Header label offset = the row cell's ps-3 (0.75rem) left gutter + the
   // toggle/checkbox gutter (w-5 + me-1 = 1.5rem) + the reorder grip (0.875rem)
   // when present, so "Resources" lines up with the row titles below it.
+  // #344: Up/Down move focus between the tree's row focus targets (group toggle, row checkbox,
+  // "+ Add task" row) in DOM order. Typing surfaces (an open create input) keep their own keys.
+  const onTreeArrowKey = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
+      return
+    const target = e.target as HTMLElement
+    if (target.closest("input, textarea, select, [contenteditable=true]")) return
+    const current = target.closest<HTMLElement>("[data-gantt-tree-focus]")
+    if (!current) return
+    const targets = Array.from(
+      e.currentTarget.querySelectorAll<HTMLElement>("[data-gantt-tree-focus]")
+    )
+    const index = targets.indexOf(current)
+    const next = targets[index + (e.key === "ArrowDown" ? 1 : -1)]
+    e.preventDefault()
+    next?.focus()
+  }, [])
   const namePaddingStart = reorderEnabled ? "3.125rem" : "2.25rem"
   const treeContent = (
     <div
@@ -2508,8 +2566,14 @@ function GanttView({
           )}
         </div>
       </div>
-      <div ref={treeRowsRef} className="flex flex-col">
-        {rows.map((row) => (
+      <div
+        ref={treeRowsRef}
+        className="flex flex-col"
+        onKeyDown={onTreeArrowKey}
+      >
+        {/* One flat, keyed list: a group's create row keeps its identity (and its typed title)
+            when a sibling row is added or removed above it. */}
+        {rows.flatMap((row) => [
           <GanttTreeRow
             key={row.resource.id}
             row={row}
@@ -2523,8 +2587,16 @@ function GanttView({
             onSelectedChange={row.isGroup ? undefined : toggleRowSelected}
             onGripPointerDown={reorderEnabled ? beginRowReorder : undefined}
             onToggle={onToggleRow}
-          />
-        ))}
+          />,
+          ...(createAfter.get(row.resource.id) ?? []).map((group) => (
+            <GanttGroupCreateRow
+              key={`create:${group.resource.id}`}
+              group={group}
+              heightRem={minRowRem}
+              reorderEnabled={reorderEnabled}
+            />
+          )),
+        ])}
         {showCreateTask && (
           <button
             type="button"
@@ -2773,7 +2845,7 @@ function GanttView({
             laneGapRem={laneGapRem}
           />
         )}
-        {rows.map((row, rowIndex) => (
+        {rows.flatMap((row, rowIndex) => [
           <GanttTimelineRow
             key={row.resource.id}
             row={row}
@@ -2792,8 +2864,17 @@ function GanttView({
             minRowRem={minRowRem}
             ghostHeightRem={ghostHeightRem}
             dependencySourceIds={dependencySourceIds}
-          />
-        ))}
+          />,
+          ...(createAfter.get(row.resource.id) ?? []).map((group) => (
+            <div
+              key={`create:${group.resource.id}`}
+              aria-hidden
+              data-testid="gantt-group-create-task-spacer"
+              className="border-border border-b"
+              style={{ height: `${minRowRem}rem`, minWidth: trackWidth }}
+            />
+          )),
+        ])}
         {rows.length === 0 && viewConfig.renderNoResources && (
           <div
             data-slot="gantt-no-resources"
@@ -3413,6 +3494,210 @@ const GanttDependencyLayer = memo(function GanttDependencyLayer({
   )
 })
 
+/**
+ * #344: one group's own "+ Add task" row, rendered in the tree pane after the group's last
+ * visible descendant. Idle it is a button; activated (click, Enter, Space) it becomes a title
+ * input. Enter submits the trimmed title through `settings.onCreateGroupTask`; Esc cancels and
+ * returns focus to the button. It has no `data-slot="gantt-row-group"`, so row reorder and the
+ * timeline's row geometry never see it; the timeline pane carries a matching-height spacer.
+ * Local state is keyed per group (React key `create:<id>`), so a data refetch keeps a typed title.
+ */
+const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
+  group,
+  heightRem,
+  reorderEnabled,
+}: {
+  group: TimelineRow
+  heightRem: number
+  reorderEnabled: boolean
+}) {
+  const settings = useGanttSettings()
+  const viewConfig = useGanttViewConfig()
+  const { addTaskIn, createTaskTitleIn } = settings.i18n.functions
+  const groupTitle = group.resource.title
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState("")
+  const [pending, setPending] = useState(false)
+  // `empty`: the vendor's own refusal (shown as the empty input's placeholder); `write`: the
+  // consumer's `{ ok: false, message }`, which the consumer also surfaces visibly.
+  const [error, setError] = useState<{ kind: "empty" | "write"; message: string } | null>(null)
+  const pendingRef = useRef(false)
+  const mountedRef = useRef(true)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const restoreButtonFocusRef = useRef(false)
+  const errorId = useId()
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    // preventScroll: the tree pane scrolls sideways on a phone, and a plain focus() would scroll
+    // the chevrons and the header out of view to bring the input's start edge in
+    if (editing) inputRef.current?.focus({ preventScroll: true })
+    else if (restoreButtonFocusRef.current) {
+      restoreButtonFocusRef.current = false
+      buttonRef.current?.focus({ preventScroll: true })
+    }
+  }, [editing])
+
+  const open = () => {
+    setError(null)
+    setEditing(true)
+  }
+  const close = () => {
+    restoreButtonFocusRef.current = true
+    setTitle("")
+    setError(null)
+    setEditing(false)
+  }
+
+  const submit = async () => {
+    if (pendingRef.current) return
+    const trimmed = title.trim()
+    if (!trimmed) {
+      setError({ kind: "empty", message: settings.i18n.labels.createTaskEmpty })
+      return
+    }
+    const create = settings.onCreateGroupTask
+    if (!create) return
+    pendingRef.current = true
+    setPending(true)
+    setError(null)
+    let result: Awaited<ReturnType<typeof create>>
+    try {
+      result = await create({
+        parentId: group.resource.id,
+        index: group.resource.children?.length ?? 0,
+        title: trimmed,
+      })
+    } catch (caught) {
+      result = {
+        ok: false,
+        message: caught instanceof Error ? caught.message : String(caught),
+      }
+    }
+    pendingRef.current = false
+    if (!mountedRef.current) return
+    setPending(false)
+    if (result.ok) close()
+    else {
+      setError({ kind: "write", message: result.message })
+      // the input is read-only while pending, not disabled, so it kept focus; re-assert anyway
+      inputRef.current?.focus({ preventScroll: true })
+    }
+  }
+
+  const lead = (
+    <>
+      {reorderEnabled && <span aria-hidden className="w-3.5 shrink-0" />}
+      {/* one level deeper than the group, so the + sits under its children's toggle/checkbox gutter */}
+      <span
+        aria-hidden
+        className="shrink-0"
+        style={{ width: `${(group.depth + 1) * 0.875}rem` }}
+      />
+    </>
+  )
+
+  return (
+    <div
+      data-testid="gantt-group-create-task-row"
+      data-gantt-create-for={group.resource.id}
+      className="border-border relative flex w-full shrink-0 items-center border-b"
+      style={{ height: `${heightRem}rem` }}
+    >
+      {/* The row has no padding of its own: the button fills it exactly (no bleed past the tree
+          pane's edge) and both states carry the same ps-3/pe-3, so the + and the title keep the
+          subtask titles' x-position. */}
+      {editing ? (
+        <div className="flex h-full w-full min-w-0 items-center ps-3 pe-3">
+          {lead}
+          <span className="me-1 flex w-5 shrink-0 items-center justify-center">
+            <PlusIcon
+              className="text-muted-foreground size-3.5"
+              aria-hidden="true"
+            />
+          </span>
+          <div className="min-w-0 flex-1">
+            <Input
+              ref={inputRef}
+              data-testid="gantt-group-create-task-input"
+              value={title}
+              maxLength={viewConfig.createTaskMaxLength}
+              readOnly={pending}
+              // the vendor's own empty-title refusal is shown in the (empty) input itself
+              placeholder={error?.kind === "empty" ? error.message : undefined}
+              aria-busy={pending || undefined}
+              aria-label={createTaskTitleIn(groupTitle)}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={errorId}
+              className="h-7 min-h-0 py-1 max-[721px]:min-h-0 aria-invalid:placeholder:text-destructive"
+              onChange={(e) => {
+                setTitle(e.target.value)
+                if (error) setError(null)
+              }}
+              onKeyDown={(e) => {
+                // this row owns its keys while typing; nothing above should also react
+                e.stopPropagation()
+                if (e.key === "Enter") {
+                  if (e.nativeEvent.isComposing) return
+                  e.preventDefault()
+                  void submit()
+                } else if (e.key === "Escape" && !pending) {
+                  e.preventDefault()
+                  close()
+                }
+              }}
+            />
+            {/* Always mounted so the polite announcement is heard; in flow and visually hidden,
+                so the tree's scroll edge can never clip it. The visible surfaces are the
+                placeholder above (empty title) and the consumer's own notice (a failed write). */}
+            <span
+              id={errorId}
+              role="status"
+              aria-live="polite"
+              data-testid="gantt-group-create-task-error"
+              className="sr-only"
+            >
+              {error?.message ?? ""}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <button
+          ref={buttonRef}
+          type="button"
+          data-testid="gantt-group-create-task"
+          data-gantt-tree-focus=""
+          aria-label={addTaskIn(groupTitle)}
+          // Inward focus ring (the same four utilities as Quincy's `AnchoredPopover` RING_IN): the
+          // row spans the tree pane, whose overflow clips an outward ring at both edges. `!` because
+          // the unlayered global `:focus-visible` outline shorthand resets `outline-offset`.
+          className="text-muted-foreground hover:text-foreground hover:bg-muted/40 flex h-full w-full items-center ps-3 pe-3 focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
+          onClick={open}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              open()
+            }
+          }}
+        >
+          {lead}
+          <span className="me-1 flex w-5 shrink-0 items-center justify-center">
+            <PlusIcon className="size-3.5" aria-hidden="true" />
+          </span>
+          <span>{settings.i18n.labels.addTask}</span>
+        </button>
+      )}
+    </div>
+  )
+})
+
 /** Memoized: only rows whose props actually changed re-render. */
 const GanttTreeRow = memo(function GanttTreeRow({
   row,
@@ -3543,6 +3828,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                   size="icon-xs"
                   aria-expanded={!row.collapsed}
                   aria-label={row.resource.title}
+                  data-gantt-tree-focus=""
                   className={cn(
                     "size-5! aria-expanded:bg-transparent!",
                     row.collapsed
@@ -3561,6 +3847,7 @@ const GanttTreeRow = memo(function GanttTreeRow({
                 onSelectedChange && (
                   <Checkbox
                     data-slot="gantt-row-checkbox"
+                    data-gantt-tree-focus=""
                     checked={selected}
                     onCheckedChange={(checked: boolean) =>
                       onSelectedChange(row.resource.id, checked)

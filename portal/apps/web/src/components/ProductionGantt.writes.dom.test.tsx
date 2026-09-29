@@ -34,6 +34,7 @@ import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { clearToasts } from "../lib/toast-store";
+import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
 
@@ -41,6 +42,22 @@ vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
   useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }),
 }));
+
+/**
+ * #344 fix round 2: a per-test draw cap, so the cap boundary can be exercised with the fixture's own
+ * few rows. `null` (every other test) is the real `PRODUCTION_GANTT_DRAW_CAP`. The adapter reads the
+ * binding at use time, so the getter is consulted on every model build.
+ */
+const drawCap = vi.hoisted(() => ({ override: null as number | null }));
+vi.mock("@quincy/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@quincy/shared")>();
+  return {
+    ...actual,
+    get PRODUCTION_GANTT_DRAW_CAP() {
+      return drawCap.override ?? actual.PRODUCTION_GANTT_DRAW_CAP;
+    },
+  };
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -96,6 +113,10 @@ let canEditDeadline: boolean;
 /** When set, the project's checklist is truncated: `total` rows exist, only the fixture's are loaded. */
 let truncatedTotal: number | null;
 let secondNoDeadlineProject: boolean;
+/** #344 — per-project `permissions.canEditChildren`, and rows the GET omits (as a filter would). */
+let firstCanEditChildren: boolean;
+let secondCanEditChildren: boolean;
+let omittedFromGet: Set<string>;
 
 function atFor(localCivil: string): string {
   const resolved = resolveSydneyCivilMinute(localCivil);
@@ -103,13 +124,16 @@ function atFor(localCivil: string): string {
   return resolved.value.instant;
 }
 
-function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; canEditDeadline?: boolean; truncatedTotal?: number; secondNoDeadlineProject?: boolean } = {}) {
+function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; canEditDeadline?: boolean; truncatedTotal?: number; secondNoDeadlineProject?: boolean; firstCanEditChildren?: boolean; secondCanEditChildren?: boolean } = {}) {
   deadlineDay = sydneyDay(options.deadlineOffset ?? 6);
   deadline = options.noDeadline ? null : { localCivil: `${deadlineDay}T15:00`, at: atFor(`${deadlineDay}T15:00`) };
   deadlineVersion = 1;
   canEditDeadline = options.canEditDeadline ?? true;
   truncatedTotal = options.truncatedTotal ?? null;
   secondNoDeadlineProject = options.secondNoDeadlineProject ?? false;
+  firstCanEditChildren = options.firstCanEditChildren ?? true;
+  secondCanEditChildren = options.secondCanEditChildren ?? true;
+  omittedFromGet = new Set();
   const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true };
   rows = [
     { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(1)), end: dateEndpoint(sydneyDay(3)), due: sydneyDay(3) } },
@@ -142,9 +166,9 @@ function ganttResponse() {
         deadlineVersion,
         editors: [],
         checklist: { completed: 0, total: truncatedTotal ?? rows.length },
-        permissions: { canEditDeadline, canEditChildren: true },
+        permissions: { canEditDeadline, canEditChildren: firstCanEditChildren },
         children: {
-          rows: rows.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: row.schedule, permissions: row.permissions })),
+          rows: rows.filter((row) => !omittedFromGet.has(row.id)).map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: row.schedule, permissions: row.permissions })),
           total: truncatedTotal ?? rows.length,
           returned: rows.length,
           truncated: truncatedTotal !== null,
@@ -168,7 +192,7 @@ function ganttResponse() {
             deadlineVersion: 1,
             editors: [],
             checklist: { completed: 0, total: 0 },
-            permissions: { canEditDeadline, canEditChildren: true },
+            permissions: { canEditDeadline, canEditChildren: secondCanEditChildren },
             children: { rows: [], total: 0, returned: 0, truncated: false, nextCursor: null },
           }]
         : []),
@@ -202,12 +226,33 @@ let patchReply: ((body: { schedule: { expectedVersion: number; schedule: Schedul
 let getGate: Promise<void> | null;
 /** When set, a truncated project's continuation page answers with this once it resolves (else held forever). */
 let childPageReply: Promise<Reply> | null;
+/** #344: per-request continuation page answer (wins over `childPageReply`). */
+let childPageHandler: (() => Promise<Reply>) | null;
+/** #344: a Gantt GET whose body is taken when the request ARRIVES, then held until this resolves. */
+let getHeldAtRequest: Promise<void> | null;
 
 function echoPatch(body: { schedule: { expectedVersion: number; schedule: ScheduleInput } }, subtaskId: string): Reply {
   const row = rows.find((candidate) => candidate.id === subtaskId)!;
   const schedule = scheduleFromInput(body.schedule.schedule, body.schedule.expectedVersion + 1);
   row.schedule = schedule;
   return { status: 200, body: { id: row.id, title: row.title, done: false, assignee: null, position: row.position, schedule } };
+}
+
+const CREATED_ID = "77777777-7777-4777-8777-777777777777";
+const CREATED_TITLE = "Cull selects";
+/** Per-POST override; default creates a range Subtask with the Project's default range (server-applied). */
+let createReply: ((body: { title: string }, projectId: string) => Promise<Reply> | Reply) | null;
+
+function echoCreate(body: { title: string }, projectId: string): Reply {
+  const schedule: ChecklistScheduleDto = { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) };
+  if (projectId === PROJECT_ID) {
+    rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true }, schedule });
+  }
+  return { status: 201, body: { id: CREATED_ID, title: body.title, done: false, assignee: null, assignmentVersion: 1, position: 4, dueDate: schedule.due, schedule, createdBy: "user-1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } };
+}
+
+function posts(): Request[] {
+  return requests.filter((request) => request.method === "POST");
 }
 
 function patches(): Request[] {
@@ -457,8 +502,12 @@ beforeEach(() => {
   resetFixture();
   requests = [];
   patchReply = null;
+  createReply = null;
   getGate = null;
   childPageReply = null;
+  childPageHandler = null;
+  getHeldAtRequest = null;
+  drawCap.override = null;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -474,12 +523,22 @@ beforeEach(() => {
     const json = (reply: Reply) => new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
     if (method === "GET" && url.startsWith("/api/production-gantt") && url.includes("childrenOf=")) {
       // A truncated project's continuation pages: held forever, so the project stays truncated.
+      if (childPageHandler) return json(await childPageHandler());
       if (childPageReply) return json(await childPageReply);
       return new Promise<Response>(() => {});
     }
     if (method === "GET" && url.startsWith("/api/production-gantt")) {
+      if (getHeldAtRequest) {
+        const snapshot = ganttResponse();
+        await getHeldAtRequest;
+        return json({ status: 200, body: snapshot });
+      }
       if (getGate) await getGate;
       return json({ status: 200, body: ganttResponse() });
+    }
+    const createMatch = /^\/api\/projects\/([^/]+)\/subtasks$/.exec(url);
+    if (method === "POST" && createMatch) {
+      return json(await (createReply ?? echoCreate)(body as { title: string }, decodeURIComponent(createMatch[1]!)));
     }
     const subtask = /^\/api\/projects\/[^/]+\/subtasks\/([^/?]+)$/.exec(url);
     if (method === "PATCH" && subtask) {
@@ -1166,5 +1225,418 @@ describe("ProductionGantt — Sydney DST on a timed range (#221)", () => {
     expect(byTestId("event-calendar-fold-choice")).toBeNull();
     expect(liveRegionText()).toBe("That time does not exist in Sydney on that date (daylight-saving gap).");
     expect(barLabel(RANGE_TITLE)).toBe(before);
+  });
+});
+
+/**
+ * #344 — the per-Project "+ Add task" row, end to end over the stubbed `fetch`: the real vendored
+ * Gantt, the real `ProductionGantt` consumer, the real toast store. The POST is the SAME endpoint
+ * and body shape the Project page's composer sends (`POST /api/projects/:id/subtasks`, title only;
+ * the server applies the default range from #339 and writes the audit row and activity in the same
+ * batch — proven by `workers/app/test/project-subtasks.test.ts`, so nothing is re-proven here).
+ */
+describe("ProductionGantt — Add task row (#344)", () => {
+  // `invalidateProjectSurfaces` refetches the Gantt through the query runtime the app installs on its
+  // QueryClient; the file's default client has none, so this describe gives it one.
+  let runtime: ProjectQueryRuntime;
+  beforeEach(() => {
+    runtime = new ProjectQueryRuntime(client, "gantt-create-tab");
+  });
+  afterEach(() => {
+    runtime.dispose();
+  });
+
+  function addTaskButton(street: string): HTMLButtonElement | null {
+    return [...host.querySelectorAll<HTMLButtonElement>("button")].find((el) => el.getAttribute("aria-label") === `Add task in ${street}`) ?? null;
+  }
+
+  function createInput(): HTMLInputElement {
+    const el = [...host.querySelectorAll<HTMLInputElement>("input")].find((candidate) => candidate.getAttribute("aria-label")?.startsWith("New task title in"));
+    if (!el) throw new Error("no create input");
+    return el;
+  }
+
+  function hasBar(title: string): boolean {
+    return [...host.querySelectorAll("[data-gantt-resource] button")].some((el) => el.getAttribute("aria-label")?.startsWith(title));
+  }
+
+  async function open(street = PROJECT_STREET) {
+    await click(addTaskButton(street)!);
+  }
+
+  async function submit(title: string) {
+    await setInput(createInput(), title);
+    await keydown(createInput(), "Enter");
+    await flush(6);
+  }
+
+  function toastTexts(): string[] {
+    return toasts().map((toast) => toast.textContent ?? "");
+  }
+
+  function errorToasts(): string[] {
+    return toasts().filter((toast) => toast.getAttribute("data-tone") === "error").map((toast) => toast.textContent ?? "");
+  }
+
+  function capToasts(): number {
+    return toastTexts().filter((text) => text.includes("Created — not shown (chart row limit)")).length;
+  }
+
+  function hiddenToasts(): number {
+    return toastTexts().filter((text) => text.includes("Created — hidden by current filters")).length;
+  }
+
+  it("shows the row only where the server lets the user edit the Project's children", async () => {
+    resetFixture({ secondNoDeadlineProject: true, secondCanEditChildren: false });
+    await render();
+    expect(addTaskButton(PROJECT_STREET)).not.toBeNull();
+    expect(addTaskButton(SECOND_PROJECT_STREET)).toBeNull();
+    // no permission: no row, and a Project with no Subtasks stays a plain leaf (no toggle)
+    expect(host.querySelector(`button[aria-label="${SECOND_PROJECT_STREET}"]`)).toBeNull();
+  });
+
+  it("gives a Project with no Subtasks a row and makes it expandable, when its children are editable", async () => {
+    resetFixture({ secondNoDeadlineProject: true });
+    await render();
+    expect(addTaskButton(SECOND_PROJECT_STREET)).not.toBeNull();
+    expect(host.querySelector(`button[aria-label="${SECOND_PROJECT_STREET}"][aria-expanded="true"]`)).not.toBeNull();
+  });
+
+  it("removes the row when the Project is collapsed", async () => {
+    await render();
+    await click(host.querySelector<HTMLElement>(`button[aria-label="${PROJECT_STREET}"]`)!);
+    expect(addTaskButton(PROJECT_STREET)).toBeNull();
+    await click(host.querySelector<HTMLElement>(`button[aria-label="${PROJECT_STREET}"]`)!);
+    expect(addTaskButton(PROJECT_STREET)).not.toBeNull();
+  });
+
+  it("clicking the row and pressing Enter posts exactly { title } (trimmed) to the selected Project, and the Subtask appears as a real, editable bar", async () => {
+    await render();
+    await open();
+    await submit(`  ${CREATED_TITLE}  `);
+
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0]).toMatchObject({ method: "POST", url: `/api/projects/${PROJECT_ID}/subtasks`, body: { title: CREATED_TITLE } });
+    expect(Object.keys(posts()[0]!.body as object)).toEqual(["title"]);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    // the refetch replaced the pinned copy with the server's row: it has grips
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(host.querySelector('input[aria-label^="New task title in"]')).toBeNull();
+    expect(document.activeElement).toBe(addTaskButton(PROJECT_STREET));
+    expect(toastTexts().join("|")).not.toContain("hidden by current filters");
+  });
+
+  it("posts to the second Project when its row is used", async () => {
+    resetFixture({ secondNoDeadlineProject: true });
+    await render();
+    await open(SECOND_PROJECT_STREET);
+    await submit("Second one");
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0]!.url).toBe(`/api/projects/${SECOND_PROJECT_ID}/subtasks`);
+  });
+
+  it("the arrow keys reach the row and Enter opens the input", async () => {
+    await render();
+    const toggle = host.querySelector<HTMLElement>(`button[aria-label="${PROJECT_STREET}"]`)!;
+    await act(async () => toggle.focus());
+    // walk down the tree's focus targets until the Add task row
+    for (let step = 0; step < 12 && document.activeElement !== addTaskButton(PROJECT_STREET); step += 1) await keydown(document.activeElement!, "ArrowDown");
+    expect(document.activeElement).toBe(addTaskButton(PROJECT_STREET));
+    await keydown(document.activeElement!, "Enter");
+    expect(document.activeElement).toBe(createInput());
+    await keydown(createInput(), "Escape");
+    expect(document.activeElement).toBe(addTaskButton(PROJECT_STREET));
+  });
+
+  it("refuses an empty or whitespace title, and Esc cancels: nothing is sent", async () => {
+    await render();
+    await open();
+    await setInput(createInput(), "   ");
+    await keydown(createInput(), "Enter");
+    await flush(2);
+    expect(posts()).toHaveLength(0);
+    expect(createInput()).toBeDefined();
+    await keydown(createInput(), "Escape");
+    await flush(2);
+    expect(posts()).toHaveLength(0);
+    expect(host.querySelector('input[aria-label^="New task title in"]')).toBeNull();
+  });
+
+  it("refuses a title over 500 characters without sending it", async () => {
+    await render();
+    await open();
+    await setInput(createInput(), "x".repeat(501));
+    await keydown(createInput(), "Enter");
+    await flush(2);
+    expect(posts()).toHaveLength(0);
+    expect(createInput().getAttribute("aria-invalid")).toBe("true");
+    expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toContain("500");
+    // visible where the tree's scroll edge cannot clip it
+    expect(errorToasts().some((text) => text.includes("500"))).toBe(true);
+  });
+
+  it("sends once while the request is held", async () => {
+    const held = deferred<Reply>();
+    createReply = async (body, projectId) => {
+      await held.promise;
+      return echoCreate(body, projectId);
+    };
+    await render();
+    await open();
+    await setInput(createInput(), CREATED_TITLE);
+    await keydown(createInput(), "Enter");
+    await keydown(createInput(), "Enter");
+    await flush(2);
+    expect(posts()).toHaveLength(1);
+    held.resolve({ status: 200, body: {} });
+    await flush(6);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("a 500 keeps the typed title and the input, shows the server's message as a toast and in the row's status, and adds no bar", async () => {
+    createReply = () => ({ status: 500, body: { error: "Nope from the server" } });
+    await render();
+    await open();
+    await submit(CREATED_TITLE);
+    expect(posts()).toHaveLength(1);
+    expect(createInput().value).toBe(CREATED_TITLE);
+    expect(createInput().getAttribute("aria-invalid")).toBe("true");
+    expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toBe("Nope from the server");
+    expect(errorToasts()).toHaveLength(1);
+    expect(errorToasts()[0]).toContain("Nope from the server");
+    expect(onAccessLoss).not.toHaveBeenCalled();
+    expect(hasBar(CREATED_TITLE)).toBe(false);
+  });
+
+  for (const status of [401, 403]) {
+    it(`a ${status} goes through the Gantt's access-loss flow (onAccessLoss) and adds no bar`, async () => {
+      createReply = () => ({ status, body: { error: "Nope from the server" } });
+      await render();
+      await open();
+      await submit(CREATED_TITLE);
+      expect(posts()).toHaveLength(1);
+      expect(onAccessLoss).toHaveBeenCalledTimes(1);
+      expect(hasBar(CREATED_TITLE)).toBe(false);
+    });
+  }
+
+  it("a refetch that omits the new Subtask keeps its bar and raises the hidden-by-filters toast once; the next refetch retires it", async () => {
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      return reply;
+    };
+    await render();
+    await open();
+    await submit(CREATED_TITLE);
+
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    // the pinned copy is read-only: no grips until the real row arrives
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).toBeNull();
+    expect(toastTexts().filter((text) => text.includes("Created — hidden by current filters"))).toHaveLength(1);
+
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(false);
+    expect(toastTexts().filter((text) => text.includes("Created — hidden by current filters"))).toHaveLength(1);
+  });
+
+  it("does not raise the hidden toast when the row simply comes back on the refetch", async () => {
+    await render();
+    await open();
+    await submit(CREATED_TITLE);
+    expect(toastTexts().join("|")).not.toContain("hidden by current filters");
+  });
+
+  it("does not treat a truncated child page as an omission", async () => {
+    resetFixture({ truncatedTotal: 40 });
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      return reply;
+    };
+    await render();
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(toastTexts().join("|")).not.toContain("hidden by current filters");
+  });
+
+  /**
+   * A Project whose checklist spans two child pages: page one is the fixture's rows, page two is
+   * `pageTwo`. The walk's continuation answers from `childGate` (held until the test releases it).
+   */
+  function paginated(pageTwo: Array<{ id: string; title: string; position: number }>) {
+    resetFixture({ truncatedTotal: rows.length + pageTwo.length });
+    let gate = deferred<void>();
+    childPageReply = null;
+    childPageHandler = async () => {
+      await gate.promise;
+      return {
+        status: 200,
+        body: {
+          projectId: PROJECT_ID,
+          children: {
+            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } })),
+            total: truncatedTotal!,
+            returned: pageTwo.length,
+            truncated: false,
+            nextCursor: null,
+          },
+        },
+      };
+    };
+    return {
+      release: () => { gate.resolve(); },
+      rearm: () => { gate = deferred<void>(); },
+    };
+  }
+
+  it("a refetch that supersedes a completed child walk is not judged until the new walk loads: the row comes back silently", async () => {
+    const pageTwo = [{ id: "88888888-8888-4888-8888-000000000001", title: "Page two row", position: 10 }];
+    const walk = paginated(pageTwo);
+    // the new Subtask lands on the LAST page (page two), and the Project's total grows
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      pageTwo.push({ id: CREATED_ID, title: body.title, position: 11 });
+      truncatedTotal = truncatedTotal! + 1;
+      return reply;
+    };
+    await render();
+    walk.release();
+    await flush(4);
+    expect(hasBar("Page two row")).toBe(true);
+
+    walk.rearm();
+    await open();
+    await submit(CREATED_TITLE);
+    // the refetch's new page one re-seeded the walk; its page two is still held
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(0);
+
+    walk.release();
+    await flush(6);
+    // the new walk brought the real row (grips and all): the pin retired, silently
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(hiddenToasts()).toBe(0);
+  });
+
+  it("a refetch that supersedes a completed child walk: when the new walk completes WITHOUT the row, the toast is raised then", async () => {
+    const pageTwo = [{ id: "88888888-8888-4888-8888-000000000001", title: "Page two row", position: 10 }];
+    const walk = paginated(pageTwo);
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      truncatedTotal = truncatedTotal! + 1;
+      return reply;
+    };
+    await render();
+    walk.release();
+    await flush(4);
+
+    walk.rearm();
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hiddenToasts()).toBe(0);
+
+    walk.release();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(1);
+  });
+
+  it("the real row tipping its Project over the draw cap removes the Project, and says so (never silently)", async () => {
+    // the Project row + its 4 Subtasks fill a cap of 5 exactly
+    drawCap.override = rows.length + 1;
+    const held = deferred<void>();
+    await render();
+    getGate = held.promise;
+    await open();
+    await submit(CREATED_TITLE);
+    // the pin is exempt from the budget: the new bar shows while the refetch is out
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hasBar(RANGE_TITLE)).toBe(true);
+    expect(capToasts()).toBe(0);
+
+    // the refetch returns the real row: 6 real rows > 5, the Project leaves the chart
+    getGate = null;
+    held.resolve();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(false);
+    expect(hasBar(RANGE_TITLE)).toBe(false);
+    expect(capToasts()).toBe(1);
+    expect(hiddenToasts()).toBe(0);
+
+    // once only
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(6);
+    expect(capToasts()).toBe(1);
+  });
+
+  it("during a pending resize transaction the chart is frozen: a refetch carrying the real row does not retire the pin until the chart shows it", async () => {
+    const held = deferred<void>();
+    await render();
+    getGate = held.promise;
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+
+    // a resize is saving: the controller freezes the drawn baseline (which lacks the new row)
+    const patchHeld = deferred<void>();
+    patchReply = async (body, subtaskId) => {
+      await patchHeld.promise;
+      return echoPatch(body, subtaskId);
+    };
+    await keyboardResizeRangeEnd();
+    await flush(2);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
+
+    // the create's refetch lands with the real row while the chart is frozen
+    getGate = null;
+    held.resolve();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(0);
+
+    // the save settles: the chart unfreezes onto the real row
+    patchHeld.resolve();
+    await flush(10);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(hiddenToasts()).toBe(0);
+  });
+
+  it("a refetch that STARTED before the create cannot retire the pin or raise the toast, even though it lands after it", async () => {
+    await render();
+    const ganttKey = client.getQueryCache().getAll().find((query) => query.queryKey[0] === "production-gantt")!.queryKey;
+    // a poll starts; its body is what the server had at that moment (no new row yet)
+    const held = deferred<void>();
+    getHeldAtRequest = held.promise;
+    await act(async () => { void client.refetchQueries({ queryKey: ganttKey }); await Promise.resolve(); });
+    await flush(1);
+    getHeldAtRequest = null;
+    // the create's own invalidation is deferred while something owns the Gantt key
+    const release = runtime.acquireOwner(ganttKey);
+
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+
+    // the pre-create poll lands AFTER the create, without the row
+    held.resolve();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(0);
+
+    // a refetch that starts after the create returns the row: the pin retires, silently
+    release();
+    await act(async () => { await client.invalidateQueries({ queryKey: ganttKey }); });
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(hiddenToasts()).toBe(0);
   });
 });
