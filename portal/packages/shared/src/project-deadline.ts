@@ -12,6 +12,11 @@ export const PROJECT_DEADLINE_PRESETS = [1440, 240, 60] as const;
 export const PROJECT_DEADLINE_MAX_ADVANCE_OFFSETS = 8;
 export const PROJECT_DEADLINE_MAX_OFFSET_MINUTES = 30 * 24 * 60;
 
+/** A Project's Deadline as Sydney local civil, or null while no Deadline is set (deadline_at null). */
+export function effectiveDeadlineLocalCivil(project: { deadlineAt: number | null; deadlineLocalCivil: string | null }): string | null {
+  return project.deadlineAt === null ? null : project.deadlineLocalCivil;
+}
+
 export type ProjectDeadlineKind = "advance" | "due_now";
 export type ProjectDeadlineDisambiguation = "earlier" | "later";
 export type ProjectDeadlineScheduleState = "unset" | "scheduled" | "overdue" | "inactive_delivered" | "inactive_archived";

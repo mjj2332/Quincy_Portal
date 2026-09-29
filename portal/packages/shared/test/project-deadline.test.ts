@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deadlineFireAt, formatSydneyCivil, isDeadlineOverdue, normalizeReminderOffsets, resolveSydneyCivilTime } from "../src/project-deadline";
+import { deadlineFireAt, effectiveDeadlineLocalCivil, formatSydneyCivil, isDeadlineOverdue, normalizeReminderOffsets, resolveSydneyCivilTime } from "../src/project-deadline";
 
 describe("Sydney Deadline civil time", () => {
   it("resolves ordinary civil time and round-trips it", () => {
@@ -43,5 +43,16 @@ describe("Sydney Deadline civil time", () => {
     expect(formatSydneyCivil("2026-08-26T23:15:00.000Z")).toBe("2026-08-27T09:15");
     expect(isDeadlineOverdue(Date.parse("2026-08-26T23:15:00.000Z"), Date.parse("2026-08-26T23:16:00.000Z"))).toBe(true);
     expect(isDeadlineOverdue(null, Date.now())).toBe(false);
+  });
+});
+
+describe("effectiveDeadlineLocalCivil", () => {
+  it("returns the stored local civil while a Deadline is set", () => {
+    expect(effectiveDeadlineLocalCivil({ deadlineAt: 1_790_000_000_000, deadlineLocalCivil: "2026-09-30T17:00" })).toBe("2026-09-30T17:00");
+  });
+
+  it("returns null while no Deadline is set, ignoring a stale local civil", () => {
+    expect(effectiveDeadlineLocalCivil({ deadlineAt: null, deadlineLocalCivil: "2026-09-30T17:00" })).toBeNull();
+    expect(effectiveDeadlineLocalCivil({ deadlineAt: null, deadlineLocalCivil: null })).toBeNull();
   });
 });

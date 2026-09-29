@@ -4,6 +4,7 @@ import {
   CHECKLIST_SCHEDULE_ZONE,
   checklistScheduleToDto,
   defaultSubtaskRange,
+  effectiveDeadlineLocalCivil,
   normalizeChecklistSchedule,
   serializeChecklistSchedule,
   type ChecklistScheduleDto,
@@ -22,7 +23,6 @@ import { auditMeta } from "./audit";
 import { newId } from "./ids";
 import { notifySubtaskAssignee } from "./notifications";
 import { projectMentionableUsers } from "./project-collaboration";
-import { effectiveDeadlineLocalCivil } from "./project-deadline";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
 
 export const POSITION_STEP = 1024;
