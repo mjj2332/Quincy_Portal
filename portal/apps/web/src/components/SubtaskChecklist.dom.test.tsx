@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
-import { scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
+import { formatSchedule, scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
@@ -352,5 +352,21 @@ describe("SubtaskChecklist", () => {
       for (let index = 0; index < 5; index += 1) await act(async () => { localRoot.render(<SubtaskChecklist projectId={projectId} onAccessFailure={() => {}} />); await Promise.resolve(); });
       expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1); expect(apiGetMock.mock.calls.filter(([path]) => path.includes("mentionable-users")).length).toBe(1);
     } finally { await act(async () => localRoot.unmount()); }
+  });
+});
+
+describe("formatSchedule", () => {
+  const ep = (kind: "date" | "timed", localCivil: string) => ({ kind, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
+  const dto = (start: ReturnType<typeof ep>, end: ReturnType<typeof ep>) => ({ state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start, end, due: end.localCivil.slice(0, 10) });
+
+  it("prints a one-day date range as the date once", () => {
+    expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-08")))).toBe("8 Oct 2026");
+  });
+  it("prints a same-day timed range with the date once and both times", () => {
+    expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-08T14:00")))).toBe("8 Oct 2026 · 13:00 → 14:00");
+  });
+  it("keeps a multi-day range as two full endpoints", () => {
+    expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-10")))).toBe("8 Oct 2026 → 10 Oct 2026");
+    expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-09T09:00")))).toBe("8 Oct 2026 · 13:00 → 9 Oct 2026 · 09:00");
   });
 });

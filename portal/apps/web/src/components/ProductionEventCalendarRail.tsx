@@ -109,13 +109,23 @@ export function upNextEvents(events: readonly CalendarEventDto[], nowCivil: stri
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "Thu 13 Aug · 10:00" / "Thu 13 Aug · All day", from the civil values — no device time zone. */
-function upNextLabel(event: CalendarEventDto): string {
-  const { startKey } = civilSpan(event);
-  const [year = 1970, month = 1, day = 1] = startKey.slice(0, 10).split("-").map(Number);
+/**
+ * "Thu 13 Aug · 10:00" / "Thu 13 Aug · All day", from the civil values — no device time zone.
+ * A range that started before today (Sydney) and is still running shows where it ends instead:
+ * "Until Fri 2 Oct · All day" / "Until Fri 2 Oct · 17:00" (an all-day end is exclusive, so the last day is the one before).
+ */
+function upNextLabel(event: CalendarEventDto, nowCivil: string): string {
+  const { startKey, endKey } = civilSpan(event);
+  const running = endKey > startKey && startKey.slice(0, 10) < nowCivil.slice(0, 10);
+  let key = startKey;
+  if (running) {
+    const lastDay = event.timing.allDay ? shiftSydneyCalendarDate(endKey.slice(0, 10), -1) : { ok: true as const, value: endKey.slice(0, 10) };
+    key = `${lastDay.ok ? lastDay.value : endKey.slice(0, 10)}${endKey.slice(10)}`;
+  }
+  const [year = 1970, month = 1, day = 1] = key.slice(0, 10).split("-").map(Number);
   const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
-  const when = event.timing.allDay ? "All day" : startKey.slice(11, 16);
-  return `${weekday} ${day} ${MONTHS[month - 1]} · ${when}`;
+  const when = event.timing.allDay ? "All day" : key.slice(11, 16);
+  return `${running ? "Until " : ""}${weekday} ${day} ${MONTHS[month - 1]} · ${when}`;
 }
 
 function upNextTitle(event: CalendarEventDto): string {
@@ -190,7 +200,7 @@ export function ProductionEventCalendarRail({ date, onDateChange, events, nowCiv
                   >
                     <ItemContent className="min-w-0">
                       <ItemTitle className="truncate">{upNextTitle(event)}</ItemTitle>
-                      <ItemDescription className="text-[length:var(--text-2xs)]">{upNextLabel(event)} · {upNextDetail(event)}</ItemDescription>
+                      <ItemDescription className="text-[length:var(--text-2xs)]">{upNextLabel(event, nowCivil)} · {upNextDetail(event)}</ItemDescription>
                     </ItemContent>
                   </Item>
                 ))}

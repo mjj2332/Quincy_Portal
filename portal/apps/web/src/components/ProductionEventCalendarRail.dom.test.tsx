@@ -82,6 +82,19 @@ describe("ProductionEventCalendarRail — Up next", () => {
     expect(props.onOpenUpNext).toHaveBeenCalledWith(late);
   });
 
+  it("shows the end, not the start, for a range that began before today and is still running", async () => {
+    // now = Wed 12 Aug 2026 08:00 Sydney. An all-day range 2026-08-10 .. exclusive 2026-08-15 ends on Fri 14 Aug.
+    const allDay = range("run", "2026-08-10", "2026-08-15");
+    const timed = { ...deadline("t", "2026-08-10T23:00:00.000Z", "2026-08-11T09:00"), kind: "checklist", timing: { allDay: false, start: "2026-08-10T23:00:00.000Z", end: "2026-08-14T07:00:00.000Z" } } as unknown as CalendarEventDto;
+    const future = range("future", "2026-08-13", "2026-08-15");
+    await render({ upNext: { status: "ready", events: [allDay, timed, future] } });
+    const text = [...host.querySelectorAll<HTMLElement>('[data-testid="event-calendar-up-next-item"]')].map((item) => item.textContent ?? "");
+    expect(text.find((t) => t.includes("Task run"))).toContain("Until Fri 14 Aug · All day");
+    expect(text.find((t) => t.includes("t Street") || t.includes("Deadline"))).toContain("Until Fri 14 Aug · 17:00");
+    expect(text.find((t) => t.includes("Task future"))).toContain("Thu 13 Aug · All day");
+    expect(text.find((t) => t.includes("Task future"))).not.toContain("Until");
+  });
+
   it("says loading, unavailable and nothing scheduled", async () => {
     await render({ upNext: { status: "pending", events: [] } });
     expect(host.querySelector('[data-testid="event-calendar-up-next"]')?.textContent).toContain("Loading");

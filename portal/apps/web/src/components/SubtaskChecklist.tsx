@@ -112,8 +112,15 @@ function storedEndpointDraft(value: ChecklistScheduleDto["start"], fallbackKind:
 function scheduleDraft(value: ChecklistScheduleDto | null): ScheduleDraft {
   return value ? { kind: value.end.kind, start: storedEndpointDraft(value.start, value.end.kind), end: storedEndpointDraft(value.end, value.end.kind) } : BLANK_DRAFT;
 }
-function formatSchedule(value: ChecklistScheduleDto): string {
-  return `${displayCivil(value.start.localCivil)} → ${displayCivil(value.end.localCivil)}`;
+/** A one-day range names its date once: "8 Oct 2026", or "8 Oct 2026 · 13:00 → 14:00" when timed. */
+export function formatSchedule(value: ChecklistScheduleDto): string {
+  const { start, end } = value;
+  const startDay = start.localCivil.slice(0, 10);
+  if (startDay === end.localCivil.slice(0, 10)) {
+    if (start.kind === "date" || end.kind === "date") return displayCivil(startDay);
+    return `${displayCivil(start.localCivil)} → ${end.localCivil.slice(11, 16)}`;
+  }
+  return `${displayCivil(start.localCivil)} → ${displayCivil(end.localCivil)}`;
 }
 function displayCivil(value: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}:\d{2}))?$/.exec(value);
