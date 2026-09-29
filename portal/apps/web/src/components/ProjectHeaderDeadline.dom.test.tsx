@@ -409,5 +409,10 @@ describe("ProjectHeaderDeadline", () => {
     expect(classes).toContain("sticky");
     expect(classes).toContain("bg-popover");
     expect(classes.some((c) => /^-?bottom-/.test(c))).toBe(true);
+    // #325 design review: the row's own pb-2.5 (which covers the popup's padding while pinned)
+    // stacked on the popup's p-2.5 whenever the row sat in flow, doubling the bottom gap. A
+    // matching negative margin cancels it, so the gap is 10px pinned or not.
+    expect(classes).toContain("pb-2.5");
+    expect(classes).toContain("-mb-2.5");
   });
 });
