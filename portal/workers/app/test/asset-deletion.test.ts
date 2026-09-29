@@ -73,13 +73,16 @@ describe("admin asset deletion", () => {
     const project = await seedProject(["edited", "video", "floorplan", "copy"]);
     for (const kind of ["photo", "edited", "video", "copy_pdf"]) {
       const asset = await seedAsset(project, kind); const key = `renditions/${asset.id}/web`; const annotationKey = `projects/${project.projectId}/annotations/${asset.id}.json`;
-      // An earlier edit's stroke object, no longer referenced by any row, under the asset's own prefix.
+      // An earlier edit's stroke object, no longer referenced by any row, under a photo's own prefix.
+      // Only photos can be annotated, so only their prefixes are walked.
+      const annotatable = kind === "photo"; // this test's "edited" seeds a non-enum kind; real edited assets are photos
       const replacedStrokeKey = `projects/${project.projectId}/raw/${asset.id}/annotations/strokes-1-replaced.json`;
-      await baseEnv.MEDIA.put(asset.r2Key, "original"); await baseEnv.MEDIA.put(key, "rendition"); await baseEnv.MEDIA.put(annotationKey, "annotation"); await baseEnv.MEDIA.put(replacedStrokeKey, "replaced");
+      await baseEnv.MEDIA.put(asset.r2Key, "original"); await baseEnv.MEDIA.put(key, "rendition"); await baseEnv.MEDIA.put(annotationKey, "annotation");
+      if (annotatable) await baseEnv.MEDIA.put(replacedStrokeKey, "replaced");
       await database.DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, stroke_r2_key, created_at) VALUES (?, ?, ?, 'admin', 'raw', ?, ?)").bind(crypto.randomUUID(), asset.id, seedAdminId, annotationKey, Date.now()).run();
       await database.DB.prepare("INSERT INTO selections (id, asset_id, selected_by, state, created_at) VALUES (?, ?, ?, 'selected_for_editing', ?)").bind(crypto.randomUUID(), asset.id, seedAdminId, Date.now()).run().catch(() => undefined);
       const response = await deleteAsset(asset.id); expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({ ok: true, deletedAssetIds: [asset.id], deletedObjects: 4, dropboxDeleted: true });
+      await expect(response.json()).resolves.toMatchObject({ ok: true, deletedAssetIds: [asset.id], deletedObjects: annotatable ? 4 : 3, dropboxDeleted: true });
       await expect(baseEnv.MEDIA.get(asset.r2Key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(annotationKey)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(replacedStrokeKey)).resolves.toBeNull();
       await expect(database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(asset.id).first()).resolves.toBeNull();
       await expect(database.DB.prepare("SELECT id FROM annotations WHERE asset_id = ?").bind(asset.id).first()).resolves.toBeNull();

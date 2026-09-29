@@ -127,12 +127,12 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
   const targetSql = `(${idMarks})`;
   const deleteParams = [...targetIds, ...targetIds, targetCount, ...targetIds, ...targetIds];
 
-  // Read before the batch: D1 cascades the annotation rows away with the asset (#283).
-  const annotationStrokeKeys = (await db.select({ key: schema.annotations.strokeR2Key }).from(schema.annotations)
-    .where(inArray(schema.annotations.assetId, targetIds)).all())
-    .flatMap((row) => row.key ? [row.key] : []);
-
   try {
+    // Read before the batch: D1 cascades the annotation rows away with the asset (#283). Inside the
+    // `try`, so a failed read still releases the Dropbox claim in the `finally`.
+    const annotationStrokeKeys = (await db.select({ key: schema.annotations.strokeR2Key }).from(schema.annotations)
+      .where(inArray(schema.annotations.assetId, targetIds)).all())
+      .flatMap((row) => row.key ? [row.key] : []);
     const results = await c.env.DB.batch([
       c.env.DB.prepare(`DELETE FROM assets
         WHERE id IN ${targetSql}
@@ -173,9 +173,10 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
     const keySet = new Set<string>([...targets.map((target) => target.r2Key), ...annotationStrokeKeys]);
     // Renditions, plus every stroke object under the asset's annotation prefixes — including objects
     // an earlier edit replaced, which no row references any more (#283).
+    // Only photos (RAW or edited collection) carry annotations, so only they cost the extra listings.
     const prefixes = targets.flatMap((target) => [
       `renditions/${target.id}/`,
-      ...(["raw", "edited"] as const).map((scope) => `projects/${primary.projectId}/${scope}/${target.id}/annotations/`),
+      ...(target.kind === "photo" ? (["raw", "edited"] as const).map((scope) => `projects/${primary.projectId}/${scope}/${target.id}/annotations/`) : []),
     ]);
     for (const prefix of prefixes) {
       let cursor: string | undefined;

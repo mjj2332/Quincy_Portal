@@ -227,6 +227,7 @@ annotationsRoutes.patch("/annotations/:id", terminalRoute("/annotations/:id", as
       }
     }
     const updated = await createDb(c.env.DB).update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
+    if (!updated) { await deleteReplacedStrokeObject(c, patch.strokeR2Key ?? null); return c.json({ error: "Annotation not found" }, 404); }
     if (patch.strokeR2Key !== undefined) await deleteReplacedStrokeObject(c, annotation.strokeR2Key, patch.strokeR2Key);
     await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: annotation.assetId, scope: annotation.scope, changed });
     return c.json(externalAnnotationDto({ id: updated!.id, authorId: annotation.authorId, authorName: annotation.authorName, authorRole: annotation.authorRole, authorActive: annotation.authorActive, scope: updated!.scope, strokeR2Key: updated!.strokeR2Key, noteText: updated!.noteText, createdAt: updated!.createdAt, editedAt: updated!.editedAt }, c.env.APP_ORIGIN));
@@ -262,6 +263,9 @@ annotationsRoutes.patch("/annotations/:id", terminalRoute("/annotations/:id", as
     }
   }
   const updated = await db.update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
+  // The row went between the read and the write (a racing delete): the object just written has
+  // nothing pointing at it, and the delete already removed the old one.
+  if (!updated) { await deleteReplacedStrokeObject(c, patch.strokeR2Key ?? null); return c.json({ error: "Annotation not found" }, 404); }
   if (patch.strokeR2Key !== undefined) await deleteReplacedStrokeObject(c, annotation.strokeR2Key, patch.strokeR2Key);
   await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: asset.assetId, scope, changed });
   return c.json(updated);
