@@ -53,6 +53,18 @@ Then copy each file into `components/reui/`, and on the way:
 `npx shadcn@latest view <name>` shows the raw registry source with unresolved placeholders
 (`cn`, `IconPlaceholder`). Read it for dependencies; copy files only from an `add`.
 
+## The skin every vendored item gets (#239)
+
+A new item under `components/reui/` lands with nova's `dark:` variants, Tailwind drop shadows and
+`bg-black/*` scrims. `components/reui/reui-skin.guard.test.ts` fails the build on all three, across
+the whole tree:
+
+- **`dark:`** — delete it. `styles/tokens/reui.css` rebinds `dark` to a `.dark` class nothing sets.
+- **`shadow-sm/md/lg/…`** — Tailwind compiles these to its own defaults, not Quincy's. A popup
+  keeps its `ring-1 ring-foreground/10` hairline and drops the shadow; an overlay above a scrim
+  names the token, `shadow-[var(--shadow-lg)]` (`sheet`, `alert-dialog`).
+- **`bg-black/10` scrims** — `bg-[var(--scrim-overlay)]` with a 3px blur, as `components/Modal.tsx`.
+
 ## Where to read real compositions
 
 - **ReUI MCP first** (`mcp__ReUI__*`, Ultimate plan): `search` → `get_component` / `get_examples`

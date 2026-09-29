@@ -49,28 +49,29 @@ describe("buttonClasses", () => {
     // confirmations render as primary buttons. Each fragment below is asserted to actually come
     // from `buttonVariants`' own output for that cva variant, so this test can't silently drift
     // from `reui/button.tsx` either.
-    const DISTINCTIVE: Record<"default" | "outline" | "destructive" | "ghost", string> = {
-      default: "bg-primary",
-      outline: "bg-background",
-      destructive: "bg-destructive/10",
-      ghost: "dark:hover:bg-muted/50",
-    };
-    for (const [cvaVariant, fragment] of Object.entries(DISTINCTIVE) as [keyof typeof DISTINCTIVE, string][]) {
-      expect(buttonVariants({ variant: cvaVariant })).toContain(fragment);
-    }
+    // Each cva variant is fingerprinted by the classes only it adds: its own output minus what
+    // every variant shares. A fragment would not do — `ghost` is a strict subset of `outline`
+    // (#239 removed its one distinctive class, a dead `dark:` variant) — so the mapped variant is
+    // the one whose whole fingerprint is present, and no larger fingerprint is.
+    const CVA_VARIANTS = ["default", "outline", "destructive", "ghost"] as const;
+    const tokens = (classes: string) => new Set(classes.split(/\s+/).filter(Boolean));
+    const shared = CVA_VARIANTS.map((v) => tokens(buttonVariants({ variant: v }))).reduce((a, b) => new Set([...a].filter((t) => b.has(t))));
+    const fingerprint = Object.fromEntries(
+      CVA_VARIANTS.map((v) => [v, [...tokens(buttonVariants({ variant: v }))].filter((t) => !shared.has(t))]),
+    ) as Record<(typeof CVA_VARIANTS)[number], string[]>;
+    for (const v of CVA_VARIANTS) expect(fingerprint[v].length, v).toBeGreaterThan(0);
 
-    const MAPPING: [ButtonVariant, keyof typeof DISTINCTIVE][] = [
+    const MAPPING: [ButtonVariant, (typeof CVA_VARIANTS)[number]][] = [
       ["primary", "default"],
       ["secondary", "outline"],
       ["danger", "destructive"],
       ["text", "ghost"],
     ];
     for (const [variant, cvaVariant] of MAPPING) {
-      const classes = buttonClasses(variant);
-      expect(classes).toContain(DISTINCTIVE[cvaVariant]);
-      for (const [otherCvaVariant, otherFragment] of Object.entries(DISTINCTIVE)) {
-        if (otherCvaVariant !== cvaVariant) expect(classes).not.toContain(otherFragment);
-      }
+      const classes = tokens(buttonClasses(variant));
+      const present = CVA_VARIANTS.filter((v) => fingerprint[v].every((t) => classes.has(t)));
+      const widest = present.reduce((a, b) => (fingerprint[b].length > fingerprint[a].length ? b : a));
+      expect(widest, variant).toBe(cvaVariant);
     }
   });
 
