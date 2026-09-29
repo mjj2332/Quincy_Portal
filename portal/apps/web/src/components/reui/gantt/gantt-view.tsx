@@ -60,6 +60,11 @@
  * `rounded-full` both already resolve through Quincy's own unlayered radius tokens — see
  * `styles/tokens/reui.css` — so neither was a `rounded-lg|xl` violation of the square-card rule).
  *
+ * #237 edit, style-only: the zoom buttons' resting glyph moved from `text-muted-foreground` to
+ * `text-foreground-secondary` (the thin 12px strokes measured 1.7-2.0:1, under WCAG 1.4.11's 3:1
+ * for a control's graphic; the hairline border is unchanged), and the drop-target row's VALID tint
+ * (`bg-muted/40`, a delta of 2) was removed. Warning and invalid tints stay.
+ *
  * This file: the largest of the 9 (~4.4k lines) — row virtualization, the resource tree, row
  * expand/collapse, the timeline grid, and the scroll-synced header. Six `IconPlaceholder`
  * occurrences (two `PlusIcon`) resolved by `add`, matching each placeholder's own `lucide=` prop:
@@ -3011,7 +3016,7 @@ function GanttView({
                         // `rounded-b-none` -> `rounded-none`: the outer capsule is `rounded-none`
                         // now too (see that element's own comment), so there is no outer corner
                         // left for this button to inherit and partially cancel.
-                        className="text-muted-foreground hover:text-foreground size-11! rounded-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                        className="text-foreground-secondary hover:text-foreground size-11! rounded-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                         onClick={() => {
                           if (!canZoomIn) return
                           // controlled zoom anchors via fineCenterRef when
@@ -3043,7 +3048,7 @@ function GanttView({
                         // header's own comment above for why. #219 PR A fix (dr-219a LOW #7, part
                         // 3): `size-5!` -> `size-11!` (44px target) and `rounded-t-none` ->
                         // `rounded-none` - see the sibling zoom-in button's own comment above.
-                        className="text-muted-foreground hover:text-foreground border-border size-11! rounded-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                        className="text-foreground-secondary hover:text-foreground border-border size-11! rounded-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                         onClick={() => {
                           if (!canZoomOut) return
                           if (viewConfig.zoom === undefined) anchorZoomCenter()
@@ -3922,7 +3927,8 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         // comment above for why.
         rowBorder !== null && "border-b border-border",
         rowBorder === "dashed" && "border-dashed",
-        dragTarget === "valid" && "bg-muted/40",
+        // #237.3: a VALID target takes no tint - bg-muted/40 measured a delta of 2 from the row's
+        // own tone, below noticing (owner: drop it). Warning and invalid still tint.
         dragTarget === "warning" && "bg-signal-caution/7",
         dragTarget === "invalid" && "bg-destructive/10"
       )}

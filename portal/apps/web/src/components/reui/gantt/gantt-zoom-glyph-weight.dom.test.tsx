@@ -96,3 +96,22 @@ describe("the zoom control's minus glyph is compensated for lacking a plus glyph
     expect(minusStrokeWidth).toBeGreaterThan(plusStrokeWidth);
   });
 });
+
+// #237.1: the glyphs measured 1.7-2.0:1 against the button ground at `text-muted-foreground`
+// (greige-400: 3.36:1 as a flat fill, but a 12px thin stroke anti-aliases well below that).
+// WCAG 1.4.11 asks 3:1 for a control's identifying graphic, so the resting glyph takes
+// `text-foreground-secondary` (greige-600, 8.66:1 on paper-050). The hairline border stays: the
+// glyph alone identifies the control (owner decision on #237).
+describe("the zoom control's glyphs clear the 3:1 non-text floor (#237)", () => {
+  it.each(["Zoom in", "Zoom out"] as const)("%s paints its glyph with text-foreground-secondary, not text-muted-foreground", async (label) => {
+    await render(
+      <Gantt resources={RESOURCES} events={[]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+    const button = host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+    const classes = button.className.split(/\s+/);
+    expect(classes).toContain("text-foreground-secondary");
+    expect(classes).not.toContain("text-muted-foreground");
+  });
+});
