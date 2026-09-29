@@ -90,9 +90,8 @@ const ADD_FILTER = "Add filter";
 const VALUE_MENU_CLASS = "w-60";
 // The server ignores an id it does not list, so the chip says so rather than claim a narrowing.
 const UNKNOWN_EDITOR = "Unknown editor (not applied)";
-// A highlighted value row paints `--accent` (ink), the avatar's own fill: a paper ring keeps its
-// circle visible there (#274 design review).
-const OPTION_AVATAR = "size-5 [[data-highlighted]_&]:ring-1 [[data-highlighted]_&]:ring-[var(--paper-050)]";
+// `InitialsAvatar` keeps its circle visible on a highlighted (ink) row itself (#324).
+const OPTION_AVATAR = "size-5";
 
 type EditorOption = { value: string; label: string; known: boolean };
 
