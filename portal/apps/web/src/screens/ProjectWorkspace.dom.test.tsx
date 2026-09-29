@@ -1071,7 +1071,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.querySelector('[data-testid="project-collaboration-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("never probes comments after a successful details response when the workspace batch fails", async () => {
+  it("a RAW 403 after detail shows Project unavailable and leaves no collaboration content mounted", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("RAW forbidden", 403));
@@ -1080,8 +1080,17 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    // The comments request itself may now happen: readiness no longer waits on Raw assets (#335).
     expect(host.textContent).toContain("Project unavailable.");
-    expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/comments?limit=50")]));
+    expect(host.textContent).not.toContain("Leaked Street");
+    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-wrap"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-workspace"]')).toBeNull();
+    const commentCalls = () => apiGetMock.mock.calls.filter(([path]) => path.includes("/comments?")).length;
+    const before = commentCalls();
+    await flush(20);
+    expect(commentCalls()).toBe(before);
+    expect(host.textContent).not.toContain("Leaked Street");
   });
 
   it("acknowledges terminal 403-probe and direct-failure signals exactly once without mounting a panel", async () => {
@@ -1227,9 +1236,12 @@ describe("ProjectWorkspace collaboration relocation", () => {
     const previousObserver = globals.IntersectionObserver;
     const previousFocused = focusManager.isFocused();
     let callback: IntersectionObserverCallback | undefined;
+    // Only the comments read-anchor observer is captured: PhotoGrid tiles (LazyImage) construct their own
+    // observers, and which one is built last depends on whether the grid mounts before the panel.
     class TestIntersectionObserver {
-      constructor(next: IntersectionObserverCallback) { callback = next; }
-      observe() {}
+      private readonly next: IntersectionObserverCallback;
+      constructor(next: IntersectionObserverCallback) { this.next = next; }
+      observe(target: Element) { if (target.matches("[data-testid=discussion-read-anchor]")) callback = this.next; }
       unobserve() {}
       disconnect() {}
     }
@@ -1557,5 +1569,94 @@ describe("ProjectWorkspace collaboration relocation", () => {
         expect(host.querySelector('[role="tabpanel"][id$="-activity-panel"] button')?.textContent).not.toBe("Retry");
       }
     }
+  });
+});
+
+describe("ProjectWorkspace readiness does not wait on asset responses (#335)", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset(); apiDeleteMock.mockReset(); });
+  afterEach(async () => { vi.useRealTimers(); await unmount(); host.remove(); });
+
+  const tabButtons = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
+  const selectedTabs = () => tabButtons().filter((item) => item.getAttribute("aria-selected") === "true");
+
+  type Gates = { ingest?: Promise<unknown>; raw?: Promise<unknown>; edited?: Promise<unknown> };
+  function mockProject(stageKey: string, gates: Gates = {}) {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey });
+      if (path.includes("/assets?collection=raw")) return gates.raw ?? Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("/assets?collection=edited")) return gates.edited ?? Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path.includes("ingest-status")) return gates.ingest ?? Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
+      if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+  }
+
+  it("becomes ready while the RAW assets response is still in flight", async () => {
+    const raw = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    mockProject("raw_review", { raw: raw.promise });
+    await render(<ProjectWorkspace projectId="p1" />);
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace present with RAW assets unresolved");
+    expect(host.querySelector('[data-testid="project-header"]')).not.toBeNull();
+    expect(selectedTabs()).toHaveLength(1);
+    expect(selectedTabs()[0]!.textContent).toContain("RAW");
+    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("Loading project.");
+    await act(async () => { raw.resolve({ assets: [workspaceAsset("raw-1")] }); await Promise.resolve(); });
+    await flush();
+    expect(host.textContent).toContain("raw-1.jpg");
+    expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
+  });
+
+  it("resolves the Edited stage default before any asset read", async () => {
+    const raw = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    const edited = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    const ingest = deferredPromise<unknown>();
+    mockProject("edited_review", { raw: raw.promise, edited: edited.promise, ingest: ingest.promise });
+    await render(<ProjectWorkspace projectId="p1" />);
+    // Detail has landed and the observer is mounted, but the companion batch still holds the workspace back.
+    await flushUntil(() => apiGetMock.mock.calls.some(([path]) => path.includes("/assets?collection=")), "first asset read");
+    const assetCalls = () => apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.includes("/assets?collection="));
+    expect(assetCalls()).toEqual(["/api/projects/p1/assets?collection=edited"]);
+    await act(async () => { ingest.resolve({ expectedCount: null, receivedCount: 1, mismatch: false }); await Promise.resolve(); });
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace with assets unresolved");
+    expect(selectedTabs()).toHaveLength(1);
+    expect(selectedTabs()[0]!.textContent).toContain("Edited");
+    expect(host.textContent).toContain("Edited frames");
+    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
+    // The passive RAW read for the Lightbox follows, and is the only RAW request.
+    expect(assetCalls()).toEqual(["/api/projects/p1/assets?collection=edited", "/api/projects/p1/assets?collection=raw"]);
+  });
+
+  it.each([
+    ["editor", "editing_autohdr", "Edited"], ["editor", "edited_review", "Edited"], ["editor", "delivered", "Edited"],
+    ["admin", "editing_autohdr", "Edited"], ["admin", "edited_review", "Edited"], ["admin", "delivered", "Edited"],
+    ["editor", "raw_review", "RAW"],
+    ["photographer", "edited_review", "RAW"],
+  ] as const)("%s on a %s project opens the %s tab", async (role, stageKey, expected) => {
+    authState.role = role;
+    mockProject(stageKey);
+    await render(<ProjectWorkspace projectId="p1" />);
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null && host.querySelector('[data-testid="collection-loading"]') === null, "workspace with loaded collection");
+    expect(selectedTabs()).toHaveLength(1);
+    expect(selectedTabs()[0]!.textContent).toContain(expected);
+    if (role === "photographer") expect(tabButtons().some((item) => item.textContent?.includes("Edited"))).toBe(false);
+    if (expected === "Edited") expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
+  });
+
+  it("keeps Loading project. while the project detail landed but the companion batch is pending", async () => {
+    const ingest = deferredPromise<unknown>();
+    mockProject("raw_review", { ingest: ingest.promise });
+    await render(<ProjectWorkspace projectId="p1" />);
+    await flush(15);
+    expect(host.querySelector('[data-testid="project-workspace"]')).toBeNull();
+    expect(host.textContent).toContain("Loading project.");
+    await act(async () => { ingest.resolve({ expectedCount: null, receivedCount: 1, mismatch: false }); await Promise.resolve(); });
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace after ingest settles");
   });
 });

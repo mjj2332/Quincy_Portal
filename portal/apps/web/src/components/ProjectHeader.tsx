@@ -1,4 +1,5 @@
 import type { CollectionKind } from "@quincy/shared";
+import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
@@ -156,7 +157,7 @@ export function ProjectHeader({
   stageMoveDisabledReason = null,
 }: {
   project: ProjectDetail;
-  activeTab: CollectionKind;
+  activeTab: WorkspaceTab;
   availableTabs: CollectionKind[];
   canUpload: boolean;
   canAdminBackend: boolean;
@@ -165,7 +166,7 @@ export function ProjectHeader({
   autohdrBlocked: boolean;
   isSyncing: boolean;
   onSyncDropbox: () => void;
-  onActiveTabChange: (kind: CollectionKind) => void;
+  onActiveTabChange: (tab: WorkspaceTab) => void;
   onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void;
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
@@ -222,7 +223,7 @@ export function ProjectHeader({
     </div>
 
     <div className="project-header__tabs">
-      <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as CollectionKind); }}>
+      <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Collections">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
             <TabsTrigger key={tab} value={tab} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
