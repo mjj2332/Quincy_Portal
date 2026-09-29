@@ -1376,7 +1376,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // One string for both: the toast is silenced as `announcedElsewhere`, so whatever the live region
       // says is all a screen-reader user gets. Speaking a generic line while the silent toast shows the
       // specific reason would withhold the reason from them alone.
-      const priorityFailure = reason instanceof Error ? reason.message : "The project priority could not be updated.";
+      // Names the project: the toast sits far from the card whose stars just snapped back (#232).
+      const priorityFailure = `Priority for ${project.street} was not saved: ${reason instanceof Error ? reason.message : "the request failed."}`;
       setAnnouncement(priorityFailure);
       toast(priorityFailure, "error", { announcedElsewhere: true });
     } finally {

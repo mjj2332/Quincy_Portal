@@ -1011,6 +1011,8 @@ describe("an optimistic priority change is rendered while its POST is pending (#
     await act(async () => { post.fail(new Error("Offline")); await Promise.resolve(); });
     await flush();
     expect(value()).toBe("1");
+    // The revert is visible on the card, so the message names which project's change was lost.
+    expect(document.body.textContent).toContain("Priority for 1 Priority Street was not saved: Offline");
   });
 
   function boardWith(priority: number) {
