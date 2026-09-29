@@ -55,6 +55,15 @@
  * the move dialog and the checklist fold choice — `ProductionEventCalendarDialogs` (the Calendar's
  * `reui/alert-dialog` shells, rendered whole; #224 retired the old Modal presentations).
  *
+ * ## #344 — "+ Add task"
+ * Each expanded Project whose `permissions.canEditChildren` holds ends with a "+ Add task" row (the
+ * vendored tree owns the row and input; `onCreateGroupTask` / `canCreateTask` here own the write and the
+ * gate). Enter posts `{ title }` only to `POST /api/projects/:id/subtasks` (the server applies the default
+ * range, the audit row and the activity — the same endpoint as the Project page). The created Subtask is
+ * pinned (`lib/production-gantt-create.ts`, display-only, generation-scoped) until the refetch returns it;
+ * if a complete refetch omits it, the bar stays for one more refetch and "Created — hidden by current
+ * filters" is toasted. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
+ *
  * Still read-only: `legacy_unresolved` / `invalid` rows, which the adapter
  * routes to `attention` with no event at all. `interactions` stays CONTROLLED and is switched off
  * while an interaction is open, the post-save refetch is pending, or access was lost.
@@ -111,7 +120,11 @@ import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttProposedUpdate, GanttResource, GanttScale, GanttSlotDraft, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
 import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
-import { ApiError } from "../lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { ApiError, apiPost } from "../lib/api";
+import { invalidateProjectSurfaces, type ProjectSubtask } from "../lib/project-data";
+import { pushToast } from "../lib/toast-store";
+import { pinFromCreated, reconcilePinnedCreatedRows, withPinnedCreatedRows, type PinnedCreatedRow } from "../lib/production-gantt-create";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
@@ -633,6 +646,9 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
   return { ...model, events };
 }
 
+/** The create endpoint's title bound (`createInput` in workers/app/src/routes/project-subtasks.ts). */
+const GANTT_CREATE_TITLE_MAX = 500;
+
 export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
@@ -1016,7 +1032,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     setPendingDeadline(null);
   }, [commands.accessLost]);
 
-  const baseModel = useMemo(() => buildProductionGanttModel(displayProjects, { now, interactive: true, deadlineInteractive: true }), [displayProjects, now]);
+  // #344: a just-created Subtask that the refetch has not (yet) returned stays a bar. Display-only,
+  // applied AFTER the controller's frozen `displayProjects`, and never part of `projectById` — the
+  // pinned row is read-only until the real row arrives.
+  const [pins, setPins] = useState<PinnedCreatedRow[]>([]);
+  const pinnedProjects = useMemo(() => withPinnedCreatedRows(displayProjects, pins, generationKey), [displayProjects, pins, generationKey]);
+  const baseModel = useMemo(() => buildProductionGanttModel(pinnedProjects, { now, interactive: true, deadlineInteractive: true }), [pinnedProjects, now]);
   const model = useMemo(
     () => withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending),
     [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending],
@@ -1326,6 +1347,56 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (proposal) commands.submitProposal(proposal);
   }, [commands, placeableEntryByResourceId, scale]);
 
+  // ---------------------------------------------------------------------------------------------
+  // #344 — "+ Add task" on each expanded Project. The vendored tree owns the row and its input;
+  // this owns the write. Title only: the server applies the Project's default range (#339), and the
+  // audit log and activity come from the same endpoint the Project page's composer uses.
+  // ---------------------------------------------------------------------------------------------
+  const queryClient = useQueryClient();
+  const dataUpdatedAtRef = useRef(query.dataUpdatedAt);
+  dataUpdatedAtRef.current = query.dataUpdatedAt;
+  const generationKeyRef = useRef(generationKey);
+  generationKeyRef.current = generationKey;
+  const canCreateTask = useCallback(({ parentId }: { parentId: string | null }) => {
+    if (!parentId?.startsWith("project:")) return false;
+    return projectById.get(parentId.slice("project:".length))?.permissions.canEditChildren === true;
+  }, [projectById]);
+  const creatingRef = useRef(false);
+  const handleCreateGroupTask = useCallback(async ({ parentId, title }: { parentId: string; index: number; title: string }): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const projectId = parentId.slice("project:".length);
+    const trimmed = title.trim();
+    if (!trimmed) return { ok: false, message: "Enter a task title." };
+    if (trimmed.length > GANTT_CREATE_TITLE_MAX) return { ok: false, message: `Task titles are ${GANTT_CREATE_TITLE_MAX} characters or fewer.` };
+    if (creatingRef.current) return { ok: false, message: "A task is already being added." };
+    creatingRef.current = true;
+    const generation = generationKeyRef.current;
+    try {
+      const created = await apiPost<ProjectSubtask, { title: string }>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`, { title: trimmed });
+      if (generationKeyRef.current === generation) {
+        setPins((current) => [...current.filter((pin) => pin.row.id !== created.id), pinFromCreated(projectId, created, dataUpdatedAtRef.current, generation)]);
+      }
+      // No `producer`: this write is outside the scheduling controller, so the Gantt refetches itself.
+      await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, dashboardSearchOnly: true, gantt: true });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof ApiError ? error.message : "Subtask could not be added." };
+    } finally {
+      creatingRef.current = false;
+    }
+  }, [queryClient]);
+  // Retire pins against each authoritative refetch; announce the ones a filter left out, once.
+  const toastedPinsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (pins.length === 0) return;
+    const { pins: next, newlyHidden } = reconcilePinnedCreatedRows(pins, effectiveProjects, query.dataUpdatedAt, generationKey);
+    for (const pin of newlyHidden) {
+      if (toastedPinsRef.current.has(pin.row.id)) continue;
+      toastedPinsRef.current.add(pin.row.id);
+      pushToast("Created — hidden by current filters", "caution");
+    }
+    if (next.length !== pins.length || next.some((pin, index) => pin !== pins[index])) setPins(next);
+  }, [pins, effectiveProjects, query.dataUpdatedAt, generationKey]);
+
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
 
   // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
@@ -1416,6 +1487,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             dragCreate
             displayScheduleHint
             displayCreateTaskHint={false}
+            canCreateTask={canCreateTask}
+            onCreateGroupTask={handleCreateGroupTask}
+            createTaskMaxLength={GANTT_CREATE_TITLE_MAX}
             renderResourceLabel={renderResourceLabel}
             renderEvent={renderEvent}
             className="h-[36rem]"

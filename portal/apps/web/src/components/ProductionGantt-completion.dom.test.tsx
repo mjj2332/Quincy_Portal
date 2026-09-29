@@ -141,7 +141,9 @@ async function render(host: HTMLElement, root: Root, projects: GanttProjectRowDt
 }
 
 function findByAriaLabelIncluding(host: HTMLElement, text: string): HTMLElement {
-  const match = [...host.querySelectorAll("button")].find((candidate) => candidate.getAttribute("aria-label")?.includes(text));
+  // #344: bars only — a childless Project is now a group, so its tree toggle (named for the street)
+  // and "Add task in <street>" row precede the bar in DOM order. Bars live in the timeline rows.
+  const match = [...host.querySelectorAll<HTMLElement>("[data-gantt-resource] button")].find((candidate) => candidate.getAttribute("aria-label")?.includes(text));
   if (!match) throw new Error(`no bar button found with aria-label including "${text}"`);
   return match;
 }

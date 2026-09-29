@@ -112,6 +112,12 @@
  * 2026-09-28, #256 — ADDED, additive (default false changes nothing): `GanttTreePanelConfig.
  * nameColumnFill`, which lets the tree's name column grow to fill the panel with `nameColumnWidth`
  * as its floor. Rendered by `gantt-view.tsx`; covered by `gantt-tree-name-fill.dom.test.tsx`.
+ *
+ * 2026-09-29, #344 — ADDED, additive (off unless `onCreateGroupTask` is passed): the per-group
+ * "+ Add task" row. `GanttSettings.onCreateGroupTask` (presence opts in; gated per group by the
+ * existing `canCreateTask({ parentId })`) and `GanttViewConfig.createTaskMaxLength`; `canCreateTask`
+ * and `onCreateGroupTask` joined `SETTINGS_KEYS` so a change re-renders the view. Rendered by
+ * `gantt-view.tsx`; covered by `gantt-group-create-task.dom.test.tsx`. See ADR 0009's #344 addendum.
  */
 
 import {
@@ -240,11 +246,23 @@ interface GanttCallbacks<TData = unknown> {
   /** Fires when the "add task" hint is activated; create a new tree row. */
   onCreateTask?: (ctx: { parentId: string | null; index: number }) => void
   /**
-   * Gates the "add task" hint. The shipped view offers root-level creation
-   * only (parentId = null); parentId stays in the contract for group-level
-   * affordances a consumer builds via its own UI + onCreateTask.
+   * Gates the "add task" hint (parentId = null) and, when `onCreateGroupTask` is set, each
+   * group's own "+ Add task" row (parentId = the group's resource id).
    */
   canCreateTask?: (ctx: { parentId: string | null }) => boolean
+  /**
+   * Quincy #344: presence opts in to a per-group "+ Add task" row after each EXPANDED group's
+   * last descendant, where `canCreateTask({ parentId })` allows it. A resource that declares a
+   * `children` array (even an empty one) counts as a group so its first child can be added. The
+   * row turns into a title input; Enter submits the trimmed title through this callback and
+   * resolves `{ ok: true }` (the row closes) or `{ ok: false, message }` (the message is shown and
+   * the typed title stays). The consumer owns the write; the vendor owns the row and its input.
+   */
+  onCreateGroupTask?: (ctx: {
+    parentId: string
+    index: number
+    title: string
+  }) => Promise<{ ok: true } | { ok: false; message: string }>
   /** Click on a tree row's surface (chevron/checkbox/grip clicks excluded). */
   onResourceClick?: (ctx: GanttColumnContext, e: React.MouseEvent) => void
   onResourceDoubleClick?: (ctx: GanttColumnContext, e: React.MouseEvent) => void
@@ -1784,6 +1802,8 @@ function createGanttStore<TData>(
     "getEventPriority",
     "eventOrder",
     "getOccurrences",
+    "canCreateTask",
+    "onCreateGroupTask",
   ] as const
 
   return {
@@ -2332,6 +2352,8 @@ interface GanttViewConfig<TData = unknown> {
    * flow (onCreateTask). Shown only when canCreateTask allows it. Default off.
    */
   displayCreateTaskHint: boolean
+  /** Quincy #344: maxLength of the per-group create-task title input. Unset = unlimited. */
+  createTaskMaxLength?: number
   /** Floating zoom in/out control over the track. Default on. */
   zoomControl: boolean
   /**
@@ -2560,6 +2582,7 @@ const VIEW_CONFIG_KEYS: Array<keyof GanttViewConfig> = [
   "displayScheduleHint",
   "initialCenter",
   "displayCreateTaskHint",
+  "createTaskMaxLength",
   "dragCreate",
   "zoomControl",
   "wheelZoom",
@@ -2654,6 +2677,7 @@ const OPTION_KEYS: Array<keyof UseGanttStateOptions> = [
   "onSelectSlot",
   "canSelectSlot",
   "onCreateTask",
+  "onCreateGroupTask",
   "canCreateTask",
   "onResourceClick",
   "onResourceDoubleClick",
