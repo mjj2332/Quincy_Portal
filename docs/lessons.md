@@ -4269,3 +4269,20 @@ freezing the whole Board.
 - **Rule:** any code that reorders the Board outside a drag goes through the same FLIP for free.
   Do not add a second animation to `KanbanItem`. happy-dom has no layout, so the geometry is
   checked in the browser pass.
+
+## #266 — every staff URL write scrolled the page to the top
+
+- **Symptom:** on a phone, changing a Gantt or Calendar filter, or committing a search, threw the
+  reader back to the top of the Dashboard (`scrollY` 433 → 0). The #255 empty-state Clear focused
+  and scrolled the Add-filter trigger into view, and the router's reset then undid it.
+- **Why:** TanStack's `setupScrollRestoration` always registers its `onRendered` subscriber on the
+  client, *past* the `scrollRestoration` option check, so "restoration off" only turns off saved
+  positions — the reset to top still runs after every render the history is notified of. Every
+  staff write notifies it (`staff-history.ts` → `history.notify`).
+- **Fix:** the staff history tells the router, before each notify, whether the pathname changed,
+  and the router sets `_scroll.next` from it — the same flag its own `resetScroll: false`
+  navigation option sets. Query-only changes keep the scroll position; a new screen lands at the top.
+- **Rule:** `_scroll` is router-internal. `app-router-scroll.dom.test.tsx` pins the behaviour, so a
+  TanStack upgrade that renames it fails a test rather than the phone layout. Do not "fix" this with
+  a `scrollRestoration` function: a truthy option also turns on the scroll cache and sets
+  `history.scrollRestoration = "manual"`.
