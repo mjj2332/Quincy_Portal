@@ -159,7 +159,7 @@ import { useStages } from "../lib/stages";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
-import { buttonClasses } from "./quincy/Button";
+import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
@@ -1366,13 +1366,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
           ) : (
             <EmptyState role="status" data-testid="production-gantt-empty" title="No projects match these filters.">
               Change or clear the filters above to see more projects.
-              <div className="flex flex-wrap justify-center gap-x-[var(--space-4)] mt-[var(--space-4)]">
+              <div className="flex flex-wrap justify-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] mt-[var(--space-4)]">
                 {/* #270: Stage = Delivered with delivered projects hidden draws nothing for a known
                     reason (a cold link is never rewritten on load), so offer that specific fix. */}
                 {showDeliveredRecovery && (
-                  <button type="button" className={buttonClasses("text")} onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery)}>
+                  <QuincyButton variant="text" type="button" onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery)}>
                     Show delivered projects
-                  </button>
+                  </QuincyButton>
                 )}
                 <button type="button" className={buttonClasses("text")} onClick={clearFiltersFromEmptyState}>
                   Clear filters
