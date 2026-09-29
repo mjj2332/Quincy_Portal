@@ -152,6 +152,8 @@ export function ProjectHeader({
   isSyncing,
   onSyncDropbox,
   onActiveTabChange,
+  collaborationUnread = 0,
+  collaborationTabRef,
   onStageMove,
   stageMovePending = false,
   stageMoveDisabledReason = null,
@@ -167,6 +169,9 @@ export function ProjectHeader({
   isSyncing: boolean;
   onSyncDropbox: () => void;
   onActiveTabChange: (tab: WorkspaceTab) => void;
+  /** Unread discussion comments, shown as a badge on the Collaboration tab. */
+  collaborationUnread?: number;
+  collaborationTabRef?: React.Ref<HTMLButtonElement>;
   onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void;
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
@@ -224,13 +229,20 @@ export function ProjectHeader({
 
     <div className="project-header__tabs">
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
-        <TabsList variant="line" aria-label="Collections">
+        <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
             <TabsTrigger key={tab} value={tab} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
               {collectionLabel(tab)}
               {/* #213: the active tab's count is the filled ink badge, the rest stay muted (prototype 2a). */}
               <Badge variant={tab === activeTab ? "default" : "primary-light"} size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
             </TabsTrigger>); })}
+          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" ref={collaborationTabRef} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+            Collaboration
+            {collaborationUnread > 0 && <>
+              <Badge variant="destructive" size="sm" aria-hidden="true" data-testid="project-collaboration-tab-unread">{collaborationUnread > 99 ? "99+" : collaborationUnread}</Badge>
+              <span className="sr-only">, {collaborationUnread} unread comment{collaborationUnread === 1 ? "" : "s"}</span>
+            </>}
+          </TabsTrigger>
         </TabsList>
       </Tabs>
     </div>

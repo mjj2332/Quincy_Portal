@@ -5,10 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
 import { EditProject } from "../screens/EditProject";
-import { buildStaffNavigation } from "../lib/staff-navigation";
-import { parseStaffLocation } from "../lib/router";
-import { SidebarProvider } from "./reui/sidebar";
-import { NavigationRail } from "./quincy/NavigationRail";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
 import { getProjectQueryRuntime } from "../lib/project-query-sync";
@@ -258,36 +254,6 @@ describe("ProjectCollaborationPanel", () => {
     ] }] } });
   });
 
-  it("starts open without stealing focus, toggles, and closes with focused Escape", async () => {
-    const host = mount();
-    const sentinel = document.createElement("button"); sentinel.textContent = "Page control"; document.body.appendChild(sentinel); sentinel.focus();
-    await render(<ProjectCollaborationPanel projectId={projectId} />);
-    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')!;
-    expect(document.activeElement).toBe(sentinel); expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
-    expect(panel).not.toBeNull();
-    await click(toggle); expect(toggle.getAttribute("aria-expanded")).toBe("false"); expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull();
-    await click(toggle); expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    const reopened = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
-    reopened.querySelector<HTMLButtonElement>("button")?.focus();
-    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true })); await Promise.resolve(); });
-    await waitForTimer();
-    expect(host.querySelector('[aria-label="Project collaboration"]')).toBeNull(); expect(document.activeElement).toBe(toggle); sentinel.remove();
-  });
-
-  it("uses an overlay-only fixed head and inner scroller while standalone content remains unwrapped", async () => {
-    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
-    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    const overlay = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
-    expect(overlay.dataset.mode).toBe("overlay");
-    expect(overlay.firstElementChild).toBe(overlay.querySelector('[data-testid="project-collaboration-head"]'));
-    const scroll = overlay.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
-    expect(overlay.children[2]).toBe(scroll); expect(scroll.querySelector('[aria-label="Project checklist"]')).not.toBeNull(); expect(scroll.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
-    await unmount(); host.remove(); const standalone = mount(); await render(<ProjectCollaborationPanel projectId={projectId} mode="standalone" />);
-    const panel = standalone.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
-    expect(panel.dataset.mode).toBe("standalone"); expect(panel.querySelector('[data-testid="project-collaboration-scroll"]')).toBeNull(); expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
-  });
-
   it("renders Discussion and Activity as persistent semantic tabs with roving keyboard focus", async () => {
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} />);
@@ -343,7 +309,6 @@ describe("ProjectCollaborationPanel", () => {
       const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
       const visibleRect = () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 });
       Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: visibleRect });
-      Object.defineProperty(host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!, "getBoundingClientRect", { configurable: true, value: visibleRect });
       window.dispatchEvent(new Event("scroll"));
       await flush(20);
       expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/" + projectId + "/comment-read-marker", { throughCommentId: "new-head" });
@@ -354,27 +319,11 @@ describe("ProjectCollaborationPanel", () => {
     }
   });
 
-  it("retains the selected view across hide/reopen, but a new collaboration signal resets Discussion", async () => {
-    const consumed: number[] = [];
-    const host = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    const activity = () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')!;
-    await click(activity());
-    expect(activity().getAttribute("aria-selected")).toBe("true");
-    const hide = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!;
-    await click(hide); await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')!);
-    expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-activity-panel"]')?.getAttribute("aria-selected")).toBe("true");
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1, 2]);
-    expect(host.querySelector<HTMLButtonElement>('[role="tab"][aria-controls$="-discussion-panel"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(host.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
-  });
-
   it("keeps the standalone composer draft across an active comments refetch", async () => {
     let queryClient!: QueryClient;
     apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
     const host = mount();
-    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(client) => { queryClient = client; }} /><ProjectCollaborationPanel projectId={projectId} mode="standalone" /></>);
+    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(client) => { queryClient = client; }} /><ProjectCollaborationPanel projectId={projectId} /></>);
     const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(composer, "Draft survives poll");
 
@@ -383,7 +332,7 @@ describe("ProjectCollaborationPanel", () => {
     expect(host.querySelector<HTMLElement>('[contenteditable="true"]')?.textContent).toContain("Draft survives poll");
   });
 
-  it("keeps the overlay open when checklist title, all popovers, and composer Escape consume the event", async () => {
+  it("keeps the panel mounted when checklist title, all popovers, and composer Escape consume the event", async () => {
     const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
@@ -413,90 +362,15 @@ describe("ProjectCollaborationPanel", () => {
     const resolves: Array<(value: unknown) => void> = [];
     apiGetMock.mockImplementation((path: string) => path.includes("/comments?") ? new Promise((resolve) => { resolves.push(resolve); }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve({ subtasks: [] }));
     const host = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+    await render(<ProjectCollaborationPanel projectId={projectId} />);
     expect([...host.querySelectorAll('[role="status"]')].map((element) => element.textContent)).toContain("Loading comments…");
     for (const resolve of resolves) resolve(comments([])); await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     expect(host.textContent).toContain("No comments yet.");
     await unmount(); host.remove();
     apiGetMock.mockImplementation((path: string) => path.includes("/comments?") ? Promise.reject(new ApiError("Comments are unavailable.", 400)) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve({ subtasks: [] }));
     const failing = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+    await render(<ProjectCollaborationPanel projectId={projectId} />);
     expect(failing.querySelector('[role="alert"]')?.textContent).toContain("Comments are unavailable.");
-  });
-
-  it("consumes every distinct arrival signal, including one while already open and one after close", async () => {
-    const consumed: number[] = [];
-    const host = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={2} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(consumed).toEqual([1, 2]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
-    await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!);
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull();
-    await waitForTimer();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={3} onOpenSignalConsumed={(signal) => consumed.push(signal)} />);
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]); expect(document.activeElement).toBe(host.querySelector('[data-testid="project-collaboration-head"] button'));
-  });
-
-  it("only closes on Escape while panel focus owns an unprevented event", async () => {
-    const host = mount();
-    await render(<><ProjectCollaborationPanel projectId={projectId} openSignal={1} /><div data-testid="lightbox-stand-in"><button type="button">Lightbox control</button></div><button type="button">Workspace control</button></>);
-    const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
-    const escape = async () => act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
-
-    host.querySelector<HTMLButtonElement>('[data-testid="lightbox-stand-in"] button')!.focus(); await escape();
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBe(panel);
-    host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-panel"] [contenteditable]')!.focus();
-    const editor = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"] [contenteditable]')!;
-    editor.addEventListener("keydown", (event) => event.preventDefault(), { once: true });
-    await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBe(panel);
-    host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!.focus(); await escape();
-    await waitForTimer();
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull();
-  });
-
-  it("shows the compact capped unread count on the closed collaboration toggle", async () => {
-    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve({ ...readState(), unreadCount: 123 }) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
-    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await click(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-head"] button')!); await flush();
-    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')!;
-    expect(toggle.querySelector('[data-testid="project-collaboration-unread"]')?.textContent).toBe("99+"); expect(toggle.getAttribute("aria-label")).toContain("123 unread comments");
-  });
-
-  it("keeps the panel open when the rail's account and notification menus consume Escape", async () => {
-    apiGetMock.mockImplementation((path) => path.startsWith("/api/notifications")
-      ? Promise.resolve({ notifications: [], unreadCount: 0 })
-      : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
-    const host = mount();
-    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true });
-    await render(
-      <>
-        <SidebarProvider open onOpenChange={() => {}}>
-          <NavigationRail navigation={navigation} user={{ name: "Ada" }} variant="expanded" />
-        </SidebarProvider>
-        <ProjectCollaborationPanel projectId={projectId} openSignal={1} />
-      </>,
-    );
-    // Both menus are portaled to `document.body` (a sibling of `host`), not `host`'s own
-    // subtree — Base UI's `Menu.Portal`/`reui/popover.tsx`'s `Popover.Portal` both portal by
-    // default. And Base UI's Escape dismissal listens on `document` (@floating-ui/react's
-    // `useDismiss`), not `window` — an event dispatched directly on `window` never reaches it.
-    const accountTrigger = document.querySelector<HTMLButtonElement>('[data-testid="navigation-rail-account"]')!;
-    await click(accountTrigger); await waitForTimer();
-    expect(document.querySelector('[role="menu"]')).not.toBeNull();
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForClose();
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(accountTrigger);
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
-
-    const bellTrigger = document.querySelector<HTMLButtonElement>('[data-testid="rail-notification-trigger"]')!;
-    await click(bellTrigger); await waitForTimer();
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitForClose();
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(bellTrigger);
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
   });
 
   it("posts comments, exposes edit/delete only to the author, cancels edits, and scopes mention lookup to the project", async () => {
@@ -507,7 +381,7 @@ describe("ProjectCollaborationPanel", () => {
       ? Promise.resolve({ users: [{ id: "user-mention", name: "Nora Mention", role: "editor" }] })
       : Promise.resolve(comments(serverHasPosted ? [posted, ownComment, otherComment] : undefined)));
     const host = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+    await render(<ProjectCollaborationPanel projectId={projectId} />);
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Edit")).toHaveLength(1);
     expect([...host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Delete")).toHaveLength(1);
     const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
@@ -524,7 +398,7 @@ describe("ProjectCollaborationPanel", () => {
   it("keeps Activity invalidation in create, edit, and delete comment success paths", async () => {
     let client!: QueryClient;
     const host = mount();
-    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(next) => { client = next; }} /><ProjectCollaborationPanel projectId={projectId} mode="standalone" /></>);
+    await render(<><PresentationSeed pages={{ pages: [comments()], pageParams: [null] }} onClient={(next) => { client = next; }} /><ProjectCollaborationPanel projectId={projectId} /></>);
     const runtime = getProjectQueryRuntime(client)!;
     const publish = vi.spyOn(runtime, "publish");
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "New Activity comment");
@@ -568,7 +442,7 @@ describe("ProjectCollaborationPanel", () => {
     ] }] };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([{ ...ownComment, content }])));
     const host = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+    await render(<ProjectCollaborationPanel projectId={projectId} />);
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
     await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
@@ -593,7 +467,7 @@ describe("ProjectCollaborationPanel", () => {
           ? Promise.resolve(comments([oldestComment]))
           : Promise.resolve({ ...comments(serverHasPosted ? [posted, otherComment, ownComment] : [otherComment, ownComment]), nextCursor: "older-page" }));
     const host = mount();
-    await render(<ProjectCollaborationPanel projectId={projectId} openSignal={1} />);
+    await render(<ProjectCollaborationPanel projectId={projectId} />);
 
     const list = host.querySelector<HTMLElement>("[data-testid=discussion-comments]")!;
     const loadOlder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments")!;
@@ -674,9 +548,7 @@ describe("ProjectCollaborationPanel", () => {
     await render(<RerenderingPanel />);
     const initialCommentGets = pendingComments.length;
     const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
-    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
-    Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
     await flush(6);
     expect(pendingComments).toHaveLength(initialCommentGets + 1);
@@ -716,9 +588,7 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount();
     await render(<StrictMode><ProjectCollaborationPanel projectId={projectId} /></StrictMode>);
     const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
-    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
-    Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
     await flush(20);
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
@@ -1025,6 +895,52 @@ describe("ProjectCollaborationPanel", () => {
     focusManager.setFocused(previousFocused);
     if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver");
     else globals.IntersectionObserver = previousObserver;
+  });
+
+  it("renders one static in-flow panel with the head, Discussion/Activity tabs and Subtask checklist, and no overlay controls", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+    expect(panel.firstElementChild).toBe(panel.querySelector('[data-testid="project-collaboration-head"]'));
+    expect(panel.querySelector('[aria-label="Project checklist"]')).not.toBeNull();
+    expect(panel.querySelector("[data-testid=discussion-composer]")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-toggle"], [data-testid="project-collaboration-wrap"], [data-testid="project-collaboration-scroll"]')).toBeNull();
+    expect([...panel.querySelectorAll("button")].some((button) => button.textContent === "Hide ›")).toBe(false);
+    expect(panel.hasAttribute("data-mode")).toBe(false);
+    expect(panel.className).not.toMatch(/\bproject-collaboration/);
+  });
+
+  it("follows a controlled view and reports every selection through onViewChange", async () => {
+    const changes: string[] = [];
+    const host = mount();
+    const ui = (view: "discussion" | "activity") => <ProjectCollaborationPanel projectId={projectId} view={view} onViewChange={(next) => changes.push(next)} />;
+    await render(ui("discussion"));
+    const tab = (name: "discussion" | "activity") => host.querySelector<HTMLButtonElement>(`[role="tab"][aria-controls$="-${name}-panel"]`)!;
+    expect(tab("discussion").getAttribute("aria-selected")).toBe("true");
+    await click(tab("activity"));
+    // Controlled: the click is reported but the panel keeps showing the parent's value until the parent changes it.
+    expect(changes).toEqual(["activity"]);
+    expect(tab("discussion").getAttribute("aria-selected")).toBe("true");
+    await render(ui("activity"));
+    expect(tab("activity").getAttribute("aria-selected")).toBe("true");
+    expect(activityQueryMock.mock.calls.at(-1)).toEqual([projectId, true]);
+    await click(tab("discussion"));
+    expect(changes).toEqual(["activity", "discussion"]);
+  });
+
+  it("renders nothing while not presented, but still reports the unread count and keeps the draft when shown again", async () => {
+    const counts: number[] = [];
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve({ ...readState(), unreadCount: 7 }) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
+    const host = mount();
+    const ui = (presented: boolean) => <ProjectCollaborationPanel projectId={projectId} presented={presented} onUnreadCountChange={(count) => counts.push(count)} />;
+    await render(ui(true)); await flush(10);
+    await typeIntoEditor(host.querySelector<HTMLElement>('[data-testid=discussion-composer] [contenteditable="true"]')!, "kept draft");
+    await render(ui(false)); await flush(10);
+    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull();
+    expect(host.textContent).toBe("");
+    expect(counts.at(-1)).toBe(7);
+    await render(ui(true)); await flush(10);
+    expect(host.querySelector<HTMLElement>('[data-testid=discussion-composer] [contenteditable="true"]')?.textContent).toContain("kept draft");
   });
 
   it("keeps EditProject form-only with no collaboration panel or two-column wrapper", async () => {

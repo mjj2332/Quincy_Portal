@@ -145,6 +145,18 @@ async function typeIntoEditor(editor: HTMLElement, text: string) {
   });
 }
 
+function workspaceTab(host: HTMLElement, name: string): HTMLButtonElement | undefined {
+  return [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.trim().startsWith(name));
+}
+
+// Every Project opens on Collaboration (#336), so a case about a Collection opens that tab explicitly first.
+async function openTab(host: HTMLElement, name: string) {
+  const tab = workspaceTab(host, name);
+  if (!tab) throw new Error(`No ${name} tab button`);
+  await click(tab);
+  await flush(20);
+}
+
 function editedTabButton(host: HTMLElement): HTMLButtonElement {
   const button = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"));
   if (!button) throw new Error("No Edited tab button");
@@ -219,6 +231,7 @@ afterEach(async () => {
   it("shows no Editor folder banner when nothing is latched (#163)", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
+    await openTab(host, "RAW");
     expect(host.textContent).toContain("raw-1.jpg");
     expect(host.querySelector('[data-testid="editor-folder-attention"]')).toBeNull();
   });
@@ -230,12 +243,14 @@ afterEach(async () => {
       : base(path));
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
+    await openTab(host, "RAW");
     expect(host.querySelector('[data-testid="editor-folder-attention"]')?.textContent).toContain("Editor pipeline paused: test headline.");
   });
 
   it("clears a RAW-tab selection when switching to Edited, via the key={activeTab} remount", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
+    await openTab(host, "RAW");
 
     const selectBoxes = host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]');
     expect(selectBoxes.length).toBeGreaterThan(0);
@@ -251,6 +266,7 @@ afterEach(async () => {
   it("shows the empty state instead of the previous tab's assets while the new tab's fetch is in flight", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
+    await openTab(host, "RAW");
     expect(host.textContent).toContain("raw-1.jpg");
 
     await click(editedTabButton(host));
@@ -303,7 +319,7 @@ afterEach(async () => {
     expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("Video"))).toBe(false);
   });
 
-  it("falls back the active collection switcher tab to RAW when the current non-raw tab becomes denied", async () => {
+  it("falls back to Collaboration when the open Collection tab becomes denied", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
@@ -315,14 +331,15 @@ afterEach(async () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     await click(editedTabButton(host)); await flush(20);
     const tabsAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
-    const rawTab = tabsAfter.find((item) => item.textContent?.includes("RAW"))!;
-    expect(rawTab.getAttribute("aria-selected")).toBe("true");
+    const collaborationTab = tabsAfter.find((item) => item.textContent?.includes("Collaboration"))!;
+    expect(collaborationTab.getAttribute("aria-selected")).toBe("true");
     expect(tabsAfter.some((item) => item.textContent?.includes("Edited"))).toBe(false);
     expect(tabsAfter.filter((item) => item.getAttribute("aria-selected") === "true")).toHaveLength(1);
-    expect(host.textContent).toContain("raw-1.jpg");
+    expect(host.querySelector<HTMLElement>('#project-workspace-panel-collaboration')?.hidden).toBe(false);
+    expect(host.textContent).not.toContain("raw-1.jpg");
   });
 
-  it("falls back the active collection switcher tab to Edited when RAW becomes denied and Edited stays viewable", async () => {
+  it("falls back to Collaboration when RAW becomes denied, and keeps Edited available", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/assets?collection=raw")) return Promise.reject(new ApiError("RAW collection forbidden", 403, { capability: "viewRaw" }));
@@ -332,13 +349,15 @@ afterEach(async () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
-    const editedTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Edited"))!;
-    expect(editedTab.getAttribute("aria-selected")).toBe("true");
-    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].some((item) => item.textContent?.includes("RAW"))).toBe(false);
-    expect(host.textContent).toContain("edited-1.jpg");
+    await openTab(host, "RAW");
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
+    expect(tabs.find((item) => item.textContent?.includes("Collaboration"))!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs.some((item) => item.textContent?.includes("RAW"))).toBe(false);
+    expect(tabs.some((item) => item.textContent?.includes("Edited"))).toBe(true);
+    expect(host.textContent).not.toContain("edited-1.jpg");
   });
 
-  it("resets the collection switcher to RAW without leaking the prior project's tab or selection on a project change", async () => {
+  it("resets the Workspace tab to Collaboration without leaking the prior project's tab or selection on a project change", async () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     await click(editedTabButton(host));
     await act(async () => { editedFetch.resolve({ assets: [workspaceAsset("edited-1")] }); await Promise.resolve(); });
@@ -363,8 +382,10 @@ afterEach(async () => {
     await render(<ProjectWorkspace projectId="p2" />);
     await flush(20);
 
-    const rawTabAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!;
-    expect(rawTabAfter.getAttribute("aria-selected")).toBe("true");
+    const collaborationTabAfter = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("Collaboration"))!;
+    expect(collaborationTabAfter.getAttribute("aria-selected")).toBe("true");
+    expect(host.textContent).not.toContain("edited-1.jpg");
+    await openTab(host, "RAW");
     expect(host.textContent).not.toContain("edited-1.jpg");
     expect(host.textContent).toContain("p2-raw-1.jpg");
   });
@@ -495,6 +516,7 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await openTab(host, "RAW");
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[1]!);
     await flush(12);
@@ -529,6 +551,7 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("raw-1"), workspaceAsset("raw-2")];
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await openTab(host, "RAW");
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[1]!); await flush(12);
     await click(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!); await flush();
@@ -741,6 +764,7 @@ afterEach(async () => {
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     rawAssets = [workspaceAsset("rated", { review: { stars: 5, colorLabel: null, decision: null, recommended: false } }), workspaceAsset("unrated")];
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await openTab(host, "RAW");
     await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-filter"]')].find((button) => button.textContent?.startsWith("Rated"))!);
     apiGetMock.mockImplementation((path: string) => path.includes("/assets?collection=raw") ? Promise.resolve({ assets: rawAssets }) : path === "/api/projects/p1" ? Promise.resolve(projectFixture()) : path.includes("/ingest-status") ? Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false }) : Promise.resolve({}));
     await queryClient!.invalidateQueries({ queryKey: ["project-data", "p1", "assets", "raw"], exact: true, refetchType: "active" }); await flush();
@@ -751,6 +775,7 @@ afterEach(async () => {
     authState.role = "admin";
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    await openTab(host, "RAW");
     const runtime = getProjectQueryRuntime(queryClient!); const publish = vi.spyOn(runtime!, "publish"); const invalidate = vi.spyOn(queryClient!, "invalidateQueries");
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((button) => button.textContent === "Select for editing")!); await flush(20);
@@ -814,6 +839,7 @@ afterEach(async () => {
   it("closes an open lightbox on tab switch instead of crashing or showing the wrong asset", async () => {
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
+    await openTab(host, "RAW");
 
     const tile = host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]');
     expect(tile).not.toBeNull();
@@ -837,6 +863,7 @@ afterEach(async () => {
     });
     apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await openTab(host, "RAW");
     const dropboxDialog = await openDropboxDialog(host);
     vi.useFakeTimers();
     await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
@@ -848,6 +875,47 @@ afterEach(async () => {
     expect(paths.some((path) => path.includes("/assets?collection=edited"))).toBe(false);
     expect(paths.some((path) => path.includes("/jobs"))).toBe(false);
     expect(paths.some((path) => path.includes("/autohdr-status"))).toBe(false);
+  });
+
+  it("syncs from the Collaboration tab without reading any Collection's assets", async () => {
+    authState.role = "photographer";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), rawFolderPath: "/dropbox/raw" });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: rawAssets });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    const dropboxDialog = await openDropboxDialog(host);
+    vi.useFakeTimers();
+    await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+    expect(apiPostMock).toHaveBeenCalledWith("/api/projects/p1/sync-dropbox", {});
+    for (let cycle = 0; cycle < 6; cycle += 1) await act(async () => { vi.advanceTimersByTime(2500); await Promise.resolve(); await Promise.resolve(); });
+    const paths = apiGetMock.mock.calls.map(([path]) => path);
+    expect(paths.filter((path) => path.includes("/ingest-status")).length).toBeGreaterThanOrEqual(7);
+    expect(paths.some((path) => path.includes("/assets?collection="))).toBe(false);
+  });
+
+  it("syncs an admin from the Collaboration tab by invalidating Edited rather than fetching it", async () => {
+    authState.role = "admin";
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), rawFolderPath: "/dropbox/raw" });
+      if (path.includes("/ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 2, mismatch: false });
+      if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: null });
+      return Promise.resolve({});
+    });
+    apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
+    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    const dropboxDialog = await openDropboxDialog(host);
+    vi.useFakeTimers();
+    await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
+    for (let cycle = 0; cycle < 6; cycle += 1) await act(async () => { vi.advanceTimersByTime(2500); await Promise.resolve(); await Promise.resolve(); });
+    const paths = apiGetMock.mock.calls.map(([path]) => path);
+    expect(paths.filter((path) => path.includes("/ingest-status")).length).toBeGreaterThanOrEqual(7);
+    expect(paths.some((path) => path.includes("/assets?collection="))).toBe(false);
   });
 });
 
@@ -873,6 +941,7 @@ describe("ProjectWorkspace selection download", () => {
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await openTab(host, "RAW");
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     const button = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!;
     await click(button); await flush();
@@ -894,6 +963,7 @@ describe("ProjectWorkspace selection download", () => {
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const anchorRemove = vi.spyOn(HTMLAnchorElement.prototype, "remove");
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await openTab(host, "RAW");
     // TB8-10B: the legacy `.button` hook is retired onto buttonClasses(); select by role within
     // the `[data-testid="autohdr-handoff"]` wrapper instead.
     const button = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="autohdr-handoff"] button')].find((item) => item.textContent === "Download 1 selected (zip)")!;
@@ -905,6 +975,7 @@ describe("ProjectWorkspace selection download", () => {
   it("toasts POST errors without removing the checked tile", async () => {
     apiPostMock.mockRejectedValue(new Error("Selection unavailable"));
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await openTab(host, "RAW");
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!); await flush(20);
     expect(host.textContent).toContain("Selection unavailable");
@@ -913,6 +984,7 @@ describe("ProjectWorkspace selection download", () => {
 
   it("treats an asset-specific mutation 404 as an ordinary mutation error", async () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await openTab(host, "RAW");
     await click(host.querySelectorAll<HTMLButtonElement>('[aria-label^="Select "]')[0]!);
     apiPostMock.mockRejectedValueOnce(new ApiError("Asset disappeared", 404));
     await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="photo-grid-actionbar"] button')].find((item) => item.textContent === "Download selection")!); await flush(20);
@@ -926,7 +998,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
   beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset(); });
   afterEach(async () => { vi.useRealTimers(); await unmount(); host.remove(); });
 
-  it("keeps the overlay out of the workspace grid, forwards every arrival, and preserves it over a lightbox", async () => {
+  function mockOpenProject() {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
@@ -937,24 +1009,79 @@ describe("ProjectWorkspace collaboration relocation", () => {
       if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
       return Promise.resolve({});
     });
-    const consumed: number[] = [];
-    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={1} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+  }
+  const subTab = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent?.startsWith(name))!;
+
+  it("mounts collaboration inside the Collaboration tab, with no overlay, toggle or Hide control", async () => {
+    mockOpenProject();
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
-    const workspace = panel.closest<HTMLElement>('[data-testid="project-workspace"]')!;
-    const wrap = host.querySelector<HTMLElement>('[data-testid="project-collaboration-wrap"]')!;
-    expect(panel).not.toBeNull(); expect(workspace).toBeNull(); expect(panel.closest('[aria-label="Project Overview"], [data-testid="workspace-main"]')).toBeNull();
-    expect(panel.closest('[data-testid="project-collaboration-wrap"]')).toBe(wrap); expect(consumed).toEqual([1]);
-    await click(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!); await flush();
-    expect(host.querySelector('[aria-label="Photo viewer"]')).not.toBeNull(); expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull();
-    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={2} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
-    expect(consumed).toEqual([1, 2]);
-    await click(hideCollaborationButton(host)); await flush();
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull();
-    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={3} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
-    expect(host.querySelector('[data-testid="project-collaboration-panel"]')).not.toBeNull(); expect(consumed).toEqual([1, 2, 3]);
+    const tabpanel = panel.closest<HTMLElement>("#project-workspace-panel-collaboration")!;
+    expect(tabpanel.getAttribute("role")).toBe("tabpanel");
+    expect(panel.closest('[data-testid="workspace-main"]')).not.toBeNull();
+    expect(tabpanel.id).toBe("project-workspace-panel-collaboration");
+    expect(tabpanel.hidden).toBe(false);
+    expect(tabpanel.getAttribute("aria-labelledby")).toBe("project-workspace-tab-collaboration");
+    expect(host.querySelector('[data-testid="project-collaboration-toggle"], [data-testid="project-collaboration-wrap"], [data-testid="project-collaboration-scroll"]')).toBeNull();
+    expect([...host.querySelectorAll("button")].some((item) => item.textContent === "Hide ›" || /collaboration/i.test(item.getAttribute("aria-label") ?? ""))).toBe(false);
+    expect(subTab("Discussion").getAttribute("aria-selected")).toBe("true");
+    expect(subTab("Activity")).toBeDefined();
+    expect(host.textContent).toContain("Checklist");
+    await openTab(host, "RAW");
+    expect(host.querySelector<HTMLElement>("#project-workspace-panel-collaboration")!.hidden).toBe(true);
   });
 
-  it("preserves a comment draft, closed overlay state, and one collaboration load across RAW↔Edited tabs", async () => {
+  it("lands a collaboration=open arrival on the Collaboration tab with Discussion shown, the tab focused and the signal acknowledged", async () => {
+    mockOpenProject();
+    const consumed: number[] = [];
+    const ui = (signal: number) => <ProjectWorkspace projectId="p1" collaborationOpenSignal={signal} onCollaborationOpenSignalConsumed={(value) => consumed.push(value)} />;
+    await render(ui(1)); await flush(20);
+    expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
+    expect(subTab("Discussion").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(workspaceTab(host, "Collaboration"));
+    expect(consumed).toEqual([1]);
+
+    // A later arrival, from Activity and over an open Lightbox on RAW, still lands on Collaboration / Discussion.
+    await click(subTab("Activity")); await flush(4);
+    expect(subTab("Activity").getAttribute("aria-selected")).toBe("true");
+    await openTab(host, "RAW");
+    await click(host.querySelector<HTMLElement>('[data-testid="photo-grid-tile"]')!); await flush();
+    expect(host.querySelector('[aria-label="Photo viewer"]')).not.toBeNull();
+    await render(ui(2)); await flush(20);
+    expect(host.querySelector('[aria-label="Photo viewer"]')).toBeNull();
+    expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
+    expect(subTab("Discussion").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(workspaceTab(host, "Collaboration"));
+    expect(consumed).toEqual([1, 2]);
+    // The Lightbox does not come back when RAW is reopened.
+    await openTab(host, "RAW");
+    expect(host.querySelector('[aria-label="Photo viewer"]')).toBeNull();
+  });
+
+  it("acknowledges an arrival exactly once while collaboration is unavailable inside the full workspace", async () => {
+    let commentsForbidden = false;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.includes("/comments?")) return commentsForbidden ? Promise.reject(new ApiError("Collaboration unavailable", 403)) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      return Promise.resolve({});
+    });
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    const consumed: number[] = [];
+    const ui = (signal?: number) => <><ProjectWorkspace projectId="p1" collaborationOpenSignal={signal} onCollaborationOpenSignalConsumed={(value) => consumed.push(value)} /><ClientCapture onClient={(client) => { queryClient = client; }} /></>;
+    await render(ui()); await flush(20);
+    commentsForbidden = true;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
+    expect(collaborationUnavailableSection(host)).not.toBeNull();
+    await render(ui(5)); await flush(20);
+    await render(ui(5)); await flush(20);
+    expect(consumed).toEqual([5]);
+    expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("preserves a comment draft, the sub-tab and one collaboration load across Collection tab switches", async () => {
     let commentRequests = 0;
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
@@ -968,16 +1095,21 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     await typeIntoEditor(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")!, "unsent draft");
-    await click(hideCollaborationButton(host));
-    expect(host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
 
-    await click(editedTabButton(host)); await flush(20);
-    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!); await flush(20);
-    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="project-collaboration-toggle"]')!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await click(toggle); await flush(4);
+    await openTab(host, "RAW");
+    await openTab(host, "Edited");
+    await openTab(host, "Collaboration");
     expect(host.querySelector<HTMLElement>("[data-testid=discussion-composer] [contenteditable=\"true\"]")?.textContent).toContain("unsent draft");
     expect(commentRequests).toBe(1);
+  });
+
+  it("keeps the selected Activity sub-tab across a Collection round trip", async () => {
+    mockOpenProject();
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await click(subTab("Activity")); await flush(4);
+    await openTab(host, "RAW");
+    await openTab(host, "Collaboration");
+    expect(subTab("Activity").getAttribute("aria-selected")).toBe("true");
   });
 
   it("uses the comments probe for a 403 collaborator without starting workspace reads", async () => {
@@ -1014,13 +1146,13 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await flushUntil(
       () => host.querySelector('[data-testid="project-collaboration-only"]') !== null
         && host.textContent!.includes("Hidden Street")
-        && host.querySelector('[data-testid="project-collaboration-panel"][data-mode="standalone"]') !== null
+        && host.querySelector('[data-testid="project-collaboration-only"] [data-testid="project-collaboration-panel"]') !== null
         && consumed.length > 0,
       "the collaboration-only probe to render and consume the open signal",
     );
     expect(host.querySelector('[data-testid="project-collaboration-only"]')).not.toBeNull(); expect(host.textContent).toContain("Hidden Street"); expect(host.querySelector('[data-testid="project-workspace"], [aria-label="Project Overview"], [data-testid="workspace-main"]')).toBeNull();
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("/assets?collection=raw"), expect.stringContaining("/ingest-status")]));
-    expect(consumed).toEqual([7]); expect(host.querySelector('[data-testid="project-collaboration-panel"][data-mode="standalone"]')).not.toBeNull();
+    expect(consumed).toEqual([7]); expect(host.querySelector('[data-testid="project-collaboration-only"] [data-testid="project-collaboration-panel"]')).not.toBeNull();
   });
 
   it("fails closed after a collaboration-only comments 403 without mounting workspace reads", async () => {
@@ -1047,13 +1179,13 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
 
     expect(collaborationUnavailableSection(host)).not.toBeNull();
-    expect(host.querySelector('[data-testid="project-collaboration-panel"][data-mode="standalone"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-collaboration-only"] [data-testid="project-collaboration-panel"]')).toBeNull();
     expect(host.querySelector('[data-testid="project-workspace"], [aria-label="Project Overview"], [data-testid="workspace-main"]')).toBeNull();
     expect(detailCalls).toBe(1);
     expect(assetCalls).toBe(0);
   });
 
-  it("defers all workspace reads until details succeeds, then owns one initial RAW batch and starts collaboration open", async () => {
+  it("defers all workspace reads until details succeeds, then reads no assets on Collaboration and owns one RAW batch when RAW opens", async () => {
     authState.role = "admin";
     const details = deferredPromise<ReturnType<typeof projectFixture>>();
     apiGetMock.mockImplementation((path: string) => {
@@ -1065,10 +1197,13 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId="p1" />); await flush();
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(["/api/projects/p1"]);
     await act(async () => { details.resolve(projectFixture()); await Promise.resolve(); }); await flush();
-    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?"))).toHaveLength(0);
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/ingest-status")]));
     expect(apiGetMock.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([expect.stringContaining("/jobs")]));
-    expect(host.querySelector('[data-testid="project-collaboration-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
+    expect(host.querySelector('[data-testid="project-collaboration-toggle"]')).toBeNull();
+    await openTab(host, "RAW");
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
   });
 
   it("a RAW 403 after detail shows Project unavailable and leaves no collaboration content mounted", async () => {
@@ -1080,6 +1215,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
+    await openTab(host, "RAW");
     // The comments request itself may now happen: readiness no longer waits on Raw assets (#335).
     expect(host.textContent).toContain("Project unavailable.");
     expect(host.textContent).not.toContain("Leaked Street");
@@ -1259,9 +1395,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     apiPatchMock.mockRejectedValueOnce(new ApiError(`Read marker PATCH ${status}`, status));
     await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
     const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
-    const scroll = host.querySelector<HTMLElement>('[data-testid="project-collaboration-scroll"]')!;
     Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 }) });
-    Object.defineProperty(scroll, "getBoundingClientRect", { configurable: true, value: () => ({ left: 0, top: 0, right: 100, bottom: 900, width: 100, height: 900 }) });
     callback?.([{ isIntersecting: true, intersectionRatio: 1, boundingClientRect: anchor.getBoundingClientRect() } as IntersectionObserverEntry] as IntersectionObserverEntry[], {} as IntersectionObserver);
     await flush(20);
     if (expected === "collaboration") {
@@ -1464,7 +1598,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     if (method === "DELETE") vi.unstubAllGlobals();
   });
 
-  it("refreshes RAW after an initial Edited-stage selection", async () => {
+  it("opens an Edited-stage project on Collaboration and reads RAW once when RAW is opened", async () => {
     apiGetMock.mockImplementation((path: string) => {
       if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: "edited_review" });
       if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
@@ -1473,8 +1607,10 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     await render(<ProjectWorkspace projectId="p1" />); await flush();
-    expect(host.textContent).toContain("Edited frames");
-    await click([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.includes("RAW"))!); await flush();
+    expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
+    expect(host.textContent).not.toContain("Edited frames");
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?"))).toHaveLength(0);
+    await openTab(host, "RAW");
     expect(host.textContent).toContain("RAW frames");
     expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
   });
@@ -1597,56 +1733,68 @@ describe("ProjectWorkspace readiness does not wait on asset responses (#335)", (
     });
   }
 
-  it("becomes ready while the RAW assets response is still in flight", async () => {
+  it("becomes ready on Collaboration without requesting RAW, and shows loading on the first RAW open until the response lands", async () => {
     const raw = deferredPromise<{ assets: WorkspaceAsset[] }>();
     mockProject("raw_review", { raw: raw.promise });
     await render(<ProjectWorkspace projectId="p1" />);
-    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace present with RAW assets unresolved");
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace present with no asset request");
     expect(host.querySelector('[data-testid="project-header"]')).not.toBeNull();
     expect(selectedTabs()).toHaveLength(1);
-    expect(selectedTabs()[0]!.textContent).toContain("RAW");
-    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
+    expect(selectedTabs()[0]!.textContent).toContain("Collaboration");
+    expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
     expect(host.textContent).not.toContain("Loading project.");
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?"))).toHaveLength(0);
+    await openTab(host, "RAW");
+    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
     await act(async () => { raw.resolve({ assets: [workspaceAsset("raw-1")] }); await Promise.resolve(); });
     await flush();
     expect(host.textContent).toContain("raw-1.jpg");
     expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
   });
 
-  it("resolves the Edited stage default before any asset read", async () => {
-    const raw = deferredPromise<{ assets: WorkspaceAsset[] }>();
-    const edited = deferredPromise<{ assets: WorkspaceAsset[] }>();
+  it("holds the workspace back on the companion batch, and reads no asset before or after it settles", async () => {
     const ingest = deferredPromise<unknown>();
-    mockProject("edited_review", { raw: raw.promise, edited: edited.promise, ingest: ingest.promise });
+    mockProject("edited_review", { ingest: ingest.promise });
     await render(<ProjectWorkspace projectId="p1" />);
-    // Detail has landed and the observer is mounted, but the companion batch still holds the workspace back.
-    await flushUntil(() => apiGetMock.mock.calls.some(([path]) => path.includes("/assets?collection=")), "first asset read");
-    const assetCalls = () => apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.includes("/assets?collection="));
-    expect(assetCalls()).toEqual(["/api/projects/p1/assets?collection=edited"]);
+    await flush(15);
+    expect(host.querySelector('[data-testid="project-workspace"]')).toBeNull();
+    expect(host.textContent).toContain("Loading project.");
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?"))).toHaveLength(0);
     await act(async () => { ingest.resolve({ expectedCount: null, receivedCount: 1, mismatch: false }); await Promise.resolve(); });
-    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace with assets unresolved");
-    expect(selectedTabs()).toHaveLength(1);
-    expect(selectedTabs()[0]!.textContent).toContain("Edited");
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace after ingest settles");
+    expect(selectedTabs()[0]!.textContent).toContain("Collaboration");
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?"))).toHaveLength(0);
+  });
+
+  it("reads Edited and the passive RAW comparison once each, only when the Edited tab is opened", async () => {
+    const edited = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    mockProject("edited_review", { edited: edited.promise });
+    await render(<ProjectWorkspace projectId="p1" />);
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace");
+    const assetCalls = () => apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.includes("/assets?collection="));
+    expect(assetCalls()).toEqual([]);
+    await openTab(host, "Edited");
     expect(host.textContent).toContain("Edited frames");
     expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
-    // The passive RAW read for the Lightbox follows, and is the only RAW request.
-    expect(assetCalls()).toEqual(["/api/projects/p1/assets?collection=edited", "/api/projects/p1/assets?collection=raw"]);
+    // Each is requested exactly once; the nested passive RAW observer subscribes ahead of its parent's Edited observer, so order is not asserted.
+    expect([...assetCalls()].sort()).toEqual(["/api/projects/p1/assets?collection=edited", "/api/projects/p1/assets?collection=raw"]);
   });
 
   it.each([
-    ["editor", "editing_autohdr", "Edited"], ["editor", "edited_review", "Edited"], ["editor", "delivered", "Edited"],
-    ["admin", "editing_autohdr", "Edited"], ["admin", "edited_review", "Edited"], ["admin", "delivered", "Edited"],
-    ["editor", "raw_review", "RAW"],
-    ["photographer", "edited_review", "RAW"],
-  ] as const)("%s on a %s project opens the %s tab", async (role, stageKey, expected) => {
+    ["editor", "editing_autohdr"], ["editor", "edited_review"], ["editor", "delivered"], ["editor", "raw_review"],
+    ["admin", "editing_autohdr"], ["admin", "edited_review"], ["admin", "delivered"], ["admin", "raw_review"],
+    ["photographer", "raw_review"], ["photographer", "edited_review"],
+  ] as const)("%s on a %s project opens the Collaboration tab and reads no Collection", async (role, stageKey) => {
     authState.role = role;
     mockProject(stageKey);
     await render(<ProjectWorkspace projectId="p1" />);
-    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null && host.querySelector('[data-testid="collection-loading"]') === null, "workspace with loaded collection");
+    await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "workspace on Collaboration");
     expect(selectedTabs()).toHaveLength(1);
-    expect(selectedTabs()[0]!.textContent).toContain(expected);
+    expect(selectedTabs()[0]!.textContent).toContain("Collaboration");
+    expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?"))).toHaveLength(0);
     if (role === "photographer") expect(tabButtons().some((item) => item.textContent?.includes("Edited"))).toBe(false);
-    if (expected === "Edited") expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/assets?collection=raw"))).toHaveLength(1);
   });
 
   it("keeps Loading project. while the project detail landed but the companion batch is pending", async () => {
@@ -1658,5 +1806,184 @@ describe("ProjectWorkspace readiness does not wait on asset responses (#335)", (
     expect(host.textContent).toContain("Loading project.");
     await act(async () => { ingest.resolve({ expectedCount: null, receivedCount: 1, mismatch: false }); await Promise.resolve(); });
     await flushUntil(() => host.querySelector('[data-testid="project-workspace"]') !== null, "project-workspace after ingest settles");
+  });
+});
+
+describe("Collaboration is the default Workspace tab (#336)", () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = mount(); authState.role = "editor"; apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset(); apiDeleteMock.mockReset(); });
+  afterEach(async () => { vi.useRealTimers(); await unmount(); host.remove(); });
+
+  const tabTexts = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].map((item) => item.textContent ?? "");
+  const activeJob = { id: "job-1", kind: "autohdr_api_send" as const, status: "running" as const, error: null, correlationId: null, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
+  type Options = { unread?: number; jobs?: unknown[]; handoff?: unknown; stageKey?: string; floorplan?: Promise<unknown> };
+  function mockProject(options: Options = {}) {
+    apiGetMock.mockImplementation((path: string) => {
+      if (path === "/api/projects/p1") return Promise.resolve({ ...projectFixture(), stageKey: options.stageKey ?? "raw_review" });
+      if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+      if (path.includes("/assets?collection=edited")) return Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+      if (path.includes("/assets?collection=floorplan")) return options.floorplan ?? Promise.resolve({ assets: [] });
+      if (path.includes("/links")) return Promise.resolve({ links: [] });
+      if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+      if (path.endsWith("/jobs")) return Promise.resolve({ jobs: options.jobs ?? [] });
+      if (path.includes("/autohdr-status")) return Promise.resolve({ handoff: options.handoff ?? null });
+      if (path.includes("/comments?")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+      if (path.includes("comment-read-marker")) return Promise.resolve({ projectId: "p1", marker: null, latest: options.unread ? { commentId: "head", createdAt: "2026-08-25T00:00:00.000Z" } : null, unreadCount: options.unread ?? 0 });
+      if (path.includes("collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
+      if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+      if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      return Promise.resolve({});
+    });
+  }
+  const assetCalls = () => apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.includes("/assets?"));
+  async function tick(times: number) { for (let index = 0; index < times; index += 1) await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }); }
+
+  it("orders the tabs Raw, Edited, Video, Floorplan, Copy, Collaboration inside one Workspace tablist", async () => {
+    mockProject();
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(tabTexts().map((text) => text.replace(/[0-9—]+$/, "").replace(/Collaboration.*/, "Collaboration"))).toEqual(["RAW", "Edited", "Video", "Floorplan", "Copy", "Collaboration"]);
+    const tablists = host.querySelectorAll('[data-testid="project-header"] [role="tablist"]');
+    expect(tablists).toHaveLength(1);
+    expect(tablists[0]!.getAttribute("aria-label")).toBe("Workspace");
+    const tabs = [...host.querySelectorAll<HTMLElement>('[data-testid="project-overview-tab"]')];
+    expect(tabs.every((tab) => tab.getAttribute("role") === "tab")).toBe(true);
+    expect(tabs.filter((tab) => tab.getAttribute("aria-selected") === "true")).toHaveLength(1);
+    // Roving tabindex: only the selected tab is in the Tab order.
+    expect(tabs.filter((tab) => tab.tabIndex === 0)).toHaveLength(1);
+    expect(tabs.find((tab) => tab.tabIndex === 0)!.textContent).toContain("Collaboration");
+    await openTab(host, "Video");
+    expect(tabs.filter((tab) => tab.getAttribute("aria-selected") === "true").map((tab) => tab.textContent)).toEqual(["Video—"]);
+  });
+
+  it("shows a photographer only Raw and Collaboration", async () => {
+    authState.role = "photographer";
+    mockProject();
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(tabTexts().map((text) => text.replace(/[0-9—]+$/, ""))).toEqual(["RAW", "Collaboration"]);
+    expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("keeps focus on the Collaboration tab across selecting it from another Workspace tab", async () => {
+    mockProject();
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    await openTab(host, "RAW");
+    const trigger = workspaceTab(host, "Collaboration")!;
+    await act(async () => { trigger.focus(); await Promise.resolve(); });
+    await click(trigger); await flush(4);
+    expect(workspaceTab(host, "Collaboration")).toBe(trigger);
+    expect(trigger.isConnected).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("shows a loading state on the first open of RAW and of Floorplan", async () => {
+    const floorplan = deferredPromise<{ assets: WorkspaceAsset[] }>();
+    mockProject({ floorplan: floorplan.promise });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(assetCalls()).toEqual([]);
+    await openTab(host, "Floorplan");
+    expect(host.querySelector('[data-testid="collection-loading"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("No floorplan yet.");
+    await act(async () => { floorplan.resolve({ assets: [] }); await Promise.resolve(); }); await flush(10);
+    expect(host.querySelector('[data-testid="collection-loading"]')).toBeNull();
+  });
+
+  it("badges the Collaboration tab with the unread count, capped at 99+, and keeps it off-tab", async () => {
+    mockProject({ unread: 123 });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    const trigger = workspaceTab(host, "Collaboration")!;
+    expect(trigger.querySelector('[data-testid="project-collaboration-tab-unread"]')?.textContent).toBe("99+");
+    expect(trigger.textContent).toContain("123 unread comments");
+    await openTab(host, "RAW");
+    expect(workspaceTab(host, "Collaboration")!.querySelector('[data-testid="project-collaboration-tab-unread"]')?.textContent).toBe("99+");
+  });
+
+  it("shows no badge without unread comments", async () => {
+    mockProject({ unread: 0 });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(host.querySelector('[data-testid="project-collaboration-tab-unread"]')).toBeNull();
+    expect(workspaceTab(host, "Collaboration")!.textContent).toBe("Collaboration");
+  });
+
+  it("does not advance the discussion read marker while another tab is open", async () => {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    const previousFocused = focusManager.isFocused();
+    Reflect.deleteProperty(globals, "IntersectionObserver");
+    focusManager.setFocused(true);
+    try {
+      mockProject({ unread: 1 });
+      apiPatchMock.mockResolvedValue({ projectId: "p1", marker: null, latest: null, unreadCount: 0 });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      const anchor = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
+      const hiddenRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+      Object.defineProperty(anchor, "getBoundingClientRect", { configurable: true, value: hiddenRect });
+      await openTab(host, "RAW");
+      window.dispatchEvent(new Event("scroll")); window.dispatchEvent(new Event("resize")); await flush(20);
+      expect(host.querySelector("[data-testid=discussion-read-anchor]")).toBeNull();
+      expect(apiPatchMock).not.toHaveBeenCalled();
+    } finally {
+      focusManager.setFocused(previousFocused);
+      if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver");
+      else globals.IntersectionObserver = previousObserver;
+    }
+  });
+
+  it("shows collaboration-unavailable inside the tab, with no second page frame", async () => {
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    let commentsForbidden = false;
+    mockProject();
+    const base = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path.includes("/comments?") && commentsForbidden ? Promise.reject(new ApiError("Collaboration unavailable", 403)) : base(path, init));
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush(20);
+    commentsForbidden = true;
+    await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
+    const section = collaborationUnavailableSection(host)!;
+    expect(section).not.toBeNull();
+    expect(section.closest('[data-testid="workspace-main"] [role="tabpanel"]')?.id).toBe("project-workspace-panel-collaboration");
+    expect(host.querySelectorAll("main")).toHaveLength(1);
+    expect(workspaceTab(host, "Collaboration")!.textContent).toBe("Collaboration");
+  });
+
+  it("issues no asset request from an active AutoHDR job poll while on Collaboration", async () => {
+    authState.role = "admin";
+    mockProject({ jobs: [activeJob] });
+    vi.useFakeTimers();
+    await render(<ProjectWorkspace projectId="p1" />);
+    await tick(20);
+    expect(host.querySelector('[data-testid="project-workspace"]')).not.toBeNull();
+    for (let cycle = 0; cycle < 3; cycle += 1) { await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await Promise.resolve(); }); await tick(8); }
+    expect(apiGetMock.mock.calls.filter(([path]) => path.endsWith("/jobs")).length).toBeGreaterThanOrEqual(3);
+    expect(assetCalls()).toEqual([]);
+  });
+
+  it("issues no asset request from the legacy AutoHDR fetch poll while on Collaboration", async () => {
+    authState.role = "admin";
+    const handoff = { id: "h1", generation: 1, state: "started", mappingState: "active", finalPath: null, diagnostic: null };
+    const fetchJob = { id: "job-fetch", kind: "fetch_edited" as const, status: "done" as const, error: null, correlationId: "fetch_edited:p1:1", createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
+    mockProject({ stageKey: "editing_autohdr", handoff, jobs: [fetchJob] });
+    vi.useFakeTimers();
+    await render(<ProjectWorkspace projectId="p1" />);
+    await tick(20);
+    for (let cycle = 0; cycle < 2; cycle += 1) { await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await Promise.resolve(); }); await tick(8); }
+    expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/autohdr-status")).length).toBeGreaterThanOrEqual(2);
+    expect(assetCalls()).toEqual([]);
+  });
+
+  it("still refreshes an open Edited tab from the active-job poll", async () => {
+    authState.role = "admin";
+    mockProject({ jobs: [activeJob] });
+    vi.useFakeTimers();
+    await render(<ProjectWorkspace projectId="p1" />);
+    await tick(20);
+    const tab = workspaceTab(host, "Edited")!;
+    await act(async () => { tab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await tick(20);
+    const before = assetCalls().filter((path) => path.includes("collection=edited")).length;
+    expect(before).toBeGreaterThanOrEqual(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await Promise.resolve(); });
+    await tick(8);
+    expect(assetCalls().filter((path) => path.includes("collection=edited")).length).toBeGreaterThan(before);
   });
 });

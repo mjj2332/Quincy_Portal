@@ -245,7 +245,7 @@ function inventoryOf(host: HTMLElement): Inventory {
   return { testids: Object.fromEntries(Object.entries(testids).sort(([a], [b]) => a.localeCompare(b))), roles, controls };
 }
 
-const TABS = ["RAW", "Edited", "Video", "Floorplan", "Copy"] as const;
+const TABS = ["RAW", "Edited", "Video", "Floorplan", "Copy", "Collaboration"] as const;
 type TabName = (typeof TABS)[number];
 type TabInventories = Record<TabName, Inventory>;
 
@@ -264,8 +264,8 @@ function tabButton(host: HTMLElement, name: TabName): HTMLButtonElement {
 }
 
 /**
- * Renders the workspace as `role` and captures the inventory of **every collection tab**, not just
- * the default one.
+ * Renders the workspace as `role` and captures the inventory of **every Workspace tab** (the five
+ * Collections and Collaboration), not just the landing one.
  *
  * Capturing only the landing tab would be a hole big enough to drive the ticket through: an
  * external editor's upload and review controls (`uploadEdited`, `reviewEdited`, `uploadExtras`)
@@ -284,12 +284,12 @@ async function inventoriesForRole(role: Role): Promise<TabInventories> {
   await render(<ProjectWorkspace projectId={PROJECT_ID} />);
   await flush();
 
+  // Every Project opens on Collaboration (#336), so each Collection tab — RAW included — is opened
+  // explicitly, and Collaboration (the landing tab) is captured last, after returning to it.
   const captured = {} as TabInventories;
   for (const tab of TABS) {
-    if (tab !== "RAW") {
-      await click(tabButton(host, tab));
-      await flush();
-    }
+    await click(tabButton(host, tab));
+    await flush();
     captured[tab] = inventoryOf(host);
   }
 
@@ -411,24 +411,32 @@ describe("external-editor visibility inventory", () => {
 // quietly disappearing (`ProjectWorkspace.dom.test.tsx`'s own Deadline/Dropbox tests exercise
 // opening each trigger and asserting its content, unchanged in substance). Nothing else in either
 // literal moved.
+//
+// Re-frozen again, deliberately, for #336 (2026-09-29): Project collaboration became the sixth Workspace
+// tab, "Collaboration", and the tab every Project opens on; the floating overlay and its toggle are gone.
+// Every tab's `testids` map loses the collaboration entries (`project-collaboration-head`, `-panel`,
+// `-scroll`, `-toggle`, `-wrap` and `discussion-comments`, `-composer`, `-read-anchor`), because the panel
+// is now the Collaboration tab's own content and renders nothing while another tab is open: `-scroll`,
+// `-toggle` and `-wrap` no longer exist at all, the rest move to the new "Collaboration" inventory.
+// `project-overview-tab` goes 5 -> 6 on every tab. The `controls` lists lose the panel's controls
+// (`Hide ›`, `Hide collaboration`, `Discussion`, `Activity`, `Checklist…`, `+ Add an item`, `Post comment`
+// and the composer toolbar) and gain `Collaboration`, the sixth tab's accessible name. The `roles` lists
+// lose `toolbar` (and, on Video, Floorplan and Copy, `status`) with the panel. The new "Collaboration"
+// entry holds what used to sit on every tab, plus the six-tab strip. It is identical in kind for both
+// roles: external_editor shows a strict subset of admin's (no `Edit details`, `Add team member`, Dropbox
+// trigger), which is what the strictly-less-than test above asserts across all six tabs. Nothing else in
+// either literal moved. Re-captured with DUMP_VISIBILITY_INVENTORY, not hand-merged.
 // ---------------------------------------------------------------------------
+
 
 const FROZEN_EXTERNAL_EDITOR = {
   "RAW": {
     "testids": {
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
       "photo-grid-filter": 5,
       "photo-grid-tile": 2,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -440,63 +448,36 @@ const FROZEN_EXTERNAL_EDITOR = {
       "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "All2",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
-      "Discussion",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
       "Labeled0",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
       "Rated0",
       "Recommend",
       "Recommended0",
-      "Redo",
       "Select all",
       "Select raw-1.jpg",
       "Select raw-2.jpg",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Video0",
-      "[div]",
       "[input]",
       "\u2190 Dashboard"
     ]
   },
   "Edited": {
     "testids": {
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
       "photo-grid-filter": 4,
       "photo-grid-tile": 1,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -508,44 +489,25 @@ const FROZEN_EXTERNAL_EDITOR = {
       "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "All1",
       "Approve",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Choose files",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
-      "Discussion",
       "Edited1",
       "Flag",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
       "Labeled0",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
       "Rated0",
-      "Redo",
       "Select all",
       "Select edited-1.jpg",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Video0",
-      "[div]",
       "[input:file]",
       "[input]",
       "\u2190 Dashboard"
@@ -554,17 +516,9 @@ const FROZEN_EXTERNAL_EDITOR = {
   "Video": {
     "testids": {
       "collection-link-add": 1,
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -572,40 +526,20 @@ const FROZEN_EXTERNAL_EDITOR = {
     },
     "roles": [
       "combobox",
-      "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "Add link",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
-      "Discussion",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
-      "Redo",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Video0",
-      "[div]",
       "[input]",
       "[placeholder] Final walkthrough",
       "[placeholder] https://vimeo.com/\u2026",
@@ -614,17 +548,9 @@ const FROZEN_EXTERNAL_EDITOR = {
   },
   "Floorplan": {
     "testids": {
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -632,40 +558,20 @@ const FROZEN_EXTERNAL_EDITOR = {
     },
     "roles": [
       "combobox",
-      "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
-      "Discussion",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
-      "Redo",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Upload floorplan",
       "Video0",
-      "[div]",
       "[input:file]",
       "[input]",
       "\u2190 Dashboard"
@@ -673,17 +579,45 @@ const FROZEN_EXTERNAL_EDITOR = {
   },
   "Copy": {
     "testids": {
+      "project-deadline-trigger": 1,
+      "project-header": 1,
+      "project-overview-tab": 6,
+      "project-team-control": 1,
+      "project-workspace": 1,
+      "toast-viewport": 1,
+      "workspace-main": 1
+    },
+    "roles": [
+      "combobox",
+      "tab",
+      "tablist",
+      "tabpanel"
+    ],
+    "controls": [
+      "Collaboration",
+      "Copy0",
+      "Deadline: Set deadline",
+      "Edited1",
+      "Floorplan0",
+      "Move project Stage",
+      "RAW2",
+      "Upload copy",
+      "Video0",
+      "[input:file]",
+      "[input]",
+      "\u2190 Dashboard"
+    ]
+  },
+  "Collaboration": {
+    "testids": {
       "discussion-comments": 1,
       "discussion-composer": 1,
       "discussion-read-anchor": 1,
       "project-collaboration-head": 1,
       "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -704,14 +638,13 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Bullet list",
       "Checklist",
       "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
       "Discussion",
       "Edited1",
       "Floorplan0",
       "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
       "Italic",
       "Link",
       "Move project Stage",
@@ -722,10 +655,8 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Strikethrough",
       "Underline",
       "Undo",
-      "Upload copy",
       "Video0",
       "[div]",
-      "[input:file]",
       "[input]",
       "\u2190 Dashboard"
     ]
@@ -736,20 +667,12 @@ const FROZEN_ADMIN = {
   "RAW": {
     "testids": {
       "autohdr-handoff": 1,
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
       "photo-grid-filter": 6,
       "photo-grid-tile": 2,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -761,25 +684,18 @@ const FROZEN_ADMIN = {
       "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "Add team member",
       "All2",
       "Approve",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Choose files",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
       "Delete raw-1.jpg",
       "Delete raw-2.jpg",
-      "Discussion",
       "Download 0 selected (zip)",
       "Dropbox: Not monitored",
       "Edit details",
@@ -787,31 +703,19 @@ const FROZEN_ADMIN = {
       "Flag",
       "Floorplan0",
       "For editing0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
       "Labeled0",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
       "Rated0",
       "Recommend",
       "Recommended0",
-      "Redo",
       "Select all",
       "Select for editing",
       "Select raw-1.jpg",
       "Select raw-2.jpg",
       "Send 0 selected to AutoHDR",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Use as project cover",
       "Video0",
-      "[div]",
       "[input:file]",
       "[input]",
       "\u2190 Dashboard"
@@ -819,20 +723,12 @@ const FROZEN_ADMIN = {
   },
   "Edited": {
     "testids": {
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
       "photo-grid-filter": 4,
       "photo-grid-tile": 1,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -844,49 +740,30 @@ const FROZEN_ADMIN = {
       "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "Add team member",
       "All1",
       "Approve",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Choose files",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
       "Delete edited-1.jpg",
-      "Discussion",
       "Dropbox: Not monitored",
       "Edit details",
       "Edited1",
       "Flag",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
       "Labeled0",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
       "Rated0",
-      "Redo",
       "Select all",
       "Select edited-1.jpg",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Use as project cover",
       "Video0",
-      "[div]",
       "[input:file]",
       "[input]",
       "\u2190 Dashboard"
@@ -895,18 +772,10 @@ const FROZEN_ADMIN = {
   "Video": {
     "testids": {
       "collection-link-add": 1,
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -914,43 +783,23 @@ const FROZEN_ADMIN = {
     },
     "roles": [
       "combobox",
-      "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "Add link",
       "Add team member",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
-      "Discussion",
       "Dropbox: Not monitored",
       "Edit details",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
-      "Redo",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Video0",
-      "[div]",
       "[input]",
       "[placeholder] Final walkthrough",
       "[placeholder] https://vimeo.com/\u2026",
@@ -959,18 +808,10 @@ const FROZEN_ADMIN = {
   },
   "Floorplan": {
     "testids": {
-      "discussion-comments": 1,
-      "discussion-composer": 1,
-      "discussion-read-anchor": 1,
-      "project-collaboration-head": 1,
-      "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -978,43 +819,23 @@ const FROZEN_ADMIN = {
     },
     "roles": [
       "combobox",
-      "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
-      "+ Add an item",
-      "Activity",
       "Add team member",
-      "Bold",
-      "Bullet list",
-      "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
-      "Discussion",
       "Dropbox: Not monitored",
       "Edit details",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
-      "Italic",
-      "Link",
       "Move project Stage",
-      "Ordered list",
-      "Post comment",
       "RAW2",
-      "Redo",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Upload floorplan",
       "Video0",
-      "[div]",
       "[input:file]",
       "[input]",
       "\u2190 Dashboard"
@@ -1022,18 +843,50 @@ const FROZEN_ADMIN = {
   },
   "Copy": {
     "testids": {
+      "project-deadline-trigger": 1,
+      "project-dropbox-trigger": 1,
+      "project-header": 1,
+      "project-overview-tab": 6,
+      "project-team-control": 1,
+      "project-workspace": 1,
+      "toast-viewport": 1,
+      "workspace-main": 1
+    },
+    "roles": [
+      "combobox",
+      "tab",
+      "tablist",
+      "tabpanel"
+    ],
+    "controls": [
+      "Add team member",
+      "Collaboration",
+      "Copy0",
+      "Deadline: Set deadline",
+      "Dropbox: Not monitored",
+      "Edit details",
+      "Edited1",
+      "Floorplan0",
+      "Move project Stage",
+      "RAW2",
+      "Upload copy",
+      "Video0",
+      "[input:file]",
+      "[input]",
+      "\u2190 Dashboard"
+    ]
+  },
+  "Collaboration": {
+    "testids": {
       "discussion-comments": 1,
       "discussion-composer": 1,
       "discussion-read-anchor": 1,
       "project-collaboration-head": 1,
       "project-collaboration-panel": 1,
-      "project-collaboration-scroll": 1,
-      "project-collaboration-toggle": 1,
-      "project-collaboration-wrap": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
-      "project-overview-tab": 5,
+      "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "toast-viewport": 1,
@@ -1055,6 +908,7 @@ const FROZEN_ADMIN = {
       "Bullet list",
       "Checklist",
       "Checklist0 of 0 complete \u00b7 0%\u2212",
+      "Collaboration",
       "Copy0",
       "Deadline: Set deadline",
       "Discussion",
@@ -1063,8 +917,6 @@ const FROZEN_ADMIN = {
       "Edited1",
       "Floorplan0",
       "Heading",
-      "Hide collaboration",
-      "Hide \u203a",
       "Italic",
       "Link",
       "Move project Stage",
@@ -1075,10 +927,8 @@ const FROZEN_ADMIN = {
       "Strikethrough",
       "Underline",
       "Undo",
-      "Upload copy",
       "Video0",
       "[div]",
-      "[input:file]",
       "[input]",
       "\u2190 Dashboard"
     ]
