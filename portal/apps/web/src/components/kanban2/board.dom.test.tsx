@@ -711,8 +711,16 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(stages).not.toContain("Awaiting RAW");
     });
 
-    it("is disabled while movement is locked", async () => {
+    // #306: a priority save locks only the saving card. The trigger is source's; another card's
+    // pending write must not lock it, and its own must.
+    it("stays enabled while ANOTHER card's priority write is pending (#306)", async () => {
       await renderBoard({ projects: threeTargets(), role: "admin", pendingOrdering: new Set(["t1"]) });
+      expect(trigger(), "no Move-to trigger rendered").not.toBeNull();
+      expect(trigger()!.disabled).toBe(false);
+    });
+
+    it("is disabled while its OWN card's priority write is pending (#306)", async () => {
+      await renderBoard({ projects: threeTargets(), role: "admin", pendingOrdering: new Set(["source"]) });
       expect(trigger(), "no Move-to trigger rendered").not.toBeNull();
       expect(trigger()!.disabled).toBe(true);
     });
@@ -778,8 +786,16 @@ describe("ProjectKanbanBoard2 (#80)", () => {
       expect(moveTo()!.disabled).toBe(false);
     });
 
-    it("are disabled while movement is locked", async () => {
+    // #306: per-card lock, same as the Move-to trigger above.
+    it("stay enabled while ANOTHER card's priority write is pending (#306)", async () => {
       await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true, pendingOrdering: new Set(["other"]) });
+      expect(up(), "no arrows rendered").not.toBeNull();
+      expect(up()!.disabled).toBe(false);
+      expect(down()!.disabled).toBe(false);
+    });
+
+    it("are disabled while their OWN card's priority write is pending (#306)", async () => {
+      await renderBoard({ canPrioritize: true, sameStageReorderEnabled: true, pendingOrdering: new Set(["source"]) });
       expect(up(), "no arrows rendered").not.toBeNull();
       expect(up()!.disabled).toBe(true);
       expect(down()!.disabled).toBe(true);
@@ -841,10 +857,19 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(props.onBoardMove).not.toHaveBeenCalled();
   });
 
-  it("locks movement for every card while ANY move or ordering write is in flight, not just the dragged one (#98)", async () => {
-    // "other" has a pending ordering write, not "source" — the old check ("only the dragged
-    // card") would leave source's own handle enabled and its own drag-end reaching onBoardMove.
+  it("locks the drag handle of ONLY the card whose priority write is in flight (#306)", async () => {
+    // #98 locked every card on any pending ordering write; #306 narrows that to the saving card,
+    // so another card's handle and drag-end stay live. `pendingMoves` is still board-wide.
     const props = await renderBoard({ pendingOrdering: new Set(["other"]) });
+    const handle = host.querySelector<HTMLButtonElement>('[data-testid="kanban2-card-handle"]');
+    expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
+    expect(handle!.disabled).toBe(false);
+    await endDrag("source", "raw_review");
+    expect(props.onBoardMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a drag-end and disables the handle for the card whose own priority write is in flight (#306)", async () => {
+    const props = await renderBoard({ pendingOrdering: new Set(["source"]) });
     const handle = host.querySelector<HTMLButtonElement>('[data-testid="kanban2-card-handle"]');
     expect(handle, "no drag handle rendered — the assertion below would be vacuous").not.toBeNull();
     expect(handle!.disabled).toBe(true);

@@ -42,8 +42,8 @@
   --ring:                  var(--paper-050);      /* 18.64:1 — the §1.2 fix, utilities half */
   --focus-ring:            var(--paper-050);      /* 18.64:1 — the §1.2 fix, global-rule half */
   --star-on:               var(--star-amber);     /*  9.20:1 — the paper ochre reads 2.98:1 here */
-  --star-off:              var(--greige-200);     /* 11.78:1 — tracks --foreground-secondary,
-                                                     the same role :root's --star-off names */
+  --star-off:              var(--greige-400);     /*  5.55:1 — dimmer than the 9.20:1 amber, so the
+                                                     unlit star recedes on ink as on paper (#306) */
 }
 
 /* The light panel inside the dark stage. Must mirror the inverse block property-for-property;
@@ -69,5 +69,5 @@
   --ring:                  var(--focus-ring);
   --focus-ring:            var(--ink-900);
   --star-on:               var(--signal-caution-text);
-  --star-off:              var(--foreground-secondary);
+  --star-off:              var(--text-muted);
 }

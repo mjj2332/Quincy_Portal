@@ -15,9 +15,11 @@ const SEGMENT_BUTTON = "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--fon
   "[&.is-active]:bg-primary [&.is-active]:text-primary-foreground not-disabled:active:translate-y-px " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2 focus-visible:relative focus-visible:z-10 " +
-  "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:cursor-not-allowed " +
-  "disabled:translate-y-0 [&.is-active]:disabled:bg-surface-sunken [&.is-active]:disabled:text-foreground-secondary " +
-  "[&.is-active]:disabled:border-border-hover max-[721px]:flex-auto " +
+  // #306: the selected segment keeps its selected fill while disabled. Greying it to the same
+  // sunken fill as its neighbours left no segment reading as current whenever the Dashboard
+  // locked the switcher. The cursor still says "not now"; only the inactive segments go sunken.
+  "not-[.is-active]:disabled:text-foreground-secondary not-[.is-active]:disabled:bg-surface-sunken " +
+  "disabled:cursor-not-allowed disabled:translate-y-0 max-[721px]:flex-auto " +
   "max-[721px]:min-h-[44px]"; /* WCAG 2.5.8 minimum target, not a spacing token */
 
 export { SEGMENT_GROUP, SEGMENT_BUTTON };
