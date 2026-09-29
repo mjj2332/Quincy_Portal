@@ -8,7 +8,6 @@ const open: CalendarPermissionContext = {
   interactionBlocked: false,
   settlePending: false,
   checklistNeedsAttention: new Set<string>(),
-  rangesEnabled: true,
   deadlineMovementDisabled: false,
 };
 
@@ -46,11 +45,10 @@ describe("effective Calendar event permissions (#222 lift of ProductionCalendar'
     expect(result.permissions).toMatchObject({ canDrag: false, canResize: false, canOpenScheduleEditor: false });
   });
 
-  it("a range needs ranges enabled AND canScheduleRange to drag or resize; a due item does not", () => {
-    expect(effectiveCalendarEventPermissions(range(), { ...open, rangesEnabled: false }).permissions).toMatchObject({ canDrag: false, canResize: false, canOpenScheduleEditor: true });
+  it("a range needs the server canScheduleRange permission to drag or resize; a due item does not", () => {
     expect(effectiveCalendarEventPermissions(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { canScheduleRange: false }), open).permissions).toMatchObject({ canDrag: false, canResize: false });
     const due = dueEvent(dated("2026-08-27"));
-    expect(effectiveCalendarEventPermissions(due, { ...open, rangesEnabled: false })).toBe(due);
+    expect(effectiveCalendarEventPermissions(due, open)).toBe(due);
   });
 
   it("never widens a server permission", () => {

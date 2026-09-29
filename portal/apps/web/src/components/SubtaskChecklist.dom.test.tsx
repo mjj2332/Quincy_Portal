@@ -128,6 +128,22 @@ describe("SubtaskChecklist", () => {
     await click(assignee); expect(portal("subtask-popover-task-1-assignee")).not.toBeNull(); const search = portal("subtask-popover-task-1-assignee").querySelector<HTMLInputElement>('input[type="search"]')!; await typeInto(search, "Ada"); expect(portal("subtask-popover-task-1-assignee").textContent).toContain("Ada Smith"); await click([...portal("subtask-popover-task-1-assignee").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Ada Smith"))!); expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assigneeId: "user-3" });
   });
 
+  it("lets an existing range be edited: the control is enabled, offers Range, and saves a versioned range PATCH", async () => {
+    const endpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
+    const rangeTask = { ...task, id: "range-1", title: "Existing range", position: 512, dueDate: `${year}-06-02`, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: endpoint(`${year}-06-01`), end: endpoint(`${year}-06-02`), due: `${year}-06-02` } };
+    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve({ subtasks: [rangeTask, second] }));
+    apiPatchMock.mockResolvedValue(rangeTask);
+    const host = mount(); await render();
+    const control = item(host, "Existing range").querySelector<HTMLButtonElement>('[aria-label="Schedule for Existing range"]')!;
+    expect(control.disabled).toBe(false);
+    expect(control.textContent).toContain("1 Jun");
+    await click(control);
+    const editor = portal("subtask-popover-range-1-schedule");
+    expect([...editor.querySelector<HTMLSelectElement>("select")!.options].map((option) => option.value)).toEqual(["unscheduled", "due_only", "range"]);
+    await click(saveButton(editor)); await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/range-1`, { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: `${year}-06-01` }, end: { kind: "date", localCivil: `${year}-06-02` } } } });
+  });
+
   it("keeps one Delete-only popover and restores deletion focus", async () => {
     const host = mount(); await render(); const first = item(host, "Call client"); const actions = first.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!; await click(actions); const group = portal("subtask-popover-task-1-actions"); expect([...group.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["Delete"]);
     confirmMock.mockResolvedValueOnce(false); await click(group.querySelector("button")!); expect(apiDeleteMock).not.toHaveBeenCalled(); expect(portal("subtask-popover-task-1-actions")).not.toBeNull(); await click(group.querySelector("button")!); await flush(); expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`); expect(document.activeElement).toBe(item(host, "Prepare files").querySelector('[data-testid="subtask-checklist-title"]'));

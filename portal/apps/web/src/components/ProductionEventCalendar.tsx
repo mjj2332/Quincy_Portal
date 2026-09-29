@@ -50,7 +50,6 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from "react";
 import {
-  CHECKLIST_SCHEDULE_RANGES_ENABLED,
   deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
   type CalendarEventDto,
@@ -157,8 +156,8 @@ function calendarResetKey(calendar: DashboardCalendarState): string {
   return `${calendar.date}|${calendar.subview}|${calendar.layers.join(",")}|${calendar.editorIds.join(",")}|${calendar.includeUnassigned}|${calendar.stageKeys.join(",")}|${calendar.showCompletedChecklist}|${calendar.showDeliveredProjects}|${calendar.overdueOnly}|${calendar.search}|${calendar.myTasks}`;
 }
 
-function canDragUnscheduledEntry(entry: CalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
-  return entry.kind === "project_deadline" ? unscheduledProjectDraggable(entry) : unscheduledChecklistDraggable(entry, rangesEnabled);
+function canDragUnscheduledEntry(entry: CalendarUnscheduledEntryDto): boolean {
+  return entry.kind === "project_deadline" ? unscheduledProjectDraggable(entry) : unscheduledChecklistDraggable(entry);
 }
 
 function ChipContent({ id, data, title, needsAttention }: { id: string; data: ProductionEventCalendarData | undefined; title: string; needsAttention: boolean }): JSX.Element {
@@ -300,7 +299,6 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // Events: effective permissions → optimistic overlay → local pending range → vendor events.
   // ---------------------------------------------------------------------------------------------
 
-  const rangesEnabled = CHECKLIST_SCHEDULE_RANGES_ENABLED && !commands.checklistRangeSchedulingDisabled;
   const gated = phone && TIME_GRID_SUBVIEWS.has(calendar.subview);
   const renderEvents = useMemo<CalendarEventDto[]>(() => (source?.events ?? []).map((event) => effectiveCalendarEventPermissions(event, {
     subview: calendar.subview,
@@ -308,9 +306,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     interactionBlocked: blocked,
     settlePending: settling,
     checklistNeedsAttention: commands.checklistNeedsAttention,
-    rangesEnabled,
     deadlineMovementDisabled: commands.deadlineMovementDisabled,
-  })), [source?.events, calendar.subview, identity.role, blocked, settling, commands.checklistNeedsAttention, rangesEnabled, commands.deadlineMovementDisabled]);
+  })), [source?.events, calendar.subview, identity.role, blocked, settling, commands.checklistNeedsAttention, commands.deadlineMovementDisabled]);
   const displayEvents = useMemo(() => applyOptimisticOverlay(renderEvents, commands.optimisticOverlay), [renderEvents, commands.optimisticOverlay]);
   const dtoById = useMemo(() => new Map(displayEvents.map((event) => [event.id, event])), [displayEvents]);
 
@@ -379,7 +376,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const projectEntries = useMemo(() => renderUnscheduled.filter((entry): entry is ProjectCalendarUnscheduledEntryDto => entry.kind === "project_deadline"), [renderUnscheduled]);
   const checklistEntries = useMemo(() => renderUnscheduled.filter((entry): entry is ChecklistCalendarUnscheduledEntryDto => entry.kind === "checklist"), [renderUnscheduled]);
 
-  const canDropEntry = useCallback((entry: CalendarUnscheduledEntryDto) => live && calendar.subview !== "agenda" && !gated && canDragUnscheduledEntry(entry, rangesEnabled), [calendar.subview, gated, live, rangesEnabled]);
+  const canDropEntry = useCallback((entry: CalendarUnscheduledEntryDto) => live && calendar.subview !== "agenda" && !gated && canDragUnscheduledEntry(entry), [calendar.subview, gated, live]);
   const dropEntry = useCallback((entry: CalendarUnscheduledEntryDto, target: EventCalendarDropTargetLike) => {
     if (!canDropEntry(entry)) return;
     const planned = eventCalendarDropToProposal(entry as ChecklistCalendarUnscheduledEntryDto | ProjectCalendarUnscheduledEntryDto, target);
@@ -417,8 +414,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           checklistEntries={checklistEntries}
           facets={unscheduledFacets}
           subview={calendar.subview}
-          rangesEnabled={rangesEnabled}
-          onScheduleProject={(entry) => { if (canDragUnscheduledEntry(entry, rangesEnabled)) commands.openUnscheduledProjectDialog(entry); }}
+          onScheduleProject={(entry) => { if (canDragUnscheduledEntry(entry)) commands.openUnscheduledProjectDialog(entry); }}
           onScheduleChecklist={commands.openUnscheduledChecklistScheduleEditor}
           disabled={blocked || settling}
           dragSuppressed={gated}
@@ -547,7 +543,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
       )}
 
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      <ProductionEventCalendarDialogs commands={commands} rangesEnabled={rangesEnabled} deadlineConfirm={deadlineConfirm} />
+      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} />
     </section>
   );
 }

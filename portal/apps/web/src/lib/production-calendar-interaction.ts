@@ -123,7 +123,6 @@ export type ChecklistFailureAction = {
   retry: false;
   retainDraft: boolean;
   askFold: boolean;
-  rangeDisabled: boolean;
   needsAttention: boolean;
   mappingDefect: boolean;
   accessLoss: boolean;
@@ -201,7 +200,7 @@ export function classifyChecklistFailure(value: unknown, ctx: { eventId: string;
   if (status === 401 || status === 403) {
     return {
       code: String(status), rollback: true, refetch: false, retry: false, retainDraft: false,
-      askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false,
+      askFold: false, needsAttention: false, mappingDefect: false,
       accessLoss: true, focus: "safe-fallback", announce: "",
     };
   }
@@ -211,19 +210,17 @@ export function classifyChecklistFailure(value: unknown, ctx: { eventId: string;
   switch (code) {
     case "subtask_schedule_version_conflict":
       // "No retry" means no automatic retry; an editor retains its draft for manual resubmission.
-      return { code, rollback: true, refetch: true, retry: false, retainDraft, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist schedule changed elsewhere. Reloaded the latest; no retry was made." };
+      return { code, rollback: true, refetch: true, retry: false, retainDraft, askFold: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist schedule changed elsewhere. Reloaded the latest; no retry was made." };
     case "subtask_item_conflict":
-      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist item changed elsewhere. Reloaded the latest item; no retry was made." };
-    case "subtask_schedule_ranges_disabled":
-      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, rangeDisabled: true, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "Range scheduling is unavailable in this app version." };
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist item changed elsewhere. Reloaded the latest item; no retry was made." };
     case "subtask_schedule_storage_invalid":
-      return { code, rollback: true, refetch: false, retry: false, retainDraft: false, askFold: false, rangeDisabled: false, needsAttention: true, mappingDefect: false, accessLoss: false, focus: "event", announce: "This checklist schedule needs attention. Repair is unavailable in Calendar." };
+      return { code, rollback: true, refetch: false, retry: false, retainDraft: false, askFold: false, needsAttention: true, mappingDefect: false, accessLoss: false, focus: "event", announce: "This checklist schedule needs attention. Repair is unavailable in Calendar." };
     case "subtask_schedule_reload_required":
-      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: true, accessLoss: false, focus: "event", announce: "The checklist schedule could not be applied. Reloaded the latest; try again." };
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, needsAttention: false, mappingDefect: true, accessLoss: false, focus: "event", announce: "The checklist schedule could not be applied. Reloaded the latest; try again." };
     case "subtask_schedule_nonexistent_local_time":
-      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That time does not exist in Sydney on that date (daylight-saving gap)." };
+      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That time does not exist in Sydney on that date (daylight-saving gap)." };
     case "subtask_schedule_repeated_local_time":
-      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: true, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint." };
+      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: true, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint." };
     case "subtask_schedule_invalid_order":
     case "subtask_schedule_mixed_endpoint_kinds":
     case "subtask_schedule_missing_endpoint":
@@ -231,7 +228,7 @@ export function classifyChecklistFailure(value: unknown, ctx: { eventId: string;
     case "subtask_schedule_invalid_local_time":
     case "subtask_schedule_invalid_version":
     case "subtask_schedule_resolver_defect":
-      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: false, rangeDisabled: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That schedule change isn't valid." };
+      return { code, rollback: true, refetch: false, retry: false, retainDraft, askFold: false, needsAttention: false, mappingDefect: false, accessLoss: false, focus: retainDraft ? "move-reschedule" : "event", announce: "That schedule change isn't valid." };
     default:
       return null;
   }
@@ -249,8 +246,7 @@ export type CalendarAnnouncementKind =
   | "settle-failed"
   | "dst-gap"
   | "fold-choice"
-  | "invalid"
-  | "range-disabled";
+  | "invalid";
 export type CalendarAnnouncementContext = {
   entity: "deadline" | "checklist";
   street?: string;
@@ -282,7 +278,6 @@ export function calendarAnnouncement(kind: CalendarAnnouncementKind, ctx: Calend
       case "dst-gap": return "That time does not exist in Sydney on that date (daylight-saving gap).";
       case "fold-choice": return "That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.";
       case "invalid": return "That schedule change isn't valid.";
-      case "range-disabled": return "Range scheduling is unavailable in this app version.";
     }
   }
   switch (kind) {
@@ -299,7 +294,6 @@ export function calendarAnnouncement(kind: CalendarAnnouncementKind, ctx: Calend
     case "dst-gap": return "That time does not exist in Sydney on that date (daylight-saving gap). Pick another time.";
     case "fold-choice": return "That time occurs twice in Sydney that day. Choose the earlier or later occurrence.";
     case "invalid": return "That is not a valid Sydney time. Adjust the value and try again.";
-    case "range-disabled": return "Range scheduling is unavailable in this app version.";
   }
 }
 

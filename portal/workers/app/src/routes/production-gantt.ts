@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { createDb } from "@quincy/db";
 import {
-  CHECKLIST_SCHEDULE_RANGES_ENABLED,
   EXTERNAL_API_RESPONSE_SCHEMAS,
   PRODUCTION_GANTT_CHILD_PAGE_LIMIT,
   PRODUCTION_GANTT_DRAW_CAP,
@@ -653,7 +652,8 @@ function ganttPerson(row: { assignee_id: string | null; assignee_name: string | 
 function ganttChecklistPermissions(schedule: ChecklistScheduleDto, canCollaborate: boolean): GanttChecklistRowDto["permissions"] {
   if (schedule.state === "invalid") return { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false };
   const canOpen = canCollaborate;
-  const canRange = canOpen && CHECKLIST_SCHEDULE_RANGES_ENABLED;
+  // canScheduleRange stays on the wire deliberately (strict schemas; removing it would break open tabs across a deploy); #342 removes it when schedules narrow to ranges only.
+  const canRange = canOpen;
   if (schedule.state === "legacy_unresolved") return { canDrag: false, canResize: false, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };
   if (schedule.state === "unscheduled") return { canDrag: canRange, canResize: false, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };
   if (schedule.state === "range") return { canDrag: canRange, canResize: canRange, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };

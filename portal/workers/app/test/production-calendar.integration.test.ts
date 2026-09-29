@@ -1,7 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import type { Context } from "hono";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   EXTERNAL_API_RESPONSE_SCHEMAS,
   adminProductionCalendarRangeResponseSchema,
@@ -597,26 +597,14 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(body.filterFacets.people.some((person) => person.id === "80666666-6666-4666-8666-666666666666")).toBe(false);
   });
 
-  it("honors the inert range flag for event and Unscheduled permissions", async () => {
-    vi.resetModules();
-    vi.doMock("@quincy/shared", async () => ({ ...(await vi.importActual<typeof import("@quincy/shared")>("@quincy/shared")), CHECKLIST_SCHEDULE_RANGES_ENABLED: false }));
-    const { productionCalendarHandler: inertHandler } = await import("../src/routes/production-calendar");
-    const url = `https://portal.test/api/production-calendar?${range}&q=Calendar`;
-    const context = {
-      req: { url, query: () => Object.fromEntries(new URL(url).searchParams.entries()) },
-      env: { DB: database.DB },
-      get: (key: string) => key === "user" ? { id: externalId, role: "external_editor", active: true } : undefined,
-      json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }),
-    } as unknown as Context<AppEnv>;
-    const body = externalCalendarRangeSchema.parse(await (await inertHandler(context)).json());
+  it("gives an external collaborator drag, resize and range scheduling on ranges and Unscheduled entries", async () => {
+    const body = externalCalendarRangeSchema.parse(await (await request(`/api/production-calendar?${range}&q=Calendar`, tokens.external)).json());
     const rangeEvent = body.events.find((event) => event.kind === "checklist" && event.title === "Timed range");
-    expect(rangeEvent?.permissions).toMatchObject({ canDrag: false, canResize: false, canScheduleRange: false, canOpenScheduleEditor: true });
+    expect(rangeEvent?.permissions).toMatchObject({ canDrag: true, canResize: true, canScheduleRange: true, canOpenScheduleEditor: true });
     const dueEvent = body.events.find((event) => event.kind === "checklist" && event.title === "Date milestone");
-    expect(dueEvent?.permissions).toMatchObject({ canDrag: true, canResize: false, canScheduleRange: false, canOpenScheduleEditor: true });
+    expect(dueEvent?.permissions).toMatchObject({ canDrag: true, canResize: false, canScheduleRange: true, canOpenScheduleEditor: true });
     const unscheduled = body.unscheduled.find((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist");
-    expect(unscheduled?.permissions).toMatchObject({ canDrag: false, canResize: false, canScheduleRange: false, canOpenScheduleEditor: true });
-    vi.doUnmock("@quincy/shared");
-    vi.resetModules();
+    expect(unscheduled?.permissions).toMatchObject({ canDrag: true, canResize: false, canScheduleRange: true, canOpenScheduleEditor: true });
   });
 
   it("refuses a real 10,001-row scheduled query before executing the facet statement", async () => {

@@ -1443,8 +1443,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       )}
       {body}
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      {/* The Gantt never opens the checklist schedule editor, so the sheet's `rangesEnabled` is moot. */}
-      <ProductionEventCalendarDialogs commands={commands} rangesEnabled={false} deadlineConfirm={deadlineConfirm} />
+      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} />
     </div>
   );
 }

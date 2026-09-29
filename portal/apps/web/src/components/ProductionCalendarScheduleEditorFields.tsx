@@ -129,7 +129,6 @@ function endpointLabel(which: "start" | "end"): string { return which === "start
 
 export type ChecklistScheduleDraftInput = {
   event: ChecklistScheduleEditorEvent;
-  rangesEnabled: boolean;
   onSubmit: (schedule: InitialChecklistScheduleInput) => void;
   initialSchedule?: InitialChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
@@ -145,7 +144,7 @@ export type ChecklistScheduleDraftState = {
 };
 
 /** The editor's draft state and its submit, shared by both shells. */
-export function useChecklistScheduleDraft({ event, rangesEnabled, onSubmit, initialSchedule, validationError }: ChecklistScheduleDraftInput): ChecklistScheduleDraftState {
+export function useChecklistScheduleDraft({ event, onSubmit, initialSchedule, validationError }: ChecklistScheduleDraftInput): ChecklistScheduleDraftState {
   const initial = initialSchedule ? draftFromInput(initialSchedule) : scheduleDraft(event.schedule);
   const [draft, setDraft] = useState<ChecklistScheduleDraft>(initial);
   const [error, setError] = useState<ProductionCalendarScheduleEditorError | undefined>(validationError);
@@ -157,10 +156,6 @@ export function useChecklistScheduleDraft({ event, rangesEnabled, onSubmit, init
 
   const submit = () => {
     const input = scheduleInput(draft);
-    if (!rangesEnabled && input.state === "range") {
-      setError({ code: "subtask_schedule_mixed_endpoint_kinds", message: "Range scheduling is unavailable in this app version." });
-      return;
-    }
     const result = normalizeChecklistSchedule(input, event.schedule.version);
     if (!result.ok) {
       setError(result.error);
@@ -174,12 +169,11 @@ export function useChecklistScheduleDraft({ event, rangesEnabled, onSubmit, init
 }
 
 export type ProductionCalendarScheduleEditorFieldsProps = {
-  rangesEnabled: boolean;
   state: ChecklistScheduleDraftState;
 };
 
 /** The editor body: intro, state and mode selects, endpoint fieldsets, fold radios, error. */
-export function ProductionCalendarScheduleEditorFields({ rangesEnabled, state }: ProductionCalendarScheduleEditorFieldsProps): JSX.Element {
+export function ProductionCalendarScheduleEditorFields({ state }: ProductionCalendarScheduleEditorFieldsProps): JSX.Element {
   const { draft, setDraft, error, setEndpoint } = state;
   const groupId = useId();
 
@@ -207,7 +201,7 @@ export function ProductionCalendarScheduleEditorFields({ rangesEnabled, state }:
       <NativeSelect className={EDITOR_SELECT} id={`${groupId}-state`} aria-label="Checklist schedule state" value={draft.state} onChange={(input) => setDraft((current) => ({ ...current, state: input.target.value as ChecklistScheduleDraft["state"] }))}>
         <option value="unscheduled">Unscheduled</option>
         <option value="due_only">Due date only</option>
-        <option value="range" disabled={!rangesEnabled}>Range{!rangesEnabled ? " · unavailable" : ""}</option>
+        <option value="range">Range</option>
       </NativeSelect>
     </label>
     {draft.state !== "unscheduled" && <>

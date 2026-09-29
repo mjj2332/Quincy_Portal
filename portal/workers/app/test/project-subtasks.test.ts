@@ -225,6 +225,17 @@ describe("project subtasks API", () => {
     expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count).toBe(outboxBefore);
   });
 
+  it("emits one broad schedule notification when a schedule change moves the end", async () => {
+    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "End change broadcast", schedule: { state: "unscheduled" } });
+    expect(created.status).toBe(201);
+    const item = await created.json() as { id: string; schedule: { version: number } };
+    const broadCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
+    const before = await broadCount();
+    const dueOnly = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: item.schedule.version, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-01" } } } });
+    expect(dueOnly.status).toBe(200);
+    expect(await broadCount()).toBe(before + 1);
+  });
+
   it("resets a fold-only end claim without changing due_date or emitting a duplicate reminder", async () => {
     const firstMorning = Date.UTC(2026, 3, 4, 22);
     const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {

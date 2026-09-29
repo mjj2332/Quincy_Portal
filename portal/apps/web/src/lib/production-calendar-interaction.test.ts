@@ -182,7 +182,6 @@ describe("Production Calendar interaction model", () => {
     expect(calendarAnnouncement("dst-gap", context)).toBe("That time does not exist in Sydney on that date (daylight-saving gap).");
     expect(calendarAnnouncement("fold-choice", context)).toBe("That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.");
     expect(calendarAnnouncement("invalid", context)).toBe("That schedule change isn't valid.");
-    expect(calendarAnnouncement("range-disabled", context)).toBe("Range scheduling is unavailable in this app version.");
     expect(calendarAnnouncement("saved", { ...context, terminal: true })).toBeUndefined();
   });
 
@@ -222,7 +221,6 @@ describe("checklist calendar failure classification", () => {
   it.each([
     ["subtask_schedule_version_conflict", { refetch: true, retainDraft: false }],
     ["subtask_item_conflict", { refetch: true, retainDraft: false }],
-    ["subtask_schedule_ranges_disabled", { refetch: true, rangeDisabled: true }],
     ["subtask_schedule_storage_invalid", { refetch: false, needsAttention: true }],
     ["subtask_schedule_reload_required", { refetch: true, mappingDefect: true }],
     ["subtask_schedule_nonexistent_local_time", { refetch: false }],
@@ -235,7 +233,7 @@ describe("checklist calendar failure classification", () => {
     ["subtask_schedule_invalid_version", { refetch: false }],
     ["subtask_schedule_resolver_defect", { refetch: false }],
   ] as const)("classifies %s without retry", (code, expected) => {
-    const status = code === "subtask_schedule_ranges_disabled" ? 503 : code === "subtask_schedule_storage_invalid" ? 422 : code === "subtask_schedule_version_conflict" || code === "subtask_item_conflict" ? 409 : 400;
+    const status = code === "subtask_schedule_storage_invalid" ? 422 : code === "subtask_schedule_version_conflict" || code === "subtask_item_conflict" ? 409 : 400;
     const result = classifyChecklistFailure(new ApiError("failure", status, { code }), { eventId: checklistEventId });
     expect(result).toMatchObject({ code, retry: false, ...expected });
   });

@@ -23,6 +23,6 @@ export function unscheduledProjectDraggable(entry: ProjectCalendarUnscheduledEnt
   return !entry.project.delivered && entry.permissions.canDrag;
 }
 
-export function unscheduledChecklistDraggable(entry: ChecklistCalendarUnscheduledEntryDto, rangesEnabled: boolean): boolean {
-  return rangesEnabled && entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
+export function unscheduledChecklistDraggable(entry: ChecklistCalendarUnscheduledEntryDto): boolean {
+  return entry.reason === "unscheduled" && entry.permissions.canDrag && entry.permissions.canScheduleRange;
 }

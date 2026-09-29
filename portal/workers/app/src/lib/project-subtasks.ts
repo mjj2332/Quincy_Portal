@@ -2,7 +2,6 @@ import { buildProjectActivityStatements, createDb, schema } from "@quincy/db";
 import { and, eq } from "drizzle-orm";
 import {
   CHECKLIST_SCHEDULE_ZONE,
-  CHECKLIST_SCHEDULE_RANGES_ENABLED,
   checklistScheduleToDto,
   normalizeChecklistSchedule,
   serializeChecklistSchedule,
@@ -65,7 +64,7 @@ type AssignmentNotice = {
 
 export type ProjectSubtaskCommandResult =
   | SuccessResult
-  | { outcome: "invalid_request"; status: 400 | 503; code: string; message: string; details?: { endpoint?: "start" | "end"; choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> } }
+  | { outcome: "invalid_request"; status: 400; code: string; message: string; details?: { endpoint?: "start" | "end"; choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> } }
   | { outcome: "forbidden" }
   | { outcome: "not_found"; target: "project" | "subtask" }
   | { outcome: "schedule_conflict"; current: ChecklistScheduleDto; currentSubtask?: ProjectSubtaskDto }
@@ -126,8 +125,8 @@ export function serializeProjectSubtask(row: SubtaskRow): ProjectSubtaskDto {
 
 type RequestDetails = { endpoint?: "start" | "end"; choices?: Array<{ disambiguation: "earlier" | "later"; utcOffsetMinutes: number }> };
 
-function invalidRequest(code: string, message: string, details?: RequestDetails, status: 400 | 503 = 400): ProjectSubtaskCommandResult {
-  return { outcome: "invalid_request", status, code, message, ...(details ? { details } : {}) };
+function invalidRequest(code: string, message: string, details?: RequestDetails): ProjectSubtaskCommandResult {
+  return { outcome: "invalid_request", status: 400, code, message, ...(details ? { details } : {}) };
 }
 
 const SCHEDULE_KEYS: Array<keyof ChecklistScheduleStorage> = [
@@ -160,7 +159,7 @@ function scheduleDiff(current: ChecklistScheduleDto, next: ChecklistScheduleDto)
 }
 
 export function scheduleActivityBroadMode(endChanged: boolean): "emit" | "activity_only" {
-  return CHECKLIST_SCHEDULE_RANGES_ENABLED && endChanged ? "emit" : "activity_only";
+  return endChanged ? "emit" : "activity_only";
 }
 
 function withVersion(value: NormalizedChecklistSchedule, scheduleVersion: number, startChanged: boolean, endChanged: boolean): NormalizedChecklistSchedule {
@@ -233,7 +232,6 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (operation.schedule && operation.legacyDueDate !== undefined) return invalidRequest("subtask_schedule_inputs_conflict", "Choose either schedule or dueDate, not both.");
     const legacyDueDateRequested = operation.legacyDueDate !== undefined;
     const requested = legacyDueDateRequested ? null : operation.schedule ?? { state: "unscheduled" as const };
-    if (requested?.state === "range" && !CHECKLIST_SCHEDULE_RANGES_ENABLED) return invalidRequest("subtask_schedule_ranges_disabled", "Range scheduling is not enabled in this app version.", undefined, 503);
     const assigneeId = operation.item.assigneeId ?? null;
     if (assigneeId && !(await projectMentionableUsers(env, projectId)).some((user) => user.id === assigneeId)) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
     const normalized = requested ? normalizeChecklistSchedule(requested, requested.state === "unscheduled" ? 0 : 1) : null;
@@ -278,7 +276,6 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     expectedVersion = 0;
   } else if (operation.scheduleRequest) {
     if (!Number.isSafeInteger(operation.scheduleRequest.expectedVersion) || operation.scheduleRequest.expectedVersion < 0) return invalidRequest("subtask_schedule_invalid_version", "Schedule version must be a nonnegative integer.");
-    if (operation.scheduleRequest.schedule.state === "range" && !CHECKLIST_SCHEDULE_RANGES_ENABLED) return invalidRequest("subtask_schedule_ranges_disabled", "Range scheduling is not enabled in this app version.", undefined, 503);
     requested = operation.scheduleRequest.schedule;
     expectedVersion = operation.scheduleRequest.expectedVersion;
   }
