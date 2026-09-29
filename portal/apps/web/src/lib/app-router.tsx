@@ -417,7 +417,14 @@ const routeTree = rootRoute.addChildren([
  * async route work would paint blank and fail the suite.
  */
 export function createStaffRouter(adapter: ReturnType<typeof locationStore>) {
-  const { history, connect } = createStaffRouterHistory(adapter);
+  // #266: TanStack scrolls to the top after every render it is notified of (its `onRendered`
+  // subscriber runs even with `scrollRestoration` off). `_scroll.next` is the flag its own
+  // `resetScroll: false` navigation option sets; our navigations never pass through the router, so
+  // the history sets it instead — a query-only change keeps the scroll position, a new pathname
+  // lands at the top. `_scroll` is internal: `app-router-scroll.dom.test.tsx` pins it across upgrades.
+  const { history, connect } = createStaffRouterHistory(adapter, {
+    beforeNotify: ({ pathnameChanged }) => { router._scroll.next = pathnameChanged; },
+  });
   const router = createRouter({
     routeTree,
     history,

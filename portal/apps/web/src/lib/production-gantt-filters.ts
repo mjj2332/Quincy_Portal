@@ -183,6 +183,29 @@ export function ganttFacetForWrite(previous: ProductionGanttFacetFilters, next: 
 }
 
 /**
+ * #269: the one-line reason for a Delivered-pair write, or `null` when the write is the user's edit
+ * as made. `edit` is the facet the user's edit projected to, `written` what `ganttFacetForWrite`
+ * turned it into. The bar shows and announces it once, so the second chip (or the vanished stage)
+ * does not appear without explanation.
+ */
+export function ganttPairingNotice(edit: ProductionGanttFacetFilters, written: ProductionGanttFacetFilters): string | null {
+  if (written.delivered && !edit.delivered) return "Also showing delivered projects.";
+  if (edit.stageKeys.includes("delivered") && !written.stageKeys.includes("delivered")) return "Removed Delivered from Stage.";
+  return null;
+}
+
+/**
+ * #270: the empty state's specific recovery. A facet with Stage = Delivered while delivered projects
+ * are hidden (a cold link like `?stages=delivered`, never rewritten on load) draws nothing for a
+ * known reason; this is that facet with delivered projects shown and every other filter kept, or
+ * `null` when the facet is not in that state.
+ */
+export function ganttShowDeliveredRecovery(facet: ProductionGanttFacetFilters): ProductionGanttFacetFilters | null {
+  if (facet.delivered || !facet.stageKeys.includes("delivered")) return null;
+  return { ...facet, delivered: true };
+}
+
+/**
  * Brings the bar's query in line with a facet `ganttFacetForWrite` changed, keeping chip identities:
  * a rule the facet still needs keeps its id and takes the facet's operator and values (finishing an
  * unfinished Show chip the facet now needs); a rule the facet no longer has is dropped when the

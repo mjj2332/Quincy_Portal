@@ -49,7 +49,7 @@ import type { AppEnv } from "../env";
 
 type GanttRole = AppEnv["Variables"]["user"]["role"];
 
-const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor"]);
+const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor", "rev"]);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 /** Canonical decimal only: no leading zero, no leading `+`, no whitespace. */
@@ -101,6 +101,8 @@ export type ParsedGanttPageQuery = {
   stageKeys: StagePresentationKey[];
   delivered: boolean;
   completed: boolean;
+  /** #246: `rev=1` — embed each project's child-collection revision (`children.revision`). */
+  revision: boolean;
 };
 
 export type ParsedGanttChildQuery = {
@@ -155,8 +157,13 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   const rawCursor = valueFor("cursor");
   const rawLimit = valueFor("limit");
 
+  const rawRevision = valueFor("rev");
+  if (rawRevision !== undefined && rawRevision !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
+
   if (childrenOf !== undefined) {
     if (rawCursor !== undefined || rawLimit !== undefined) return parseFailure("childrenOf cannot be combined with cursor or limit.", "gantt_query_invalid");
+    // #246: the revision rides on the embedded first page, which is what the client's cache is keyed to.
+    if (rawRevision !== undefined) return parseFailure("rev applies to the project list, not a child page.", "gantt_query_invalid");
     if (!UUID_RE.test(childrenOf)) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
     const rawChildCompletedFlag = valueFor("completed");
     if (rawChildCompletedFlag !== undefined && rawChildCompletedFlag !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
@@ -218,6 +225,7 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
     stageKeys: canonicalStageOrder(rawStages),
     delivered: deliveredFlag === "1",
     completed: completedFlag === "1",
+    revision: rawRevision === "1",
   };
 }
 
@@ -439,7 +447,7 @@ type GanttChildBaseRow = {
 
 /** Statement 2's embedded-children row: `total` is per-project (`PARTITION BY project_id`), and
  * `rnk` is that project's own 1-based rank used to cap the embedded page at `CHILD_PAGE_LIMIT`. */
-type GanttChildSqlRow = GanttChildBaseRow & { rnk: number };
+type GanttChildSqlRow = GanttChildBaseRow & { rnk: number; revision: number };
 
 /** The dedicated child-page endpoint's row (§5/§7): there is no per-row rank since the cursor
  * itself defines the page. `total` is NOT read off this row — see `GanttChildPageTotalSqlRow`
@@ -474,7 +482,8 @@ ranked AS (
     s.schedule_end_at, s.schedule_end_utc_offset_minutes, s.schedule_end_fold, s.schedule_zone, s.schedule_version,
     sp.can_collaborate,
     ROW_NUMBER() OVER (PARTITION BY s.project_id ORDER BY s.position ASC, s.id ASC) AS rnk,
-    COUNT(*) OVER (PARTITION BY s.project_id) AS total
+    COUNT(*) OVER (PARTITION BY s.project_id) AS total,
+    MAX(s.updated_at) OVER (PARTITION BY s.project_id) AS revision
   FROM project_subtasks s
   INNER JOIN scoped_projects sp ON sp.project_id = s.project_id
   LEFT JOIN user assignee ON assignee.id = s.assignee_id
@@ -664,6 +673,7 @@ function serializeGanttProjectRow(
   editorsByProject: Map<string, { id: string; name: string }[]>,
   childrenByProject: Map<string, GanttChildSqlRow[]>,
   completed: boolean,
+  withRevision: boolean,
 ): GanttProjectRowDto {
   if (row.project_id === null || row.street === null || row.stage_key === null || row.bar_start_date === null || row.created_at === null) {
     throw new Error("Gantt project row is incomplete.");
@@ -703,6 +713,8 @@ function serializeGanttProjectRow(
       rows: children.map(serializeGanttChecklistRow),
       total,
       returned,
+      // #246: the revision is a window over the project's whole partition, so any row carries it.
+      ...(withRevision ? { revision: children.length > 0 ? Number(children[0]!.revision) : 0 } : {}),
       // `truncated` means "more rows remain" (fix-218-r4 #3) — for THIS embedded, uncursored
       // batch (always the project's first `CHILD_PAGE_LIMIT` visible rows, fetched fresh every
       // time), that is equivalent to `total > returned`. It is NOT equivalent for the dedicated,
@@ -804,7 +816,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     childrenByProject.set(row.project_id, list);
   }
 
-  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed));
+  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision));
   const lastRow = pageRows.at(-1);
   const nextCursor = truncatedPage && lastRow
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })

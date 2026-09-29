@@ -110,6 +110,12 @@ export type ProductionEventCalendarProps = {
   onAccessLoss?: () => void;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
+  /**
+   * #260: how many projects this range draws under the Calendar's filters (the projects its events
+   * and unscheduled entries reference), for the Dashboard search chip. `null` while no response has
+   * landed, when a truncated unscheduled list means the count is not known, and on unmount.
+   */
+  onShownProjectsChange?: (count: number | null) => void;
 };
 
 /** Below this width the rail leaves the grid's side and moves into a sheet. */
@@ -197,7 +203,7 @@ function UnscheduledDragSource({ dragEnabled, canDrop, onDrop, ...list }: Omit<P
   return <ProductionEventCalendarUnscheduledList {...list} beginDrag={dragEnabled ? beginDrag : undefined} />;
 }
 
-export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject }: ProductionEventCalendarProps): JSX.Element {
+export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange }: ProductionEventCalendarProps): JSX.Element {
   const query = useProductionCalendarRange({ identity, calendar, enabled: true, bounds: true });
 
   // Up next: a second, read-only agenda range from today (Sydney), same filters, outside any gate.
@@ -268,6 +274,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // Draw from the accepted baseline; the live query only while nothing holds the gate.
   const source: ProductionCalendarRangeResponse | null = commands.acceptedResponse ?? (!blocked ? query.data ?? null : null);
   boundsRef.current = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, calendarScheduleBounds(bound)])), [source?.projectBounds, query.data?.projectBounds]);
+
+  const unscheduledFacet = query.data?.filterFacets.unscheduled;
+  const shownProjects = !query.data?.projectBounds || unscheduledFacet?.project.truncated || unscheduledFacet?.checklist.truncated ? null : query.data.projectBounds.length;
+  useEffect(() => { onShownProjectsChange?.(shownProjects); }, [onShownProjectsChange, shownProjects]);
+  useEffect(() => () => onShownProjectsChange?.(null), [onShownProjectsChange]);
 
   // First-load skeleton only: once a range has drawn, a new range key keeps the grid mounted.
   const [everLoaded, setEverLoaded] = useState(false);

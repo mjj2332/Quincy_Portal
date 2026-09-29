@@ -216,6 +216,45 @@ describe("production-gantt", () => {
     expect(project.children.nextCursor).not.toBeNull();
   });
 
+  describe("#246: a per-project child revision, only when the request asks (rev=1)", () => {
+    const embedded = async (path: string) => {
+      const body = await (await request(path, tokens.admin)).json() as { projects: Array<{ id: string; children: Record<string, unknown> & { rows: Array<{ id: string; title: string }> } }> };
+      adminProductionGanttResponseSchema.parse(body);
+      return body.projects.find((p) => p.id === manyChildrenProjectId)!.children;
+    };
+
+    it("omits the revision without rev=1, so an old bundle's strict decoder never sees the key", async () => {
+      expect(Object.keys(await embedded("/api/production-gantt?scope=active"))).not.toContain("revision");
+    });
+
+    it("changes the revision for a content edit to a row beyond the embedded first page, and only then", async () => {
+      const before = await embedded("/api/production-gantt?scope=active&rev=1");
+      expect(typeof before.revision).toBe("number");
+      expect(await embedded("/api/production-gantt?scope=active&rev=1")).toEqual(before);
+
+      // A row that lives only on page 2: its edit moves neither total, nextCursor nor any page-one row.
+      const pageTwoRow = await database.DB.prepare("SELECT id FROM project_subtasks WHERE project_id = ? ORDER BY position DESC, id DESC LIMIT 1").bind(manyChildrenProjectId).first<{ id: string }>();
+      expect(before.rows.map((row) => row.id)).not.toContain(pageTwoRow!.id);
+      await database.DB.prepare("UPDATE project_subtasks SET title = 'Edited on page two', updated_at = ? WHERE id = ?").bind(Number(before.revision) + 1000, pageTwoRow!.id).run();
+
+      const after = await embedded("/api/production-gantt?scope=active&rev=1");
+      expect(after.total).toBe(before.total);
+      expect(after.nextCursor).toBe(before.nextCursor);
+      expect(after.rows).toEqual(before.rows);
+      expect(after.revision).not.toBe(before.revision);
+    });
+
+    it("rejects rev other than 1, and rev on a child page", async () => {
+      expect((await request("/api/production-gantt?scope=active&rev=0", tokens.admin)).status).toBe(400);
+      expect((await request(`/api/production-gantt?scope=active&childrenOf=${manyChildrenProjectId}&rev=1`, tokens.admin)).status).toBe(400);
+    });
+
+    it("carries the revision for the external editor too", async () => {
+      const response = await request("/api/production-gantt?scope=active&rev=1", tokens.external);
+      expect(response.status).toBe(200);
+    });
+  });
+
   it("the child page returns the remainder with no overlap or gap", async () => {
     const response = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active", tokens.admin)).json());
     const project = response.projects.find((p) => p.id === manyChildrenProjectId)!;

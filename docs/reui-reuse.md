@@ -49,6 +49,10 @@ Then copy each file into `components/reui/`, and on the way:
   `button.tsx`)
 - record in the file's header comment what was dropped or changed and why (see
   `reui-block-adoption.md`)
+- keep Quincy's adaptations of items already installed: `avatar`'s fallback initials read
+  `text-foreground-secondary` (#212, 8.09:1 — the registry's `text-muted-foreground` is 3.13:1),
+  pinned by `styles/design-system-guards.test.ts`; a re-install that restores the registry class
+  fails that guard
 
 `npx shadcn@latest view <name>` shows the raw registry source with unresolved placeholders
 (`cn`, `IconPlaceholder`). Read it for dependencies; copy files only from an `add`.

@@ -69,16 +69,21 @@ beforeAll(async () => {
 });
 
 describe("admin asset deletion", () => {
-  it("deletes every asset kind, exact original/rendition keys, cascades D1 children, retains annotation R2, and reconciles count", async () => {
+  it("deletes every asset kind, exact original/rendition keys, cascades D1 children, deletes annotation R2 (#283), and reconciles count", async () => {
     const project = await seedProject(["edited", "video", "floorplan", "copy"]);
     for (const kind of ["photo", "edited", "video", "copy_pdf"]) {
       const asset = await seedAsset(project, kind); const key = `renditions/${asset.id}/web`; const annotationKey = `projects/${project.projectId}/annotations/${asset.id}.json`;
+      // An earlier edit's stroke object, no longer referenced by any row, under a photo's own prefix.
+      // Only photos can be annotated, so only their prefixes are walked.
+      const annotatable = kind === "photo"; // this test's "edited" seeds a non-enum kind; real edited assets are photos
+      const replacedStrokeKey = `projects/${project.projectId}/raw/${asset.id}/annotations/strokes-1-replaced.json`;
       await baseEnv.MEDIA.put(asset.r2Key, "original"); await baseEnv.MEDIA.put(key, "rendition"); await baseEnv.MEDIA.put(annotationKey, "annotation");
+      if (annotatable) await baseEnv.MEDIA.put(replacedStrokeKey, "replaced");
       await database.DB.prepare("INSERT INTO annotations (id, asset_id, author_id, author_role, scope, stroke_r2_key, created_at) VALUES (?, ?, ?, 'admin', 'raw', ?, ?)").bind(crypto.randomUUID(), asset.id, seedAdminId, annotationKey, Date.now()).run();
       await database.DB.prepare("INSERT INTO selections (id, asset_id, selected_by, state, created_at) VALUES (?, ?, ?, 'selected_for_editing', ?)").bind(crypto.randomUUID(), asset.id, seedAdminId, Date.now()).run().catch(() => undefined);
       const response = await deleteAsset(asset.id); expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({ ok: true, deletedAssetIds: [asset.id], deletedObjects: 2, dropboxDeleted: true });
-      await expect(baseEnv.MEDIA.get(asset.r2Key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(annotationKey)).resolves.not.toBeNull();
+      await expect(response.json()).resolves.toMatchObject({ ok: true, deletedAssetIds: [asset.id], deletedObjects: annotatable ? 4 : 3, dropboxDeleted: true });
+      await expect(baseEnv.MEDIA.get(asset.r2Key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(key)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(annotationKey)).resolves.toBeNull(); await expect(baseEnv.MEDIA.get(replacedStrokeKey)).resolves.toBeNull();
       await expect(database.DB.prepare("SELECT id FROM assets WHERE id = ?").bind(asset.id).first()).resolves.toBeNull();
       await expect(database.DB.prepare("SELECT id FROM annotations WHERE asset_id = ?").bind(asset.id).first()).resolves.toBeNull();
     }
@@ -232,8 +237,10 @@ describe("admin asset deletion", () => {
     let listCalls = 0;
     const renewCalls: string[] = [];
     const fakeMedia = {
-      async list({ cursor }: { cursor?: string }) {
+      async list({ prefix, cursor }: { prefix: string; cursor?: string }) {
         listCalls += 1;
+        // The two annotation prefixes (#283) are listed too, and hold nothing here.
+        if (!prefix.startsWith("renditions/")) return { objects: [], truncated: false };
         if (!cursor) return { objects: pageOneKeys.map((key) => ({ key })), truncated: true, cursor: "page-two" };
         return { objects: pageTwoKeys.map((key) => ({ key })), truncated: false };
       },
@@ -254,7 +261,7 @@ describe("admin asset deletion", () => {
       executionContext,
     );
     expect(response.status).toBe(200);
-    expect(listCalls).toBe(2); // one call per page
+    expect(listCalls).toBe(4); // two rendition pages, then one page per annotation prefix (raw, edited)
     expect(deletedBatches).toHaveLength(1); // 5 keys + the original r2Key fit in one 1000-key delete batch
     expect(deletedBatches[0]).toHaveLength(1 + pageOneKeys.length + pageTwoKeys.length);
     // Renewed before each of the 2 list pages, before the 1 delete batch, and once more before
@@ -336,6 +343,23 @@ describe("admin asset deletion", () => {
     } finally {
       await database.DB.exec("DROP TRIGGER asset_delete_audit_failure;");
     }
+  });
+
+  it("removes the deleted asset's DLQ rows in the delete batch, keeps a live asset's, and keeps them when the delete is blocked (#284)", async () => {
+    const project = await seedProject(); const doomed = await seedAsset(project, "photo"); const live = await seedAsset(project, "photo");
+    const insertDlq = (assetId: string) => {
+      const id = crypto.randomUUID();
+      return database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(id, assetId, Date.now()).run().then(() => id);
+    };
+    const doomedEvent = await insertDlq(doomed.id); const liveEvent = await insertDlq(live.id);
+    expect((await deleteAsset(doomed.id)).status).toBe(200);
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM rendition_dlq_events WHERE id = ?").bind(doomedEvent).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT asset_id FROM rendition_dlq_events WHERE id = ?").bind(liveEvent).first()).resolves.toEqual({ asset_id: live.id });
+
+    const blocked = await seedAsset(project, "photo"); const blockedEvent = await insertDlq(blocked.id);
+    await database.DB.prepare("INSERT INTO edited_source_claims (id, collection_id, source_path_key, current_asset_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), blocked.collectionId, `/blocked/${blocked.id}`, blocked.id, Date.now(), Date.now()).run();
+    expect((await deleteAsset(blocked.id)).status).toBe(409);
+    await expect(database.DB.prepare("SELECT asset_id FROM rendition_dlq_events WHERE id = ?").bind(blockedEvent).first()).resolves.toEqual({ asset_id: blocked.id });
   });
 
   it("refuses DLQ replay for a deleted asset but still replays a live asset", async () => {

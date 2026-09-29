@@ -96,13 +96,14 @@ function ganttResponse() {
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 
-function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFiltersChange }: { initial?: ProductionGanttFacetFilters; q?: string; onFiltersChange?: (next: ProductionGanttFacetFilters) => void }) {
+function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFiltersChange, onShownProjectsChange }: { initial?: ProductionGanttFacetFilters; q?: string; onFiltersChange?: (next: ProductionGanttFacetFilters) => void; onShownProjectsChange?: (count: number | null) => void }) {
   const [filters, setFilters] = useState(initial);
   return (
     <ProductionGantt
       identity={identity}
       q={q}
       filters={filters}
+      {...(onShownProjectsChange ? { onShownProjectsChange } : {})}
       onFiltersChange={(next) => {
         onFiltersChange?.(next);
         setFilters(next);
@@ -242,18 +243,27 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     host.remove();
   });
 
-  async function render(initial?: ProductionGanttFacetFilters, onFiltersChange?: (next: ProductionGanttFacetFilters) => void, q?: string) {
+  async function render(initial?: ProductionGanttFacetFilters, onFiltersChange?: (next: ProductionGanttFacetFilters) => void, q?: string, onShownProjectsChange?: (count: number | null) => void) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ControlledGantt {...(initial ? { initial } : {})} {...(onFiltersChange ? { onFiltersChange } : {})} {...(q !== undefined ? { q } : {})} />
+          <ControlledGantt {...(initial ? { initial } : {})} {...(onFiltersChange ? { onFiltersChange } : {})} {...(q !== undefined ? { q } : {})} {...(onShownProjectsChange ? { onShownProjectsChange } : {})} />
         </QueryClientProvider>,
       );
       await Promise.resolve();
     });
     await settle();
   }
+
+  it("#260: reports the server's filtered project count for the search chip, and null on unmount", async () => {
+    const shown = vi.fn<(count: number | null) => void>();
+    await render(undefined, undefined, "Schedule", shown);
+    await waitFor(() => expect(shown).toHaveBeenLastCalledWith(1));
+    await act(async () => { root.unmount(); await Promise.resolve(); });
+    expect(shown).toHaveBeenLastCalledWith(null);
+    root = createRoot(host);
+  });
 
   it("offers only the two Gantt fields: Stage (the five role-aware stages) and Show (delivered, completed)", async () => {
     await render();
@@ -440,6 +450,35 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       // The bar and legend stay mounted around it.
       expect(chipNames(host)).toEqual(["Stage is any of Delivered"]);
       expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+    });
+
+    function showDeliveredButton(scope: HTMLElement): HTMLButtonElement | undefined {
+      return [...scope.querySelectorAll("button")].find((button) => button.textContent === "Show delivered projects");
+    }
+
+    it("#270: offers Show delivered projects for Stage = Delivered with delivered hidden, keeping the other filters", async () => {
+      apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") && !path.includes("delivered=1") ? emptyGanttResponse() : ganttResponse()));
+      const onFiltersChange = vi.fn<(next: ProductionGanttFacetFilters) => void>();
+      await render({ ...deliveredStageOnly, completed: true }, onFiltersChange);
+      const empty = emptyState()!;
+      expect(clearButton(empty)).toBeDefined();
+      const show = showDeliveredButton(empty);
+      expect(show).toBeDefined();
+
+      await act(async () => { show!.click(); });
+      await settle();
+      expect(onFiltersChange).toHaveBeenCalledTimes(1);
+      expect(onFiltersChange).toHaveBeenCalledWith({ ...deliveredStageOnly, delivered: true, completed: true });
+      expect(emptyState()).toBeNull();
+      // The button unmounted with the empty state; focus lands on the filters, not <body>.
+      expect(document.activeElement).toBe(addTrigger(host));
+    });
+
+    it("#270: offers no Show delivered projects when the empty state has another cause", async () => {
+      apiGetMock.mockImplementation(() => Promise.resolve(emptyGanttResponse()));
+      await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["editing"] });
+      expect(clearButton(emptyState()!)).toBeDefined();
+      expect(showDeliveredButton(emptyState()!)).toBeUndefined();
     });
 
     it("clears the filters from the empty state's Clear filters button", async () => {

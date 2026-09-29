@@ -206,6 +206,46 @@ describe("Dashboard Gantt routing", () => {
     expect(ganttPropsState.value?.q).toBe("smith");
   });
 
+  describe("search chip names what the Gantt shows (#260)", () => {
+    async function renderAt(location: string) {
+      window.history.replaceState(null, "", location);
+      await act(async () => { root.render(<DashboardRouteHarness />); await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    }
+    const chip = () => host.querySelector('[data-testid="dashboard-search-chip"]')?.textContent ?? "";
+    const reportShown = async (count: number | null) => {
+      await act(async () => { (ganttPropsState.value?.onShownProjectsChange as (count: number | null) => void)(count); await Promise.resolve(); });
+    };
+
+    beforeEach(() => {
+      apiGetMock.mockImplementation(() => Promise.resolve({ ...projectResponse(), search: { query: "Schedule", matching: 2, total: 31 } }));
+    });
+
+    it("names both counts when the Gantt's filters hide a match", async () => {
+      await renderAt("/?view=gantt&stages=raw_review&completed=1&q=Schedule");
+      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+      await reportShown(1);
+      expect(chip()).toContain("2 of 31 projects match · 1 shown · 'Schedule'");
+    });
+
+    it("stays the plain search count when the Gantt shows every match, or has not reported", async () => {
+      await renderAt("/?view=gantt&q=Schedule");
+      await reportShown(2);
+      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+      await reportShown(null);
+      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+    });
+
+    it("drops a Gantt's shown count once the Dashboard leaves the Gantt", async () => {
+      await renderAt("/?view=gantt&q=Schedule");
+      await reportShown(1);
+      await act(async () => { switcherButton("List")!.click(); await Promise.resolve(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+      expect(chip()).toContain("2 of 31 projects · 'Schedule'");
+      expect(chip()).not.toContain("shown");
+    });
+  });
+
   describe("Gantt filters in the URL (#255)", () => {
     async function renderAt(location: string) {
       window.history.replaceState(null, "", location);

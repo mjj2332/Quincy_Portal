@@ -146,6 +146,10 @@ hand-built element's line records the searches run, the closest candidates, and 
 (an ADR, a proven token conflict, a behaviour ReUI lacks). The ledger is complete when every new
 element in the diff has its line. Sol, `/code-review` and design-reviewer each report a new element
 with no ledger line as a finding.
+`portal/apps/web/src/config/ui-primitive-ratchet.guard.test.ts` makes part of this mechanical: a new
+raw `<button>`/`<input>`/`<select>`/`<textarea>`/`<dialog>` or widget `role` outside
+`components/reui/` and `components/quincy/` fails the build unless `config/ui-primitive-allowlist.ts`
+gains an entry carrying its ledger line. The allowlist may only shrink.
 
 ## Agent skills
 

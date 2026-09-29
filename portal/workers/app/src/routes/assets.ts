@@ -128,6 +128,11 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
   const deleteParams = [...targetIds, ...targetIds, targetCount, ...targetIds, ...targetIds];
 
   try {
+    // Read before the batch: D1 cascades the annotation rows away with the asset (#283). Inside the
+    // `try`, so a failed read still releases the Dropbox claim in the `finally`.
+    const annotationStrokeKeys = (await db.select({ key: schema.annotations.strokeR2Key }).from(schema.annotations)
+      .where(inArray(schema.annotations.assetId, targetIds)).all())
+      .flatMap((row) => row.key ? [row.key] : []);
     const results = await c.env.DB.batch([
       c.env.DB.prepare(`DELETE FROM assets
         WHERE id IN ${targetSql}
@@ -151,6 +156,12 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
           AND NOT EXISTS (SELECT 1 FROM assets WHERE id IN ${targetSql})`)
         .bind(nowMs, primary.projectId, ...targetIds, ...targetIds),
       c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(primary.collectionId, nowMs)),
+      // `rendition_dlq_events.asset_id` has no FK (0011), so nothing cascades: a dead letter for a
+      // deleted asset would sit in the admin DLQ with a null join and a replay that can only fail
+      // (#284). Gated like the pointer-nulling above, so a blocked delete keeps its rows.
+      c.env.DB.prepare(`DELETE FROM rendition_dlq_events WHERE asset_id IN ${targetSql}
+          AND NOT EXISTS (SELECT 1 FROM assets WHERE id IN ${targetSql})`)
+        .bind(...targetIds, ...targetIds),
     ]);
 
     if ((results[0]?.meta.changes ?? 0) === 0) {
@@ -165,20 +176,27 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
       return c.json({ error: "Asset deletion was blocked by a concurrent change — retry the delete." }, 409);
     }
 
-    const keys: string[] = targets.map((target) => target.r2Key);
-    for (const target of targets) {
-      const prefix = `renditions/${target.id}/`;
+    const keySet = new Set<string>([...targets.map((target) => target.r2Key), ...annotationStrokeKeys]);
+    // Renditions, plus every stroke object under the asset's annotation prefixes — including objects
+    // an earlier edit replaced, which no row references any more (#283).
+    // Only photos (RAW or edited collection) carry annotations, so only they cost the extra listings.
+    const prefixes = targets.flatMap((target) => [
+      `renditions/${target.id}/`,
+      ...(target.kind === "photo" ? (["raw", "edited"] as const).map((scope) => `projects/${primary.projectId}/${scope}/${target.id}/annotations/`) : []),
+    ]);
+    for (const prefix of prefixes) {
       let cursor: string | undefined;
       while (true) {
         if (claimId && deleteJobId && !await c.env.BACKGROUND.renewDropboxDeletionClaim(claimId, deleteJobId)) {
           return c.json({ ok: false, error: "Dropbox sync claim was lost during cleanup — retry the delete", outcome: "claimLost" }, 409);
         }
         const page = await c.env.MEDIA.list({ prefix, ...(cursor ? { cursor } : {}) });
-        keys.push(...page.objects.map((object) => object.key));
+        for (const object of page.objects) keySet.add(object.key);
         if (!page.truncated) break;
         cursor = page.cursor;
       }
     }
+    const keys = [...keySet];
     for (let index = 0; index < keys.length; index += 1000) {
       if (claimId && deleteJobId && !await c.env.BACKGROUND.renewDropboxDeletionClaim(claimId, deleteJobId)) {
         return c.json({ ok: false, error: "Dropbox sync claim was lost during cleanup — retry the delete", outcome: "claimLost" }, 409);

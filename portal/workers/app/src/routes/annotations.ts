@@ -81,6 +81,15 @@ function scopeForAsset(c: Context<AppEnv>, asset: AssetContext): "raw" | "edited
   return asset.kind;
 }
 
+/**
+ * Removes a stroke object once D1 no longer points at it (#283): after the row's delete, or after an
+ * edit has repointed the row at a new object. Never before the D1 write commits — a failed write must
+ * not leave a row pointing at a missing object.
+ */
+async function deleteReplacedStrokeObject(c: Context<AppEnv>, previousKey: string | null, currentKey: string | null = null) {
+  if (previousKey && previousKey !== currentKey) await c.env.MEDIA.delete(previousKey);
+}
+
 async function canViewAsset(c: Context<AppEnv>, asset: AssetContext): Promise<Response | null> {
   if (!isUserVisibleAsset(asset.kind, asset.publishStatus)) return unpublishedAssetResponse(c);
   if (!await hasProjectAccess(c, asset.projectId)) return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
@@ -174,6 +183,7 @@ annotationsRoutes.delete("/annotations/:id", terminalRoute("/annotations/:id", a
     if (!roleHasCapability(c.get("user").role, annotation.collectionKind === "raw" ? "annotateRaw" : "annotateEdited")) return c.json({ error: "Forbidden" }, 403);
     if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this annotation." }, 403);
     await createDb(c.env.DB).delete(schema.annotations).where(eq(schema.annotations.id, id));
+    await deleteReplacedStrokeObject(c, annotation.strokeR2Key);
     await audit(c.env, c.get("user"), "annotation.delete", "annotation", id, { assetId: annotation.assetId, scope: annotation.scope, hadStrokes: Boolean(annotation.strokeR2Key) });
     return c.json({ ok: true });
   }
@@ -187,8 +197,8 @@ annotationsRoutes.delete("/annotations/:id", terminalRoute("/annotations/:id", a
   // An impersonated Admin intentionally acts as the effective author here — see the
   // impersonation caveat on this rule in AGENTS.md.
   if (annotation.authorId !== c.get("user").id) return c.json({ error: "Forbidden: only the author can delete this annotation." }, 403);
-  // Retain stroke objects in R2: deletes only remove the D1 reference, preserving cheap, audit-friendly history.
   await db.delete(schema.annotations).where(eq(schema.annotations.id, id));
+  await deleteReplacedStrokeObject(c, annotation.strokeR2Key);
   await audit(c.env, c.get("user"), "annotation.delete", "annotation", id, { assetId: asset.assetId, scope, hadStrokes: Boolean(annotation.strokeR2Key) });
   return c.json({ ok: true });
 }));
@@ -217,6 +227,8 @@ annotationsRoutes.patch("/annotations/:id", terminalRoute("/annotations/:id", as
       }
     }
     const updated = await createDb(c.env.DB).update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
+    if (!updated) { await deleteReplacedStrokeObject(c, patch.strokeR2Key ?? null); return c.json({ error: "Annotation not found" }, 404); }
+    if (patch.strokeR2Key !== undefined) await deleteReplacedStrokeObject(c, annotation.strokeR2Key, patch.strokeR2Key);
     await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: annotation.assetId, scope: annotation.scope, changed });
     return c.json(externalAnnotationDto({ id: updated!.id, authorId: annotation.authorId, authorName: annotation.authorName, authorRole: annotation.authorRole, authorActive: annotation.authorActive, scope: updated!.scope, strokeR2Key: updated!.strokeR2Key, noteText: updated!.noteText, createdAt: updated!.createdAt, editedAt: updated!.editedAt }, c.env.APP_ORIGIN));
   }
@@ -242,15 +254,19 @@ annotationsRoutes.patch("/annotations/:id", terminalRoute("/annotations/:id", as
       let strokeJson: string;
       try { strokeJson = JSON.stringify(data.strokes); } catch { return c.json({ error: "Markup must be JSON-serializable" }, 400); }
       if (byteLength(strokeJson) > 2_000_000) return c.json({ error: "Markup is too large" }, 400);
-      // New R2 object per edit (never overwrite/delete the old one — cheap, audit-friendly).
+      // New R2 object per edit, never an overwrite: the row is repointed first, then the old object goes.
       const dir = annotation.strokeR2Key ? annotation.strokeR2Key.slice(0, annotation.strokeR2Key.lastIndexOf("/")) : `projects/${asset.projectId}/${scope}/${annotation.assetId}/annotations`;
-      // Random suffix: Date.now() alone can collide for same-millisecond edits, overwriting the retained prior object.
+      // Random suffix: Date.now() alone can collide for same-millisecond edits, overwriting the prior object.
       const strokeR2Key = `${dir}/strokes-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.json`;
       await c.env.MEDIA.put(strokeR2Key, strokeJson, { httpMetadata: { contentType: "application/json" } });
       patch.strokeR2Key = strokeR2Key;
     }
   }
   const updated = await db.update(schema.annotations).set(patch).where(eq(schema.annotations.id, id)).returning().get();
+  // The row went between the read and the write (a racing delete): the object just written has
+  // nothing pointing at it, and the delete already removed the old one.
+  if (!updated) { await deleteReplacedStrokeObject(c, patch.strokeR2Key ?? null); return c.json({ error: "Annotation not found" }, 404); }
+  if (patch.strokeR2Key !== undefined) await deleteReplacedStrokeObject(c, annotation.strokeR2Key, patch.strokeR2Key);
   await audit(c.env, c.get("user"), "annotation.edit", "annotation", id, { assetId: asset.assetId, scope, changed });
   return c.json(updated);
 }));

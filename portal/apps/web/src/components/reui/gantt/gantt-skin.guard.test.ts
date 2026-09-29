@@ -88,6 +88,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, sep } from "node:path";
+import { stageColors } from "../../../lib/stage-colors";
 
 const ganttDir = dirname(fileURLToPath(import.meta.url));
 // components/reui/gantt -> components/reui -> components -> src
@@ -648,6 +649,125 @@ describe("guard: no rounded-lg/rounded-xl/rounded-2xl (or larger) anywhere in th
       "flags. Found in:",
       ...offenders,
     ].join("\n")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Detector 9 — a bar's boundary clears WCAG 1.4.11 (3:1) against the timeline (#247)
+// ---------------------------------------------------------------------------
+/**
+ * #247: the bar fill (`bg-(--gantt-event-color)/20`) composited to 1.23-1.43:1 against the
+ * timeline for every stage hue, and none of the detectors above measure contrast, so it passed
+ * every mechanical check. The bar is the graphic that encodes start, end and duration, so
+ * WCAG 1.4.11 wants 3:1 for its boundary. The fill stays a quiet wash; the full-strength
+ * stage-hue BORDER is what carries the contrast (the milestone diamond's treatment). This reads
+ * the real hex values out of `styles/tokens/colors.css`, so a token change that drops a hue
+ * below 3:1 fails here rather than on someone's screen.
+ */
+const colorsCss = readFileSync(join(srcDir, "styles", "tokens", "colors.css"), "utf8");
+
+function resolveToken(value: string, seen: string[] = []): string {
+  const v = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+  const ref = /^var\((--[\w-]+)\)$/.exec(v);
+  if (!ref) throw new Error(`cannot resolve colour value ${v}`);
+  const name = ref[1]!;
+  if (seen.includes(name)) throw new Error(`token cycle at ${name}`);
+  const decl = new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(colorsCss);
+  if (!decl) throw new Error(`token ${name} not declared in colors.css`);
+  return resolveToken(decl[1]!, [...seen, name]);
+}
+
+function luminance(hex: string): number {
+  const channel = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** Both canvas tones the timeline paints over (`--bg-canvas`, `--bg-surface`). */
+const TIMELINE_BACKDROPS = ["var(--bg-canvas)", "var(--bg-surface)"].map((v) => resolveToken(v));
+
+/** The bar shell's own `cn()` argument list, comments stripped. */
+function barShellClasses(): string {
+  const bar = stripComments(readFileSync(join(ganttDir, "gantt-bar.tsx"), "utf8"));
+  const start = bar.indexOf('"group/gantt-bar-group');
+  const end = bar.indexOf('"data-completed:data-selected:border-border-strong"', start);
+  if (start < 0 || end < 0) throw new Error("bar shell className block not found in gantt-bar.tsx");
+  return bar.slice(start, end);
+}
+
+describe("guard: a Gantt bar's boundary clears 3:1 against the timeline (#247)", () => {
+  it("resolves tokens and measures contrast correctly (known pairs)", () => {
+    expect(resolveToken("var(--text-muted)")).toBe("#8f8775");
+    expect(contrast("#000000", "#ffffff")).toBeCloseTo(21, 5);
+    expect(contrast("#8f8775", "#ffffff")).toBeCloseTo(3.565, 2);
+  });
+
+  it("every stage hue, as a full-strength border, clears 3:1 on both canvas tones", () => {
+    const failing: string[] = [];
+    for (const [stage, value] of Object.entries(stageColors)) {
+      const hue = resolveToken(value);
+      for (const bg of TIMELINE_BACKDROPS) {
+        const ratio = contrast(hue, bg);
+        if (ratio < 3) failing.push(`${stage} ${hue} on ${bg}: ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failing).toEqual([]);
+  });
+
+  it("the active bar shell draws a full-strength stage-hue border (not an alpha step)", () => {
+    const shell = barShellClasses();
+    expect(shell).toMatch(/(?<![\w:-])border(?![\w-])/);
+    expect(shell).toMatch(/(?<![\w:-])border-\(--gantt-event-color\)(?!\/)/);
+  });
+
+  it("a completed bar's border token clears 3:1 on both canvas tones", () => {
+    const shell = barShellClasses();
+    const match = /data-completed:border-([\w-]+)(?=["\s])/g;
+    const tokens = [...shell.matchAll(match)].map((m) => m[1]!);
+    expect(tokens.length, "no data-completed:border-<token> class on the bar shell").toBeGreaterThan(0);
+    const TOKEN_FOR: Record<string, string> = {
+      border: "var(--border-hairline)",
+      "muted-foreground": "var(--text-muted)",
+      "border-strong": "var(--border-strong)",
+    };
+    for (const token of tokens) {
+      const value = TOKEN_FOR[token];
+      expect(value, `unmapped completed-border token ${token}`).toBeDefined();
+      for (const bg of TIMELINE_BACKDROPS) {
+        expect(contrast(resolveToken(value!), bg), `${token} on ${bg}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  // #247 design review: a segment cut off by the visible period used to show that only through its
+  // square corner. With a full border it drew a hard edge on the cut side, reading as a real start
+  // or end date, so the cut side drops its border as well as its radius.
+  it("a segment that continues past the period has no border on the cut side", () => {
+    const bar = stripComments(readFileSync(join(ganttDir, "gantt-bar.tsx"), "utf8"));
+    expect(bar).toContain('segment.continuesBefore && "rounded-s-none border-s-0"');
+    expect(bar).toContain('segment.continuesAfter && "rounded-e-none border-e-0"');
+  });
+
+  // #247 design review: `--text-muted` IS `--greige-400`, the Awaiting RAW hue, so a done bar and an
+  // active Awaiting RAW bar drew the same border over fills 1.07:1 apart. Nothing lighter than
+  // greige-400 clears 3:1, so done differs by FILL instead: an outline with no resting wash,
+  // against every active bar's wash plus outline.
+  it("a done bar rests as an outline: no fill on the shell or its full-width progress span", () => {
+    const bar = stripComments(readFileSync(join(ganttDir, "gantt-bar.tsx"), "utf8"));
+    const shell = barShellClasses();
+    expect(shell).toContain("data-completed:bg-transparent");
+    expect(shell).toContain("data-completed:data-selected:bg-transparent");
+    expect(shell).not.toMatch(/data-completed:bg-border\//);
+    expect(bar).toContain("group-data-completed/gantt-bar-group:bg-transparent");
+    expect(bar).not.toContain("group-data-completed/gantt-bar-group:bg-border/");
   });
 });
 

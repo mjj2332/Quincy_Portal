@@ -27,6 +27,7 @@ import { cn } from "../lib/utils";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
+import { searchChipCountText } from "../lib/dashboard-search-chip";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 
 import {
@@ -357,6 +358,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity, committedQuery);
   const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, committedQuery);
+  // #260: the projects the Gantt / Calendar actually draws under its own filters (the chip's "shown").
+  const [viewShownProjects, setViewShownProjects] = useState<number | null>(null);
   // #230: widened to carry `committedQuery` as the fifth argument -- ONE q-aware key, not a second
   // "scope identity" alongside it. `updateProjects`'s optimistic/confirmed/rollback writes
   // (`setProjectPriority`'s only caller, below) `setQueryData` this exact key, so they now land in
@@ -1510,8 +1513,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             <span className="shrink-0">
               {searchCountsQuery.data && (
                 <>
-                  {searchCountsQuery.data.matching} of {searchCountsQuery.data.total}{" "}
-                  {searchCountsQuery.data.total === 1 ? "project" : "projects"} ·{" "}
+                  {searchChipCountText(searchCountsQuery.data, isGanttView || isCalendarView ? viewShownProjects : null)}
                 </>
               )}
             </span>
@@ -1567,6 +1569,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               onAcceptGateChange={setCalendarInteractionBlocked}
               onSettleStateChange={setCalendarSettle}
               onAccessLoss={handleCalendarAccessLoss}
+              onShownProjectsChange={setViewShownProjects}
               projectHrefFor={projectHrefFor}
               onOpenProject={openCalendarProject}
             />
@@ -1589,6 +1592,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               onAcceptGateChange={setCalendarInteractionBlocked}
               onSettleStateChange={setCalendarSettle}
               onAccessLoss={handleCalendarAccessLoss}
+              onShownProjectsChange={setViewShownProjects}
             />
           </Suspense>
         </ViewLoadBoundary>
