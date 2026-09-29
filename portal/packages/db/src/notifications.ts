@@ -121,6 +121,10 @@ export async function emitNotifications(
   // consumer. Keeping the legacy emitter fail-closed prevents a future generic caller from
   // creating a second producer or bypassing membership-cycle authorization.
   if (input.type === "project_deadline_reminder") return 0;
+  // #141: same rule for a staff subtask assignment. Its only producer is
+  // `emitStaffSubtaskAssignedNotification` (the outbox carries the assigner as actor); a direct
+  // row here would be a second producer, and a second email once the consumer delivers.
+  if (input.type === "subtask_assigned") return 0;
   const copy = input.title && input.body ? { title: input.title, body: input.body } : notificationCopy(input.type);
   const recipients = [...new Map(input.recipients.map((recipient) => [recipient.userId, recipient])).values()];
   // This is the security choke point for all legacy direct emitters. Do not rely on each of the

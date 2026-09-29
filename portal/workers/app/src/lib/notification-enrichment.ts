@@ -152,10 +152,9 @@ export async function notificationEnrichment(
     if (!row.projectId || !collaborates.has(row.projectId)) continue;
     const entry: NotificationEnrichmentEntry = { actor: null, subject: { kind: "subtask", label: detail.title }, assetId: null, body: detail.title };
     if (source.kind === "subtask_assignment") {
-      // Staff `subtask_assigned` rows have no outbox row (only external recipients get one — see
-      // packages/db/src/external-notifications.ts), so this resolves an actor for nobody the staff
-      // branch serves today. Kept on the ledger path so the day a staff outbox row is emitted, the
-      // title composes without a resolver change (owner decision #1 in the PR).
+      // Since #141 staff assignments are durable occurrences too (`emitStaffSubtaskAssignedNotification`),
+      // so the ledger names the assigner. Rows written before #141 have no ledger and keep the
+      // stored title with no actor.
       entry.actor = ledgerActor(row.id);
       if (entry.actor) entry.title = `${entry.actor.name} assigned you a subtask`;
     }
