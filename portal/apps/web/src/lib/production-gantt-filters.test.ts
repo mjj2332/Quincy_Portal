@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseStaffLocation, staffPathFor, STAGE_PRESENTATION_KEYS } from "@quincy/shared";
 import type { FilterNode, FilterQuery } from "../components/reui/filters/filters-types";
 import {
+  GANTT_FILTER_RULE_ID,
   DEFAULT_GANTT_FACET_FILTERS,
   GANTT_FILTER_ROOT_ID,
   ganttFacetFor,
@@ -116,13 +117,20 @@ describe("Gantt filter mapping", () => {
 
   it("writes an all-default facet as absent and canonicalises stage order", () => {
     expect(ganttFacetFor(DEFAULT_GANTT_FACET_FILTERS)).toBeUndefined();
-    expect(ganttFacetFor({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], delivered: false, completed: false })).toEqual({ stageKeys: ["awaiting_raw", "delivered"], delivered: false, completed: false });
+    expect(ganttFacetFor({ editorIds: [], stageKeys: ["delivered", "awaiting_raw"], delivered: false, completed: false })).toEqual({ stageKeys: ["awaiting_raw", "delivered"], delivered: false, completed: false, editorIds: [] });
     expect(staffPathFor(ganttRouteFor(DEFAULT_GANTT_FACET_FILTERS))).toBe("/?view=gantt");
     expect(staffPathFor(ganttRouteFor({ editorIds: [], stageKeys: ["raw_review"], delivered: false, completed: true }, "smith"))).toBe("/?view=gantt&stages=raw_review&completed=1&q=smith");
   });
 
+  it("carries editors through route -> request -> route, sorted (#274)", () => {
+    const route = parseStaffLocation("/?view=gantt&editors=22222222-2222-4222-8222-222222222222%2C11111111-1111-4111-8111-111111111111");
+    if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error("expected a Gantt route");
+    expect(ganttFiltersFromRoute(route).editorIds).toEqual(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]);
+    expect(ganttFacetFor({ editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], stageKeys: [], delivered: false, completed: false })).toEqual({ stageKeys: [], delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
+  });
+
   it("round-trips route -> request -> route", () => {
-    for (const location of ["/?view=gantt", "/?view=gantt&stages=raw_review&completed=1", "/?view=gantt&stages=awaiting_raw%2Cdelivered&delivered=1&q=smith"]) {
+    for (const location of ["/?view=gantt", "/?view=gantt&stages=raw_review&completed=1", "/?view=gantt&stages=awaiting_raw%2Cdelivered&delivered=1&q=smith", "/?view=gantt&editors=11111111-1111-4111-8111-111111111111&stages=raw_review"]) {
       const route = parseStaffLocation(location);
       if (route.kind !== "dashboard" || !("dashboardView" in route) || route.dashboardView !== "gantt") throw new Error(location);
       const filters = ganttFiltersFromRoute(route);
@@ -146,6 +154,26 @@ describe("Gantt filters bar mapping (#255)", () => {
   const root = (rules: FilterNode<unknown>[], combinator: "and" | "or" = "and"): FilterQuery<unknown> => ({ id: "root", type: "group", combinator, rules });
   const stageRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "s", type: "rule", path: ["stage"], operator: "is_any_of", value, ...extra });
   const showRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "w", type: "rule", path: ["show"], operator: "includes", value, ...extra });
+
+  const editorRule = (value: unknown, extra: Record<string, unknown> = {}): FilterNode<unknown> => ({ id: "e", type: "rule", path: ["editor"], operator: "is_any_of", value, ...extra });
+
+  it("round-trips an Editor rule, sorted, beside Stage and Show (#274)", () => {
+    const facet: ProductionGanttFacetFilters = { editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"], stageKeys: ["raw_review"], delivered: false, completed: true };
+    const query = ganttFacetToQuery(facet);
+    expect(query.rules.map((rule) => (rule.type === "rule" ? rule.path[0] : "group"))).toEqual(["stage", "show", "editor"]);
+    expect(query.rules[2]).toEqual({ id: GANTT_FILTER_RULE_ID.editor, type: "rule", path: ["editor"], operator: "is_any_of", value: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
+    expect(queryToGanttFacet(query)).toEqual({ ...facet, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] });
+  });
+
+  it("reads any lowercase UUID as an editor value (a stale id stays readable) and refuses anything else (#274)", () => {
+    const stale = "33333333-3333-4333-8333-333333333333";
+    expect(queryToGanttFacet(root([editorRule([stale])]))?.editorIds).toEqual([stale]);
+    expect(queryToGanttFacet(root([editorRule(["not-a-uuid"])]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111".toUpperCase().replace(/1/g, "A")])]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111"], { operator: "is_not_any_of" })]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111"]), editorRule(["22222222-2222-4222-8222-222222222222"])]))).toBeNull();
+    expect(queryToGanttFacet(root([editorRule(["11111111-1111-4111-8111-111111111111"], { operator: "" })]))).toEqual(DEFAULT_GANTT_FACET_FILTERS);
+  });
 
   it("round-trips every facet (all stage subsets x delivered x completed) through the query", () => {
     const facets = everyFacet();

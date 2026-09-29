@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InfiniteQueryObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { PRODUCTION_GANTT_ZONE, type GanttChecklistRowDto, type GanttProjectRowDto, type ProductionGanttChildPageResponse, type ProductionGanttResponse } from "@quincy/shared";
 import {
+  buildGanttPageQuery,
   decodeProductionGanttResponse,
   flattenGanttProjectPages,
   mergeGanttChildPage,
@@ -67,6 +68,15 @@ function checklistRow(id: string, overrides: Partial<GanttChecklistRowDto> = {})
     ...overrides,
   };
 }
+
+describe("buildGanttPageQuery (#274)", () => {
+  const filters = { q: "", editorIds: [editorId], stageKeys: [], delivered: false, completed: false };
+  it("asks for the Editor options on page one only", () => {
+    expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("facets")).toBe("1");
+    expect(new URLSearchParams(buildGanttPageQuery(filters, "cursor-2")).has("facets")).toBe(false);
+    expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("editors")).toBe(editorId);
+  });
+});
 
 describe("production gantt query family", () => {
   it("composes the authorization, scope, and filter key in order, with the principal load-bearing at index 1", () => {

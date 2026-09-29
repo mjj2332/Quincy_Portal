@@ -1023,6 +1023,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // partway). Both are honoured: the server signal fires the notice immediately, the adapter's own
   // cap remains the backstop against whatever this client has actually built a model for.
   const firstPageDensity = query.data?.pages[0]?.density;
+  // #274: the Editor field's options ride on page one only.
+  const filterPeople = query.data?.pages[0]?.filterFacets?.people;
   const tooManyToDraw = (firstPageDensity?.tooManyToDraw ?? false) || model.tooManyToDraw;
 
   // fix-220-sol1b: one signature per CURRENT project, memoized on `projects` alone (not `childState`)
@@ -1412,7 +1414,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt-root">
-      <ProductionGanttFiltersBar filters={facetFilters} stageOptions={stageOptions} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
+      <ProductionGanttFiltersBar filters={facetFilters} stageOptions={stageOptions} people={filterPeople} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
       <GanttLegend entries={legendEntries} />
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">

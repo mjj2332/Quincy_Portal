@@ -7,13 +7,15 @@
  * - the filters bar's query (`ProductionGanttFiltersBar`, a ReUI `Filters` chip row, which speaks
  *   a `FilterQuery`: `ganttFacetToQuery` / `queryToGanttFacet`).
  *
- * `editorIds` is always `[]` here: the Editor filter needs a server change and ships separately, so
- * the Gantt URL does not accept `editors` and the bar offers no Editor field.
+ * `editorIds` (#274) are sorted canonical lowercase UUIDs. Any UUID-shaped value is readable here,
+ * including one the server no longer knows: whether an id is a real, visible editor is the
+ * server's call (`appliedFilters.editorIds`), and the surface decides what to render for it.
  *
  * Also the one role-aware stage-option derivation both the Calendar filter panel and the Gantt
  * filters bar use (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
  */
 import {
+  CANONICAL_LOWERCASE_UUID_REGEX,
   isDefaultGanttFacet,
   STAGE_PRESENTATION_KEYS,
   type DashboardGanttFacet,
@@ -42,7 +44,7 @@ export const DEFAULT_GANTT_FACET_FILTERS: ProductionGanttFacetFilters = { editor
 export function ganttFiltersFromRoute(route: Pick<DashboardGanttRoute, "gantt"> | null | undefined): ProductionGanttFacetFilters {
   const facet = route?.gantt;
   return {
-    editorIds: [],
+    editorIds: facet ? [...facet.editorIds] : [],
     stageKeys: facet ? [...facet.stageKeys] : [],
     delivered: facet?.delivered ?? false,
     completed: facet?.completed ?? false,
@@ -57,6 +59,7 @@ export function ganttFacetFor(filters: ProductionGanttFacetFilters): DashboardGa
     stageKeys: STAGE_PRESENTATION_KEYS.filter((key) => selected.has(key)),
     delivered: filters.delivered,
     completed: filters.completed,
+    editorIds: [...new Set(filters.editorIds)].sort(),
   };
   return isDefaultGanttFacet(facet) ? undefined : facet;
 }
@@ -72,22 +75,26 @@ export function ganttRouteFor(filters: ProductionGanttFacetFilters, search?: str
 // ---------------------------------------------------------------------------
 
 /** The two bar fields. Their ids are the rule `path` segments the mapping reads. */
-export const GANTT_FILTER_FIELD = { stage: "stage", show: "show" } as const;
+export const GANTT_FILTER_FIELD = { stage: "stage", show: "show", editor: "editor" } as const;
 
 /** Stable rule ids, so a URL re-seed hands the bar the same chip identities it already had. */
-export const GANTT_FILTER_RULE_ID = { stage: "gantt-stage", show: "gantt-show" } as const;
+export const GANTT_FILTER_RULE_ID = { stage: "gantt-stage", show: "gantt-show", editor: "gantt-editor" } as const;
 
 /** The query root's id, stable for the same reason. */
 export const GANTT_FILTER_ROOT_ID = "gantt-filters";
 
 const STAGE_OPERATOR = "is_any_of";
 const SHOW_OPERATOR = "includes";
+const EDITOR_OPERATOR = "is_any_of";
 
 /** Stage: one operator, no negation. */
 export const GANTT_STAGE_OPERATORS: FilterOperator[] = [{ value: STAGE_OPERATOR, label: "is any of", arity: "many" }];
 
 /** Show: one operator, no negation. One chip replaces the old panel's two checkboxes. */
 export const GANTT_SHOW_OPERATORS: FilterOperator[] = [{ value: SHOW_OPERATOR, label: "includes", arity: "many" }];
+
+/** Editor (#274): one operator, no negation, the Calendar's own. */
+export const GANTT_EDITOR_OPERATORS: FilterOperator[] = [{ value: EDITOR_OPERATOR, label: "is any of", arity: "many" }];
 
 /** Show's options, in display order. */
 export const GANTT_SHOW_OPTIONS = [
@@ -116,6 +123,9 @@ export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilt
   if (show.length > 0) {
     rules.push({ id: GANTT_FILTER_RULE_ID.show, type: "rule", path: [GANTT_FILTER_FIELD.show], operator: SHOW_OPERATOR, value: show });
   }
+  if (canonical.editorIds.length > 0) {
+    rules.push({ id: GANTT_FILTER_RULE_ID.editor, type: "rule", path: [GANTT_FILTER_FIELD.editor], operator: EDITOR_OPERATOR, value: [...canonical.editorIds] });
+  }
   return { id: GANTT_FILTER_ROOT_ID, type: "group", combinator: "and", rules };
 }
 
@@ -125,36 +135,39 @@ export function ganttFacetToQuery(facet: ProductionGanttFacetFilters): GanttFilt
  * nested path, a non-array value, or a second rule on a field already used (finished or not — the
  * bar allows one chip per field). Unfinished rules (no operator yet) and rules with no values are
  * skipped, so they read as the default — though a value an unfinished rule retains is still
- * checked, and an unknown or malformed one returns `null`. `editorIds` is always `[]` (the Editor filter ships
- * separately). Canonicalised through `ganttFacetFor` / `ganttFiltersFromRoute`.
+ * checked, and an unknown or malformed one returns `null`. An Editor value is checked by shape (a
+ * lowercase UUID), never against the known people: a stale id must stay readable, or the bar would
+ * veto every later edit. Canonicalised through `ganttFacetFor` / `ganttFiltersFromRoute`.
  */
 export function queryToGanttFacet(query: FilterQuery<unknown>): ProductionGanttFacetFilters | null {
   if (query.type !== "group" || query.combinator !== "and") return null;
   const seen = new Set<string>();
   let stageKeys: string[] = [];
+  let editorIds: string[] = [];
   const show = new Set<string>();
   for (const node of query.rules) {
     if (node.type !== "rule") return null;
     if (node.negated) return null;
     const [field, ...rest] = node.path;
     if (field === undefined || rest.length > 0) return null;
-    if (field !== GANTT_FILTER_FIELD.stage && field !== GANTT_FILTER_FIELD.show) return null;
+    if (field !== GANTT_FILTER_FIELD.stage && field !== GANTT_FILTER_FIELD.show && field !== GANTT_FILTER_FIELD.editor) return null;
     if (seen.has(field)) return null;
     seen.add(field);
     const unfinished = node.operator === "";
-    const expectedOperator = field === GANTT_FILTER_FIELD.stage ? STAGE_OPERATOR : SHOW_OPERATOR;
+    const expectedOperator = field === GANTT_FILTER_FIELD.stage ? STAGE_OPERATOR : field === GANTT_FILTER_FIELD.editor ? EDITOR_OPERATOR : SHOW_OPERATOR;
     if (!unfinished && node.operator !== expectedOperator) return null;
     if (node.value === undefined) continue;
     // A value is checked even on an unfinished rule: one it retained must still be readable.
     if (!Array.isArray(node.value)) return null;
-    const allowed = field === GANTT_FILTER_FIELD.stage ? STAGE_VALUES : SHOW_VALUES;
-    for (const value of node.value) if (typeof value !== "string" || !allowed.has(value)) return null;
+    const allowed = (value: unknown) => typeof value === "string" && (field === GANTT_FILTER_FIELD.editor ? CANONICAL_LOWERCASE_UUID_REGEX.test(value) : (field === GANTT_FILTER_FIELD.stage ? STAGE_VALUES : SHOW_VALUES).has(value));
+    for (const value of node.value) if (!allowed(value)) return null;
     if (unfinished) continue;
     if (field === GANTT_FILTER_FIELD.stage) stageKeys = node.value as string[];
+    else if (field === GANTT_FILTER_FIELD.editor) editorIds = node.value as string[];
     else for (const value of node.value as string[]) show.add(value);
   }
   const facet = ganttFacetFor({
-    editorIds: [],
+    editorIds,
     stageKeys: stageKeys as ProductionGanttFacetFilters["stageKeys"],
     delivered: show.has("delivered"),
     completed: show.has("completed"),

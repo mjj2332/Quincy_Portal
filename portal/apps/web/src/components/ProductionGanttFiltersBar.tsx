@@ -3,9 +3,15 @@
  * variant). Quincy-owned composition: the vendored primitive draws the chips, the field picker, the
  * value menus and Clear; this file owns the schema, the URL mapping and focus.
  *
- * Two fields, one operator each, no negation — Stage ("is any of", the role-aware stage options with
- * their legend swatches) and Show ("includes": Delivered projects, Completed checklist items). The
- * query <-> facet mapping is pure and lives in `lib/production-gantt-filters.ts`.
+ * Three fields, one operator each, no negation — Editor (#274: "is any of", the people the server
+ * lists in `filterFacets.people`, each with its initials avatar), Stage ("is any of", the role-aware
+ * stage options with their legend swatches) and Show ("includes": Delivered projects, Completed
+ * checklist items). The query <-> facet mapping is pure and lives in `lib/production-gantt-filters.ts`.
+ *
+ * EDITOR. Offered only once the server has listed somebody (or the URL already holds an editor, so
+ * its chip is never "unknown"). An id in the URL the server does not list — a deactivated editor, a
+ * stale link — is kept and shown as "Unknown editor", so the viewer sees why the chart is narrowed
+ * and can remove it; the server ignores it (`appliedFilters.editorIds`).
  *
  * THE DELIVERED PAIR. Stage = Delivered draws nothing while delivered projects are hidden, so a bar
  * edit that selects it also turns Show -> Delivered on, and one that turns Show -> Delivered off
@@ -33,10 +39,12 @@
  * `ProductionGantt` focuses it through `triggerRef` after the empty state's Clear filters. Its
  * scroll-margin clears the sticky shell header for that caller's `scrollIntoView`.
  */
+import type { CalendarPerson } from "@quincy/shared";
 import { ListFilterPlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Filters, countFilterRules, flattenFilterRules, type FilterChangeDetails, type FilterField, type FilterLabels, type FilterQuery } from "@/components/reui/filters/filters";
 import {
+  GANTT_EDITOR_OPERATORS,
   GANTT_FILTER_FIELD,
   GANTT_SHOW_OPERATORS,
   GANTT_SHOW_OPTIONS,
@@ -52,6 +60,7 @@ import {
   type StageFilterOption,
 } from "../lib/production-gantt-filters";
 import { Button } from "./quincy/Button";
+import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { StageSwatch } from "./quincy/StageSwatch";
 
 export type ProductionGanttFiltersBarProps = {
@@ -59,6 +68,8 @@ export type ProductionGanttFiltersBarProps = {
   filters: ProductionGanttFacetFilters;
   /** Role-aware stage options (`productionStageFilterOptions`). */
   stageOptions: readonly StageFilterOption[];
+  /** #274: the people the viewer may filter by, from the Gantt's first page (`filterFacets.people`). */
+  people?: readonly CalendarPerson[];
   /** Pushes a new facet to the URL; it arrives back through `filters`. */
   onFiltersChange: (next: ProductionGanttFacetFilters) => void;
   /** The add-filter trigger, for a caller that must move focus to it. */
@@ -74,8 +85,33 @@ const ADD_FILTER = "Add filter";
  * (`filters-editors.tsx`), so this widens both menus without editing the vendored default.
  */
 const VALUE_MENU_CLASS = "w-60";
+const UNKNOWN_EDITOR = "Unknown editor";
+const OPTION_AVATAR = "size-5";
 
-export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChange, triggerRef }: ProductionGanttFiltersBarProps) {
+type EditorOption = { value: string; label: string; known: boolean };
+
+/** The server's people, deduplicated by lowercase id, then any URL id it does not list. */
+function editorOptions(people: readonly CalendarPerson[], selected: readonly string[]): EditorOption[] {
+  const seen = new Set<string>();
+  const options: EditorOption[] = [];
+  for (const person of people) {
+    const value = person.id.toLowerCase();
+    if (seen.has(value)) continue;
+    seen.add(value);
+    options.push({ value, label: person.name, known: true });
+  }
+  for (const value of selected) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      options.push({ value, label: UNKNOWN_EDITOR, known: false });
+    }
+  }
+  return options;
+}
+
+const NO_PEOPLE: readonly CalendarPerson[] = [];
+
+export function ProductionGanttFiltersBar({ filters, stageOptions, people = NO_PEOPLE, onFiltersChange, triggerRef }: ProductionGanttFiltersBarProps) {
   const ownTriggerRef = useRef<HTMLButtonElement | null>(null);
   const trigger = triggerRef ?? ownTriggerRef;
 
@@ -110,8 +146,28 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
   const usedFields = useMemo(() => new Set(flattenFilterRules(query).map((rule) => rule.path[0])), [query]);
   const stageUsed = usedFields.has(GANTT_FILTER_FIELD.stage);
   const showUsed = usedFields.has(GANTT_FILTER_FIELD.show);
+  const editorUsed = usedFields.has(GANTT_FILTER_FIELD.editor);
+  const selectedEditorKey = filters.editorIds.join(",");
+  const editors = useMemo(() => editorOptions(people, selectedEditorKey ? selectedEditorKey.split(",") : []), [people, selectedEditorKey]);
   const fields = useMemo<FilterField<string[]>[]>(
     () => [
+      ...(editors.length > 0 || editorUsed
+        ? [
+            {
+              id: GANTT_FILTER_FIELD.editor,
+              label: "Editor",
+              type: "multiselect" as const,
+              operators: GANTT_EDITOR_OPERATORS,
+              disabled: editorUsed,
+              className: VALUE_MENU_CLASS,
+              options: editors.map((option) => ({
+                value: option.value,
+                label: option.label,
+                icon: option.known ? <InitialsAvatar name={option.label} className={OPTION_AVATAR} /> : undefined,
+              })),
+            },
+          ]
+        : []),
       {
         id: GANTT_FILTER_FIELD.stage,
         label: "Stage",
@@ -135,7 +191,7 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
         options: GANTT_SHOW_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
       },
     ],
-    [stageOptions, stageUsed, showUsed],
+    [editors, editorUsed, stageOptions, stageUsed, showUsed],
   );
 
   const focusTrigger = useCallback(() => {
