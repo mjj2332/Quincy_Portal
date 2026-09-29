@@ -290,6 +290,41 @@ describe("gantt per-group create row (#344)", () => {
     expect(document.activeElement).toBe(input());
   });
 
+  it("moving focus into the input and back to the row never scrolls the tree pane (preventScroll)", async () => {
+    await render(view({ onCreateGroupTask: ok }));
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    await click(createButton("Alpha")!);
+    const toInput = focus.mock.contexts.findIndex((el) => el === input());
+    expect(toInput).toBeGreaterThanOrEqual(0);
+    expect(focus.mock.calls[toInput]![0]).toEqual({ preventScroll: true });
+    focus.mockClear();
+    await key(input(), "Escape");
+    const toRow = focus.mock.contexts.findIndex((el) => el === createButton("Alpha"));
+    expect(toRow).toBeGreaterThanOrEqual(0);
+    expect(focus.mock.calls[toRow]![0]).toEqual({ preventScroll: true });
+    expect(document.activeElement).toBe(createButton("Alpha"));
+    focus.mockRestore();
+  });
+
+  it("the row button fits inside its row and draws its focus ring inward, so the tree pane cannot clip it", async () => {
+    await render(view({ onCreateGroupTask: ok }));
+    const button = createButton("Alpha")!;
+    // no negative-margin bleed past the row (the old -mx-3 / w-[calc(100%+1.5rem)])
+    expect(button.className).not.toMatch(/(^|\s)-mx-/);
+    expect(button.className).not.toContain("calc(100%+");
+    expect(button.className).toMatch(/(^|\s)w-full(\s|$)/);
+    // the inward ring: the unlayered global `:focus-visible` outline shorthand resets the offset,
+    // so the offset must be `!`-prefixed (AnchoredPopover's RING_IN)
+    expect(button.className).toContain("focus-visible:!outline-offset-[-2px]");
+  });
+
+  it("the input is sized inside the row (h-7) and its placeholder reads as an error when invalid", async () => {
+    await render(view({ onCreateGroupTask: ok }));
+    await click(createButton("Alpha")!);
+    expect(input().className).toMatch(/(^|\s)h-7(\s|$)/);
+    expect(input().className).toContain("aria-invalid:placeholder:text-destructive");
+  });
+
   it("maxLength comes from createTaskMaxLength", async () => {
     await render(view({ onCreateGroupTask: ok, createTaskMaxLength: 500 }));
     await click(createButton("Alpha")!);

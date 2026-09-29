@@ -225,8 +225,11 @@
  * the input is `aria-invalid` and `aria-describedby` an always-mounted, visually hidden
  * `role="status"` (polite) node carrying the message; the vendor's own empty-title refusal
  * (`labels.createTaskEmpty`) shows as the empty input's placeholder, and a failed write's message is
- * made visible by the consumer (Quincy: the toast store, `announcedElsewhere`). Covered by
- * `gantt-create-task.dom.test.tsx`.
+ * made visible by the consumer (Quincy: the toast store, `announcedElsewhere`). DESIGN (fix round):
+ * focus moves with `preventScroll` (a phone's tree pane would scroll sideways); the row button fits
+ * the row (no negative-margin bleed) with an inward focus ring, since the pane clips an outward one;
+ * the input is `h-7` so its ring stays inside the row; an invalid input's placeholder is
+ * `text-destructive`. Covered by `gantt-create-task.dom.test.tsx`.
  */
 
 import {
@@ -3533,10 +3536,12 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   }, [])
 
   useLayoutEffect(() => {
-    if (editing) inputRef.current?.focus()
+    // preventScroll: the tree pane scrolls sideways on a phone, and a plain focus() would scroll
+    // the chevrons and the header out of view to bring the input's start edge in
+    if (editing) inputRef.current?.focus({ preventScroll: true })
     else if (restoreButtonFocusRef.current) {
       restoreButtonFocusRef.current = false
-      buttonRef.current?.focus()
+      buttonRef.current?.focus({ preventScroll: true })
     }
   }, [editing])
 
@@ -3583,7 +3588,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     else {
       setError({ kind: "write", message: result.message })
       // the input is read-only while pending, not disabled, so it kept focus; re-assert anyway
-      inputRef.current?.focus()
+      inputRef.current?.focus({ preventScroll: true })
     }
   }
 
@@ -3603,11 +3608,14 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     <div
       data-testid="gantt-group-create-task-row"
       data-gantt-create-for={group.resource.id}
-      className="border-border relative flex w-full shrink-0 items-center border-b ps-3 pe-3"
+      className="border-border relative flex w-full shrink-0 items-center border-b"
       style={{ height: `${heightRem}rem` }}
     >
+      {/* The row has no padding of its own: the button fills it exactly (no bleed past the tree
+          pane's edge) and both states carry the same ps-3/pe-3, so the + and the title keep the
+          subtask titles' x-position. */}
       {editing ? (
-        <div className="flex h-full w-full min-w-0 items-center">
+        <div className="flex h-full w-full min-w-0 items-center ps-3 pe-3">
           {lead}
           <span className="me-1 flex w-5 shrink-0 items-center justify-center">
             <PlusIcon
@@ -3628,7 +3636,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
               aria-label={createTaskTitleIn(groupTitle)}
               aria-invalid={error ? true : undefined}
               aria-describedby={errorId}
-              className="h-8 min-h-0 py-1 max-[721px]:min-h-0"
+              className="h-7 min-h-0 py-1 max-[721px]:min-h-0 aria-invalid:placeholder:text-destructive"
               onChange={(e) => {
                 setTitle(e.target.value)
                 if (error) setError(null)
@@ -3667,7 +3675,10 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
           data-testid="gantt-group-create-task"
           data-gantt-tree-focus=""
           aria-label={addTaskIn(groupTitle)}
-          className="text-muted-foreground hover:text-foreground hover:bg-muted/40 -mx-3 flex h-full w-[calc(100%+1.5rem)] items-center px-3"
+          // Inward focus ring (the same four utilities as Quincy's `AnchoredPopover` RING_IN): the
+          // row spans the tree pane, whose overflow clips an outward ring at both edges. `!` because
+          // the unlayered global `:focus-visible` outline shorthand resets `outline-offset`.
+          className="text-muted-foreground hover:text-foreground hover:bg-muted/40 flex h-full w-full items-center ps-3 pe-3 focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]"
           onClick={open}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
