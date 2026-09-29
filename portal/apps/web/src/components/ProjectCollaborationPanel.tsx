@@ -25,9 +25,11 @@ type ProjectCollaborationPanelProps = {
   showUnreadBadge?: boolean;
   onUnreadCountChange?: (count: number) => void;
   onAccessFailure?: (error: unknown, resource: AccessFailureResource) => void;
+  /** Rendered inside the Workspace's Collaboration tab: the page h1 and the tab label already name it, so the panel head is dropped and the card chrome (border, shadow) gives way to the full-bleed band the Collection tabs use. */
+  embedded?: boolean;
 };
 
-export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure }: ProjectCollaborationPanelProps) {
+export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure, embedded = false }: ProjectCollaborationPanelProps) {
   const session = useSession();
   const currentUserId = session.data?.user.id;
   const [localView, setLocalView] = useState<CollaborationView>("discussion");
@@ -75,7 +77,9 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
       <div className="min-w-0" role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
       <div className="min-w-0" role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={presented && activeView === "activity"} onAccessFailure={onAccessFailure} /></div>
     </>;
-    return <section className="grid content-start gap-[var(--space-4)] p-[var(--space-5)] min-h-0 overflow-auto bg-[var(--paper-050)] [border-style:solid] border-[length:var(--border-width-hair)] border-border shadow-[var(--shadow-sm)]" data-testid="project-collaboration-panel" aria-label="Project collaboration">{headerMarkup}{tabs}{panels}</section>;
+    return <section className={cn("grid content-start gap-[var(--space-4)] p-[var(--space-5)] min-h-0 overflow-auto bg-[var(--paper-050)]",
+      embedded ? "max-[721px]:p-[var(--space-3)]" : "[border-style:solid] border-[length:var(--border-width-hair)] border-border shadow-[var(--shadow-sm)]")}
+      data-testid="project-collaboration-panel" aria-label="Project collaboration">{!embedded && headerMarkup}{tabs}{panels}</section>;
   };
 
   return <ProjectDiscussionThread

@@ -530,3 +530,30 @@ describe("Project header Stage control", () => {
     expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
 });
+
+describe("Project header tab strip", () => {
+  beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); roleState.role = "editor"; });
+  afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); vi.restoreAllMocks(); });
+  const props = (activeTab: "raw" | "collaboration") => ({
+    project: project(), activeTab, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
+    canEdit: false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
+  });
+
+  it("scrolls the selected tab into view on mount and when the selection changes, without vertical page scroll", () => {
+    const calls: Array<{ text: string | null; arg: unknown }> = [];
+    Element.prototype.scrollIntoView = function (this: Element, arg?: unknown) { calls.push({ text: this.textContent, arg }); };
+    render(<ProjectHeader {...props("collaboration")} />);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.text).toContain("Collaboration");
+    expect(calls[0]!.arg).toEqual({ block: "nearest", inline: "nearest" });
+    act(() => { root.render(<ProjectHeader {...props("raw")} />); });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.text).toContain("RAW");
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("does not throw where scrollIntoView is unavailable", () => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    expect(() => render(<ProjectHeader {...props("collaboration")} />)).not.toThrow();
+  });
+});

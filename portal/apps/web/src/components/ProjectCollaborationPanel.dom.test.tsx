@@ -190,6 +190,19 @@ describe("ProjectCollaborationPanel", () => {
     else globals.IntersectionObserver = previousObserver;
   });
 
+  it("keeps the panel head and card chrome on the standalone page, and drops them when embedded", async () => {
+    let host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    let panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+    expect(host.querySelector('[data-testid="project-collaboration-head"]')).not.toBeNull();
+    expect(panel.className).toContain("shadow-[var(--shadow-sm)]");
+    host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} embedded />);
+    panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+    expect(host.querySelector('[data-testid="project-collaboration-head"]')).toBeNull();
+    expect(panel.className).not.toContain("shadow-");
+    expect(panel.className).not.toContain("border-border");
+    expect(panel.className).toContain("max-[721px]:p-[var(--space-3)]");
+  });
+
   it("posts a task list and renders its posted indicator without a checkbox control", async () => {
     const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Comment task" }] }] }] }] };
     const posted = { ...otherComment, id: "comment-task", body: "Comment task", content };

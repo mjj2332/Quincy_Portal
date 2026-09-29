@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
@@ -180,6 +181,14 @@ export function ProjectHeader({
   const { can } = useCapabilities();
   const currentStageKey = presentationStageKey(project.stageKey);
   const canMoveStage = can("moveProjectStage") && !project.archivedAt;
+  // The strip scrolls horizontally on phones and opens at scrollLeft 0, so a selected tab past the
+  // fold (Collaboration is last and the default) would be out of view. `nearest` on both axes keeps
+  // the page itself from scrolling vertically.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const selected = tabsRef.current?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
+    if (typeof selected?.scrollIntoView === "function") selected.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTab]);
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
     <div className="project-header__identity">
@@ -227,7 +236,7 @@ export function ProjectHeader({
       </div>}
     </div>
 
-    <div className="project-header__tabs">
+    <div className="project-header__tabs" ref={tabsRef}>
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
