@@ -662,7 +662,7 @@ describe("Dashboard Stage interactions", () => {
 
   it("changes Kanban display order by sort without fetching a new authorization snapshot", async () => {
     const sortProjects = [
-      { ...summary("sort-source", "awaiting_raw", 4), street: "Sort Source", priority: 9, shootDate: "2026-08-15" },
+      { ...summary("sort-source", "awaiting_raw", 4), street: "Sort Source", priority: 5, shootDate: "2026-08-15" },
       { ...summary("board-first", "raw_review", 1), street: "Board First", priority: 1, shootDate: "2026-08-30" },
       { ...summary("priority-first", "raw_review", 2), street: "Priority First", priority: 5, shootDate: "2026-09-01" },
       { ...summary("date-first", "raw_review", 3), street: "Date First", priority: 2, shootDate: "2026-08-01" },

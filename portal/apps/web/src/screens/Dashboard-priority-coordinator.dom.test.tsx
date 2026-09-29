@@ -1008,11 +1008,13 @@ describe("an optimistic priority change is rendered while its POST is pending (#
     const post = heldPost();
     const value = await renderAndChooseTwo();
     expect(value()).toBe("2");
-    await act(async () => { post.fail(new Error("Offline")); await Promise.resolve(); });
+    await act(async () => { post.fail(new Error("Offline!")); await Promise.resolve(); });
     await flush();
     expect(value()).toBe("1");
     // The revert is visible on the card, so the message names which project's change was lost.
-    expect(document.body.textContent).toContain("Priority for 1 Priority Street was not saved: Offline");
+    // Server reasons end in any punctuation or none; the sentence always ends in exactly one stop.
+    expect(document.body.textContent).toContain("Priority for 1 Priority Street was not saved: Offline.");
+    expect(document.body.textContent).not.toContain("Offline!");
   });
 
   function boardWith(priority: number) {

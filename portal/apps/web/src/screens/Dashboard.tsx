@@ -1377,7 +1377,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // says is all a screen-reader user gets. Speaking a generic line while the silent toast shows the
       // specific reason would withhold the reason from them alone.
       // Names the project: the toast sits far from the card whose stars just snapped back (#232).
-      const priorityFailure = `Priority for ${project.street} was not saved: ${reason instanceof Error ? reason.message : "the request failed."}`;
+      // Server reasons end in any punctuation or none (the 409 has none); the sentence ends in one stop.
+      const failureReason = (reason instanceof Error ? reason.message : "the request failed").trim().replace(/[.!?]+$/, "");
+      const priorityFailure = `Priority for ${project.street} was not saved: ${failureReason}.`;
       setAnnouncement(priorityFailure);
       toast(priorityFailure, "error", { announcedElsewhere: true });
     } finally {
