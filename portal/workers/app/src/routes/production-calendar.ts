@@ -700,6 +700,7 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
   const done = Boolean(row.done);
   const range = schedule.state === "range";
   const canOpen = collaboration;
+  // canScheduleRange stays on the wire deliberately (strict schemas; removing it would break open tabs across a deploy); #342 removes it when schedules narrow to ranges only.
   const canRange = canOpen;
   return {
     id: calendarChecklistEntityId(row.subtask_id),
@@ -735,6 +736,7 @@ function unscheduledChecklist(row: CalendarSqlRow, role: CalendarRole): Calendar
   const project = projectContext(row, role);
   const schedule = serializeChecklistSchedule(scheduleStorage(row));
   const collaboration = row.can_collaborate === 1;
+  // canScheduleRange stays on the wire deliberately (strict schemas; removing it would break open tabs across a deploy); #342 removes it when schedules narrow to ranges only.
   const canRange = collaboration;
   const base = { id: calendarChecklistEntityId(row.subtask_id), kind: "checklist" as const, title: row.subtask_title, project, assignee: person(row) };
   if (schedule.state === "unscheduled") return { ...base, reason: "unscheduled", schedule: schedule as UnscheduledChecklistScheduleDto, permissions: { canDrag: canRange, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };

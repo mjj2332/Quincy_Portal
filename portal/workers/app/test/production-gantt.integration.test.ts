@@ -323,17 +323,25 @@ describe("production-gantt", () => {
 
   it("lets a collaborating external editor drag, resize and range-schedule range, due-only and unscheduled children", async () => {
     const rangeId = crypto.randomUUID();
+    const dueOnlyId = crypto.randomUUID();
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Gantt range child', 0, 500, 0, '2026-08-28', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
-      .bind(rangeId, memberProjectId, adminId, now, now).run();
-    const response = await request(`/api/production-gantt?scope=active&childrenOf=${memberProjectId}`, tokens.external);
-    expect(response.status).toBe(200);
-    const body = await response.json() as { children: { rows: Array<{ id: string; title: string; permissions: Record<string, boolean> }> } };
-    const rangeRow = body.children.rows.find((row) => row.id === rangeId);
-    expect(rangeRow?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true });
-    const unscheduledRow = body.children.rows.find((row) => row.title === "Prep listing");
-    expect(unscheduledRow?.permissions).toEqual({ canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true });
-    await database.DB.prepare("DELETE FROM project_subtasks WHERE id = ?").bind(rangeId).run();
+    try {
+      await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Gantt range child', 0, 500, 0, '2026-08-28', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
+        .bind(rangeId, memberProjectId, adminId, now, now).run();
+      await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Gantt due-only child', 0, 501, 0, '2026-08-29', 0, ?, ?, ?)")
+        .bind(dueOnlyId, memberProjectId, adminId, now, now).run();
+      const response = await request(`/api/production-gantt?scope=active&childrenOf=${memberProjectId}`, tokens.external);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { children: { rows: Array<{ id: string; title: string; permissions: Record<string, boolean> }> } };
+      const rangeRow = body.children.rows.find((row) => row.id === rangeId);
+      expect(rangeRow?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true });
+      const dueOnlyRow = body.children.rows.find((row) => row.id === dueOnlyId);
+      expect(dueOnlyRow?.permissions).toEqual({ canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true });
+      const unscheduledRow = body.children.rows.find((row) => row.title === "Prep listing");
+      expect(unscheduledRow?.permissions).toEqual({ canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true });
+    } finally {
+      await database.DB.prepare("DELETE FROM project_subtasks WHERE id IN (?, ?)").bind(rangeId, dueOnlyId).run();
+    }
   });
 
   it("reminder offsets survive a set deadline", async () => {
