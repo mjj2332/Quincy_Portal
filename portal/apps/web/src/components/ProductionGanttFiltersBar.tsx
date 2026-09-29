@@ -10,8 +10,9 @@
  *
  * EDITOR. Offered only once the server has listed somebody (or the URL already holds an editor, so
  * its chip is never "unknown"). An id in the URL the server does not list — a deactivated editor, a
- * stale link — is kept and shown as "Unknown editor", so the viewer sees why the chart is narrowed
- * and can remove it; the server ignores it (`appliedFilters.editorIds`).
+ * stale link — is kept and shown as "Unknown editor (not applied)": the server ignores it
+ * (`appliedFilters.editorIds`), so the chip names it without claiming a narrowing, and the viewer
+ * can remove it.
  *
  * THE DELIVERED PAIR. Stage = Delivered draws nothing while delivered projects are hidden, so a bar
  * edit that selects it also turns Show -> Delivered on, and one that turns Show -> Delivered off
@@ -85,8 +86,11 @@ const ADD_FILTER = "Add filter";
  * (`filters-editors.tsx`), so this widens both menus without editing the vendored default.
  */
 const VALUE_MENU_CLASS = "w-60";
-const UNKNOWN_EDITOR = "Unknown editor";
-const OPTION_AVATAR = "size-5";
+// The server ignores an id it does not list, so the chip says so rather than claim a narrowing.
+const UNKNOWN_EDITOR = "Unknown editor (not applied)";
+// A highlighted value row paints `--accent` (ink), the avatar's own fill: a paper ring keeps its
+// circle visible there (#274 design review).
+const OPTION_AVATAR = "size-5 [[data-highlighted]_&]:ring-1 [[data-highlighted]_&]:ring-[var(--paper-050)]";
 
 type EditorOption = { value: string; label: string; known: boolean };
 

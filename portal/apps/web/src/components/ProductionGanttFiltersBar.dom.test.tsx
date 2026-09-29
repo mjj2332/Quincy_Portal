@@ -178,6 +178,11 @@ describe("ProductionGanttFiltersBar: the Editor field (#274)", () => {
     await waitFor(() => option("Alex Admin"));
     expect(options().map(optionLabel)).toEqual(["Bea Editor", "Alex Admin"]);
     expect(options().map((candidate) => candidate.querySelector('[aria-hidden="true"]')?.textContent)).toEqual(["BE", "AA"]);
+    // The highlighted row paints --accent (ink), the avatar's own fill: a paper ring keeps its circle
+    // visible there (#274 design review).
+    const avatar = options()[0]!.querySelector<HTMLElement>('[aria-hidden="true"]')!;
+    expect(avatar.className).toContain("[[data-highlighted]_&]:ring-1");
+    expect(avatar.className).toContain("[[data-highlighted]_&]:ring-[var(--paper-050)]");
   });
 
   it("writes the picked editors as sorted lowercase ids, independent of Stage and Show", async () => {
@@ -189,13 +194,13 @@ describe("ProductionGanttFiltersBar: the Editor field (#274)", () => {
     await waitFor(() => expect(pushes.at(-1)).toEqual({ editorIds: [ALEX, BEA], stageKeys: ["editing"], delivered: false, completed: false }));
   });
 
-  it("renders an editor id the server no longer lists as 'Unknown editor', which can still be removed", async () => {
+  it("renders an editor id the server no longer lists as 'Unknown editor (not applied)', which can still be removed", async () => {
     barPeople = people;
     await render({ editorIds: [STALE], stageKeys: [], delivered: false, completed: false });
-    expect(chipNames()).toEqual(["Editor is any of Unknown editor"]);
-    await click(button("Unknown editor", chips()[0]!));
-    await waitFor(() => expect(option("Unknown editor").getAttribute("aria-selected")).toBe("true"));
-    await click(option("Unknown editor"));
+    expect(chipNames()).toEqual(["Editor is any of Unknown editor (not applied)"]);
+    await click(button("Unknown editor (not applied)", chips()[0]!));
+    await waitFor(() => expect(option("Unknown editor (not applied)").getAttribute("aria-selected")).toBe("true"));
+    await click(option("Unknown editor (not applied)"));
     await waitFor(() => expect(pushes.at(-1)?.editorIds).toEqual([]));
   });
 
