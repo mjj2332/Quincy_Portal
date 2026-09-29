@@ -210,6 +210,10 @@ let patchReply: ((body: { schedule: { expectedVersion: number; schedule: Schedul
 let getGate: Promise<void> | null;
 /** When set, a truncated project's continuation page answers with this once it resolves (else held forever). */
 let childPageReply: Promise<Reply> | null;
+/** #344: per-request continuation page answer (wins over `childPageReply`). */
+let childPageHandler: (() => Promise<Reply>) | null;
+/** #344: a Gantt GET whose body is taken when the request ARRIVES, then held until this resolves. */
+let getHeldAtRequest: Promise<void> | null;
 
 function echoPatch(body: { schedule: { expectedVersion: number; schedule: ScheduleInput } }, subtaskId: string): Reply {
   const row = rows.find((candidate) => candidate.id === subtaskId)!;
@@ -485,6 +489,8 @@ beforeEach(() => {
   createReply = null;
   getGate = null;
   childPageReply = null;
+  childPageHandler = null;
+  getHeldAtRequest = null;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -500,10 +506,16 @@ beforeEach(() => {
     const json = (reply: Reply) => new Response(JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
     if (method === "GET" && url.startsWith("/api/production-gantt") && url.includes("childrenOf=")) {
       // A truncated project's continuation pages: held forever, so the project stays truncated.
+      if (childPageHandler) return json(await childPageHandler());
       if (childPageReply) return json(await childPageReply);
       return new Promise<Response>(() => {});
     }
     if (method === "GET" && url.startsWith("/api/production-gantt")) {
+      if (getHeldAtRequest) {
+        const snapshot = ganttResponse();
+        await getHeldAtRequest;
+        return json({ status: 200, body: snapshot });
+      }
       if (getGate) await getGate;
       return json({ status: 200, body: ganttResponse() });
     }
@@ -1245,6 +1257,14 @@ describe("ProductionGantt — Add task row (#344)", () => {
     return toasts().map((toast) => toast.textContent ?? "");
   }
 
+  function errorToasts(): string[] {
+    return toasts().filter((toast) => toast.getAttribute("data-tone") === "error").map((toast) => toast.textContent ?? "");
+  }
+
+  function hiddenToasts(): number {
+    return toastTexts().filter((text) => text.includes("Created — hidden by current filters")).length;
+  }
+
   it("shows the row only where the server lets the user edit the Project's children", async () => {
     resetFixture({ secondNoDeadlineProject: true, secondCanEditChildren: false });
     await render();
@@ -1328,7 +1348,10 @@ describe("ProductionGantt — Add task row (#344)", () => {
     await keydown(createInput(), "Enter");
     await flush(2);
     expect(posts()).toHaveLength(0);
+    expect(createInput().getAttribute("aria-invalid")).toBe("true");
     expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toContain("500");
+    // visible where the tree's scroll edge cannot clip it
+    expect(errorToasts().some((text) => text.includes("500"))).toBe(true);
   });
 
   it("sends once while the request is held", async () => {
@@ -1349,15 +1372,29 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(posts()).toHaveLength(1);
   });
 
-  for (const status of [500, 403]) {
-    it(`a ${status} shows a message, keeps the typed title and the input, and adds no bar`, async () => {
+  it("a 500 keeps the typed title and the input, shows the server's message as a toast and in the row's status, and adds no bar", async () => {
+    createReply = () => ({ status: 500, body: { error: "Nope from the server" } });
+    await render();
+    await open();
+    await submit(CREATED_TITLE);
+    expect(posts()).toHaveLength(1);
+    expect(createInput().value).toBe(CREATED_TITLE);
+    expect(createInput().getAttribute("aria-invalid")).toBe("true");
+    expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toBe("Nope from the server");
+    expect(errorToasts()).toHaveLength(1);
+    expect(errorToasts()[0]).toContain("Nope from the server");
+    expect(onAccessLoss).not.toHaveBeenCalled();
+    expect(hasBar(CREATED_TITLE)).toBe(false);
+  });
+
+  for (const status of [401, 403]) {
+    it(`a ${status} goes through the Gantt's access-loss flow (onAccessLoss) and adds no bar`, async () => {
       createReply = () => ({ status, body: { error: "Nope from the server" } });
       await render();
       await open();
       await submit(CREATED_TITLE);
       expect(posts()).toHaveLength(1);
-      expect(createInput().value).toBe(CREATED_TITLE);
-      expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toBeTruthy();
+      expect(onAccessLoss).toHaveBeenCalledTimes(1);
       expect(hasBar(CREATED_TITLE)).toBe(false);
     });
   }
@@ -1402,5 +1439,121 @@ describe("ProductionGantt — Add task row (#344)", () => {
     await submit(CREATED_TITLE);
     expect(hasBar(CREATED_TITLE)).toBe(true);
     expect(toastTexts().join("|")).not.toContain("hidden by current filters");
+  });
+
+  /**
+   * A Project whose checklist spans two child pages: page one is the fixture's rows, page two is
+   * `pageTwo`. The walk's continuation answers from `childGate` (held until the test releases it).
+   */
+  function paginated(pageTwo: Array<{ id: string; title: string; position: number }>) {
+    resetFixture({ truncatedTotal: rows.length + pageTwo.length });
+    let gate = deferred<void>();
+    childPageReply = null;
+    childPageHandler = async () => {
+      await gate.promise;
+      return {
+        status: 200,
+        body: {
+          projectId: PROJECT_ID,
+          children: {
+            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } })),
+            total: truncatedTotal!,
+            returned: pageTwo.length,
+            truncated: false,
+            nextCursor: null,
+          },
+        },
+      };
+    };
+    return {
+      release: () => { gate.resolve(); },
+      rearm: () => { gate = deferred<void>(); },
+    };
+  }
+
+  it("a refetch that supersedes a completed child walk is not judged until the new walk loads: the row comes back silently", async () => {
+    const pageTwo = [{ id: "88888888-8888-4888-8888-000000000001", title: "Page two row", position: 10 }];
+    const walk = paginated(pageTwo);
+    // the new Subtask lands on the LAST page (page two), and the Project's total grows
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      pageTwo.push({ id: CREATED_ID, title: body.title, position: 11 });
+      truncatedTotal = truncatedTotal! + 1;
+      return reply;
+    };
+    await render();
+    walk.release();
+    await flush(4);
+    expect(hasBar("Page two row")).toBe(true);
+
+    walk.rearm();
+    await open();
+    await submit(CREATED_TITLE);
+    // the refetch's new page one re-seeded the walk; its page two is still held
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(0);
+
+    walk.release();
+    await flush(6);
+    // the new walk brought the real row (grips and all): the pin retired, silently
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(hiddenToasts()).toBe(0);
+  });
+
+  it("a refetch that supersedes a completed child walk: when the new walk completes WITHOUT the row, the toast is raised then", async () => {
+    const pageTwo = [{ id: "88888888-8888-4888-8888-000000000001", title: "Page two row", position: 10 }];
+    const walk = paginated(pageTwo);
+    createReply = (body, projectId) => {
+      const reply = echoCreate(body, projectId);
+      omittedFromGet.add(CREATED_ID);
+      truncatedTotal = truncatedTotal! + 1;
+      return reply;
+    };
+    await render();
+    walk.release();
+    await flush(4);
+
+    walk.rearm();
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hiddenToasts()).toBe(0);
+
+    walk.release();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(1);
+  });
+
+  it("a refetch that STARTED before the create cannot retire the pin or raise the toast, even though it lands after it", async () => {
+    await render();
+    const ganttKey = client.getQueryCache().getAll().find((query) => query.queryKey[0] === "production-gantt")!.queryKey;
+    // a poll starts; its body is what the server had at that moment (no new row yet)
+    const held = deferred<void>();
+    getHeldAtRequest = held.promise;
+    await act(async () => { void client.refetchQueries({ queryKey: ganttKey }); await Promise.resolve(); });
+    await flush(1);
+    getHeldAtRequest = null;
+    // the create's own invalidation is deferred while something owns the Gantt key
+    const release = runtime.acquireOwner(ganttKey);
+
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+
+    // the pre-create poll lands AFTER the create, without the row
+    held.resolve();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(0);
+
+    // a refetch that starts after the create returns the row: the pin retires, silently
+    release();
+    await act(async () => { await client.invalidateQueries({ queryKey: ganttKey }); });
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(hiddenToasts()).toBe(0);
   });
 });

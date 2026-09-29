@@ -73,6 +73,12 @@ function view(props: Partial<React.ComponentProps<typeof Gantt>> = {}, resources
 
 const ok = async (): Promise<Result> => ({ ok: true });
 
+function errorRegion(): HTMLElement {
+  const el = host.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-error"]');
+  if (!el) throw new Error("no error region");
+  return el;
+}
+
 function createButton(group: string): HTMLButtonElement | null {
   return [...host.querySelectorAll<HTMLButtonElement>('[data-testid="gantt-group-create-task"]')].find((el) => el.getAttribute("aria-label") === `Add task in ${group}`) ?? null;
 }
@@ -196,8 +202,27 @@ describe("gantt per-group create row (#344)", () => {
     await setValue(input(), "   ");
     await key(input(), "Enter");
     expect(create).not.toHaveBeenCalled();
-    expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toBe("Enter a task title.");
     expect(input().getAttribute("aria-invalid")).toBe("true");
+    // visible in the row itself (the input is empty by definition, so the message is its placeholder)
+    expect(input().placeholder).toBe("Enter a task title.");
+    expect(errorRegion().textContent).toBe("Enter a task title.");
+  });
+
+  it("an error can never be clipped by the tree: it is in the row's flow, not an absolutely positioned overlay", async () => {
+    const create = vi.fn<Create>(async () => ({ ok: false, message: "Nope." }));
+    await render(view({ onCreateGroupTask: create }));
+    await click(createButton("Alpha")!);
+    await setValue(input(), "Keep me");
+    await key(input(), "Enter");
+    await settle();
+    const region = errorRegion();
+    // a polite live region inside the create row, described by the input — never an overlay
+    expect(region.getAttribute("role")).toBe("status");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    expect(region.closest('[data-testid="gantt-group-create-task-row"]')).not.toBeNull();
+    expect(input().getAttribute("aria-describedby")).toBe(region.id);
+    expect(region.className).not.toMatch(/\babsolute\b/);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("Esc cancels without a call, discards the draft, and returns focus to the row", async () => {
@@ -221,11 +246,13 @@ describe("gantt per-group create row (#344)", () => {
     await key(input(), "Enter");
     await settle();
     expect(input().value).toBe("Keep me");
-    expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')?.textContent).toBe("Nope.");
+    expect(errorRegion().textContent).toBe("Nope.");
+    expect(input().getAttribute("aria-invalid")).toBe("true");
     expect(input().hasAttribute("readonly")).toBe(false);
     // typing clears the message
     await setValue(input(), "Keep me 2");
-    expect(host.querySelector('[data-testid="gantt-group-create-task-error"]')).toBeNull();
+    expect(errorRegion().textContent).toBe("");
+    expect(input().hasAttribute("aria-invalid")).toBe(false);
   });
 
   it("ignores a second Enter while the first create is pending", async () => {

@@ -214,12 +214,26 @@
  * split the slack 50/50 with the name cell). `GanttTreeRow` takes a new memoised `nameFill` prop.
  * Both cells gained additive test seams, `data-testid="gantt-tree-name-header"` /
  * `"gantt-tree-name-cell"`. Covered by `gantt-tree-name-fill.dom.test.tsx`.
+ *
+ * 2026-09-29, #344 — ADDED, additive (off unless `settings.onCreateGroupTask` is set): the
+ * per-group "+ Add task" row (`GanttGroupCreateRow`) after each expanded group's last descendant,
+ * its matching-height timeline spacer, the dependency layer's matching row offset, and Up/Down focus
+ * movement across `[data-gantt-tree-focus]` targets (ADR 0009 addendum). ERROR SURFACE (fix round):
+ * the row never grows and never overlays — its height is `minRowRem` in the tree, the spacer and the
+ * dependency offset alike, so an in-flow message would have to resize all three, and the earlier
+ * absolutely positioned message was clipped by the tree's scroll edge. Instead the typed title stays,
+ * the input is `aria-invalid` and `aria-describedby` an always-mounted, visually hidden
+ * `role="status"` (polite) node carrying the message; the vendor's own empty-title refusal
+ * (`labels.createTaskEmpty`) shows as the empty input's placeholder, and a failed write's message is
+ * made visible by the consumer (Quincy: the toast store, `announcedElsewhere`). Covered by
+ * `gantt-create-task.dom.test.tsx`.
  */
 
 import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -3501,12 +3515,15 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState("")
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // `empty`: the vendor's own refusal (shown as the empty input's placeholder); `write`: the
+  // consumer's `{ ok: false, message }`, which the consumer also surfaces visibly.
+  const [error, setError] = useState<{ kind: "empty" | "write"; message: string } | null>(null)
   const pendingRef = useRef(false)
   const mountedRef = useRef(true)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const restoreButtonFocusRef = useRef(false)
+  const errorId = useId()
 
   useEffect(() => {
     mountedRef.current = true
@@ -3538,7 +3555,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     if (pendingRef.current) return
     const trimmed = title.trim()
     if (!trimmed) {
-      setError(settings.i18n.labels.createTaskEmpty)
+      setError({ kind: "empty", message: settings.i18n.labels.createTaskEmpty })
       return
     }
     const create = settings.onCreateGroupTask
@@ -3564,7 +3581,7 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
     setPending(false)
     if (result.ok) close()
     else {
-      setError(result.message)
+      setError({ kind: "write", message: result.message })
       // the input is read-only while pending, not disabled, so it kept focus; re-assert anyway
       inputRef.current?.focus()
     }
@@ -3598,16 +3615,19 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
               aria-hidden="true"
             />
           </span>
-          <div className="relative min-w-0 flex-1">
+          <div className="min-w-0 flex-1">
             <Input
               ref={inputRef}
               data-testid="gantt-group-create-task-input"
               value={title}
               maxLength={viewConfig.createTaskMaxLength}
               readOnly={pending}
+              // the vendor's own empty-title refusal is shown in the (empty) input itself
+              placeholder={error?.kind === "empty" ? error.message : undefined}
               aria-busy={pending || undefined}
               aria-label={createTaskTitleIn(groupTitle)}
               aria-invalid={error ? true : undefined}
+              aria-describedby={errorId}
               className="h-8 min-h-0 py-1 max-[721px]:min-h-0"
               onChange={(e) => {
                 setTitle(e.target.value)
@@ -3626,15 +3646,18 @@ const GanttGroupCreateRow = memo(function GanttGroupCreateRow({
                 }
               }}
             />
-            {error && (
-              <p
-                role="alert"
-                data-testid="gantt-group-create-task-error"
-                className="bg-background border-border text-destructive absolute start-0 top-full z-20 mt-0.5 max-w-full border px-2 py-1 text-xs"
-              >
-                {error}
-              </p>
-            )}
+            {/* Always mounted so the polite announcement is heard; in flow and visually hidden,
+                so the tree's scroll edge can never clip it. The visible surfaces are the
+                placeholder above (empty title) and the consumer's own notice (a failed write). */}
+            <span
+              id={errorId}
+              role="status"
+              aria-live="polite"
+              data-testid="gantt-group-create-task-error"
+              className="sr-only"
+            >
+              {error?.message ?? ""}
+            </span>
           </div>
         </div>
       ) : (

@@ -517,6 +517,41 @@ describe("S5: PRODUCTION_GANTT_DRAW_CAP", () => {
     expect(model.resources.some((resource) => resource.id === `project:${trailingSmallProject.id}`)).toBe(false);
     expect(model.tooManyToDraw).toBe(true);
   });
+
+  it("#344: a budget-exempt (pinned, just-created) row never tips its project past the cap", () => {
+    // 1998 childless projects + one project with one real child fill the cap exactly (2000 rows).
+    // The project's pinned row would make 2001 — without the exemption the whole project (and the
+    // new bar) would drop out; with it, inclusion is decided on the real rows alone.
+    const bulk = makeChildlessProjects(PRODUCTION_GANTT_DRAW_CAP - 2);
+    const real = makeTask({ schedule: unscheduledSchedule() });
+    const pinned = makeTask({ schedule: unscheduledSchedule() });
+    const edge = makeProject({
+      shootDateCivil: "2026-01-01",
+      children: { rows: [real, pinned], total: 2, returned: 2, truncated: false, nextCursor: null },
+    });
+    const without = buildProductionGanttModel([...bulk, edge], { now: NOW });
+    expect(without.includedProjectIds.has(edge.id)).toBe(false);
+    const model = buildProductionGanttModel([...bulk, edge], { now: NOW, budgetExemptRowIds: new Set([pinned.id]) });
+    expect(model.includedProjectIds.has(edge.id)).toBe(true);
+    expect(model.tooManyToDraw).toBe(false);
+    const edgeResource = model.resources.find((resource) => resource.id === `project:${edge.id}`);
+    const childIds = edgeResource?.children?.map((child) => child.id) ?? [];
+    expect(childIds).toHaveLength(2);
+    expect(childIds).toEqual(expect.arrayContaining([`task:${real.id}`, `task:${pinned.id}`]));
+  });
+
+  it("#344: an exempt row does not free budget for a project that would not fit on its real rows", () => {
+    const bulk = makeChildlessProjects(PRODUCTION_GANTT_DRAW_CAP - 1);
+    const pinned = makeTask({ schedule: unscheduledSchedule() });
+    const real = makeTask({ schedule: unscheduledSchedule() });
+    const over = makeProject({
+      shootDateCivil: "2026-01-01",
+      children: { rows: [real, pinned], total: 2, returned: 2, truncated: false, nextCursor: null },
+    });
+    const model = buildProductionGanttModel([...bulk, over], { now: NOW, budgetExemptRowIds: new Set([pinned.id]) });
+    expect(model.includedProjectIds.has(over.id)).toBe(false);
+    expect(model.tooManyToDraw).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

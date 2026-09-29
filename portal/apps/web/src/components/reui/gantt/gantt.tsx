@@ -117,7 +117,7 @@
  * "+ Add task" row. `GanttSettings.onCreateGroupTask` (presence opts in; gated per group by the
  * existing `canCreateTask({ parentId })`) and `GanttViewConfig.createTaskMaxLength`; `canCreateTask`
  * and `onCreateGroupTask` joined `SETTINGS_KEYS` so a change re-renders the view. Rendered by
- * `gantt-view.tsx`; covered by `gantt-group-create-task.dom.test.tsx`. See ADR 0009's #344 addendum.
+ * `gantt-view.tsx`; covered by `gantt-create-task.dom.test.tsx`. See ADR 0009's #344 addendum.
  */
 
 import {
@@ -255,8 +255,10 @@ interface GanttCallbacks<TData = unknown> {
    * last descendant, where `canCreateTask({ parentId })` allows it. A resource that declares a
    * `children` array (even an empty one) counts as a group so its first child can be added. The
    * row turns into a title input; Enter submits the trimmed title through this callback and
-   * resolves `{ ok: true }` (the row closes) or `{ ok: false, message }` (the message is shown and
-   * the typed title stays). The consumer owns the write; the vendor owns the row and its input.
+   * resolves `{ ok: true }` (the row closes) or `{ ok: false, message }` (the typed title stays and
+   * the message is announced politely from the row; the consumer makes it visible — the row never
+   * grows or overlays, see `gantt-view.tsx`'s #344 entry). The consumer owns the write; the vendor
+   * owns the row and its input.
    */
   onCreateGroupTask?: (ctx: {
     parentId: string

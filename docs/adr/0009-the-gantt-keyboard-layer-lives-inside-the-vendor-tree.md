@@ -181,8 +181,13 @@ between the tree's own rows and be paired with a timeline spacer of the same hei
   existing `canCreateTask({ parentId })`. The row appears after each EXPANDED group's last
   descendant. A resource that declares a `children` array, even an empty one, counts as a group, so
   a Project with no Subtasks can be expanded and given its first. The callback resolves
-  `{ ok: true }` (the row closes) or `{ ok: false, message }` (the message shows and the typed title
-  stays). The root-level `onCreateTask` / `displayCreateTaskHint` affordance is unchanged.
+  `{ ok: true }` (the row closes) or `{ ok: false, message }` (the typed title stays, the input is
+  marked invalid and the message is announced from a polite status node in the row). The row keeps
+  one fixed height in the tree, the timeline spacer and the dependency layer, so it never grows or
+  overlays to show a message (an overlay was clipped by the tree's scroll edge): the vendor's own
+  empty-title refusal shows as the empty input's placeholder, and the consumer makes a failed
+  write's message visible (Quincy: a toast). The root-level `onCreateTask` / `displayCreateTaskHint`
+  affordance is unchanged.
 - **Up/Down focus movement** between the tree's row focus targets (group toggle, row checkbox, the
   create row), in DOM order. It is a small extension of this layer, not a change to the bar
   Adjust keyboard: bars are in the timeline pane and are untouched. Enter or Space on the row opens

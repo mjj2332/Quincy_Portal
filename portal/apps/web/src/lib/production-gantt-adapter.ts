@@ -381,7 +381,17 @@ function compareChecklistRows(a: GanttChecklistRowDto, b: GanttChecklistRowDto):
  */
 export function buildProductionGanttModel(
   projects: readonly GanttProjectRowDto[],
-  opts: { now: Date; interactive?: boolean; deadlineInteractive?: boolean },
+  opts: {
+    now: Date;
+    interactive?: boolean;
+    deadlineInteractive?: boolean;
+    /**
+     * #344: child row ids drawn but not counted against `PRODUCTION_GANTT_DRAW_CAP` — the Gantt's
+     * display-only pins of just-created Subtasks. Inclusion and `tooManyToDraw` are decided on the
+     * real rows alone, so a pin can never push its own project (and itself) out of the model.
+     */
+    budgetExemptRowIds?: ReadonlySet<string>;
+  },
 ): ProductionGanttModel {
   const interactive = opts.interactive === true;
   const deadlineInteractive = interactive && opts.deadlineInteractive === true;
@@ -394,7 +404,8 @@ export function buildProductionGanttModel(
 
   for (const project of projects) {
     const sortedChildren = [...project.children.rows].sort(compareChecklistRows);
-    const rowCount = 1 + sortedChildren.length;
+    const exempt = opts.budgetExemptRowIds;
+    const rowCount = 1 + (exempt && exempt.size > 0 ? sortedChildren.filter((row) => !exempt.has(row.id)).length : sortedChildren.length);
     if (rowBudget + rowCount > PRODUCTION_GANTT_DRAW_CAP) {
       tooManyToDraw = true;
       break;

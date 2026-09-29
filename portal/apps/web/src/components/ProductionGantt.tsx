@@ -60,9 +60,13 @@
  * vendored tree owns the row and input; `onCreateGroupTask` / `canCreateTask` here own the write and the
  * gate). Enter posts `{ title }` only to `POST /api/projects/:id/subtasks` (the server applies the default
  * range, the audit row and the activity — the same endpoint as the Project page). The created Subtask is
- * pinned (`lib/production-gantt-create.ts`, display-only, generation-scoped) until the refetch returns it;
- * if a complete refetch omits it, the bar stays for one more refetch and "Created — hidden by current
- * filters" is toasted. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
+ * pinned (`lib/production-gantt-create.ts`, display-only, generation-scoped, exempt from the draw
+ * cap's row budget) until the refetch returns it; if an authoritative refetch omits it, the bar stays
+ * for one more refetch and "Created — hidden by current filters" is toasted. Authoritative means a
+ * full refetch that STARTED after the create (`GanttFullFetchLedger`) and a complete child list that
+ * is not a superseded walk awaiting its re-seed. A failed write keeps the typed title and is toasted
+ * (the row's own status node announces it); 401/403 goes through the port's access-loss path, like a
+ * child page. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
  *
  * Still read-only: `legacy_unresolved` / `invalid` rows, which the adapter
  * routes to `attention` with no event at all. `interactions` stays CONTROLLED and is switched off
@@ -120,11 +124,11 @@ import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttProposedUpdate, GanttResource, GanttScale, GanttSlotDraft, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
 import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
-import { useQueryClient } from "@tanstack/react-query";
+import { hashKey, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiPost } from "../lib/api";
-import { invalidateProjectSurfaces, type ProjectSubtask } from "../lib/project-data";
+import { invalidateProjectSurfaces, useProjectAccessTermination, type ProjectSubtask } from "../lib/project-data";
 import { pushToast } from "../lib/toast-store";
-import { pinFromCreated, reconcilePinnedCreatedRows, withPinnedCreatedRows, type PinnedCreatedRow } from "../lib/production-gantt-create";
+import { buildPinnedGanttModel, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, type PinnedCreatedRow } from "../lib/production-gantt-create";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
@@ -152,7 +156,6 @@ import {
   type ProductionGanttFilters,
 } from "../lib/production-gantt-query";
 import {
-  buildProductionGanttModel,
   type ProductionGanttAttention,
   type ProductionGanttAttentionReason,
   type ProductionGanttModel,
@@ -646,7 +649,11 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
   return { ...model, events };
 }
 
-/** The create endpoint's title bound (`createInput` in workers/app/src/routes/project-subtasks.ts). */
+/**
+ * The create endpoint's title bound: mirrors `TITLE_MAX_LENGTH` in
+ * workers/app/src/routes/project-subtasks.ts, which is module-local to the Worker (nothing in
+ * `@quincy/shared` exports the create bound — the shared `max(500)`s are read-DTO bounds).
+ */
 const GANTT_CREATE_TITLE_MAX = 500;
 
 export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange }: ProductionGanttProps) {
@@ -722,7 +729,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
    * #221: a continuation child page answered 401/403. That is access loss, not a per-project load
    * failure, so it is surfaced to the scheduling controller (through the port's `latestError`, the
    * controller's own access-loss path) instead of the retry badge. Scoped to the generation that saw
-   * it, so a reset (which re-arms the controller) never re-fires it.
+   * it, so a reset (which re-arms the controller) never re-fires it. #344: a 401/403 from the "+ Add
+   * task" create lands here too — the same access-loss path, not a row error.
    */
   const [childAccessError, setChildAccessError] = useState<{ error: ApiError; generationKey: string } | null>(null);
 
@@ -1035,9 +1043,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // #344: a just-created Subtask that the refetch has not (yet) returned stays a bar. Display-only,
   // applied AFTER the controller's frozen `displayProjects`, and never part of `projectById` — the
   // pinned row is read-only until the real row arrives.
+  // Pins are exempt from the draw cap's row budget, so a pin can never push its own Project (and
+  // the new bar) out of a model that the real rows fill exactly.
   const [pins, setPins] = useState<PinnedCreatedRow[]>([]);
-  const pinnedProjects = useMemo(() => withPinnedCreatedRows(displayProjects, pins, generationKey), [displayProjects, pins, generationKey]);
-  const baseModel = useMemo(() => buildProductionGanttModel(pinnedProjects, { now, interactive: true, deadlineInteractive: true }), [pinnedProjects, now]);
+  const baseModel = useMemo(() => buildPinnedGanttModel(displayProjects, pins, generationKey, { now, interactive: true, deadlineInteractive: true }), [displayProjects, pins, generationKey, now]);
   const model = useMemo(
     () => withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending),
     [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending],
@@ -1353,8 +1362,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // audit log and activity come from the same endpoint the Project page's composer uses.
   // ---------------------------------------------------------------------------------------------
   const queryClient = useQueryClient();
-  const dataUpdatedAtRef = useRef(query.dataUpdatedAt);
-  dataUpdatedAtRef.current = query.dataUpdatedAt;
+  const terminateOnUnauthorized = useProjectAccessTermination();
+  // Which FULL refetch (by start order) produced the rendered pages: only data from a refetch that
+  // STARTED after a create may retire its pin or call it hidden (`lib/production-gantt-create.ts`).
+  const ganttQueryHash = useMemo(() => hashKey(productionGanttKey(identity, "active", filters)), [identity, filters]);
+  const fetchLedger = useMemo(() => new GanttFullFetchLedger(), [ganttQueryHash]);
+  useEffect(() => subscribeGanttFullFetchLedger(queryClient.getQueryCache(), ganttQueryHash, fetchLedger), [queryClient, ganttQueryHash, fetchLedger]);
   const generationKeyRef = useRef(generationKey);
   generationKeyRef.current = generationKey;
   const canCreateTask = useCallback(({ parentId }: { parentId: string | null }) => {
@@ -1362,40 +1375,64 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return projectById.get(parentId.slice("project:".length))?.permissions.canEditChildren === true;
   }, [projectById]);
   const creatingRef = useRef(false);
+  // An empty title never reaches this: the vendor row refuses it (`labels.createTaskEmpty`).
   const handleCreateGroupTask = useCallback(async ({ parentId, title }: { parentId: string; index: number; title: string }): Promise<{ ok: true } | { ok: false; message: string }> => {
     const projectId = parentId.slice("project:".length);
     const trimmed = title.trim();
-    if (!trimmed) return { ok: false, message: "Enter a task title." };
-    if (trimmed.length > GANTT_CREATE_TITLE_MAX) return { ok: false, message: `Task titles are ${GANTT_CREATE_TITLE_MAX} characters or fewer.` };
+    // The vendor row reports a failure politely; the visible copy is this toast, which the tree's
+    // scroll edge cannot clip (`announcedElsewhere`: the row's status node already speaks it).
+    const fail = (message: string) => {
+      pushToast(message, "error", { announcedElsewhere: true });
+      return { ok: false as const, message };
+    };
+    if (trimmed.length > GANTT_CREATE_TITLE_MAX) return fail(`Task titles are ${GANTT_CREATE_TITLE_MAX} characters or fewer.`);
     if (creatingRef.current) return { ok: false, message: "A task is already being added." };
     creatingRef.current = true;
     const generation = generationKeyRef.current;
     try {
       const created = await apiPost<ProjectSubtask, { title: string }>(`/api/projects/${encodeURIComponent(projectId)}/subtasks`, { title: trimmed });
       if (generationKeyRef.current === generation) {
-        setPins((current) => [...current.filter((pin) => pin.row.id !== created.id), pinFromCreated(projectId, created, dataUpdatedAtRef.current, generation)]);
+        // The mark is taken NOW: a refetch already running cannot contain the new row.
+        setPins((current) => [...current.filter((pin) => pin.row.id !== created.id), pinFromCreated(projectId, created, fetchLedger.currentStartSeq(), generation)]);
       }
       // No `producer`: this write is outside the scheduling controller, so the Gantt refetches itself.
       await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: true, calendar: true, dashboardSearchOnly: true, gantt: true });
       return { ok: true };
     } catch (error) {
-      return { ok: false, message: error instanceof ApiError ? error.message : "Subtask could not be added." };
+      // The same unauthorized handling as the Project page's composer (`SubtaskChecklist`): a 401
+      // ends the principal's project data; and, like a 401/403 child page, access loss goes to the
+      // scheduling controller through the port (`handleAccessLoss` -> `onAccessLoss`).
+      terminateOnUnauthorized(error);
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setChildAccessError({ error, generationKey: generation });
+        return { ok: false, message: error.message };
+      }
+      return fail(error instanceof ApiError ? error.message : "Subtask could not be added.");
     } finally {
       creatingRef.current = false;
     }
-  }, [queryClient]);
+  }, [queryClient, fetchLedger, terminateOnUnauthorized]);
+  // A project's child list is authoritative only when complete AND not a previous walk that the
+  // latest page one has superseded: the re-seed effect above re-walks it, but its state lands a
+  // render late, and until then `effectiveProjects` still shows the old walk's "complete" rows.
+  const isChildListAuthoritative = useCallback((project: GanttProjectRowDto) => {
+    if (project.children.truncated) return false;
+    const state = liveChildState[project.id];
+    return !state || state.seedSignature === embeddedChildSignatureByProjectId.get(project.id);
+  }, [liveChildState, embeddedChildSignatureByProjectId]);
   // Retire pins against each authoritative refetch; announce the ones a filter left out, once.
   const toastedPinsRef = useRef(new Set<string>());
+  const dataFetchSeq = fetchLedger.seqAt(query.dataUpdatedAt);
   useEffect(() => {
     if (pins.length === 0) return;
-    const { pins: next, newlyHidden } = reconcilePinnedCreatedRows(pins, effectiveProjects, query.dataUpdatedAt, generationKey);
+    const { pins: next, newlyHidden } = reconcilePinnedCreatedRows(pins, effectiveProjects, dataFetchSeq, generationKey, isChildListAuthoritative);
     for (const pin of newlyHidden) {
       if (toastedPinsRef.current.has(pin.row.id)) continue;
       toastedPinsRef.current.add(pin.row.id);
       pushToast("Created — hidden by current filters", "caution");
     }
     if (next.length !== pins.length || next.some((pin, index) => pin !== pins[index])) setPins(next);
-  }, [pins, effectiveProjects, query.dataUpdatedAt, generationKey]);
+  }, [pins, effectiveProjects, dataFetchSeq, generationKey, isChildListAuthoritative]);
 
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
 
