@@ -2,8 +2,8 @@ import type { CalendarEventDto, ProductionCalendarSubview, Role } from "@quincy/
 
 /**
  * #222 — the Calendar's EFFECTIVE event permissions: the server's per-event permissions narrowed by
- * the surface's live state. Lifted verbatim from `ProductionCalendar.tsx`'s `renderEvents` so the
- * FullCalendar build and the ReUI event-calendar build apply one rule set; no behaviour change.
+ * the surface's live state. Lifted verbatim from the retired `ProductionCalendar.tsx`'s `renderEvents` so the
+ * FullCalendar build and the ReUI event-calendar build applied one rule set; no behaviour change.
  * It only ever NARROWS a server permission, and returns the SAME object when nothing narrows (the
  * render memo relies on that identity).
  */

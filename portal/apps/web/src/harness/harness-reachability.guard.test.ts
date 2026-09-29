@@ -693,8 +693,8 @@ describe("guard: no production consumer of components/reui/gantt or components/r
 /**
  * Exact baseline of non-test production files with a non-literal `import()` call, as of this
  * guard landing. Empty today — the repo's only dynamic imports are literal
- * (`Dashboard.tsx`'s `lazy(() => import("../components/ProductionCalendar"))`, and since #220/#222
- * its `ProductionGantt` / `ProductionEventCalendar` twins,
+ * (`Dashboard.tsx`'s `lazy(() => import(...))` of `ProductionGantt` / `ProductionEventCalendar`
+ * (the old FullCalendar `ProductionCalendar` twin was deleted in #224),
  * `harness/reui-scheduling/main.tsx`'s `lazy(() => import("./GanttPreview"))`). A new non-literal
  * `import()` anywhere not already listed here fails closed, because it could be the harness.
  */

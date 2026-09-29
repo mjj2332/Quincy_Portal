@@ -17,8 +17,8 @@ import { useState } from "react";
  * SAME render's `key=` read (the whole reason the original `useEffect`-based version was wrong,
  * per round 1) — React re-invokes the function body immediately, not on a later tick.
  *
- * Shared by `components/ProductionCalendar.tsx` and `components/ProductionEventCalendarDialogs.tsx`.
- * `components/ProductionGantt.tsx` still has its own copy (owned by another branch).
+ * Used by `components/ProductionEventCalendarDialogs.tsx`, which the Calendar and (since #224) the
+ * Gantt both render; the Gantt's own copy and `components/ProductionCalendar.tsx` went in #224.
  */
 export function useOpenToken(isOpen: boolean): number {
   const [token, setToken] = useState(0);

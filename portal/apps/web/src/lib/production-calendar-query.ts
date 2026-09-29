@@ -60,7 +60,7 @@ export function buildProductionCalendarQuery(
   calendar: DashboardCalendarState,
   window = deriveProductionCalendarWindow(calendar.date, calendar.subview),
   // #222: `bounds=1` asks for `projectBounds` (the event-calendar renderer). Off by default — the
-  // FullCalendar build never sends it, so its strict decoders never see the key.
+  // retired FullCalendar build never sent it, so its strict decoders never saw the key.
   { bounds = false }: { bounds?: boolean } = {},
 ): string {
   const filters = productionCalendarFiltersFor(calendar);

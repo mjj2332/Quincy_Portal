@@ -1,7 +1,7 @@
 /**
- * #222 — the unscheduled-entry rules both Calendar renderers share. Moved verbatim out of
- * `components/ProductionCalendarUnscheduledPanel.tsx` (which re-exports them), because that module
- * imports FullCalendar's `Draggable` and the event-calendar renderer must not pull FullCalendar
+ * #222 — the unscheduled-entry rules both Calendar renderers shared. Moved verbatim out of
+ * `components/ProductionCalendarUnscheduledPanel.tsx` (deleted in #224), because that module
+ * imported FullCalendar's `Draggable` and the event-calendar renderer must not pull FullCalendar
  * into its chunk to reach two predicates and a label map.
  */
 import type { ChecklistCalendarUnscheduledEntryDto, ProjectCalendarUnscheduledEntryDto } from "@quincy/shared";

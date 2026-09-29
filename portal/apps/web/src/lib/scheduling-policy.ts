@@ -304,8 +304,8 @@ function deadlineTimingFromLocalCivil(deadline: { localCivil: string; disambigua
 
 /**
  * Dispatches a typed `SchedulingProposal` to the matching shared mapper, exactly as
- * `ProductionCalendar.tsx`'s `mapChecklistCommand`/`mapAndRunDropProposal`/
- * `mapAndRunUnscheduledProjectProposal` do today, then folds in `normalizeChecklistSchedule` +
+ * the retired `ProductionCalendar.tsx`'s `mapChecklistCommand`/`mapAndRunDropProposal`/
+ * `mapAndRunUnscheduledProjectProposal` did, then folds in `normalizeChecklistSchedule` +
  * `timingFromChecklistSchedule` (checklist) or a civil-minute resolution (deadline) to build the
  * `SchedulingPlan`. Mapper errors pass through unchanged (same `code`/`endpoint`/`choices`).
  * A checklist plan's `warnings` are the shared out-of-range rule (`scheduleWindowWarnings`) over

@@ -25,10 +25,10 @@
  * vendored files, which is what lets `event-calendar-skin.guard.test.ts` scope itself to this
  * directory (`docs/reui-reuse.md`).
  *
- * No production code imports this tree. `src/harness/harness-reachability.guard.test.ts` and
- * `src/build/forbid-dev-only-modules.ts` make that a build failure rather than a bug report; the
- * dev-only harness at `src/harness/reui-scheduling/` is the only thing that renders it, on local
- * fixture data. FullCalendar remains the production calendar and PR B does not touch it.
+ * The one production consumer of this tree is `components/ProductionEventCalendar.tsx`, pinned by
+ * `src/harness/harness-reachability.guard.test.ts`; `src/build/forbid-dev-only-modules.ts` keeps
+ * the dev-only harness at `src/harness/reui-scheduling/` (which also renders it, on local fixture
+ * data) out of the production build. FullCalendar was retired in #224.
  *
  * QUINCY EDIT LOG — every dated entry below is a real Quincy change made after the verbatim
  * vendoring commit. ADR 0009 (written for the Gantt, and the precedent this tree follows) calls

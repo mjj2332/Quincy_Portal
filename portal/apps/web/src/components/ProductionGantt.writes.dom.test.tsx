@@ -951,9 +951,9 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
 
     await click(fix!);
     await flush(2);
-    expect(byTestId("calendar-move-dialog")).not.toBeNull();
+    expect(byTestId("event-calendar-move-dialog")).not.toBeNull();
     await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(-3));
-    await click(byTestId("calendar-move-submit")!);
+    await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
 
     expect(deadlineDialog()).not.toBeNull();
@@ -974,9 +974,9 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
 
     await click(set!);
     await flush(2);
-    expect(byTestId("calendar-move-dialog")).not.toBeNull();
+    expect(byTestId("event-calendar-move-dialog")).not.toBeNull();
     await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
-    await click(byTestId("calendar-move-submit")!);
+    await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
 
     expect(deadlineDialog()).not.toBeNull();
@@ -1006,12 +1006,30 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await click(deadlineActionButton()!);
     await flush(2);
     await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
-    await click(byTestId("calendar-move-submit")!);
+    await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
     expect(deadlineDialog()).not.toBeNull();
+    // #224: the move dialog is the ReUI alert-dialog now; focus must move into the confirm, not
+    // stay on the page behind it.
+    expect(deadlineDialog()!.contains(document.activeElement)).toBe(true);
     await click(byTestId("gantt-deadline-confirm-cancel")!);
     await flush(4);
     expect(deadlineDialog()).toBeNull();
+    expect(puts()).toHaveLength(0);
+    expect(document.activeElement).toBe(deadlineActionButton());
+  });
+
+  it("6e. Set deadline → move dialog → Cancel returns focus to the Set deadline button", async () => {
+    resetFixture({ noDeadline: true });
+    await render();
+    const set = deadlineActionButton()!;
+    set.focus();
+    await click(set);
+    await flush(2);
+    expect(byTestId("event-calendar-move-dialog")!.contains(document.activeElement)).toBe(true);
+    await click(byTestId("event-calendar-move-cancel")!);
+    await flush(4);
+    expect(byTestId("event-calendar-move-dialog")).toBeNull();
     expect(puts()).toHaveLength(0);
     expect(document.activeElement).toBe(deadlineActionButton());
   });
@@ -1022,7 +1040,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await click(deadlineActionButton()!);
     await flush(2);
     await setInput(document.body.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, sydneyDay(5));
-    await click(byTestId("calendar-move-submit")!);
+    await click(byTestId("event-calendar-move-submit")!);
     await flush(4);
     await click(byTestId("gantt-deadline-confirm-action")!);
     await flush(6);
@@ -1120,14 +1138,14 @@ describe("ProductionGantt — Sydney DST on a timed range (#221)", () => {
 
     // The planner catches the fold before any request: nothing is sent until a side is chosen.
     expect(patches()).toHaveLength(0);
-    const dialog = byTestId("calendar-fold-choice");
+    const dialog = byTestId("event-calendar-fold-choice");
     expect(dialog).not.toBeNull();
     const radios = [...dialog!.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
     expect(radios.map((radio) => radio.getAttribute("aria-label"))).toEqual(["end earlier occurrence", "end later occurrence"]);
     expect(liveRegionText()).toBe("That time occurs twice in Sydney that day. Choose the earlier or later occurrence for each endpoint.");
 
     await click(radios[1]!);
-    await click(byTestId("calendar-fold-submit")!);
+    await click(byTestId("event-calendar-fold-submit")!);
     await flush(6);
 
     expect(patches()).toHaveLength(1);
@@ -1145,7 +1163,7 @@ describe("ProductionGantt — Sydney DST on a timed range (#221)", () => {
     await flush(6);
 
     expect(patches()).toHaveLength(0);
-    expect(byTestId("calendar-fold-choice")).toBeNull();
+    expect(byTestId("event-calendar-fold-choice")).toBeNull();
     expect(liveRegionText()).toBe("That time does not exist in Sydney on that date (daylight-saving gap).");
     expect(barLabel(RANGE_TITLE)).toBe(before);
   });

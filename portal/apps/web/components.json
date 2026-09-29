@@ -15,7 +15,6 @@
   },
   "iconLibrary": "lucide",
   "registries": {
-    "@fullcalendar": "https://shadcn-registry.fullcalendar.io/{name}.json",
     "@reui": {
       "url": "https://proxy.collectui.pro/api/r/reui/{style}/{name}.json",
       "headers": {

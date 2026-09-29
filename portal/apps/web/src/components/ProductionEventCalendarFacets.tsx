@@ -3,7 +3,7 @@
  * `components/reui/event-calendar/`. Filter state stays in the Dashboard's `DashboardCalendarState`
  * URL path: every change is emitted as a whole canonical `ProductionCalendarFilters`
  * (`productionCalendarFiltersSchema.parse`, `search` passed through untouched — `q` belongs to the
- * shell search, never a second input here), exactly as the FullCalendar renderer's panel does.
+ * shell search, never a second input here), exactly as the retired FullCalendar renderer's panel did.
  *
  * - Section labels — the installed `quincy/Eyebrow`.
  * - Layers ("Project deadlines" / "Checklist tasks", issue #222's copy) — `reui/combobox` multi-select chips (base-nova `c-combobox` chips composition, as

@@ -7,7 +7,7 @@ import { ApiError, apiPost } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { useCapabilities } from "../lib/capabilities";
 import { useStages } from "../lib/stages";
-import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, coerceCalendarSubviewForRenderer, focusTargetAfterClearingSearch, readCalendarRenderer, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
+import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, focusTargetAfterClearingSearch, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
 import { NoticeBoard } from "../components/NoticeBoard";
@@ -24,7 +24,6 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
 import { cn } from "../lib/utils";
-import { CALENDAR_STATE_BOX } from "../components/production-calendar-classes";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
 import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
@@ -50,19 +49,16 @@ import {
   type SemanticGap,
 } from "../lib/kanban-interaction";
 import { ProjectKanbanBoard2 } from "../components/kanban2/board";
-// Code-split: FullCalendar + its deps (~84 kB gzip) load only when a capable
-// principal opens the Calendar view in a browser opted out to FullCalendar (#223),
-// never on the sign-in screen or a Photographer dashboard.
-const ProductionCalendar = lazy(() => import("../components/ProductionCalendar").then((module) => ({ default: module.ProductionCalendar })));
-// #220: same code-split shape as Calendar above — the vendored ReUI Gantt tree loads only when a
+// #220: code-split — the vendored ReUI Gantt tree loads only when a
 // capable principal opens the Gantt view. `ProductionGantt.tsx` is the ONLY app file allowed to
 // import `components/reui/gantt/` (`harness-reachability.guard.test.ts`'s
 // `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`); this literal `import(...)` — not a variable, not a
 // template string — is what lets that guard's dynamic-import detector keep pinning this exact
 // site as the vendored tree's one production entry point.
 const ProductionGantt = lazy(() => import("../components/ProductionGantt").then((module) => ({ default: module.ProductionGantt })));
-// #222: the ReUI event-calendar renderer — the Calendar's default since #223 (a browser can opt back
-// to FullCalendar via `readCalendarRenderer` until #224). Same code-split shape and the same literal `import(...)` as the Gantt above:
+// #222: the Calendar (the ReUI event calendar; #224 deleted FullCalendar and the per-browser opt-out
+// to it). It loads only when a capable principal opens the Calendar view, never on the sign-in
+// screen or a Photographer dashboard. Same code-split shape and the same literal `import(...)` as the Gantt above:
 // `ProductionEventCalendar.tsx` is the ONLY app file allowed to import
 // `components/reui/event-calendar/`, and this lazy import is that tree's one production entry.
 const ProductionEventCalendar = lazy(() => import("../components/ProductionEventCalendar").then((module) => ({ default: module.ProductionEventCalendar })));
@@ -77,6 +73,9 @@ import {
 } from "../lib/dashboard-search-store";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { ganttFiltersFromRoute, ganttRouteFor, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+
+/** The Calendar's loading / empty state box (was `production-calendar-classes.ts`, retired in #224). */
+const CALENDAR_STATE_BOX = "min-h-[180px] grid place-content-center gap-[4px]";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
@@ -209,19 +208,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // canonicalisers below. `undefined` when the route itself carries none (`isDashboardCalendarRoute`
   // excludes the one arm -- the facet -- that has no `search` field at all).
   const routeDashboardSearch = currentDashboardRoute && !isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.search : undefined;
-  const rawRouteCalendar = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.calendar : routeCalendar;
-  // #222: the renderer preference, read once per mount (a renderer preference, not a route or a
-  // capability). The event calendar is the default since #223; in a browser opted out to
-  // FullCalendar a `day`/`days` subview from the URL reads as `week` — memoised so the reconciliation effect below sees a stable object, and rewritten in
-  // the address bar there.
-  const [calendarRenderer] = useState(() => readCalendarRenderer({ read: (key) => window.localStorage.getItem(key) }));
-  // #222: both renderers take the same props; pick one here and render it once below.
-  const CalendarRenderer = calendarRenderer === "event-calendar" ? ProductionEventCalendar : ProductionCalendar;
-  const effectiveRouteCalendar = useMemo(() => {
-    if (!rawRouteCalendar) return rawRouteCalendar;
-    const subview = coerceCalendarSubviewForRenderer(rawRouteCalendar.subview, calendarRenderer);
-    return subview === rawRouteCalendar.subview ? rawRouteCalendar : { ...rawRouteCalendar, subview };
-  }, [calendarRenderer, rawRouteCalendar]);
+  const effectiveRouteCalendar = currentDashboardRoute && isDashboardCalendarRoute(currentDashboardRoute) ? currentDashboardRoute.calendar : routeCalendar;
   // #255: the Gantt's filters live in the URL only — derived here at render from the parsed route
   // (defaults for the bare `/?view=gantt` or any non-Gantt location), never copied into state, so a
   // cold deep link and Back/Forward both apply on their first commit. Independent of the Calendar's
@@ -283,7 +270,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [calendarState, setCalendarState] = useState<DashboardCalendarState | null>(() => {
     if (effectiveRouteCalendar && canViewProductionCalendar) return effectiveRouteCalendar;
     if (!canViewProductionCalendar) return null;
-    const initial = initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false, renderer: calendarRenderer });
+    const initial = initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
     // #217 design-fix round 2, item 1: when THIS render already resolves to Calendar (the
     // explicit `?view=calendar` intent, or a bare "/" landing on a remembered Calendar
     // preference -- both already decided by `view`'s own initializer above), seed the initial
@@ -603,8 +590,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
     if (effectiveRouteCalendar) {
       calendarFallbackLocationRef.current = false;
-      // #222: a coerced subview (opted out to FullCalendar, `sub=day|days`) is written back to the address bar.
-      if (effectiveRouteCalendar !== rawRouteCalendar && locationHasCalendar) history.replace(staffPathFor({ kind: "dashboard", calendar: effectiveRouteCalendar }));
       setCalendarState(effectiveRouteCalendar);
       setView("calendar");
       return;
@@ -630,7 +615,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // two canonicalisers themselves only ever fire while genuinely arriving at their respective
     // locations, not on every draft change), so this does not turn typing into a per-keystroke
     // URL-rewrite storm.
-  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, rawRouteCalendar, routeDashboardSearch, routeDashboardView, search.draft, view, viewingArchived]);
+  }, [calendarState, canViewProductionCalendar, currentDashboardRoute, currentLocation, effectiveRouteCalendar, history, locationHasCalendar, routeDashboardSearch, routeDashboardView, search.draft, view, viewingArchived]);
 
   const navigateCalendar = useCallback((next: DashboardCalendarState, replace = false) => {
     if (!canViewProductionCalendar || viewingArchived || calendarInteractionBlocked) return;
@@ -979,7 +964,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     if (interactionBlockedRef.current || calendarInteractionBlocked) return;
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
-      const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false, renderer: calendarRenderer });
+      const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
       calendarFallbackLocationRef.current = false;
       setView("calendar");
       try { window.localStorage.setItem("quincy:dashboard:view", "calendar"); } catch { /* Storage can be disabled by the browser. */ }
@@ -1487,7 +1472,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       {isCalendarView && (
         <ViewLoadBoundary viewLabel="calendar">
           <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
-            <CalendarRenderer
+            <ProductionEventCalendar
               identity={identity}
               calendar={calendarState && { ...calendarState, search: committedQuery }}
               onNavigate={(next) => navigateCalendar(next)}

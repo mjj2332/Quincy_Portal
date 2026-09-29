@@ -76,7 +76,7 @@ import {
   type CalendarSettleState,
 } from "./production-calendar-interaction";
 import { ProductionCalendarMoveConfirmation } from "../components/ProductionCalendarMoveConfirmation";
-import type { ProductionCalendarScheduleEditorError } from "../components/ProductionCalendarScheduleEditor";
+import type { ProductionCalendarScheduleEditorError } from "../components/ProductionCalendarScheduleEditorFields";
 import type {
   CalendarDropInfo,
   CalendarRevertable,
@@ -84,8 +84,8 @@ import type {
 } from "./scheduling-types";
 
 /**
- * §216 step 4: the scheduling/mutation controller extracted from `ProductionCalendar.tsx`. A
- * pure move of state, refs, effects and command bodies — `ProductionCalendar.tsx` still owns
+ * §216 step 4: the scheduling/mutation controller extracted from the (since deleted, #224) `ProductionCalendar.tsx`. A
+ * pure move of state, refs, effects and command bodies — that component kept
  * every FullCalendar handler and the JSX render; this hook owns the interaction lifecycle
  * (accept/settle/optimistic-overlay/dialogs) and the network round trips. See docs/lessons.md
  * for the retained-dialog and open-token patterns this hook's state still has to honor.
@@ -145,7 +145,7 @@ export type ChecklistProposal = {
   /** #221: the plan's bounds warnings (`planSchedulingProposal` → the shared `scheduleWindowWarnings`,
    * `schedule-bounds.ts`). Only set when non-empty, and only when the port supplies bounds
    * (`SchedulingPort.boundsFor`): the Gantt and, since #222, the event-calendar renderer (from its
-   * `bounds=1` response) do; the FullCalendar renderer does not. */
+   * `bounds=1` response) do; the retired FullCalendar renderer did not. */
   warnings?: SchedulingWarning[];
 };
 export type ChecklistFoldState = {
@@ -165,7 +165,7 @@ export type ScheduleEditorState = {
  * `submitDeadlineProposal`'s single typed entry point over what were two positional-argument
  * internal functions (`mapAndRunDropProposal` for the in-calendar move/drag, and
  * `mapAndRunUnscheduledProjectProposal` for an external panel drop) — both still exist, unmoved,
- * inside this hook; this is only the FullCalendar-handler-facing shape.
+ * inside this hook; this is only the (retired) FullCalendar-handler-facing shape.
  */
 export type SubmitDeadlineProposalInput =
   | { kind: "drop"; snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>; event: ProjectDeadlineCalendarEventDto; localCivil: string; subview: "month" | "week"; disambiguation?: ProjectDeadlineDisambiguation; drop: CalendarDropInfo }
@@ -223,7 +223,7 @@ export type SchedulingPort<TBaseline> = {
    * the plan (`ChecklistProposal.warnings`), and over the schedule the server actually SAVED — that
    * text is appended to the "saved" announcement (` Warning: <text>`, the vendor's
    * `dropWarningSuffix` wording) and handed to `onCommitted` as `warningText`. Absent (the
-   * FullCalendar renderer): no warnings, and the announcement is unchanged.
+   * retired FullCalendar renderer): no warnings, and the announcement is unchanged.
    */
   boundsFor?: (projectId: string) => ScheduleBounds | null;
   /**
@@ -304,7 +304,7 @@ export type SchedulingController<TBaseline> = {
   submitChecklistProposal: (snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "start" | "end") => void;
   /**
    * #216 fix round 1 item 4, gated per fix round 2 item 1: the typed-proposal entry point. Checks
-   * `canStartCommand()` first — same gate the FullCalendar handlers check externally before their
+   * `canStartCommand()` first — same gate the (retired) FullCalendar handlers checked externally before their
    * own `acceptForInteraction` call — so a second `submitProposal` while one is already
    * pending/confirming is rejected with no side effects, rather than overwriting the active
    * snapshot and running two concurrent flows. On success, plans the `SchedulingProposal` via
@@ -333,14 +333,14 @@ export type SchedulingController<TBaseline> = {
   /**
    * #216 fix round 1 item 2: reads `acceptedResponseRef.current` (hook-private, synchronously
    * fresh), not the `acceptedResponse` render-state snapshot — the external-drop handler stayed
-   * in `ProductionCalendar.tsx` and on `main` read the ref for exactly this reason; a render-state
+   * in the retired `ProductionCalendar.tsx` and on `main` read the ref for exactly this reason; a render-state
    * read there is a stale-closure risk the ref read never was.
    */
   findUnscheduledEntry: (id: string | undefined, kind: string | undefined) => CalendarUnscheduledEntryDto | undefined;
   refreshRecovery: () => Promise<void>;
   clearSettleOnNavigation: () => void;
-  /** Announcement helpers the FullCalendar handlers (stayed in ProductionCalendar.tsx) still
-   * need for their own "picked-up"/"invalid" calls — both read the hook-private `accessLostRef`
+  /** Announcement helpers the FullCalendar handlers (stayed in the since-deleted ProductionCalendar.tsx)
+   * needed for their own "picked-up"/"invalid" calls — both read the hook-private `accessLostRef`
    * and write the hook-private `announcement` state, so they can't be reimplemented outside it. */
   announceLifecycle: (kind: Parameters<typeof calendarAnnouncement>[0], context: Parameters<typeof calendarAnnouncement>[1]) => void;
   announceChecklistLifecycle: (kind: Parameters<typeof calendarAnnouncement>[0], context: Omit<Parameters<typeof calendarAnnouncement>[1], "entity">) => void;
@@ -595,7 +595,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         ? document.querySelector<HTMLElement>('.button[data-focus-key="calendar-recovery"]') ?? document.querySelector<HTMLElement>('[data-focus-key="calendar-recovery"]')
         : focusKey ? document.querySelector<HTMLElement>(`[data-focus-key="${focusKey}"]`) : null;
       const eventElement = [...document.querySelectorAll<HTMLElement>("[data-event-id]")].find((element) => element.getAttribute("data-event-id") === descriptor.eventId);
-      // #222: the FullCalendar card is itself focusable (`tabIndex={-1}`) and is focused as before.
+      // #222: the retired FullCalendar card was itself focusable (`tabIndex={-1}`) and was focused as before.
       // The event-calendar renderer tags its chip CONTENT; the focusable element is the vendor's chip
       // `<button>` around it (whose own `data-ec-*` attributes are vendor-internal —
       // `event-calendar-skin.guard.test.ts`, detector 9).
@@ -630,7 +630,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (err instanceof ApiError && (err.status === 401 || err.status === 403)) handleAccessLoss();
   }, [latestError, handleAccessLoss]);
 
-  // §216 step 4: the four external-facing FullCalendar handlers that used to set
+  // §216 step 4: the four external-facing FullCalendar handlers (retired in #224) that used to set
   // `commandLockRef.current.active = true` immediately after every successful accept now get
   // that from here instead — every one of those call sites did it unconditionally right after,
   // so folding it in is behaviour-preserving and lets `commandLockRef` stay hook-private.
@@ -656,7 +656,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     return snapshot;
   }, [acceptRange, identity.authorizationEpoch, identity.principalId, setAcceptGate]);
 
-  // Combines the two ref-based start-gates every FullCalendar handler used to check directly
+  // Combines the two ref-based start-gates every (retired) FullCalendar handler used to check directly
   // (`settleRef.current.pending`, `canStartCalendarCommand(commandLockRef.current)`) into one
   // predicate the component can call without reaching into hook-private refs.
   const canStartCommand = useCallback((): boolean => !settleRef.current.pending && canStartCalendarCommand(commandLockRef.current), []);
@@ -979,7 +979,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
 
   // §216 correction #4: the unscheduled-entry draggability check (`canDragUnscheduledEntry`,
   // which imports from `ProductionCalendarUnscheduledPanel`) stays a component-only function —
-  // `lib/` must not import a component. `ProductionCalendar.tsx` wraps its call to this command
+  // `lib/` must not import a component. the retired `ProductionCalendar.tsx` wrapped its call to this command
   // with that check instead of this hook performing it internally.
   const openUnscheduledProjectDialog = useCallback((entry: ProjectCalendarUnscheduledEntryDto) => {
     if (calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
@@ -1259,7 +1259,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
 
   /**
    * §216 fix round 1 item 4, gated + unified per fix round 2 items 1 and 3: checks
-   * `canStartCommand()` before doing anything else — the positional FullCalendar handlers check
+   * `canStartCommand()` before doing anything else — the positional FullCalendar handlers (retired in #224) checked
    * this externally before their own `acceptForInteraction` call, but `submitProposal` is a
    * self-contained command with no external caller to gate it, so it has to gate itself. No side
    * effects on a "busy" rejection: `acceptForInteraction` (which replaces `snapshotRef` and

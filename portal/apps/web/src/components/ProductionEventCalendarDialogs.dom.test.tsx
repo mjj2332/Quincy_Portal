@@ -16,11 +16,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PRODUCTION_CALENDAR_ZONE,
+  resolveSydneyCivilMinute,
   type ChecklistCalendarEventDto,
   type ChecklistCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
 import {
+  civilParts,
+  validCivil,
   ProductionEventCalendarDialogs,
   ProductionEventCalendarFoldChoice,
   ProductionEventCalendarMoveDialog,
@@ -99,6 +102,13 @@ describe("ProductionEventCalendarMoveDialog (alert-dialog shell)", () => {
     await click(byTestId("event-calendar-move-submit")!);
     expect(onSubmit).toHaveBeenCalledWith("2026-08-11T09:30", "later");
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("labels a negative occurrence offset with U+2212, like the fold choice (#222)", async () => {
+    await renderMove({ foldChoices: [{ disambiguation: "earlier", utcOffsetMinutes: -240 }, { disambiguation: "later", utcOffsetMinutes: -300 }] });
+    expect(document.body.textContent).toContain("Earlier occurrence (UTC\u221204:00)");
+    expect(document.body.textContent).toContain("Later occurrence (UTC\u221205:00)");
+    expect(document.body.textContent).not.toContain("UTC-");
   });
 
   it("edits date and time before submitting", async () => {
@@ -197,6 +207,87 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     await click(byTestId("event-calendar-schedule-cancel")!);
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  const stateSelect = () => document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!;
+  const modeSelect = () => document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!;
+  const radios = () => [...document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+
+  it("keeps endpoint mode to one select and reports a nonexistent spring-forward time", async () => {
+    await renderSheet();
+    await change(stateSelect(), "range");
+    await change(modeSelect(), "timed");
+    expect(document.body.querySelectorAll('select[aria-label="Checklist endpoint mode"]')).toHaveLength(1);
+    await change(input("Checklist start date"), "2026-10-04"); await change(input("Checklist start time"), "02:30");
+    await change(input("Checklist end date"), "2026-10-04"); await change(input("Checklist end time"), "04:00");
+    await click(byTestId("event-calendar-schedule-submit")!);
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("does not exist");
+  });
+
+  it("collects independent fold choices for both range endpoints", async () => {
+    const onSubmit = await renderSheet();
+    await change(stateSelect(), "range"); await change(modeSelect(), "timed");
+    await change(input("Checklist start date"), "2026-04-05"); await change(input("Checklist start time"), "02:30");
+    await change(input("Checklist end date"), "2026-04-05"); await change(input("Checklist end time"), "02:30");
+    const folds = radios();
+    expect(folds).toHaveLength(4);
+    await click(folds[0]!); await click(folds[3]!);
+    await click(byTestId("event-calendar-schedule-submit")!);
+    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } });
+  });
+
+  it("seeds a stored fold with the matching endpoint occurrence selected", async () => {
+    const resolved = resolveSydneyCivilMinute("2026-04-05T02:30", "earlier");
+    if (!resolved.ok) throw new Error("fold fixture did not resolve");
+    const event = {
+      ...dueEvent,
+      id: "checklist:stored-fold",
+      timing: { allDay: false as const, start: resolved.value.instant, end: null },
+      schedule: {
+        ...dueEvent.schedule,
+        due: "2026-04-05T02:30",
+        end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: resolved.value.instant, utcOffsetMinutes: resolved.value.utcOffsetMinutes, fold: 0 as const, resolution: "stored" as const },
+      },
+    };
+    await renderSheet({ event });
+    await change(modeSelect(), "timed");
+    expect(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="earlier"]')?.checked).toBe(true);
+    expect(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="later"]')?.checked).toBe(false);
+  });
+
+  it("submits a complete legacy replacement with no dueDate, against a version-zero entry", async () => {
+    const onSubmit = await renderSheet({ event: legacyEntry });
+    expect(legacyEntry.schedule.version).toBe(0);
+    expect(modeSelect().value).toBe("timed");
+    await change(stateSelect(), "due_only");
+    await change(input("Checklist end date"), "2026-08-25");
+    await change(input("Checklist end time"), "09:00");
+    await click(byTestId("event-calendar-schedule-submit")!);
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(onSubmit).toHaveBeenCalledWith({ state: "due_only", end: { kind: "timed", localCivil: "2026-08-25T09:00" } });
+    expect(JSON.stringify(vi.mocked(onSubmit).mock.calls[0])).not.toContain("dueDate");
+  });
+});
+
+describe("civilParts / validCivil", () => {
+  it("accepts Feb 29 only in a leap year", () => {
+    expect(validCivil("2028-02-29T10:00")).toBe(true);
+    expect(validCivil("2027-02-29T10:00")).toBe(false);
+  });
+
+  it("rejects an out-of-range day, hour or minute, and a malformed value", () => {
+    expect(validCivil("2026-04-31T10:00")).toBe(false);
+    expect(validCivil("2026-04-30T10:00")).toBe(true);
+    expect(validCivil("2026-08-11T24:00")).toBe(false);
+    expect(validCivil("2026-08-11T23:60")).toBe(false);
+    expect(validCivil("2026-13-01T10:00")).toBe(false);
+    expect(validCivil("not-a-civil")).toBe(false);
+  });
+
+  it("splits a well-formed civil value and returns empty parts otherwise", () => {
+    expect(civilParts("2026-08-11T09:30")).toEqual({ date: "2026-08-11", time: "09:30" });
+    expect(civilParts("2026-08-11")).toEqual({ date: "", time: "" });
+    expect(civilParts("")).toEqual({ date: "", time: "" });
   });
 });
 

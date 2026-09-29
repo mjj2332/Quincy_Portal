@@ -1,11 +1,13 @@
 /**
  * #220 pass B, build spec S6 — proves the read-only boundary in a real render, not just by
  * inspecting props: `Space` on a focused project bar must not open Adjust mode, and no bar may
- * render a resize grip. Since #221 PR B2 checklist rows are writable, so this now pins what stays
- * read-only: the PROJECT bar (deadline writes are not wired yet), and this fixture's only task is a
- * `due_only` milestone, which never renders grips — checklist writes are covered by
- * `ProductionGantt.writes.dom.test.tsx`. `gantt-bar-adjust-keyboard.dom.test.tsx` and
- * `gantt-bar-resize-grips.dom.test.tsx` already prove the VENDOR's own `readOnly`/`interactions`
+ * render a resize grip. Since #221 PR B2 checklist rows and the project's deadline edge are
+ * writable, so this pins what stays read-only: a PROJECT bar whose viewer lacks
+ * `permissions.canEditDeadline`, and a `due_only` milestone, which never renders grips — the
+ * writable paths are covered by `ProductionGantt.writes.dom.test.tsx`. (Until #224 the fixture
+ * granted `canEditDeadline` and passed only while its deadline fell past the visible month, which
+ * clipped the bar's end edge; the milestone test failed in the last two days of every month.)
+ * `gantt-bar-adjust-keyboard.dom.test.tsx` and `gantt-bar-resize-grips.dom.test.tsx` already prove the VENDOR's own `readOnly`/`interactions`
  * contract in isolation; this proves `ProductionGantt.tsx`'s actual composition of it — the real
  * props this file passes to `<Gantt>`, through the real adapter, end to end.
  *
@@ -46,11 +48,12 @@ const PROJECT_STREET = "1 Readonly Street";
 const TASK_ID = "22222222-2222-4222-8222-222222222222";
 const TASK_TITLE = "Deliver preview gallery";
 
-// `ProductionGantt` defaults its visible `date` state to `new Date()` (today, whenever the test
-// actually runs) with no way for a caller to override it — so the fixture's shoot/deadline dates
-// must be anchored to "today", not a fixed date, or the bar falls outside the initially-visible
-// month and never renders.
-const TODAY = new Date();
+// `ProductionGantt` defaults its visible `date` state to `new Date()` and draws that month, with no
+// way for a caller to override it. Anchoring the fixture to the real "today" broke in the last two
+// days of every month: `isoDate(2)` landed in the next month and the task bar never rendered. So
+// `Date` is pinned (only `Date`: timers stay real) to a mid-month instant, and every fixture date
+// sits inside that month.
+const TODAY = new Date("2026-09-15T02:00:00.000Z");
 function isoDate(daysFromToday: number): string {
   const date = new Date(TODAY);
   date.setDate(date.getDate() + daysFromToday);
@@ -81,7 +84,7 @@ function ganttResponse() {
         deadlineVersion: 1,
         editors: [],
         checklist: { completed: 0, total: 1 },
-        permissions: { canEditDeadline: true, canEditChildren: true },
+        permissions: { canEditDeadline: false, canEditChildren: true },
         children: {
           rows: [
             {
@@ -146,6 +149,8 @@ describe("ProductionGantt — read-only boundary", () => {
   let root: Root;
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(TODAY);
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse()) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
     host = document.createElement("div");
@@ -159,6 +164,7 @@ describe("ProductionGantt — read-only boundary", () => {
       await Promise.resolve();
     });
     host.remove();
+    vi.useRealTimers();
   });
 
   it("renders the project bar with no aria-keyshortcuts, and Space does not open Adjust mode", async () => {

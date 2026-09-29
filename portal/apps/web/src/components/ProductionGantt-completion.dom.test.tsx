@@ -36,7 +36,11 @@ if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
 
-const TODAY = new Date();
+// The Gantt draws the month of `new Date()`, so a fixture anchored to the real "today" left the
+// month once `isoDate(n)` crossed it (the widest bar spans `isoDate(20)`). The first block pins
+// `Date` alone (timers stay real: `render` awaits real timeouts) early in a month so every
+// `isoDate(0..20)` stays inside it.
+const TODAY = new Date("2026-09-03T02:00:00.000Z");
 function isoDate(daysFromToday: number): string {
   const date = new Date(TODAY);
   date.setDate(date.getDate() + daysFromToday);
@@ -147,6 +151,8 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
   let root: Root;
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(TODAY);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -158,6 +164,7 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
       await Promise.resolve();
     });
     host.remove();
+    vi.useRealTimers();
   });
 
   it("a done checklist task's bar carries data-completed, and the reproduced done checkmark", async () => {

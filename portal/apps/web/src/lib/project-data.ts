@@ -352,7 +352,7 @@ export async function invalidateProjectSurfaces(queryClient: QueryClient, input:
   gantt: boolean;
   /**
    * The surface (if any) that performed the mutation and already owns its single
-   * post-settle refetch (`Dashboard.tsx` queuedRefreshRef / `ProductionCalendar.tsx`
+   * post-settle refetch (`Dashboard.tsx` queuedRefreshRef / the retired `ProductionCalendar.tsx`
    * refetchAuthoritative). Its in-tab query is NOT invalidated here (that would
    * double-refetch a drag), but its cross-tab broadcast still fires so other tabs converge.
    * The skip covers EVERY in-tab query on the surface's prefix, so a producer that owns more than

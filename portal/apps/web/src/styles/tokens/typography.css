@@ -7,9 +7,8 @@
    Athelas (long-form body serif) is self-hosted and live; the four faces at
    styles/fonts.css:33-63 back the --font-body-serif / --type-body-serif tokens
    below, which are themselves live (the Charter/Georgia stack after Athelas is
-   a fallback only, for environments without the font file). Done in TB8-10A:
-   production-calendar.css now names --font-sans and --font-body-serif
-   directly; no var() fallback carries a face any more.
+   a fallback only, for environments without the font file). Since TB8-10A no
+   var() fallback carries a face any more.
    ========================================================================== */
 :root {
   /* ---- Families ------------------------------------------------------ */
