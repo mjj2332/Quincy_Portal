@@ -171,7 +171,6 @@ describe("Notice Board presentation freshness", () => {
   });
 
   it("polls read state and updates a collapsed badge without patching", async () => {
-    window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "false");
     let readStateCalls = 0;
     apiGetMock.mockImplementation((path) => {
       if (path.includes("read-marker")) { readStateCalls += 1; return Promise.resolve(state(1)); }
@@ -209,7 +208,6 @@ describe("Notice Board presentation freshness", () => {
   });
 
   it("commits another device's deletion on a later collapsed read-state poll", async () => {
-    window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "false");
     let readStateCalls = 0;
     let deletionObserved = false;
     const beforeDelete = state(1, { throughPostId: newPost.id, throughCreatedAt: newPost.createdAt, updatedAt: newPost.createdAt }, newPost);
@@ -271,7 +269,7 @@ describe("Notice Board presentation freshness", () => {
       return Promise.resolve({ posts: [remoteEdit ? remotelyEdited : oldPost] });
     });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('button[aria-expanded]')).toBeNull();
     await click(host.querySelector('[data-slot="notice-board-edit"]')!);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Keep this edit draft");
     const editorsAfterEdit = host.querySelectorAll<HTMLElement>('[contenteditable="true"]');
@@ -306,11 +304,6 @@ describe("Notice Board presentation freshness", () => {
     focusManager.setFocused(true); await flush();
     assertActiveDraftsPreserved();
 
-    await click(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!);
-    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
-    assertActiveDraftsPreserved();
-    await click(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!);
-    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
     assertActiveDraftsPreserved();
 
     apiPatchMock.mockResolvedValue({ post: remotelyEdited, readState: state(0, marker(oldPost.id, oldPost.createdAt), remotelyEdited) });
@@ -320,7 +313,7 @@ describe("Notice Board presentation freshness", () => {
     failPresentation = true;
     emit(false); await flush(); emit(true); await flush();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("temporary list failure");
-    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('button[aria-expanded]')).toBeNull();
     assertCreateComposerPreserved();
     failPresentation = false;
     emit(false); await flush(); emit(true); await flush();
@@ -627,7 +620,6 @@ describe("Notice Board presentation freshness", () => {
     await advance(30_000);
     await flush();
     expect(queryClient!.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)?.[0]?.id).toBe(newPost.id);
-    await click(host.querySelector('[data-slot="notice-board-toggle"]')!);
     await advance(30_000);
     expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).toBeNull();
   });

@@ -37,6 +37,7 @@ export type StaffNavigationSectionId =
   | "create-project"
   | "edit-project"
   | "admin"
+  | "notices"
   | "notifications"
   | "not-found";
 
@@ -48,7 +49,7 @@ export type StaffNavigationSectionId =
  * Note this is the opposite of the decision for notification rows, which deliberately have no type
  * icon. Different component, different constraint.
  */
-export type StaffNavigationIcon = "dashboard" | "list" | "kanban" | "gantt" | "calendar" | "admin";
+export type StaffNavigationIcon = "dashboard" | "list" | "kanban" | "gantt" | "calendar" | "notices" | "admin";
 
 export type StaffNavigationItem = {
   id: string;
@@ -85,6 +86,7 @@ export type StaffNavigation = {
 export type StaffNavigationCapabilities = {
   adminBackend: boolean;
   viewProductionCalendar: boolean;
+  viewNoticeBoard: boolean;
 };
 
 function sectionFor(route: StaffRoute): StaffNavigationSectionId {
@@ -94,6 +96,7 @@ function sectionFor(route: StaffRoute): StaffNavigationSectionId {
     case "project": return "project";
     case "edit-project": return "edit-project";
     case "admin": return "admin";
+    case "notices": return "notices";
     // Both notification kinds fold to the same coarse section (#115) — the list at
     // `/settings/notifications` and its preferences leaf are one screen identity to the shell,
     // same as every Dashboard view folding to "dashboard".
@@ -179,6 +182,9 @@ export function buildStaffNavigation(
       children,
     },
   ];
+  if (capabilities.viewNoticeBoard) {
+    items.push({ id: "notices", label: "Notice board", href: staffPathFor({ kind: "notices" }), icon: "notices", active: activeSectionId === "notices" });
+  }
   if (capabilities.adminBackend) {
     items.push({ id: "admin", label: "Admin", href: staffPathFor({ kind: "admin" }), icon: "admin", active: activeSectionId === "admin" });
   }
@@ -197,11 +203,12 @@ export type StaffBreadcrumbSegment = { label: string; href: string | null };
 /**
  * Humanizes a section id that has no representation in the navigation model — `project`,
  * `create-project`, `edit-project`, `notifications`, `not-found` are none of them nav items (only
- * `dashboard` and `admin` are), so there is no model label to read for them. This derives one from
+ * `dashboard`, `notices` and `admin` are), so there is no model label to read for them. This derives one from
  * the id itself (`"create-project"` → `"Create project"`) rather than hardcoding a copy string per
  * kind, so a new `StaffNavigationSectionId` needs no matching entry here.
  */
 function sectionLabel(sectionId: StaffNavigationSectionId): string {
+  if (sectionId === "notices") return "Notice board";
   return sectionId.charAt(0).toUpperCase() + sectionId.slice(1).replace(/-/g, " ");
 }
 

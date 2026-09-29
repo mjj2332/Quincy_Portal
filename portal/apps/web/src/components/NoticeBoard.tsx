@@ -1,23 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useId, useRef, useState, type FormEvent } from "react";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, type RichTextDoc } from "@quincy/shared";
 import { createNoticeBoardPost, deleteNoticeBoardPost, editNoticeBoardPost, useNoticeBoardPostsQuery, useNoticeBoardPresentation, useNoticeBoardReadStateQuery } from "../lib/notice-board-data";
 import { apiGet } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
-import { Eyebrow, META_TEXT } from "./quincy/Eyebrow";
+import { META_TEXT } from "./quincy/Eyebrow";
 import { buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import type { MentionableUser } from "./MentionAutocomplete";
 import type { NoticeBoardPost } from "../lib/notice-board-data";
-
-// `!outline-solid`, not `!outline`: `cn()` is twMerge, and it discards a bare
-// `focus-visible:!outline` as conflicting with the `-[length:…]` utility (Sol r2 #4, verified).
-const RING =
-  "focus-visible:!outline-solid focus-visible:!outline-[length:var(--border-width-bold)] " +
-  "focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-2";
 
 // `min-w` is prescribed because `buttonClasses` contains NO min-width at all (§2.1); height
 // alone is not a touch target. `min-h-[38px]` is prescribed because the `text` variant's own
@@ -35,23 +29,18 @@ const DELETE_ACTION = buttonClasses("text", {
 // Two separate complete strings, not "create plus overrides" — `.px-0` is emitted before
 // `.px-[var(--space-5)]` under Tailwind's utility order, so an override form would silently
 // lose the padding drop the edit composer needs (§5.4, Sol r2 #3).
-const CREATE_COMPOSER = "grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)] max-w-[calc(var(--container-sm)+2*var(--space-5))]";
-const EDIT_COMPOSER = "grid gap-[var(--space-3)] pt-[var(--space-4)] px-0 pb-0 max-w-[var(--container-sm)]";
+const CREATE_COMPOSER = "grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)]";
+const EDIT_COMPOSER = "grid gap-[var(--space-3)] pt-[var(--space-4)] px-0 pb-0";
 const COMPOSER_FOOT = "flex flex-wrap items-center justify-between gap-[var(--space-3)]";
 // `!normal-case` is mandatory: a plain `normal-case` loses to `META_TEXT`'s `uppercase` on
 // emission order (§2.2, Sol r1 #5 — this exact bug shipped once already in TB8-07).
 const MENTION_HINT = cn(META_TEXT, "!normal-case", "flex-[1_1_12rem] min-w-0");
 
-const COLLAPSE_KEY = "quincy:dashboard:noticeboard:v2";
 const EMPTY_DOC: RichTextDoc = { type: "doc", content: [{ type: "paragraph" }] };
 type NoticeBoardMutation = "create" | "edit";
 
 export type { NoticeBoardPost };
 
-function readStorage(key: string): string | null { try { return window.localStorage.getItem(key); } catch { return null; } }
-function readOpen(): boolean { return readStorage(COLLAPSE_KEY) !== "false"; }
-const PHONE_QUERY = "(max-width: 721px)";
-function onPhone(): boolean { try { return window.matchMedia?.(PHONE_QUERY).matches ?? false; } catch { return false; } }
 function relativeTime(value: string): string {
   const timestamp = new Date(value).valueOf(); if (!Number.isFinite(timestamp)) return "Unknown time";
   const seconds = Math.round((timestamp - Date.now()) / 1000);
@@ -61,24 +50,9 @@ function relativeTime(value: string): string {
   return "just now";
 }
 
-/**
- * `foldOnPhone` (#271): the Gantt and Calendar views pass it so, on a phone, the board starts folded
- * and the chart reaches the first screen. The fold is not a preference: it is never written to
- * storage, a tap opens the board as usual (and persists that), and leaving those views restores the
- * stored state. It is re-evaluated when the prop changes, not on every resize.
- */
-export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUserId: string; foldOnPhone?: boolean }) {
+export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const queryClient = useQueryClient();
   const panelId = useId();
-  const [open, setOpen] = useState(readOpen);
-  const lastPersistedOpen = useRef(open);
-  const [folded, setFolded] = useState(() => foldOnPhone && onPhone());
-  const [seenFoldOnPhone, setSeenFoldOnPhone] = useState(foldOnPhone);
-  if (seenFoldOnPhone !== foldOnPhone) {
-    setSeenFoldOnPhone(foldOnPhone);
-    setFolded(foldOnPhone && onPhone());
-  }
-  const expanded = open && !folded;
   const [content, setContent] = useState<RichTextDoc>(EMPTY_DOC);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<RichTextDoc>(EMPTY_DOC);
@@ -86,7 +60,7 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
   const noticeBoardMutationRef = useRef<NoticeBoardMutation | null>(null);
   const [presentationError, setPresentationError] = useState<string | null>(null);
   const [mutationErrors, setMutationErrors] = useState<Partial<Record<"create" | "edit" | "delete", string>>>({});
-  const postsQuery = useNoticeBoardPostsQuery(expanded);
+  const postsQuery = useNoticeBoardPostsQuery(true);
   const readStateQuery = useNoticeBoardReadStateQuery();
   const posts = postsQuery.data ?? [];
   const readState = readStateQuery.data;
@@ -98,7 +72,7 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
 
   const presentation = useNoticeBoardPresentation({
     principalId: currentUserId,
-    open: expanded,
+    open: true,
     posts,
     readState,
     onError: (reason) => setPresentationError(reason instanceof Error ? reason.message : "Notice board is unavailable."),
@@ -136,12 +110,6 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
     setNoticeBoardMutation(null);
   };
 
-  useEffect(() => {
-    if (lastPersistedOpen.current === open) return;
-    lastPersistedOpen.current = open;
-    try { window.localStorage.setItem(COLLAPSE_KEY, String(open)); } catch { /* Storage can be disabled. */ }
-  }, [lastPersistedOpen, open]);
-
   async function submit(event?: FormEvent) {
     event?.preventDefault(); if (postingOverBytes || !beginNoticeBoardMutation("create")) return;
     try {
@@ -177,36 +145,13 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
   const hasUnread = (readState?.unreadCount ?? 0) > 0;
   const editingPostStillExists = editingId !== null && posts.some((post) => post.id === editingId);
   return <section className="mb-[var(--space-6)] border-[length:var(--border-width-hair)] border-solid border-border bg-card" aria-label="Notice board">
-    <button
-      data-slot="notice-board-toggle"
-      className={cn(
-        "w-full flex items-center gap-[var(--space-4)] px-[var(--space-5)] py-[var(--space-4)] min-h-[44px] bg-transparent border-0 [border-left-style:solid] border-l-[length:var(--border-width-rule)] text-left text-foreground cursor-pointer transition-[background-color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] hover:bg-secondary",
-        hasUnread ? "border-l-border-strong" : "border-l-transparent",
-        RING,
-      )}
-      type="button"
-      aria-expanded={expanded}
-      aria-controls={panelId}
-      onClick={() => {
-        if (folded) {
-          setFolded(false);
-          setOpen(true);
-        } else setOpen((value) => !value);
-      }}
-    >
-      <span className="flex flex-col gap-[var(--space-1)] flex-1 min-w-0">
-        <Eyebrow>Staff notice board</Eyebrow>
-        <span className={cn("[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", folded && "hidden")}>Messages for the production desk</span>
+    {hasUnread && (
+      <span className="flex items-center gap-[var(--space-2)] px-[var(--space-5)] pt-[var(--space-4)]">
+        <span className="sr-only" data-slot="notice-board-unread-indicator">New notice</span>
+        <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[var(--radius-pill)] bg-primary" />
       </span>
-      {hasUnread && (
-        <>
-          <span className="sr-only" data-slot="notice-board-unread-indicator">New notice</span>
-          <span aria-hidden="true" className="w-[7px] h-[7px] flex-none rounded-[var(--radius-pill)] bg-primary" />
-        </>
-      )}
-      <span className="[font:var(--weight-regular)_var(--text-xl)/1_var(--font-sans)] text-foreground-secondary" aria-hidden="true">{expanded ? "−" : "+"}</span>
-    </button>
-    <div id={panelId} className="border-t-[length:var(--border-width-hair)] [border-top-style:solid] border-t-border" aria-hidden={!expanded} hidden={!expanded}>
+    )}
+    <div id={panelId} data-slot="notice-board-panel">
       {visibleError && <Notice tone="critical" role="alert">{visibleError}</Notice>}
       <div className="grid" aria-live="polite" ref={posts.length === 0 ? presentation.anchorRef : undefined}>
         {posts.length === 0 && <EmptyState title="No notices yet." className="px-[var(--space-5)] py-[var(--space-5)] text-left" />}
@@ -224,11 +169,11 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
                `RichTextContent` takes `className` and appends it to `rich-text` by plain string
                concatenation — no `cn()`, so no twMerge — which is fine here: `mt-` conflicts with nothing
                in `.rich-text`. */
-            : <RichTextContent content={post.content} className="mt-[var(--space-2)] max-w-[var(--container-sm)]" />}
+            : <RichTextContent content={post.content} className="mt-[var(--space-2)]" />}
           {/* Hidden while this post is being edited: the composer's Cancel/Save replace them, so Edit
               is never offered mid-edit and Delete never sits beside Save. */}
           {post.authorId === currentUserId && editingId !== post.id && (
-            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)] max-w-[var(--container-sm)]">
+            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)]">
               <button type="button" className={EDIT_ACTION} data-slot="notice-board-edit" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button>
               <button type="button" className={DELETE_ACTION} data-slot="notice-board-delete" onClick={() => void deletePost(post.id)}>Delete</button>
             </div>

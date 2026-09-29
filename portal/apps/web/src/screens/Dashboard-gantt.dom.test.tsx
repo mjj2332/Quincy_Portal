@@ -37,7 +37,7 @@ vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<type
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authRole.value } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
 vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
-vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: ({ foldOnPhone }: { foldOnPhone?: boolean }) => <div data-testid="notice-board" data-fold-on-phone={String(Boolean(foldOnPhone))} /> }));
+vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => <div data-testid="notice-board" /> }));
 vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
 // #220: the same "mock at the boundary" idea `Dashboard-calendar.dom.test.tsx` applies to the
 // event-calendar vendor tree (`testing/event-calendar-fake.tsx`) — this suite owns Dashboard's routing/URL/rail contract, not the
@@ -150,18 +150,17 @@ describe("Dashboard Gantt routing", () => {
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeNull();
   });
 
-  it("#271: on a phone, Gantt hides the stat grid and folds the notice board; List keeps both", async () => {
+  it("#334: renders neither the project summary strip nor a notice board, on List and Gantt alike", async () => {
     await render();
-    const summary = () => host.querySelector<HTMLElement>('section[aria-label="Project summary"]')!;
-    const foldOnPhone = () => host.querySelector('[data-testid="notice-board"]')?.getAttribute("data-fold-on-phone");
-    expect(summary().className).not.toContain("max-[721px]:hidden");
-    expect(foldOnPhone()).toBe("false");
+    const absent = () => {
+      expect(host.querySelector('section[aria-label="Project summary"]')).toBeNull();
+      expect(host.querySelector('[data-testid="notice-board"]')).toBeNull();
+    };
+    absent();
     await act(async () => { switcherButton("Gantt")!.click(); await Promise.resolve(); });
-    expect(summary().className).toContain("max-[721px]:hidden");
-    expect(foldOnPhone()).toBe("true");
+    absent();
     await act(async () => { switcherButton("List")!.click(); await Promise.resolve(); });
-    expect(summary().className).not.toContain("max-[721px]:hidden");
-    expect(foldOnPhone()).toBe("false");
+    absent();
   });
 
   it("leaves Gantt to explicit List", async () => {

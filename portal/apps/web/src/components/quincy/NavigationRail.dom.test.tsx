@@ -175,7 +175,7 @@ afterEach(async () => {
 });
 
 const USER = { name: "Terry Lee", email: "terry@example.test" };
-const FULL_CAPABILITIES = { adminBackend: true, viewProductionCalendar: true };
+const FULL_CAPABILITIES = { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true };
 
 function navigationFor(location: string, remembered: "list" | "kanban" | "calendar" = "kanban") {
   return buildStaffNavigation(parseStaffLocation(location), remembered, FULL_CAPABILITIES);
@@ -195,7 +195,7 @@ describe("NavigationRail", () => {
   it("renders the model's items and children in the model's order, as real anchors", async () => {
     await renderInProvider(navigationFor("/"));
 
-    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
     expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban", "Gantt", "Calendar"]);
 
     // Every destination is an anchor with a real href — the rail cannot navigate through
@@ -305,6 +305,16 @@ describe("NavigationRail", () => {
     expect(current).toEqual(["Admin"]);
   });
 
+  it("marks Notice board current on /notices, with no child links", async () => {
+    await renderInProvider(navigationFor("/notices"));
+    const link = testids("navigation-rail-link").find((element) => element.textContent?.trim() === "Notice board")!;
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(link.hasAttribute("data-active")).toBe(true);
+    expect(link.getAttribute("href")).toBe("/notices");
+    expect(testids("navigation-rail-child-link")).toHaveLength(0);
+    expect([...host.querySelectorAll('[aria-current="page"]')]).toHaveLength(1);
+  });
+
   it("renders the wordmark and the identity", async () => {
     await renderInProvider(navigationFor("/"));
     expect(testids("navigation-rail-brand")[0]?.getAttribute("href")).toBe("/");
@@ -409,6 +419,7 @@ describe("NavigationRail", () => {
     const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", {
       adminBackend: true,
       viewProductionCalendar: false,
+      viewNoticeBoard: true,
     });
     await renderInProvider(navigation);
     expect(linkTexts("navigation-rail-child-link")).toEqual(["List", "Kanban"]);
@@ -451,7 +462,7 @@ describe("NavigationRail variant — collapsed", () => {
     // Visually hidden text is still the link's accessible name — it is in the DOM, only hidden by
     // CSS a happy-dom assertion cannot see, so this asserts the name itself rather than the class
     // that hides it.
-    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
     const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
     expect(accessibleName(dashboard)).toBe("Dashboard");
   });
@@ -563,7 +574,7 @@ describe("NavigationRail variant — sheet", () => {
   it("shows visible labels", async () => {
     const navigation = navigationFor("/?view=kanban");
     await renderInProvider(navigation, { variant: "sheet" });
-    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Admin"]);
+    expect(linkTexts("navigation-rail-link")).toEqual(["Dashboard", "Notice board", "Admin"]);
     const dashboard = testids("navigation-rail-link").find((el) => el.textContent?.trim() === "Dashboard")!;
     expect(accessibleName(dashboard)).toBe("Dashboard");
   });

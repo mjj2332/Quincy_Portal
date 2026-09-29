@@ -6,6 +6,7 @@ import {
   GanttChart,
   Calendar,
   Shield,
+  Megaphone,
   ChevronsUpDown,
   Settings,
   LogOut,
@@ -120,6 +121,7 @@ const NAVIGATION_ICONS: Record<StaffNavigationIcon, LucideIcon> = {
   kanban: SquareKanban,
   gantt: GanttChart,
   calendar: Calendar,
+  notices: Megaphone,
   admin: Shield,
 };
 

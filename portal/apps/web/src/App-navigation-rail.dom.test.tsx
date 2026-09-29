@@ -40,6 +40,7 @@ vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unkn
 vi.mock("./screens/Dashboard", () => ({ Dashboard: () => <main>Dashboard</main> }));
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: () => <main>Project</main> }));
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>Sign in</main> }));
+vi.mock("./screens/NoticeBoardPage", () => ({ NoticeBoardPage: () => <main>Notices</main> }));
 vi.mock("./screens/Admin", () => ({ Admin: () => <main>Admin</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>Create</main> }));
 vi.mock("./screens/EditProject", () => ({ EditProject: () => <main>Edit</main> }));
@@ -108,7 +109,7 @@ describe("the navigation rail", () => {
         '[data-testid="navigation-rail-link"], [data-testid="navigation-rail-child-link"]',
       ),
     ].map((element) => element.getAttribute("href")!);
-    expect(destinations).toEqual(["/", "/?view=list", "/?view=kanban", "/?view=gantt", "/?view=calendar", "/admin"]);
+    expect(destinations).toEqual(["/", "/?view=list", "/?view=kanban", "/?view=gantt", "/?view=calendar", "/notices", "/admin"]);
 
     for (const href of destinations) {
       await renderAt("/");
@@ -138,9 +139,14 @@ describe("the navigation rail", () => {
     expect(host.textContent).not.toContain("That page is not available.");
   });
 
-  it("hides Admin from a role without the capability", async () => {
+  it.each([
+    ["admin", ["Dashboard", "Notice board", "Admin"]],
+    ["editor", ["Dashboard", "Notice board"]],
+    ["photographer", ["Dashboard", "Notice board"]],
+    ["external_editor", ["Dashboard"]],
+  ])("offers %s exactly the rail items its capabilities allow", async (role, expected) => {
     sessionState.value = {
-      data: { user: { id: "p1", name: "Photographer", role: "photographer" } },
+      data: { user: { id: "r1", name: "Role", role } },
       isPending: false,
       refetch: vi.fn<() => Promise<void>>(),
     };
@@ -148,6 +154,13 @@ describe("the navigation rail", () => {
     const labels = [
       ...host.querySelectorAll('[data-testid="navigation-rail-link"]'),
     ].map((element) => element.textContent?.trim());
-    expect(labels).toEqual(["Dashboard"]);
+    expect(labels).toEqual(expected);
+  });
+
+  it("marks Notice board active when mounted at /notices", async () => {
+    const host = await renderAt("/notices");
+    const link = [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((element) => element.textContent?.trim() === "Notice board")!;
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(host.textContent).toContain("Notices");
   });
 });
