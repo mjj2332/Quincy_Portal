@@ -186,9 +186,10 @@ export function sortKanbanProjects(projects: ProjectSummary[], sort: KanbanSortM
     }
     return project.boardRank ?? Number.POSITIVE_INFINITY;
   };
+  // 5 stars is the highest Priority and sorts first; unset Priority stays last (owner decision).
   if (sort === "priority") return [...projects].sort((left, right) =>
     (left.priority === null ? 1 : 0) - (right.priority === null ? 1 : 0)
-    || (left.priority ?? 0) - (right.priority ?? 0)
+    || (right.priority ?? 0) - (left.priority ?? 0)
     || boardRank(left) - boardRank(right)
     || left.id.localeCompare(right.id));
   if (sort !== "board") return sortKanbanProjectsByShootDate(projects, sort);

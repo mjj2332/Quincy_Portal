@@ -663,8 +663,8 @@ describe("Dashboard Stage interactions", () => {
   it("changes Kanban display order by sort without fetching a new authorization snapshot", async () => {
     const sortProjects = [
       { ...summary("sort-source", "awaiting_raw", 4), street: "Sort Source", priority: 9, shootDate: "2026-08-15" },
-      { ...summary("board-first", "raw_review", 1), street: "Board First", priority: 5, shootDate: "2026-08-30" },
-      { ...summary("priority-first", "raw_review", 2), street: "Priority First", priority: 1, shootDate: "2026-09-01" },
+      { ...summary("board-first", "raw_review", 1), street: "Board First", priority: 1, shootDate: "2026-08-30" },
+      { ...summary("priority-first", "raw_review", 2), street: "Priority First", priority: 5, shootDate: "2026-09-01" },
       { ...summary("date-first", "raw_review", 3), street: "Date First", priority: 2, shootDate: "2026-08-01" },
     ];
     const sortSnapshot = {
@@ -721,8 +721,8 @@ describe("Dashboard Stage interactions", () => {
   ] as const)("announces an authoritative changed:false result using the displayed %s order", async (_label, sortMode, expectedPosition) => {
     const noChangeSnapshot = {
       projects: [
-        { ...summary("source", "awaiting_raw", 3), shootDate: "2026-08-02", priority: 1 },
-        { ...summary("before", "raw_review", 8), shootDate: "2026-08-03", priority: 3 },
+        { ...summary("source", "awaiting_raw", 3), shootDate: "2026-08-02", priority: 3 },
+        { ...summary("before", "raw_review", 8), shootDate: "2026-08-03", priority: 1 },
         { ...summary("target", "raw_review", 9), shootDate: "2026-08-01", priority: 2 },
       ],
       board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["source"], raw_review: ["before", "target"] } },
