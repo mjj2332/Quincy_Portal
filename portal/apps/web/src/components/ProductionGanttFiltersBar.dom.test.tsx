@@ -88,6 +88,11 @@ function toolbar(): HTMLElement {
   return element;
 }
 
+/** #269: the bar's one-shot pairing notice (a polite status line). */
+function notice(): string {
+  return document.querySelector('[data-testid="production-gantt-filters-notice"]')?.textContent ?? "";
+}
+
 function chips(): HTMLElement[] {
   return [...toolbar().querySelectorAll<HTMLElement>('[role="group"]')];
 }
@@ -357,6 +362,51 @@ describe("ProductionGanttFiltersBar (#255)", () => {
       await settle();
       expect(chipNames()).toEqual(["Stage is any of Delivered"]);
       expect(pushes).toEqual([]);
+      expect(notice()).toBe("");
+    });
+
+    describe("says why the pair fired (#269)", () => {
+      it("announces 'Also showing delivered projects.' when Stage = Delivered adds the Show chip", async () => {
+        await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+        expect(notice()).toBe("");
+        const status = document.querySelector('[data-testid="production-gantt-filters-notice"]');
+        expect(status?.getAttribute("role")).toBe("status");
+        await click(button("Editing", toolbar()));
+        await waitFor(() => option("Delivered"));
+        await click(option("Delivered"));
+        await waitFor(() => expect(notice()).toBe("Also showing delivered projects."));
+        // The same always-mounted status node carries it, so a screen reader hears the change.
+        expect(document.querySelector('[data-testid="production-gantt-filters-notice"]')).toBe(status);
+      });
+
+      it("announces 'Removed Delivered from Stage.' when hiding delivered projects drops the stage", async () => {
+        await render({ editorIds: [], stageKeys: ["editing", "delivered"], delivered: true, completed: false });
+        await click(button("Delivered projects", toolbar()));
+        await waitFor(() => option("Delivered projects"));
+        await click(option("Delivered projects"));
+        await waitFor(() => expect(notice()).toBe("Removed Delivered from Stage."));
+      });
+
+      it("clears the notice on the next edit that does not pair", async () => {
+        await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+        await click(button("Editing", toolbar()));
+        await waitFor(() => option("Delivered"));
+        await click(option("Delivered"));
+        await waitFor(() => expect(notice()).toBe("Also showing delivered projects."));
+        await click(option("Awaiting RAW"));
+        await waitFor(() => expect(pushes).toHaveLength(2));
+        expect(notice()).toBe("");
+      });
+
+      it("clears the notice on an outside navigation (Back/Forward re-seeds the chips)", async () => {
+        await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+        await click(button("Editing", toolbar()));
+        await waitFor(() => option("Delivered"));
+        await click(option("Delivered"));
+        await waitFor(() => expect(notice()).toBe("Also showing delivered projects."));
+        await act(async () => { setUrl({ editorIds: [], stageKeys: ["awaiting_raw"], delivered: false, completed: false }); });
+        expect(notice()).toBe("");
+      });
     });
   });
 

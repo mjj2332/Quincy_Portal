@@ -44,6 +44,7 @@ import {
   ganttFacetForWrite,
   ganttFacetKey,
   ganttFacetToQuery,
+  ganttPairingNotice,
   ganttQueryForFacet,
   queryToGanttFacet,
   stageOptionsWithColor,
@@ -51,6 +52,7 @@ import {
   type ProductionGanttFacetFilters,
   type StageFilterOption,
 } from "../lib/production-gantt-filters";
+import { FieldDescription } from "./reui/field";
 import { Button } from "./quincy/Button";
 import { StageSwatch } from "./quincy/StageSwatch";
 
@@ -90,6 +92,8 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
   // outside navigation, which re-seeds and forgets the pending writes. Trimmed only here, on a URL
   // change, never by comparing with a stale `urlKey` on an unrelated render.
   const [seenUrlKey, setSeenUrlKey] = useState(urlKey);
+  // #269: why the bar's last write changed more than the user's edit (the Delivered pair), or "".
+  const [pairingNotice, setPairingNotice] = useState("");
   if (seenUrlKey !== urlKey) {
     setSeenUrlKey(urlKey);
     const landed = pending.indexOf(urlKey);
@@ -97,6 +101,7 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
       setPending(pending.slice(landed + 1));
     } else {
       if (pending.length > 0) setPending([]);
+      if (pairingNotice) setPairingNotice("");
       const local = queryToGanttFacet(query);
       if (!local || ganttFacetKey(local) !== urlKey) setQuery(ganttFacetToQuery(filters));
     }
@@ -154,6 +159,8 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
       // chips follow, keeping their ids, so the write's own echo finds nothing to re-seed.
       const facet = edit && previous ? ganttFacetForWrite(previous, edit) : edit;
       if (edit && facet && ganttFacetKey(facet) !== ganttFacetKey(edit)) next = ganttQueryForFacet(edited, facet);
+      // #269: say so once, visibly and through the status line, when the pair changed the other chip.
+      setPairingNotice((edit && facet && ganttPairingNotice(edit, facet)) || "");
       current.query = next;
       setQuery(next);
       if (facet) {
@@ -199,6 +206,10 @@ export function ProductionGanttFiltersBar({ filters, stageOptions, onFiltersChan
           </Button>
         }
       />
+      {/* #269: always mounted and never `display: none`, so a change of text is announced; empty (no height) until the pair fires. Padding, not margin: `FieldDescription` zeroes a last child's margin. */}
+      <FieldDescription role="status" data-testid="production-gantt-filters-notice" className="pt-[var(--space-2)] text-foreground-secondary empty:pt-0">
+        {pairingNotice}
+      </FieldDescription>
     </div>
   );
 }
