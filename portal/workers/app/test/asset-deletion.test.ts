@@ -338,6 +338,23 @@ describe("admin asset deletion", () => {
     }
   });
 
+  it("removes the deleted asset's DLQ rows in the delete batch, keeps a live asset's, and keeps them when the delete is blocked (#284)", async () => {
+    const project = await seedProject(); const doomed = await seedAsset(project, "photo"); const live = await seedAsset(project, "photo");
+    const insertDlq = (assetId: string) => {
+      const id = crypto.randomUUID();
+      return database.DB.prepare("INSERT INTO rendition_dlq_events (id, asset_id, status, received_at) VALUES (?, ?, 'open', ?)").bind(id, assetId, Date.now()).run().then(() => id);
+    };
+    const doomedEvent = await insertDlq(doomed.id); const liveEvent = await insertDlq(live.id);
+    expect((await deleteAsset(doomed.id)).status).toBe(200);
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM rendition_dlq_events WHERE id = ?").bind(doomedEvent).first()).resolves.toEqual({ count: 0 });
+    await expect(database.DB.prepare("SELECT asset_id FROM rendition_dlq_events WHERE id = ?").bind(liveEvent).first()).resolves.toEqual({ asset_id: live.id });
+
+    const blocked = await seedAsset(project, "photo"); const blockedEvent = await insertDlq(blocked.id);
+    await database.DB.prepare("INSERT INTO edited_source_claims (id, collection_id, source_path_key, current_asset_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), blocked.collectionId, `/blocked/${blocked.id}`, blocked.id, Date.now(), Date.now()).run();
+    expect((await deleteAsset(blocked.id)).status).toBe(409);
+    await expect(database.DB.prepare("SELECT asset_id FROM rendition_dlq_events WHERE id = ?").bind(blockedEvent).first()).resolves.toEqual({ asset_id: blocked.id });
+  });
+
   it("refuses DLQ replay for a deleted asset but still replays a live asset", async () => {
     const project = await seedProject(); const deleted = await seedAsset(project, "photo"); const deletedEvent = crypto.randomUUID();
     expect((await deleteAsset(deleted.id)).status).toBe(200);
