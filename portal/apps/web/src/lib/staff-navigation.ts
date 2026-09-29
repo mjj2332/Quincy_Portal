@@ -208,6 +208,7 @@ export type StaffBreadcrumbSegment = { label: string; href: string | null };
  * kind, so a new `StaffNavigationSectionId` needs no matching entry here.
  */
 function sectionLabel(sectionId: StaffNavigationSectionId): string {
+  if (sectionId === "notices") return "Notice board";
   return sectionId.charAt(0).toUpperCase() + sectionId.slice(1).replace(/-/g, " ");
 }
 

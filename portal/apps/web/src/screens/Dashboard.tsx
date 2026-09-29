@@ -1421,18 +1421,17 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   return (
     <main className="page page--full [overflow-x:clip]">
-      <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-6)] gap-y-[var(--space-5)] pb-[var(--space-4)]">
+      <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-6)] gap-y-[var(--space-5)]">
         <div>
           <Eyebrow className="mb-[var(--space-3)]">Quincy Portal · production desk</Eyebrow>
           <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)] max-[721px]:[font:var(--type-h2)]">Projects</h1>
         </div>
-        <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[721px]:mb-[var(--space-5)]" />
+        <hr className="basis-full m-0 mb-[var(--space-5)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary" />
       </div>
 
       <div data-testid="dashboard-toolbar" tabIndex={-1} className={cn(
         "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
-        "mb-[var(--space-4)] pt-[var(--space-4)] [border-top-style:solid] " +
-        "border-t-[length:var(--border-width-hair)] border-t-border")}>
+        "mb-[var(--space-4)]")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
         </div>

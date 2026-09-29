@@ -29,8 +29,8 @@ const DELETE_ACTION = buttonClasses("text", {
 // Two separate complete strings, not "create plus overrides" — `.px-0` is emitted before
 // `.px-[var(--space-5)]` under Tailwind's utility order, so an override form would silently
 // lose the padding drop the edit composer needs (§5.4, Sol r2 #3).
-const CREATE_COMPOSER = "grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)] max-w-[calc(var(--container-sm)+2*var(--space-5))]";
-const EDIT_COMPOSER = "grid gap-[var(--space-3)] pt-[var(--space-4)] px-0 pb-0 max-w-[var(--container-sm)]";
+const CREATE_COMPOSER = "grid gap-[var(--space-3)] px-[var(--space-5)] py-[var(--space-4)]";
+const EDIT_COMPOSER = "grid gap-[var(--space-3)] pt-[var(--space-4)] px-0 pb-0";
 const COMPOSER_FOOT = "flex flex-wrap items-center justify-between gap-[var(--space-3)]";
 // `!normal-case` is mandatory: a plain `normal-case` loses to `META_TEXT`'s `uppercase` on
 // emission order (§2.2, Sol r1 #5 — this exact bug shipped once already in TB8-07).
@@ -169,11 +169,11 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
                `RichTextContent` takes `className` and appends it to `rich-text` by plain string
                concatenation — no `cn()`, so no twMerge — which is fine here: `mt-` conflicts with nothing
                in `.rich-text`. */
-            : <RichTextContent content={post.content} className="mt-[var(--space-2)] max-w-[var(--container-sm)]" />}
+            : <RichTextContent content={post.content} className="mt-[var(--space-2)]" />}
           {/* Hidden while this post is being edited: the composer's Cancel/Save replace them, so Edit
               is never offered mid-edit and Delete never sits beside Save. */}
           {post.authorId === currentUserId && editingId !== post.id && (
-            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)] max-w-[var(--container-sm)]">
+            <div className="flex justify-end gap-[var(--space-3)] mt-[var(--space-2)]">
               <button type="button" className={EDIT_ACTION} data-slot="notice-board-edit" onClick={() => { setEditingId(post.id); setEditingContent(post.content); }}>Edit</button>
               <button type="button" className={DELETE_ACTION} data-slot="notice-board-delete" onClick={() => void deletePost(post.id)}>Delete</button>
             </div>

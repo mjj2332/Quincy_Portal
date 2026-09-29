@@ -271,6 +271,13 @@ describe("the Notice board item (#334)", () => {
   });
 });
 
+describe("the notices breadcrumb without a nav item (#334)", () => {
+  it("still reads Notice board when the capability hides the rail item", () => {
+    const navigation = buildStaffNavigation({ kind: "notices" }, "kanban", { ...all, viewNoticeBoard: false });
+    expect(buildStaffBreadcrumb(navigation).at(-1)).toEqual({ label: "Notice board", href: null });
+  });
+});
+
 describe("buildStaffBreadcrumb — #112, AC7", () => {
   // Pure and derived from the model, never re-derived from the route: it consumes
   // `buildStaffNavigation`'s own `active` flags, so it cannot disagree with the rail about what
