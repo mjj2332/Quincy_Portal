@@ -16,6 +16,9 @@ export type InitialChecklistScheduleInput =
   | { state: "due_only"; end: ChecklistScheduleEndpointInput }
   | { state: "range"; start: ChecklistScheduleEndpointInput; end: ChecklistScheduleEndpointInput };
 
+/** A Subtask's schedule is always a range (ADR 0011): the only shape the write paths accept. */
+export type RangeChecklistScheduleInput = Extract<InitialChecklistScheduleInput, { state: "range" }>;
+
 export type SaveChecklistScheduleRequest = {
   expectedVersion: number;
   schedule: InitialChecklistScheduleInput;

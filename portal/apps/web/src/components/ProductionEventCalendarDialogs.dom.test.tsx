@@ -154,24 +154,28 @@ describe("ProductionEventCalendarFoldChoice (alert-dialog shell)", () => {
 });
 
 describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
+  const modeSelect = () => document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!;
   async function renderSheet(props: Partial<ComponentProps<typeof ProductionEventCalendarScheduleEditorSheet>> = {}) {
     const onSubmit = props.onSubmit ?? vi.fn();
     await render(<ProductionEventCalendarScheduleEditorSheet open event={dueEvent} onSubmit={onSubmit} onCancel={vi.fn()} {...props} />);
     return onSubmit;
   }
 
-  it("offers the three states with Range enabled", async () => {
+  it("offers no state picker: start and end, plus one endpoint mode select (#340)", async () => {
     await renderSheet();
     const sheet = byTestId("event-calendar-schedule-editor")!;
     expect(sheet.textContent).toContain("Schedule checklist item");
     expect(sheet.textContent).toContain("12 Harbour Street");
-    const range = [...document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!.options].find((option) => option.value === "range")!;
-    expect(range.disabled).toBe(false);
+    expect(document.body.querySelector('[aria-label="Checklist schedule state"]')).toBeNull();
+    expect(document.body.querySelectorAll("select")).toHaveLength(1);
+    expect([...document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!.options].map((option) => option.value)).toEqual(["date", "timed"]);
+    // A legacy due-only entry opens as a one-day range for the user to confirm.
+    expect(input("Checklist start date").value).toBe("2026-08-20");
+    expect(input("Checklist end date").value).toBe("2026-08-20");
   });
 
   it("surfaces local preflight errors and does not submit", async () => {
     const onSubmit = await renderSheet();
-    await change(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!, "range");
     await change(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!, "timed");
     await change(input("Checklist start date"), "2026-08-20"); await change(input("Checklist start time"), "10:00");
     await change(input("Checklist end date"), "2026-08-20"); await change(input("Checklist end time"), "09:00");
@@ -182,7 +186,6 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
 
   it("asks for a fold choice at the endpoint that repeats, then submits it", async () => {
     const onSubmit = await renderSheet();
-    await change(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!, "range");
     await change(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!, "timed");
     await change(input("Checklist start date"), "2026-04-05"); await change(input("Checklist start time"), "02:30");
     await change(input("Checklist end date"), "2026-04-05"); await change(input("Checklist end time"), "04:00");
@@ -195,6 +198,7 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
 
   it("reopens with a retained draft and its server validation error", async () => {
     await renderSheet({ initialSchedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-25" } }, validationError: { code: "subtask_schedule_invalid_order", message: "" } });
+    expect(input("Checklist start date").value).toBe("2026-08-25");
     expect(input("Checklist end date").value).toBe("2026-08-25");
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("start must be before");
   });
@@ -202,20 +206,20 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
   it("seeds a legacy unresolved entry for complete replacement and cancels through Cancel", async () => {
     const onCancel = vi.fn();
     const onSubmit = await renderSheet({ event: legacyEntry, onCancel });
-    expect(document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!.value).toBe("due_only");
+    expect(document.body.querySelector('[aria-label="Checklist schedule state"]')).toBeNull();
+    expect(modeSelect().value).toBe("timed");
+    expect(input("Checklist start date").value).toBe("2026-08-20");
+    expect(input("Checklist start time").value).toBe("00:00");
     expect(input("Checklist end time").value).toBe("09:00");
     await click(byTestId("event-calendar-schedule-cancel")!);
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  const stateSelect = () => document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!;
-  const modeSelect = () => document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!;
   const radios = () => [...document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
 
   it("keeps endpoint mode to one select and reports a nonexistent spring-forward time", async () => {
     await renderSheet();
-    await change(stateSelect(), "range");
     await change(modeSelect(), "timed");
     expect(document.body.querySelectorAll('select[aria-label="Checklist endpoint mode"]')).toHaveLength(1);
     await change(input("Checklist start date"), "2026-10-04"); await change(input("Checklist start time"), "02:30");
@@ -226,7 +230,7 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
 
   it("collects independent fold choices for both range endpoints", async () => {
     const onSubmit = await renderSheet();
-    await change(stateSelect(), "range"); await change(modeSelect(), "timed");
+    await change(modeSelect(), "timed");
     await change(input("Checklist start date"), "2026-04-05"); await change(input("Checklist start time"), "02:30");
     await change(input("Checklist end date"), "2026-04-05"); await change(input("Checklist end time"), "02:30");
     const folds = radios();
@@ -259,12 +263,12 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     const onSubmit = await renderSheet({ event: legacyEntry });
     expect(legacyEntry.schedule.version).toBe(0);
     expect(modeSelect().value).toBe("timed");
-    await change(stateSelect(), "due_only");
+    await change(input("Checklist start date"), "2026-08-25");
     await change(input("Checklist end date"), "2026-08-25");
     await change(input("Checklist end time"), "09:00");
     await click(byTestId("event-calendar-schedule-submit")!);
     expect(onSubmit).toHaveBeenCalledOnce();
-    expect(onSubmit).toHaveBeenCalledWith({ state: "due_only", end: { kind: "timed", localCivil: "2026-08-25T09:00" } });
+    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { kind: "timed", localCivil: "2026-08-25T00:00" }, end: { kind: "timed", localCivil: "2026-08-25T09:00" } });
     expect(JSON.stringify(vi.mocked(onSubmit).mock.calls[0])).not.toContain("dueDate");
   });
 });
@@ -331,7 +335,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
     await click(byTestId("event-calendar-fold-submit")!);
     expect(wired.submitChecklistFold).toHaveBeenCalledWith("later");
     await click(byTestId("event-calendar-schedule-submit")!);
-    expect(wired.submitScheduleEditor).toHaveBeenCalledWith({ state: "due_only", end: { kind: "date", localCivil: "2026-08-20" } });
+    expect(wired.submitScheduleEditor).toHaveBeenCalledWith({ state: "range", start: { kind: "date", localCivil: "2026-08-20" }, end: { kind: "date", localCivil: "2026-08-20" } });
   });
 
   it("reuses the Deadline confirm with no preview and shows each reminder consequence", async () => {

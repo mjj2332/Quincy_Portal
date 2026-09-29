@@ -5,12 +5,13 @@
  * renderer's `reui/sheet` (`ProductionEventCalendarDialogs.tsx`), now its only shell.
  *
  * The draft/seed/normalise/validate code and every DOM hook the tests select
- * (`aria-label="Checklist … date|time"`, `Checklist schedule state`, `Checklist endpoint mode`,
+ * (`aria-label="Checklist … date|time"`, `Checklist endpoint mode`,
  * the fold radios and the `role="alert"` error) moved unchanged; #224 re-framed the fold radios
  * in `reui/field` `FieldSet`/`FieldLegend`, because their only styling lived in the retired
  * `production-calendar.css`. The shell owns only its frame and its footer (Cancel / Save schedule), which call `submit` from
  * `useChecklistScheduleDraft`.
  */
+import { foldToDisambiguation } from "../lib/fold-disambiguation";
 import { useId, useState, type JSX } from "react";
 import {
   normalizeChecklistSchedule,
@@ -21,10 +22,13 @@ import {
   type ChecklistScheduleEndpointInput,
   type ChecklistScheduleValidationError,
   type InitialChecklistScheduleInput,
+  type RangeChecklistScheduleInput,
+  oneDaySubtaskRange,
 } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { FieldLegend, FieldSet } from "./reui/field";
 import { Input } from "./reui/input";
+import { POPOVER_LABEL } from "./AnchoredPopover";
 import { NativeSelect } from "./quincy/NativeSelect";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
 
@@ -32,7 +36,7 @@ import { utcOffsetLabel } from "../lib/sydney-time-labels";
 // background and the `max-[721px]:min-h-[44px]` floor. This is the compact type/padding plus the
 // coarse-pointer half of the 44px floor that the calendar dialogs layer on top of it.
 export const FIELD_COMPACT =
-  "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+  "text-foreground [font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
 
 // The Sydney-occurrence radios, shared with the Calendar's move and fold dialogs
 // (`ProductionEventCalendarDialogs.tsx`) so every fold choice reads the same.
@@ -45,10 +49,9 @@ export const FOLD_LEGEND = "mb-[var(--space-2)] text-foreground data-[variant=le
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
-const EDITOR_STATE = "grid gap-[6px] text-muted-foreground text-[11px] tracking-[.04em]";
-// FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background and the
-// `max-[721px]:min-h-[44px]` floor. `max-w-[360px]` overrides its `w-full`.
-const EDITOR_SELECT = cn("max-w-[360px]", FIELD_COMPACT);
+// FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background, the
+// `max-[721px]:min-h-[44px]` floor and `w-full`, so the lone mode select lines up with the Start/End grid.
+const EDITOR_SELECT = FIELD_COMPACT;
 const EDITOR_ENDPOINTS = "grid grid-cols-2 gap-[16px] max-[721px]:grid-cols-1";
 const EDITOR_ENDPOINT = "grid gap-[10px] min-w-0 m-0 p-[14px] border border-solid border-border";
 const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibold";
@@ -66,7 +69,7 @@ const EDITOR_ERROR =
 export type ChecklistScheduleEditorEvent = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
 type EndpointKind = "date" | "timed";
 type EndpointDraft = { date: string; time: string; disambiguation?: "earlier" | "later" };
-export type ChecklistScheduleDraft = { state: "unscheduled" | "due_only" | "range"; kind: EndpointKind; start: EndpointDraft; end: EndpointDraft };
+export type ChecklistScheduleDraft = { kind: EndpointKind; start: EndpointDraft; end: EndpointDraft };
 
 export type ProductionCalendarScheduleEditorError = { code: string; message: string; endpoint?: ChecklistScheduleValidationError["endpoint"]; choices?: ChecklistScheduleValidationError["choices"] };
 
@@ -79,28 +82,43 @@ function endpointDraft(value: ChecklistScheduleEndpointInput | { kind: EndpointK
   const parts = civilParts(value?.localCivil ?? "");
   const disambiguation = value && "disambiguation" in value
     ? value.disambiguation
-    : value && "fold" in value && (value.fold === 0 || value.fold === 1)
-      ? value.fold === 0 ? "earlier" : "later"
-      : undefined;
+    : value && "fold" in value ? foldToDisambiguation(value.fold) : undefined;
   return { date: parts.date, time: parts.time, disambiguation };
 }
 
-function scheduleDraft(value: ChecklistScheduleDto): ChecklistScheduleDraft {
-  if (value.state === "invalid") return { state: "unscheduled", kind: "date", start: endpointDraft(null, "date"), end: endpointDraft(null, "date") };
-  if (value.state === "legacy_unresolved") {
-    const kind = value.due.includes("T") ? "timed" : "date";
-    return { state: "due_only", kind, start: endpointDraft(null, kind), end: endpointDraft({ kind, localCivil: value.due }, kind) };
-  }
-  const kind = value.end?.kind ?? value.start?.kind ?? "date";
-  return { state: value.state, kind, start: endpointDraft(value.start, kind), end: endpointDraft(value.end, kind) };
+const blankDraft = (): ChecklistScheduleDraft => ({ kind: "date", start: { date: "", time: "" }, end: { date: "", time: "" } });
+
+function draftFromRange(value: RangeChecklistScheduleInput): ChecklistScheduleDraft {
+  const kind = value.end.kind;
+  return { kind, start: endpointDraft(value.start, kind), end: endpointDraft(value.end, kind) };
 }
 
+// A legacy row (unscheduled, due only) seeds a one-day range on its due for the user to confirm.
+// The Project's shoot date and Deadline are not on the calendar entry, so the shared default range is not available here.
+// An unusable due seeds blank fields rather than garbage.
+function seedFromDue(end: ChecklistScheduleEndpointInput | null): ChecklistScheduleDraft {
+  const range = end ? oneDaySubtaskRange(end) : null;
+  return range ? draftFromRange(range) : blankDraft();
+}
+
+function scheduleDraft(value: ChecklistScheduleDto): ChecklistScheduleDraft {
+  if (value.state === "invalid" || value.state === "unscheduled") return blankDraft();
+  if (value.state === "legacy_unresolved") return seedFromDue({ kind: value.due.includes("T") ? "timed" : "date", localCivil: value.due });
+  if (value.state === "due_only") {
+    const end = value.end;
+    if (!end) return blankDraft();
+    // Keep a stored fold as the end's occurrence, as a range end would.
+    const disambiguation = end.kind === "timed" ? foldToDisambiguation(end.fold) : undefined;
+    return seedFromDue(end.kind === "timed" ? { kind: "timed", localCivil: end.localCivil, ...(disambiguation ? { disambiguation } : {}) } : { kind: "date", localCivil: end.localCivil });
+  }
+  const kind = value.end?.kind ?? value.start?.kind ?? "date";
+  return { kind, start: endpointDraft(value.start, kind), end: endpointDraft(value.end, kind) };
+}
+
+// A retained or server-returned draft can still carry a legacy shape: it seeds a one-day range too.
 function draftFromInput(value: InitialChecklistScheduleInput): ChecklistScheduleDraft {
-  const blank = (kind: EndpointKind): EndpointDraft => ({ date: "", time: "" });
-  if (value.state === "unscheduled") return { state: "unscheduled", kind: "date", start: blank("date"), end: blank("date") };
-  const kind = value.end.kind;
-  const start = value.state === "range" ? value.start : null;
-  return { state: value.state, kind, start: start ? endpointDraft(start, kind) : blank(kind), end: endpointDraft(value.end, kind) };
+  if (value.state === "range") return draftFromRange(value);
+  return value.state === "due_only" ? seedFromDue(value.end) : blankDraft();
 }
 
 function toEndpointInput(value: EndpointDraft, kind: EndpointKind): ChecklistScheduleEndpointInput {
@@ -108,11 +126,8 @@ function toEndpointInput(value: EndpointDraft, kind: EndpointKind): ChecklistSch
   return { kind, localCivil: `${value.date}T${value.time}`, ...(value.disambiguation ? { disambiguation: value.disambiguation } : {}) };
 }
 
-function scheduleInput(value: ChecklistScheduleDraft): InitialChecklistScheduleInput {
-  if (value.state === "unscheduled") return { state: "unscheduled" };
-  const end = toEndpointInput(value.end, value.kind);
-  if (value.state === "due_only") return { state: value.state, end };
-  return { state: value.state, start: toEndpointInput(value.start, value.kind), end };
+function scheduleInput(value: ChecklistScheduleDraft): RangeChecklistScheduleInput {
+  return { state: "range", start: toEndpointInput(value.start, value.kind), end: toEndpointInput(value.end, value.kind) };
 }
 
 function errorText(error: ProductionCalendarScheduleEditorError): string {
@@ -129,7 +144,7 @@ function endpointLabel(which: "start" | "end"): string { return which === "start
 
 export type ChecklistScheduleDraftInput = {
   event: ChecklistScheduleEditorEvent;
-  onSubmit: (schedule: InitialChecklistScheduleInput) => void;
+  onSubmit: (schedule: RangeChecklistScheduleInput) => void;
   initialSchedule?: InitialChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
 };
@@ -172,7 +187,7 @@ export type ProductionCalendarScheduleEditorFieldsProps = {
   state: ChecklistScheduleDraftState;
 };
 
-/** The editor body: intro, state and mode selects, endpoint fieldsets, fold radios, error. */
+/** The editor body: intro, endpoint mode select, start and end fieldsets, fold radios, error. */
 export function ProductionCalendarScheduleEditorFields({ state }: ProductionCalendarScheduleEditorFieldsProps): JSX.Element {
   const { draft, setDraft, error, setEndpoint } = state;
   const groupId = useId();
@@ -197,22 +212,13 @@ export function ProductionCalendarScheduleEditorFields({ state }: ProductionCale
 
   return <div className={EDITOR}>
     <p className={EDITOR_INTRO}>Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>
-    <label className={EDITOR_STATE} htmlFor={`${groupId}-state`}>State
-      <NativeSelect className={EDITOR_SELECT} id={`${groupId}-state`} aria-label="Checklist schedule state" value={draft.state} onChange={(input) => setDraft((current) => ({ ...current, state: input.target.value as ChecklistScheduleDraft["state"] }))}>
-        <option value="unscheduled">Unscheduled</option>
-        <option value="due_only">Due date only</option>
-        <option value="range">Range</option>
+    <label className={POPOVER_LABEL} htmlFor={`${groupId}-mode`}>Date or time
+      <NativeSelect className={EDITOR_SELECT} id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
+        <option value="date">Date</option>
+        <option value="timed">Timed · Australia/Sydney</option>
       </NativeSelect>
     </label>
-    {draft.state !== "unscheduled" && <>
-      <label className={EDITOR_STATE} htmlFor={`${groupId}-mode`}>Endpoint mode
-        <NativeSelect className={EDITOR_SELECT} id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
-          <option value="date">Date</option>
-          <option value="timed">Timed · Australia/Sydney</option>
-        </NativeSelect>
-      </label>
-      {draft.state === "range" ? <div className={EDITOR_ENDPOINTS}>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</div> : endpointFields("end", draft.end)}
-    </>}
+    <div className={EDITOR_ENDPOINTS}>{endpointFields("start", draft.start)}{endpointFields("end", draft.end)}</div>
     {error && <div className={EDITOR_ERROR} role="alert">{errorText(error)}</div>}
   </div>;
 }

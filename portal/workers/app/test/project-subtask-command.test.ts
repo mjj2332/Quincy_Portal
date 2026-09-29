@@ -43,7 +43,7 @@ function commandInput(projectId: string, operation: Parameters<typeof saveProjec
 }
 
 async function createDueItem(projectId = commandProjectId, title = `Command item ${crypto.randomUUID()}`) {
-  const result = await saveProjectSubtask(commandInput(projectId, { kind: "create", item: { title }, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-01" } } }));
+  const result = await saveProjectSubtask(commandInput(projectId, { kind: "create", item: { title }, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-01" } } }));
   expect(result.outcome).toBe("created");
   if (result.outcome !== "created") throw new Error("Fixture creation failed");
   return result;
@@ -129,7 +129,7 @@ describe("saveProjectSubtask command boundary", () => {
   it("returns the command's not-found and both deterministic fence-loss arms without retrying", async () => {
     const missingProject = await saveProjectSubtask(commandInput(crypto.randomUUID(), { kind: "create", item: { title: "Missing project" } }, { principal: { ...commandPrincipal, id: commandAdminId, email: `${commandAdminId}@example.test`, name: "Command Admin", role: "admin" } }));
     expect(missingProject).toEqual({ outcome: "not_found", target: "project" });
-    const missingSubtask = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: crypto.randomUUID(), scheduleRequest: { expectedVersion: 0, schedule: { state: "unscheduled" } } }));
+    const missingSubtask = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: crypto.randomUUID(), scheduleRequest: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-01" } } } }));
     expect(missingSubtask).toEqual({ outcome: "not_found", target: "subtask" });
 
     const deleted = await createDueItem();
@@ -148,7 +148,7 @@ describe("saveProjectSubtask command boundary", () => {
     const scheduled = await createDueItem();
     const scheduleCalls = { count: 0 };
     const scheduleDb = faultDb(async (db) => { await db.prepare("UPDATE project_subtasks SET due_date = '2027-01-02' WHERE id = ?").bind(scheduled.item.id).run(); }, scheduleCalls);
-    const scheduleLost = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: scheduled.item.id, itemPatch: { title: "Losing title" }, scheduleRequest: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: scheduleDb } }));
+    const scheduleLost = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: scheduled.item.id, itemPatch: { title: "Losing title" }, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: scheduleDb } }));
     expect(scheduleLost.outcome).toBe("schedule_conflict"); expect(scheduleCalls.count).toBe(1);
     const auditAfterScheduleLoss = await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.update'").bind(scheduled.item.id).first();
     expect(auditAfterScheduleLoss).toEqual({ count: 0 });
@@ -156,14 +156,14 @@ describe("saveProjectSubtask command boundary", () => {
     const item = await createDueItem();
     const itemCalls = { count: 0 };
     const itemDb = faultDb(async (db) => { await db.prepare("UPDATE project_subtasks SET title = 'Authoritative title' WHERE id = ?").bind(item.item.id).run(); }, itemCalls);
-    const itemLost = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: item.item.id, itemPatch: { title: "Losing title" }, scheduleRequest: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-01" } } } }, { env: { ...baseEnv, DB: itemDb } }));
+    const itemLost = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: item.item.id, itemPatch: { title: "Losing title" }, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-01" } } } }, { env: { ...baseEnv, DB: itemDb } }));
     expect(itemLost.outcome).toBe("item_conflict"); if (itemLost.outcome === "item_conflict") expect(itemLost.currentSubtask.title).toBe("Authoritative title"); expect(itemCalls.count).toBe(1);
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.update'").bind(item.item.id).first()).toEqual({ count: 0 });
   });
 
   it("fences every schedule column and leaves the losing writer footprint empty", async () => {
     const axes: Array<[string, string]> = [
-      ["due_date", "'2027-01-02'"], ["schedule_start_kind", "'date'"], ["schedule_start_civil", "'2027-01-01'"],
+      ["due_date", "'2027-01-02'"], ["schedule_start_kind", "'timed'"], ["schedule_start_civil", "'2027-01-01'"],
       ["schedule_start_at", "1"], ["schedule_start_utc_offset_minutes", "601"], ["schedule_start_fold", "1"],
       ["schedule_end_kind", "'timed'"], ["schedule_end_at", "1"], ["schedule_end_utc_offset_minutes", "601"],
       ["schedule_end_fold", "1"], ["schedule_zone", "NULL"],
@@ -175,7 +175,7 @@ describe("saveProjectSubtask command boundary", () => {
       const beforeOutbox = (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
       const calls = { count: 0 };
       const db = faultDb(async (databaseForFault) => { await databaseForFault.prepare(`UPDATE project_subtasks SET ${column} = ${value} WHERE id = ?`).bind(created.item.id).run(); }, calls);
-      const result = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: db } }));
+      const result = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: db } }));
       expect(result.outcome, column).toBe("schedule_conflict"); expect(calls.count, column).toBe(1);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(created.item.id).first<{ count: number }>())!.count).toBe(beforeAudit);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeActivity);
@@ -185,11 +185,33 @@ describe("saveProjectSubtask command boundary", () => {
 
   it("returns zero, one, or two committed publication IDs from the corresponding bundles", async () => {
     const created = await createDueItem();
-    const noop = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-01" } } } }));
+    const noop = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-01" } } } }));
     expect(noop.outcome).toBe("noop"); if (noop.outcome === "noop") expect(noop.broadPublicationIds).toEqual([]);
     const one = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, itemPatch: { title: "Item bundle" } }));
     expect(one.outcome).toBe("updated"); if (one.outcome === "updated") { expect(one.broadPublicationIds).toHaveLength(1); for (const id of one.broadPublicationIds) expect(await database.DB.prepare("SELECT id FROM notification_outbox WHERE id = ?").bind(id).first()).toEqual({ id }); }
-    const two = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, itemPatch: { done: true }, scheduleRequest: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-02" } } } }));
+    const two = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, itemPatch: { done: true }, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-02" } } } }));
     expect(two.outcome).toBe("updated"); if (two.outcome === "updated") { expect(two.broadPublicationIds).toHaveLength(2); for (const id of two.broadPublicationIds) expect(await database.DB.prepare("SELECT id FROM notification_outbox WHERE id = ?").bind(id).first()).toEqual({ id }); }
+  });
+
+  it("rejects a non-range schedule from a direct caller and writes nothing (the route schema is not the only fence)", async () => {
+    const rows = async () => (await database.DB.prepare("SELECT count(*) AS count FROM project_subtasks WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
+    const audits = async () => (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action LIKE 'project_subtask.%'").first<{ count: number }>())!.count;
+    const rowsBefore = await rows(); const auditsBefore = await audits();
+    const dueOnly = { state: "due_only", end: { kind: "date", localCivil: "2027-01-01" } } as const;
+    for (const schedule of [dueOnly, { state: "unscheduled" } as const]) {
+      const created = await saveProjectSubtask(commandInput(commandProjectId, { kind: "create", item: { title: "Direct legacy create" }, schedule }));
+      expect(created).toMatchObject({ outcome: "invalid_request", status: 400, code: "subtask_schedule_range_required" });
+    }
+    expect(await rows()).toBe(rowsBefore);
+    const target = await createDueItem();
+    const beforeRow = await database.DB.prepare("SELECT due_date, schedule_version, updated_at FROM project_subtasks WHERE id = ?").bind(target.item.id).first();
+    const auditsWithTarget = await audits();
+    for (const schedule of [dueOnly, { state: "unscheduled" } as const]) {
+      const updated = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: target.item.id, scheduleRequest: { expectedVersion: 1, schedule } }));
+      expect(updated).toMatchObject({ outcome: "invalid_request", status: 400, code: "subtask_schedule_range_required" });
+    }
+    expect(await database.DB.prepare("SELECT due_date, schedule_version, updated_at FROM project_subtasks WHERE id = ?").bind(target.item.id).first()).toEqual(beforeRow);
+    expect(await audits()).toBe(auditsWithTarget);
+    expect(auditsBefore).toBeLessThanOrEqual(auditsWithTarget);
   });
 });

@@ -648,7 +648,7 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(unscheduledEntry.id.startsWith("checklist:")).toBe(true);
 
     const rawPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${scheduledEvent.id}`, tokens.admin, {
-      schedule: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } },
+      schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } },
     });
     expect(rawPatch.status).toBe(400);
     await expect(rawPatch.json()).resolves.toMatchObject({ error: "Invalid project or subtask id" });
@@ -656,13 +656,13 @@ describe("TB5C production Calendar range endpoint", () => {
     const unwrappedId = subtaskIdFromCalendarEntityId(scheduledEvent.id);
     expect(unwrappedId).not.toBeNull();
     const unwrappedPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unwrappedId}`, tokens.admin, {
-      schedule: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } },
+      schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } },
     });
     expect(unwrappedPatch.status).toBe(200);
-    await expect(unwrappedPatch.json()).resolves.toMatchObject({ schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } });
+    await expect(unwrappedPatch.json()).resolves.toMatchObject({ schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } });
 
     const rawUnscheduledPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unscheduledEntry.id}`, tokens.admin, {
-      schedule: { expectedVersion: 0, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } } },
+      schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } } },
     });
     expect(rawUnscheduledPatch.status).toBe(400);
     await expect(rawUnscheduledPatch.json()).resolves.toMatchObject({ error: "Invalid project or subtask id" });
@@ -670,10 +670,10 @@ describe("TB5C production Calendar range endpoint", () => {
     const unwrappedUnscheduledId = subtaskIdFromCalendarEntityId(unscheduledEntry.id);
     expect(unwrappedUnscheduledId).not.toBeNull();
     const unwrappedUnscheduledPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unwrappedUnscheduledId}`, tokens.admin, {
-      schedule: { expectedVersion: 0, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } } },
+      schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } } },
     });
     expect(unwrappedUnscheduledPatch.status).toBe(200);
-    await expect(unwrappedUnscheduledPatch.json()).resolves.toMatchObject({ schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } } });
+    await expect(unwrappedUnscheduledPatch.json()).resolves.toMatchObject({ schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } } });
   });
 });
 

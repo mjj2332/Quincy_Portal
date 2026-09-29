@@ -4295,3 +4295,15 @@ freezing the whole Board.
   TanStack upgrade that renames it fails a test rather than the phone layout. Do not "fix" this with
   a `scrollRestoration` function: a truthy option also turns on the scroll cache and sets
   `history.scrollRestoration = "manual"`.
+
+### An API narrowing lands before its data backfill (#340, ADR 0011)
+
+- **What happened:** #340 made the Subtask create/update API accept only a range, while about 13 production rows are
+  still unscheduled or due-only until the #341 backfill. The calendar's diamond move, Unscheduled drop and undo-to-legacy
+  gestures still send due-only or unscheduled payloads (`production-calendar.ts` `checklistMoveSchedule`, the month drop,
+  `scheduling-undo.ts`), so on those legacy rows they now get a 400.
+- **Behaviour to expect:** the zod `.strict()` 400 body is `{ error: "Invalid input", details }` with no `code`, so
+  `classifyChecklistFailure` returns null and the generic failure path rolls the optimistic move back and announces the
+  failure. `ProductionEventCalendar-unscheduled.dom.test.tsx` pins that. No data changes.
+- **Rule:** do not rewrite those mappers in the interim: #342 deletes them. Run #341 right after deploy. Both editors
+  still convert a legacy row: they seed a one-day range for the user to confirm (`oneDaySubtaskRange`).

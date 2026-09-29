@@ -1,8 +1,8 @@
-import type { ChecklistScheduleEndpointInput, InitialChecklistScheduleInput } from "./checklist-schedule";
+import type { ChecklistScheduleEndpointInput, RangeChecklistScheduleInput } from "./checklist-schedule";
 import { isChecklistCivilMinute } from "./checklist-schedule";
 import { formatSydneyCivilMinute, isSydneyCalendarDate, resolveSydneyCivilMinute } from "./sydney-civil-time";
 
-export type DefaultSubtaskRange = Extract<InitialChecklistScheduleInput, { state: "range" }>;
+export type DefaultSubtaskRange = RangeChecklistScheduleInput;
 
 export type DefaultSubtaskRangeInput = {
   /** Raw Project shoot date (free text). Used only when it is a canonical YYYY-MM-DD date. */
@@ -34,11 +34,27 @@ function timedRange(startDate: string, end: Extract<ChecklistScheduleEndpointInp
   if (resolvedStart.value.epochMs < resolvedEnd.value.epochMs) {
     return { state: "range", start: { kind: "timed", localCivil: `${startDate}T00:00` }, end };
   }
-  // Inverted: one day ending on the due. A due exactly at 00:00 starts on the preceding day so that start < end.
+  return oneDayTimedRange(end);
+}
+
+function oneDayTimedRange(end: Extract<ChecklistScheduleEndpointInput, { kind: "timed" }>): DefaultSubtaskRange | null {
+  const resolvedEnd = resolveSydneyCivilMinute(end.localCivil, end.disambiguation);
+  if (!resolvedEnd.ok || !isChecklistCivilMinute(end.localCivil)) return null;
+  // One day ending on the due. A due exactly at 00:00 starts on the preceding day so that start < end.
   const dueDate = end.localCivil.slice(0, 10);
   const collapsed = resolveSydneyCivilMinute(`${dueDate}T00:00`, "earlier");
   const startCivil = collapsed.ok && collapsed.value.epochMs < resolvedEnd.value.epochMs ? `${dueDate}T00:00` : `${previousDay(dueDate)}T00:00`;
   return { state: "range", start: { kind: "timed", localCivil: startCivil }, end };
+}
+
+/**
+ * A one-day range ending on `end` (ADR 0011): the seed an editor offers for a legacy due-only row.
+ * A date end gives start = end. A timed end starts at 00:00 that day (the previous day when the end is exactly 00:00).
+ * Returns null when the end cannot be resolved, so a caller seeds blank fields rather than garbage.
+ */
+export function oneDaySubtaskRange(end: ChecklistScheduleEndpointInput): RangeChecklistScheduleInput | null {
+  if (end.kind === "date") return isSydneyCalendarDate(end.localCivil) ? dateRange(end.localCivil, end.localCivil) : null;
+  return oneDayTimedRange(end);
 }
 
 /**

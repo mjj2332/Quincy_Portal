@@ -22,6 +22,7 @@ import {
   type ProductionCalendarRangeResponse,
   type SaveChecklistScheduleRequest,
   type SaveProjectDeadlineRequest,
+  oneDaySubtaskRange,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
 import type { ChecklistMutationResult, SaveResponse } from "./scheduling-types";
@@ -1275,8 +1276,10 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
   const openUnscheduledChecklistScheduleEditor = useCallback((entry: ChecklistCalendarUnscheduledEntryDto) => {
+    // A one-day range on the placement date, for the user to confirm (ADR 0011: every Subtask has a range).
+    const placementDate = portRef.current.defaultPlacementDate();
     const initialSchedule: InitialChecklistScheduleInput | undefined = entry.reason === "unscheduled"
-      ? { state: "due_only", end: { kind: "date", localCivil: portRef.current.defaultPlacementDate() } }
+      ? oneDaySubtaskRange({ kind: "date", localCivil: placementDate }) ?? undefined
       : undefined;
     openChecklistScheduleEditor(entry, initialSchedule);
   }, [openChecklistScheduleEditor]);
