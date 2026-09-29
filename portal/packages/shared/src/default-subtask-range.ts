@@ -1,5 +1,5 @@
 import type { ChecklistScheduleEndpointInput, InitialChecklistScheduleInput } from "./checklist-schedule";
-import { isChecklistCalendarDate, isChecklistCivilMinute } from "./checklist-schedule";
+import { isChecklistCivilMinute } from "./checklist-schedule";
 import { formatSydneyCivilMinute, isSydneyCalendarDate, resolveSydneyCivilMinute } from "./sydney-civil-time";
 
 export type DefaultSubtaskRange = Extract<InitialChecklistScheduleInput, { state: "range" }>;
@@ -56,7 +56,7 @@ export function defaultSubtaskRange(input: DefaultSubtaskRangeInput): DefaultSub
   }
 
   const existing = input.existingDueEnd;
-  if (existing?.kind === "date" && isChecklistCalendarDate(existing.localCivil)) return dateRange(startDate, existing.localCivil);
+  if (existing?.kind === "date" && isSydneyCalendarDate(existing.localCivil)) return dateRange(startDate, existing.localCivil);
   if (existing?.kind === "timed") {
     const range = timedRange(startDate, existing);
     if (range) return range;

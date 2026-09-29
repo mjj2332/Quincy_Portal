@@ -21,6 +21,7 @@ import { auditMeta } from "./audit";
 import { newId } from "./ids";
 import { notifySubtaskAssignee } from "./notifications";
 import { projectMentionableUsers } from "./project-collaboration";
+import { effectiveDeadlineLocalCivil } from "./project-deadline";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
 
 export const POSITION_STEP = 1024;
@@ -233,10 +234,9 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (operation.schedule && operation.legacyDueDate !== undefined) return invalidRequest("subtask_schedule_inputs_conflict", "Choose either schedule or dueDate, not both.");
     const legacyDueDateRequested = operation.legacyDueDate !== undefined;
     // No range given: copy the Project's shoot date to Deadline once (ADR 0011). The copy is the Subtask's own afterwards.
-    // A Deadline counts only while deadline_at is set, as everywhere else that reads deadline_local_civil.
     const requested = legacyDueDateRequested ? null : operation.schedule ?? defaultSubtaskRange({
       shootDate: project.shootDate,
-      deadlineLocalCivil: project.deadlineAt === null ? null : project.deadlineLocalCivil,
+      deadlineLocalCivil: effectiveDeadlineLocalCivil(project),
       projectCreatedAt: project.createdAt.getTime(),
     });
     const assigneeId = operation.item.assigneeId ?? null;

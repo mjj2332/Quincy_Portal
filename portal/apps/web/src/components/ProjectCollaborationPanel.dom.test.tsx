@@ -401,7 +401,7 @@ describe("ProjectCollaborationPanel", () => {
     await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
     const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
     for (const label of ["Schedule for new subtask", "Assignee for new subtask"] as const) {
-      const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!; await click(trigger);
+      const trigger = host.querySelector<HTMLButtonElement>(`[aria-label^="${label}"]`)!; await click(trigger);
       await dispatchEscape(label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger);
       expect(document.getElementById(`subtask-popover-composer-${label.startsWith("Schedule") ? "schedule" : "assignee"}`)).toBeNull();
       expect(host.querySelector(`#subtask-composer-${projectId}`)).toBe(composer);
