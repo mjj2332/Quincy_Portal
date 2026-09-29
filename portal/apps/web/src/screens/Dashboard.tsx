@@ -84,6 +84,26 @@ type ProjectScope = "active" | "archived";
 type BoardOverlay = { key: string; baseline: ProjectSummary[]; model: ProjectSummary[]; movingProjectId: string };
 type FocusRestore = { key: string | null; x: number; y: number; fallbackStageKey?: StageKey };
 type MovementRecovery = { model: BoardModel; projectId: string; project: ProjectSummary; settledStageKey: StageKey };
+// #232: the priority a project should DISPLAY while the snapshot it renders from lags behind. The
+// accept effect deliberately defers while a priority POST is pending, so without this the control
+// shows the old value for the whole round trip. "pending" is the click's value (and the confirmed
+// entry it replaced, restored if the POST fails). "confirmed" outlives the POST: it stays until
+// `acceptDashboardProjects` takes a fetch at least as new as the confirmation, since a priority
+// write does not bump `board_revision` and so revision alone cannot say when the base caught up.
+type ConfirmedPriority = { phase: "confirmed"; priority: number | null; boardRevision: number; confirmedAt: number };
+type PriorityOverlayEntry = { phase: "pending"; priority: number | null; prior?: ConfirmedPriority } | ConfirmedPriority;
+
+function applyPriorityOverlay(base: ProjectSummary[], overlay: ReadonlyMap<string, PriorityOverlayEntry>): ProjectSummary[] {
+  if (overlay.size === 0) return base;
+  return base.map((project) => {
+    const entry = overlay.get(project.id);
+    if (!entry || entry.priority === project.priority) return project;
+    // Same freshness rule `applyConfirmed` uses: a base row already newer than the confirmation wins.
+    if (entry.phase === "confirmed" && project.boardRevision > entry.boardRevision) return project;
+    return { ...project, priority: entry.priority };
+  });
+}
+
 const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
 
@@ -290,6 +310,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const [pendingMoves, setPendingMoves] = useState<Set<string>>(new Set());
   const [pendingOrdering, setPendingOrdering] = useState<Set<string>>(new Set());
   const [boardOverlay, setBoardOverlay] = useState<BoardOverlay | null>(null);
+  const [priorityOverlay, setPriorityOverlay] = useState<ReadonlyMap<string, PriorityOverlayEntry>>(() => new Map());
   const [movementSettlePending, setMovementSettlePending] = useState(false);
   const [calendarInteractionBlocked, setCalendarInteractionBlocked] = useState(false);
   const [calendarSettle, setCalendarSettle] = useState<CalendarSettleState>({ pending: false, recoveryReason: null });
@@ -421,11 +442,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // same tick), which a bare-timestamp dedupe would confuse for "already accepted", silently
   // dropping a genuinely new key's own first-ever result.
   const lastAcceptedResultRef = useRef<{ key: string; updatedAt: number } | null>(null);
-  const projects = boardOverlay?.key === dashboardKeyString
+  const baseProjects = boardOverlay?.key === dashboardKeyString
     ? boardOverlay.model
     : acceptedProjects?.key === dashboardKeyString
       ? acceptedProjects.projects
       : queryProjects ?? [];
+  // #232: over whichever base wins, including a Board move's overlay -- Priority stays editable
+  // while a move is pending.
+  const projects = useMemo(() => applyPriorityOverlay(baseProjects, priorityOverlay), [baseProjects, priorityOverlay]);
   const boardContractEnabled = projects.some((project) => project.boardContractEnabled === true);
   const hasAuthorizedBoardMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
   const effectiveKanbanSort: KanbanSortMode = !canPrioritize && kanbanSort === "priority" ? "board" : kanbanSort;
@@ -719,7 +743,18 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     const lastAccepted = lastAcceptedResultRef.current;
     if (dataUpdatedAt !== undefined && lastAccepted !== null && lastAccepted.key === dashboardKeyString && lastAccepted.updatedAt === dataUpdatedAt) return;
     const safeProjects = queryRuntime ? next.filter((project) => !queryRuntime.isProjectRemoved(project.id)) : next;
-    if (dataUpdatedAt !== undefined) lastAcceptedResultRef.current = { key: dashboardKeyString, updatedAt: dataUpdatedAt };
+    if (dataUpdatedAt !== undefined) {
+      lastAcceptedResultRef.current = { key: dashboardKeyString, updatedAt: dataUpdatedAt };
+      // #232: a fetch no older than a confirmation already carries it (or something newer, such as
+      // another user's later edit), so that confirmed entry has done its job.
+      setPriorityOverlay((current) => {
+        const stale = [...current].filter(([, entry]) => entry.phase === "confirmed" && entry.confirmedAt <= dataUpdatedAt);
+        if (stale.length === 0) return current;
+        const next = new Map(current);
+        for (const [id] of stale) next.delete(id);
+        return next;
+      });
+    }
     if (safeProjects.every((project) => project.boardContractEnabled !== false)) setBoardUnavailableReason(null);
     replaceAcceptedProjects(safeProjects);
   }, [dashboardKeyString, queryRuntime, replaceAcceptedProjects]);
@@ -874,6 +909,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       setBoardInteraction({ activeId: undefined, proposal: null });
       setPendingMoves(new Set());
       setPendingOrdering(new Set());
+      setPriorityOverlay(new Map());
       setAnnouncement("");
       setAcceptedProjects((current) => current?.key === dashboardKeyString && current.projects.length === 0 ? current : { key: dashboardKeyString, projects: [] });
       return;
@@ -891,6 +927,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setBoardInteraction({ activeId: undefined, proposal: null });
     setPendingMoves(new Set());
     setPendingOrdering(new Set());
+    setPriorityOverlay(new Map());
     setAnnouncement("");
     if (!current) return;
     const filtered = current.filter((project) => !queryRuntime.isProjectRemoved(project.id));
@@ -909,6 +946,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     setBoardInteraction({ activeId: undefined, proposal: null });
     setPendingMoves(new Set());
     setPendingOrdering(new Set());
+    setPriorityOverlay(new Map());
     setAnnouncement("");
     setAcceptedProjects({ key: dashboardKeyString, projects: [] });
   }, [dashboardKeyString, projectsQuery.error]);
@@ -1264,9 +1302,23 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   async function setProjectPriority(project: ProjectSummary, priority: number | null) {
     if (pendingOrdering.has(project.id)) return;
     updateProjects((current) => current.map((item) => item.id === project.id ? { ...item, priority } : item));
+    // #232: the cache write above is not what renders -- this is. See `PriorityOverlayEntry`.
+    setPriorityOverlay((current) => {
+      const prior = current.get(project.id);
+      return new Map(current).set(project.id, { phase: "pending", priority, prior: prior?.phase === "confirmed" ? prior : undefined });
+    });
     setPendingOrdering((current) => new Set(current).add(project.id));
     try {
       const response = await apiPost<{ priority: number | null; boardRevision: number }, { priority: number | null }>(`/api/projects/${project.id}/priority`, { priority });
+      // Taken before the fan-out and refresh below, so the follow-up refetch's `dataUpdatedAt` is
+      // never older than it.
+      const confirmedAt = Date.now();
+      // Only a still-pending entry is promoted: a reset while the POST was in flight emptied the
+      // overlay on purpose, and a late response must not put the value back.
+      setPriorityOverlay((current) => {
+        if (current.get(project.id)?.phase !== "pending") return current;
+        return new Map(current).set(project.id, { phase: "confirmed", priority: response.priority, boardRevision: response.boardRevision, confirmedAt });
+      });
       // The fan-out below opens two races once it lands in a SIBLING entry no observer is currently
       // reading -- (A) a sibling's own refetch that started BEFORE this POST resolving AFTER the
       // fan-out write and putting the stale value back, (B) this response being older than a
@@ -1311,11 +1363,23 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 503 && reason.details && typeof reason.details === "object" && ((reason.details as { code?: unknown }).code === "board_contract_disabled" || (reason.details as { code?: unknown }).code === "board_schema_maintenance")) setBoardUnavailableReason("Board interactions are temporarily unavailable while the Board is being updated.");
       updateProjects((current) => current.map((item) => item.id === project.id && item.priority === priority ? { ...item, priority: project.priority } : item));
+      // Back to the last confirmed value if an earlier edit's is still showing, else to the base.
+      setPriorityOverlay((current) => {
+        const entry = current.get(project.id);
+        if (entry?.phase !== "pending") return current;
+        const next = new Map(current);
+        if (entry.prior) next.set(project.id, entry.prior);
+        else next.delete(project.id);
+        return next;
+      });
       queueDashboardRefresh();
       // One string for both: the toast is silenced as `announcedElsewhere`, so whatever the live region
       // says is all a screen-reader user gets. Speaking a generic line while the silent toast shows the
       // specific reason would withhold the reason from them alone.
-      const priorityFailure = reason instanceof Error ? reason.message : "The project priority could not be updated.";
+      // Names the project: the toast sits far from the card whose stars just snapped back (#232).
+      // Server reasons end in any punctuation or none (the 409 has none); the sentence ends in one stop.
+      const failureReason = (reason instanceof Error ? reason.message : "the request failed").trim().replace(/[.!?]+$/, "");
+      const priorityFailure = `Priority for ${project.street} was not saved: ${failureReason}.`;
       setAnnouncement(priorityFailure);
       toast(priorityFailure, "error", { announcedElsewhere: true });
     } finally {

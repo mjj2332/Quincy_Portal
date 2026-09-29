@@ -131,12 +131,10 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
   // cache entry from a real fetch), THEN commits the search through `locationStore().replace`, the
   // same URL-write path `ShellSearch`'s own commit uses, mirrored with
   // `syncDashboardSearchDraftFromLocation` the way `lib/app-router.tsx`'s `ShellRoute` calls it on
-  // every location change. Waits on `getQueryData`, not the rendered `<select>`: the render reads
-  // the `acceptedProjects` SNAPSHOT (Dashboard.tsx ~:370), gated behind `interactionBlocked`
-  // (~:354, includes `pendingOrdering.size > 0`) -- a snapshot the accept effect will not update
-  // while a mutation is in flight, on main today, searched or not (a separate, pre-existing
-  // behaviour, not this cache-key bug -- see this file's own (a)/(c) history and the step-6 lessons
-  // entry). `getQueryData` reads the react-query cache directly and is unaffected by that gate.
+  // every location change. Waits on `getQueryData`, not the rendered `<select>`: these tests pin the
+  // CACHE write contract, and since #232 the rendered control shows the priority overlay, which
+  // would read "2" whichever cache entry the write landed in. The rendered control has its own
+  // tests at the end of this file.
   async function renderUnfilteredThenSearch() {
     window.history.replaceState(null, "", "/");
     await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
@@ -166,12 +164,10 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     return { settle: (value: { priority: number; boardRevision: number }) => settle(value), fail: (reason: unknown) => fail(reason) };
   }
 
-  // Rescoped by the coordinator: the original (a) asserted on the rendered `<select>` "immediately"
-  // showing the optimistic value, which cannot happen on main regardless of this bug (see this
-  // block's shared `renderUnfilteredThenSearch` docblock) -- filed as its own, separate issue. This
-  // now asserts the EXACT-KEY write contract instead: the q-aware entry gets the optimistic value,
-  // and the q-less entry (loaded first, real data, not absent) is untouched while the POST is
-  // pending.
+  // Asserts the EXACT-KEY write contract, not the rendered `<select>` (see this block's shared
+  // `renderUnfilteredThenSearch` docblock; the rendered value is #232's, tested at the end of this
+  // file): the q-aware entry gets the optimistic value, and the q-less entry (loaded first, real
+  // data, not absent) is untouched while the POST is pending.
   it("(a) an optimistic priority change at /?q=... writes the q-aware cache entry only -- the q-less entry (loaded first) is untouched while the POST is pending", async () => {
     deferredPost();
     const select = await renderUnfilteredThenSearch();
@@ -198,8 +194,8 @@ describe("Dashboard optimistic writes target the searched cache entry (#230)", (
     expect(cached?.find((entry) => entry.id === searchedProject.id)?.priority).toBe(2);
   });
 
-  // Rescoped by the coordinator the same way (a) was -- the rendered `<select>` cannot observe this
-  // either, for the same `acceptedProjects`-snapshot reason. Asserts the cache directly: the q-aware
+  // Cache contract again, the same way (a) is -- the rendered `<select>` shows the #232 overlay
+  // whichever entry was written. Asserts the cache directly: the q-aware
   // entry holds the new value while pending and rolls back to the old one on rejection; the q-less
   // entry (loaded first) never changes at any point.
   it("(c) a rejected priority POST at /?q=... rolls back the q-aware entry only -- the q-less entry (loaded first) never changes", async () => {
@@ -881,7 +877,7 @@ describe("lastAcceptedResultRef dedupes by key AND updatedAt, not updatedAt alon
     });
 
     // Fixed: B was accepted above, so its accepted snapshot survives this cache eviction + failed
-    // refetch the same way #232 documents Dashboard rendering an accepted snapshot, not the cache --
+    // refetch because Dashboard renders its accepted snapshot, not the cache --
     // Beta's own (accepted) row still renders, no error. Buggy: B was NEVER accepted (deduped away
     // by the colliding millisecond), so once its own cache is ALSO gone, nothing is left to fall
     // back on -- the error state shows instead, exactly as an un-accepted, data-less key does in
@@ -957,5 +953,131 @@ describe("updateProjects never manufactures an entry for a key removed while a s
     const post = await clickPriorityThenEvictOrigin();
     await act(async () => { post.settle({ priority: 2, boardRevision: 2 }); await flush(); });
     expect(queryClient.getQueryState(originKey)).toBeUndefined();
+  });
+});
+
+// #232. The list renders the `acceptedProjects` snapshot, whose accept effect defers while
+// `pendingOrdering` is non-empty -- so the optimistic cache write alone never reached the control.
+// These assert on the RENDERED control, not the cache: that is the whole bug.
+describe("an optimistic priority change is rendered while its POST is pending (#232)", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // A priority write never bumps `board_revision` (workers/app/src/routes/projects.ts), so every
+  // response and refetched row here keeps the fixture's revision 1, as the real server does.
+  function heldPost() {
+    let settle!: (value: { priority: number; boardRevision: number }) => void;
+    let fail!: (reason: unknown) => void;
+    apiPostMock.mockReset().mockImplementation(() => new Promise((resolve, reject) => { settle = resolve; fail = reject; }));
+    return { settle: (value: { priority: number; boardRevision: number }) => settle(value), fail: (reason: unknown) => fail(reason) };
+  }
+
+  async function renderAndChooseTwo() {
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await vi.waitFor(() => expect(host.querySelector('select[aria-label="Priority"]')).not.toBeNull());
+    await flush();
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+    expect(select.value).toBe("1");
+    await act(async () => { select.value = "2"; select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await flush();
+    return () => host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!.value;
+  }
+
+  it("shows the new priority while the POST is still in flight", async () => {
+    heldPost();
+    const value = await renderAndChooseTwo();
+    expect(apiPostMock).toHaveBeenCalledTimes(1);
+    expect(value()).toBe("2");
+  });
+
+  it("keeps the confirmed priority between the POST resolving and the follow-up refetch landing -- no revert to the old value", async () => {
+    const post = heldPost();
+    const value = await renderAndChooseTwo();
+    let releaseGet!: () => void;
+    apiGetMock.mockImplementation(() => new Promise((resolve) => { releaseGet = () => resolve({ projects: [{ ...project, priority: 2, boardRevision: 1 }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } }); }));
+    const getsBefore = apiGetMock.mock.calls.length;
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
+    await flush();
+    expect(apiGetMock.mock.calls.length).toBeGreaterThan(getsBefore);
+    expect(value()).toBe("2");
+    await act(async () => { releaseGet(); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+  });
+
+  it("reverts to the old priority when the POST is rejected", async () => {
+    const post = heldPost();
+    const value = await renderAndChooseTwo();
+    expect(value()).toBe("2");
+    await act(async () => { post.fail(new Error("Offline!")); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("1");
+    // The revert is visible on the card, so the message names which project's change was lost.
+    // Server reasons end in any punctuation or none; the sentence always ends in exactly one stop.
+    expect(document.body.textContent).toContain("Priority for 1 Priority Street was not saved: Offline.");
+    expect(document.body.textContent).not.toContain("Offline!");
+  });
+
+  function boardWith(priority: number) {
+    return { projects: [{ ...project, priority, boardRevision: 1 }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } };
+  }
+
+  it("keeps the confirmed priority when the follow-up refetch fails", async () => {
+    const post = heldPost();
+    const value = await renderAndChooseTwo();
+    apiGetMock.mockRejectedValue(new Error("Offline"));
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
+    await flush();
+    await flush();
+    expect(value()).toBe("2");
+  });
+
+  it("a fetch accepted after the confirmation wins -- another user's later priority replaces the confirmed one", async () => {
+    const post = heldPost();
+    const value = await renderAndChooseTwo();
+    apiGetMock.mockResolvedValue(boardWith(3));
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
+    await flush();
+    await vi.waitFor(() => expect(value()).toBe("3"));
+  });
+
+  // Pins the behaviour, not the `confirmedAt` comparison: that stale result is never ACCEPTED at all
+  // (the accept effect defers while blocked, and the queued `refetch()` supersedes it), which is why
+  // the prune may key on `dataUpdatedAt` at all.
+  it("a fetch already in flight when the POST confirms lands AFTER the confirmation but carries the old priority -- it never clears the confirmed value", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 1));
+    const post = heldPost();
+    const value = await renderAndChooseTwo();
+    let releaseStale!: () => void;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { releaseStale = () => resolve(boardWith(1)); }));
+    let releaseFresh!: () => void;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { releaseFresh = () => resolve(boardWith(2)); }));
+    // Started before the POST resolves, the way a window-focus refetch would be.
+    await act(async () => { void queryClient.refetchQueries({ queryKey: dashboardProjectsKey("admin-1", "admin", 0, false) }); await Promise.resolve(); });
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+    await act(async () => { releaseStale(); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+    await act(async () => { releaseFresh?.(); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+  });
+
+  it("a second edit that fails falls back to the first edit's confirmed value, not the original", async () => {
+    const first = heldPost();
+    const value = await renderAndChooseTwo();
+    apiGetMock.mockImplementation(() => new Promise(() => undefined));
+    await act(async () => { first.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+    const second = heldPost();
+    await act(async () => { const select = host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!; select.value = "3"; select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("3");
+    await act(async () => { second.fail(new Error("Offline")); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
   });
 });

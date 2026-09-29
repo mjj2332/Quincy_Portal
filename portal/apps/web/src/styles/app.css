@@ -473,6 +473,8 @@ button { font-family: var(--font-sans); }
 /* animations */
 @keyframes fade { from { opacity: 0; } }
 @keyframes slidein { from { opacity: 0; transform: translateX(20px); } }
+/* PriorityStars while a save is in flight (#232): scale only, so the star keeps its contrast. */
+@keyframes starpulse { to { transform: scale(1.2); } }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
 
 /* ---------------------------------------------------------------------

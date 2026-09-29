@@ -94,8 +94,9 @@ describe("Kanban interaction model", () => {
       project("same-priority-late", "awaiting_raw", { priority: 2, boardPosition: -999, authorizedBoardOrder: { awaiting_raw: ["priority-1", "priority-2", "same-priority-late"] } }),
       project("null-a", "awaiting_raw", { priority: null, boardPosition: 999, authorizedBoardOrder: { awaiting_raw: ["null-a", "null-b"] } }),
     ];
+    // 5 stars is the highest Priority and sorts first; unset Priority stays last.
     expect(sortKanbanProjects(priorityRows, "priority").map((row) => row.id)).toEqual([
-      "priority-1", "priority-2", "same-priority-late", "null-a", "null-b",
+      "priority-2", "same-priority-late", "priority-1", "null-a", "null-b",
     ]);
   });
 
@@ -296,8 +297,8 @@ describe("Kanban interaction model", () => {
     // "priority-first") differs from BOTH the canonical Board order ("board-first", "priority-first",
     // "date-first") and the Priority order ("priority-first", "date-first", "board-first") below — a
     // Priority-only implementation of the #83 fix would still pass without this.
-    const boardFirst = project("board-first", "raw_review", { street: "Board First", priority: 5, boardRevision: 1, shootDate: "2026-03-03" });
-    const priorityFirst = project("priority-first", "raw_review", { street: "Priority First", priority: 1, boardRevision: 2, shootDate: "2026-03-05" });
+    const boardFirst = project("board-first", "raw_review", { street: "Board First", priority: 1, boardRevision: 1, shootDate: "2026-03-03" });
+    const priorityFirst = project("priority-first", "raw_review", { street: "Priority First", priority: 5, boardRevision: 2, shootDate: "2026-03-05" });
     const dateFirst = project("date-first", "raw_review", { street: "Date First", priority: 2, boardRevision: 4, shootDate: "2026-03-01" });
     const model = board([mover, boardFirst, priorityFirst, dateFirst], {
       awaiting_raw: ["mover"],
@@ -396,8 +397,8 @@ describe("Kanban interaction model", () => {
     expect(settled.model.authorizedBoardOrder?.awaiting_raw).toEqual([]);
     expect(settled.model.projects.find((item) => item.id === "source")).toMatchObject({ stageKey: "raw_review", boardRevision: 11 });
     expect(boardOrder(settled.model)).toEqual(boardOrder(overlay));
-    // Priority sort is a local view and still tiers by Priority.
-    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review"), "priority").map((item) => item.id)).toEqual(["first", "middle", "source", "last"]);
+    // Priority sort is a local view and still tiers by Priority, highest (5 stars) first.
+    expect(sortKanbanProjects(settled.model.projects.filter((item) => item.stageKey === "raw_review"), "priority").map((item) => item.id)).toEqual(["middle", "first", "source", "last"]);
 
     const unchanged = reconcileAuthoritativeResponse(baseline, "source", { ...response, changed: false });
     expect(unchanged.model.authorizedBoardOrder?.raw_review).toEqual(["first", "source", "middle", "last"]);

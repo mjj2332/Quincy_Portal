@@ -39,7 +39,8 @@ These are distinct concepts that share a 1–5 range, a nullable "unset", and a 
 glyph. They are never the same number and never describe the same thing.
 
 **Project priority**:
-How urgently a Project should be worked, relative to other Projects. 1–5, or unset.
+How urgently a Project should be worked, relative to other Projects. 1–5, or unset; 5 stars is
+the highest priority and 1 the lowest, so the Priority sort lists 5 first and unset last.
 Set by hand; never derived. It orders Projects only in the Priority sort — a Stage's Board
 order is Board position alone, so Priority never moves a card on the Kanban (#106).
 _Avoid_: Rank, urgency, importance, weight, project rating
