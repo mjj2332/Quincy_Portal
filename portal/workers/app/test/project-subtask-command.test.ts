@@ -50,6 +50,13 @@ async function createDueItem(projectId = commandProjectId, title = `Command item
   return result;
 }
 
+async function createTimedItem(title: string) {
+  const result = await saveProjectSubtask(commandInput(commandProjectId, { kind: "create", item: { title }, schedule: { state: "range", start: { kind: "timed", localCivil: "2027-01-01T08:00" }, end: { kind: "timed", localCivil: "2027-01-01T09:30" } } }));
+  expect(result.outcome).toBe("created");
+  if (result.outcome !== "created") throw new Error("Fixture creation failed");
+  return result;
+}
+
 function faultDb(fault: (db: D1Database) => Promise<void>, calls: { count: number }) {
   let injected = false;
   return new Proxy(baseEnv.DB, {
@@ -162,26 +169,38 @@ describe("saveProjectSubtask command boundary", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.update'").bind(item.item.id).first()).toEqual({ count: 0 });
   });
 
-  const STILL_A_RANGE = new Set(["due_date", "schedule_start_civil"]);
+  // A concurrent writer can only leave the row a valid range now: the database refuses anything else (#343, ADR 0011).
+  // Every axis is a whole valid move (a partial timed edit would not resolve), so together they touch every schedule
+  // column except `schedule_zone`, which has one legal value and so cannot change to another valid one. The corrupting
+  // axes are pinned by migration-0047.test.ts.
+  const utc = (y: number, m: number, d: number, h: number, min: number) => Date.UTC(y, m - 1, d, h, min);
+  const setTimed = (startCivil: string, startAt: number, startOff: number, startFold: number, endCivil: string, endAt: number, endOff: number, endFold: number) =>
+    `schedule_start_kind = 'timed', schedule_start_civil = '${startCivil}', schedule_start_at = ${startAt}, schedule_start_utc_offset_minutes = ${startOff}, schedule_start_fold = ${startFold}, schedule_end_kind = 'timed', due_date = '${endCivil}', schedule_end_at = ${endAt}, schedule_end_utc_offset_minutes = ${endOff}, schedule_end_fold = ${endFold}`;
+  const setDate = (start: string, end: string) =>
+    `schedule_start_kind = 'date', schedule_start_civil = '${start}', schedule_start_at = NULL, schedule_start_utc_offset_minutes = NULL, schedule_start_fold = NULL, schedule_end_kind = 'date', due_date = '${end}', schedule_end_at = NULL, schedule_end_utc_offset_minutes = NULL, schedule_end_fold = NULL`;
   it("fences every schedule column and leaves the losing writer footprint empty", async () => {
-    const axes: Array<[string, string]> = [
-      ["due_date", "'2027-01-02'"], ["schedule_start_kind", "'timed'"], ["schedule_start_civil", "'2027-01-01'"],
-      ["schedule_start_at", "1"], ["schedule_start_utc_offset_minutes", "601"], ["schedule_start_fold", "1"],
-      ["schedule_end_kind", "'timed'"], ["schedule_end_at", "1"], ["schedule_end_utc_offset_minutes", "601"],
-      ["schedule_end_fold", "1"], ["schedule_zone", "NULL"],
+    const axes: Array<[string, "date" | "timed", string]> = [
+      ["date: due_date", "date", "due_date = '2027-01-02'"],
+      ["date: schedule_start_civil", "date", "schedule_start_civil = '2027-01-01'"],
+      ["date: schedule_version", "date", "schedule_version = 2"],
+      ["date to timed: kinds, instants, offsets, folds", "date", setTimed("2027-01-05T08:00", utc(2027, 1, 4, 21, 0), 660, 0, "2027-01-05T09:30", utc(2027, 1, 4, 22, 30), 660, 0)],
+      ["timed: start civil and start instant", "timed", "schedule_start_civil = '2027-01-01T07:00', schedule_start_at = " + utc(2026, 12, 31, 20, 0)],
+      ["timed: end civil (due_date) and end instant", "timed", "due_date = '2027-01-01T10:00', schedule_end_at = " + utc(2026, 12, 31, 23, 0)],
+      ["timed: start and end offsets (Sydney DST ends)", "timed", setTimed("2027-04-10T08:00", utc(2027, 4, 9, 22, 0), 600, 0, "2027-04-10T09:30", utc(2027, 4, 9, 23, 30), 600, 0)],
+      ["timed: start and end folds (the repeated hour)", "timed", setTimed("2027-04-04T02:30", utc(2027, 4, 3, 16, 30), 600, 1, "2027-04-04T02:45", utc(2027, 4, 3, 16, 45), 600, 1)],
+      ["timed to date: kinds and cleared instants, offsets, folds", "timed", setDate("2027-01-05", "2027-01-06")],
     ];
-    for (const [column, value] of axes) {
-      const created = await createDueItem(commandProjectId, `Fence ${column}`);
+    for (const [column, baseKind, assignment] of axes) {
+      const created = baseKind === "timed" ? await createTimedItem(`Fence ${column}`) : await createDueItem(commandProjectId, `Fence ${column}`);
       const beforeAudit = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(created.item.id).first<{ count: number }>())!.count;
       const beforeActivity = (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
       const beforeOutbox = (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
       const calls = { count: 0 };
-      const db = faultDb(async (databaseForFault) => { await databaseForFault.prepare(`UPDATE project_subtasks SET ${column} = ${value} WHERE id = ?`).bind(created.item.id).run(); }, calls);
-      // The concurrent writer left the row a still-valid range (only its due / start civil moved) or
-      // corrupted it (ADR 0011). A corrupt current schedule is not served as a conflict payload: the
-      // command fails loud, and the fenced UPDATE has still already lost, so the footprint is empty.
+      const db = faultDb(async (databaseForFault) => { await databaseForFault.prepare(`UPDATE project_subtasks SET ${assignment} WHERE id = ?`).bind(created.item.id).run(); }, calls);
+      // The concurrent writer moved the range (it cannot corrupt it: the database refuses that, #343), so the
+      // fenced UPDATE loses with a conflict and the footprint is empty.
       const outcome = await (async () => { try { return (await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: db } }))).outcome; } catch (error) { return error instanceof ChecklistScheduleStorageError ? "storage_error" : Promise.reject(error); } })();
-      expect(outcome, column).toBe(STILL_A_RANGE.has(column) ? "schedule_conflict" : "storage_error"); expect(calls.count, column).toBe(1);
+      expect(outcome, column).toBe("schedule_conflict"); expect(calls.count, column).toBe(1);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(created.item.id).first<{ count: number }>())!.count).toBe(beforeAudit);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeActivity);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeOutbox);

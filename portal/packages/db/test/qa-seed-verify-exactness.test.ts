@@ -132,7 +132,7 @@ describe("fix item 4 (Sol round 3, finding 3): verify derives its column set fro
 
   it("a subtask the app added to a fixture project fails verify, naming project_subtasks", () => {
     const { db, executor } = appliedDatabase([]);
-    db.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, created_by, created_at, updated_at) VALUES ('6d6d6d6d-6d6d-4d6d-8d6d-6d6d6d6d6d6d', ?, 'App-added', 0, 999999, '6b851dc8-14cf-4f90-bd29-ce6c27f86385', 0, 0);")
+    db.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES ('6d6d6d6d-6d6d-4d6d-8d6d-6d6d6d6d6d6d', ?, 'App-added', 0, 999999, '2026-09-21', 'date', '2026-09-21', 'date', 'Australia/Sydney', 1, '6b851dc8-14cf-4f90-bd29-ce6c27f86385', 0, 0);")
       .run(firstFixtureProjectId(db));
     expect(verifyError(executor)).toMatch(/project_subtasks: 1 unexpected id\(s\) found, e\.g\. 6d6d6d6d-6d6d-4d6d-8d6d-6d6d6d6d6d6d/);
     db.close();

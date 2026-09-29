@@ -73,7 +73,7 @@ async function insertMember(projectId: string, userId: string, roleOnProject: "e
 }
 
 async function insertSubtask(projectId: string, title: string): Promise<void> {
-  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 0, ?, ?, ?)")
+  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
     .bind(crypto.randomUUID(), projectId, title, adminId, Date.now(), Date.now()).run();
 }
 

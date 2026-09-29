@@ -51,15 +51,45 @@ describe("project subtasks API", () => {
     expect(stale.status).toBe(409); expect(await stale.json()).toMatchObject({ code: "subtask_schedule_version_conflict", current: { state: "range", version: 1 } });
   });
 
-  it("fails loud on storage that is not a valid range: list and every write 500 with no schedule DTO, and the row is left untouched (ADR 0011)", async () => {
+  it("the database refuses a Subtask without a complete range, and accepts a valid one (#343)", async () => {
+    const insert = (id: string, cols: string, ...values: unknown[]) => database.DB.prepare(`INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, ${cols}, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D constraint', 0, 999997, 0, ${values.map(() => "?").join(", ")}, ?, ?, ?)`).bind(id, projectId, ...values, editorId, Date.now(), Date.now()).run();
+    const count = async () => (await database.DB.prepare("SELECT COUNT(*) AS n FROM project_subtasks WHERE project_id = ?").bind(projectId).first<{ n: number }>())!.n;
+    const before = await count();
+    // Unscheduled, and due-only: both are refused at the storage layer.
+    await expect(insert(crypto.randomUUID(), "schedule_version", 0)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insert(crypto.randomUUID(), "due_date, schedule_version", "2026-08-18", 1)).rejects.toThrow(/CHECK constraint failed/);
+    expect(await count()).toBe(before);
+
+    const id = crypto.randomUUID();
+    await insert(id, "due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version", "2026-08-19", "date", "2026-08-18", "date", "Australia/Sydney", 1);
+    expect(await count()).toBe(before + 1);
+    const listed = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token")).json() as { subtasks: Array<{ id: string; schedule: { state: string } }> };
+    expect(listed.subtasks.find((item) => item.id === id)?.schedule.state).toBe("range");
+
+    // Clearing one endpoint of a stored range is refused, and the row survives unchanged.
+    const stored = await database.DB.prepare("SELECT * FROM project_subtasks WHERE id = ?").bind(id).first();
+    await expect(database.DB.prepare("UPDATE project_subtasks SET due_date = NULL, schedule_end_kind = NULL WHERE id = ?").bind(id).run()).rejects.toThrow(/CHECK constraint failed/);
+    await expect(database.DB.prepare("UPDATE project_subtasks SET schedule_start_civil = NULL WHERE id = ?").bind(id).run()).rejects.toThrow(/CHECK constraint failed/);
+    expect(await database.DB.prepare("SELECT * FROM project_subtasks WHERE id = ?").bind(id).first()).toEqual(stored);
+
+    // The ordinary HTTP path still works: a create with no schedule stores a complete default range.
+    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "TB4D no schedule" });
+    expect(created.status).toBe(201);
+    const body = await created.json() as { id: string; schedule: { state: string; version: number } };
+    expect(body.schedule).toMatchObject({ state: "range", version: 1 });
+    expect(await database.DB.prepare("SELECT schedule_start_kind, schedule_end_kind, schedule_zone, due_date IS NOT NULL AS has_due FROM project_subtasks WHERE id = ?").bind(body.id).first()).toEqual({ schedule_start_kind: "date", schedule_end_kind: "date", schedule_zone: "Australia/Sydney", has_due: 1 });
+    await database.DB.prepare("DELETE FROM project_subtasks WHERE id IN (?, ?)").bind(id, body.id).run();
+  });
+
+  it("fails loud on storage that passes the range CHECK but is not a valid range: list and every write 500 with no schedule DTO, and the row is left untouched (ADR 0011)", async () => {
     const id = crypto.randomUUID(); const now = Date.now();
-    // A pre-range row: a due date only, no endpoint columns. #341/#343 make this state unreachable in production.
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D corrupt', 0, 999998, 0, '2026-08-18', ?, ?, ?)").bind(id, projectId, editorId, now, now).run();
+    // Structurally complete (so migration 0047's CHECK accepts it) but semantically invalid: 2026-02-30 is not a calendar day.
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D corrupt', 0, 999998, 0, '2026-03-01', 'date', '2026-02-30', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, projectId, editorId, now, now).run();
     const before = await database.DB.prepare("SELECT * FROM project_subtasks WHERE id = ?").bind(id).first();
     const responses = [
       await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token"),
       await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { title: "TB4D renamed" }),
-      await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } }),
+      await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } }),
     ];
     for (const response of responses) {
       expect(response.status).toBe(500);
@@ -125,8 +155,8 @@ describe("project subtasks API", () => {
   it("rejects invalid or stale reorder neighbors and rebases tied snapshots, including a 24-item checklist", async () => {
     const now = Date.now(); const guardedProject = crypto.randomUUID(); const targetId = crypto.randomUUID(); const beforeId = crypto.randomUUID(); const afterId = crypto.randomUUID(); const betweenId = crypto.randomUUID(); const otherProject = crypto.randomUUID(); const foreignId = crypto.randomUUID();
     for (const id of [guardedProject, otherProject]) await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, ?, 'editing_autohdr', 0, ?, ?)").bind(id, `Reorder ${id}`, now, now).run();
-    for (const [id, position] of [[beforeId, 1024], [afterId, 2048], [targetId, 3072], [betweenId, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, guardedProject, id, position, editorId, now, now).run();
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'foreign', 0, 1024, 0, ?, ?, ?)").bind(foreignId, otherProject, editorId, now, now).run();
+    for (const [id, position] of [[beforeId, 1024], [afterId, 2048], [targetId, 3072], [betweenId, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, guardedProject, id, position, editorId, now, now).run();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'foreign', 0, 1024, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(foreignId, otherProject, editorId, now, now).run();
     for (const body of [{ beforeId: "not-a-uuid", afterId: null }, { beforeId: 42, afterId: null }, { beforeId: null }, { beforeId: null, afterId: null, position: 1 }]) expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", body)).status).toBe(400);
     expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId: targetId, afterId })).status).toBe(400);
     expect((await request(`/api/projects/${guardedProject}/subtasks/${targetId}/reorder`, "subtasks-admin-token", "POST", { beforeId, afterId: beforeId })).status).toBe(400);
@@ -138,13 +168,13 @@ describe("project subtasks API", () => {
 
     const tiedProject = crypto.randomUUID(); const tiedBefore = "81000000-0000-4000-8000-000000000001"; const tiedAfter = "81000000-0000-4000-8000-000000000002"; const tiedTarget = "81000000-0000-4000-8000-000000000003";
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Tied rebase', 'editing_autohdr', 0, ?, ?)").bind(tiedProject, now, now).run();
-    for (const [id, position] of [[tiedBefore, 1024], [tiedAfter, 1024], [tiedTarget, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, tiedProject, id, position, editorId, now, now).run();
+    for (const [id, position] of [[tiedBefore, 1024], [tiedAfter, 1024], [tiedTarget, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, tiedProject, id, position, editorId, now, now).run();
     expect(await (await request(`/api/projects/${tiedProject}/subtasks/${tiedTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: tiedBefore, afterId: tiedAfter })).json()).toEqual({ position: 2048 });
     expect((await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(tiedProject).all()).results).toEqual([{ id: tiedBefore, position: 1024 }, { id: tiedTarget, position: 2048 }, { id: tiedAfter, position: 3072 }]);
 
     const longProject = crypto.randomUUID(); await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Long tied rebase', 'editing_autohdr', 0, ?, ?)").bind(longProject, now, now).run();
     const ids = Array.from({ length: 24 }, (_, index) => `82000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
-    for (const [index, id] of ids.entries()) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, longProject, id, index === 10 ? 10 * 1024 : (index + 1) * 1024, editorId, now, now).run();
+    for (const [index, id] of ids.entries()) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, longProject, id, index === 10 ? 10 * 1024 : (index + 1) * 1024, editorId, now, now).run();
     const longTarget = ids[23]!; const longBefore = ids[9]!; const longAfter = ids[10]!;
     expect((await request(`/api/projects/${longProject}/subtasks/${longTarget}/reorder`, "subtasks-admin-token", "POST", { beforeId: longBefore, afterId: longAfter })).status).toBe(200);
     const longRows = (await database.DB.prepare("SELECT id, position FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(longProject).all()).results as Array<{ id: string; position: number }>;
@@ -154,7 +184,7 @@ describe("project subtasks API", () => {
   it("reorders at beginning, middle, and end without restamping neighbors, auditing twice, or notifying", async () => {
     const now = 1; const ordinaryProject = crypto.randomUUID(); const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Ordinary reorders', 'editing_autohdr', 0, ?, ?)").bind(ordinaryProject, now, now).run();
-    for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
+    for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
     const assignments = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.subtask.assigned'").bind(ordinaryProject).first<{ count: number }>())!.count;
     const reorder = async (target: string, beforeId: string | null, afterId: string | null, expectedPosition: number, expectedOrder: string[]) => {
       const previous = (await database.DB.prepare("SELECT id, updated_at FROM project_subtasks WHERE project_id = ?").bind(ordinaryProject).all()).results as Array<{ id: string; updated_at: number }>;
@@ -170,7 +200,7 @@ describe("project subtasks API", () => {
   it("keeps a non-integral ordinary midpoint without rebasing its neighbors", async () => {
     const now = 1; const midpointProject = crypto.randomUUID(); const before = crypto.randomUUID(); const after = crypto.randomUUID(); const target = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Fractional midpoint', 'editing_autohdr', 0, ?, ?)").bind(midpointProject, now, now).run();
-    for (const [id, position] of [[before, 1024], [after, 1025], [target, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, midpointProject, id, position, editorId, now, now).run();
+    for (const [id, position] of [[before, 1024], [after, 1025], [target, 4096]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, midpointProject, id, position, editorId, now, now).run();
     const response = await request(`/api/projects/${midpointProject}/subtasks/${target}/reorder`, "subtasks-admin-token", "POST", { beforeId: before, afterId: after }); expect(response.status).toBe(200); expect(await response.json()).toEqual({ position: 1024.5 });
     expect(await database.DB.prepare("SELECT position FROM project_subtasks WHERE id = ?").bind(target).first()).toEqual({ position: 1024.5 });
     expect((await database.DB.prepare("SELECT id, position, updated_at FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(midpointProject).all()).results).toEqual([{ id: before, position: 1024, updated_at: now }, { id: target, position: 1024.5, updated_at: expect.any(Number) }, { id: after, position: 1025, updated_at: now }]);
@@ -297,8 +327,8 @@ describe("project subtasks API", () => {
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Assignment count race', 'editing_autohdr', ?, ?)").bind(isolatedProject, now, now).run();
     await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(cycle, isolatedProject, photographerId, now).run();
     await database.DB.batch([
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'One', 0, 1024, ?, 1, ?, ?, ?)").bind(taskOne, isolatedProject, photographerId, editorId, now, now),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two', 0, 2048, ?, 1, ?, ?, ?)").bind(taskTwo, isolatedProject, photographerId, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'One', 0, 1024, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskOne, isolatedProject, photographerId, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two', 0, 2048, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskTwo, isolatedProject, photographerId, editorId, now, now),
     ]);
     const body = { membershipCycle: cycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 };
     const first = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", body);
@@ -319,7 +349,7 @@ describe("project subtasks API", () => {
     await database.DB.batch([
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(photographerCycle, isolatedProject, editorId, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(editorCycle, isolatedProject, editorId, now),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Drifted assignment', 0, 1024, ?, 1, ?, ?, ?)").bind(taskId, isolatedProject, editorId, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Drifted assignment', 0, 1024, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskId, isolatedProject, editorId, editorId, now, now),
     ]);
     try {
       await database.DB.prepare("UPDATE user SET role = 'photographer' WHERE id = ?").bind(editorId).run();

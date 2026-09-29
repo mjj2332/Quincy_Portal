@@ -318,7 +318,7 @@ function subtaskFingerprintRow(subtask: QaFixtureDataset["subtasks"][number], cr
     schedule_start_utc_offset_minutes: s.scheduleStartUtcOffsetMinutes, schedule_start_fold: s.scheduleStartFold,
     schedule_end_kind: s.scheduleEndKind, schedule_end_at: s.scheduleEndAt, schedule_end_utc_offset_minutes: s.scheduleEndUtcOffsetMinutes,
     schedule_end_fold: s.scheduleEndFold, schedule_zone: s.scheduleZone, schedule_version: s.scheduleVersion,
-    created_by: createdBy, created_at: subtask.createdAtMs, updated_at: subtask.updatedAtMs,
+    schedule_range_required: 1, created_by: createdBy, created_at: subtask.createdAtMs, updated_at: subtask.updatedAtMs,
   };
 }
 

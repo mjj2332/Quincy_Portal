@@ -184,7 +184,7 @@ describe("notifications API and recipient selection", () => {
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Staff assigner street', 'edited_review', ?, ?)").bind(projectId, now, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, actorId, now),
       ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
     ]);
     return { projectId, actorId, assigneeId, subtaskId };
   }
@@ -492,7 +492,7 @@ describe("notification read-model enrichment", () => {
   async function makeSubtask(projectId: string, title: string, assigneeId: string | null, assignmentVersion = 1) {
     const subtaskId = crypto.randomUUID();
     const now = Date.now();
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?)")
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, ?, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
       .bind(subtaskId, projectId, title, assigneeId, assignmentVersion, admin, now, now).run();
     return subtaskId;
   }
