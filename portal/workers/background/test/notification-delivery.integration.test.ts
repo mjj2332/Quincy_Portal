@@ -427,7 +427,7 @@ describe("TB4 notification delivery Worker integration", () => {
     expect((first as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("assigned as the photographer") }));
     expect(await database.DB.prepare("SELECT type, source_key, body FROM notifications WHERE source_key = ?").bind(photographer.membershipId).first()).toMatchObject({ type: "assigned_to_project", source_key: photographer.membershipId, body: "You have been assigned as the photographer for Assignment Street." });
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: `You have been assigned as the photographer for Assignment Street.\n\nhttps://portal.test/projects/${photographer.projectId}` }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: `You have been assigned as the photographer for Assignment Street.\n\nhttps://portal.test/projects/${photographer.projectId}?collaboration=open` }));
     expect(await database.DB.prepare("SELECT status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(photographer.outboxId).all()).toMatchObject({ results: [{ status: "sent" }, { status: "sent" }] });
 
     const duplicate = message(photographer.outboxId, 1);

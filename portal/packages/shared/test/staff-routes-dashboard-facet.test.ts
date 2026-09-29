@@ -149,7 +149,7 @@ describe("Dashboard routing grammar", () => {
     expect(parseStaffLocation("/?view=unknown")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation("/admin?view=list")).toEqual({ kind: "not-found" });
     expect(parseStaffLocation(`/?${retiredProjectParameter}=${projectId}`)).toEqual({ kind: "not-found" });
-    expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, collaboration: "open" });
+    expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, arrivalTab: "collaboration" });
     expect(parseStaffLocation(`/projects/${projectId}?collaboration=closed`)).toEqual({ kind: "not-found" });
   });
 

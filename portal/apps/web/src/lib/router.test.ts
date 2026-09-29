@@ -14,8 +14,10 @@ describe("staff route contract", () => {
     expect(parseStaffPathname("/settings/notifications")).toEqual({ kind: "notifications" });
     expect(parseStaffPathname("/settings/notifications/preferences")).toEqual({ kind: "notification-preferences" });
     expect(staffPathFor({ kind: "project", projectId })).toBe(`/projects/${projectId}`);
-    expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, collaboration: "open" });
-    expect(staffPathFor({ kind: "project", projectId, collaboration: "open" })).toBe(`/projects/${projectId}?collaboration=open`);
+    expect(parseStaffLocation(`/projects/${projectId}?collaboration=open`)).toEqual({ kind: "project", projectId, arrivalTab: "collaboration" });
+    expect(staffPathFor({ kind: "project", projectId, arrivalTab: "collaboration" })).toBe(`/projects/${projectId}?collaboration=open`);
+    expect(parseStaffLocation(`/projects/${projectId}?tab=edited`)).toEqual({ kind: "project", projectId, arrivalTab: "edited" });
+    expect(staffPathFor({ kind: "project", projectId, arrivalTab: "raw" })).toBe(`/projects/${projectId}?tab=raw`);
     expect(staffPathFor({ kind: "edit-project", projectId })).toBe(`/projects/${projectId}/edit`);
     expect(staffPathFor({ kind: "notifications" })).toBe("/settings/notifications");
     expect(staffPathFor({ kind: "notification-preferences" })).toBe("/settings/notifications/preferences");
@@ -46,6 +48,10 @@ describe("staff route contract", () => {
   it("only accepts canonical pathname-only OAuth destinations", () => {
     expect(safeStaffDestination(`/projects/${projectId}/edit`)).toBe(`/projects/${projectId}/edit`);
     expect(safeStaffDestination(`/projects/${projectId}?collaboration=open`)).toBe(`/projects/${projectId}?collaboration=open`);
+    // #337: a signed-out click on a Raw/Edited notification email keeps its tab through sign-in.
+    expect(safeStaffDestination(`/projects/${projectId}?tab=edited`)).toBe(`/projects/${projectId}?tab=edited`);
+    expect(safeStaffDestination(`/projects/${projectId}?tab=raw`)).toBe(`/projects/${projectId}?tab=raw`);
+    expect(safeStaffDestination(`/projects/${projectId}?tab=collaboration`)).toBeNull();
     for (const destination of [
       "https://quincy.flamingfire.my/admin", "//attacker.example", "\\admin", "/admin?next=/api", "/admin#x",
       "/d/token", "/api/projects", "/unknown", `/projects/${projectId.toUpperCase()}`,
@@ -82,12 +88,18 @@ describe("staff route contract", () => {
   });
 
   it("projects notification destinations consistently", () => {
-    for (const type of ["mentioned", "subtask_assigned", "subtask_due_today"]) {
-      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, collaboration: "open" });
+    // #337: every declared type names its Workspace tab (the table in the issue).
+    for (const type of ["raw_ready", "sent_to_editing", "autohdr_stalled"]) {
+      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, arrivalTab: "raw" });
     }
-    for (const type of ["raw_ready", "edited_landed", "sent_to_editing", "autohdr_stalled", "delivered", "comment_added", "assigned_to_project", "other"]) {
-      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId });
+    for (const type of ["edited_landed", "delivered"]) {
+      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, arrivalTab: "edited" });
     }
+    for (const type of ["comment_added", "assigned_to_project", "mentioned", "subtask_assigned", "subtask_due_today", "project_deadline_reminder", "project_activity", "project_collaboration_activity"]) {
+      expect(projectNotificationRoute(projectId, type)).toEqual({ kind: "project", projectId, arrivalTab: "collaboration" });
+    }
+    // A stored type the app no longer declares still opens the Project, on its default tab.
+    expect(projectNotificationRoute(projectId, "other")).toEqual({ kind: "project", projectId });
     expect(projectNotificationRoute(null, "mentioned")).toBeUndefined();
     expect(projectNotificationRoute(null, "raw_ready")).toBeUndefined();
   });

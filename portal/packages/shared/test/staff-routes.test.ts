@@ -3,11 +3,13 @@ import {
   DASHBOARD_SEARCH_MAX_CHARS,
   parseStaffLocation,
   parseStaffPathname,
+  projectNotificationRoute,
   safeStaffDestination,
   staffPathFor,
   type DashboardCalendarState,
   type StaffRoute,
 } from "../src/staff-routes";
+import { NOTIFICATION_TYPES, type NotificationType } from "../src/notification-types";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
 const editorId = "11111111-1111-4111-8111-111111111111";
@@ -41,7 +43,12 @@ describe("shared staff route contract", () => {
       ["/", { kind: "dashboard" }],
       ["/projects/new", { kind: "create-project" }],
       [`/projects/${projectId}`, { kind: "project", projectId }],
-      [`/projects/${projectId}?collaboration=open`, { kind: "project", projectId, collaboration: "open" }],
+      [`/projects/${projectId}?collaboration=open`, { kind: "project", projectId, arrivalTab: "collaboration" }],
+      [`/projects/${projectId}?tab=raw`, { kind: "project", projectId, arrivalTab: "raw" }],
+      [`/projects/${projectId}?tab=edited`, { kind: "project", projectId, arrivalTab: "edited" }],
+      [`/projects/${projectId}?tab=video`, { kind: "project", projectId, arrivalTab: "video" }],
+      [`/projects/${projectId}?tab=floorplan`, { kind: "project", projectId, arrivalTab: "floorplan" }],
+      [`/projects/${projectId}?tab=copy`, { kind: "project", projectId, arrivalTab: "copy" }],
       [`/projects/${projectId}/edit`, { kind: "edit-project", projectId }],
       ["/admin", { kind: "admin" }],
       ["/notices", { kind: "notices" }],
@@ -83,6 +90,69 @@ describe("shared staff route contract", () => {
       `/projects/${projectId}?x=collaboration%3Dopen`,
       `/projects/${projectId}?collaboration=open#x`,
     ]) expect(parseStaffLocation(location)).toEqual({ kind: "not-found" });
+  });
+
+  it("#337: keeps the one-shot Workspace tab query strict", () => {
+    for (const location of [
+      // Collaboration has exactly one spelling -- `?collaboration=open` (see the pin below).
+      `/projects/${projectId}?tab=collaboration`,
+      `/projects/${projectId}?tab=RAW`,
+      `/projects/${projectId}?tab=`,
+      `/projects/${projectId}?tab`,
+      `/projects/${projectId}?tab=unknown`,
+      `/projects/${projectId}?tab=raw&tab=raw`,
+      `/projects/${projectId}?tab=raw&tab=edited`,
+      `/projects/${projectId}?tab=raw&collaboration=open`,
+      `/projects/${projectId}?collaboration=open&tab=raw`,
+      `/projects/${projectId}?tab=raw&x=1`,
+      `/projects/${projectId}?tab=raw#x`,
+      `/projects/${projectId}?x=tab%3Draw`,
+      `/projects/${projectId}?tab=%72aw`,
+      `/projects/${projectId}/edit?tab=raw`,
+      `/?tab=raw`,
+      `/admin?tab=raw`,
+    ]) {
+      expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+      expect(safeStaffDestination(location), location).toBeNull();
+    }
+  });
+
+  it("#337: a project notification links to its mapped Workspace tab", () => {
+    // Independent expectation matrix written from #337's table (not read from the implementation map).
+    const expected: Record<NotificationType, string> = {
+      raw_ready: `/projects/${projectId}?tab=raw`,
+      sent_to_editing: `/projects/${projectId}?tab=raw`,
+      autohdr_stalled: `/projects/${projectId}?tab=raw`,
+      edited_landed: `/projects/${projectId}?tab=edited`,
+      delivered: `/projects/${projectId}?tab=edited`,
+      comment_added: `/projects/${projectId}?collaboration=open`,
+      assigned_to_project: `/projects/${projectId}?collaboration=open`,
+      mentioned: `/projects/${projectId}?collaboration=open`,
+      subtask_assigned: `/projects/${projectId}?collaboration=open`,
+      subtask_due_today: `/projects/${projectId}?collaboration=open`,
+      project_deadline_reminder: `/projects/${projectId}?collaboration=open`,
+      project_activity: `/projects/${projectId}?collaboration=open`,
+      project_collaboration_activity: `/projects/${projectId}?collaboration=open`,
+    };
+    for (const type of NOTIFICATION_TYPES) {
+      const route = projectNotificationRoute(projectId, type);
+      expect(route, type).toBeDefined();
+      const path = staffPathFor(route as Exclude<StaffRoute, { kind: "not-found" } | { kind: "reserved" }>);
+      expect(path, type).toBe(expected[type]);
+      expect(safeStaffDestination(path), type).toBe(path);
+    }
+    // A stored type the app no longer declares still reaches the Project (its default tab).
+    expect(projectNotificationRoute(projectId, "some_unknown_type")).toEqual({ kind: "project", projectId });
+    expect(projectNotificationRoute(null, "raw_ready")).toBeUndefined();
+  });
+
+  it("#337: pins Collaboration's arrival spelling to `?collaboration=open`", () => {
+    // Frozen: `projectActivityDeepLink` (project-activity.ts) builds the expected deep link with
+    // `staffPathFor`, and `parseProjectActivityRow` rejects any persisted `deep_link_path` that is
+    // not byte-equal to it. Changing this output would invalidate every stored
+    // `project_collaboration` activity row and in-flight outbox payload.
+    expect(staffPathFor({ kind: "project", projectId, arrivalTab: "collaboration" })).toBe(`/projects/${projectId}?collaboration=open`);
+    expect(staffPathFor({ kind: "project", projectId })).toBe(`/projects/${projectId}`);
   });
 
   it("round-trips a minimal Calendar query with all documented defaults", () => {

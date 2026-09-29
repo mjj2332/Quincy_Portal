@@ -2,7 +2,8 @@ import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation } from "../../lib/staff-navigation";
-import { parseStaffLocation } from "../../lib/router";
+import { parseStaffLocation, staffPathFor } from "../../lib/router";
+import { NOTIFICATION_WORKSPACE_TAB, type NotificationType } from "@quincy/shared";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { NavigationRail } from "./NavigationRail";
 import { NotificationBell, alignOffsetFor, type NotificationBellProps } from "./NotificationBell";
@@ -504,11 +505,11 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.activeElement).toBe(firstItemAfter);
   });
 
-  it("links every project notification, opening collaboration only for collaboration types, then marks them read without waiting", async () => {
+  it("#337: links every project notification to its mapped Workspace tab, then marks them read without waiting", async () => {
     // The full 11-type fixture Topbar.dom.test.tsx's own version of this test used — every
     // notification type the model routes, not just a sampled subset.
     const projectId = "11111111-1111-4111-8111-111111111111";
-    apiGetMock.mockResolvedValue({ notifications: [
+    const rows = [
       notification({ id: "project-mention", projectId, type: "mentioned", title: "You were mentioned", body: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "board-mention", projectId: null, type: "mentioned", title: "You were mentioned", body: "Notice", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-subtask", projectId, type: "subtask_assigned", title: "Subtask assigned", body: "Checklist", createdAt: "2026-08-17T00:00:00.000Z" }),
@@ -520,16 +521,27 @@ describe("NotificationBell panel (Popover)", () => {
       notification({ id: "project-delivered", projectId, type: "delivered", title: "Delivered", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-comment", projectId, type: "comment_added", title: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-assigned", projectId, type: "assigned_to_project", title: "Assigned", createdAt: "2026-08-17T00:00:00.000Z" }),
-    ], unreadCount: 11 });
+    ];
+    apiGetMock.mockResolvedValue({ notifications: rows, unreadCount: 11 });
     // Held unresolved — proving the link activation navigates without waiting on the read POST.
     let resolvePost: ((value: unknown) => void) | undefined;
     apiPostMock.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
     const trigger = await renderPanel();
     await click(trigger);
-    const collabLinks = document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`);
-    expect(collabLinks).toHaveLength(3);
-    expect([...collabLinks].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned"), expect.stringContaining("Due today")]));
-    expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(7);
+    // Expectations come from the shared map, so this row set follows the table rather than copying it.
+    const expectedHrefs = rows
+      .filter((row) => row.projectId !== null)
+      .map((row) => staffPathFor({ kind: "project", projectId, arrivalTab: NOTIFICATION_WORKSPACE_TAB[row.type as NotificationType] }))
+      .sort();
+    const projectLinks = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/projects/"]')];
+    expect(projectLinks.map((link) => link.getAttribute("href")).sort()).toEqual(expectedHrefs);
+    // The three spellings the table produces for these ten rows.
+    expect(document.querySelectorAll(`a[href="/projects/${projectId}?collaboration=open"]`)).toHaveLength(5);
+    expect(document.querySelectorAll(`a[href="/projects/${projectId}?tab=raw"]`)).toHaveLength(3);
+    expect(document.querySelectorAll(`a[href="/projects/${projectId}?tab=edited"]`)).toHaveLength(2);
+    expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(0);
+    const collabLinks = [...document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`)];
+    expect(collabLinks[0]!.textContent).toContain("You were mentioned");
     const unrouted = [...document.querySelectorAll('[data-testid="rail-notification-item"][data-notification-route="none"]')];
     // The board mention has no project, so it stays a plain row — but keeps its fixed copy.
     expect(unrouted.map((row) => row.textContent)).toEqual([expect.stringContaining("You were mentioned")]);

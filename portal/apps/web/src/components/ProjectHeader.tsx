@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
@@ -154,7 +154,7 @@ export function ProjectHeader({
   onSyncDropbox,
   onActiveTabChange,
   collaborationUnread = 0,
-  collaborationTabRef,
+  workspaceTabRefs,
   onStageMove,
   stageMovePending = false,
   stageMoveDisabledReason = null,
@@ -172,7 +172,8 @@ export function ProjectHeader({
   onActiveTabChange: (tab: WorkspaceTab) => void;
   /** Unread discussion comments, shown as a badge on the Collaboration tab. */
   collaborationUnread?: number;
-  collaborationTabRef?: React.Ref<HTMLButtonElement>;
+  /** #337: each Workspace tab's trigger, keyed by tab, so an arrival can focus the tab it selected. */
+  workspaceTabRefs?: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>;
   onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void;
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
@@ -185,6 +186,22 @@ export function ProjectHeader({
   // fold (Collaboration is last and the default) would be out of view. `nearest` on both axes keeps
   // the page itself from scrolling vertically.
   const tabsRef = useRef<HTMLDivElement>(null);
+  // One stable callback per tab: a fresh ref callback every render makes Base UI's trigger re-run
+  // its own ref registration (a state update), which loops.
+  const tabRefCallbacks = useMemo(() => new Map<WorkspaceTab, (element: HTMLButtonElement | null) => void>(), [workspaceTabRefs]);
+  const tabRef = (tab: WorkspaceTab) => {
+    let callback = tabRefCallbacks.get(tab);
+    if (!callback) {
+      callback = (element) => {
+        const refs = workspaceTabRefs?.current;
+        if (!refs) return;
+        if (element) refs.set(tab, element);
+        else refs.delete(tab);
+      };
+      tabRefCallbacks.set(tab, callback);
+    }
+    return callback;
+  };
   useEffect(() => {
     const selected = tabsRef.current?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
     if (typeof selected?.scrollIntoView === "function") selected.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -240,12 +257,12 @@ export function ProjectHeader({
       <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
         <TabsList variant="line" aria-label="Workspace">
           {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
-            <TabsTrigger key={tab} value={tab} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+            <TabsTrigger key={tab} value={tab} ref={tabRef(tab)} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
               {collectionLabel(tab)}
               {/* #213: the active tab's count is the filled ink badge, the rest stay muted (prototype 2a). */}
               <Badge variant={tab === activeTab ? "default" : "primary-light"} size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
             </TabsTrigger>); })}
-          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" aria-controls="project-workspace-panel-collaboration" ref={collaborationTabRef} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" aria-controls="project-workspace-panel-collaboration" ref={tabRef("collaboration")} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
             Collaboration
             {collaborationUnread > 0 && <>
               <Badge variant="destructive" size="sm" aria-hidden="true" data-testid="project-collaboration-tab-unread">{formatUnreadCount(collaborationUnread)}</Badge>

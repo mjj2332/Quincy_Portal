@@ -27,7 +27,8 @@ _Avoid_: Comments panel, chat
 
 **Workspace tab**:
 One selectable view of a Project's workspace: each Collection, plus Project collaboration.
-Project collaboration is the tab a Project opens on.
+Project collaboration is the tab a Project opens on, unless a Notification's arrival names
+another Workspace tab (`?tab=<collection>`; Collaboration's own arrival is `?collaboration=open`).
 _Avoid_: Collection (for the Collaboration tab)
 
 **Notice board**:

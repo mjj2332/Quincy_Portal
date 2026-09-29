@@ -1042,7 +1042,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
   it("lands a collaboration=open arrival on the Collaboration tab with Discussion shown, the tab focused and the signal acknowledged", async () => {
     mockOpenProject();
     const consumed: number[] = [];
-    const ui = (signal: number) => <ProjectWorkspace projectId="p1" collaborationOpenSignal={signal} onCollaborationOpenSignalConsumed={(value) => consumed.push(value)} />;
+    const ui = (signal: number) => <ProjectWorkspace projectId="p1" arrivalSignal={signal} onArrivalConsumed={(value) => consumed.push(value)} />;
     await render(ui(1)); await flush(20);
     expect(workspaceTab(host, "Collaboration")!.getAttribute("aria-selected")).toBe("true");
     expect(subTab("Discussion").getAttribute("aria-selected")).toBe("true");
@@ -1066,6 +1066,101 @@ describe("ProjectWorkspace collaboration relocation", () => {
     expect(host.querySelector('[aria-label="Photo viewer"]')).toBeNull();
   });
 
+  describe("#337 Workspace-tab arrival", () => {
+    function mockArrivalProject(options: { editedForbidden?: boolean } = {}) {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+        if (path.includes("/assets?collection=edited")) return options.editedForbidden ? Promise.reject(new ApiError("Edited collection forbidden", 403, { capability: "viewEdited" })) : Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+        if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+        if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        if (path.includes("/links")) return Promise.resolve({ links: [] });
+        return Promise.resolve({});
+      });
+    }
+    const selectedTabs = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].filter((item) => item.getAttribute("aria-selected") === "true");
+
+    it("lands a RAW arrival on RAW, focuses it and acknowledges the signal once", async () => {
+      mockArrivalProject();
+      const consumed: number[] = [];
+      const ui = (signal: number) => <ProjectWorkspace projectId="p1" arrivalSignal={signal} arrivalTab="raw" onArrivalConsumed={(value) => consumed.push(value)} />;
+      await render(ui(1)); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "RAW")]);
+      expect(document.activeElement).toBe(workspaceTab(host, "RAW"));
+      expect(consumed).toEqual([1]);
+      await render(ui(1)); await flush(10);
+      expect(consumed).toEqual([1]);
+    });
+
+    it("lands an Edited arrival on Edited for a role that can view it, without resetting the Collaboration sub-tab", async () => {
+      mockArrivalProject();
+      const consumed: number[] = [];
+      const ui = (signal?: number) => <ProjectWorkspace projectId="p1" arrivalSignal={signal} arrivalTab="edited" onArrivalConsumed={(value) => consumed.push(value)} />;
+      await render(ui()); await flush(20);
+      await click(subTab("Activity")); await flush(4);
+      await render(ui(1)); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Edited")]);
+      expect(document.activeElement).toBe(workspaceTab(host, "Edited"));
+      expect(consumed).toEqual([1]);
+      await openTab(host, "Collaboration");
+      expect(subTab("Activity").getAttribute("aria-selected")).toBe("true");
+    });
+
+    it("falls back to Collaboration, on Discussion and focused, when the role has no Edited tab", async () => {
+      authState.role = "photographer";
+      mockArrivalProject();
+      const consumed: number[] = [];
+      await render(<ProjectWorkspace projectId="p1" arrivalSignal={1} arrivalTab="edited" onArrivalConsumed={(value) => consumed.push(value)} />); await flush(20);
+      expect(workspaceTab(host, "Edited")).toBeUndefined();
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Collaboration")]);
+      expect(subTab("Discussion").getAttribute("aria-selected")).toBe("true");
+      expect(document.activeElement).toBe(workspaceTab(host, "Collaboration"));
+      expect(consumed).toEqual([1]);
+    });
+
+    it("falls back to a Collection already denied on this mounted Project when a later arrival targets it", async () => {
+      mockArrivalProject({ editedForbidden: true });
+      const consumed: number[] = [];
+      const ui = (signal?: number) => <ProjectWorkspace projectId="p1" arrivalSignal={signal} arrivalTab="edited" onArrivalConsumed={(value) => consumed.push(value)} />;
+      await render(ui()); await flush(20);
+      await openTab(host, "Edited");
+      expect(workspaceTab(host, "Edited")).toBeUndefined();
+      await openTab(host, "RAW");
+      await render(ui(1)); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Collaboration")]);
+      expect(document.activeElement).toBe(workspaceTab(host, "Collaboration"));
+      expect(consumed).toEqual([1]);
+    });
+
+    it("ends on Collaboration when the Edited arrival's Collection is denied after it lands", async () => {
+      mockArrivalProject({ editedForbidden: true });
+      await render(<ProjectWorkspace projectId="p1" arrivalSignal={1} arrivalTab="edited" onArrivalConsumed={() => undefined} />);
+      await flushUntil(() => workspaceTab(host, "Edited") === undefined && workspaceTab(host, "Collaboration")?.getAttribute("aria-selected") === "true", "Edited denied, Collaboration selected");
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Collaboration")]);
+      expect(host.querySelector<HTMLElement>("#project-workspace-panel-collaboration")?.hidden).toBe(false);
+    });
+
+    it("never overrides later in-Project navigation with a consumed arrival, but applies a new one", async () => {
+      mockArrivalProject();
+      const consumed: number[] = [];
+      const ui = (signal: number, tab: "raw" | "edited" | "collaboration") => <ProjectWorkspace projectId="p1" arrivalSignal={signal} arrivalTab={tab} onArrivalConsumed={(value) => consumed.push(value)} />;
+      await render(ui(1, "raw")); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "RAW")]);
+      await openTab(host, "Collaboration");
+      await render(ui(1, "raw")); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Collaboration")]);
+      expect(consumed).toEqual([1]);
+      // A same-Project notification click is a fresh signal.
+      await render(ui(2, "edited")); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Edited")]);
+      expect(document.activeElement).toBe(workspaceTab(host, "Edited"));
+      expect(consumed).toEqual([1, 2]);
+    });
+  });
+
   it("acknowledges an arrival exactly once while collaboration is unavailable inside the full workspace", async () => {
     let commentsForbidden = false;
     apiGetMock.mockImplementation((path: string) => {
@@ -1078,7 +1173,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
     let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
     const consumed: number[] = [];
-    const ui = (signal?: number) => <><ProjectWorkspace projectId="p1" collaborationOpenSignal={signal} onCollaborationOpenSignalConsumed={(value) => consumed.push(value)} /><ClientCapture onClient={(client) => { queryClient = client; }} /></>;
+    const ui = (signal?: number) => <><ProjectWorkspace projectId="p1" arrivalSignal={signal} onArrivalConsumed={(value) => consumed.push(value)} /><ClientCapture onClient={(client) => { queryClient = client; }} /></>;
     await render(ui()); await flush(20);
     commentsForbidden = true;
     await queryClient!.invalidateQueries({ queryKey: projectDataKeys.comments("p1"), exact: true, refetchType: "active" }); await flush(20);
@@ -1138,7 +1233,7 @@ describe("ProjectWorkspace collaboration relocation", () => {
       return Promise.resolve({});
     });
     const consumed: number[] = [];
-    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={7} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />);
+    await render(<ProjectWorkspace projectId="p1" arrivalSignal={7} onArrivalConsumed={(signal) => consumed.push(signal)} />);
     // Deliberately over-pump first: with the gate closed the detail 403 has certainly settled, so
     // this asserts the stronger property — while the probe is in flight the screen holds the
     // loading state and never flashes the terminal error — instead of whatever was on screen at
@@ -1243,11 +1338,11 @@ describe("ProjectWorkspace collaboration relocation", () => {
       ? Promise.reject(new ApiError("Forbidden", 403))
       : path.includes("/collaboration-summary") ? Promise.resolve(collaborationSummaryFixture())
       : path.includes("comments?limit=50") ? Promise.reject(new ApiError("Forbidden", 403)) : Promise.resolve({}));
-    await render(<ProjectWorkspace projectId="p1" collaborationOpenSignal={11} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    await render(<ProjectWorkspace projectId="p1" arrivalSignal={11} onArrivalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(host.textContent).toContain("Collaboration unavailable."); expect(collaborationUnavailableSection(host)).not.toBeNull(); expect(consumed).toEqual([11]);
 
     apiGetMock.mockReset().mockImplementation((path: string) => path === "/api/projects/p2" ? Promise.reject(new ApiError("Session expired", 401)) : Promise.resolve({}));
-    await render(<ProjectWorkspace projectId="p2" collaborationOpenSignal={12} onCollaborationOpenSignalConsumed={(signal) => consumed.push(signal)} />); await flush();
+    await render(<ProjectWorkspace projectId="p2" arrivalSignal={12} onArrivalConsumed={(signal) => consumed.push(signal)} />); await flush();
     expect(host.textContent).toContain("Project unavailable."); expect(consumed).toEqual([11, 12]);
     expect(apiGetMock.mock.calls.map(([path]) => path)).not.toEqual(expect.arrayContaining([expect.stringContaining("comments?limit=50")]));
   });

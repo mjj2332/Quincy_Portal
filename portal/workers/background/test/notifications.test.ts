@@ -93,7 +93,7 @@ describe("notification fanout and stalled scan", () => {
     expect(row.results).toHaveLength(1);
     expect(row.results[0]).toMatchObject({ user_id: userId, email_message_id: "message-1" });
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?tab=raw`) }));
   });
 
   it("finds stalled handoffs and makes a second scan a true no-op", async () => {
@@ -123,7 +123,7 @@ describe("notification fanout and stalled scan", () => {
     expect(rows.results.map((row) => row.user_id)).toContain(activeAdmin);
     expect(rows.results.map((row) => row.user_id)).not.toContain(inactiveAdmin);
     expect(send).toHaveBeenCalledTimes(2);
-    for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) });
+    for (const [message] of send.mock.calls) expect(message).toMatchObject({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?tab=raw`) });
   });
 
   it("skips both the duplicate row and the duplicate email on a repeated sourceKey", async () => {

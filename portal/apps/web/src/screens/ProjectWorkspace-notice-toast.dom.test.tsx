@@ -205,7 +205,7 @@ describe("ProjectWorkspace notice toast on mount (#117)", () => {
     await flush();
 
     const second = vi.fn();
-    await render(<ProjectWorkspace projectId="p1" notice="Moved to Editing." onNoticeShown={second} collaborationOpenSignal={7} />);
+    await render(<ProjectWorkspace projectId="p1" notice="Moved to Editing." onNoticeShown={second} arrivalSignal={7} />);
     await flush();
 
     expect(first).toHaveBeenCalledTimes(1);

@@ -4307,3 +4307,29 @@ freezing the whole Board.
   failure. `ProductionEventCalendar-unscheduled.dom.test.tsx` pins that. No data changes.
 - **Rule:** do not rewrite those mappers in the interim: #342 deletes them. Run #341 right after deploy. Both editors
   still convert a legacy row: they seed a one-day range for the user to confirm (`oneDaySubtaskRange`).
+
+## `?collaboration=open` is frozen by stored activity deep links; Collection tabs got `?tab=` (#337, 2026-09-29)
+
+- **Context:** #337 made every Project notification open the Workspace tab it is about. The obvious
+  shape was one uniform `?tab=<workspace tab>` parameter, with `?tab=collaboration` replacing
+  `?collaboration=open`.
+- **Why that breaks production data:** `projectActivityDeepLink` (`packages/shared/src/project-activity.ts`)
+  builds a Collaboration activity's deep link through `staffPathFor`, and `parseProjectActivityRow`
+  rejects any persisted `deep_link_path` that is not byte-equal to it. Changing what `staffPathFor`
+  emits for Collaboration would turn every stored `project_collaboration` activity row and every
+  in-flight outbox payload into `payload_invalid` -- a silent suppression of real notifications.
+  Accepting `tab=collaboration` as an alias would break the read-only router's invariant that no
+  accepted location is rebuilt differently (`staff-history.test.ts`).
+- **Shape:** Collaboration keeps `?collaboration=open` as its only spelling; the five Collections use
+  `?tab=raw|edited|video|floorplan|copy`. `?tab=collaboration`, unknown kinds and mixed/duplicate
+  params are `not-found`. `staff-routes.test.ts` pins the Collaboration output with a comment naming
+  the constraint.
+- **Rule:** before changing any `staffPathFor` output, grep for places that persist its result and
+  compare it byte-for-byte later. Changing the Collaboration spelling needs a data migration of
+  `project_activity_events.deep_link_path` and outbox payloads first.
+- **Also found:** `InternalLink` only intercepts a pointer click (`event.detail !== 0`); a
+  programmatic `.click()` in a DOM test falls through to happy-dom's own navigation, which changes
+  `location` without notifying `locationStore`. Dispatch a `MouseEvent` with `detail: 1`.
+- **Also found:** a ref callback created fresh on every render, handed to a Base UI `TabsTrigger`,
+  loops (Base UI re-registers the trigger with a state update on each ref change). Keep per-item
+  ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).
