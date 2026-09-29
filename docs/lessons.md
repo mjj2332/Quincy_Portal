@@ -2147,6 +2147,15 @@ has neither — no outbox row and no assigner column on `project_subtasks` — s
 unrecoverable without a write-path change. Rule: before promising an actor for a type, find the
 `INSERT INTO notification_outbox` for that type *and* that recipient role.
 
+**Update (#141, 2026-09-29):** staff `subtask_assigned` is now durable too
+(`emitStaffSubtaskAssignedNotification`), and `emitNotifications` refuses the type, as it already
+did `project_deadline_reminder`. One `event_type` (`project.subtask.assigned`) now carries two
+payload shapes: the consumer tells them apart by `recipient_membership_cycle_id` (NULL for staff,
+the membership cycle for external) and parses each with its own strict parser. The staff arm
+re-checks eligibility (active, non-external, admin or member, current assignment version) in SQL at
+every channel admission, not only in the resolver. Building the tests surfaced #319: the external
+arm had never delivered at all.
+
 ## Cookie-session scripts must send an `Origin` header or every mutation is a 403 (2026-09-15)
 
 **Symptom:** `scripts/bulk-archive-delete-sep-2026.mjs --live`, modelled line for line on the July

@@ -90,7 +90,8 @@ describe("project subtasks API", () => {
     expect(first).toMatchObject({ position: 1024, assignmentVersion: 1, dueDate: "2028-02-29" });
     const second = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Second" })).json() as { id: string; position: number };
     expect(second.position).toBe(2048);
-    const notificationCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE type = 'subtask_assigned' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count;
+    // #141: an assignment is a durable occurrence (outbox row) the consumer delivers, not a direct row.
+    const notificationCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     expect(await notificationCount()).toBe(1);
     const completed = await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { done: true });
     expect((await completed.json() as { assignmentVersion: number }).assignmentVersion).toBe(1); expect(await notificationCount()).toBe(1);
@@ -102,7 +103,7 @@ describe("project subtasks API", () => {
     expect(await cleared.json()).toMatchObject({ dueDate: null, assignee: null, assignmentVersion: 3 });
     const reassignedAgain = await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { assigneeId: adminId });
     expect(await reassignedAgain.json()).toMatchObject({ assignmentVersion: 4 }); expect(await notificationCount()).toBe(3);
-    expect((await database.DB.prepare("SELECT source_key FROM notifications WHERE type = 'subtask_assigned' AND project_id = ? ORDER BY source_key").bind(projectId).all()).results.map((row) => (row as { source_key: string }).source_key)).toEqual(expect.arrayContaining([`subtask-assignment:${first.id}:2`, `subtask-assignment:${first.id}:4`]));
+    expect((await database.DB.prepare("SELECT source_key FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND project_id = ? ORDER BY source_key").bind(projectId).all()).results.map((row) => (row as { source_key: string }).source_key)).toEqual(expect.arrayContaining([`subtask-assignment:${first.id}:2`, `subtask-assignment:${first.id}:4`]));
     const moved = await request(`/api/projects/${projectId}/subtasks/${second.id}/reorder`, "subtasks-editor-token", "POST", { beforeId: null, afterId: first.id });
     expect(await moved.json()).toEqual({ position: 0 });
     const listed = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token")).json() as { subtasks: Array<{ id: string }> };
@@ -158,7 +159,7 @@ describe("project subtasks API", () => {
     const now = 1; const ordinaryProject = crypto.randomUUID(); const a = crypto.randomUUID(); const b = crypto.randomUUID(); const c = crypto.randomUUID();
     await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Ordinary reorders', 'editing_autohdr', 0, ?, ?)").bind(ordinaryProject, now, now).run();
     for (const [id, position] of [[a, 1024], [b, 2048], [c, 3072]] as const) await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?)").bind(id, ordinaryProject, id, position, editorId, now, now).run();
-    const assignments = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE project_id = ? AND type = 'subtask_assigned'").bind(ordinaryProject).first<{ count: number }>())!.count;
+    const assignments = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.subtask.assigned'").bind(ordinaryProject).first<{ count: number }>())!.count;
     const reorder = async (target: string, beforeId: string | null, afterId: string | null, expectedPosition: number, expectedOrder: string[]) => {
       const previous = (await database.DB.prepare("SELECT id, updated_at FROM project_subtasks WHERE project_id = ?").bind(ordinaryProject).all()).results as Array<{ id: string; updated_at: number }>;
       const priorAudit = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.reorder'").bind(target).first<{ count: number }>())!.count; const priorNotices = await assignments();

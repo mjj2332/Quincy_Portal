@@ -1,7 +1,7 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { notificationCopy } from "@quincy/db";
+import { emitStaffSubtaskAssignedNotification, notificationCopy } from "@quincy/db";
 import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, conformsToNotificationEnrichment, encodeNotificationCursor, externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
@@ -704,7 +704,7 @@ describe("notification read-model enrichment", () => {
     expect(row).toMatchObject({ title: "Notification A — added a comment", body: "Unchanged body", actor: { id: userA, name: "Notification A" }, subject: null, assetId: null });
   });
 
-  it("gives a staff subtask_assigned recipient an unchanged title, the subtask title as body, and no actor", async () => {
+  it("gives a pre-#141 staff subtask_assigned row (no outbox) an unchanged title, the subtask title as body, and no actor", async () => {
     const { projectId } = await makeProject("Enrichment Subtask Street");
     await makeStaffMember(projectId, userB);
     const subtaskId = await makeSubtask(projectId, "Retouch the hero shot", userB);
@@ -714,6 +714,26 @@ describe("notification read-model enrichment", () => {
       title: "Subtask assigned",
       body: "Retouch the hero shot",
       actor: null,
+      subject: { kind: "subtask", label: "Retouch the hero shot" },
+      assetId: null,
+    });
+  });
+
+  it("names the assigner on a staff subtask_assigned row delivered through the durable path (#141)", async () => {
+    const { projectId } = await makeProject("Enrichment Subtask Assigner Street");
+    await makeStaffMember(projectId, userB);
+    const subtaskId = await makeSubtask(projectId, "Retouch the hero shot", userB);
+    const sourceKey = `subtask-assignment:${subtaskId}:1`;
+    const [outboxId] = await emitStaffSubtaskAssignedNotification(database.DB, { projectId, actorId: userA, assigneeId: userB, subtaskId, assignmentVersion: 1, sourceKey });
+    expect(outboxId).toBeDefined();
+    // What the background consumer writes on in-app delivery: the row, linked from its ledger.
+    const notificationId = await makeNotification({ userId: userB, projectId, type: "subtask_assigned", title: "Subtask assigned", body: "You have been assigned a project subtask.", sourceKey });
+    await database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'sent', notification_id = ? WHERE outbox_id = ? AND channel = 'in_app'").bind(notificationId, outboxId).run();
+    const row = rowFor(await fetchAs(tokenB), notificationId);
+    expect(row).toMatchObject({
+      title: "Notification A assigned you a subtask",
+      body: "Retouch the hero shot",
+      actor: { id: userA, name: "Notification A" },
       subject: { kind: "subtask", label: "Retouch the hero shot" },
       assetId: null,
     });

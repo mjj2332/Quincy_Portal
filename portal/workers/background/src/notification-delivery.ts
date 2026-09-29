@@ -230,7 +230,7 @@ type LegacyResolvedRecipient = {
   ok: true;
   kind: "legacy";
   row: ResolverRow | ReminderResolverRow;
-  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload;
+  payload: ProjectCommentMentionPayload | ProjectAssignmentCreatedPayload | ProjectDeadlineReminderOutboxPayload | ExternalNotificationOutboxPayload | StaffSubtaskAssignedPayload;
   commentPath: string;
   delivery: ResolvedDelivery;
 };
@@ -333,8 +333,21 @@ function isLegacyNotificationType(value: string): value is NotificationType {
   return (NOTIFICATION_TYPES as readonly string[]).includes(value);
 }
 
+/**
+ * #319: `payload_json` is TEXT, and the shared strict parser takes the decoded object (it rejects
+ * a string outright). Passing the column straight through suppressed every external-editor
+ * occurrence as `payload_invalid`. Malformed JSON is still `null`, and still suppressed.
+ */
+function parseExternalOutboxJson(value: string): ExternalNotificationOutboxPayload | null {
+  try {
+    return parseExternalNotificationOutboxPayload(JSON.parse(value) as unknown);
+  } catch {
+    return null;
+  }
+}
+
 async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
-  const payload = parseExternalNotificationOutboxPayload(outbox.payload_json);
+  const payload = parseExternalOutboxJson(outbox.payload_json);
   if (!payload || !("legacy" in payload) || payload.event.type !== "project.external_safe.direct") return suppressed("payload_invalid");
   if (!isLegacyNotificationType(payload.legacy.type)) return suppressed("external_policy_suppressed");
   const policy = EXTERNAL_LEGACY_NOTIFICATION_POLICY[payload.legacy.type];
@@ -345,6 +358,7 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
       o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
       o.recipient_id AS recipientId, o.payload_json AS payloadJson,
       o.recipient_authorization_epoch AS recipientAuthorizationEpoch,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
       recipient.authorization_epoch AS currentAuthorizationEpoch,
       recipient.active AS recipientActive, recipient.role AS recipientRole,
       recipient.name AS recipientName, recipient.email AS recipientEmail,
@@ -382,8 +396,86 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
   };
 }
 
+/**
+ * #141: the payload `emitStaffSubtaskAssignedNotification` writes. It has no
+ * `authorizationAtOccurrence` (that is the external contract, ADR 0007), so the external parser
+ * would refuse it; this strict parser accepts exactly this shape and nothing else.
+ */
+type StaffSubtaskAssignedPayload = {
+  schemaVersion: 1;
+  event: { type: "project.subtask.assigned"; sourceKey: string; recipientId: string };
+  assignment: { projectId: string; subtaskId: string; assigneeId: string; assignmentVersion: number };
+};
+
+function staffSubtaskAssignedPayload(value: string, outbox: OutboxRow): StaffSubtaskAssignedPayload | null {
+  if (outbox.schema_version !== 1 || outbox.event_type !== "project.subtask.assigned" || outbox.recipient_membership_cycle_id !== null) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isObject(parsed) || !hasExactKeys(parsed, ["schemaVersion", "event", "assignment"]) || parsed.schemaVersion !== 1) return null;
+    const { event, assignment } = parsed;
+    if (!isObject(event) || !hasExactKeys(event, ["type", "sourceKey", "recipientId"]) || event.type !== "project.subtask.assigned" || event.sourceKey !== outbox.source_key || event.recipientId !== outbox.recipient_id) return null;
+    if (!isObject(assignment) || !hasExactKeys(assignment, ["projectId", "subtaskId", "assigneeId", "assignmentVersion"])) return null;
+    if (assignment.projectId !== outbox.project_id || typeof assignment.subtaskId !== "string" || assignment.assigneeId !== outbox.recipient_id || typeof assignment.assignmentVersion !== "number" || !Number.isSafeInteger(assignment.assignmentVersion)) return null;
+    return parsed as StaffSubtaskAssignedPayload;
+  } catch {
+    return null;
+  }
+}
+
+/** The staff eligibility `emitStaffSubtaskAssignedNotification` checked, re-run as SQL at send time. */
+const STAFF_SUBTASK_ASSIGNED_ELIGIBILITY = `
+  recipient.active = 1 AND recipient.role <> 'external_editor'
+  AND (recipient.role = 'admin' OR EXISTS (
+    SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
+  ))
+  AND subtask.project_id = o.project_id AND subtask.assignee_id = o.recipient_id
+  AND subtask.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')`;
+
+async function resolveStaffSubtaskAssignedRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
+  const payload = staffSubtaskAssignedPayload(outbox.payload_json, outbox);
+  if (!payload) return suppressed("payload_invalid");
+  const row = await env.DB.prepare(`
+    SELECT o.id AS outboxId, o.schema_version AS schemaVersion, o.event_type AS eventType,
+      o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
+      o.recipient_id AS recipientId, o.payload_json AS payloadJson,
+      o.recipient_authorization_epoch AS recipientAuthorizationEpoch,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
+      recipient.authorization_epoch AS currentAuthorizationEpoch,
+      recipient.active AS recipientActive, recipient.role AS recipientRole,
+      recipient.name AS recipientName, recipient.email AS recipientEmail,
+      p.street AS projectStreet, p.archived_at AS projectArchivedAt,
+      EXISTS (SELECT 1 FROM project_subtasks subtask WHERE subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId') AND ${STAFF_SUBTASK_ASSIGNED_ELIGIBILITY}) AS eligible,
+      EXISTS (SELECT 1 FROM project_subtasks subtask WHERE subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId') AND subtask.project_id = o.project_id AND subtask.assignee_id = o.recipient_id AND subtask.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')) AS assignmentCurrent
+    FROM notification_outbox o
+    INNER JOIN user recipient ON recipient.id = o.recipient_id
+    INNER JOIN projects p ON p.id = o.project_id
+    WHERE o.id = ?
+  `).bind(outbox.id).first<ResolverRow & { eligible: number; assignmentCurrent: number }>();
+  if (!row) return suppressed("payload_invalid");
+  if (!row.projectStreet) return suppressed("project_no_longer_visible");
+  if (row.assignmentCurrent !== 1) return suppressed("subtask_changed");
+  if (row.eligible !== 1) return suppressed("recipient_ineligible");
+  const copy = { title: "Subtask assigned", body: "You have been assigned a project subtask." };
+  const collaborationPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: row.projectId, collaboration: "open" })}`;
+  return {
+    ok: true,
+    kind: "legacy",
+    row,
+    payload,
+    commentPath: collaborationPath,
+    delivery: {
+      notificationType: "subtask_assigned",
+      title: copy.title,
+      body: copy.body,
+      emailSubject: copy.title,
+      emailText: `${copy.body}\n\n${collaborationPath}`,
+      emailHtml: `<p>${htmlEscape(copy.body)}</p><p><a href="${htmlEscape(collaborationPath)}">View project</a></p>`,
+    },
+  };
+}
+
 async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
-  const payload = parseExternalNotificationOutboxPayload(outbox.payload_json);
+  const payload = parseExternalOutboxJson(outbox.payload_json);
   if (!payload || !("assignment" in payload) || payload.event.type !== outbox.event_type) return suppressed("payload_invalid");
   const expectedType = outbox.event_type === "project.subtask.assigned" ? "subtask_assigned" : outbox.event_type === "project.subtask.due_today" ? "subtask_due_today" : null;
   if (!expectedType || payload.event.sourceKey !== outbox.source_key || payload.event.recipientId !== outbox.recipient_id) return suppressed("payload_invalid");
@@ -701,6 +793,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad) return resolveBroadRecipient(env, outbox);
   if (outbox.event_type === NOTIFICATION_OUTBOX_EVENT_TYPES.projectDeadlineReminder) return resolveDeadlineReminderRecipient(env, outbox);
   if (outbox.event_type === "project.external_safe.direct") return resolveExternalSafeDirectRecipient(env, outbox);
+  if (outbox.event_type === "project.subtask.assigned" && outbox.recipient_membership_cycle_id === null) return resolveStaffSubtaskAssignedRecipient(env, outbox);
   if (outbox.event_type === "project.subtask.assigned" || outbox.event_type === "project.subtask.due_today") return resolveExternalSubtaskRecipient(env, outbox);
   const row = await env.DB.prepare(`
     SELECT
@@ -1096,6 +1189,20 @@ async function beginReminderChannel(env: Env, outbox: OutboxRow, token: string, 
 type LegacyAdmission = { sql: string; values: unknown[] };
 
 function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, token: string): LegacyAdmission {
+  // #141: a staff subtask assignment re-checks its eligibility at every channel admission, so a
+  // reassignment, a role change or lost access between in-app and email stops the email.
+  if (outbox.event_type === "project.subtask.assigned" && outbox.recipient_membership_cycle_id === null) {
+    return {
+      sql: `EXISTS (
+        SELECT 1 FROM notification_outbox o
+        JOIN user recipient ON recipient.id = o.recipient_id
+        JOIN project_subtasks subtask ON subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId')
+        WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?
+          AND o.recipient_membership_cycle_id IS NULL AND ${STAFF_SUBTASK_ASSIGNED_ELIGIBILITY}
+      )`,
+      values: [outbox.id, token, outbox.recipient_id],
+    };
+  }
   if (resolved.row.recipientRole !== "external_editor") {
     return {
       sql: "EXISTS (SELECT 1 FROM notification_outbox o WHERE o.id = ? AND o.status = 'processing' AND o.lease_token = ? AND o.recipient_id = ?)",

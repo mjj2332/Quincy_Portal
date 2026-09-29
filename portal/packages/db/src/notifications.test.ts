@@ -45,8 +45,10 @@ describe("EMAIL_ENABLED_EVENTS", () => {
 });
 
 describe("emitNotifications email gating", () => {
-  it("attempts an email send for each of the 10 enabled types", async () => {
-    for (const type of ALL_TYPES) {
+  // #141: `subtask_assigned` stays email-enabled, but its email is sent by the background consumer;
+  // the direct emitter refuses it (see the next test).
+  it("attempts an email send for each of the 9 types the direct emitter still writes", async () => {
+    for (const type of ALL_TYPES.filter((candidate) => candidate !== "subtask_assigned")) {
       const { db } = mockDb();
       const email = fakeEmail(async () => ({ messageId: "m1" }));
       await emitNotifications(db, {
@@ -57,6 +59,14 @@ describe("emitNotifications email gating", () => {
       });
       expect(email.send).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("refuses subtask_assigned: no row and no email, since its only producer is the durable path (#141)", async () => {
+    const { db } = mockDb();
+    const email = fakeEmail(async () => ({ messageId: "m1" }));
+    const written = await emitNotifications(db, { type: "subtask_assigned", recipients: [recipient("u1", "u1@example.com")], email, fromAddress: "studio@example.test" });
+    expect(written).toBe(0);
+    expect(email.send).not.toHaveBeenCalled();
   });
 
   it("uses role-specific assignment copy", () => {

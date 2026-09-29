@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { NOTIFICATION_OUTBOX_EVENT_TYPE, NOTIFICATION_OUTBOX_EVENT_TYPES, type NotificationOutboxMessage } from "@quincy/shared";
-import { emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification } from "@quincy/db";
+import { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification } from "@quincy/db";
 import QuincyBackground from "../src";
 import type { Env } from "../src/env";
 import {
@@ -746,7 +746,8 @@ async function publishWith(envValue: Env, outboxId: string): Promise<void> {
 
 describe("#141 staff subtask assignment through the durable consumer", () => {
   beforeAll(async () => {
-    await executeSql(__PORTAL_MIGRATION_SQL__);
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
   }, 60_000);
 
   type StaffAssignmentFixture = { projectId: string; actorId: string; assigneeId: string; subtaskId: string; sourceKey: string; outboxIds: string[] };
@@ -844,5 +845,62 @@ describe("#141 staff subtask assignment through the durable consumer", () => {
     expect(found.rows).toHaveLength(1);
     expect(found.rows[0]!.type).toBe("subtask_assigned");
     expect(found.outbox?.status).toBe("completed");
+  });
+});
+
+describe("#319 external-editor durable notifications reach the consumer's strict parser", () => {
+  beforeAll(async () => {
+    // The file's first describe applies the migrations; apply them here only when it was
+    // filtered out (`-t`), since re-running them against an existing schema fails.
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  async function seedExternalEditor() {
+    const now = Date.now();
+    const projectId = crypto.randomUUID();
+    const actorId = crypto.randomUUID();
+    const editorId = crypto.randomUUID();
+    const subtaskId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Staff Actor', ?, 1, 'editor', 1, ?, ?), (?, 'External Editor', ?, 1, 'external_editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, editorId, `${editorId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'External Delivery Street', 'editing', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, editorId, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, ?, ?, ?)").bind(subtaskId, projectId, editorId, actorId, now, now),
+    ]);
+    return { projectId, actorId, editorId, subtaskId };
+  }
+
+  async function outcome(sourceKey: string, userId: string) {
+    const outbox = await database.DB.prepare("SELECT status, last_error AS lastError FROM notification_outbox WHERE source_key = ?").bind(sourceKey).first<{ status: string; lastError: string | null }>();
+    const rows = await database.DB.prepare("SELECT type, title FROM notifications WHERE source_key = ? AND user_id = ?").bind(sourceKey, userId).all<{ type: string; title: string }>();
+    return { outbox, rows: rows.results };
+  }
+
+  it("delivers a subtask assignment written by emitExternalSubtaskNotification", async () => {
+    const seeded = await seedExternalEditor();
+    const sourceKey = `subtask-assignment:${seeded.subtaskId}:1`;
+    const ids = await emitExternalSubtaskNotification(database.DB, { projectId: seeded.projectId, actorId: seeded.actorId, assigneeId: seeded.editorId, subtaskId: seeded.subtaskId, assignmentVersion: 1, sourceKey, kind: "assigned" });
+    expect(ids).toHaveLength(1);
+    const send = vi.fn().mockResolvedValue({ messageId: "external-subtask" });
+    await processNotificationMessage(deliveryEnv(send), message(ids[0]!));
+    expect(await outcome(sourceKey, seeded.editorId)).toEqual({
+      outbox: { status: "completed", lastError: null },
+      rows: [{ type: "subtask_assigned", title: "Checklist item assigned" }],
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers a safe direct workflow signal written by emitExternalSafeLegacyNotification", async () => {
+    const seeded = await seedExternalEditor();
+    const sourceKey = `raw-ready:${seeded.projectId}:${crypto.randomUUID()}`;
+    const ids = await emitExternalSafeLegacyNotification(database.DB, { projectId: seeded.projectId, actorId: seeded.actorId, type: "raw_ready", sourceKey, sourceId: seeded.projectId });
+    expect(ids).toHaveLength(1);
+    const send = vi.fn().mockResolvedValue({ messageId: "external-direct" });
+    await processNotificationMessage(deliveryEnv(send), message(ids[0]!));
+    const found = await outcome(sourceKey, seeded.editorId);
+    expect(found.outbox).toEqual({ status: "completed", lastError: null });
+    expect(found.rows).toHaveLength(1);
+    expect(found.rows[0]!.type).toBe("raw_ready");
   });
 });
