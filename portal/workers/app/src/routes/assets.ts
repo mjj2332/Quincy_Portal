@@ -151,6 +151,12 @@ assetsRoutes.delete("/assets/:id", terminalRoute("/assets/:id", async (c) => {
           AND NOT EXISTS (SELECT 1 FROM assets WHERE id IN ${targetSql})`)
         .bind(nowMs, primary.projectId, ...targetIds, ...targetIds),
       c.env.DB.prepare(COLLECTION_RECEIVED_COUNT_SQL).bind(...collectionReceivedCountBindings(primary.collectionId, nowMs)),
+      // `rendition_dlq_events.asset_id` has no FK (0011), so nothing cascades: a dead letter for a
+      // deleted asset would sit in the admin DLQ with a null join and a replay that can only fail
+      // (#284). Gated like the pointer-nulling above, so a blocked delete keeps its rows.
+      c.env.DB.prepare(`DELETE FROM rendition_dlq_events WHERE asset_id IN ${targetSql}
+          AND NOT EXISTS (SELECT 1 FROM assets WHERE id IN ${targetSql})`)
+        .bind(...targetIds, ...targetIds),
     ]);
 
     if ((results[0]?.meta.changes ?? 0) === 0) {
