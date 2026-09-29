@@ -509,6 +509,53 @@ describe("guard: star colour comes from a token, never a literal", () => {
       ...offenders,
     ].join("\n")).toEqual([]);
   });
+
+  // #306: the unlit star read heavier than the lit one — greige-600 at 8.7:1 against ochre at
+  // 5.9:1 on paper, and greige-200 at 11.8:1 against amber at 9.2:1 on ink — so an unset row
+  // looked "on". The owner's rule: unlit recedes. On every ground a star lands on, the unlit star
+  // sits closer to the ground than the lit one, and both still clear the 3:1 non-text floor.
+  it("keeps the unlit star quieter than the lit one, and both at 3:1, on every star ground", () => {
+    const declarations = (css: string) => new Map(
+      [...stripCssComments(css).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1]!, m[2]!.trim()]),
+    );
+    const colorsCss = readFileSync(join(stylesDir, "tokens/colors.css"), "utf8");
+    const inverseCss = readFileSync(join(stylesDir, "tokens/inverse.css"), "utf8");
+    const inverseBlock = /\[data-surface="inverse"\]\s*\{([^}]*)\}/.exec(stripCssComments(inverseCss))?.[1] ?? "";
+    const paper = declarations(colorsCss);
+    const ink = new Map([...paper, ...declarations(inverseBlock)]);
+    const resolve = (scope: Map<string, string>, name: string): string => {
+      const value = scope.get(name) ?? "";
+      const ref = /^var\((--[\w-]+)\)$/.exec(value);
+      return ref ? resolve(scope, ref[1]!) : value;
+    };
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+    };
+    const contrast = (a: string, b: string) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi! + 0.05) / (lo! + 0.05);
+    };
+    // Paper: the Board card and the Lightbox panel are --paper-000, the canvas is --paper-050,
+    // a raised row is --paper-100. Ink: the Lightbox stage and its popovers.
+    const grounds: [Map<string, string>, string][] = [
+      [paper, "--paper-000"], [paper, "--paper-050"], [paper, "--paper-100"],
+      [ink, "--ink-900"], [ink, "--ink-800"],
+    ];
+    const failures: string[] = [];
+    for (const [scope, groundName] of grounds) {
+      const ground = resolve(scope, groundName);
+      const on = contrast(resolve(scope, "--star-on"), ground);
+      const off = contrast(resolve(scope, "--star-off"), ground);
+      const at = `${groundName} (on ${on.toFixed(2)}:1, off ${off.toFixed(2)}:1)`;
+      if (off >= on) failures.push(`unlit reads as heavy as lit on ${at}`);
+      if (off < 3 || on < 3) failures.push(`under the 3:1 non-text floor on ${at}`);
+    }
+    expect(failures).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

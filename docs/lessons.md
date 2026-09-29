@@ -4206,3 +4206,26 @@ point `ProductionEventCalendar` uses, showed that neither invariant could be wri
   Do not keep the old assertions as they were: an assertion the new path can never violate passes
   whatever the code does. Mutation-check the replacement, and write down which invariant became
   unreachable.
+
+## A data barrier is not a UI lock; split them, and build a move's baseline from the pre-overlay list (#306, 2026-09-29)
+
+`interactionBlocked` in `Dashboard.tsx` did two jobs. It deferred accepting refetched data, and it
+disabled the view switcher, the sort and (via the Board's `movementLocked`) every card's movement.
+A priority save needs the first job: a refetch that started before the POST must never land
+mid-save (#232). It never needed the second. The board-wide lock came from #98 as a general "no
+second interaction mid-write" caution, with no failure behind it. The result was one star click
+freezing the whole Board.
+
+- **The split:** `interactionBlocked` stays the data barrier and still includes `pendingOrdering`.
+  `movementInteractionActive` drives the UI and leaves it out. A pending priority now locks only
+  its own card (`pendingOrdering.has(id)`); a pending *move* still locks every card, because moves
+  are single-writer.
+- **The trap the split uncovered:** `runBoardMovement` built its baseline from `projects`, which
+  already carries `priorityOverlay`. While the lock was board-wide no move could start during a
+  priority save, so it never mattered. Once another card can move, that move stamps X's
+  *unconfirmed* priority into `acceptedProjects` and `boardOverlay`. If X's save then fails,
+  removing the overlay entry reveals the stamped value, not the original. The baseline must come
+  from `baseProjects` (pre-overlay); the overlay is re-applied at render.
+- **Rule:** before relaxing a lock, list every path the lock made unreachable. Each is a latent bug
+  the relaxation exposes. The #306 test that pins this (`Dashboard-priority-coordinator`, "a failed
+  save then rolls back to the ORIGINAL priority") was mutation-checked against the old baseline.

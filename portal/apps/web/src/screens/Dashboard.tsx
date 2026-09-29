@@ -425,6 +425,12 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
+  // #306: the UI lock is NOT the data barrier. `interactionBlocked` above stays the barrier that
+  // defers accepting refetched data (it must include `pendingOrdering`, so a refetch cannot land
+  // mid-save). Locking the view switcher and the sort control on a priority save served no data
+  // purpose, and a priority save is per-card: only the saving card locks (see `runBoardMovement`
+  // and `moveProjectPosition`). Move-related state still locks the switcher, as before.
+  const movementInteractionActive = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || activeConfirm);
   const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
   // The location this reconciliation effect itself last processed — not merely "is the location
   // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
@@ -999,7 +1005,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }, [calendarInteractionBlocked, calendarSettle.pending, canViewProductionCalendar, history, projectHrefFor, viewingArchived]);
 
   function selectView(next: DashboardView) {
-    if (interactionBlockedRef.current || calendarInteractionBlocked) return;
+    if (movementInteractionActive || calendarInteractionBlocked) return;
     if (next === "calendar") {
       if (!canViewProductionCalendar || viewingArchived) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
@@ -1039,7 +1045,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   function selectProjectScope(next: ProjectScope) {
-    if (interactionBlockedRef.current || calendarInteractionBlocked) return;
+    if (movementInteractionActive || calendarInteractionBlocked) return;
     setProjectScope(next);
     if (next === "archived" && view !== "list") {
       const leavingCalendar = view === "calendar";
@@ -1056,7 +1062,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   function selectKanbanSort(next: KanbanSortMode) {
-    if (interactionBlockedRef.current) return;
+    if (movementInteractionActive) return;
     if (next === "priority" && (!canPrioritize || !hasAuthorizedBoardMap)) return;
     setKanbanSort(next);
     try { window.localStorage.setItem("quincy:dashboard:kanbanSort", next); } catch { /* Storage can be disabled by the browser. */ }
@@ -1101,8 +1107,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // Last line of defence (#217 fix round 1, item 2): `canMoveStages`/`sameStageReorderEnabled`
     // already withhold the UI affordances that would normally reach this, but a stale drag gesture
     // in flight when a search commits must not be allowed to slip a mutation through regardless.
-    if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.size > 0 || searchActive) return;
-    const baselineModel = boardModelFromProjects(projects);
+    if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.has(intent.projectId) || searchActive) return;
+    // #306: the baseline is the PRE-overlay list. `projects` carries another card's unconfirmed
+    // priority (`priorityOverlay`); stamping that into `acceptedProjects`/`boardOverlay` would make
+    // it un-rollbackable if that save then fails. The overlay is re-applied on top at render.
+    const baselineModel = boardModelFromProjects(baseProjects);
     const movingProject = baselineModel.projects.find((project) => project.id === intent.projectId);
     if (!movingProject) {
       if (intent.origin === "move-to") {
@@ -1388,7 +1397,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   function moveProjectPosition(project: ProjectSummary, direction: "up" | "down") {
-    if (movementBusyRef.current || pendingMoves.size > 0 || pendingOrdering.size > 0) return;
+    if (movementBusyRef.current || pendingMoves.size > 0 || pendingOrdering.has(project.id)) return;
     const currentProject = projects.find((item) => item.id === project.id);
     if (!currentProject) return;
     const gap = adjacentBoardGap(currentProject.id, canonicalStageKey(currentProject.stageKey), direction, projects);
@@ -1448,13 +1457,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         {!viewingArchived && <>
         <Eyebrow className="max-[721px]:basis-full max-[721px]:-mb-[var(--space-1)]">View</Eyebrow>
         <div className={SEGMENT_GROUP} aria-label="Dashboard view">
-          <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" data-active={view === "list" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
-          <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" data-active={view === "kanban" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
+          <button className={cn(SEGMENT_BUTTON, view === "list" && "is-active")} type="button" data-focus-key="dashboard-view-list" data-active={view === "list" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("list")}>List</button>
+          <button className={cn(SEGMENT_BUTTON, view === "kanban" && "is-active")} type="button" data-focus-key="dashboard-view-kanban" data-active={view === "kanban" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("kanban")}>Kanban</button>
           {/* #220: gated on the same `canViewProductionCalendar` capability Calendar uses — see
               `lib/staff-navigation.ts`'s `CAPABILITY_GATED_VIEWS`, which gates the rail's own Gantt
               child identically. */}
-          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "gantt" && "is-active")} type="button" data-focus-key="dashboard-view-gantt" data-active={view === "gantt" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("gantt")}>Gantt</button>}
-          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" data-active={view === "calendar" ? "true" : undefined} disabled={interactionBlocked || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
+          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "gantt" && "is-active")} type="button" data-focus-key="dashboard-view-gantt" data-active={view === "gantt" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("gantt")}>Gantt</button>}
+          {canViewProductionCalendar && <button className={cn(SEGMENT_BUTTON, view === "calendar" && "is-active")} type="button" data-focus-key="dashboard-view-calendar" data-active={view === "calendar" ? "true" : undefined} disabled={movementInteractionActive || calendarInteractionBlocked} onClick={() => selectView("calendar")}>Calendar</button>}
         </div>
         {!viewingArchived && view === "kanban" && (
           <div className="max-[721px]:basis-full">
@@ -1462,7 +1471,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               value={effectiveKanbanSort}
               onValueChange={(next) => selectKanbanSort(next)}
               options={kanbanSortOptions}
-              disabled={interactionBlocked}
+              disabled={movementInteractionActive}
               ariaLabel="Sort Kanban board"
               className="max-[721px]:w-full"
               triggerClassName={cn(

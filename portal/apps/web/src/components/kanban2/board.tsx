@@ -156,9 +156,11 @@ export function ProjectKanbanBoard2({
   const noopValueChange = useCallback(() => undefined, []);
   const reducedMotion = usePrefersReducedMotion();
 
-  // Movement is locked while ANY move or ordering write is in flight, not just for the card that
-  // started it — a second interaction must not be able to start mid-write.
-  const movementLocked = movementDisabled || pendingMoves.size > 0 || pendingOrdering.size > 0;
+  // A move is single-writer, so ANY pending move locks every card. A pending priority write does
+  // NOT (#306): it locks only the card being saved, per card, via `pendingOrdering.has(id)` below
+  // (#98 locked the whole Board, which froze every other card for the length of one star click).
+  const movementLocked = movementDisabled || pendingMoves.size > 0;
+  const orderingPending = (projectId: string) => pendingOrdering?.has(projectId) ?? false;
   // Either capability is enough to pick a card up: a prioritize-only principal reorders within a
   // Stage without being able to change it. Which drops each capability permits is decided per
   // drop, in `handleMove`.
@@ -232,7 +234,7 @@ export function ProjectKanbanBoard2({
     onMoveToProposalChange?.(proposal);
   }, [onMoveToProposalChange]);
   const boardModel = useMemo(() => ({ projects }), [projects]);
-  const controlsDisabled = (projectId: string) => dragDisabled || dragActive || pendingMoves.has(projectId);
+  const controlsDisabled = (projectId: string) => dragDisabled || dragActive || pendingMoves.has(projectId) || orderingPending(projectId);
 
   /**
    * Only for the paths that do NOT hand off to the Dashboard. Never on the valid path: the
@@ -272,7 +274,7 @@ export function ProjectKanbanBoard2({
     };
     if (dragDisabled) return reject("dnd-cancel");
     const project = projects.find((item) => item.id === projectId);
-    if (!project || pendingMoves.has(projectId)) return reject("dnd-cancel");
+    if (!project || pendingMoves.has(projectId) || orderingPending(projectId)) return reject("dnd-cancel");
     const sameStage = semanticStageKey(activeContainer as ProjectStageKey) === semanticStageKey(overContainer as ProjectStageKey);
     const { gap } = gapFor(projectId, overContainer, overIndex);
     const verdict = dropVerdict(project, gap, sameStage);
@@ -281,7 +283,7 @@ export function ProjectKanbanBoard2({
     // `"same"` routes to the Dashboard's `/board-position` branch, where a confirmation is forbidden;
     // `"cross"` to `/stage`, where the 409 confirmation round trip is the normal path.
     onBoardMove?.(projectId, gap, sameStage ? "same" : "cross", focusDescriptor);
-  }, [announceRejection, dragDisabled, dropVerdict, gapFor, onBoardMove, pendingMoves, projects, refocusHandle]);
+  }, [announceRejection, dragDisabled, dropVerdict, gapFor, onBoardMove, pendingMoves, pendingOrdering, projects, refocusHandle]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     if (unmountedRef.current) return;
@@ -499,14 +501,14 @@ export function ProjectKanbanBoard2({
                         // specificity than the vendor's bare `.opacity-50`, so it wins only while
                         // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
                         // `opacity-50`, not gated on `data-disabled`) is untouched.
-                        <KanbanItem key={project.id} value={project.id} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id)}>
+                        <KanbanItem key={project.id} value={project.id} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}>
                           {shownProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
                           <KanbanCard2
                             project={project}
                             projectHref={projectHrefFor?.(project)}
-                            dragDisabled={dragDisabled || pendingMoves.has(project.id)}
+                            dragDisabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}
                             canPrioritize={priorityEditable}
-                            priorityPending={pendingOrdering?.has(project.id) ?? false}
+                            priorityPending={orderingPending(project.id)}
                             onPriorityChange={onPriorityChange}
                             handleRef={registerHandle}
                             controls={<div className="flex items-stretch border-t border-t-border">
