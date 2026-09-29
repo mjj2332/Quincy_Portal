@@ -351,7 +351,10 @@ describe("Project header Stage control", () => {
     expect(tablist?.getAttribute("aria-label")).toBe("Workspace");
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs.length).toBeGreaterThan(0);
-    for (const tab of tabs) expect(tab.hasAttribute("aria-controls")).toBe(false);
+    // Collection tabs' panels are not tabpanels, so they carry no aria-controls; Collaboration's panel is a real tabpanel.
+    for (const tab of tabs.filter((button) => !button.textContent?.includes("Collaboration"))) expect(tab.hasAttribute("aria-controls")).toBe(false);
+    const collaboration = tabs.find((button) => button.textContent?.includes("Collaboration"))!;
+    expect(collaboration.getAttribute("aria-controls")).toBe("project-workspace-panel-collaboration");
   });
 
   it("puts Collaboration last in the same tablist, emits it when clicked, and marks it selected when active", () => {
@@ -364,7 +367,7 @@ describe("Project header Stage control", () => {
     const collaboration = tabs.at(-1)!;
     expect(tabRef.current).toBe(collaboration);
     expect(collaboration.id).toBe("project-workspace-tab-collaboration");
-    expect(collaboration.hasAttribute("aria-controls")).toBe(false);
+    expect(collaboration.getAttribute("aria-controls")).toBe("project-workspace-panel-collaboration");
     act(() => collaboration.click());
     expect(onActiveTabChange).toHaveBeenCalledWith("collaboration");
     act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab="collaboration" onActiveTabChange={onActiveTabChange} collaborationTabRef={tabRef} />); });
@@ -398,7 +401,7 @@ describe("Project header Stage control", () => {
   });
 
   // Arrow-key movement between tabs is Base UI composite navigation; happy-dom does not drive it. #206 covers it in a real browser,
-  // and the #336 browser pass covers Arrow / Home / End across all six Workspace tabs. Structure, selection and roving tabindex are asserted above.
+  // and the #336 browser pass covers Arrow / Home / End across all six Workspace tabs. Structure and selection are asserted in the two tests above; roving tabindex is Base UI composite behaviour and is covered by the browser pass.
 
   it("keeps the street heading as the property label target", () => {
     render(<ProjectHeader {...baseProps(project())} />);

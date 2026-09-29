@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "../lib/auth";
-import { cn } from "../lib/utils";
+import { cn, formatUnreadCount } from "../lib/utils";
 import { ProjectDiscussionThread, type ProjectDiscussionAccessFailureResource } from "./ProjectDiscussionThread";
 import { ProjectActivityView } from "./ProjectActivityView";
 import { SubtaskChecklist } from "./SubtaskChecklist";
@@ -21,11 +21,13 @@ type ProjectCollaborationPanelProps = {
   /** Controlled Discussion/Activity selection (the Workspace owns it); uncontrolled when omitted. */
   view?: CollaborationView;
   onViewChange?: (view: CollaborationView) => void;
+  /** Show the unread count on the Discussion sub-tab. The Workspace passes false because the count lives on its Collaboration tab; the standalone collaboration-only page has no such tab, so it defaults to true. */
+  showUnreadBadge?: boolean;
   onUnreadCountChange?: (count: number) => void;
   onAccessFailure?: (error: unknown, resource: AccessFailureResource) => void;
 };
 
-export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, onUnreadCountChange, onAccessFailure }: ProjectCollaborationPanelProps) {
+export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure }: ProjectCollaborationPanelProps) {
   const session = useSession();
   const currentUserId = session.data?.user.id;
   const [localView, setLocalView] = useState<CollaborationView>("discussion");
@@ -38,7 +40,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
 
   const renderDiscussion = ({ content, project }: Parameters<NonNullable<React.ComponentProps<typeof ProjectDiscussionThread>["children"]>>[0]) => {
     if (!presented) return null;
-    const unreadLabel = unreadCount > 99 ? "99+" : String(unreadCount);
+    const unreadLabel = formatUnreadCount(unreadCount);
     const headerMarkup = <div data-testid="project-collaboration-head" className="flex items-start justify-between gap-[var(--space-3)]"><div><Eyebrow>Collaboration</Eyebrow><h2 className="serif [font:var(--type-h3)]">{project?.street ?? "Project comments"}</h2></div></div>;
     const tabId = (tab: CollaborationView) => `project-collaboration-${projectId}-${tab}-tab`;
     const panelId = (tab: CollaborationView) => `project-collaboration-${projectId}-${tab}-panel`;
@@ -66,7 +68,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
       "-mx-[var(--space-5)] px-[var(--space-5)] max-[721px]:-mx-[var(--space-4)] max-[721px]:px-[var(--space-4)]",
     );
     const tabs = <div className={tabsStripClass} role="tablist" aria-label="Project collaboration views">
-      <button ref={(element) => { tabRefs.current[0] = element; }} className={cn(TAB_BASE, activeView === "discussion" ? TAB_SELECTED : TAB_IDLE)} type="button" role="tab" aria-selected={activeView === "discussion"} aria-controls={panelId("discussion")} id={tabId("discussion")} tabIndex={tabIndex("discussion")} onClick={() => selectTab("discussion")} onKeyDown={(event) => onTabKeyDown(event, "discussion")}>Discussion{unreadCount > 0 && <span data-testid="project-collaboration-unread" className={UNREAD_BADGE} aria-hidden="true">{unreadLabel}</span>}</button>
+      <button ref={(element) => { tabRefs.current[0] = element; }} className={cn(TAB_BASE, activeView === "discussion" ? TAB_SELECTED : TAB_IDLE)} type="button" role="tab" aria-selected={activeView === "discussion"} aria-controls={panelId("discussion")} id={tabId("discussion")} tabIndex={tabIndex("discussion")} onClick={() => selectTab("discussion")} onKeyDown={(event) => onTabKeyDown(event, "discussion")}>Discussion{showUnreadBadge && unreadCount > 0 && <span data-testid="project-collaboration-unread" className={UNREAD_BADGE} aria-hidden="true">{unreadLabel}</span>}</button>
       <button ref={(element) => { tabRefs.current[1] = element; }} className={cn(TAB_BASE, activeView === "activity" ? TAB_SELECTED : TAB_IDLE)} type="button" role="tab" aria-selected={activeView === "activity"} aria-controls={panelId("activity")} id={tabId("activity")} tabIndex={tabIndex("activity")} onClick={() => selectTab("activity")} onKeyDown={(event) => onTabKeyDown(event, "activity")}>Activity</button>
     </div>;
     const panels = <>

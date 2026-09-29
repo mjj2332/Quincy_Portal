@@ -928,6 +928,15 @@ describe("ProjectCollaborationPanel", () => {
     expect(changes).toEqual(["activity", "discussion"]);
   });
 
+  it("badges the Discussion sub-tab with the capped unread count unless the host shows it elsewhere", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve({ ...readState(), unreadCount: 123 }) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
+    const host = mount();
+    await render(<ProjectCollaborationPanel projectId={projectId} />); await flush(10);
+    expect(host.querySelector('[data-testid="project-collaboration-unread"]')?.textContent).toBe("99+");
+    await render(<ProjectCollaborationPanel projectId={projectId} showUnreadBadge={false} />); await flush(10);
+    expect(host.querySelector('[data-testid="project-collaboration-unread"]')).toBeNull();
+  });
+
   it("renders nothing while not presented, but still reports the unread count and keeps the draft when shown again", async () => {
     const counts: number[] = [];
     apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve({ ...readState(), unreadCount: 7 }) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));

@@ -8,7 +8,7 @@ import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 import { Badge } from "@/components/reui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
-import { cn } from "../lib/utils";
+import { cn, formatUnreadCount } from "../lib/utils";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
 import type { ProjectDetail } from "../lib/project-data";
@@ -236,10 +236,10 @@ export function ProjectHeader({
               {/* #213: the active tab's count is the filled ink badge, the rest stay muted (prototype 2a). */}
               <Badge variant={tab === activeTab ? "default" : "primary-light"} size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
             </TabsTrigger>); })}
-          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" ref={collaborationTabRef} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
+          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" aria-controls="project-workspace-panel-collaboration" ref={collaborationTabRef} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
             Collaboration
             {collaborationUnread > 0 && <>
-              <Badge variant="destructive" size="sm" aria-hidden="true" data-testid="project-collaboration-tab-unread">{collaborationUnread > 99 ? "99+" : collaborationUnread}</Badge>
+              <Badge variant="destructive" size="sm" aria-hidden="true" data-testid="project-collaboration-tab-unread">{formatUnreadCount(collaborationUnread)}</Badge>
               <span className="sr-only">, {collaborationUnread} unread comment{collaborationUnread === 1 ? "" : "s"}</span>
             </>}
           </TabsTrigger>

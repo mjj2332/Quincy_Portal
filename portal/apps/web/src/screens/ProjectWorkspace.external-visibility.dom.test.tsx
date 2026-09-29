@@ -428,7 +428,6 @@ describe("external-editor visibility inventory", () => {
 // either literal moved. Re-captured with DUMP_VISIBILITY_INVENTORY, not hand-merged.
 // ---------------------------------------------------------------------------
 
-
 const FROZEN_EXTERNAL_EDITOR = {
   "RAW": {
     "testids": {

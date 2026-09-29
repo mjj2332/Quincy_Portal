@@ -908,7 +908,9 @@ afterEach(async () => {
       return Promise.resolve({});
     });
     apiPostMock.mockResolvedValue({ raw: { jobId: "raw-job" }, edited: { skipped: "not_ready" } });
-    await render(<ProjectWorkspace projectId="p1" />); await flush();
+    let queryClient: ReturnType<typeof import("../lib/query-client").createQuincyQueryClient> | undefined;
+    await render(<><ProjectWorkspace projectId="p1" /><ClientCapture onClient={(client) => { queryClient = client; }} /></>); await flush();
+    const invalidateSpy = vi.spyOn(queryClient!, "invalidateQueries");
     const dropboxDialog = await openDropboxDialog(host);
     vi.useFakeTimers();
     await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
@@ -916,6 +918,12 @@ afterEach(async () => {
     const paths = apiGetMock.mock.calls.map(([path]) => path);
     expect(paths.filter((path) => path.includes("/ingest-status")).length).toBeGreaterThanOrEqual(7);
     expect(paths.some((path) => path.includes("/assets?collection="))).toBe(false);
+    // Not fetched because it was invalidated (marked stale for the next observer), not because nothing touched it.
+    expect(invalidateSpy.mock.calls.some(([filters]) => JSON.stringify((filters as { queryKey?: unknown })?.queryKey) === JSON.stringify(["project-data", "p1", "assets", "edited"]))).toBe(true);
+    expect(queryClient!.getQueryState(["project-data", "p1", "assets", "edited"])?.isInvalidated ?? true).toBe(true);
+    vi.useRealTimers();
+    await openTab(host, "Edited"); await flush(10);
+    expect(apiGetMock.mock.calls.map(([path]) => path).filter((path) => path.includes("/assets?collection=edited")).length).toBe(1);
   });
 });
 
@@ -1897,6 +1905,13 @@ describe("Collaboration is the default Workspace tab (#336)", () => {
     expect(trigger.textContent).toContain("123 unread comments");
     await openTab(host, "RAW");
     expect(workspaceTab(host, "Collaboration")!.querySelector('[data-testid="project-collaboration-tab-unread"]')?.textContent).toBe("99+");
+  });
+
+  it("does not repeat the unread count as a badge on the Discussion sub-tab", async () => {
+    mockProject({ unread: 5 });
+    await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+    expect(host.querySelector('[data-testid="project-collaboration-tab-unread"]')?.textContent).toBe("5");
+    expect(host.querySelector('[data-testid="project-collaboration-unread"]')).toBeNull();
   });
 
   it("shows no badge without unread comments", async () => {
