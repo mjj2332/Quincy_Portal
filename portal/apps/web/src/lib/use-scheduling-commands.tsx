@@ -161,16 +161,6 @@ export type ScheduleEditorState = {
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
-/**
- * `submitDeadlineProposal`'s single typed entry point over what were two positional-argument
- * internal functions (`mapAndRunDropProposal` for the in-calendar move/drag, and
- * `mapAndRunUnscheduledProjectProposal` for an external panel drop) — both still exist, unmoved,
- * inside this hook; this is only the (retired) FullCalendar-handler-facing shape.
- */
-export type SubmitDeadlineProposalInput =
-  | { kind: "drop"; snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>; event: ProjectDeadlineCalendarEventDto; localCivil: string; subview: "month" | "week"; disambiguation?: ProjectDeadlineDisambiguation; drop: CalendarDropInfo }
-  | { kind: "place"; snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>; entry: ProjectCalendarUnscheduledEntryDto; event: ProjectDeadlineCalendarEventDto; localCivil: string; target: CalendarManipulationTarget; disambiguation?: ProjectDeadlineDisambiguation; drop?: CalendarRevertable };
-
 /** #216 fix round 2 item 1: `submitProposal`'s own gate result — "busy" when `canStartCommand()`
  * was already false (an open confirmation/settle, or another command mid-flight), "not-accepted"
  * on the rarer `acceptForInteraction` failure (access lost / no data yet). Either way, no side
@@ -300,8 +290,6 @@ export type SchedulingController<TBaseline> = {
   moveDialog: MoveDialogState | null;
   scheduleEditor: ScheduleEditorState | null;
   checklistFold: ChecklistFoldState | null;
-  submitDeadlineProposal: (proposal: SubmitDeadlineProposalInput) => void;
-  submitChecklistProposal: (snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "start" | "end") => void;
   /**
    * #216 fix round 1 item 4, gated per fix round 2 item 1: the typed-proposal entry point. Checks
    * `canStartCommand()` first — same gate the (retired) FullCalendar handlers checked externally before their
@@ -309,9 +297,8 @@ export type SchedulingController<TBaseline> = {
    * pending/confirming is rejected with no side effects, rather than overwriting the active
    * snapshot and running two concurrent flows. On success, plans the `SchedulingProposal` via
    * `planSchedulingProposal` and feeds the plan into the SAME internal accept/plan/confirm/mutate
-   * functions (`runChecklistProposal`/`runDeadlineProposal`) the positional
-   * `submitChecklistProposal`/`submitDeadlineProposal` adapters call too — fix round 2 item 3: one
-   * path, not two.
+   * functions (`runChecklistProposal`/`runDeadlineProposal`) the move dialog's and checklist fold's
+   * retries call too — fix round 2 item 3: one path, not two.
    */
   submitProposal: (proposal: SchedulingProposal, options?: { revertable?: CalendarRevertable }) => SubmitProposalOutcome;
   /** #221: applies an Undo ticket (a compensating versioned mutation, `applyUndo`) under the same
@@ -875,8 +862,8 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   }, [acceptRange, finishInteraction, flushQueuedRefetch, focusDescriptor, handleAccessLoss, announceLifecycle, queryClient, refetchAuthoritative, setAcceptGate, setOverlay, setSettle]);
 
   /**
-   * §216 fix round 3 item 3: the ONE deadline plan/error/confirm/mutate path — both the positional
-   * adapters below and `submitProposal` build a `SchedulingProposal` and call this. `event` is an
+   * §216 fix round 3 item 3: the ONE deadline plan/error/confirm/mutate path — both the move dialog's
+   * retry (`mapAndRunDropProposal`/`mapAndRunUnscheduledProjectProposal` below) and `submitProposal` build a `SchedulingProposal` and call this. `event` is an
    * explicit argument (not derived from `snapshot.event`), matching main exactly: main's
    * `mapAndRunDropProposal`/`mapAndRunUnscheduledProjectProposal` always mapped against
    * `snapshot.event` (the freshest accepted schedule) but used a *separately passed* `event` for
@@ -960,14 +947,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const mapAndRunUnscheduledProjectProposal = useCallback((snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto>, entry: ProjectCalendarUnscheduledEntryDto, event: ProjectDeadlineCalendarEventDto, localCivil: string, target: CalendarManipulationTarget, disambiguation: ProjectDeadlineDisambiguation | undefined, drop?: CalendarRevertable) => {
     runDeadlineProposal({ kind: "place", entity: "project_deadline", entry, target, ...(disambiguation ? { disambiguation } : {}) }, snapshot, event, drop, localCivil);
   }, [runDeadlineProposal]);
-
-  const submitDeadlineProposal = useCallback((proposal: SubmitDeadlineProposalInput) => {
-    if (proposal.kind === "drop") {
-      mapAndRunDropProposal(proposal.snapshot, proposal.event, proposal.localCivil, proposal.subview, proposal.disambiguation, proposal.drop);
-    } else {
-      mapAndRunUnscheduledProjectProposal(proposal.snapshot, proposal.entry, proposal.event, proposal.localCivil, proposal.target, proposal.disambiguation, proposal.drop);
-    }
-  }, [mapAndRunDropProposal, mapAndRunUnscheduledProjectProposal]);
 
   const openMoveDialog = useCallback((event: ProjectDeadlineCalendarEventDto) => {
     if (identity.role !== "admin" || !event.permissions.canDrag || deadlineMovementDisabled || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
@@ -1205,7 +1184,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
 
   /**
    * §216 fix round 3 item 3: the ONE checklist plan/error/mutate path — both `mapChecklistCommand`
-   * (the positional adapter below, unchanged public signature) and `submitProposal` build a
+   * (the checklist fold's retry, below) and `submitProposal` build a
    * `SchedulingProposal` and call this. `event` is an explicit argument, matching main exactly:
    * main's `mapChecklistCommand` mapped against `snapshot.event` (the freshest accepted schedule)
    * but used a *separately passed* `event` for the branch decision, `ChecklistProposal.source`,
@@ -1264,7 +1243,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
    * self-contained command with no external caller to gate it, so it has to gate itself. No side
    * effects on a "busy" rejection: `acceptForInteraction` (which replaces `snapshotRef` and
    * activates the command lock) is never reached. On success, plans + runs through the exact same
-   * `runChecklistProposal`/`runDeadlineProposal` the positional adapters call.
+   * `runChecklistProposal`/`runDeadlineProposal` the move dialog's and checklist fold's retries call.
    */
   const submitProposal = useCallback((proposal: SchedulingProposal, options?: { revertable?: CalendarRevertable }): SubmitProposalOutcome => {
     if (!canStartCommand()) return { ok: false, reason: "busy" };
@@ -1475,8 +1454,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     moveDialog,
     scheduleEditor,
     checklistFold,
-    submitDeadlineProposal,
-    submitChecklistProposal: mapChecklistCommand,
     submitProposal,
     runUndo,
     openMoveDialog,

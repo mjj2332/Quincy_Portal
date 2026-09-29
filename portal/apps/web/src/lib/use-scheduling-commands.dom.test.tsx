@@ -25,8 +25,7 @@ import {
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
 import { confirm, confirmStore } from "../lib/confirm";
-import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib/production-calendar-query";
-import type { CalendarAcceptedSnapshot } from "./production-calendar-interaction";
+import { useProductionCalendarRange } from "../lib/production-calendar-query";
 import { useSchedulingCommands, type SchedulingCommands, type SubmitProposalOutcome } from "./use-scheduling-commands";
 import type { SchedulingProposal } from "./scheduling-policy";
 
@@ -274,14 +273,15 @@ describe("useSchedulingCommands submitProposal", () => {
     expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
   });
 
-  // §216 fix round 5 item 3
-  it("does not leak event A's street into event B's cancelled-confirmation announcement, after A's invalid drag cleared the snapshot (snapshot-clearing regression)", async () => {
-    // `submitDeadlineProposal` does NOT call `acceptForInteraction` itself (see the round 4 item 1
-    // test below, which hands it an already-built snapshot the same way) — `snapshotRef` is only
-    // ever written by `acceptForInteraction` and cleared at `runDeadlineProposal`'s generic-invalid
-    // branch. So a stale `snapshotRef` left over from an earlier, unrelated interaction is the ONE
-    // thing standing between a later `submitDeadlineProposal`'s cancelled-confirmation announcement
-    // and leaking that earlier interaction's street/focus into it.
+  // §216 fix round 5 item 3, re-expressed through `submitProposal` after the non-accepting
+  // `submitDeadlineProposal` adapter was deleted. That adapter was the only entry point that ran a
+  // deadline proposal WITHOUT `acceptForInteraction`, so it was the only way a stale `snapshotRef`
+  // could reach `finishInteraction`'s cancelled announcement. Every surviving entry point
+  // (`submitProposal`, `openMoveDialog`, `openUnscheduledProjectDialog`) accepts first, and
+  // `cancelMoveDialog` is guarded on an open dialog, so the round 3 item 1 clear on the
+  // generic-invalid branch is now defensive; this test pins what the Calendar can actually reach:
+  // after A's invalid drag, B is accepted and B's cancelled confirmation names B, never A.
+  it("after A's invalid drag, B's cancelled-confirmation announcement names B and never A", async () => {
     const eventA = deadlineEvent("2026-08-27T09:00", 8);
     const projectB = { id: "33333333-3333-4333-8333-333333333333", street: "44 Bridge Road", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false };
     const eventB: ProjectDeadlineCalendarEventDto = { ...deadlineEvent("2026-09-03T09:00", 8), id: `project-deadline:${projectB.id}`, project: projectB };
@@ -289,84 +289,61 @@ describe("useSchedulingCommands submitProposal", () => {
 
     // Step 1: an invalid DRAG (not placement) proposal for A. target.subview:"agenda" hits the
     // generic-invalid branch (neither repeated_local_time nor nonexistent_local_time) — same
-    // technique as the lock-release regression test above — which unconditionally clears
-    // `snapshotRef` for a drag too (round 3 item 1).
+    // technique as the lock-release regression test above.
     const invalidProposalA: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event: eventA, target: { subview: "agenda", targetDate: "2026-08-29" } };
     await act(async () => { commandsRef!.submitProposal(invalidProposalA); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
     expect(confirm).not.toHaveBeenCalled();
 
-    // Step 2: a direct, valid `submitDeadlineProposal` for B, with a hand-built snapshot — the
-    // same pattern the round 4 item 1 test below uses, and the point of this test: this call never
-    // touches `snapshotRef`.
+    // Step 2: a valid drag for B, with the revertable the Calendar's `onEventUpdate` hands over.
     let resolveConfirm: (value: boolean) => void = () => {};
     (confirm as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<boolean>((resolve) => { resolveConfirm = resolve; }));
-    const snapshotB: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto> = {
-      event: eventB,
-      filters: productionCalendarFiltersFor(calendar),
-      principalId: identity.principalId,
-      authorizationEpoch: identity.authorizationEpoch,
-      focus: { eventId: eventB.id, control: "event" },
-      capturedNow: Date.now(),
-    };
-    const dropInfo = { event: { allDay: false, start: null, startStr: "", end: null, endStr: "", extendedProps: {} }, revert: vi.fn() };
-    await act(async () => {
-      commandsRef!.submitDeadlineProposal({ kind: "drop", snapshot: snapshotB, event: eventB, localCivil: "2026-09-05T09:00", subview: "month", drop: dropInfo });
-      await Promise.resolve();
-    });
+    const revertable = { revert: vi.fn() };
+    const proposalB: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event: eventB, target: { subview: "month", targetDate: "2026-09-05" } };
+    let outcomeB: SubmitProposalOutcome | undefined;
+    await act(async () => { outcomeB = commandsRef!.submitProposal(proposalB, { revertable }); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
+    expect(outcomeB).toEqual({ ok: true });
     expect(confirm).toHaveBeenCalledTimes(1);
 
     // Step 3: cancel the confirmation. `finishInteraction` reads `snapshotRef.current` for the
-    // announcement's street — with the unconditional clear in step 1, it must be blank rather than
-    // A's "12 Harbour Street" (a placement-only clear would leave A's snapshot stranded there).
+    // announcement's street — it must be B's, never A's "12 Harbour Street".
     await act(async () => { resolveConfirm(false); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
 
     expect(commandsRef!.announcement).not.toContain(eventA.project.street);
-    expect(commandsRef!.announcement).toBe(`Cancelled moving the Deadline. It remains at ${eventB.deadlineLocalCivil.replace("T", " ")}.`);
-    expect(dropInfo.revert).toHaveBeenCalledTimes(1);
+    expect(commandsRef!.announcement).toBe(`Cancelled moving the Deadline for ${projectB.street}. It remains at ${eventB.deadlineLocalCivil.replace("T", " ")}.`);
+    expect(revertable.revert).toHaveBeenCalledTimes(1);
+    expect(putBodies).toEqual([]);
   });
 
-  // §216 fix round 4 item 1
-  it("maps a deadline-drag proposal from snapshot.event, not the positional event — the mutation carries the SNAPSHOT's expectedVersion/offsets", async () => {
-    const snapshotEvent = deadlineEvent("2026-08-27T09:00", 8);
-    await render(response({ events: [snapshotEvent], unscheduled: [] }));
+  // §216 fix round 4 item 1, re-expressed through the drag's fold retry — `submitMoveDialog` →
+  // `mapAndRunDropProposal`, that function's only caller now `submitDeadlineProposal` is gone. The
+  // retry maps from the dialog's `snapshot.event` (the clone `acceptForInteraction` took), and the
+  // mutation must carry THAT snapshot's expectedVersion and reminder offsets. The old test could
+  // also hand in a positional `event` that disagreed with `snapshot.event`; no surviving entry point
+  // can, since each builds the snapshot from the very event it passes alongside it.
+  it("retries a deadline DRAG onto a repeated local time through the fold dialog, mapping from the accepted snapshot's version/offsets", async () => {
+    const event = deadlineEvent("2026-03-30T02:30", 8);
+    await render(response({ events: [event], unscheduled: [] }));
+    const revertable = { revert: vi.fn() };
+    const proposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T02:30" } };
+    await act(async () => { commandsRef!.submitProposal(proposal, { revertable }); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
 
-    // A positional `event` that deliberately disagrees with snapshot.event on every field the
-    // mapper/mutation would read (version, civil time, offsets, instant) — main
-    // (ProductionCalendar.tsx:983) mapped mapProjectDeadlineMoveToCommand from snapshot.event, so
-    // if the adapter ever maps from the positional `event` instead, this test's expected PUT body
-    // (below) would come out wrong (a different expectedVersion/localCivil/offsets).
-    const positionalEvent: ProjectDeadlineCalendarEventDto = {
-      ...snapshotEvent,
-      deadlineLocalCivil: "2026-01-01T00:00",
-      deadlineVersion: 99,
-      reminderOffsetsMinutes: [30],
-      timing: { allDay: false, start: "2025-12-31T13:00:00.000Z", end: null },
-    };
-    const snapshot: CalendarAcceptedSnapshot<ProjectDeadlineCalendarEventDto> = {
-      event: snapshotEvent,
-      filters: productionCalendarFiltersFor(calendar),
-      principalId: identity.principalId,
-      authorizationEpoch: identity.authorizationEpoch,
-      focus: { eventId: snapshotEvent.id, control: "event" },
-      capturedNow: Date.now(),
-    };
-    const dropInfo = { event: { allDay: false, start: null, startStr: "", end: null, endStr: "", extendedProps: {} }, revert: vi.fn() };
+    // A drag's fold leaves the chip where it landed (no revert) and remembers the subview + drop,
+    // which is what routes the retry through `mapAndRunDropProposal`.
+    expect(confirm).not.toHaveBeenCalled();
+    expect(revertable.revert).not.toHaveBeenCalled();
+    expect(commandsRef!.moveDialog?.initialCivil).toBe("2026-04-05T02:30");
+    expect(commandsRef!.moveDialog?.subview).toBe("week");
+    expect(commandsRef!.moveDialog?.foldChoices).toEqual([{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }]);
 
-    await act(async () => {
-      commandsRef!.submitDeadlineProposal({ kind: "drop", snapshot, event: positionalEvent, localCivil: "2026-08-29T09:00", subview: "month", drop: dropInfo });
-      await Promise.resolve();
-    });
+    await act(async () => { commandsRef!.submitMoveDialog("2026-04-05T02:30", "later"); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
 
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(dropInfo.revert).not.toHaveBeenCalled();
-    // The mapper shifts snapshot.event's date (2026-08-27 -> 2026-08-29) while preserving ITS
-    // wall-clock time (09:00) — not the positional event's (00:00) — and the request carries
-    // snapshot.event's version (8) and reminder offsets ([1440, 60]), not the positional event's
-    // (99, [30]).
-    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-08-29T09:00" }, reminderOffsetsMinutes: [1440, 60] }]);
+    expect(revertable.revert).not.toHaveBeenCalled();
+    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [1440, 60] }]);
   });
 });
