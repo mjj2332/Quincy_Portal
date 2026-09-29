@@ -280,6 +280,11 @@
  * 2026-09-28, #257 design review — CHANGED: the default content's inline time label moves from
  * `text-muted-foreground` (2.76:1 on the 20% stage tint, 1.73:1 on a hatch stripe) to
  * `text-foreground-secondary` (7.1:1 / 5.05:1). Title and layout unchanged.
+ *
+ * 2026-09-29, #247 — ADDED: a non-milestone bar shell draws a 1px full-strength
+ * `border-(--gantt-event-color)` (the /20 wash measured 1.23-1.43:1, under WCAG 1.4.11's 3:1),
+ * and a completed bar's border moves from `border-border` (1.58:1) to `border-muted-foreground`
+ * (3.37:1). Fill alphas unchanged. Covered by `gantt-skin.guard.test.ts` Detector 9.
  */
 
 import {
@@ -992,6 +997,13 @@ function GanttBar<TData = unknown>({
       // the unfilled remainder has to be legible on its own - at /12 a bar
       // with a progress fill read as a floating segment with no basement
       "bg-(--gantt-event-color)/20 hover:bg-(--gantt-event-color)/30",
+      // Quincy #247: the /20 wash measured 1.23-1.43:1 against the timeline for every stage hue,
+      // under WCAG 1.4.11's 3:1 for the graphic that encodes start, end and duration. The wash
+      // stays quiet; a full-strength stage-hue border carries the contrast instead (the
+      // milestone diamond's own treatment), >= 3.37:1 for every hue on both canvas tones -
+      // `gantt-skin.guard.test.ts` Detector 9 measures it from the tokens. A milestone's shell
+      // sheds its body for the diamond (below), so it gets no border either.
+      !milestone && "border border-(--gantt-event-color)",
       // done: #219 PR A fix (dr-219a MEDIUM #5) - this used to be an ALPHA STEP on the event's
       // OWN hue (`bg-(--gantt-event-color)/10`, hover `/15`) - reduced emphasis, but not
       // guaranteed reduced LOUDNESS: a 10% wash of a naturally dark/saturated stage colour (e.g.
@@ -1016,7 +1028,11 @@ function GanttBar<TData = unknown>({
       // (the ring), but a merely-completed, unselected bar had no boundary of its own at all. An
       // explicit token hairline, not a raised fill - the fill's own alpha is already proven quieter
       // than the active palette by the MEDIUM #5 calculation above, and raising it would undo that.
-      "data-completed:border data-completed:border-border",
+      // Quincy #247: the hairline was `--border` (greige-200, 1.58:1 on the canvas). A done bar
+      // still encodes its dates, so its boundary needs 3:1 too: `--text-muted` (greige-400,
+      // 3.37:1 / 3.57:1), still hue-independent and still quieter than the ink border a
+      // completed+selected bar swaps to below. Width comes from the #247 border above.
+      "data-completed:border-muted-foreground",
       // move: a POINTER move hides the original (the smooth cursor clone represents it instead).
       // #219 PR A fix (dr-219a HIGH #4, part 1): a KEYBOARD move has no cursor clone, and DOM
       // focus never leaves this exact bar, so it instead gets the SAME faded-placeholder

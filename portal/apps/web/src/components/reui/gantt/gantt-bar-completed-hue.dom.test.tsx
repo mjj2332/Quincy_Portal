@@ -308,9 +308,13 @@ describe("a completed bar that is ALSO selected keeps the neutral completed back
  * explicit token hairline, `data-completed:border data-completed:border-border`, without raising
  * the fill itself (that alpha is already proven quieter than the active palette by MEDIUM #5's own
  * calculation - raising it would undo that work).
+ *
+ * #247 superseded the hairline's TOKEN: `--border` (greige-200) measured 1.58:1 on the canvas,
+ * under WCAG 1.4.11's 3:1, so the completed border is now `data-completed:border-muted-foreground`
+ * (`--text-muted`, greige-400, 3.37:1), with its width from the shell's own #247 border.
  */
 describe("a completed bar gets an explicit border hairline, distinct from its own fill (#219 PR A, dr2-219a MEDIUM #3)", () => {
-  it("the shell carries data-completed:border data-completed:border-border", async () => {
+  it("the shell carries a border, coloured data-completed:border-muted-foreground (#247)", async () => {
     const event: GanttEvent = {
       id: "bordered-done",
       title: "Bordered Done",
@@ -328,8 +332,9 @@ describe("a completed bar gets an explicit border hairline, distinct from its ow
 
     const bar = findBar("Bordered Done");
     expect(bar.getAttribute("data-completed")).toBe("true");
-    expect(bar.className).toContain("data-completed:border");
-    expect(bar.className).toContain("data-completed:border-border");
+    expect(bar.className.split(/\s+/)).toContain("border");
+    expect(bar.className).toContain("data-completed:border-muted-foreground");
+    expect(bar.className).not.toContain("data-completed:border-border ");
     // MEDIUM #5's own hue-independent rule stays untouched - do not raise the fill.
     expect(bar.className).toContain("data-completed:bg-border/15");
   });
@@ -338,7 +343,8 @@ describe("a completed bar gets an explicit border hairline, distinct from its ow
     // No CSS pipeline runs in this happy-dom suite, so there is nothing for getComputedStyle to
     // read - resolve the real shipped tokens instead (see loadTokenSource's own header comment).
     const tokens = loadTokenSource();
-    const borderHex = resolveToken(tokens, "--color-border");
+    const borderHex = resolveToken(tokens, "--color-muted-foreground");
+    const fillTokenHex = resolveToken(tokens, "--color-border");
     const canvasHex = resolveToken(tokens, "--bg-canvas");
 
     // `border-border`: the token painted at FULL strength (an ordinary CSS border has no alpha of
@@ -346,16 +352,13 @@ describe("a completed bar gets an explicit border hairline, distinct from its ow
     const borderRgb = hexToRgb(borderHex);
     // `bg-border/15`: the SAME token, but at 15% alpha composited over the canvas underneath -
     // the shell's own fill, unchanged by this fix.
-    const fillRgb = compositeOver(borderHex, canvasHex, 15);
+    const fillRgb = compositeOver(fillTokenHex, canvasHex, 15);
 
     expect(fillRgb).not.toEqual(borderRgb);
-    // Not merely "different by the compositing algebra" - a real, perceivable object boundary,
-    // not a couple of shifted least-significant bits. The delta between the opaque border and its
-    // own 15%-alpha fill is exactly 85% of the delta between the border token and the canvas it is
-    // composited over (algebraically: border - (border*0.15 + canvas*0.85) = 0.85*(border -
-    // canvas)) - with this app's actual tokens (border `--greige-200` #cfc7b6 (207,199,182),
-    // canvas `--paper-050` #faf8f2 (250,248,242)) that puts the largest per-channel delta (blue)
-    // at 51 of 255. 40 is a conservative floor under that, not a coincidence tuned to pass.
+    // A real, perceivable boundary, not a couple of shifted bits. Since #247 the border is
+    // `--text-muted` (greige-400, (143,135,117)) against a fill of `--border` (greige-200) at 15%
+    // over `--paper-050`, about (244,241,233), so the largest per-channel delta is ~116 of 255.
+    // 40 stays the conservative floor this test has always used.
     const maxChannelDelta = Math.max(
       ...[0, 1, 2].map((i) => Math.abs(borderRgb[i]! - fillRgb[i]!)),
     );
