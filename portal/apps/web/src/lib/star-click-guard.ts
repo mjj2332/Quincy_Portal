@@ -5,7 +5,7 @@ import type { ProjectSummary } from "./kanban-interaction";
  * The Board's misclick guard (#304). The reorder FLIP (`lib/kanban-flip.ts`) shows where a
  * re-sorted card went, but a quick second click at the same spot lands on whichever card slid under
  * the pointer — a silent write to the wrong project's priority. After a pointer star commit moves
- * its card, a pointer star commit on a DIFFERENT card within `STAR_GUARD_RADIUS_PX` of the first,
+ * its card (slid or, under reduced motion, jumped), a pointer star commit on a DIFFERENT card within `STAR_GUARD_RADIUS_PX` of the first,
  * inside `STAR_GUARD_WINDOW_MS`, is dropped. Keyboard commits are never pointer commits, so they are
  * untouched; moving the pointer away or scrolling anything disarms it.
  */
@@ -73,7 +73,7 @@ export function useStarClickGuard(onPriorityChange: ((project: ProjectSummary, p
     }, []),
   };
 
-  const onFlipPlayed = useCallback((movedIds: readonly string[]) => {
+  const onCardsMoved = useCallback((movedIds: readonly string[]) => {
     const guard = armStarClickGuard(lastPointerCommitRef.current, movedIds, performance.now());
     if (!guard) return;
     guardRef.current = guard;
@@ -92,5 +92,5 @@ export function useStarClickGuard(onPriorityChange: ((project: ProjectSummary, p
     onPriorityChange?.(project, priority);
   }, [onPriorityChange]);
 
-  return { boardHandlers, onFlipPlayed, handlePriorityChange };
+  return { boardHandlers, onCardsMoved, handlePriorityChange };
 }

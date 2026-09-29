@@ -51,11 +51,16 @@ type FlipScopeProps = {
   /** Every column's card order; the FLIP measures only when this changes. */
   orderKey: string;
   sort: KanbanSortMode;
-  /** False under reduced motion and while a drag is live. */
+  /** False while a drag is live. */
   enabled: boolean;
+  /** False under reduced motion: moves are still measured and reported, but not played. */
+  animate: boolean;
   rootRef: RefObject<HTMLElement | null>;
-  /** Called with the ids of the cards that moved, when any did. */
-  onPlayed: (movedIds: string[]) => void;
+  /**
+   * Called with the ids of the cards that moved, when any did — played or not, because the
+   * misclick guard it arms matters most exactly when the card jumps.
+   */
+  onMoved: (movedIds: string[]) => void;
   children: ReactNode;
 };
 
@@ -74,7 +79,7 @@ function measureCards(root: HTMLElement): FlipSnapshot {
  * BEFORE it is committed — the "first" positions. Positions saved from the previous commit would be
  * stale after any scroll or image load in between.
  *
- * Skipped unless both commits were eligible: the drop commit (drag live in the previous one) belongs
+ * Measured unless both commits were eligible: the drop commit (drag live in the previous one) belongs
  * to dnd-kit's overlay drop animation, and a sort-mode change reshuffles everything at once, which
  * reads as noise rather than as a card going somewhere.
  */
@@ -95,11 +100,15 @@ class FlipScope extends Component<FlipScopeProps> {
     if (!before || !root) return;
     this.land();
     const deltas = flipDeltas(before, measureCards(root));
-    for (const { id, dx, dy } of deltas) {
-      const element = root.querySelector<HTMLElement>(`[data-flip-id="${CSS.escape(id)}"]`);
-      if (element) this.flights.set(id, playFlip(element, dx, dy));
+    if (deltas.length === 0) return;
+    if (this.props.animate) {
+      const farthest = deltas.reduce((best, delta) => (Math.hypot(delta.dx, delta.dy) > Math.hypot(best.dx, best.dy) ? delta : best));
+      for (const delta of deltas) {
+        const element = root.querySelector<HTMLElement>(`[data-flip-id="${CSS.escape(delta.id)}"]`);
+        if (element) this.flights.set(delta.id, playFlip(element, delta.dx, delta.dy, delta === farthest));
+      }
     }
-    if (deltas.length > 0) this.props.onPlayed(deltas.map((delta) => delta.id));
+    this.props.onMoved(deltas.map((delta) => delta.id));
   }
 
   override componentWillUnmount() { this.land(); }
@@ -537,7 +546,7 @@ export function ProjectKanbanBoard2({
           className="w-full focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="w-max min-w-full">
-            <FlipScope orderKey={orderKey} sort={effectiveKanbanSort} enabled={!reducedMotion && !dragActive} rootRef={boardRef} onPlayed={starClickGuard.onFlipPlayed}>
+            <FlipScope orderKey={orderKey} sort={effectiveKanbanSort} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
               <div
                 ref={boardRef}
                 {...starClickGuard.boardHandlers}

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } from "./kanban-flip";
+import { FLIP_SETTLE_FALLBACK_MS, boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } from "./kanban-flip";
 
 function snapshot(entries: Array<[string, string, number, number?]>): FlipSnapshot {
   return new Map(entries.map(([id, column, top, left = 0]) => [id, { column, top, left }]));
@@ -34,7 +34,7 @@ describe("flipDeltas (#304)", () => {
 describe("playFlip (#304)", () => {
   function fakeElement() {
     const writes: string[] = [];
-    const listeners = new Map<string, () => void>();
+    const listeners = new Map<string, (event: { target: unknown; propertyName: string }) => void>();
     const style = new Proxy({} as Record<string, string>, {
       set(target, key: string, value: string) {
         writes.push(`${key}=${value}`);
@@ -45,15 +45,15 @@ describe("playFlip (#304)", () => {
     const element = {
       style,
       getBoundingClientRect: () => { writes.push("reflow"); return {}; },
-      addEventListener: (type: string, listener: () => void) => { listeners.set(type, listener); },
+      addEventListener: (type: string, listener: (event: { target: unknown; propertyName: string }) => void) => { listeners.set(type, listener); },
       removeEventListener: (type: string) => { listeners.delete(type); },
     };
-    return { element: element as unknown as HTMLElement, writes, style, listeners };
+    return { element: element as unknown as HTMLElement, raw: element, writes, style, listeners };
   }
 
   it("inverts with no transition, forces a reflow, then eases back to rest on the motion tokens", () => {
     const { element, writes } = fakeElement();
-    playFlip(element, 0, 224);
+    playFlip(element, 0, 224, true);
     expect(writes).toEqual([
       "transition=none",
       "transform=translate(0px, 224px)",
@@ -64,16 +64,42 @@ describe("playFlip (#304)", () => {
     ]);
   });
 
-  it("clears its inline styles when the transition ends, and when cancelled", () => {
+  it("lifts only the card it is told to", () => {
+    const { element, writes } = fakeElement();
+    playFlip(element, 0, -100, false);
+    expect(writes).not.toContain("zIndex=1");
+  });
+
+  it("ignores a child's transition ending — a card's hover shadow must not cut its flight short", () => {
+    const flying = fakeElement();
+    playFlip(flying.element, 0, 10, true);
+    flying.listeners.get("transitionend")?.({ target: {}, propertyName: "box-shadow" });
+    flying.listeners.get("transitionend")?.({ target: flying.raw, propertyName: "box-shadow" });
+    expect(flying.style.transition).toBe("transform var(--dur-base) var(--ease-standard)");
+    expect(flying.style.zIndex).toBe("1");
+  });
+
+  it("clears its inline styles when the transition ends, if it never ends, and when cancelled", () => {
+    vi.useFakeTimers();
+    try {
+      const stuck = fakeElement();
+      playFlip(stuck.element, 0, 10, true);
+      vi.advanceTimersByTime(FLIP_SETTLE_FALLBACK_MS);
+      expect(stuck.style.zIndex).toBe("");
+      expect(stuck.listeners.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+
     const ended = fakeElement();
-    playFlip(ended.element, 0, 10);
-    ended.listeners.get("transitionend")?.();
+    playFlip(ended.element, 0, 10, true);
+    ended.listeners.get("transitionend")?.({ target: ended.raw, propertyName: "transform" });
     expect(ended.style.transition).toBe("");
     expect(ended.style.zIndex).toBe("");
     expect(ended.listeners.size).toBe(0);
 
     const cancelled = fakeElement();
-    const cancel = playFlip(cancelled.element, 0, 10);
+    const cancel = playFlip(cancelled.element, 0, 10, true);
     cancel();
     expect(cancelled.style.transition).toBe("");
     expect(cancelled.style.transform).toBe("");

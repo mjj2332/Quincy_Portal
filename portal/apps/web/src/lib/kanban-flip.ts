@@ -38,30 +38,46 @@ export function flipDeltas(before: FlipSnapshot, after: FlipSnapshot): FlipDelta
 }
 
 /**
+ * If `transitionend` never arrives (a background tab, an interrupted style recalc), the flight is
+ * cleared anyway, so a card cannot be left lifted over its neighbours. Comfortably past `--dur-base`.
+ */
+export const FLIP_SETTLE_FALLBACK_MS = 1_000;
+
+/**
  * Plays one card's FLIP and returns a cancel. A CSS transition, never `element.animate`: the global
  * reduced-motion rule in `styles/app.css` can only reach CSS motion (see
  * `ProductionEventCalendar.focus-motion.guard.test.ts`), and the Board also skips the FLIP outright
  * under reduced motion. The forced reflow is what separates the inverted frame from the eased one;
  * without it the browser coalesces both writes and nothing moves.
  *
- * `z-index` lifts the flying card over the neighbours it passes; the wrapper is `relative`.
+ * `lift` raises the card over the neighbours it passes (the wrapper is `relative`). Only the card
+ * travelling farthest is lifted: lifting every mover would leave DOM order to decide, and the card
+ * moving up — now first in the DOM — would pass UNDER the cards sliding down.
+ *
+ * Only the wrapper's own `transform` ending counts. `transitionend` bubbles, and the card inside
+ * transitions its border and shadow on hover — which a re-sort toggles on the card leaving the
+ * pointer and the one sliding under it — so any child's ending would otherwise snap the flight.
  */
-export function playFlip(element: HTMLElement, dx: number, dy: number): () => void {
+export function playFlip(element: HTMLElement, dx: number, dy: number, lift: boolean): () => void {
   const { style } = element;
   const clear = () => {
     element.removeEventListener("transitionend", onEnd);
+    clearTimeout(fallback);
     style.transition = "";
     style.transform = "";
     style.zIndex = "";
   };
-  function onEnd() { clear(); }
+  function onEnd(event: TransitionEvent) {
+    if (event.target === element && event.propertyName === "transform") clear();
+  }
   style.transition = "none";
   style.transform = `translate(${dx}px, ${dy}px)`;
-  style.zIndex = "1";
+  if (lift) style.zIndex = "1";
   element.getBoundingClientRect();
   style.transition = "transform var(--dur-base) var(--ease-standard)";
   style.transform = "";
   element.addEventListener("transitionend", onEnd);
+  const fallback = setTimeout(clear, FLIP_SETTLE_FALLBACK_MS);
   return clear;
 }
 

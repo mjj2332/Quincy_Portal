@@ -94,15 +94,15 @@ vi.mock("../LazyImage", () => ({
 // #304: happy-dom has no layout, so the FLIP's DOM writes are the seam's own tests
 // (`lib/kanban-flip.test.ts`). Here only WHICH elements it is played on, and by how much, matters.
 const flip = vi.hoisted(() => ({
-  played: [] as Array<{ element: HTMLElement; dx: number; dy: number }>,
+  played: [] as Array<{ element: HTMLElement; dx: number; dy: number; lift: boolean }>,
 }));
 
 vi.mock("../../lib/kanban-flip", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/kanban-flip")>();
   return {
     ...actual,
-    playFlip: (element: HTMLElement, dx: number, dy: number) => {
-      flip.played.push({ element, dx, dy });
+    playFlip: (element: HTMLElement, dx: number, dy: number, lift: boolean) => {
+      flip.played.push({ element, dx, dy, lift });
       return () => undefined;
     },
   };
@@ -1463,12 +1463,25 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
     expect(played()).toEqual([{ id: "b", dx: 0, dy: 100 }, { id: "a", dx: 0, dy: -100 }]);
   });
 
-  it("does not animate under reduced motion", async () => {
+  it("lifts only the card travelling farthest, so the one moving up passes over the ones moving down", async () => {
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(5) });
+    expect(flip.played.map(({ element, lift }) => ({ id: element.dataset.flipId, lift }))).toEqual([
+      { id: "c", lift: true },
+      { id: "a", lift: false },
+      { id: "b", lift: false },
+    ]);
+  });
+
+  it("does not animate under reduced motion, but still guards the click that lands on the card that jumped in", async () => {
     const restore = mockMatchMedia(true);
     try {
-      await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
-      await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(5) });
+      const props = await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+      await commitAndResort(props);
       expect(played()).toEqual([]);
+      now += 200;
+      await clickStar("b Street", 4, { x: 202, y: 228 });
+      expect(props.onPriorityChange).toHaveBeenCalledTimes(1);
     } finally {
       restore();
     }
