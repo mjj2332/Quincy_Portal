@@ -244,7 +244,34 @@ describe("SubtaskChecklist", () => {
 
   it("resets composer metadata on Cancel", async () => {
     const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!); const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(composer, "Discard me"); await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')!); const editor = portal("subtask-popover-composer-schedule"); const state = editor.querySelector<HTMLSelectElement>("select")!; state.value = "due_only"; state.dispatchEvent(new Event("change", { bubbles: true })); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-04`); await click(saveButton(editor)); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!); expect(document.activeElement).toBe(document.getElementById(`subtask-add-${projectId}`));
-    await click(document.getElementById(`subtask-add-${projectId}`)!); expect(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')?.textContent).toContain("◷");
+    await click(document.getElementById(`subtask-add-${projectId}`)!); expect(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')?.textContent).toContain("Project default");
+    // The reset returns to the Project default, not the stale due-only choice: an untouched Add sends no schedule.
+    const retitled = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!; await typeInto(retitled, "After cancel"); await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    expect(apiPostMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks`, { title: "After cancel" });
+  });
+
+  it("shows the Project default on the composer trigger and posts no schedule when none was chosen", async () => {
+    const created = { ...task, id: "task-default", title: "Plain", position: 3072, dueDate: `${year}-11-06`, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-11-02`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-11-06`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-11-06` } };
+    apiPostMock.mockResolvedValueOnce(created);
+    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!);
+    const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')!;
+    expect(trigger().textContent).toContain("Project default"); expect(trigger().textContent).not.toContain("◷");
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Plain");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Plain" });
+    expect(item(host, "Plain").textContent).toContain(`2 Nov ${year} → 6 Nov ${year}`);
+  });
+
+  it("treats choosing Unscheduled in the composer as the Project default", async () => {
+    const host = mount(); await render(); await click(document.getElementById(`subtask-add-${projectId}`)!);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Back to default");
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')!);
+    const editor = portal("subtask-popover-composer-schedule"); const state = editor.querySelector<HTMLSelectElement>("select")!; state.value = "due_only"; state.dispatchEvent(new Event("change", { bubbles: true })); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-04`); await click(saveButton(editor));
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')!);
+    const reopened = portal("subtask-popover-composer-schedule"); const again = reopened.querySelector<HTMLSelectElement>("select")!; again.value = "unscheduled"; again.dispatchEvent(new Event("change", { bubbles: true })); await click(saveButton(reopened));
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="Schedule for new subtask"]')?.textContent).toContain("Project default");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Back to default" });
   });
 
   it("derives pure reorder neighbors and mounts grip-only activators", async () => {

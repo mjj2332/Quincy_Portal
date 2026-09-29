@@ -361,3 +361,93 @@ describe("project subtasks API", () => {
     }
   });
 });
+
+describe("default Subtask range (#339)", () => {
+  const CREATED_SPLIT = Date.UTC(2026, 5, 30, 15); // 2026-07-01 01:00 in Sydney
+  type Seed = { shootDate?: string | null; deadlineLocalCivil?: string | null; createdAt?: number };
+  async function seedProject(seed: Seed = {}) {
+    const id = crypto.randomUUID(); const createdAt = seed.createdAt ?? CREATED_SPLIT;
+    await database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, board_position, created_at, updated_at) VALUES (?, 'Default Range Street', ?, 'editing_autohdr', 0, ?, ?)").bind(id, seed.shootDate ?? null, createdAt, createdAt).run();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), id, photographerId, createdAt).run();
+    if (seed.deadlineLocalCivil) await setDeadline(id, seed.deadlineLocalCivil);
+    return id;
+  }
+  async function setDeadline(id: string, localCivil: string) {
+    const before = await database.DB.prepare("SELECT deadline_version AS version FROM projects WHERE id = ?").bind(id).first<{ version: number }>();
+    const response = await request(`/api/projects/${id}/deadline`, "subtasks-admin-token", "PUT", { expectedVersion: before!.version, deadline: { localCivil }, reminderOffsetsMinutes: [] });
+    expect(response.status).toBe(200);
+  }
+  type Dto = { id: string; dueDate: string | null; schedule: { state: string; version: number; zone: string; start: { kind: string; localCivil: string } | null; end: { kind: string; localCivil: string } | null } };
+  async function create(id: string, body: Record<string, unknown> = { title: "Defaulted" }) {
+    const response = await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token", "POST", body);
+    expect(response.status).toBe(201);
+    return await response.json() as Dto;
+  }
+  const columns = "due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_end_kind, schedule_end_at, schedule_zone, schedule_version";
+  const row = (id: string) => database.DB.prepare(`SELECT ${columns} FROM project_subtasks WHERE id = ?`).bind(id).first();
+
+  it("creates without a schedule as the Project's shoot date to Deadline range", async () => {
+    const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
+    const item = await create(id);
+    expect(item).toMatchObject({ dueDate: "2026-11-06", schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { kind: "date", localCivil: "2026-11-02" }, end: { kind: "date", localCivil: "2026-11-06" } } });
+    expect(await row(item.id)).toEqual({ due_date: "2026-11-06", schedule_start_kind: "date", schedule_start_civil: "2026-11-02", schedule_start_at: null, schedule_end_kind: "date", schedule_end_at: null, schedule_zone: "Australia/Sydney", schedule_version: 1 });
+  });
+
+  it.each([
+    ["no shoot date and no Deadline: the Sydney creation date, not the UTC date", { shootDate: null }, "2026-07-01", "2026-07-01"],
+    ["non-canonical shoot text falls back to the creation date", { shootDate: "Thursday arvo", deadlineLocalCivil: "2026-07-09T10:00" }, "2026-07-01", "2026-07-09"],
+    ["a Deadline before the shoot date collapses to one day on the Deadline", { shootDate: "2026-11-10", deadlineLocalCivil: "2026-11-06T09:00" }, "2026-11-06", "2026-11-06"],
+    ["a shoot date with no Deadline is one day", { shootDate: "2026-11-02" }, "2026-11-02", "2026-11-02"],
+  ] as Array<[string, Seed, string, string]>)("%s", async (_name, seed, start, end) => {
+    const item = await create(await seedProject(seed));
+    expect(item.schedule).toMatchObject({ state: "range", version: 1, start: { kind: "date", localCivil: start }, end: { kind: "date", localCivil: end } });
+    expect(item.dueDate).toBe(end);
+  });
+
+  it("keeps an explicit schedule and an explicit unscheduled create unchanged", async () => {
+    const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
+    const explicit = await create(id, { title: "Explicit", schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-01" }, end: { kind: "date", localCivil: "2026-12-03" } } });
+    expect(explicit.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-12-01" }, end: { localCivil: "2026-12-03" } });
+    const unscheduled = await create(id, { title: "Explicit unscheduled", schedule: { state: "unscheduled" } });
+    expect(unscheduled.schedule).toMatchObject({ state: "unscheduled", version: 0 });
+  });
+
+  it("does not move existing Subtasks when the Project's shoot date or Deadline changes later", async () => {
+    const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
+    const item = await create(id);
+    const auditBefore = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(item.id).first<{ count: number }>())!.count;
+    const updatedBefore = (await database.DB.prepare("SELECT updated_at FROM project_subtasks WHERE id = ?").bind(item.id).first<{ updated_at: number }>())!.updated_at;
+    await database.DB.prepare("UPDATE projects SET shoot_date = '2026-12-01' WHERE id = ?").bind(id).run();
+    await setDeadline(id, "2026-12-20T09:00");
+    const listed = await (await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token")).json() as { subtasks: Dto[] };
+    expect(listed.subtasks.find((entry) => entry.id === item.id)).toMatchObject({ dueDate: "2026-11-06", schedule: { state: "range", version: 1, start: { localCivil: "2026-11-02" }, end: { localCivil: "2026-11-06" } } });
+    expect(await row(item.id)).toMatchObject({ due_date: "2026-11-06", schedule_start_civil: "2026-11-02", schedule_version: 1 });
+    expect((await database.DB.prepare("SELECT updated_at FROM project_subtasks WHERE id = ?").bind(item.id).first<{ updated_at: number }>())!.updated_at).toBe(updatedBefore);
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(item.id).first<{ count: number }>())!.count).toBe(auditBefore);
+  });
+
+  it("writes the same audit and activity shape as an explicit range create, apart from the schedule", async () => {
+    const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
+    const defaulted = await create(id, { title: "Audit default", assigneeId: photographerId });
+    const explicit = await create(id, { title: "Audit explicit", assigneeId: photographerId, schedule: { state: "range", start: { kind: "date", localCivil: "2026-11-02" }, end: { kind: "date", localCivil: "2026-11-06" } } });
+    const audit = async (itemId: string) => (await database.DB.prepare("SELECT action, target_type, meta_json FROM audit_log WHERE target_id = ?").bind(itemId).all()).results;
+    expect(await audit(defaulted.id)).toEqual(await audit(explicit.id));
+    expect(await audit(defaulted.id)).toHaveLength(1);
+    expect(JSON.parse((await audit(defaulted.id))[0]!.meta_json as string)).toMatchObject({ scheduleState: "range", scheduleVersion: 1 });
+    const activityCount = async (itemId: string, type: string) => (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ? AND event_type = ? AND source_id = ?").bind(id, type, itemId).first<{ count: number }>())!.count;
+    for (const item of [defaulted, explicit]) {
+      expect(await activityCount(item.id, "project.checklist.item_created")).toBe(1);
+      expect(await activityCount(item.id, "project.checklist.schedule_changed")).toBe(0);
+    }
+    expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND source_key = ?").bind(`subtask-assignment:${defaulted.id}:1`).first<{ count: number }>())!.count).toBe(1);
+  });
+
+  it("makes a defaulted, assigned Subtask due on its range end for the due-day reminder scan", async () => {
+    const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
+    const item = await create(id, { title: "Reminder default", assigneeId: photographerId });
+    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "default-range" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    const dueMorning = Date.UTC(2026, 10, 5, 21); // 2026-11-06 08:00 in Sydney (AEDT)
+    await scanDueSubtasks(reminderEnv, dueMorning);
+    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: dueMorning });
+  });
+});

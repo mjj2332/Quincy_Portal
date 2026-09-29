@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import {
   CHECKLIST_SCHEDULE_ZONE,
   checklistScheduleToDto,
+  defaultSubtaskRange,
   normalizeChecklistSchedule,
   serializeChecklistSchedule,
   type ChecklistScheduleDto,
@@ -173,7 +174,7 @@ function validateTitle(title: unknown): ProjectSubtaskCommandResult | null {
 
 async function authorizedProject(env: AppEnv["Bindings"], principal: SessionUser, projectId: string) {
   if (!await hasProjectCollaborationAccessForUser(env, principal, projectId)) return null;
-  return createDb(env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
+  return createDb(env.DB).select({ id: schema.projects.id, shootDate: schema.projects.shootDate, createdAt: schema.projects.createdAt, deadlineLocalCivil: schema.projects.deadlineLocalCivil, deadlineAt: schema.projects.deadlineAt }).from(schema.projects).where(eq(schema.projects.id, projectId)).get();
 }
 
 function activityFor(itemId: string, projectId: string, actorId: string, now: number, title: string, type: "created" | "updated", changes?: Array<"title" | "completion" | "assignee">): ProjectActivityIntent {
@@ -231,7 +232,13 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   if (operation.kind === "create") {
     if (operation.schedule && operation.legacyDueDate !== undefined) return invalidRequest("subtask_schedule_inputs_conflict", "Choose either schedule or dueDate, not both.");
     const legacyDueDateRequested = operation.legacyDueDate !== undefined;
-    const requested = legacyDueDateRequested ? null : operation.schedule ?? { state: "unscheduled" as const };
+    // No range given: copy the Project's shoot date to Deadline once (ADR 0011). The copy is the Subtask's own afterwards.
+    // A Deadline counts only while deadline_at is set, as everywhere else that reads deadline_local_civil.
+    const requested = legacyDueDateRequested ? null : operation.schedule ?? defaultSubtaskRange({
+      shootDate: project.shootDate,
+      deadlineLocalCivil: project.deadlineAt === null ? null : project.deadlineLocalCivil,
+      projectCreatedAt: project.createdAt.getTime(),
+    });
     const assigneeId = operation.item.assigneeId ?? null;
     if (assigneeId && !(await projectMentionableUsers(env, projectId)).some((user) => user.id === assigneeId)) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
     const normalized = requested ? normalizeChecklistSchedule(requested, requested.state === "unscheduled" ? 0 : 1) : null;
