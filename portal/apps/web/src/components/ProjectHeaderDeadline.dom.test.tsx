@@ -414,5 +414,8 @@ describe("ProjectHeaderDeadline", () => {
     // matching negative margin cancels it, so the gap is 10px pinned or not.
     expect(classes).toContain("pb-2.5");
     expect(classes).toContain("-mb-2.5");
+    // Review: a control Tabbed to below the fold scrolls only to the popover's edge, under the
+    // pinned row (WCAG 2.4.11). The popover's scroll padding reserves the row's height.
+    expect(dialog.className.split(/\s+/)).toContain("scroll-pb-18");
   });
 });
