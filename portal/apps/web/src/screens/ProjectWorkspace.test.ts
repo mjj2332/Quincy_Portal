@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { computeBulkDeleteOutcome, deletedAssetClosesLightbox, projectAssetsForRender } from "./ProjectWorkspace";
 import { ApiError } from "../lib/api";
+import { isCollectionTab, type WorkspaceTab } from "../lib/workspace-tab";
+import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 
 function asset(id: string): WorkspaceAsset {
@@ -70,5 +72,21 @@ describe("computeBulkDeleteOutcome", () => {
     );
     expect(result.succeededIds).toEqual([]);
     expect(result.failedIds).toEqual(["a", "b"]);
+  });
+});
+
+describe("isCollectionTab", () => {
+  it("accepts the five Collection kinds and rejects Collaboration", () => {
+    for (const kind of ["raw", "edited", "video", "floorplan", "copy"] as const) expect(isCollectionTab(kind)).toBe(true);
+    expect(isCollectionTab("collaboration")).toBe(false);
+  });
+
+  it("keeps Collection-only paths from accepting the Collaboration tab", () => {
+    const tab: WorkspaceTab = "collaboration" as WorkspaceTab;
+    // @ts-expect-error Collaboration is a Workspace tab, not a Collection
+    const kind: CollectionKind = tab;
+    // @ts-expect-error asset rendering accepts Collection kinds only
+    projectAssetsForRender(undefined, null, tab);
+    expect(kind).toBe("collaboration");
   });
 });
