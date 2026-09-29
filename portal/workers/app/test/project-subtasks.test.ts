@@ -81,6 +81,25 @@ describe("project subtasks API", () => {
     await database.DB.prepare("DELETE FROM project_subtasks WHERE id IN (?, ?)").bind(id, body.id).run();
   });
 
+  it("fails loud on storage that passes the range CHECK but is not a valid range: list and every write 500 with no schedule DTO, and the row is left untouched (ADR 0011)", async () => {
+    const id = crypto.randomUUID(); const now = Date.now();
+    // Structurally complete (so migration 0047's CHECK accepts it) but semantically invalid: 2026-02-30 is not a calendar day.
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D corrupt', 0, 999998, 0, '2026-03-01', 'date', '2026-02-30', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(id, projectId, editorId, now, now).run();
+    const before = await database.DB.prepare("SELECT * FROM project_subtasks WHERE id = ?").bind(id).first();
+    const responses = [
+      await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token"),
+      await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { title: "TB4D renamed" }),
+      await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } }),
+    ];
+    for (const response of responses) {
+      expect(response.status).toBe(500);
+      const text = await response.text();
+      expect(text).not.toContain("invalid"); expect(text).not.toContain("due_only"); expect(text).not.toContain("schedule");
+    }
+    expect(await database.DB.prepare("SELECT * FROM project_subtasks WHERE id = ?").bind(id).first()).toEqual(before);
+    await database.DB.prepare("DELETE FROM project_subtasks WHERE id = ?").bind(id).run();
+  });
+
   it("uses collaboration access, validates scoped input, orders/reorders tasks, and emits assignment notices only for real assignment changes", async () => {
     // Earlier schedule coverage intentionally leaves durable history on the shared fixture
     // project. Start this ordering contract from an empty checklist so the first two positions
