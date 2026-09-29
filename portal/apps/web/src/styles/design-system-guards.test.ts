@@ -774,3 +774,52 @@ describe("guard: the bare-border compat rule", () => {
     ).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Guard — avatar fallback initials are text, so they need 4.5:1 (#212)
+// ---------------------------------------------------------------------------
+// The vendored `AvatarFallback` / `AvatarGroupCount` shipped `text-muted-foreground` on `bg-muted`:
+// --text-muted (greige-400) on --bg-raised (paper-100) is 3.13:1, an axe `color-contrast` failure on
+// every initials avatar that keeps the default (Board card editors, Team chip, calendar facets).
+// Initials are 12–14px text, so the floor is the 4.5:1 text ratio, not the 3:1 non-text one.
+describe("guard: avatar fallback initials clear 4.5:1 on their ground (#212)", () => {
+  const AVATAR_FG = "text-foreground-secondary";
+
+  it("reads the secondary text role on the muted ground, in both the fallback and the group count", () => {
+    const avatar = readFileSync(join(srcDir, "components/reui/avatar.tsx"), "utf8");
+    for (const slot of ["avatar-fallback", "avatar-group-count"]) {
+      const at = avatar.indexOf(`data-slot="${slot}"`);
+      expect(at, `${slot} not found in reui/avatar.tsx`).toBeGreaterThan(-1);
+      const classes = /className=\{cn\(\s*"([^"]+)"/.exec(avatar.slice(at))?.[1] ?? "";
+      expect(classes, `${slot} base classes`).toContain("bg-muted");
+      expect(classes, `${slot} must not use the 3.13:1 muted text role`).not.toMatch(/\btext-muted-foreground\b/);
+      expect(classes, `${slot} must use ${AVATAR_FG}`).toContain(AVATAR_FG);
+    }
+  });
+
+  it("measures --foreground-secondary on --muted at 4.5:1 or more", () => {
+    const declarations = new Map(
+      ["tokens/colors.css", "tokens/tailwind.css"].flatMap((f) =>
+        [...stripCssComments(readFileSync(join(stylesDir, f), "utf8")).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)]
+          .map((m) => [m[1]!, m[2]!.trim()] as const)),
+    );
+    const resolve = (name: string): string => {
+      const value = declarations.get(name) ?? "";
+      const ref = /^var\((--[\w-]+)\)$/.exec(value);
+      return ref ? resolve(ref[1]!) : value;
+    };
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+    };
+    const fg = resolve("--foreground-secondary");
+    const bg = resolve("--muted");
+    expect(fg).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(bg).toMatch(/^#[0-9a-f]{6}$/i);
+    const [hi, lo] = [luminance(fg), luminance(bg)].sort((x, y) => y - x);
+    expect((hi! + 0.05) / (lo! + 0.05)).toBeGreaterThanOrEqual(4.5);
+  });
+});
