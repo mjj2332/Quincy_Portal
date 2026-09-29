@@ -770,6 +770,11 @@ function KanbanColumnHandle({
 export interface KanbanItemProps extends useRender.ComponentProps<"div"> {
   value: string
   disabled?: boolean
+  /**
+   * Quincy adaptation (#304): the consumer may replace this item's layout-animation predicate.
+   * Defaults to the registry's own, so an item that passes nothing behaves exactly as shipped.
+   */
+  animateLayoutChanges?: AnimateLayoutChanges
 }
 
 function KanbanItem({
@@ -777,6 +782,7 @@ function KanbanItem({
   className,
   render,
   disabled,
+  animateLayoutChanges: itemAnimateLayoutChanges = animateLayoutChanges,
   ...props
 }: KanbanItemProps) {
   const isOverlay = useContext(IsOverlayContext)
@@ -791,7 +797,7 @@ function KanbanItem({
   } = useSortable({
     id: value,
     disabled: disabled || isOverlay,
-    animateLayoutChanges,
+    animateLayoutChanges: itemAnimateLayoutChanges,
   })
 
   // Hooks must run unconditionally; the derived value below is used only in the non-overlay branch.

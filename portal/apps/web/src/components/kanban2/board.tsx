@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StageKey } from "@quincy/shared";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { StatusBadge } from "../atoms";
@@ -10,10 +10,13 @@ import {
   eligibleTarget,
   focusDescriptorFor,
   sortKanbanProjects,
+  type KanbanSortMode,
   type ProjectKanbanBoardProps,
   type ProjectSummary,
   type SemanticGap,
 } from "../../lib/kanban-interaction";
+import { boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } from "../../lib/kanban-flip";
+import { useStarClickGuard } from "../../lib/star-click-guard";
 import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { ScrollBar } from "../reui/scroll-area";
@@ -42,6 +45,81 @@ function DropIndicator({ className }: { className: string }) {
       aria-hidden="true"
     />
   );
+}
+
+type FlipScopeProps = {
+  /** Every column's card order; the FLIP measures only when this changes. */
+  orderKey: string;
+  sort: KanbanSortMode;
+  /** False while a drag is live. */
+  enabled: boolean;
+  /** False under reduced motion: moves are still measured and reported, but not played. */
+  animate: boolean;
+  rootRef: RefObject<HTMLElement | null>;
+  /**
+   * Called with the ids of the cards that moved, when any did — played or not, because the
+   * misclick guard it arms matters most exactly when the card jumps.
+   */
+  onMoved: (movedIds: string[]) => void;
+  children: ReactNode;
+};
+
+function measureCards(root: HTMLElement): FlipSnapshot {
+  const snapshot: FlipSnapshot = new Map();
+  for (const element of root.querySelectorAll<HTMLElement>("[data-flip-id]")) {
+    const rect = element.getBoundingClientRect();
+    snapshot.set(element.dataset.flipId!, { column: element.dataset.flipColumn ?? "", left: rect.left, top: rect.top });
+  }
+  return snapshot;
+}
+
+/**
+ * The Board's reorder FLIP (#304; the maths and the DOM writes are `lib/kanban-flip.ts`). A class
+ * because `getSnapshotBeforeUpdate` is the only React hook that reads the DOM after a render but
+ * BEFORE it is committed — the "first" positions. Positions saved from the previous commit would be
+ * stale after any scroll or image load in between.
+ *
+ * Measured unless both commits were eligible: the drop commit (drag live in the previous one) belongs
+ * to dnd-kit's overlay drop animation, and a sort-mode change reshuffles everything at once, which
+ * reads as noise rather than as a card going somewhere.
+ */
+class FlipScope extends Component<FlipScopeProps> {
+  private flights = new Map<string, () => void>();
+
+  override getSnapshotBeforeUpdate(previous: FlipScopeProps): FlipSnapshot | null {
+    const root = this.props.rootRef.current;
+    if (!root || previous.orderKey === this.props.orderKey) return null;
+    if (!previous.enabled || !this.props.enabled || previous.sort !== this.props.sort) return null;
+    // Mid-flight cards are measured WITH their transform: a second re-sort starts from where the
+    // card is on screen, not from where the first one was heading.
+    return measureCards(root);
+  }
+
+  override componentDidUpdate(_previous: FlipScopeProps, _state: unknown, before: FlipSnapshot | null) {
+    const root = this.props.rootRef.current;
+    if (!before || !root) return;
+    this.land();
+    const deltas = flipDeltas(before, measureCards(root));
+    if (deltas.length === 0) return;
+    if (this.props.animate) {
+      const farthest = deltas.reduce((best, delta) => (Math.hypot(delta.dx, delta.dy) > Math.hypot(best.dx, best.dy) ? delta : best));
+      for (const delta of deltas) {
+        const element = root.querySelector<HTMLElement>(`[data-flip-id="${CSS.escape(delta.id)}"]`);
+        if (element) this.flights.set(delta.id, playFlip(element, delta.dx, delta.dy, delta === farthest));
+      }
+    }
+    this.props.onMoved(deltas.map((delta) => delta.id));
+  }
+
+  override componentWillUnmount() { this.land(); }
+
+  /** Snaps every card still in flight to rest, so the next measurement reads its real slot. */
+  private land() {
+    for (const cancel of this.flights.values()) cancel();
+    this.flights.clear();
+  }
+
+  override render() { return this.props.children; }
 }
 
 /**
@@ -155,6 +233,10 @@ export function ProjectKanbanBoard2({
   // mode (below) none of them ever fire — see `components/reui/kanban.tsx`'s `handleDragEnd`.
   const noopValueChange = useCallback(() => undefined, []);
   const reducedMotion = usePrefersReducedMotion();
+  const orderKey = useMemo(
+    () => activeStages.map((stage) => `${stage.key}:${(columns[stage.key] ?? []).map((item) => item.id).join(",")}`).join("|"),
+    [activeStages, columns],
+  );
 
   // A move is single-writer, so ANY pending move locks every card. A pending priority write does
   // NOT (#306): it locks only the card being saved, per card, via `orderingPending(id)` below
@@ -225,6 +307,10 @@ export function ProjectKanbanBoard2({
   // from under A's drag. A Board-side lock, not a Dashboard guard — the Dashboard still sees the drag
   // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
   const [dragActive, setDragActive] = useState(false);
+
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  // The misclick guard (#304): wraps `onPriorityChange`, armed by the FLIP below.
+  const starClickGuard = useStarClickGuard(onPriorityChange);
   // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
   // to the Dashboard too, which treats a live proposal as an interaction and holds refreshes for it.
   const [moveToProposal, setMoveToProposal] = useState<SemanticGap | null>(null);
@@ -460,92 +546,100 @@ export function ProjectKanbanBoard2({
           className="w-full focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="w-max min-w-full">
-            <div
-              className="kanban2 grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full pb-[var(--space-2)]"
-              aria-label="Project pipeline board"
-              // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
-              // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
-              // This Board published none of them, so every restore fell through to a no-op. `tabIndex={-1}`
-              // is load-bearing — without it the div is not focusable and tier 3 silently does nothing.
-              data-focus-key="board"
-              tabIndex={-1}
-            >
-              {activeStages.map((stage, stageIndex) => {
-                const stageProjects = columns[stage.key] ?? [];
-                return (
-                  // `disabled` is deliberate — it keeps every column (even an empty one) a valid drop
-                  // target — but `reui/kanban.tsx` turns a disabled `KanbanColumn` into `opacity-50`
-                  // unconditionally, washing out every column on this Board. `opacity-100` here is
-                  // appended last, so tailwind-merge resolves the conflict in our favour; no vendor
-                  // edit, and no genuine drag-ghost to preserve (column dragging is disabled entirely,
-                  // so `isSortableDragging` is never true here). Confirmed live: every kanban2 column
-                  // rendered at `getComputedStyle(...).opacity === "0.5"` before this fix.
-                  //
-                  // The column heading's `data-focus-key` uses `semanticStageKey`, not `stage.key`: the
-                  // Dashboard's `fallbackStageKey` is always a canonical `StageKey` (via
-                  // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
-                  // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
-                  // through to the Board root. The Board this replaced keyed its headings the same way.
-                  <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="kanban2-column">
-                    <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
-                      <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
-                      <StatusBadge stageKey={stage.key} />
-                      <span className="flex-none tabular-nums text-sm text-foreground-secondary">{stageProjects.length}</span>
-                    </div>
-                    <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1">
-                      {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
-                      {stageProjects.map((project) => (
-                        // Same `opacity-50` defect as the column above, but now on every OTHER card too
-                        // once the pending-write lock (above) disables movement board-wide during a
-                        // single write. `data-[disabled=true]:opacity-100` is a variant selector, higher
-                        // specificity than the vendor's bare `.opacity-50`, so it wins only while
-                        // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
-                        // `opacity-50`, not gated on `data-disabled`) is untouched.
-                        <KanbanItem key={project.id} value={project.id} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}>
-                          {shownProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
-                          <KanbanCard2
-                            project={project}
-                            projectHref={projectHrefFor?.(project)}
-                            dragDisabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}
-                            canPrioritize={priorityEditable}
-                            priorityPending={orderingPending(project.id)}
-                            onPriorityChange={onPriorityChange}
-                            handleRef={registerHandle}
-                            controls={<div className="flex items-stretch border-t border-t-border">
-                              {canReorder && <>
-                                {/* Adjacent one-slot nudges (#99), through the Dashboard's `adjacentBoardGap` and
-                                    `/board-position`. Deliberately NOT disabled at a column's edge: the Dashboard
-                                    restores focus to `arrow-up:<id>` after the move settles, and a disabled target
-                                    would drop focus on the floor. An edge press is a silent no-op there instead.
-                                    44px coarse-pointer targets, as on the handle. */}
-                                <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
-                                <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
-                              </>}
-                              <MoveToControl
+            <FlipScope orderKey={orderKey} sort={effectiveKanbanSort} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
+              <div
+                ref={boardRef}
+                {...starClickGuard.boardHandlers}
+                className="kanban2 grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full pb-[var(--space-2)]"
+                aria-label="Project pipeline board"
+                // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
+                // `[data-focus-key]`: the moved card's control, then its Stage heading, then the Board root.
+                // This Board published none of them, so every restore fell through to a no-op. `tabIndex={-1}`
+                // is load-bearing — without it the div is not focusable and tier 3 silently does nothing.
+                data-focus-key="board"
+                tabIndex={-1}
+              >
+                {activeStages.map((stage, stageIndex) => {
+                  const stageProjects = columns[stage.key] ?? [];
+                  return (
+                    // `disabled` is deliberate — it keeps every column (even an empty one) a valid drop
+                    // target — but `reui/kanban.tsx` turns a disabled `KanbanColumn` into `opacity-50`
+                    // unconditionally, washing out every column on this Board. `opacity-100` here is
+                    // appended last, so tailwind-merge resolves the conflict in our favour; no vendor
+                    // edit, and no genuine drag-ghost to preserve (column dragging is disabled entirely,
+                    // so `isSortableDragging` is never true here). Confirmed live: every kanban2 column
+                    // rendered at `getComputedStyle(...).opacity === "0.5"` before this fix.
+                    //
+                    // The column heading's `data-focus-key` uses `semanticStageKey`, not `stage.key`: the
+                    // Dashboard's `fallbackStageKey` is always a canonical `StageKey` (via
+                    // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
+                    // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
+                    // through to the Board root. The Board this replaced keyed its headings the same way.
+                    <KanbanColumn key={stage.key} value={stage.key} disabled className="bg-[var(--paper-050)] min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100" data-testid="kanban2-column">
+                      <div className="flex items-center gap-[var(--space-3)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${semanticStageKey(stage.key)}`} tabIndex={-1}>
+                        <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
+                        <StatusBadge stageKey={stage.key} />
+                        <span className="flex-none tabular-nums text-sm text-foreground-secondary">{stageProjects.length}</span>
+                      </div>
+                      <KanbanColumnContent value={stage.key} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px] flex-1">
+                        {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
+                        {stageProjects.map((project) => (
+                          // Same `opacity-50` defect as the column above, but now on every OTHER card too
+                          // once the pending-write lock (above) disables movement board-wide during a
+                          // single write. `data-[disabled=true]:opacity-100` is a variant selector, higher
+                          // specificity than the vendor's bare `.opacity-50`, so it wins only while
+                          // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
+                          // `opacity-50`, not gated on `data-disabled`) is untouched.
+                          <KanbanItem key={project.id} value={project.id} animateLayoutChanges={boardAnimateLayoutChanges} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}>
+                            {shownProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
+                            {/* The FLIP's own node (#304): never `KanbanItem`, whose transform React and
+                                dnd-kit own. The drop indicator stays outside it, so it never flies. */}
+                            <div data-flip-id={project.id} data-flip-column={stage.key} className="relative">
+                              <KanbanCard2
                                 project={project}
-                                model={boardModel}
-                                activeStages={activeStages}
-                                // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
-                                role={role ?? "editor"}
-                                sort={effectiveKanbanSort}
-                                canMoveStages={canMoveStages}
-                                canReorder={canReorder}
-                                disabled={controlsDisabled(project.id)}
-                                onMoveStage={onMoveStage}
-                                onProposalChange={handleMoveToProposal}
+                                projectHref={projectHrefFor?.(project)}
+                                dragDisabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}
+                                canPrioritize={priorityEditable}
+                                priorityPending={orderingPending(project.id)}
+                                onPriorityChange={starClickGuard.handlePriorityChange}
+                                handleRef={registerHandle}
+                                controls={<div className="flex items-stretch border-t border-t-border">
+                                  {canReorder && <>
+                                    {/* Adjacent one-slot nudges (#99), through the Dashboard's `adjacentBoardGap` and
+                                        `/board-position`. Deliberately NOT disabled at a column's edge: the Dashboard
+                                        restores focus to `arrow-up:<id>` after the move settles, and a disabled target
+                                        would drop focus on the floor. An edge press is a silent no-op there instead.
+                                        44px coarse-pointer targets, as on the handle. */}
+                                    <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-up:${project.id}`} aria-label={`Move ${project.street} up`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "up")}><span aria-hidden="true">↑</span></button>
+                                    <button type="button" className={ARROW_CLASSES} data-focus-key={`arrow-down:${project.id}`} aria-label={`Move ${project.street} down`} disabled={controlsDisabled(project.id)} onClick={() => onBoardPosition(project, "down")}><span aria-hidden="true">↓</span></button>
+                                  </>}
+                                  <MoveToControl
+                                    project={project}
+                                    model={boardModel}
+                                    activeStages={activeStages}
+                                    // Fail closed: without a role, same-Stage positions (Admin-only) are withheld.
+                                    role={role ?? "editor"}
+                                    sort={effectiveKanbanSort}
+                                    canMoveStages={canMoveStages}
+                                    canReorder={canReorder}
+                                    disabled={controlsDisabled(project.id)}
+                                    onMoveStage={onMoveStage}
+                                    onProposalChange={handleMoveToProposal}
+                                  />
+                                </div>}
                               />
-                            </div>}
-                          />
-                        </KanbanItem>
-                      ))}
-                      {shownProposal?.successor === "end" && shownProposal.targetStageKey === semanticStageKey(stage.key) && (
-                        <DropIndicator className="bottom-[calc(var(--space-3)/2)] translate-y-1/2" />
-                      )}
-                    </KanbanColumnContent>
-                  </KanbanColumn>
-                );
-              })}
-            </div>
+                            </div>
+                          </KanbanItem>
+                        ))}
+                        {shownProposal?.successor === "end" && shownProposal.targetStageKey === semanticStageKey(stage.key) && (
+                          <DropIndicator className="bottom-[calc(var(--space-3)/2)] translate-y-1/2" />
+                        )}
+                      </KanbanColumnContent>
+                    </KanbanColumn>
+                  );
+                })}
+              </div>
+            </FlipScope>
           </ScrollAreaPrimitive.Content>
         </ScrollAreaPrimitive.Viewport>
         {/* Paper (`--bg-canvas`) behind the bar so cards never show through it while it is stuck
