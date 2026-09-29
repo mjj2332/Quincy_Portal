@@ -62,7 +62,9 @@
  * range, the audit row and the activity — the same endpoint as the Project page). The created Subtask is
  * pinned (`lib/production-gantt-create.ts`, display-only, generation-scoped, exempt from the draw
  * cap's row budget) until the refetch returns it; if an authoritative refetch omits it, the bar stays
- * for one more refetch and "Created — hidden by current filters" is toasted. Authoritative means a
+ * for one more refetch and "Created — hidden by current filters" is toasted; if the real row arrives
+ * but tips its Project over the draw cap, "Created — not shown (chart row limit)" is. Pins are judged
+ * only against what the chart draws (a controller-frozen baseline included). Authoritative means a
  * full refetch that STARTED after the create (`GanttFullFetchLedger`) and a complete child list that
  * is not a superseded walk awaiting its re-seed. A failed write keeps the typed title and is toasted
  * (the row's own status node announces it); 401/403 goes through the port's access-loss path, like a
@@ -1415,24 +1417,42 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // A project's child list is authoritative only when complete AND not a previous walk that the
   // latest page one has superseded: the re-seed effect above re-walks it, but its state lands a
   // render late, and until then `effectiveProjects` still shows the old walk's "complete" rows.
-  const isChildListAuthoritative = useCallback((project: GanttProjectRowDto) => {
-    if (project.children.truncated) return false;
+  // Judged on the DRAWN project (`displayProjects`), which must also have caught up with the current
+  // one: the accepted baseline is cloned a render after the data changes.
+  const effectiveProjectById = useMemo(() => new Map(effectiveProjects.map((project) => [project.id, project])), [effectiveProjects]);
+  const isChildListAuthoritative = useCallback((drawn: GanttProjectRowDto) => {
+    const project = effectiveProjectById.get(drawn.id);
+    if (!project || project.children.truncated || drawn.children.truncated) return false;
     const state = liveChildState[project.id];
-    return !state || state.seedSignature === embeddedChildSignatureByProjectId.get(project.id);
-  }, [liveChildState, embeddedChildSignatureByProjectId]);
-  // Retire pins against each authoritative refetch; announce the ones a filter left out, once.
+    if (state && state.seedSignature !== embeddedChildSignatureByProjectId.get(project.id)) return false;
+    const drawnIds = drawn.children.rows.map((row) => row.id);
+    return drawnIds.length === project.children.rows.length && project.children.rows.every((row, index) => row.id === drawnIds[index]);
+  }, [effectiveProjectById, liveChildState, embeddedChildSignatureByProjectId]);
+  // Retire pins against what the chart DRAWS (`displayProjects`, the controller's accepted
+  // baseline), never ahead of it:
+  // - a pin retires only when the DRAWN project has its row: a transaction holds the baseline
+  //   frozen (a drag/resize open or saving), and a newer refetch must not retire a pin that frozen
+  //   chart still needs. (The accept also lands a render late in steady state.)
+  // - hidden is judged only where the drawn project has caught up with the current one
+  //   (`isChildListAuthoritative`), and the cap only on the drawn model's own inclusion.
+  // Announce, once each, a pin a filter left out and a real row whose Project the draw cap now
+  // excludes from the drawn model (the task leaves the chart; the cap is never bent to keep it).
   const toastedPinsRef = useRef(new Set<string>());
   const dataFetchSeq = fetchLedger.seqAt(query.dataUpdatedAt);
+  const drawnProjectIds = baseModel.includedProjectIds;
   useEffect(() => {
     if (pins.length === 0) return;
-    const { pins: next, newlyHidden } = reconcilePinnedCreatedRows(pins, effectiveProjects, dataFetchSeq, generationKey, isChildListAuthoritative);
-    for (const pin of newlyHidden) {
-      if (toastedPinsRef.current.has(pin.row.id)) continue;
+    const result = reconcilePinnedCreatedRows(pins, displayProjects, dataFetchSeq, generationKey, isChildListAuthoritative, drawnProjectIds);
+    const announce = (pin: PinnedCreatedRow, message: string) => {
+      if (toastedPinsRef.current.has(pin.row.id)) return;
       toastedPinsRef.current.add(pin.row.id);
-      pushToast("Created — hidden by current filters", "caution");
-    }
+      pushToast(message, "caution");
+    };
+    for (const pin of result.newlyHidden) announce(pin, "Created — hidden by current filters");
+    for (const pin of result.newlyCapped) announce(pin, "Created — not shown (chart row limit)");
+    const next = result.pins;
     if (next.length !== pins.length || next.some((pin, index) => pin !== pins[index])) setPins(next);
-  }, [pins, effectiveProjects, dataFetchSeq, generationKey, isChildListAuthoritative]);
+  }, [pins, displayProjects, dataFetchSeq, generationKey, isChildListAuthoritative, drawnProjectIds]);
 
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
 

@@ -35,12 +35,12 @@ describe("production-gantt-create (#344)", () => {
 
   it("drops the pin once the row is in a newer response", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(reconcilePinnedCreatedRows([pin], [project("p1", ["t1"])], 200, "g")).toEqual({ pins: [], newlyHidden: [] });
+    expect(reconcilePinnedCreatedRows([pin], [project("p1", ["t1"])], 200, "g")).toEqual({ pins: [], newlyHidden: [], newlyCapped: [] });
   });
 
   it("keeps the pin, without a notice, until a newer stamp", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(reconcilePinnedCreatedRows([pin], [project("p1", [])], 100, "g")).toEqual({ pins: [pin], newlyHidden: [] });
+    expect(reconcilePinnedCreatedRows([pin], [project("p1", [])], 100, "g")).toEqual({ pins: [pin], newlyHidden: [], newlyCapped: [] });
   });
 
   it("judges an omitting complete refetch hidden once, keeps it for one more refetch, then drops it", () => {
@@ -51,12 +51,12 @@ describe("production-gantt-create (#344)", () => {
     const same = reconcilePinnedCreatedRows(first.pins, [project("p1", ["a"])], 200, "g");
     expect(same.newlyHidden).toEqual([]);
     expect(same.pins).toHaveLength(1);
-    expect(reconcilePinnedCreatedRows(same.pins, [project("p1", ["a"])], 300, "g")).toEqual({ pins: [], newlyHidden: [] });
+    expect(reconcilePinnedCreatedRows(same.pins, [project("p1", ["a"])], 300, "g")).toEqual({ pins: [], newlyHidden: [], newlyCapped: [] });
   });
 
   it("does not call a truncated project's missing row hidden", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(reconcilePinnedCreatedRows([pin], [project("p1", ["a"], true)], 200, "g")).toEqual({ pins: [pin], newlyHidden: [] });
+    expect(reconcilePinnedCreatedRows([pin], [project("p1", ["a"], true)], 200, "g")).toEqual({ pins: [pin], newlyHidden: [], newlyCapped: [] });
   });
 
   it("treats a project that is gone from a newer response as hidden", () => {
@@ -66,7 +66,7 @@ describe("production-gantt-create (#344)", () => {
 
   it("drops a pin from another generation", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(reconcilePinnedCreatedRows([pin], [project("p1", [])], 200, "g2")).toEqual({ pins: [], newlyHidden: [] });
+    expect(reconcilePinnedCreatedRows([pin], [project("p1", [])], 200, "g2")).toEqual({ pins: [], newlyHidden: [], newlyCapped: [] });
   });
 });
 
@@ -74,14 +74,14 @@ describe("production-gantt-create — authority of a project's child list (#344 
   it("does not judge a complete-looking project the caller marks non-authoritative (a stale child walk)", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
     const stale = reconcilePinnedCreatedRows([pin], [project("p1", ["a"])], 200, "g", () => false);
-    expect(stale).toEqual({ pins: [pin], newlyHidden: [] });
+    expect(stale).toEqual({ pins: [pin], newlyHidden: [], newlyCapped: [] });
     // once the caller's walk is current again, the same view is judged
     expect(reconcilePinnedCreatedRows([pin], [project("p1", ["a"])], 200, "g", () => true).newlyHidden).toHaveLength(1);
   });
 
   it("still retires the pin on sight of the row, authoritative or not", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(reconcilePinnedCreatedRows([pin], [project("p1", ["a", "t1"])], 200, "g", () => false)).toEqual({ pins: [], newlyHidden: [] });
+    expect(reconcilePinnedCreatedRows([pin], [project("p1", ["a", "t1"])], 200, "g", () => false)).toEqual({ pins: [], newlyHidden: [], newlyCapped: [] });
   });
 });
 
@@ -94,6 +94,39 @@ describe("buildPinnedGanttModel (#344 fix round — the draw cap)", () => {
     expect(model.includedProjectIds.has("edge")).toBe(true);
     expect(model.tooManyToDraw).toBe(false);
     expect(model.resources.find((resource) => resource.id === "project:edge")?.children?.map((child) => child.id)).toEqual(expect.arrayContaining(["task:real", "task:pinned"]));
+  });
+});
+
+describe("the draw cap AFTER the real row replaces the pin (#344 fix round 2)", () => {
+  const NOW = { now: new Date("2026-03-01T00:00:00.000Z") };
+  const filler = () => Array.from({ length: PRODUCTION_GANTT_DRAW_CAP - 2 }, (_, index) => ganttProject(`f${index}`, []));
+
+  it("the real row at the cap boundary excludes the Project: the pin retires as 'capped', never silently", () => {
+    const pin = pinFromCreated("edge", { ...created, id: "pinned" }, 0, "g");
+    // the refetch returns the real row: the Project's real rows now exceed the cap
+    const after = [...filler(), ganttProject("edge", ["real", "pinned"])];
+    const model = buildPinnedGanttModel(after, [pin], "g", NOW);
+    expect(model.includedProjectIds.has("edge")).toBe(false);
+    const result = reconcilePinnedCreatedRows([pin], after, 1, "g", undefined, model.includedProjectIds);
+    expect(result).toEqual({ pins: [], newlyHidden: [], newlyCapped: [pin] });
+    // and the model the chart draws next has no Project (and no bar) — the notice is the only trace
+    expect(buildPinnedGanttModel(after, result.pins, "g", NOW).includedProjectIds.has("edge")).toBe(false);
+  });
+
+  it("the real row arriving inside the cap retires the pin silently", () => {
+    const pin = pinFromCreated("edge", { ...created, id: "pinned" }, 0, "g");
+    const after = [...filler().slice(1), ganttProject("edge", ["real", "pinned"])];
+    const model = buildPinnedGanttModel(after, [pin], "g", NOW);
+    expect(model.includedProjectIds.has("edge")).toBe(true);
+    expect(reconcilePinnedCreatedRows([pin], after, 1, "g", undefined, model.includedProjectIds)).toEqual({ pins: [], newlyHidden: [], newlyCapped: [] });
+  });
+
+  it("while the row is still absent, an exempt pin keeps its Project drawn and is not capped", () => {
+    const pin = pinFromCreated("edge", { ...created, id: "pinned" }, 0, "g");
+    const before = [...filler(), ganttProject("edge", ["real"])];
+    const model = buildPinnedGanttModel(before, [pin], "g", NOW);
+    expect(model.includedProjectIds.has("edge")).toBe(true);
+    expect(reconcilePinnedCreatedRows([pin], before, 0, "g", undefined, model.includedProjectIds)).toEqual({ pins: [pin], newlyHidden: [], newlyCapped: [] });
   });
 });
 

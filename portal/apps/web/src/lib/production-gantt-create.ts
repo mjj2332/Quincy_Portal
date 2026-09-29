@@ -19,7 +19,9 @@
  *   is not a filter omission.
  *
  * `buildPinnedGanttModel` draws pins without counting them against the adapter's draw cap, so a pin
- * can never push its own project out of the model.
+ * can never push its own project out of the model. The exemption ends with the pin: when the real
+ * row arrives and tips its project over the cap, the project leaves the model (the cap holds) and
+ * reconciliation reports the pin as `newlyCapped` so the caller can say so.
  */
 import type { Query, QueryCacheNotifyEvent } from "@tanstack/react-query";
 import type { GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
@@ -75,8 +77,16 @@ export function buildPinnedGanttModel(
 }
 
 /**
+ * `projects` must be what the chart DRAWS (the controller's frozen baseline during a transaction),
+ * never a newer list it has not shown yet: a pin retired against rows the chart lacks would vanish.
+ *
  * `isAuthoritative` (default: `!children.truncated`) says whether a project's CURRENT child list is
  * the whole list the stamped refetch implies; the pin is judged only when it holds.
+ *
+ * `includedProjectIds` is the drawn model's (`buildPinnedGanttModel`) — decided on real rows, pins
+ * exempt. When the real row has arrived but its Project is NOT included (the real row tipped it over
+ * the draw cap), the pin retires as `newlyCapped`: the task leaves the chart, so the caller must say
+ * so. The cap itself is never bent to keep it drawn.
  */
 export function reconcilePinnedCreatedRows(
   pins: readonly PinnedCreatedRow[],
@@ -84,13 +94,18 @@ export function reconcilePinnedCreatedRows(
   stamp: number,
   generationKey: string,
   isAuthoritative: (project: GanttProjectRowDto) => boolean = (project) => !project.children.truncated,
-): { pins: PinnedCreatedRow[]; newlyHidden: PinnedCreatedRow[] } {
+  includedProjectIds?: ReadonlySet<string>,
+): { pins: PinnedCreatedRow[]; newlyHidden: PinnedCreatedRow[]; newlyCapped: PinnedCreatedRow[] } {
   const kept: PinnedCreatedRow[] = [];
   const newlyHidden: PinnedCreatedRow[] = [];
+  const newlyCapped: PinnedCreatedRow[] = [];
   for (const pin of pins) {
     if (pin.generationKey !== generationKey) continue;
     const project = projects.find((candidate) => candidate.id === pin.row.projectId);
-    if (project?.children.rows.some((row) => row.id === pin.row.id)) continue;
+    if (project?.children.rows.some((row) => row.id === pin.row.id)) {
+      if (includedProjectIds && !includedProjectIds.has(project.id)) newlyCapped.push(pin);
+      continue;
+    }
     if (pin.hiddenAtStamp !== null) {
       // shown for one more refetch after the omission, then let go
       if (stamp > pin.hiddenAtStamp) continue;
@@ -106,7 +121,7 @@ export function reconcilePinnedCreatedRows(
     kept.push(hidden);
     newlyHidden.push(hidden);
   }
-  return { pins: kept, newlyHidden };
+  return { pins: kept, newlyHidden, newlyCapped };
 }
 
 /**

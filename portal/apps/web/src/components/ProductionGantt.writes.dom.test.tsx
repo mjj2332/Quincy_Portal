@@ -43,6 +43,22 @@ vi.mock("../lib/stages", () => ({
   useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }),
 }));
 
+/**
+ * #344 fix round 2: a per-test draw cap, so the cap boundary can be exercised with the fixture's own
+ * few rows. `null` (every other test) is the real `PRODUCTION_GANTT_DRAW_CAP`. The adapter reads the
+ * binding at use time, so the getter is consulted on every model build.
+ */
+const drawCap = vi.hoisted(() => ({ override: null as number | null }));
+vi.mock("@quincy/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@quincy/shared")>();
+  return {
+    ...actual,
+    get PRODUCTION_GANTT_DRAW_CAP() {
+      return drawCap.override ?? actual.PRODUCTION_GANTT_DRAW_CAP;
+    },
+  };
+});
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -491,6 +507,7 @@ beforeEach(() => {
   childPageReply = null;
   childPageHandler = null;
   getHeldAtRequest = null;
+  drawCap.override = null;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -1261,6 +1278,10 @@ describe("ProductionGantt — Add task row (#344)", () => {
     return toasts().filter((toast) => toast.getAttribute("data-tone") === "error").map((toast) => toast.textContent ?? "");
   }
 
+  function capToasts(): number {
+    return toastTexts().filter((text) => text.includes("Created — not shown (chart row limit)")).length;
+  }
+
   function hiddenToasts(): number {
     return toastTexts().filter((text) => text.includes("Created — hidden by current filters")).length;
   }
@@ -1524,6 +1545,68 @@ describe("ProductionGantt — Add task row (#344)", () => {
     await flush(6);
     expect(hasBar(CREATED_TITLE)).toBe(true);
     expect(hiddenToasts()).toBe(1);
+  });
+
+  it("the real row tipping its Project over the draw cap removes the Project, and says so (never silently)", async () => {
+    // the Project row + its 4 Subtasks fill a cap of 5 exactly
+    drawCap.override = rows.length + 1;
+    const held = deferred<void>();
+    await render();
+    getGate = held.promise;
+    await open();
+    await submit(CREATED_TITLE);
+    // the pin is exempt from the budget: the new bar shows while the refetch is out
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hasBar(RANGE_TITLE)).toBe(true);
+    expect(capToasts()).toBe(0);
+
+    // the refetch returns the real row: 6 real rows > 5, the Project leaves the chart
+    getGate = null;
+    held.resolve();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(false);
+    expect(hasBar(RANGE_TITLE)).toBe(false);
+    expect(capToasts()).toBe(1);
+    expect(hiddenToasts()).toBe(0);
+
+    // once only
+    await act(async () => { await client.invalidateQueries(); });
+    await flush(6);
+    expect(capToasts()).toBe(1);
+  });
+
+  it("during a pending resize transaction the chart is frozen: a refetch carrying the real row does not retire the pin until the chart shows it", async () => {
+    const held = deferred<void>();
+    await render();
+    getGate = held.promise;
+    await open();
+    await submit(CREATED_TITLE);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+
+    // a resize is saving: the controller freezes the drawn baseline (which lacks the new row)
+    const patchHeld = deferred<void>();
+    patchReply = async (body, subtaskId) => {
+      await patchHeld.promise;
+      return echoPatch(body, subtaskId);
+    };
+    await keyboardResizeRangeEnd();
+    await flush(2);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
+
+    // the create's refetch lands with the real row while the chart is frozen
+    getGate = null;
+    held.resolve();
+    await flush(6);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(hiddenToasts()).toBe(0);
+
+    // the save settles: the chart unfreezes onto the real row
+    patchHeld.resolve();
+    await flush(10);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+    expect(hasBar(CREATED_TITLE)).toBe(true);
+    expect(host.querySelector(`[data-gantt-resource="task:${CREATED_ID}"] [data-testid="gantt-resize-handle-end"]`)).not.toBeNull();
+    expect(hiddenToasts()).toBe(0);
   });
 
   it("a refetch that STARTED before the create cannot retire the pin or raise the toast, even though it lands after it", async () => {
