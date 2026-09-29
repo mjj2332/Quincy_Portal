@@ -764,7 +764,7 @@ describe("#141 staff subtask assignment through the durable consumer", () => {
       database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Assigning Actor', ?, 1, 'editor', 1, ?, ?), (?, 'Subtask Assignee', ?, 1, ?, 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, assigneeId, `${assigneeId}@example.test`, assigneeRole, now, now),
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Subtask Assigner Street', 'editing', ?, ?)").bind(projectId, now, now),
       ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
     ]);
     const sourceKey = `subtask-assignment:${subtaskId}:1`;
     const occurrence = { projectId, actorId, assigneeId, subtaskId, assignmentVersion: 1, sourceKey };
@@ -866,7 +866,7 @@ describe("#319 external-editor durable notifications reach the consumer's strict
       database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Staff Actor', ?, 1, 'editor', 1, ?, ?), (?, 'External Editor', ?, 1, 'external_editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, editorId, `${editorId}@example.test`, now, now),
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'External Delivery Street', 'editing', ?, ?)").bind(projectId, now, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, editorId, now),
-      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, ?, ?, ?)").bind(subtaskId, projectId, editorId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, editorId, actorId, now, now),
     ]);
     return { projectId, actorId, editorId, subtaskId };
   }

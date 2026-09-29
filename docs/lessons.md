@@ -4326,6 +4326,26 @@ remove the legacy readers) still applies.
   have run and been verified at 0 non-range rows (`scripts/subtask-range-backfill-verify.sql`) before #342 ships.
   #343's constraint follows #342.
 
+### The database requires every Subtask to be a range (#343, migration 0047)
+
+- **What it is:** `project_subtasks.schedule_range_required integer NOT NULL DEFAULT 1 CHECK (...)`, one bare
+  `ADD COLUMN`. The CHECK is `schedule_range_required = 1 AND COALESCE(<range predicate>, 0) = 1`, and the predicate
+  is exactly `portal/scripts/subtask-range-backfill-verify.sql`, so the pre-merge production verify returning 0
+  guarantees the migration applies. SQLite tests an added column's CHECK against every existing row, so 0047
+  refuses to apply while a range-less row exists. It is not a table rebuild (see the 0020 entry) and has no trigger.
+  `migration-0047.test.ts` pins the verify/CHECK equivalence over a matrix of row shapes.
+- **Why `COALESCE(...) = 1`:** a CHECK passes when its expression is NULL, so a NULL anywhere in the predicate would
+  otherwise accept the row. The `schedule_range_required = 1` term also stops a write of NULL or 0 to the marker.
+- **Rule: a later migration that drops a schedule column or `due_date` must first drop this column**
+  (`ALTER TABLE project_subtasks DROP COLUMN schedule_range_required`): SQLite refuses to drop a column an existing
+  CHECK references. Rollback of 0047 itself is that same forward `DROP COLUMN`.
+- **Not proven on remote D1 (the 0020 caveat above):** the "same column only" advice came from a rebuild failure, and
+  this CHECK references other columns. Local D1 (`wrangler d1 ... --local`) and `node:sqlite` accept it; a rehearsal on
+  a throwaway remote database was not run here.
+- **Test fixtures:** raw `INSERT INTO project_subtasks` in Worker and DB tests must carry a complete range. Neutral
+  rows use a far-future one-day date range (`2099-12-31`, so no reminder scan claims them). A test that simulated a
+  concurrent writer corrupting a schedule column can no longer do so; only moves between valid ranges are reachable.
+
 ## `?collaboration=open` is frozen by stored activity deep links; Collection tabs got `?tab=` (#337, 2026-09-29)
 
 - **Context:** #337 made every Project notification open the Workspace tab it is about. The obvious

@@ -162,26 +162,25 @@ describe("saveProjectSubtask command boundary", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.update'").bind(item.item.id).first()).toEqual({ count: 0 });
   });
 
-  const STILL_A_RANGE = new Set(["due_date", "schedule_start_civil"]);
+  // A concurrent writer can only leave the row a valid range now: the database refuses anything else (#343, ADR 0011).
+  // Each axis moves the range without ever leaving it incomplete. The corrupting axes are pinned by migration-0047.test.ts.
   it("fences every schedule column and leaves the losing writer footprint empty", async () => {
     const axes: Array<[string, string]> = [
-      ["due_date", "'2027-01-02'"], ["schedule_start_kind", "'timed'"], ["schedule_start_civil", "'2027-01-01'"],
-      ["schedule_start_at", "1"], ["schedule_start_utc_offset_minutes", "601"], ["schedule_start_fold", "1"],
-      ["schedule_end_kind", "'timed'"], ["schedule_end_at", "1"], ["schedule_end_utc_offset_minutes", "601"],
-      ["schedule_end_fold", "1"], ["schedule_zone", "NULL"],
+      ["due_date", "due_date = '2027-01-02'"],
+      ["schedule_start_civil", "schedule_start_civil = '2027-01-01'"],
+      ["schedule_version", "schedule_version = 2"],
     ];
-    for (const [column, value] of axes) {
+    for (const [column, assignment] of axes) {
       const created = await createDueItem(commandProjectId, `Fence ${column}`);
       const beforeAudit = (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(created.item.id).first<{ count: number }>())!.count;
       const beforeActivity = (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
       const beforeOutbox = (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
       const calls = { count: 0 };
-      const db = faultDb(async (databaseForFault) => { await databaseForFault.prepare(`UPDATE project_subtasks SET ${column} = ${value} WHERE id = ?`).bind(created.item.id).run(); }, calls);
-      // The concurrent writer left the row a still-valid range (only its due / start civil moved) or
-      // corrupted it (ADR 0011). A corrupt current schedule is not served as a conflict payload: the
-      // command fails loud, and the fenced UPDATE has still already lost, so the footprint is empty.
+      const db = faultDb(async (databaseForFault) => { await databaseForFault.prepare(`UPDATE project_subtasks SET ${assignment} WHERE id = ?`).bind(created.item.id).run(); }, calls);
+      // The concurrent writer moved the range (it cannot corrupt it: the database refuses that, #343), so the
+      // fenced UPDATE loses with a conflict and the footprint is empty.
       const outcome = await (async () => { try { return (await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: db } }))).outcome; } catch (error) { return error instanceof ChecklistScheduleStorageError ? "storage_error" : Promise.reject(error); } })();
-      expect(outcome, column).toBe(STILL_A_RANGE.has(column) ? "schedule_conflict" : "storage_error"); expect(calls.count, column).toBe(1);
+      expect(outcome, column).toBe("schedule_conflict"); expect(calls.count, column).toBe(1);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(created.item.id).first<{ count: number }>())!.count).toBe(beforeAudit);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeActivity);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeOutbox);

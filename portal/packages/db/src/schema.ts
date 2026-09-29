@@ -368,6 +368,9 @@ export const projectSubtasks = sqliteTable(
     scheduleEndFold: integer("schedule_end_fold"),
     scheduleZone: text("schedule_zone", { enum: ["Australia/Sydney"] as const }),
     scheduleVersion: integer("schedule_version").notNull().default(0),
+    /** Constant marker (always 1, never read or written by the app) that carries the migration 0047 range CHECK below.
+     * Any migration that drops a schedule column or `due_date` must drop this column first. */
+    scheduleRangeRequired: integer("schedule_range_required").notNull().default(1),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -385,6 +388,26 @@ export const projectSubtasks = sqliteTable(
     check("project_subtasks_schedule_end_fold_check", sql`${t.scheduleEndFold} IS NULL OR ${t.scheduleEndFold} IN (0, 1)`),
     check("project_subtasks_schedule_zone_check", sql`${t.scheduleZone} IS NULL OR ${t.scheduleZone} = 'Australia/Sydney'`),
     check("project_subtasks_schedule_version_check", sql`typeof(${t.scheduleVersion}) = 'integer' AND ${t.scheduleVersion} >= 0`),
+    // Mirrors migration 0047 and scripts/subtask-range-backfill-verify.sql: every Subtask is a structurally complete range (ADR 0011).
+    check("project_subtasks_schedule_range_required_check", sql`${t.scheduleRangeRequired} = 1 AND COALESCE((
+      ${t.scheduleVersion} >= 1
+      AND ${t.scheduleZone} IS 'Australia/Sydney'
+      AND ${t.scheduleStartKind} IS NOT NULL
+      AND ${t.scheduleStartKind} IS ${t.scheduleEndKind}
+      AND ${t.scheduleStartCivil} IS NOT NULL
+      AND ${t.dueDate} IS NOT NULL
+      AND (
+        (${t.scheduleStartKind} = 'date'
+          AND ${t.scheduleStartAt} IS NULL AND ${t.scheduleStartUtcOffsetMinutes} IS NULL AND ${t.scheduleStartFold} IS NULL
+          AND ${t.scheduleEndAt} IS NULL AND ${t.scheduleEndUtcOffsetMinutes} IS NULL AND ${t.scheduleEndFold} IS NULL
+          AND ${t.scheduleStartCivil} <= ${t.dueDate})
+        OR
+        (${t.scheduleStartKind} = 'timed'
+          AND ${t.scheduleStartAt} IS NOT NULL AND ${t.scheduleStartUtcOffsetMinutes} IS NOT NULL AND ${t.scheduleStartFold} IS NOT NULL
+          AND ${t.scheduleEndAt} IS NOT NULL AND ${t.scheduleEndUtcOffsetMinutes} IS NOT NULL AND ${t.scheduleEndFold} IS NOT NULL
+          AND ${t.scheduleStartAt} < ${t.scheduleEndAt})
+      )
+    ), 0) = 1`),
   ],
 );
 

@@ -125,7 +125,7 @@ export function controlProjectRows(ctx: PlantContext): PlantRow[] {
   return [
     { table: "projects", values: { id: ctx.projectId, street: `Control ${ctx.tag}`, stage_key: "raw_review", board_position: 99_000, created_at: T0, updated_at: T0 } },
     { table: "collections", values: { id: ctx.collectionId, project_id: ctx.projectId, kind: "raw", status: "empty", received_count: 0, created_at: T0, updated_at: T0 } },
-    { table: "project_subtasks", values: { id: ctx.subtaskId, project_id: ctx.projectId, title: "Control subtask", done: 0, position: 1024, created_by: ctx.userId, created_at: T0, updated_at: T0 } },
+    { table: "project_subtasks", values: { id: ctx.subtaskId, project_id: ctx.projectId, title: "Control subtask", done: 0, position: 1024, due_date: "2026-09-21", schedule_start_kind: "date", schedule_start_civil: "2026-09-21", schedule_end_kind: "date", schedule_zone: "Australia/Sydney", schedule_version: 1, created_by: ctx.userId, created_at: T0, updated_at: T0 } },
     {
       table: "project_deadline_occurrences",
       values: {
