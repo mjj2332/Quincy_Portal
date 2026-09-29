@@ -959,6 +959,14 @@ describe("the Dashboard sheds the Notice board and summary strip; /notices hosts
     }
   });
 
+  it.each(["kanban", "gantt", "calendar"])("external_editor: ?view=%s never shows the Notice board or summary either, wherever it lands", async (view) => {
+    signInAs("external_editor");
+    const host = await renderApp(`/?view=${view}`);
+    expect(host.querySelector('[data-testid="notice-board-marker"]'), view).toBeNull();
+    expect(host.querySelector('[aria-label="Project summary"]'), view).toBeNull();
+    expect(host.querySelector("main")!.children[1]?.getAttribute("data-testid"), view).toBe("dashboard-toolbar");
+  });
+
   it("admin: the Active/Archived toggle still works and the Archived scope has no strip or board either", async () => {
     const host = await renderApp("/?view=list");
     await clickButtonLabelled(host, "Archived");

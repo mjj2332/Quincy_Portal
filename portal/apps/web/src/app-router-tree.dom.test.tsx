@@ -34,6 +34,7 @@ vi.mock("./screens/NotificationPreferences", () => ({ NotificationPreferences: (
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>SIGN IN</main> }));
 
 import App from "./App";
+import { locationStore } from "./lib/router";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
 let root: Root | null = null;
@@ -138,11 +139,23 @@ describe("/notices by role (#334)", () => {
     root = createRoot(host);
     await act(async () => { root!.render(<StrictMode><App /></StrictMode>); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("DASHBOARD SCREEN");
-    await act(async () => { window.history.pushState(null, "", "/notices"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    // Forward navigation goes through the app's real transport, then the browser's own history
+    // traversal (jsdom fires a real, async popstate) drives Back and Forward.
+    const traverse = (go: () => void) => act(async () => {
+      const popped = new Promise<void>((resolve) => window.addEventListener("popstate", () => resolve(), { once: true }));
+      go(); await popped; await Promise.resolve(); await Promise.resolve();
+    });
+    await act(async () => { locationStore().push("/notices"); await Promise.resolve(); await Promise.resolve(); });
+    expect(window.location.pathname).toBe("/notices");
     expect(host.textContent).toContain("NOTICES SCREEN u1");
-    await act(async () => { window.history.pushState(null, "", "/"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    await traverse(() => window.history.back());
+    expect(window.location.pathname).toBe("/");
     expect(host.textContent).toContain("DASHBOARD SCREEN");
     expect(host.textContent).not.toContain("NOTICES SCREEN");
+    await traverse(() => window.history.forward());
+    expect(window.location.pathname).toBe("/notices");
+    expect(host.textContent).toContain("NOTICES SCREEN u1");
+    expect(host.textContent).not.toContain("DASHBOARD SCREEN");
   });
 });
 

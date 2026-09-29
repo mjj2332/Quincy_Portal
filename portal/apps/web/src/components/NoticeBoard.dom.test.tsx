@@ -181,7 +181,7 @@ describe("NoticeBoard disclosure and polling", () => {
     ] }] } });
   });
 
-  it("starts expanded, persists the toggle, and switches polling modes without overlap", async () => {
+  it("always renders in full and keeps polling the list and read state without overlap", async () => {
     let listCalls = 0; let readStateCalls = 0;
     apiGetMock.mockImplementation((path) => {
       if (path.includes("read-marker")) { readStateCalls += 1; return Promise.resolve({ marker: null, latest: { postId: oldPost.id, createdAt: oldPost.createdAt }, unreadCount: 0 }); }
@@ -190,50 +190,30 @@ describe("NoticeBoard disclosure and polling", () => {
     });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    const toggle = host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('button[aria-expanded]')).toBeNull();
     expect(apiGetMock).toHaveBeenCalledWith("/api/notice-board/posts?limit=50");
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
     await advance(30_000);
     expect(listCalls).toBeGreaterThanOrEqual(2);
     expect(readStateCalls).toBeGreaterThanOrEqual(1);
     expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
-    const listCallsBeforeCollapse = listCalls; const readStateCallsBeforeCollapse = readStateCalls;
-    await click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(window.localStorage.getItem("quincy:dashboard:noticeboard:v2")).toBe("false");
-    await advance(60_000);
-    expect(apiGetMock.mock.calls.some(([path]) => path.includes("latest"))).toBe(false);
-    expect(listCalls).toBe(listCallsBeforeCollapse);
-    expect(readStateCalls).toBeGreaterThan(readStateCallsBeforeCollapse);
-
-    await act(async () => { root!.unmount(); await Promise.resolve(); });
-    root = null;
-    const remounted = mount();
-    await render(<NoticeBoard currentUserId="user-a" />);
-    expect(remounted.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("does not write the collapse key on mount when no preference is stored, even under StrictMode", async () => {
-    apiGetMock.mockResolvedValue({ posts: [oldPost] });
-    const values = new Map<string, string>();
+  it("ignores a previously stored collapse key: the board renders its content and never writes it", async () => {
+    const KEY = "quincy:dashboard:noticeboard:v2";
+    const values = new Map<string, string>([[KEY, "false"]]);
     const setItemSpy = vi.fn((key: string, value: string) => { values.set(key, String(value)); });
     Object.defineProperty(window, "localStorage", { configurable: true, value: {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: setItemSpy,
-      removeItem: (key: string) => { values.delete(key); },
-      clear: () => { values.clear(); },
+      getItem: (key: string) => values.get(key) ?? null, setItem: setItemSpy,
+      removeItem: (key: string) => { values.delete(key); }, clear: () => { values.clear(); },
     } });
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<StrictMode><NoticeBoard currentUserId="user-a" /></StrictMode>);
-    const toggle = host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
-    expect(toggle).not.toBeNull();
-    expect(setItemSpy.mock.calls.some(([key]) => key === "quincy:dashboard:noticeboard:v2")).toBe(false);
-
-    await click(toggle);
-    const collapseWrites = setItemSpy.mock.calls.filter(([key]) => key === "quincy:dashboard:noticeboard:v2");
-    expect(collapseWrites).toHaveLength(1);
-    expect(collapseWrites[0]![1]).toBe("false");
+    expect(host.querySelector('[data-slot="notice-board-composer"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="notice-board-post"]')).not.toBeNull();
+    expect(host.querySelector<HTMLElement>('[data-slot="notice-board-panel"]')?.hidden).toBe(false);
+    expect(setItemSpy.mock.calls.some(([key]) => key === KEY)).toBe(false);
   });
 
   it("ignores a value stored under the old, pre-rename collapse key and leaves it untouched", async () => {
@@ -248,7 +228,7 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [oldPost] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
-    expect(host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('[data-slot="notice-board-composer"]')).not.toBeNull();
     expect(getItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
     expect(setItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
     expect(removeItemSpy.mock.calls.some(([key]) => key === OLD_KEY)).toBe(false);
@@ -256,8 +236,7 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(values.has("quincy:dashboard:noticeboard:v2")).toBe(false);
   });
 
-  it("shows unread activity from the authoritative collapsed read state", async () => {
-    window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "false");
+  it("shows unread activity from the authoritative read state", async () => {
     apiGetMock.mockImplementation((path) => path.includes("read-marker")
       ? Promise.resolve({ marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 1 })
       : Promise.resolve({ posts: [] }));
@@ -267,7 +246,6 @@ describe("NoticeBoard disclosure and polling", () => {
   });
 
   it("does not write a seen cursor when an expanded list tick succeeds", async () => {
-    window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "true");
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", oldPost.id);
     let listCalls = 0;
     apiGetMock.mockImplementation((path) => {
@@ -282,8 +260,7 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
-  it("keeps a stale unread badge when the fresh expand fetch fails", async () => {
-    window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "false");
+  it("keeps a stale unread badge when the list fetch fails", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", oldPost.id);
     apiGetMock.mockImplementation((path) => path.includes("read-marker")
       ? Promise.resolve({ marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 1 })
@@ -291,13 +268,10 @@ describe("NoticeBoard disclosure and polling", () => {
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
     expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
-    await click(host.querySelector('[data-slot="notice-board-toggle"]')!);
-    expect(host.querySelector('[data-slot="notice-board-unread-indicator"]')).not.toBeNull();
   });
 
   it("leaves legacy seen keys untouched and only offers author controls", async () => {
     window.localStorage.setItem("quincy:dashboard:noticeboard:seen:user-a", newPost.id);
-    window.localStorage.setItem("quincy:dashboard:noticeboard:v2", "true");
     apiGetMock.mockResolvedValue({ posts: [newPost, { ...oldPost, authorId: "user-a" }] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-b" />);
@@ -491,24 +465,5 @@ describe("NoticeBoard disclosure and polling", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Publishing is unavailable.");
     expect(editor.textContent).toContain("Draft survives");
-  });
-});
-
-describe("NoticeBoard on a phone (#334)", () => {
-  const KEY = "quincy:dashboard:noticeboard:v2";
-  const toggleOf = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
-
-  it("does not fold on a phone: open by default, panel visible, subtitle shown", async () => {
-    Object.defineProperty(window, "matchMedia", { configurable: true, value: (query: string) => ({ matches: query.includes("721px"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false }) });
-    apiGetMock.mockImplementation((path) => path.includes("read-marker")
-      ? Promise.resolve({ marker: null, latest: { postId: oldPost.id, createdAt: oldPost.createdAt }, unreadCount: 0 })
-      : Promise.resolve({ posts: [oldPost] }));
-    window.localStorage.removeItem(KEY);
-    const host = mount();
-    await render(<NoticeBoard currentUserId="user-a" />);
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector<HTMLElement>(`#${CSS.escape(toggleOf(host).getAttribute("aria-controls")!)}`)!.hidden).toBe(false);
-    const subtitle = [...toggleOf(host).querySelectorAll("span")].find((span) => span.textContent === "Messages for the production desk")!;
-    expect(subtitle.className.split(/\s+/)).not.toContain("hidden");
   });
 });
