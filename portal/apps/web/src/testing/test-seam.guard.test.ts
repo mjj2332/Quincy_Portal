@@ -219,7 +219,7 @@ const UTILITY_EXACT = new Set([
  * for why a bare prefix match is the wrong shape for those specifically.
  */
 const UTILITY_PREFIX =
-  /^(?:min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
+  /^(?:min-|max-|w-|h-|p[xytblr]?-|m[xytblr]?-|gap-|text-|bg-|border-|rounded-|font-|leading-|tracking-|opacity-|z-|overflow-|items-|justify-|self-|order-|shrink-|grow-|basis-|cursor-|select-|pointer-|transition-|duration-|scroll-[mp][xytblrse]?-|ease-|scale-|translate-|rotate-|shadow-|ring-|outline-|whitespace-|aspect-|col-|row-|place-|content-|space-|divide-|backdrop-|blur-|object-|top-|bottom-|left-|right-|inset-|size-|flex-|grid-)/;
 
 /**
  * The Tailwind SCALE a spacing utility's value can take, as this repo actually uses it: the
@@ -734,6 +734,11 @@ describe("guard E: the seam matchers classify selectors correctly", () => {
     // Quincy BEM name (this exact file's sibling, gantt-view.tsx:564, uses the phrase "ms-fraction
     // bar geometry" in an ordinary comment) that would have slipped past guard C entirely.
     ["ms-fraction", false],
+    // Tailwind's scroll-margin/scroll-padding utilities (#325's Deadline popover uses
+    // `scroll-pb-18`). Only the m/p + side forms: `scroll-area` stays a plausible Quincy name.
+    ["scroll-pb-18", true],
+    ["scroll-my-1", true],
+    ["scroll-area", false],
   ])("isUtilityClass(%j) === %s", (token, expected) => {
     expect(isUtilityClass(token)).toBe(expected);
   });
