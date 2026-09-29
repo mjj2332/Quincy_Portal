@@ -10,8 +10,11 @@ import type { ProjectSummary } from "./kanban-interaction";
  * untouched; moving the pointer away or scrolling anything disarms it.
  */
 export const STAR_GUARD_RADIUS_PX = 16;
-/** One `--dur-base` flight plus a double-click interval. */
-export const STAR_GUARD_WINDOW_MS = 700;
+/**
+ * One `--dur-slow` flight (420ms, `styles/tokens/spacing.css`) plus a ~480ms double-click interval.
+ * Hand-copied from the token: change it with `playFlip`'s duration.
+ */
+export const STAR_GUARD_WINDOW_MS = 900;
 /**
  * How long after a pointer commit its card's move still counts as that commit's. The optimistic
  * overlay (#232) re-sorts on the very next render, so this only has to outlast a slow frame.

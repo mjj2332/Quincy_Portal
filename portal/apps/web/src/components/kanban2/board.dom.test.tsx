@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyboardSensor, MeasuringStrategy, MouseSensor, TouchSensor, type DragEndEvent } from "@dnd-kit/core";
 import { ProjectKanbanBoard2 } from "./board";
 import { KanbanCard2 } from "./card";
+import { STAR_GUARD_WINDOW_MS } from "../../lib/star-click-guard";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 
@@ -1532,7 +1533,7 @@ describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#3
 
     await renderBoard({ ...props, projects: column(1) });
     await commitAndResort(props);
-    now += 800;
+    now += STAR_GUARD_WINDOW_MS + 100;
     await clickStar("b Street", 4, { x: 200, y: 230 });
     expect(props.onPriorityChange).toHaveBeenCalledTimes(4);
   });

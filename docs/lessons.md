@@ -4256,7 +4256,8 @@ freezing the whole Board.
   drop's commit, and on a sort-mode change.
 - **The FLIP alone does not stop the misclick.** A pointer star commit whose card then moves arms
   a short guard (`lib/star-click-guard.ts`): a pointer commit on a *different* card within 16px and
-  700ms is dropped. A pointer commit is told from a keyboard one by a click point recorded in the
+  900ms (one `--dur-slow` flight plus a double-click interval) is dropped. A pointer commit is told
+  from a keyboard one by a click point recorded in the
   Board's capture phase, because a star commits on `click` and keyboard commits never produce one.
 - **Trap caught in review, invisible to the tests:** the first version cleared that point in a
   `queueMicrotask`. React dispatches capture and bubble from two *separate* native listeners on the

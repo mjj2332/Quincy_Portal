@@ -39,7 +39,7 @@ export function flipDeltas(before: FlipSnapshot, after: FlipSnapshot): FlipDelta
 
 /**
  * If `transitionend` never arrives (a background tab, an interrupted style recalc), the flight is
- * cleared anyway, so a card cannot be left lifted over its neighbours. Comfortably past `--dur-base`.
+ * cleared anyway, so a card cannot be left lifted over its neighbours. Comfortably past `--dur-slow` (420ms).
  */
 export const FLIP_SETTLE_FALLBACK_MS = 1_000;
 
@@ -74,7 +74,7 @@ export function playFlip(element: HTMLElement, dx: number, dy: number, lift: boo
   style.transform = `translate(${dx}px, ${dy}px)`;
   if (lift) style.zIndex = "1";
   element.getBoundingClientRect();
-  style.transition = "transform var(--dur-base) var(--ease-standard)";
+  style.transition = "transform var(--dur-slow) var(--ease-standard)";
   style.transform = "";
   element.addEventListener("transitionend", onEnd);
   const fallback = setTimeout(clear, FLIP_SETTLE_FALLBACK_MS);

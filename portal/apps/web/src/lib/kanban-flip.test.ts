@@ -59,7 +59,7 @@ describe("playFlip (#304)", () => {
       "transform=translate(0px, 224px)",
       "zIndex=1",
       "reflow",
-      "transition=transform var(--dur-base) var(--ease-standard)",
+      "transition=transform var(--dur-slow) var(--ease-standard)",
       "transform=",
     ]);
   });
@@ -75,7 +75,7 @@ describe("playFlip (#304)", () => {
     playFlip(flying.element, 0, 10, true);
     flying.listeners.get("transitionend")?.({ target: {}, propertyName: "box-shadow" });
     flying.listeners.get("transitionend")?.({ target: flying.raw, propertyName: "box-shadow" });
-    expect(flying.style.transition).toBe("transform var(--dur-base) var(--ease-standard)");
+    expect(flying.style.transition).toBe("transform var(--dur-slow) var(--ease-standard)");
     expect(flying.style.zIndex).toBe("1");
   });
 
