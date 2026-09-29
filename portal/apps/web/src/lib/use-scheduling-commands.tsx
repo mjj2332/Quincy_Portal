@@ -9,12 +9,10 @@ import {
   subtaskIdFromCalendarEntityId,
   type CalendarEventTiming,
   type CalendarManipulationTarget,
-  type CalendarUnscheduledEntryDto,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistDisambiguation,
   type DashboardCalendarState,
-  type InitialChecklistScheduleInput,
+  type RangeChecklistScheduleInput,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type ProjectDeadlineDisambiguation,
@@ -22,7 +20,6 @@ import {
   type ProductionCalendarRangeResponse,
   type SaveChecklistScheduleRequest,
   type SaveProjectDeadlineRequest,
-  oneDaySubtaskRange,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "./dashboard-projects";
 import type { ChecklistMutationResult, SaveResponse } from "./scheduling-types";
@@ -32,7 +29,6 @@ import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "./proj
 import { decodeChecklistMutationResponse, productionCalendarFiltersFor, removeProductionCalendarQueries, useProductionCalendarRange } from "./production-calendar-query";
 import {
   adoptChecklistResult,
-  canonicalChecklistEvent,
   canonicalEventFromSchedule,
   checklistCurrentCivil,
   checklistInputFromSchedule,
@@ -45,7 +41,6 @@ import {
   endpointChoicesFromError,
   endpointOfError,
   inputDisambiguation,
-  optimisticChecklistEvent,
   planSchedulingProposal,
   projectDeadlinePlaceholder,
   proposedCivilForAllDay,
@@ -59,7 +54,6 @@ import {
 import { scheduleWarningText, scheduleWindowWarnings } from "./schedule-bounds";
 import { applyUndo, type UndoOutcome, type UndoTicket } from "./scheduling-undo";
 import {
-  applyOptimisticOverlay,
   beginCalendarInteraction,
   canStartCalendarCommand,
   calendarAnnouncement,
@@ -125,13 +119,12 @@ export type ChecklistOperationInfo = {
   drop?: CalendarRevertable;
   resize?: CalendarResizeInfo;
   editor?: boolean;
-  external?: boolean;
 };
 export type ChecklistProposal = {
   snapshot: ChecklistSnapshot;
   source: ChecklistSource;
   request: SaveChecklistScheduleRequest;
-  schedule: InitialChecklistScheduleInput;
+  schedule: RangeChecklistScheduleInput;
   timing: CalendarEventTiming | null;
   operation: ChecklistOperationInfo;
   target?: CalendarManipulationTarget;
@@ -157,7 +150,7 @@ export type ChecklistFoldState = {
 export type ScheduleEditorState = {
   source: ChecklistSource;
   snapshot: ChecklistSnapshot;
-  initialSchedule?: InitialChecklistScheduleInput;
+  initialSchedule?: RangeChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
@@ -193,11 +186,8 @@ export type SchedulingPort<TBaseline> = {
   latestError: unknown;
   refetch: () => Promise<{ data?: TBaseline; error?: unknown; isError: boolean }>;
   clone: (baseline: TBaseline) => TBaseline;
-  /** Heals client-only needs-attention markers off an authoritative baseline; returns `current`
-   * itself when nothing changed. */
-  healNeedsAttention: (current: Set<string>, baseline: TBaseline) => Set<string>;
   snapshotFilters: () => ProductionCalendarFilters;
-  findUnscheduledEntry: (baseline: TBaseline, id: string | undefined, kind: string | undefined) => CalendarUnscheduledEntryDto | undefined;
+  findUnscheduledEntry: (baseline: TBaseline, id: string | undefined, kind: string | undefined) => ProjectCalendarUnscheduledEntryDto | undefined;
   findChecklist: (baseline: TBaseline, id: string) => ChecklistSource | undefined;
   findDeadline: (baseline: TBaseline, eventId: string) => ProjectDeadlineCalendarEventDto | undefined;
   findUnscheduledDeadline: (baseline: TBaseline, entryId: string) => ProjectCalendarUnscheduledEntryDto | undefined;
@@ -284,7 +274,6 @@ export type SchedulingController<TBaseline> = {
   settle: CalendarSettleState;
   announcement: string;
   accessLost: boolean;
-  checklistNeedsAttention: Set<string>;
   deadlineMovementDisabled: boolean;
   moveDialog: MoveDialogState | null;
   scheduleEditor: ScheduleEditorState | null;
@@ -306,11 +295,10 @@ export type SchedulingController<TBaseline> = {
   runUndo: (ticket: UndoTicket) => Promise<RunUndoOutcome>;
   openMoveDialog: (event: ProjectDeadlineCalendarEventDto) => void;
   openUnscheduledProjectDialog: (entry: ProjectCalendarUnscheduledEntryDto) => void;
-  openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: InitialChecklistScheduleInput) => void;
-  openUnscheduledChecklistScheduleEditor: (entry: ChecklistCalendarUnscheduledEntryDto) => void;
+  openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput) => void;
   submitMoveDialog: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => void;
   cancelMoveDialog: () => void;
-  submitScheduleEditor: (schedule: InitialChecklistScheduleInput) => void;
+  submitScheduleEditor: (schedule: RangeChecklistScheduleInput) => void;
   cancelScheduleEditor: () => void;
   submitChecklistFold: (choice: "earlier" | "later") => void;
   cancelChecklistFold: () => void;
@@ -318,11 +306,10 @@ export type SchedulingController<TBaseline> = {
   canStartCommand: () => boolean;
   /**
    * #216 fix round 1 item 2: reads `acceptedResponseRef.current` (hook-private, synchronously
-   * fresh), not the `acceptedResponse` render-state snapshot — the external-drop handler stayed
-   * in the retired `ProductionCalendar.tsx` and on `main` read the ref for exactly this reason; a render-state
-   * read there is a stale-closure risk the ref read never was.
+   * fresh), not the `acceptedResponse` render-state snapshot: a render-state read is a
+   * stale-closure risk the ref read never was.
    */
-  findUnscheduledEntry: (id: string | undefined, kind: string | undefined) => CalendarUnscheduledEntryDto | undefined;
+  findUnscheduledEntry: (id: string | undefined, kind: string | undefined) => ProjectCalendarUnscheduledEntryDto | undefined;
   refreshRecovery: () => Promise<void>;
   clearSettleOnNavigation: () => void;
   /** Announcement helpers the FullCalendar handlers (stayed in the since-deleted ProductionCalendar.tsx)
@@ -341,9 +328,9 @@ export type SchedulingCommands = SchedulingController<ProductionCalendarRangeRes
  * was actually ATTEMPTED — the shared mapper's own error object never carries it (only
  * code/message/endpoint/choices), so this reproduces exactly what the positional callers compute
  * as `localCivil` BEFORE calling the mapper: `proposedCivilForAllDay` for a month-subview drag
- * (preserves the pre-drag wall-clock time), the unscheduled-panel's fixed 17:00 default for a
- * month-subview placement, and the target's own civil minute verbatim for week-subview (both
- * kinds) — never `event.deadlineLocalCivil`, which for a placement is literally "Not scheduled".
+ * (preserves the pre-drag wall-clock time), the fixed 17:00 default for a month-subview
+ * placement, and the target's own civil minute verbatim for week-subview (both kinds) — never
+ * `event.deadlineLocalCivil`, which for a placement is literally "Not scheduled".
  */
 function attemptedDeadlineLocalCivil(proposal: Extract<SchedulingProposal, { entity: "project_deadline" }>, event: ProjectDeadlineCalendarEventDto): string {
   if (proposal.target.subview === "month") {
@@ -353,7 +340,7 @@ function attemptedDeadlineLocalCivil(proposal: Extract<SchedulingProposal, { ent
 }
 
 function proposalProjectId(proposal: SchedulingProposal): string {
-  if (proposal.entity === "checklist") return proposal.kind === "place" ? proposal.entry.project.id : proposal.source.project.id;
+  if (proposal.entity === "checklist") return proposal.source.project.id;
   return proposal.kind === "place" ? proposal.entry.project.id : proposal.event.project.id;
 }
 
@@ -374,29 +361,12 @@ export function useCalendarSchedulingPort(calendar: DashboardCalendarState, quer
       return { data: result.data, error: result.error, isError: result.isError };
     },
     clone: cloneResponse,
-    healNeedsAttention: (current, copy) => {
-      const invalidIds = new Set(copy.unscheduled.filter((entry) => entry.kind === "checklist" && entry.reason === "schedule_needs_attention" && entry.attentionReason === "invalid").map((entry) => entry.id));
-      const presentIds = new Set([
-        ...copy.events.filter((event) => event.kind === "checklist").map((event) => event.id),
-        ...copy.unscheduled.filter((entry) => entry.kind === "checklist").map((entry) => entry.id),
-      ]);
-      let changed = false;
-      const next = new Set(current);
-      for (const id of current) {
-        if (presentIds.has(id) && !invalidIds.has(id)) {
-          next.delete(id);
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    },
     snapshotFilters: () => cloneFilters(productionCalendarFiltersFor(calendar)),
-    findUnscheduledEntry: (baseline, id, kind) => baseline.unscheduled.find((candidate) => candidate.id === id && (
-      kind === "project" ? candidate.kind === "project_deadline" : kind === "checklist" && candidate.kind === "checklist"
-    )),
+    // The Calendar has no unscheduled entries (ADR 0011); only the Gantt places a missing Project Deadline.
+    findUnscheduledEntry: () => undefined,
     findChecklist: checklistSourceFromResponse,
     findDeadline: responseEvent,
-    findUnscheduledDeadline: (baseline, entryId) => baseline.unscheduled.find((entry): entry is ProjectCalendarUnscheduledEntryDto => entry.id === entryId && entry.kind === "project_deadline"),
+    findUnscheduledDeadline: () => undefined,
     adoptChecklist: adoptChecklistResult,
     adoptDeadline: (baseline, event, current) => ({ ...baseline, events: baseline.events.map((candidate) => candidate.id === event.id && candidate.kind === "project_deadline" ? canonicalEventFromSchedule(candidate, current) : candidate) }),
     purge: (queryClient) => {
@@ -440,7 +410,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const [scheduleEditor, setScheduleEditor] = useState<ScheduleEditorState | null>(null);
   const [checklistFold, setChecklistFold] = useState<ChecklistFoldState | null>(null);
   const [deadlineMovementDisabled, setDeadlineMovementDisabled] = useState(false);
-  const [checklistNeedsAttention, setChecklistNeedsAttention] = useState<Set<string>>(() => new Set());
   const [announcement, setAnnouncement] = useState("");
   const [calendarAccessLost, setCalendarAccessLost] = useState(false);
   const acceptedResponseRef = useRef<TBaseline | null>(null);
@@ -502,7 +471,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     // for an unrelated item still present in the stale baseline.
     if (!authoritative) return;
     if (settleRef.current.pending) setSettle({ type: "refetch-succeeded" });
-    setChecklistNeedsAttention((current) => port.healNeedsAttention(current, copy));
     setDeadlineMovementDisabled(false);
   }, [setSettle]);
 
@@ -521,7 +489,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     setAcceptGate(false);
     setSettle({ type: "terminal" });
     setAnnouncement("");
-    setChecklistNeedsAttention(new Set());
     acceptedResponseRef.current = null;
     setAcceptedResponse(null);
     queuedRefetchRef.current = false;
@@ -639,7 +606,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   // predicate the component can call without reaching into hook-private refs.
   const canStartCommand = useCallback((): boolean => !settleRef.current.pending && canStartCalendarCommand(commandLockRef.current), []);
 
-  const findUnscheduledEntry = useCallback((id: string | undefined, kind: string | undefined): CalendarUnscheduledEntryDto | undefined => {
+  const findUnscheduledEntry = useCallback((id: string | undefined, kind: string | undefined): ProjectCalendarUnscheduledEntryDto | undefined => {
     const baseline = acceptedResponseRef.current;
     return baseline ? portRef.current.findUnscheduledEntry(baseline, id, kind) : undefined;
   }, []);
@@ -947,10 +914,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     setMoveDialog({ event, snapshot, initialCivil: event.deadlineLocalCivil });
   }, [acceptForInteraction, announceLifecycle, deadlineMovementDisabled, identity.role]);
 
-  // §216 correction #4: the unscheduled-entry draggability check (`canDragUnscheduledEntry`,
-  // which imports from `ProductionCalendarUnscheduledPanel`) stays a component-only function —
-  // `lib/` must not import a component. the retired `ProductionCalendar.tsx` wrapped its call to this command
-  // with that check instead of this hook performing it internally.
   const openUnscheduledProjectDialog = useCallback((entry: ProjectCalendarUnscheduledEntryDto) => {
     if (calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const sourceSnapshot = acceptForInteraction(entry, { eventId: entry.id, control: "move-reschedule" });
@@ -1043,15 +1006,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       finishChecklistInteraction(proposal.operation, proposal.source, { kind: "invalid" });
       return;
     }
-    const normalizedSchedule = normalizeChecklistSchedule(proposal.schedule, proposal.source.schedule.version);
-    const optimisticEvent = !(("timing" in proposal.source)) && normalizedSchedule.ok
-      ? optimisticChecklistEvent(proposal.source, checklistScheduleToDto(normalizedSchedule.value))
-      : null;
-    setOverlay(proposal.timing
-      ? optimisticEvent
-        ? { kind: "reschedule-unscheduled", entryId: proposal.source.id, timing: proposal.timing, asEvent: optimisticEvent }
-        : { eventId: proposal.source.id, timing: proposal.timing }
-      : null);
+    setOverlay(proposal.timing ? { eventId: proposal.source.id, timing: proposal.timing } : null);
     announceChecklistLifecycle("saving", { street: proposal.source.project.street });
     try {
       // The captured role chooses the response arm before this request. The
@@ -1066,7 +1021,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
         && checklistSchedulesEqual(result.schedule, proposal.source.schedule);
       const baseline = acceptedResponseRef.current;
       if (baseline) acceptRange(portRef.current.adoptChecklist(baseline, proposal.source, result), false);
-      setChecklistNeedsAttention((current) => { const next = new Set(current); next.delete(proposal.source.id); return next; });
       if (noop) {
         setOverlay(null);
         setScheduleEditor(null);
@@ -1117,7 +1071,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       proposal.operation.drop?.revert();
       proposal.operation.resize?.revert();
       setOverlay(null);
-      if (action?.needsAttention) setChecklistNeedsAttention((current) => new Set(current).add(proposal.source.id));
 
       if (action?.askFold) {
         const choices = endpointChoicesFromError(error);
@@ -1216,9 +1169,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       ? { kind: "resize", entity: "checklist", source: snapshot.event as ChecklistCalendarEventDto, edge: "start", target, ...(disambiguation ? { disambiguation } : {}) }
       : edge === "end"
         ? { kind: "resize", entity: "checklist", source: snapshot.event as ChecklistCalendarEventDto, edge: "end", target, ...(disambiguation ? { disambiguation } : {}) }
-        : "reason" in event && event.reason === "unscheduled"
-          ? { kind: "place", entity: "checklist", entry: snapshot.event as ChecklistCalendarUnscheduledEntryDto, target, ...(disambiguation ? { disambiguation } : {}) }
-          : { kind: "move", entity: "checklist", source: snapshot.event as ChecklistCalendarEventDto, target, ...(disambiguation ? { disambiguation } : {}) };
+        : { kind: "move", entity: "checklist", source: snapshot.event as ChecklistCalendarEventDto, target, ...(disambiguation ? { disambiguation } : {}) };
     runChecklistProposal(proposal, snapshot, event, operation);
   }, [runChecklistProposal]);
 
@@ -1235,7 +1186,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (!canStartCommand()) return { ok: false, reason: "busy" };
     const revertable = options?.revertable;
     if (proposal.entity === "checklist") {
-      const source: ChecklistSource = proposal.kind === "place" ? proposal.entry : proposal.source;
+      const source: ChecklistSource = proposal.source;
       const snapshot = acceptForInteraction(source, { eventId: source.id, control: "event" });
       if (!snapshot) return { ok: false, reason: "not-accepted" };
       runChecklistProposal(proposal, snapshot, source, revertable ? { drop: revertable } : {});
@@ -1262,8 +1213,8 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     finishChecklistInteraction(state.proposal.operation, state.proposal.source, { kind: "cancelled" });
   }, [checklistFold, finishChecklistInteraction]);
 
-  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: InitialChecklistScheduleInput) => {
-    if (source.schedule.state === "invalid" || !source.permissions.canOpenScheduleEditor || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
+  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput) => {
+    if (!source.permissions.canOpenScheduleEditor || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule" });
     if (!snapshot) return;
     announceChecklistLifecycle("picked-up", {
@@ -1275,16 +1226,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}) });
   }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
-  const openUnscheduledChecklistScheduleEditor = useCallback((entry: ChecklistCalendarUnscheduledEntryDto) => {
-    // A one-day range on the placement date, for the user to confirm (ADR 0011: every Subtask has a range).
-    const placementDate = portRef.current.defaultPlacementDate();
-    const initialSchedule: InitialChecklistScheduleInput | undefined = entry.reason === "unscheduled"
-      ? oneDaySubtaskRange({ kind: "date", localCivil: placementDate }) ?? undefined
-      : undefined;
-    openChecklistScheduleEditor(entry, initialSchedule);
-  }, [openChecklistScheduleEditor]);
-
-  const handleScheduleEditorSubmit = useCallback((schedule: InitialChecklistScheduleInput) => {
+  const handleScheduleEditorSubmit = useCallback((schedule: RangeChecklistScheduleInput) => {
     const state = scheduleEditor;
     if (!state || accessLostRef.current) return;
     const normalized = normalizeChecklistSchedule(schedule, state.source.schedule.version);
@@ -1432,7 +1374,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     settle: calendarSettle,
     announcement,
     accessLost: calendarAccessLost,
-    checklistNeedsAttention,
     deadlineMovementDisabled,
     moveDialog,
     scheduleEditor,
@@ -1442,7 +1383,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     openMoveDialog,
     openUnscheduledProjectDialog,
     openChecklistScheduleEditor,
-    openUnscheduledChecklistScheduleEditor,
     submitMoveDialog: handleMoveDialogSubmit,
     cancelMoveDialog: handleMoveDialogCancel,
     submitScheduleEditor: handleScheduleEditorSubmit,

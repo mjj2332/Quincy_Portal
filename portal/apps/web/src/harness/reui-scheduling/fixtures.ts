@@ -228,26 +228,11 @@ const CALENDAR_RESOURCES: EventCalendarResource[] = [
   },
 ];
 
-export interface UnscheduledItem {
-  id: string;
-  title: string;
-  durationMinutes: number;
-  color: string;
-}
-
 export interface CalendarFixture {
   date: Date;
   events: CalendarEvent[];
   resources: EventCalendarResource[];
-  /** Items not yet on the calendar — the external-drag tray's source (stage 3 wires the drag). */
-  unscheduled: UnscheduledItem[];
 }
-
-const UNSCHEDULED: UnscheduledItem[] = [
-  { id: "unsched-scout", title: "Location scout", durationMinutes: 90, color: STAGE_COLORS.awaitingRaw },
-  { id: "unsched-grade", title: "Colour grade", durationMinutes: 60, color: STAGE_COLORS.editing },
-  { id: "unsched-review", title: "Client review", durationMinutes: 30, color: STAGE_COLORS.rawReview },
-];
 
 /**
  * One scenario's calendar fixture, anchored the same way `buildFromAnchor` above anchors the
@@ -365,7 +350,6 @@ function buildCalendarFromAnchor(anchor: TZDate): Omit<CalendarFixture, "date"> 
   return {
     events,
     resources: CALENDAR_RESOURCES,
-    unscheduled: UNSCHEDULED,
   };
 }
 

@@ -8,8 +8,8 @@
  * surface is `[data-surface="inverse"]`, which re-scopes tokens — a `dark:` variant is dead code
  * that silently activates the moment someone adds that class), a `shadow-(xs|sm|md|lg|xl)` class
  * outside the documented allowlist, a hex/`rgb()`/`rgba()` colour literal, and a non-Quincy
- * Tailwind palette class. The Quincy-authored external-drop adapter code inside
- * `event-calendar-dnd.tsx` is in scope — it is part of the file, not a separate module.
+ * Tailwind palette class. The Quincy-authored code inside `event-calendar-dnd.tsx` (the keyboard
+ * Adjust session) is in scope — it is part of the file, not a separate module.
  *
  * Detector 6 (bare `border*`) from the Gantt guard is NOT ported here, and deliberately so — see
  * that guard's own header. `styles/tokens/base.css` now carries a `@layer base { *, *::before,
@@ -49,12 +49,11 @@
  *     `GANTT_COLORS` earns Detector 4a in the Gantt guard: it is invisible to Detector 4 (a CSS
  *     custom-property VALUE, not a Tailwind class name) and a re-vendor will bring it back. If this
  *     goes red, the fix is real Quincy tokens for whatever imported it, never a widened detector.
- *   - Detector 9 pins an architectural decision, not a class name: the external-drop adapter's
- *     whole justification (`event-calendar-dnd.tsx`'s own banner comment, ~line 1028) is that the
- *     vendor's `data-ec-day` / `-bounds-start` / `-bounds-end` / `-wall-start` / `-wall-end` / `-resource` attribute contract is
- *     read ONLY from inside this directory. A consumer outside it reading those attributes directly
- *     would bypass the adapter and couple itself to vendor internals the next re-vendor is free to
- *     rename.
+ *   - Detector 9 pins an architectural decision, not a class name: the vendor's `data-ec-day` /
+ *     `-bounds-start` / `-bounds-end` / `-wall-start` / `-wall-end` / `-resource` attribute contract
+ *     is read ONLY from inside this directory (the external-drop adapter that first justified this
+ *     was removed in #342; the decision stands). A consumer outside it reading those attributes
+ *     directly would couple itself to vendor internals the next re-vendor is free to rename.
  *   - Detector 10 pins `docs/lessons.md`'s bare-`.focus()` trap: every `.focus()` call in the tree
  *     must pass `{ preventScroll: true }`, or the browser's default focus-follows-scroll silently
  *     yanks the viewport out from under whatever the user was reading. There is exactly one call
@@ -631,18 +630,15 @@ describe("guard: no rounded-lg/rounded-xl/rounded-2xl (or larger) anywhere in th
 // Detector 9 — `data-ec-*` confinement to this directory
 // ---------------------------------------------------------------------------
 /**
- * Pins an architectural decision, not a class name. The external-drop adapter's whole
- * justification (`event-calendar-dnd.tsx`'s own banner comment, ~line 1028) is that the vendor's
+ * Pins an architectural decision, not a class name. The vendor's
  * `data-ec-day` / `-bounds-start` / `-bounds-end` / `-wall-start` / `-wall-end` / `-resource` attribute contract is read ONLY
  * from inside this directory — a consumer outside it reading those attributes directly would
- * bypass the adapter and couple itself to vendor internals a re-vendor is free to rename. This
+ * couple itself to vendor internals a re-vendor is free to rename. (The external-drop adapter that
+ * first justified this was removed in #342; the decision stands.) This
  * scans every non-test `.ts`/`.tsx` file under `src/` OUTSIDE
  * `components/reui/event-calendar/` for the string `data-ec-` and fails on any hit.
  *
- * Checked, not assumed: `src/harness/reui-scheduling/external-drop-policy.ts` mentions `data-ec-
- * resource` once, but only inside a `//` comment describing the contract — `stripComments` removes
- * it before this runs, and the rest of `src/harness/reui-scheduling/` has no `data-ec-` at all. The
- * `.dom.test.tsx` files inside this directory that stub `[data-ec-day]` DOM nodes for test geometry
+ * The `.dom.test.tsx` files inside this directory that stub `[data-ec-day]` DOM nodes for test geometry
  * are already outside this detector's scan (they live INSIDE `components/reui/event-calendar/`,
  * which this detector deliberately excludes), so no additional test-file exclusion is needed here.
  */
@@ -678,9 +674,8 @@ describe("guard: `data-ec-*` attributes stay confined to components/reui/event-c
     const offenders = findDataEcOutsideDirectory(allNonTestSourceFiles());
     expect(offenders, [
       "data-ec-* is the vendored event-calendar's own DOM attribute contract, meant to be read",
-      "only from inside components/reui/event-calendar/ (see event-calendar-dnd.tsx's external-",
-      "drop adapter banner comment). A consumer outside this directory reading it directly bypasses",
-      "the adapter and couples itself to vendor internals a re-vendor is free to rename. Found in:",
+      "only from inside components/reui/event-calendar/. A consumer outside this directory reading",
+      "it directly couples itself to vendor internals a re-vendor is free to rename. Found in:",
       ...offenders.map((name) => `  ${name}`),
     ].join("\n")).toEqual([]);
   });

@@ -70,10 +70,6 @@ const RANGE_ID = "22222222-2222-4222-8222-222222222222";
 const RANGE_TITLE = "Edit hero set";
 const DUE_ID = "33333333-3333-4333-8333-333333333333";
 const DUE_TITLE = "Send preview";
-const UNSCHED_ID = "44444444-4444-4444-8444-444444444444";
-const UNSCHED_TITLE = "Place me";
-const LOCKED_ID = "55555555-5555-4555-8555-555555555555";
-const LOCKED_TITLE = "Locked placement";
 
 const CONFLICT_TEXT = "The checklist schedule changed elsewhere. Reloaded the latest; no retry was made.";
 
@@ -98,7 +94,7 @@ type Row = {
   title: string;
   position: number;
   schedule: ChecklistScheduleDto;
-  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canScheduleRange: boolean };
+  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean };
 };
 
 type ScheduleInput = { state: string; start?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" }; end?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" } };
@@ -134,12 +130,10 @@ function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; 
   firstCanEditChildren = options.firstCanEditChildren ?? true;
   secondCanEditChildren = options.secondCanEditChildren ?? true;
   omittedFromGet = new Set();
-  const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true };
+  const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true };
   rows = [
     { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(1)), end: dateEndpoint(sydneyDay(3)), due: sydneyDay(3) } },
-    { id: DUE_ID, title: DUE_TITLE, position: 1, permissions: all, schedule: { state: "due_only", version: 1, zone: PRODUCTION_GANTT_ZONE, start: null, end: dateEndpoint(sydneyDay(2)), due: sydneyDay(2) } },
-    { id: UNSCHED_ID, title: UNSCHED_TITLE, position: 2, permissions: all, schedule: { state: "unscheduled", version: 1, zone: PRODUCTION_GANTT_ZONE, start: null, end: null, due: null } },
-    { id: LOCKED_ID, title: LOCKED_TITLE, position: 3, permissions: { ...all, canDrag: false, canResize: false }, schedule: { state: "unscheduled", version: 1, zone: PRODUCTION_GANTT_ZONE, start: null, end: null, due: null } },
+    { id: DUE_ID, title: DUE_TITLE, position: 1, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(2)), end: dateEndpoint(sydneyDay(2)), due: sydneyDay(2) } },
   ];
 }
 
@@ -211,9 +205,10 @@ function timedEndpoint(localCivil: string, disambiguation?: "earlier" | "later")
 
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
   const endpoint = (value: ScheduleInput["end"]) => (value ? (value.kind === "timed" ? timedEndpoint(value.localCivil, value.disambiguation) : dateEndpoint(value.localCivil)) : null);
-  if (input.state === "unscheduled") return { state: "unscheduled", version, zone: PRODUCTION_GANTT_ZONE, start: null, end: null, due: null };
+  const start = endpoint(input.start);
   const end = endpoint(input.end);
-  return { state: input.state as "due_only" | "range", version, zone: PRODUCTION_GANTT_ZONE, start: input.state === "range" ? endpoint(input.start) : null, end, due: end?.localCivil ?? null };
+  if (!start || !end) throw new Error("fixture: a range PATCH must carry both endpoints");
+  return { state: "range", version, zone: PRODUCTION_GANTT_ZONE, start, end, due: end.localCivil };
 }
 
 type Request = { method: string; url: string; body: unknown };
@@ -246,7 +241,7 @@ let createReply: ((body: { title: string }, projectId: string) => Promise<Reply>
 function echoCreate(body: { title: string }, projectId: string): Reply {
   const schedule: ChecklistScheduleDto = { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) };
   if (projectId === PROJECT_ID) {
-    rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true }, schedule });
+    rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true }, schedule });
   }
   return { status: 201, body: { id: CREATED_ID, title: body.title, done: false, assignee: null, assignmentVersion: 1, position: 4, dueDate: schedule.due, schedule, createdBy: "user-1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } };
 }
@@ -397,9 +392,9 @@ async function click(el: HTMLElement) {
  * ABSOLUTE position on the (stubbed, 1440px) axis, so 1400 lands near the view's far end — well
  * after the fixture's end date and deadline.
  */
-async function resizeRangeEnd(clientX: number, pointerId: number, options: { release?: boolean } = {}) {
+async function resizeRangeEnd(clientX: number, pointerId: number, options: { release?: boolean; taskId?: string } = {}) {
   stubGeometry();
-  const grip = host.querySelector<HTMLElement>(`[data-gantt-resource="task:${RANGE_ID}"] [data-testid="gantt-resize-handle-end"]`);
+  const grip = host.querySelector<HTMLElement>(`[data-gantt-resource="task:${options.taskId ?? RANGE_ID}"] [data-testid="gantt-resize-handle-end"]`);
   if (!grip) throw new Error("no end grip");
   await pointerEvent(grip, "pointerdown", { pointerId, button: 0, clientX: 300, clientY: 10 });
   await pointerEvent(window, "pointermove", { pointerId, clientX, clientY: 10 });
@@ -564,6 +559,19 @@ afterEach(async () => {
 });
 
 describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
+  // The fixture days and the resize aim are anchored to the visible month, which the Gantt takes from
+  // `new Date()` and the fixture from Sydney's clock. Pin `Date` (timers stay real) so neither depends
+  // on the real date, in particular on the last or first day of a month when the two disagree.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
+    resetFixture();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("1. a pointer resize-end of a range task sends one PATCH, shows the new end before the response, then the server value", async () => {
     await render();
     const before = barLabel(RANGE_TITLE);
@@ -612,7 +620,7 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(liveRegionText()).not.toMatch(/rejected/i);
   });
 
-  it("2. a pointer move of a due_only milestone sends one due_only PATCH", async () => {
+  it("2. a pointer move of a one-day range sends one range PATCH", async () => {
     await render();
     stubGeometry();
     const bar = findBar(DUE_TITLE);
@@ -625,8 +633,32 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     expect(patches()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/subtasks/${DUE_ID}`);
     const body = patchBody();
     expect(body.schedule.expectedVersion).toBe(1);
-    expect(body.schedule.schedule.state).toBe("due_only");
+    expect(body.schedule.schedule.state).toBe("range");
     expect(body.schedule.schedule.end!.localCivil > sydneyDay(2)).toBe(true);
+  });
+
+  it("2b. a permitted ONE-DAY range bar shows both grips, and resizing its end sends a range PATCH ending one day later", async () => {
+    await render();
+    const row = host.querySelector(`[data-gantt-resource="task:${DUE_ID}"]`);
+    expect(row).not.toBeNull();
+    expect(row!.querySelector('[data-testid="gantt-resize-handle-start"]')).not.toBeNull();
+    expect(row!.querySelector('[data-testid="gantt-resize-handle-end"]')).not.toBeNull();
+
+    // The stubbed 1440px axis spans the visible month, one equal cell per day: aim at the middle of
+    // the cell one day after the task's day.
+    const target = sydneyDay(3);
+    const [year, month, day] = target.split("-").map(Number) as [number, number, number];
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    await resizeRangeEnd(((day - 0.5) / daysInMonth) * 1440, 39, { taskId: DUE_ID });
+    await flush(6);
+
+    expect(patches()).toHaveLength(1);
+    expect(patches()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/subtasks/${DUE_ID}`);
+    const body = patchBody();
+    expect(body.schedule.expectedVersion).toBe(1);
+    expect(body.schedule.schedule.state).toBe("range");
+    expect(body.schedule.schedule.start).toEqual({ kind: "date", localCivil: sydneyDay(2) });
+    expect(body.schedule.schedule.end).toEqual({ kind: "date", localCivil: sydneyDay(3) });
   });
 
   it("3. a 409 conflict rolls the bar back, announces the conflict and never retries", async () => {
@@ -756,34 +788,6 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     await flush(6);
     expect(onAccessLoss).toHaveBeenCalledTimes(1);
     expect(undoButtons()).toHaveLength(0);
-  });
-
-  it("11. placement: a draggable unscheduled row offers the tile and a click places it; a locked row offers nothing", async () => {
-    await render();
-    stubGeometry();
-    const hintTile = () => [...host.querySelectorAll("button")].find((el) => el.getAttribute("aria-label") === "Click or drag to add a schedule");
-
-    const lockedRow = host.querySelector<HTMLElement>(`[data-gantt-resource="task:${LOCKED_ID}"]`);
-    expect(lockedRow).not.toBeNull();
-    await pointerEvent(lockedRow!, "pointermove", { pointerId: 40, pointerType: "mouse", clientX: 400, clientY: 10 });
-    expect(hintTile()).toBeUndefined();
-    await click(lockedRow!);
-    await flush(2);
-    expect(patches()).toHaveLength(0);
-
-    const row = host.querySelector<HTMLElement>(`[data-gantt-resource="task:${UNSCHED_ID}"]`);
-    expect(row).not.toBeNull();
-    await pointerEvent(row!, "pointermove", { pointerId: 41, pointerType: "mouse", clientX: 400, clientY: 10 });
-    expect(hintTile()).toBeDefined();
-    await click(row!);
-    await flush(6);
-
-    expect(patches()).toHaveLength(1);
-    expect(patches()[0]!.url).toBe(`/api/projects/${PROJECT_ID}/subtasks/${UNSCHED_ID}`);
-    const body = patchBody();
-    expect(body.schedule.expectedVersion).toBe(1);
-    expect(body.schedule.schedule.state).toBe("due_only");
-    expect(body.schedule.schedule.end!.kind).toBe("date");
   });
 
   it("12. a project bar the user may re-deadline offers only its END grip and advertises its keyboard contract (#221 PR C)", async () => {
@@ -989,7 +993,7 @@ describe("ProductionGantt — project Deadline writes (#221 PR C)", () => {
     await render();
     await resizeProjectEnd(450, 62);
     await flush(4);
-    expect(byTestId("gantt-deadline-confirm-truncated")?.textContent).toBe("Based on 4 of 9 checklist items loaded.");
+    expect(byTestId("gantt-deadline-confirm-truncated")?.textContent).toBe("Based on 2 of 9 checklist items loaded.");
     await click(byTestId("gantt-deadline-confirm-cancel")!);
     await flush(2);
     expect(puts()).toHaveLength(0);
@@ -1477,7 +1481,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
         body: {
           projectId: PROJECT_ID,
           children: {
-            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } })),
+            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } })),
             total: truncatedTotal!,
             returned: pageTwo.length,
             truncated: false,

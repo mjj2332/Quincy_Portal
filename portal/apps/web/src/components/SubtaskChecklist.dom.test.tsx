@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
-import { scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
+import { formatSchedule, scheduleReorderFocus, SubtaskChecklist } from "./SubtaskChecklist";
 import { reorderNeighbors } from "../lib/reorder-neighbors";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
@@ -34,8 +34,9 @@ vi.mock("../lib/api", async (importOriginal) => { const actual = await importOri
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const year = new Date().getFullYear();
-const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: { id: "user-2", name: "Nora Jones" }, assignmentVersion: 0, dueDate: `${year}-05-30`, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
-const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignee: null, dueDate: null };
+const rangeOf = (day: string, version = 0) => { const endpoint = { kind: "date" as const, localCivil: day, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }; return { state: "range" as const, version, zone: "Australia/Sydney" as const, start: endpoint, end: endpoint, due: day }; };
+const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: { id: "user-2", name: "Nora Jones" }, assignmentVersion: 0, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignee: null, dueDate: `${year}-06-01`, schedule: rangeOf(`${year}-06-01`) };
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 function mount() { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); return host; }
@@ -59,7 +60,7 @@ afterEach(async () => { await act(async () => root?.unmount()); root = null; doc
 describe("SubtaskChecklist", () => {
   it("preserves accordion/progress, literal schedule badges, and compact title edit/Escape behavior", async () => {
     const host = mount(); await render(); const toggle = [...host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((button) => button.textContent?.includes("Checklist"))!;
-    expect(toggle.textContent).toContain("0 of 2 complete · 0%"); expect(toggle.querySelector("progress")?.max).toBe(2); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("Due 30 May");
+    expect(toggle.textContent).toContain("0 of 2 complete · 0%"); expect(toggle.querySelector("progress")?.max).toBe(2); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("30 May");
     expect(host.querySelector("select")).toBeNull(); expect([...host.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Move "))).toBe(false);
     const title = item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!; await click(title); const input = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(input, "Discarded"); const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => input.dispatchEvent(escape));
     expect(escape.defaultPrevented).toBe(true); expect(apiPatchMock).not.toHaveBeenCalled(); const reopened = item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!; reopened.focus(); await keydown(reopened, " "); const saveInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(saveInput, "Saved title"); await keydown(saveInput, "Enter"); expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Saved title" });
@@ -77,7 +78,7 @@ describe("SubtaskChecklist", () => {
     const subtasksKey = projectDataKeys.subtasks(projectId);
     const updated = {
       ...task,
-      schedule: { state: "due_only" as const, version: 1, zone: "Australia/Sydney" as const, start: null, end: { kind: "date" as const, localCivil: `${year}-06-15`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-15` },
+      schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-15`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-15`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-15` },
     };
     queryClient.setQueryData(subtasksKey, [task, second]);
     let patchSettled = false;
@@ -121,10 +122,10 @@ describe("SubtaskChecklist", () => {
     runtime.dispose(); queryClient.clear();
   });
 
-  it("edits a legacy row into a one-day range and a timed range, and never offers a mode picker (start = end is one day)", async () => {
+  it("edits a one-day range row and a timed range, and never offers a mode picker (start = end is one day)", async () => {
     const host = mount(); await render(); const first = item(host, "Call client"); const schedule = first.querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!; const assignee = first.querySelector<HTMLButtonElement>('[aria-label="Assignee for Call client"]')!;
     await click(schedule); const group = portal("subtask-popover-task-1-schedule"); expect(group).not.toBeNull();
-    // Only the Date / Timed choice remains; a legacy due-only row opens as a one-day range on its due date.
+    // Only the Date / Timed choice remains;.
     expect(group.querySelectorAll("select")).toHaveLength(1); expect(group.textContent).not.toContain("Due only"); expect(group.textContent).not.toContain("Unscheduled");
     // The popover scrolls under AnchoredPopover's height cap, so Save/Cancel are pinned to the bottom of it, and the mode label reads "Date or time".
     expect(saveButton(group).parentElement!.classList.contains("sticky")).toBe(true); expect(saveButton(group).parentElement!.classList.contains("bottom-0")).toBe(true); expect(group.textContent).toContain("Date or time");
@@ -184,7 +185,7 @@ describe("SubtaskChecklist", () => {
 
   it("shows the full authoritative item on an item conflict with explicit discard and reapply choices", async () => {
     const host = mount(); await render();
-    const latest = { ...task, title: "Authoritative title", done: true, assignee: { id: "user-3", name: "Ada Smith" }, schedule: { state: "due_only", version: 2, zone: "Australia/Sydney", start: null, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
+    const latest = { ...task, title: "Authoritative title", done: true, assignee: { id: "user-3", name: "Ada Smith" }, schedule: { state: "range", version: 2, zone: "Australia/Sydney", start: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed", 409, { code: "subtask_item_conflict", current: latest.schedule, currentSubtask: latest }));
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const draft = portal("subtask-popover-task-1-schedule"); await typeInto(draft.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(draft));
@@ -197,7 +198,7 @@ describe("SubtaskChecklist", () => {
 
   it("keeps a retained schedule conflict draft when an unrelated Done update succeeds", async () => {
     const host = mount(); await render();
-    const latest = { ...task, schedule: { state: "due_only" as const, version: 2, zone: "Australia/Sydney" as const, start: null, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    const latest = { ...task, schedule: { state: "range" as const, version: 2, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
@@ -225,7 +226,7 @@ describe("SubtaskChecklist", () => {
   });
 
   it("submits the schedule version captured at editor open after a late versioned refresh", async () => {
-    const versionOne = { ...task, schedule: { state: "due_only" as const, version: 1, zone: "Australia/Sydney" as const, start: null, end: { kind: "timed" as const, localCivil: `${year}-06-01T09:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, due: `${year}-06-01T09:00` } };
+    const versionOne = { ...task, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "timed" as const, localCivil: `${year}-06-01T00:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: null, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil: `${year}-06-01T09:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, due: `${year}-06-01T09:00` } };
     const versionTwo = { ...versionOne, title: "Late version 2", dueDate: `${year}-06-02T09:00`, schedule: { ...versionOne.schedule, version: 2, end: { ...versionOne.schedule.end, localCivil: `${year}-06-02T09:00`, instant: "2026-06-02T23:00:00.000Z" }, due: `${year}-06-02T09:00` } };
     apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }] }) : Promise.resolve({ subtasks: [versionOne, second] }));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -235,7 +236,7 @@ describe("SubtaskChecklist", () => {
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const editor = portal("subtask-popover-task-1-schedule");
-    // A legacy timed due seeds as 00:00 that day → its due time; the user moves the end to 10:00.
+    // A stored timed range opens with its own start and end; the user moves the end to 10:00.
     expect(timeInputs(editor).map((input) => input.value)).toEqual(["00:00", "09:00"]);
     await typeInto(timeInputs(editor)[1]!, "10:00");
     await act(async () => { queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionTwo, second]); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
@@ -252,9 +253,9 @@ describe("SubtaskChecklist", () => {
     runtime.dispose(); queryClient.clear();
   });
 
-  it.each([[0 as const, "earlier", 660], [1 as const, "later", 600]])("seeds a due-only timed endpoint's stored fold %s into the popover as the %s Sydney occurrence", async (fold, disambiguation, offset) => {
+  it.each([[0 as const, "earlier", 660], [1 as const, "later", 600]])("seeds a timed range endpoint's stored fold %s into the popover as the %s Sydney occurrence", async (fold, disambiguation, offset) => {
     // 02:30 on 2026-04-05 happens twice in Sydney (DST ends): fold 0 is +11:00, fold 1 is +10:00.
-    const repeated = { ...task, dueDate: "2026-04-05T02:30", schedule: { state: "due_only" as const, version: 1, zone: "Australia/Sydney" as const, start: null, end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: null, utcOffsetMinutes: offset, fold, resolution: "stored" as const }, due: "2026-04-05T02:30" } };
+    const repeated = { ...task, dueDate: "2026-04-05T02:30", schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "timed" as const, localCivil: "2026-04-05T00:00", instant: null, utcOffsetMinutes: 660, fold: null, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: null, utcOffsetMinutes: offset, fold, resolution: "stored" as const }, due: "2026-04-05T02:30" } };
     apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }] }) : Promise.resolve({ subtasks: [repeated, second] }));
     const host = mount(); await render();
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
@@ -351,5 +352,21 @@ describe("SubtaskChecklist", () => {
       for (let index = 0; index < 5; index += 1) await act(async () => { localRoot.render(<SubtaskChecklist projectId={projectId} onAccessFailure={() => {}} />); await Promise.resolve(); });
       expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1); expect(apiGetMock.mock.calls.filter(([path]) => path.includes("mentionable-users")).length).toBe(1);
     } finally { await act(async () => localRoot.unmount()); }
+  });
+});
+
+describe("formatSchedule", () => {
+  const ep = (kind: "date" | "timed", localCivil: string) => ({ kind, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
+  const dto = (start: ReturnType<typeof ep>, end: ReturnType<typeof ep>) => ({ state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start, end, due: end.localCivil.slice(0, 10) });
+
+  it("prints a one-day date range as the date once", () => {
+    expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-08")))).toBe("8 Oct 2026");
+  });
+  it("prints a same-day timed range with the date once and both times", () => {
+    expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-08T14:00")))).toBe("8 Oct 2026 · 13:00 → 14:00");
+  });
+  it("keeps a multi-day range as two full endpoints", () => {
+    expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-10")))).toBe("8 Oct 2026 → 10 Oct 2026");
+    expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-09T09:00")))).toBe("8 Oct 2026 · 13:00 → 9 Oct 2026 · 09:00");
   });
 });

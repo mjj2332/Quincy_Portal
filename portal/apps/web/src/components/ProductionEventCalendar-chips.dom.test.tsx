@@ -15,7 +15,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventDto, ChecklistCalendarEventDto } from "@quincy/shared";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
-import { dated, deadlineEvent, dueEvent, PROJECT_ID, PROJECT_STREET, rangeResponse } from "../testing/production-calendar-fixtures";
+import { dated, deadlineEvent, oneDayEvent, PROJECT_ID, PROJECT_STREET, rangeResponse } from "../testing/production-calendar-fixtures";
 import { calendarState, createHarness, stubCalendarFetch, type Harness } from "../testing/production-event-calendar-harness";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,11 +24,10 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: fals
 vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
-vi.mock("./reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 const DEADLINE_ID = `project-deadline:${PROJECT_ID}`;
 const overlapping = (value: boolean): ChecklistCalendarEventDto => {
-  const event = dueEvent(dated("2026-08-12"));
+  const event = oneDayEvent(dated("2026-08-12"));
   return { ...event, status: { ...event.status, sameAssigneeOverlap: value } } as ChecklistCalendarEventDto;
 };
 

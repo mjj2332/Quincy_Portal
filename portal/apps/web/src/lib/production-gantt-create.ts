@@ -37,7 +37,7 @@ export type PinnedCreatedRow = {
   hiddenAtStamp: number | null;
 };
 
-const READ_ONLY = { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false } as const;
+const READ_ONLY = { canDrag: false, canResize: false, canOpenScheduleEditor: false } as const;
 
 /** The created Subtask as a Gantt child row: unassigned (a title-only create), read-only until the real row arrives. */
 export function pinFromCreated(projectId: string, created: Pick<ProjectSubtask, "id" | "title" | "done" | "position" | "schedule">, stamp: number, generationKey: string): PinnedCreatedRow {

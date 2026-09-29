@@ -4296,7 +4296,11 @@ freezing the whole Board.
   a `scrollRestoration` function: a truthy option also turns on the scroll cache and sets
   `history.scrollRestoration = "manual"`.
 
-### An API narrowing lands before its data backfill (#340, ADR 0011)
+### An API narrowing lands before its data backfill (#340, ADR 0011) (historical: #342 removed everything it describes)
+
+Historical. #342 deleted the mappers, the Unscheduled drop, `oneDaySubtaskRange` and
+`ProductionEventCalendar-unscheduled.dom.test.tsx`; only the lesson (narrow the API, then backfill, then
+remove the legacy readers) still applies.
 
 - **What happened:** #340 made the Subtask create/update API accept only a range, while about 13 production rows are
   still unscheduled or due-only until the #341 backfill. The calendar's diamond move, Unscheduled drop and undo-to-legacy
@@ -4305,8 +4309,22 @@ freezing the whole Board.
 - **Behaviour to expect:** the zod `.strict()` 400 body is `{ error: "Invalid input", details }` with no `code`, so
   `classifyChecklistFailure` returns null and the generic failure path rolls the optimistic move back and announces the
   failure. `ProductionEventCalendar-unscheduled.dom.test.tsx` pins that. No data changes.
-- **Rule:** do not rewrite those mappers in the interim: #342 deletes them. Run #341 right after deploy. Both editors
-  still convert a legacy row: they seed a one-day range for the user to confirm (`oneDaySubtaskRange`).
+- **Rule (at the time):** do not rewrite those mappers in the interim: #342 deletes them. Run #341 right after
+  deploy. Until #342, both editors converted a legacy row by seeding a one-day range for the user to confirm.
+
+### An old tab still holds the pre-range wire (#342, ADR 0011)
+
+- **What happened:** #342 removed the checklist `unscheduled` / `due_only` / `legacy_unresolved` / `invalid` DTO
+  states, `permissions.canScheduleRange`, the calendar response's `unscheduled` list and
+  `filterFacets.unscheduled`. The web decoders are strict, so a tab opened before the deploy, on the old bundle,
+  fails to parse the new calendar and Gantt responses until it reloads.
+- **Behaviour to expect:** the tab shows its normal load-error state; a reload fixes it. No data is affected. The
+  other direction is not a concern: the API only accepts ranges since #340.
+- **Rule:** do not add a compatibility shim for the old shape. A deploy that changes a strict wire shape
+  needs the tab to reload; the same holds for any future one. Storage that is not a valid range now throws
+  (`ChecklistScheduleStorageError`, an unhandled 500 with the subtask id in the log), so the #341 backfill must
+  have run and been verified at 0 non-range rows (`scripts/subtask-range-backfill-verify.sql`) before #342 ships.
+  #343's constraint follows #342.
 
 ## `?collaboration=open` is frozen by stored activity deep links; Collection tabs got `?tab=` (#337, 2026-09-29)
 

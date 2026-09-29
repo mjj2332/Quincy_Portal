@@ -8,7 +8,8 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
-import { externalChecklistItemSchema, externalChecklistListResponseSchema, ROLE_LABELS, publishNotificationOutbox, projectActivityDeepLink, serializeChecklistSchedule, type ChecklistScheduleStorage, type ProjectActivityIntent } from "@quincy/shared";
+import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
+import { externalChecklistItemSchema, externalChecklistListResponseSchema, ROLE_LABELS, publishNotificationOutbox, projectActivityDeepLink, type ChecklistScheduleStorage, type ProjectActivityIntent } from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
@@ -87,7 +88,7 @@ function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>
   return externalChecklistItemSchema.parse({
     id: row.id, title: row.title, done: Boolean(row.done), position: row.position,
     assignee: row.assigneeId && row.assigneeName && row.assigneeRole ? { id: row.assigneeId, name: row.assigneeName, roleLabel: ROLE_LABELS[row.assigneeRole], isExternal: row.assigneeRole === "external_editor", active: Boolean(row.assigneeActive) } : null,
-    assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeChecklistSchedule(storage),
+    assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeSubtaskSchedule(row.id, storage),
     createdBy: row.creatorId && row.creatorName && row.creatorRole ? { id: row.creatorId, name: row.creatorName, roleLabel: ROLE_LABELS[row.creatorRole], isExternal: row.creatorRole === "external_editor", active: Boolean(row.creatorActive) } : { id: "00000000-0000-4000-8000-000000000000", name: "", roleLabel: "", isExternal: false, active: false },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   });
@@ -111,7 +112,6 @@ async function commandResponse(c: Context<AppEnv>, projectId: string, result: Aw
     case "not_found": return c.json({ error: result.target === "project" ? "Project not found" : "Subtask not found" }, 404);
     case "schedule_conflict": return c.json({ error: "Checklist schedule changed; review the latest schedule before saving.", code: "subtask_schedule_version_conflict", current: result.current, ...(result.currentSubtask ? { currentSubtask: result.currentSubtask } : {}) }, 409);
     case "item_conflict": return c.json({ error: "Checklist item changed; review the latest item before saving.", code: "subtask_item_conflict", current: result.current, currentSubtask: result.currentSubtask }, 409);
-    case "storage_invalid": return c.json({ error: "Checklist schedule data needs repair.", code: "subtask_schedule_storage_invalid", current: result.current }, 422);
   }
 }
 

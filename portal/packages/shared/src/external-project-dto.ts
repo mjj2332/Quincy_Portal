@@ -58,44 +58,18 @@ const externalScheduleEndpointSchema = z.object({
   instant: iso.nullable(),
   utcOffsetMinutes: z.number().int().nullable(),
   fold: z.union([z.literal(0), z.literal(1)]).nullable(),
-  resolution: z.enum(["stored", "derived_unambiguous"]),
+  resolution: z.literal("stored"),
 }).strict();
 
-export const externalScheduleSchema = z.union([
-  z.object({
-    state: z.enum(["unscheduled", "due_only", "range"]),
-    version: z.number().int().nonnegative(),
-    zone: z.literal("Australia/Sydney"),
-    start: externalScheduleEndpointSchema.nullable(),
-    end: externalScheduleEndpointSchema.nullable(),
-    due: z.string().nullable(),
-  }).strict(),
-  z.object({
-    state: z.literal("legacy_unresolved"),
-    version: z.literal(0),
-    zone: z.literal("Australia/Sydney"),
-    start: z.null(),
-    end: z.null(),
-    due: z.string(),
-    error: z.object({
-      code: z.literal("subtask_schedule_legacy_unresolved"),
-      reason: z.enum(["invalid_literal", "nonexistent_local_time", "repeated_local_time"]),
-      foldChoices: z.array(z.object({ disambiguation: z.enum(["earlier", "later"]), utcOffsetMinutes: z.number().int() }).strict()).optional(),
-    }).strict(),
-  }).strict(),
-  z.object({
-    state: z.literal("invalid"),
-    version: z.number().int().nonnegative(),
-    zone: z.null(),
-    start: z.null(),
-    end: z.null(),
-    due: z.string().nullable(),
-    error: z.object({
-      code: z.literal("subtask_schedule_storage_invalid"),
-      reason: z.enum(["shape_mismatch", "resolution_mismatch", "ordering_invalid"]),
-    }).strict(),
-  }).strict(),
-]);
+/** Every Subtask schedule is a range (ADR 0011). */
+export const externalScheduleSchema = z.object({
+  state: z.literal("range"),
+  version: z.number().int().min(1),
+  zone: z.literal("Australia/Sydney"),
+  start: externalScheduleEndpointSchema,
+  end: externalScheduleEndpointSchema,
+  due: z.string(),
+}).strict();
 export type ExternalScheduleDto = z.infer<typeof externalScheduleSchema>;
 
 const serviceSchema = z.object({

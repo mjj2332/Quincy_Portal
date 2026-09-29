@@ -96,21 +96,6 @@ export function adoptGanttChecklist(baseline: GanttBaseline, result: ChecklistMu
   return changed ? { projects } : baseline;
 }
 
-/** Drop a marker once its row is gone from the authoritative baseline or is no longer `invalid`. */
-export function healGanttNeedsAttention(current: Set<string>, baseline: GanttBaseline): Set<string> {
-  let changed = false;
-  const next = new Set(current);
-  for (const id of current) {
-    const subtaskId = subtaskIdFromCalendarEntityId(id);
-    const found = subtaskId ? findGanttChecklistRow(baseline, subtaskId) : undefined;
-    if (!found || found.row.schedule.state !== "invalid") {
-      next.delete(id);
-      changed = true;
-    }
-  }
-  return changed ? next : current;
-}
-
 export function ganttInvalidation(_kind: "checklist" | "deadline", projectId: string) {
   // Every surface that shows the item refreshes; `producer: "gantt"` suppresses only this tab's own
   // Gantt refetch (the controller's settle refetch is the single one).
@@ -186,17 +171,12 @@ export function useGanttSchedulingPort({ identity, projects, query, purgeChildre
       return { data: result.data ? { projects: result.data.projects } : undefined, error: result.error, isError: result.isError };
     },
     clone: cloneGanttBaseline,
-    healNeedsAttention: healGanttNeedsAttention,
     snapshotFilters: defaultCalendarFilters,
     findUnscheduledEntry: (baseline, id, kind) => {
       if (!id) return undefined;
-      if (kind === "project") {
-        const project = projectForDeadlineId(baseline, id);
-        return project && !project.deadline ? ganttDeadlineEntry(project) : undefined;
-      }
-      if (kind !== "checklist") return undefined;
-      const source = findChecklist(baseline, id);
-      return source && "reason" in source ? source : undefined;
+      if (kind !== "project") return undefined;
+      const project = projectForDeadlineId(baseline, id);
+      return project && !project.deadline ? ganttDeadlineEntry(project) : undefined;
     },
     findChecklist,
     findDeadline: (baseline, eventId) => {

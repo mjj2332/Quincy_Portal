@@ -4,7 +4,7 @@ import {
   type ChecklistScheduleDto,
   type ChecklistScheduleEndpointDto,
   type ChecklistScheduleEndpointInput,
-  type InitialChecklistScheduleInput,
+  type RangeChecklistScheduleInput,
   type SaveChecklistScheduleRequest,
 } from "./checklist-schedule";
 import {
@@ -36,7 +36,6 @@ export const PRODUCTION_CALENDAR_ZONE = SYDNEY_TIME_ZONE;
 export const PRODUCTION_CALENDAR_SUBVIEWS = ["month", "week", "day", "days", "agenda"] as const;
 export const PRODUCTION_CALENDAR_LAYERS = ["project", "checklist"] as const;
 export const PRODUCTION_CALENDAR_MAX_RANGE_DAYS = 42;
-export const PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND = 50;
 export const PRODUCTION_CALENDAR_MAX_EDITOR_IDS = 50;
 export const PRODUCTION_CALENDAR_MAX_STAGE_KEYS = 5;
 export const PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES = 8192;
@@ -331,7 +330,7 @@ const calendarPersonSchema = z.object({
 }).strict();
 
 export type CalendarPermissions = { canDrag: boolean; canResize: boolean };
-export type ChecklistCalendarPermissions = CalendarPermissions & { canOpenScheduleEditor: boolean; canScheduleRange: boolean };
+export type ChecklistCalendarPermissions = CalendarPermissions & { canOpenScheduleEditor: boolean };
 
 export type CalendarProjectContext<TStage extends StageTransportKey = StageTransportKey> = {
   id: string;
@@ -376,22 +375,10 @@ export type ChecklistCalendarEventBase<TStage extends StageTransportKey = StageT
   status: { overdue: boolean; delivered: boolean; completed: boolean; sameAssigneeOverlap: boolean };
 };
 
-export type ValidChecklistScheduleDto = Extract<ChecklistScheduleDto, { state: "unscheduled" | "due_only" | "range" }>;
-export type UnscheduledChecklistScheduleDto = ValidChecklistScheduleDto & { state: "unscheduled" };
-export type DueOnlyChecklistScheduleDto = ValidChecklistScheduleDto & { state: "due_only" };
-export type RangeChecklistScheduleDto = ValidChecklistScheduleDto & { state: "range" };
-export type LegacyUnresolvedChecklistScheduleDto = Extract<ChecklistScheduleDto, { state: "legacy_unresolved" }>;
-export type InvalidChecklistScheduleDto = Extract<ChecklistScheduleDto, { state: "invalid" }>;
-
-export type ChecklistCalendarEventDto<TStage extends StageTransportKey = StageTransportKey> =
-  | (ChecklistCalendarEventBase<TStage> & {
-      schedule: DueOnlyChecklistScheduleDto;
-      permissions: { canDrag: boolean; canResize: false; canOpenScheduleEditor: boolean; canScheduleRange: boolean };
-    })
-  | (ChecklistCalendarEventBase<TStage> & {
-      schedule: RangeChecklistScheduleDto;
-      permissions: ChecklistCalendarPermissions;
-    });
+export type ChecklistCalendarEventDto<TStage extends StageTransportKey = StageTransportKey> = ChecklistCalendarEventBase<TStage> & {
+  schedule: ChecklistScheduleDto;
+  permissions: ChecklistCalendarPermissions;
+};
 
 export type CalendarEventDto<TStage extends StageTransportKey = StageTransportKey> = ProjectDeadlineCalendarEventDto<TStage> | ChecklistCalendarEventDto<TStage>;
 
@@ -405,35 +392,6 @@ export type ProjectCalendarUnscheduledEntryDto<TStage extends StageTransportKey 
   deadlineVersion: number;
   reminderOffsetsMinutes: [];
 };
-
-export type ChecklistCalendarUnscheduledBase<TStage extends StageTransportKey = StageTransportKey> = {
-  id: string;
-  kind: "checklist";
-  title: string;
-  project: CalendarProjectContext<TStage>;
-  assignee: CalendarPerson | null;
-};
-
-export type ChecklistCalendarUnscheduledEntryDto<TStage extends StageTransportKey = StageTransportKey> =
-  | (ChecklistCalendarUnscheduledBase<TStage> & {
-      reason: "unscheduled";
-      schedule: UnscheduledChecklistScheduleDto;
-      permissions: { canDrag: boolean; canResize: false; canOpenScheduleEditor: boolean; canScheduleRange: boolean };
-    })
-  | (ChecklistCalendarUnscheduledBase<TStage> & {
-      reason: "schedule_needs_attention";
-      attentionReason: "legacy_unresolved";
-      schedule: LegacyUnresolvedChecklistScheduleDto;
-      permissions: { canDrag: false; canResize: false; canOpenScheduleEditor: boolean; canScheduleRange: boolean };
-    })
-  | (ChecklistCalendarUnscheduledBase<TStage> & {
-      reason: "schedule_needs_attention";
-      attentionReason: "invalid";
-      schedule: InvalidChecklistScheduleDto;
-      permissions: { canDrag: false; canResize: false; canOpenScheduleEditor: false; canScheduleRange: false };
-    });
-
-export type CalendarUnscheduledEntryDto<TStage extends StageTransportKey = StageTransportKey> = ProjectCalendarUnscheduledEntryDto<TStage> | ChecklistCalendarUnscheduledEntryDto<TStage>;
 
 /**
  * #222: one project's advisory scheduling window, the Calendar's counterpart of the Gantt's
@@ -460,19 +418,14 @@ export type ProductionCalendarRangeResponse<TStage extends StageTransportKey = S
     appliedFilters: ProductionCalendarFilters;
   };
   events: CalendarEventDto<TStage>[];
-  unscheduled: CalendarUnscheduledEntryDto<TStage>[];
   filterFacets: {
     projects: Array<{ id: string; street: string }>;
     people: CalendarPerson[];
     myTasksUserId: string;
-    unscheduled: {
-      project: { matched: number; returned: number; truncated: boolean };
-      checklist: { matched: number; returned: number; truncated: boolean };
-    };
   };
   /**
    * #222, request-gated: present ONLY when the request carried `bounds=1` (the event-calendar
-   * renderer), one entry per project referenced by `events`/`unscheduled`. Old bundles never send
+   * renderer), one entry per project referenced by `events`. Old bundles never send
    * the param, so their `.strict()` decoders never see the key.
    */
   projectBounds?: ProductionCalendarProjectBounds[];
@@ -489,38 +442,14 @@ const checklistScheduleEndpointSchema = z.object({
   instant: isoStringSchema.nullable(),
   utcOffsetMinutes: z.number().int().nullable(),
   fold: z.union([z.literal(0), z.literal(1)]).nullable(),
-  resolution: z.enum(["stored", "derived_unambiguous"]),
+  resolution: z.literal("stored"),
 }).strict();
 
-const validScheduleCommon = {
-  version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  zone: z.literal(PRODUCTION_CALENDAR_ZONE),
-};
-const unscheduledChecklistScheduleSchema = z.object({
-  state: z.literal("unscheduled"), ...validScheduleCommon,
-  start: z.null(), end: z.null(), due: z.null(),
-}).strict();
-const dueOnlyChecklistScheduleSchema = z.object({
-  state: z.literal("due_only"), ...validScheduleCommon,
-  start: z.null(), end: checklistScheduleEndpointSchema, due: z.string().min(1).max(32),
-}).strict();
 const rangeChecklistScheduleSchema = z.object({
-  state: z.literal("range"), ...validScheduleCommon,
+  state: z.literal("range"),
+  version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  zone: z.literal(PRODUCTION_CALENDAR_ZONE),
   start: checklistScheduleEndpointSchema, end: checklistScheduleEndpointSchema, due: z.string().min(1).max(32),
-}).strict();
-const legacyUnresolvedChecklistScheduleSchema = z.object({
-  state: z.literal("legacy_unresolved"), version: z.literal(0), zone: z.literal(PRODUCTION_CALENDAR_ZONE),
-  start: z.null(), end: z.null(), due: z.string().min(1).max(32),
-  error: z.object({
-    code: z.literal("subtask_schedule_legacy_unresolved"),
-    reason: z.enum(["invalid_literal", "nonexistent_local_time", "repeated_local_time"]),
-    foldChoices: z.array(z.object({ disambiguation: z.enum(["earlier", "later"]), utcOffsetMinutes: z.number().int() }).strict()).optional(),
-  }).strict(),
-}).strict();
-const invalidChecklistScheduleSchema = z.object({
-  state: z.literal("invalid"), version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), zone: z.null(),
-  start: z.null(), end: z.null(), due: z.string().max(32).nullable(),
-  error: z.object({ code: z.literal("subtask_schedule_storage_invalid"), reason: z.enum(["shape_mismatch", "resolution_mismatch", "ordering_invalid"]) }).strict(),
 }).strict();
 
 function calendarProjectContextSchema<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<CalendarProjectContext<TStage>> {
@@ -535,16 +464,9 @@ function calendarProjectContextSchema<TStage extends StageTransportKey>(stageSch
 export const calendarPersonZodSchema: z.ZodType<CalendarPerson> = calendarPersonSchema;
 /** Exported for reuse by any other surface reusing the checklist schedule DTO shape (Gantt, #218). */
 export { checklistScheduleEndpointSchema };
-/** The full `ChecklistScheduleDto` union — every state a stored checklist schedule can serialize
- * to, including the two repair states. Exported so Gantt (#218) can reuse it verbatim rather than
- * re-declaring the same five-branch union. */
-export const checklistScheduleDtoSchema: z.ZodType<ChecklistScheduleDto> = z.union([
-  unscheduledChecklistScheduleSchema,
-  dueOnlyChecklistScheduleSchema,
-  rangeChecklistScheduleSchema,
-  legacyUnresolvedChecklistScheduleSchema,
-  invalidChecklistScheduleSchema,
-]);
+/** The `ChecklistScheduleDto` schema: every Subtask schedule is a range (ADR 0011). Exported so
+ * Gantt (#218) can reuse it verbatim. */
+export const checklistScheduleDtoSchema: z.ZodType<ChecklistScheduleDto> = rangeChecklistScheduleSchema;
 
 function projectDeadlineEventSchema<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>) {
   return z.object({
@@ -568,41 +490,8 @@ function checklistEventBaseSchema<TStage extends StageTransportKey>(stageSchema:
 
 export function calendarEventSchemaFor<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<CalendarEventDto<TStage>> {
   const base = checklistEventBaseSchema(stageSchema);
-  const due = base.extend({
-    schedule: dueOnlyChecklistScheduleSchema,
-    permissions: z.object({ canDrag: z.boolean(), canResize: z.literal(false), canOpenScheduleEditor: z.boolean(), canScheduleRange: z.boolean() }).strict(),
-  }).strict();
-  const range = base.extend({ schedule: rangeChecklistScheduleSchema, permissions: z.object({ canDrag: z.boolean(), canResize: z.boolean(), canOpenScheduleEditor: z.boolean(), canScheduleRange: z.boolean() }).strict() }).strict();
-  return z.union([projectDeadlineEventSchema(stageSchema), due, range]);
-}
-
-function checklistUnscheduledBaseSchema<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>) {
-  return z.object({
-    id: opaqueIdSchema, kind: z.literal("checklist"), title: z.string().max(500),
-    project: calendarProjectContextSchema(stageSchema), assignee: calendarPersonZodSchema.nullable(),
-  }).strict();
-}
-
-export function calendarUnscheduledEntrySchemaFor<TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<CalendarUnscheduledEntryDto<TStage>> {
-  const checklistBase = checklistUnscheduledBaseSchema(stageSchema);
-  const project = z.object({
-    id: opaqueIdSchema, kind: z.literal("project_deadline"), reason: z.literal("unscheduled"), title: z.string().max(500),
-    project: calendarProjectContextSchema(stageSchema), permissions: z.object({ canDrag: z.boolean(), canResize: z.literal(false) }).strict(),
-    deadlineVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), reminderOffsetsMinutes: z.tuple([]),
-  }).strict();
-  const plain = checklistBase.extend({
-    reason: z.literal("unscheduled"), schedule: unscheduledChecklistScheduleSchema,
-    permissions: z.object({ canDrag: z.boolean(), canResize: z.literal(false), canOpenScheduleEditor: z.boolean(), canScheduleRange: z.boolean() }).strict(),
-  }).strict();
-  const legacy = checklistBase.extend({
-    reason: z.literal("schedule_needs_attention"), attentionReason: z.literal("legacy_unresolved"), schedule: legacyUnresolvedChecklistScheduleSchema,
-    permissions: z.object({ canDrag: z.literal(false), canResize: z.literal(false), canOpenScheduleEditor: z.boolean(), canScheduleRange: z.boolean() }).strict(),
-  }).strict();
-  const invalid = checklistBase.extend({
-    reason: z.literal("schedule_needs_attention"), attentionReason: z.literal("invalid"), schedule: invalidChecklistScheduleSchema,
-    permissions: z.object({ canDrag: z.literal(false), canResize: z.literal(false), canOpenScheduleEditor: z.literal(false), canScheduleRange: z.literal(false) }).strict(),
-  }).strict();
-  return z.union([project, plain, legacy, invalid]);
+  const range = base.extend({ schedule: rangeChecklistScheduleSchema, permissions: z.object({ canDrag: z.boolean(), canResize: z.boolean(), canOpenScheduleEditor: z.boolean() }).strict() }).strict();
+  return z.union([projectDeadlineEventSchema(stageSchema), range]);
 }
 
 const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
@@ -617,14 +506,10 @@ const projectBoundsSchema: z.ZodType<ProductionCalendarProjectBounds> = z.object
 
 const responseSchemaFor = <TStage extends StageTransportKey>(stageSchema: z.ZodType<TStage>): z.ZodType<ProductionCalendarRangeResponse<TStage>> => z.object({
   range: z.object({ start: calendarDateSchema, end: calendarDateSchema, date: calendarDateSchema, subview: z.enum(PRODUCTION_CALENDAR_SUBVIEWS), zone: z.literal(PRODUCTION_CALENDAR_ZONE), appliedFilters: dtoFiltersSchema }).strict(),
-  events: z.array(calendarEventSchemaFor(stageSchema)), unscheduled: z.array(calendarUnscheduledEntrySchemaFor(stageSchema)),
+  events: z.array(calendarEventSchemaFor(stageSchema)),
   filterFacets: z.object({
     projects: z.array(z.object({ id: z.string().uuid(), street: z.string().max(500) }).strict()),
     people: z.array(calendarPersonZodSchema), myTasksUserId: z.string().uuid(),
-    unscheduled: z.object({
-      project: z.object({ matched: z.number().int().nonnegative(), returned: z.number().int().nonnegative(), truncated: z.boolean() }).strict(),
-      checklist: z.object({ matched: z.number().int().nonnegative(), returned: z.number().int().nonnegative(), truncated: z.boolean() }).strict(),
-    }).strict(),
   }).strict(),
   projectBounds: z.array(projectBoundsSchema).optional(),
 }).strict();
@@ -685,12 +570,6 @@ export type ChecklistMoveInput<TStage extends StageTransportKey = StageTransport
   disambiguation?: ChecklistDisambiguation;
 };
 export type ChecklistResizeInput<TStage extends StageTransportKey = StageTransportKey> = ChecklistMoveInput<TStage> & { edge?: "start" | "end" };
-export type UnscheduledChecklistDropInput<TStage extends StageTransportKey = StageTransportKey> = {
-  event: ChecklistCalendarUnscheduledEntryDto<TStage>;
-  target: CalendarManipulationTarget;
-  disambiguation?: ChecklistDisambiguation;
-};
-
 function targetTime(target: CalendarManipulationTarget): CalendarMappingResult<{ date: string; time: string }> {
   if (!parseCalendarDate(target.targetDate)) return calendarError("invalid_local_time", "Expected a valid target calendar date.");
   const value = target.targetCivilMinute;
@@ -713,14 +592,10 @@ function endpointToInput(endpoint: ChecklistScheduleEndpointDto): ChecklistSched
   return { kind: "timed", localCivil: endpoint.localCivil, ...(endpoint.fold === 1 ? { disambiguation: "later" as const } : { disambiguation: "earlier" as const }) };
 }
 
-function normalizedRequest(schedule: InitialChecklistScheduleInput, version: number): CalendarMappingResult<SaveChecklistScheduleRequest> {
+function normalizedRequest(schedule: RangeChecklistScheduleInput, version: number): CalendarMappingResult<SaveChecklistScheduleRequest> {
   const normalized = normalizeChecklistSchedule(schedule, version);
   if (!normalized.ok) return { ok: false, error: { code: normalized.error.code, message: normalized.error.message, ...(normalized.error.endpoint ? { endpoint: normalized.error.endpoint } : {}), ...(normalized.error.choices ? { choices: normalized.error.choices } : {}) } };
   return { ok: true, value: { expectedVersion: version, schedule } };
-}
-
-function scheduledEndpoint(schedule: DueOnlyChecklistScheduleDto | RangeChecklistScheduleDto, endpoint: "start" | "end"): ChecklistScheduleEndpointDto | null {
-  return schedule[endpoint];
 }
 
 function shiftedEndpoint(endpoint: ChecklistScheduleEndpointDto, dayShift: number, disambiguation: SydneyCivilDisambiguation | undefined, which: "start" | "end"): CalendarMappingResult<ChecklistScheduleEndpointInput> {
@@ -733,37 +608,12 @@ function shiftedEndpoint(endpoint: ChecklistScheduleEndpointDto, dayShift: numbe
   return { ok: true, value: { kind: "timed", localCivil: shifted.value.localCivil, ...(disambiguation ? { disambiguation } : {}) } };
 }
 
-function checklistMoveSchedule<TStage extends StageTransportKey>(input: ChecklistMoveInput<TStage>): CalendarMappingResult<InitialChecklistScheduleInput> {
+function checklistMoveSchedule<TStage extends StageTransportKey>(input: ChecklistMoveInput<TStage>): CalendarMappingResult<RangeChecklistScheduleInput> {
   const { event, target } = input;
   if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda uses the Move/Reschedule editor instead of direct drag mapping.");
   if (target.edge === "start") return calendarError("start_resize_unsupported", "Checklist range start resize is not supported.");
-  if (event.schedule.state !== "due_only" && event.schedule.state !== "range") return calendarError("unsupported_schedule_state", "Only scheduled checklist states can be moved.");
-  const schedule = event.schedule;
-  const start = scheduledEndpoint(schedule, "start");
-  const end = scheduledEndpoint(schedule, "end");
-  if (schedule.state === "due_only" && end === null) return calendarError("invalid_schedule", "The checklist due endpoint is missing.");
-  if (schedule.state === "range" && (start === null || end === null)) return calendarError("invalid_schedule", "The checklist range endpoint is missing.");
-
-  if (schedule.state === "due_only") {
-    const source = end!;
-    let mapped: CalendarMappingResult<ChecklistScheduleEndpointInput>;
-    if (source.kind === "date") {
-      if (!parseCalendarDate(target.targetDate)) return calendarError("invalid_local_time", "Expected a valid target calendar date.");
-      mapped = { ok: true, value: { kind: "date", localCivil: target.targetDate } };
-    } else if (target.subview === "month") {
-      const delta = dayDelta(source.localCivil.slice(0, 10), target.targetDate);
-      mapped = delta === null ? calendarError("invalid_local_time", "Expected valid Calendar dates.") : shiftedEndpoint(source, delta, endpointDisambiguation(input.disambiguation, "end"), "end");
-    } else {
-      const time = targetTime(target);
-      if (!time.ok) return time;
-      mapped = { ok: true, value: { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(endpointDisambiguation(input.disambiguation, "end") ? { disambiguation: endpointDisambiguation(input.disambiguation, "end") } : {}) } };
-    }
-    if (!mapped.ok) return mapped;
-    return { ok: true, value: { state: "due_only", end: mapped.value } };
-  }
-
-  const sourceStart = start!;
-  const sourceEnd = end!;
+  const sourceStart = event.schedule.start;
+  const sourceEnd = event.schedule.end;
   const mappedStart: CalendarMappingResult<ChecklistScheduleEndpointInput> = target.subview === "month"
     ? (() => { const delta = dayDelta(sourceStart.localCivil.slice(0, 10), target.targetDate); return delta === null ? calendarError("invalid_local_time", "Expected valid Calendar dates.") : shiftedEndpoint(sourceStart, delta, endpointDisambiguation(input.disambiguation, "start"), "start"); })()
     : sourceStart.kind === "date"
@@ -842,7 +692,6 @@ export function mapChecklistEndResizeToCommand<TStage extends StageTransportKey>
   const { event, target } = input;
   if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda uses the Move/Reschedule editor instead of direct resize mapping.");
   if (input.edge === "start" || target.edge === "start") return calendarError("start_resize_unsupported", "Checklist range start resize is not supported.");
-  if (event.schedule.state !== "range" || !event.schedule.start || !event.schedule.end) return calendarError("unsupported_schedule_state", "Only checklist ranges can be end-resized.");
   const currentStart = endpointToInput(event.schedule.start);
   const oldEnd = event.schedule.end;
   const disambiguation = endpointDisambiguation(input.disambiguation, "end");
@@ -860,7 +709,7 @@ export function mapChecklistEndResizeToCommand<TStage extends StageTransportKey>
     if (!time.ok) return time;
     nextEnd = { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
   }
-  const schedule: InitialChecklistScheduleInput = { state: "range", start: currentStart, end: nextEnd };
+  const schedule: RangeChecklistScheduleInput = { state: "range", start: currentStart, end: nextEnd };
   return normalizedRequest(schedule, event.schedule.version);
 }
 
@@ -868,7 +717,6 @@ export function mapChecklistStartResizeToCommand<TStage extends StageTransportKe
   const { event, target } = input;
   if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda uses the Move/Reschedule editor instead of direct resize mapping.");
   if (input.edge === "end" || target.edge === "end") return calendarError("end_resize_not_this_mapper", "Use mapChecklistEndResizeToCommand for the end edge.");
-  if (event.schedule.state !== "range" || !event.schedule.start || !event.schedule.end) return calendarError("unsupported_schedule_state", "Only checklist ranges can be start-resized.");
   const currentEnd = endpointToInput(event.schedule.end);
   const oldStart = event.schedule.start;
   const disambiguation = endpointDisambiguation(input.disambiguation, "start");
@@ -881,28 +729,7 @@ export function mapChecklistStartResizeToCommand<TStage extends StageTransportKe
     if (!time.ok) return time;
     nextStart = { kind: "timed", localCivil: `${time.value.date}T${time.value.time}`, ...(disambiguation ? { disambiguation } : {}) };
   }
-  const schedule: InitialChecklistScheduleInput = { state: "range", start: nextStart, end: currentEnd };
-  return normalizedRequest(schedule, event.schedule.version);
-}
-
-export function mapUnscheduledChecklistDropToCommand<TStage extends StageTransportKey>(input: UnscheduledChecklistDropInput<TStage>): CalendarMappingResult<SaveChecklistScheduleRequest> {
-  const { event, target } = input;
-  if (event.reason !== "unscheduled") return calendarError("schedule_needs_attention", "Only a plain unscheduled checklist entry can be dropped.");
-  if (target.subview === "agenda") return calendarError("unsupported_subview", "Agenda has no external drop.");
-  let schedule: InitialChecklistScheduleInput;
-  if (target.subview === "month") {
-    if (!parseCalendarDate(target.targetDate)) return calendarError("invalid_local_time", "Expected a valid target calendar date.");
-    schedule = { state: "due_only", end: { kind: "date", localCivil: target.targetDate } };
-  } else {
-    const time = targetTime(target);
-    if (!time.ok) return time;
-    const start = `${time.value.date}T${time.value.time}`;
-    const end = addCivilMinutes(start, 60);
-    if (!end.ok) return end;
-    const startDisambiguation = endpointDisambiguation(input.disambiguation, "start");
-    const endDisambiguation = endpointDisambiguation(input.disambiguation, "end");
-    schedule = { state: "range", start: { kind: "timed", localCivil: start, ...(startDisambiguation ? { disambiguation: startDisambiguation } : {}) }, end: { kind: "timed", localCivil: end.value, ...(endDisambiguation ? { disambiguation: endDisambiguation } : {}) } };
-  }
+  const schedule: RangeChecklistScheduleInput = { state: "range", start: nextStart, end: currentEnd };
   return normalizedRequest(schedule, event.schedule.version);
 }
 
@@ -976,10 +803,10 @@ export function previewProjectDeadlineReminderConsequences(input: ProjectDeadlin
 }
 
 /**
- * The Calendar's checklist-event/unscheduled-entry `id` is an ENTITY id, not a
- * bare subtask id: FullCalendar/DOM ids, focus descriptors, `data-event-id` /
- * `data-unscheduled-id`, optimistic overlays, `checklistSourceFromResponse`, and
- * the unscheduled-panel drag dataset all depend on the `checklist:` prefix
+ * The Calendar's checklist-event `id` is an ENTITY id, not a
+ * bare subtask id: FullCalendar/DOM ids, focus descriptors, `data-event-id`,
+ * optimistic overlays and `checklistSourceFromResponse`
+ * all depend on the `checklist:` prefix
  * staying on the wire exactly as-is. It must never be sent as-is to
  * `PATCH /api/projects/:projectId/subtasks/:subtaskId`, which requires the bare
  * uuid — mint/parse through these two functions at that boundary instead of

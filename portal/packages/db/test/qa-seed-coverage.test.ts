@@ -158,35 +158,28 @@ describe("coverage 5: progress boundaries exist", () => {
   });
 });
 
-describe("coverage 6: schedule-state census — the strongest test", () => {
+describe("coverage 6: schedule census — every Subtask is a range (ADR 0011)", () => {
   const dataset = buildQaFixtureDataset({ anchor: ANCHOR, tiers: ["core"], appliedAtMs: APPLIED_AT_MS });
+  // The serializer throws on any storage that is not a valid range, so mapping every row proves
+  // there is no unscheduled, due-only, legacy or invalid row anywhere in the dataset.
   const dtos: ChecklistScheduleDto[] = dataset.subtasks.map((s) => serializeChecklistSchedule(s.storage));
 
-  it("zero rows serialize to invalid", () => {
-    expect(dtos.filter((d) => d.state === "invalid")).toHaveLength(0);
+  it("every row serializes as a range and none carries a version-0 or endpoint-less schedule", () => {
+    expect(dtos.length).toBeGreaterThan(0);
+    for (const dto of dtos) {
+      expect(dto.state).toBe("range");
+      expect(dto.version).toBeGreaterThanOrEqual(1);
+    }
   });
 
-  it("covers unscheduled, due_only, range and legacy_unresolved", () => {
-    const states = new Set(dtos.map((d) => d.state));
-    expect(states).toEqual(new Set(["unscheduled", "due_only", "range", "legacy_unresolved"]));
+  it("covers both date and timed endpoint kinds", () => {
+    expect(new Set(dtos.map((d) => d.start.kind))).toEqual(new Set(["date", "timed"]));
   });
 
-  it("covers both date and timed endpoint kinds for due_only", () => {
-    const dueOnly = dtos.filter((d): d is Extract<ChecklistScheduleDto, { state: "due_only" }> => d.state === "due_only");
-    const kinds = new Set(dueOnly.map((d) => d.end?.kind));
-    expect(kinds).toEqual(new Set(["date", "timed"]));
-  });
-
-  it("covers both date and timed endpoint kinds for range", () => {
-    const ranges = dtos.filter((d): d is Extract<ChecklistScheduleDto, { state: "range" }> => d.state === "range");
-    const kinds = new Set(ranges.map((d) => d.start?.kind));
-    expect(kinds).toEqual(new Set(["date", "timed"]));
-  });
-
-  it("covers all three legacy_unresolved reasons (invalid_literal, repeated_local_time, nonexistent_local_time)", () => {
-    const legacy = dtos.filter((d): d is Extract<ChecklistScheduleDto, { state: "legacy_unresolved" }> => d.state === "legacy_unresolved");
-    const reasons = new Set(legacy.map((d) => d.error.reason));
-    expect(reasons).toEqual(new Set(["invalid_literal", "repeated_local_time", "nonexistent_local_time"]));
+  it("covers a one-day date range and a multi-day date range", () => {
+    const dates = dtos.filter((d) => d.start.kind === "date");
+    expect(dates.some((d) => d.start.localCivil === d.end.localCivil)).toBe(true);
+    expect(dates.some((d) => d.start.localCivil < d.end.localCivil)).toBe(true);
   });
 });
 
@@ -202,12 +195,13 @@ describe("coverage 7: DST canary — recomputed via Intl, not trusted as literal
     expect(later).toBeDefined();
     const earlierDto = serializeChecklistSchedule(earlier!.storage);
     const laterDto = serializeChecklistSchedule(later!.storage);
-    if (earlierDto.state !== "due_only" || laterDto.state !== "due_only") throw new Error("Fold canary rows must both be due_only.");
-    expect(earlierDto.end?.localCivil).toBe(laterDto.end?.localCivil);
-    expect(earlierDto.end?.fold).toBe(0);
-    expect(laterDto.end?.fold).toBe(1);
-    const earlierMs = Date.parse(earlierDto.end!.instant!);
-    const laterMs = Date.parse(laterDto.end!.instant!);
+    expect(earlierDto.end.kind).toBe("timed");
+    expect(earlierDto.end.localCivil).toBe(laterDto.end.localCivil);
+    expect(earlierDto.start).toEqual(laterDto.start);
+    expect(earlierDto.end.fold).toBe(0);
+    expect(laterDto.end.fold).toBe(1);
+    const earlierMs = Date.parse(earlierDto.end.instant!);
+    const laterMs = Date.parse(laterDto.end.instant!);
     expect(laterMs - earlierMs).toBe(3_600_000);
   });
 

@@ -18,7 +18,6 @@ import {
   PRODUCTION_CALENDAR_ZONE,
   resolveSydneyCivilMinute,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
 import {
@@ -44,8 +43,7 @@ const deadline: ProjectDeadlineCalendarEventDto = {
   permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-11T09:30", deadlineVersion: 7, reminderOffsetsMinutes: [1440, 60],
 };
 
-const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignee: person, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "due_only", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: dateEndpoint("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
-const legacyEntry: ChecklistCalendarUnscheduledEntryDto = { id: "checklist:legacy", kind: "checklist", title: "Repair this date", project, assignee: null, reason: "schedule_needs_attention", attentionReason: "legacy_unresolved", schedule: { state: "legacy_unresolved", version: 0, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: "2026-08-20T09:00", error: { code: "subtask_schedule_legacy_unresolved", reason: "repeated_local_time" } }, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
+const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignee: person, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: dateEndpoint("2026-08-20"), end: dateEndpoint("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
 
 let host: HTMLDivElement;
 let root: Root;
@@ -169,7 +167,6 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     expect(document.body.querySelector('[aria-label="Checklist schedule state"]')).toBeNull();
     expect(document.body.querySelectorAll("select")).toHaveLength(1);
     expect([...document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist endpoint mode"]')!.options].map((option) => option.value)).toEqual(["date", "timed"]);
-    // A legacy due-only entry opens as a one-day range for the user to confirm.
     expect(input("Checklist start date").value).toBe("2026-08-20");
     expect(input("Checklist end date").value).toBe("2026-08-20");
   });
@@ -197,23 +194,10 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
   });
 
   it("reopens with a retained draft and its server validation error", async () => {
-    await renderSheet({ initialSchedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-25" } }, validationError: { code: "subtask_schedule_invalid_order", message: "" } });
+    await renderSheet({ initialSchedule: { state: "range", start: { kind: "date", localCivil: "2026-08-25" }, end: { kind: "date", localCivil: "2026-08-25" } }, validationError: { code: "subtask_schedule_invalid_order", message: "" } });
     expect(input("Checklist start date").value).toBe("2026-08-25");
     expect(input("Checklist end date").value).toBe("2026-08-25");
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("start must be before");
-  });
-
-  it("seeds a legacy unresolved entry for complete replacement and cancels through Cancel", async () => {
-    const onCancel = vi.fn();
-    const onSubmit = await renderSheet({ event: legacyEntry, onCancel });
-    expect(document.body.querySelector('[aria-label="Checklist schedule state"]')).toBeNull();
-    expect(modeSelect().value).toBe("timed");
-    expect(input("Checklist start date").value).toBe("2026-08-20");
-    expect(input("Checklist start time").value).toBe("00:00");
-    expect(input("Checklist end time").value).toBe("09:00");
-    await click(byTestId("event-calendar-schedule-cancel")!);
-    expect(onCancel).toHaveBeenCalledOnce();
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   const radios = () => [...document.body.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
@@ -257,19 +241,6 @@ describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
     await change(modeSelect(), "timed");
     expect(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="earlier"]')?.checked).toBe(true);
     expect(document.body.querySelector<HTMLInputElement>('input[type="radio"][value="later"]')?.checked).toBe(false);
-  });
-
-  it("submits a complete legacy replacement with no dueDate, against a version-zero entry", async () => {
-    const onSubmit = await renderSheet({ event: legacyEntry });
-    expect(legacyEntry.schedule.version).toBe(0);
-    expect(modeSelect().value).toBe("timed");
-    await change(input("Checklist start date"), "2026-08-25");
-    await change(input("Checklist end date"), "2026-08-25");
-    await change(input("Checklist end time"), "09:00");
-    await click(byTestId("event-calendar-schedule-submit")!);
-    expect(onSubmit).toHaveBeenCalledOnce();
-    expect(onSubmit).toHaveBeenCalledWith({ state: "range", start: { kind: "timed", localCivil: "2026-08-25T00:00" }, end: { kind: "timed", localCivil: "2026-08-25T09:00" } });
-    expect(JSON.stringify(vi.mocked(onSubmit).mock.calls[0])).not.toContain("dueDate");
   });
 });
 

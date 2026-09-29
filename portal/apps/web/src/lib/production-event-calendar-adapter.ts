@@ -8,11 +8,11 @@
  * - Ids are the Calendar entity ids (`checklist:<uuid>`, `project-deadline:<uuid>`), unchanged.
  * - All-day start/end are Sydney ZONED midnights (the vendor's contract: another zone's midnight
  *   paints the wrong days) and the end is EXCLUSIVE, as the DTO's all-day end already is.
- * - A Deadline and a due-only item are points, but the vendor needs `end >= start` with some length
- *   to draw a chip, so they get a synthetic display end (`PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES`
+ * - A Deadline is a point, but the vendor needs `end >= start` with some length
+ *   to draw a chip, so it gets a synthetic display end (`PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES`
  *   when timed, the next zoned midnight when dated). `data.syntheticEnd` says so; the scheduling
- *   module ignores a proposal's end for these shapes.
- * - Deadlines and due-only items are never resizable; a checklist range resizes per edge when the
+ *   module ignores a proposal's end for it.
+ * - Deadlines are never resizable; a checklist range resizes per edge when the
  *   (effective) `canResize` allows. Nothing is marked `readOnly` — the Reschedule affordance stays.
  *
  * Import boundary: like `production-gantt-adapter.ts`, this file must never import
@@ -55,18 +55,18 @@ export function productionEventCalendarAnchor(civilDate: string): Date {
   return resolved.ok ? new Date(resolved.value.instant) : new Date(`${civilDate}T02:00:00.000Z`);
 }
 
-/** Display length of a timed Deadline / timed due-only chip. Synthetic — never written anywhere. */
+/** Display length of a timed Deadline chip. Synthetic — never written anywhere. */
 export const PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES = 30;
 
 /** Structural copy of the vendor's `CalendarView`. */
 export type CalendarViewName = "month" | "week" | "day" | "days" | "agenda" | "resource";
 
-export type ProductionEventCalendarShape = "deadline" | "range" | "due";
+export type ProductionEventCalendarShape = "deadline" | "range";
 
 export type ProductionEventCalendarData = {
   dto: CalendarEventDto;
   shape: ProductionEventCalendarShape;
-  /** True when `end` is a display length, not a stored endpoint (Deadlines, due-only items). */
+  /** True when `end` is a display length, not a stored endpoint (Deadlines). */
   syntheticEnd: boolean;
   /** Assignee initials for a checklist item; null for a Deadline or an unassigned item. */
   initials: string | null;
@@ -111,8 +111,7 @@ export function assigneeInitials(name: string): string | null {
 }
 
 function shapeOf(dto: CalendarEventDto): ProductionEventCalendarShape {
-  if (dto.kind === "project_deadline") return "deadline";
-  return dto.schedule.state === "range" ? "range" : "due";
+  return dto.kind === "project_deadline" ? "deadline" : "range";
 }
 
 function placement(dto: CalendarEventDto): { start: Date; end: Date; allDay: boolean; syntheticEnd: boolean } | null {

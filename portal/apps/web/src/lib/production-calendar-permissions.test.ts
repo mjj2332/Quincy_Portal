@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { effectiveCalendarEventPermissions, type CalendarPermissionContext } from "./production-calendar-permissions";
-import { dated, deadlineEvent, dueEvent, rangeEvent, timed } from "../testing/production-calendar-fixtures";
+import { deadlineEvent, rangeEvent, timed } from "../testing/production-calendar-fixtures";
 
 const open: CalendarPermissionContext = {
   subview: "week",
   role: "admin",
   interactionBlocked: false,
   settlePending: false,
-  checklistNeedsAttention: new Set<string>(),
   deadlineMovementDisabled: false,
 };
 
@@ -37,18 +36,6 @@ describe("effective Calendar event permissions (#222 lift of ProductionCalendar'
     for (const ctx of [{ ...open, interactionBlocked: true }, { ...open, settlePending: true }]) {
       expect(effectiveCalendarEventPermissions(range(), ctx).permissions).toMatchObject({ canDrag: false, canResize: false, canOpenScheduleEditor: false });
     }
-  });
-
-  it("an attention item keeps nothing", () => {
-    const event = range();
-    const result = effectiveCalendarEventPermissions(event, { ...open, checklistNeedsAttention: new Set([event.id]) });
-    expect(result.permissions).toMatchObject({ canDrag: false, canResize: false, canOpenScheduleEditor: false });
-  });
-
-  it("a range needs the server canScheduleRange permission to drag or resize; a due item does not", () => {
-    expect(effectiveCalendarEventPermissions(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { canScheduleRange: false }), open).permissions).toMatchObject({ canDrag: false, canResize: false });
-    const due = dueEvent(dated("2026-08-27"));
-    expect(effectiveCalendarEventPermissions(due, open)).toBe(due);
   });
 
   it("never widens a server permission", () => {

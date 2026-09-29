@@ -53,6 +53,17 @@ _Avoid_: Board, dashboard, pipeline view
 The civil-time commitment for a Project's delivery, held in the studio's timezone.
 _Avoid_: Due date, ETA
 
+**Subtask**:
+One unit of work inside a Project's collaboration, with an optional assignee and a Subtask
+range. The screen's "Add task" label is kept; the concept is Subtask.
+_Avoid_: Checklist item, task, to-do
+
+**Subtask range**:
+The span a Subtask is scheduled across, from start to end; every Subtask has one, and one
+day is the shortest. A Subtask's "due" is simply the end of its range. When none is given, it
+is copied once from the Project (shoot date to Deadline) and is the Subtask's own thereafter.
+_Avoid_: Schedule mode, unscheduled, due-only, milestone
+
 ### The two star scales
 
 These are distinct concepts that share a 1–5 range, a nullable "unset", and a star

@@ -58,14 +58,14 @@ function task(id: string, title: string, position: number): GanttChecklistRowDto
     position,
     assignee: null,
     schedule: {
-      state: "due_only",
+      state: "range",
       version: 1,
       zone: PRODUCTION_GANTT_ZONE,
-      start: null,
+      start: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
       end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
       due: isoDate(2),
     },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 

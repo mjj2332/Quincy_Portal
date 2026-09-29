@@ -18,7 +18,7 @@ function event(start: string, end: string, startChoice?: "earlier" | "later", en
     timing: startEndpoint.kind === "date" ? { allDay: true, start, end: end } : { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 

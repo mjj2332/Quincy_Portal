@@ -92,7 +92,6 @@ vi.mock("./components/kanban2/board", async (importOriginal) => {
 vi.mock("./components/reui/event-calendar/event-calendar", async () => (await import("./testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./components/reui/event-calendar/event-calendar-nav", async () => (await import("./testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./components/reui/event-calendar/event-calendar-content", async () => (await import("./testing/event-calendar-fake")).eventCalendarContentModule);
-vi.mock("./components/reui/event-calendar/event-calendar-dnd", async () => (await import("./testing/event-calendar-fake")).eventCalendarDndModule);
 vi.mock("./components/NoticeBoard", () => ({ NoticeBoard: () => <section data-testid="notice-board-marker" /> }));
 // `Dashboard` navigates to a project by pushing a location; the real `ProjectWorkspace` fetches
 // its own project graph, which is out of scope for a rail/Dashboard agreement check — a stub with
@@ -164,8 +163,7 @@ function calendarRangeResponse(path: string) {
       appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: calendarEventFixture.enabled ? [calendarDeadlineEvent()] : [],
-    unscheduled: [],
-    filterFacets: { projects: [], people: [], myTasksUserId: "00000000-0000-4000-8000-000000000000", unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+    filterFacets: { projects: [], people: [], myTasksUserId: "00000000-0000-4000-8000-000000000000" },
   });
 }
 

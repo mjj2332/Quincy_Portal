@@ -12,15 +12,12 @@ import {
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   type CalendarEventDto,
-  type CalendarUnscheduledEntryDto,
   type ChecklistScheduleDto,
   type ProductionCalendarProjectBounds,
   type ProductionCalendarRangeResponse,
   type ProductionCalendarSubview,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleEndpointDto,
-  type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
 
@@ -55,7 +52,25 @@ function exclusiveAfter(date: string): string {
   return next.toISOString().slice(0, 10);
 }
 
-export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto, over: { canDrag?: boolean; canResize?: boolean; canScheduleRange?: boolean; canOpenScheduleEditor?: boolean; completed?: boolean; id?: string; assigneeNull?: boolean; version?: number } = {}): ChecklistCalendarEventDto {
+/** `at` plus one hour, as a timed endpoint (a timed range needs start < end); a date endpoint is its own one-day range end. */
+function oneDayEnd(at: ChecklistScheduleEndpointDto): ChecklistScheduleEndpointDto {
+  if (at.kind === "date") return at;
+  const next = new Date(`${at.localCivil}:00Z`);
+  next.setUTCHours(next.getUTCHours() + 1);
+  return timed(next.toISOString().slice(0, 16));
+}
+
+/** A one-day (date) or one-hour (timed) range starting at `at`: the ordinary checklist chip the calendar tests move. */
+export function oneDayEvent(at: ChecklistScheduleEndpointDto, over: Parameters<typeof rangeEvent>[2] = {}): ChecklistCalendarEventDto {
+  return rangeEvent(at, oneDayEnd(at), over);
+}
+
+/** The matching range schedule DTO at `version` (for mutation bodies). */
+export function oneDaySchedule(at: ChecklistScheduleEndpointDto, version: number): ChecklistScheduleDto {
+  return rangeSchedule(at, oneDayEnd(at), version);
+}
+
+export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto, over: { canDrag?: boolean; canResize?: boolean; canOpenScheduleEditor?: boolean; completed?: boolean; id?: string; assigneeNull?: boolean; version?: number } = {}): ChecklistCalendarEventDto {
   const timing = start.kind === "date"
     ? { allDay: true as const, start: start.localCivil, end: exclusiveAfter(end.localCivil) }
     : { allDay: false as const, start: start.instant!, end: end.instant };
@@ -63,16 +78,7 @@ export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistSc
     id: over.id ?? `checklist:${SUBTASK_ID}`, kind: "checklist", title: "Select hero images", project, assignee: over.assigneeNull ? null : assignee, timing,
     status: { ...status, completed: over.completed ?? false },
     schedule: { state: "range", version: over.version ?? 3, zone: "Australia/Sydney", start, end, due: end.localCivil },
-    permissions: { canDrag: over.canDrag ?? true, canResize: over.canResize ?? true, canOpenScheduleEditor: over.canOpenScheduleEditor ?? true, canScheduleRange: over.canScheduleRange ?? true },
-  } as ChecklistCalendarEventDto;
-}
-
-export function dueEvent(end: ChecklistScheduleEndpointDto, over: { canDrag?: boolean; id?: string; version?: number; canOpenScheduleEditor?: boolean } = {}): ChecklistCalendarEventDto {
-  const timing = end.kind === "date" ? { allDay: true as const, start: end.localCivil, end: null } : { allDay: false as const, start: end.instant!, end: null };
-  return {
-    id: over.id ?? `checklist:${SUBTASK_ID}`, kind: "checklist", title: "Deliver proofs", project, assignee, timing, status,
-    schedule: { state: "due_only", version: over.version ?? 2, zone: "Australia/Sydney", start: null, end, due: end.localCivil },
-    permissions: { canDrag: over.canDrag ?? true, canResize: false, canOpenScheduleEditor: over.canOpenScheduleEditor ?? true, canScheduleRange: true },
+    permissions: { canDrag: over.canDrag ?? true, canResize: over.canResize ?? true, canOpenScheduleEditor: over.canOpenScheduleEditor ?? true },
   } as ChecklistCalendarEventDto;
 }
 
@@ -81,28 +87,6 @@ export function deadlineEvent(localCivil: string, over: { canDrag?: boolean; ver
     id: `project-deadline:${PROJECT_ID}`, kind: "project_deadline", title: "1 Calendar Street", project: over.stageKey ? { ...project, stageKey: over.stageKey } : project,
     timing: { allDay: false, start: instantOf(localCivil), end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     permissions: { canDrag: over.canDrag ?? true, canResize: false }, deadlineLocalCivil: localCivil, deadlineVersion: over.version ?? 4, reminderOffsetsMinutes: over.offsets ?? [],
-  };
-}
-
-export function unscheduledChecklist(over: { reason?: "unscheduled" | "schedule_needs_attention" } = {}): ChecklistCalendarUnscheduledEntryDto {
-  if (over.reason === "schedule_needs_attention") {
-    return {
-      id: `checklist:${SUBTASK_ID}`, kind: "checklist", reason: "schedule_needs_attention", attentionReason: "invalid", title: "Broken", project, assignee: null,
-      schedule: { state: "invalid", version: 1, zone: null, start: null, end: null, due: null, error: { code: "subtask_schedule_storage_invalid", reason: "shape_mismatch" } },
-      permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false },
-    } as ChecklistCalendarUnscheduledEntryDto;
-  }
-  return {
-    id: `checklist:${SUBTASK_ID}`, kind: "checklist", reason: "unscheduled", title: "Cull selects", project, assignee: null,
-    schedule: { state: "unscheduled", version: 0, zone: "Australia/Sydney", start: null, end: null, due: null },
-    permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
-  } as ChecklistCalendarUnscheduledEntryDto;
-}
-
-export function unscheduledProject(): ProjectCalendarUnscheduledEntryDto {
-  return {
-    id: `project-deadline:${PROJECT_ID}`, kind: "project_deadline", reason: "unscheduled", title: "1 Calendar Street", project,
-    permissions: { canDrag: true, canResize: false }, deadlineVersion: 0, reminderOffsetsMinutes: [],
   };
 }
 
@@ -119,36 +103,27 @@ export type FixtureRole = "admin" | "editor" | "external_editor";
 
 export type RangeResponseInput = {
   events?: CalendarEventDto[];
-  unscheduled?: CalendarUnscheduledEntryDto[];
   subview?: ProductionCalendarSubview;
   date?: string;
   role?: FixtureRole;
   layers?: Array<"project" | "checklist">;
   projectBounds?: ProductionCalendarProjectBounds[];
-  facets?: { project?: { matched: number; returned: number; truncated: boolean }; checklist?: { matched: number; returned: number; truncated: boolean } };
 };
 
 export function rangeResponse(input: RangeResponseInput = {}): ProductionCalendarRangeResponse {
   const subview = input.subview ?? "month";
   const date = input.date ?? "2026-08-12";
   const window = deriveProductionCalendarWindow(date, subview);
-  const unscheduled = input.unscheduled ?? [];
-  const count = (kind: "project_deadline" | "checklist") => unscheduled.filter((entry) => entry.kind === kind).length;
   const raw = {
     range: {
       start: window.start, end: window.end, date, subview, zone: PRODUCTION_CALENDAR_ZONE,
       appliedFilters: { layers: input.layers ?? ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
     events: input.events ?? [],
-    unscheduled,
     filterFacets: {
       projects: [{ id: PROJECT_ID, street: project.street }],
       people: [assignee],
       myTasksUserId: ASSIGNEE_ID,
-      unscheduled: {
-        project: input.facets?.project ?? { matched: count("project_deadline"), returned: count("project_deadline"), truncated: false },
-        checklist: input.facets?.checklist ?? { matched: count("checklist"), returned: count("checklist"), truncated: false },
-      },
     },
     ...(input.projectBounds ? { projectBounds: input.projectBounds } : {}),
   };
@@ -165,10 +140,6 @@ export function checklistMutationBody(event: ChecklistCalendarEventDto, schedule
 /** A range schedule DTO at `version` (for mutation bodies). */
 export function rangeSchedule(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto, version: number): ChecklistScheduleDto {
   return { state: "range", version, zone: "Australia/Sydney", start, end, due: end.localCivil } as ChecklistScheduleDto;
-}
-
-export function dueSchedule(end: ChecklistScheduleEndpointDto, version: number): ChecklistScheduleDto {
-  return { state: "due_only", version, zone: "Australia/Sydney", start: null, end, due: end.localCivil } as ChecklistScheduleDto;
 }
 
 /** The worker's Deadline PUT response. */

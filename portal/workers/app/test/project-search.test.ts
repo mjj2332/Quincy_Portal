@@ -16,17 +16,24 @@ function sha256(value: string): string {
 // at a time, and confirming a byte-for-byte match before recording the digest here. A digest
 // (not the ~30KB SQL text itself) keeps this fixture reviewable while still catching any future
 // drift in the emitted SQL.
+//
+// RE-PINNED in #342 (ADR 0011). The calendar SQL changed deliberately there: every checklist
+// schedule is a range, so the due-only / unscheduled / legacy / invalid branches, the Unscheduled
+// CTEs and the unscheduled facet counts were deleted. The digests below are of that new text;
+// the byte-for-byte match with the pre-refactor project-search extraction (#193) no longer applies,
+// and the `project-search` SQL helpers themselves are covered by the tests above.
+// (Re-pinned again in the #342 review round for a SQL comment reword; no logic change.)
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "82c8fa85e011900043b30dd04f1c9b1c3e38239d6ef58c392e05a863bf8221c0",
-  editor: "3c9bce0003ace97a700dcfa881ca315f3e9380a21627524bdebd59356446af2b",
-  photographer: "3c9bce0003ace97a700dcfa881ca315f3e9380a21627524bdebd59356446af2b",
-  external_editor: "50672082a756639af4a350013bdb3a308b5603daf17205dd3148d1cd116d7431",
+  admin: "cc10e642b05ba43754d323668fb5b92daf848b4ff4630b5ca949ac92fad3aa93",
+  editor: "92cc7cb58dfe62f5aa47172d8b1f40d975837c24e9aaef324aa0fa3e168a85bc",
+  photographer: "92cc7cb58dfe62f5aa47172d8b1f40d975837c24e9aaef324aa0fa3e168a85bc",
+  external_editor: "49b7e0718c755674c8ddea27930e5a42dbb38319e450118d41aa93a73851c2db",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "a3da8c82e24b0c38ce261ac885cecd97654bb1c9e75d4ffd370a0b1c527f5016",
-  editor: "4453922139b1c80f34d552ec2d97173da7dfadc78e6732d1bf9677272783224e",
-  photographer: "4453922139b1c80f34d552ec2d97173da7dfadc78e6732d1bf9677272783224e",
-  external_editor: "38db0717bfe4c9bff97f36cc4dc0e5b871f1cb57e18722c2b9db316400fa2712",
+  admin: "8a66c033f1bede508c077c260215f73eb9f18c2c420b8e84ee6eab5f58605275",
+  editor: "153336b81e8af5ec8f0cdee1e17f6e8f99ac2e4eceec6417188ce981e364097c",
+  photographer: "153336b81e8af5ec8f0cdee1e17f6e8f99ac2e4eceec6417188ce981e364097c",
+  external_editor: "ca9e2eaf142f98855bd5fd8e86b0c97b614df98ad52fc1967d94c27d1cb94402",
 };
 
 describe("project-search", () => {

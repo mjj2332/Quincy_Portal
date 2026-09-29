@@ -9,7 +9,7 @@ export type ProjectCalendarAnchorProps = {
 };
 
 /**
- * A real project anchor for the Calendar's rails, including the draggable Unscheduled rows. Native
+ * A real project anchor for the Calendar's rails. Native
  * modified clicks keep their browser behavior; an ordinary click or keyboard activation is
  * enhanced by the Calendar route owner. The small movement threshold stops a drag that starts on
  * the anchor from turning its terminating click into a sheet open.

@@ -28,8 +28,7 @@ function response(stageKey: "editing_autohdr" | "editing") {
       timing: { allDay: false as const, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false as const, sameAssigneeOverlap: false as const },
       permissions: { canDrag: true, canResize: false as const }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 1, reminderOffsetsMinutes: [],
     }],
-    unscheduled: [],
-    filterFacets: { projects: [{ id: principal, street: "11 Calendar Street" }], people: [], myTasksUserId: principal, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+    filterFacets: { projects: [{ id: principal, street: "11 Calendar Street" }], people: [], myTasksUserId: principal },
   };
 }
 
@@ -128,10 +127,10 @@ describe("checklist mutation response domains", () => {
   const itemId = "33333333-3333-4333-8333-333333333333";
   const personId = "44444444-4444-4444-8444-444444444444";
   const schedule = {
-    state: "due_only" as const,
+    state: "range" as const,
     version: 9,
     zone: PRODUCTION_CALENDAR_ZONE,
-    start: null,
+    start: { kind: "date" as const, localCivil: "2026-08-19", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const },
     end: { kind: "date" as const, localCivil: "2026-08-20", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const },
     due: "2026-08-20",
   };

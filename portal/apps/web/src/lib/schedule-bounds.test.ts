@@ -12,7 +12,7 @@
  * The rule compares civil strings, never instants, so neither needs resolution here.
  */
 import { describe, expect, it } from "vitest";
-import type { GanttProjectRowDto, InitialChecklistScheduleInput, ProductionCalendarProjectBounds } from "@quincy/shared";
+import type { GanttProjectRowDto, RangeChecklistScheduleInput, ProductionCalendarProjectBounds } from "@quincy/shared";
 import { ganttScheduleBounds } from "./production-gantt-scheduling";
 import {
   beforeLowerBound,
@@ -62,7 +62,7 @@ function calendarBounds(bounds: Bounds): ProductionCalendarProjectBounds {
   return parsed;
 }
 
-function bothPaths(bounds: Bounds, schedule: InitialChecklistScheduleInput) {
+function bothPaths(bounds: Bounds, schedule: RangeChecklistScheduleInput) {
   const ganttWarnings = scheduleWindowWarnings(schedule, ganttScheduleBounds(ganttProject(bounds)));
   const calendarWarnings = scheduleWindowWarnings(schedule, calendarScheduleBounds(calendarBounds(bounds)));
   return { ganttWarnings, calendarWarnings, ganttText: scheduleWarningText(ganttWarnings), calendarText: scheduleWarningText(calendarWarnings) };
@@ -70,53 +70,45 @@ function bothPaths(bounds: Bounds, schedule: InitialChecklistScheduleInput) {
 
 const date = (localCivil: string) => ({ kind: "date" as const, localCivil });
 const timed = (localCivil: string) => ({ kind: "timed" as const, localCivil });
-const range = (start: { kind: "date" | "timed"; localCivil: string }, end: { kind: "date" | "timed"; localCivil: string }): InitialChecklistScheduleInput => ({ state: "range", start, end });
-const dueOnly = (end: { kind: "date" | "timed"; localCivil: string }): InitialChecklistScheduleInput => ({ state: "due_only", end });
+const range = (start: { kind: "date" | "timed"; localCivil: string }, end: { kind: "date" | "timed"; localCivil: string }): RangeChecklistScheduleInput => ({ state: "range", start, end });
 
 const W = {
   startsBeforeShoot: { code: "subtask_before_project_shoot", message: "Starts before the shoot date.", endpoint: "start" },
-  dueBeforeShoot: { code: "subtask_before_project_shoot", message: "Due before the shoot date.", endpoint: "end" },
   startsBeforeCreated: { code: "subtask_before_project_created", message: "Starts before the project was created.", endpoint: "start" },
-  dueBeforeCreated: { code: "subtask_before_project_created", message: "Due before the project was created.", endpoint: "end" },
   endsAfterDeadline: { code: "subtask_after_project_deadline", message: "Ends after the project deadline.", endpoint: "end" },
-  dueAfterDeadline: { code: "subtask_after_project_deadline", message: "Due after the project deadline.", endpoint: "end" },
 } satisfies Record<string, SchedulingWarning>;
 
-type Row = { name: string; bounds: Partial<Bounds>; schedule: InitialChecklistScheduleInput; expected: SchedulingWarning[]; text: string | null };
+type Row = { name: string; bounds: Partial<Bounds>; schedule: RangeChecklistScheduleInput; expected: SchedulingWarning[]; text: string | null };
 
 const ROWS: Row[] = [
   // Lower bound: the shoot date.
   { name: "range starting 1 day before the shoot", bounds: {}, schedule: range(date("2026-04-30"), date("2026-05-02")), expected: [W.startsBeforeShoot], text: "Starts before the shoot date." },
-  { name: "due_only 1 day before the shoot (endpoint end)", bounds: {}, schedule: dueOnly(date("2026-04-30")), expected: [W.dueBeforeShoot], text: "Due before the shoot date." },
-  { name: "timed due_only 23:59 the day before the shoot", bounds: {}, schedule: dueOnly(timed("2026-04-30T23:59")), expected: [W.dueBeforeShoot], text: "Due before the shoot date." },
   { name: "date start ON the shoot date", bounds: {}, schedule: range(date(SHOOT), date("2026-05-03")), expected: [], text: null },
   { name: "timed start 00:01 on the shoot day (date compare, never the time)", bounds: {}, schedule: range(timed("2026-05-01T00:01"), timed("2026-05-01T02:00")), expected: [], text: null },
   // Lower bound: no shoot date → the Sydney civil creation date.
   { name: "range, no shoot date, starting before the created date", bounds: { shoot: null, createdAt: "2026-05-01T00:00:00.000Z" }, schedule: range(date("2026-04-30"), date("2026-05-02")), expected: [W.startsBeforeCreated], text: "Starts before the project was created." },
-  { name: "due_only, no shoot date, before the created date", bounds: { shoot: null, createdAt: "2026-05-01T00:00:00.000Z" }, schedule: dueOnly(date("2026-04-30")), expected: [W.dueBeforeCreated], text: "Due before the project was created." },
-  { name: "created date is SYDNEY civil, not UTC (2026-01-01T14:00Z is Sydney 2026-01-02)", bounds: { shoot: null, createdAt: "2026-01-01T14:00:00.000Z" }, schedule: dueOnly(date("2026-01-01")), expected: [W.dueBeforeCreated], text: "Due before the project was created." },
-  { name: "on the Sydney created date itself", bounds: { shoot: null, createdAt: "2026-01-01T14:00:00.000Z" }, schedule: dueOnly(date("2026-01-02")), expected: [], text: null },
+  { name: "created date is SYDNEY civil, not UTC (2026-01-01T14:00Z is Sydney 2026-01-02)", bounds: { shoot: null, createdAt: "2026-01-01T14:00:00.000Z" }, schedule: range(date("2026-01-01"), date("2026-01-03")), expected: [W.startsBeforeCreated], text: "Starts before the project was created." },
+  { name: "on the Sydney created date itself", bounds: { shoot: null, createdAt: "2026-01-01T14:00:00.000Z" }, schedule: range(date("2026-01-02"), date("2026-01-03")), expected: [], text: null },
   // Upper bound: the deadline.
   { name: "timed end == the deadline minute", bounds: { deadline: DEADLINE }, schedule: range(timed("2026-05-10T09:00"), timed("2026-06-01T15:00")), expected: [], text: null },
   { name: "timed end 1 minute after the deadline", bounds: { deadline: DEADLINE }, schedule: range(timed("2026-05-10T09:00"), timed("2026-06-01T15:01")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
-  { name: "timed due_only 1 minute after the deadline", bounds: { deadline: DEADLINE }, schedule: dueOnly(timed("2026-06-01T15:01")), expected: [W.dueAfterDeadline], text: "Due after the project deadline." },
-  { name: "date end on the deadline day", bounds: { deadline: DEADLINE }, schedule: dueOnly(date("2026-06-01")), expected: [], text: null },
-  { name: "date end the day after the deadline (due_only)", bounds: { deadline: DEADLINE }, schedule: dueOnly(date("2026-06-02")), expected: [W.dueAfterDeadline], text: "Due after the project deadline." },
+  { name: "timed end 1 minute after the deadline (starting the same day)", bounds: { deadline: DEADLINE }, schedule: range(timed("2026-06-01T09:00"), timed("2026-06-01T15:01")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
+  { name: "date end on the deadline day", bounds: { deadline: DEADLINE }, schedule: range(date("2026-05-31"), date("2026-06-01")), expected: [], text: null },
+  { name: "date end the day after the deadline (one-day range)", bounds: { deadline: DEADLINE }, schedule: range(date("2026-06-01"), date("2026-06-02")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
   { name: "date end the day after the deadline (range)", bounds: { deadline: DEADLINE }, schedule: range(date("2026-05-10"), date("2026-06-02")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
-  { name: "date-only deadline (no T) vs a timed end at 23:00 the same day", bounds: { deadline: "2026-06-01" }, schedule: dueOnly(timed("2026-06-01T23:00")), expected: [], text: null },
-  { name: "date-only deadline vs a timed end the next day", bounds: { deadline: "2026-06-01" }, schedule: dueOnly(timed("2026-06-02T00:00")), expected: [W.dueAfterDeadline], text: "Due after the project deadline." },
+  { name: "date-only deadline (no T) vs a timed end at 23:00 the same day", bounds: { deadline: "2026-06-01" }, schedule: range(timed("2026-06-01T09:00"), timed("2026-06-01T23:00")), expected: [], text: null },
+  { name: "date-only deadline vs a timed end the next day", bounds: { deadline: "2026-06-01" }, schedule: range(timed("2026-06-01T09:00"), timed("2026-06-02T00:00")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
   // DST: civil-string comparisons across the fold and the gap.
   { name: "DST fold 2026-04-05: end 02:30 vs deadline 02:30", bounds: { shoot: "2026-04-01", deadline: "2026-04-05T02:30" }, schedule: range(timed("2026-04-05T01:00"), timed("2026-04-05T02:30")), expected: [], text: null },
   { name: "DST fold 2026-04-05: end 02:31 vs deadline 02:30", bounds: { shoot: "2026-04-01", deadline: "2026-04-05T02:30" }, schedule: range(timed("2026-04-05T01:00"), timed("2026-04-05T02:31")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
-  { name: "DST fold 2026-04-05: date end vs timed deadline, next day warns", bounds: { shoot: "2026-04-01", deadline: "2026-04-05T02:30" }, schedule: dueOnly(date("2026-04-06")), expected: [W.dueAfterDeadline], text: "Due after the project deadline." },
-  { name: "DST gap 2026-10-04: end 02:29 vs deadline 02:30", bounds: { shoot: "2026-10-01", deadline: "2026-10-04T02:30" }, schedule: dueOnly(timed("2026-10-04T02:29")), expected: [], text: null },
-  { name: "DST gap 2026-10-04: end 03:00 vs deadline 03:00", bounds: { shoot: "2026-10-01", deadline: "2026-10-04T03:00" }, schedule: dueOnly(timed("2026-10-04T03:00")), expected: [], text: null },
-  { name: "DST gap 2026-10-04: end 03:01 vs deadline 03:00", bounds: { shoot: "2026-10-01", deadline: "2026-10-04T03:00" }, schedule: dueOnly(timed("2026-10-04T03:01")), expected: [W.dueAfterDeadline], text: "Due after the project deadline." },
+  { name: "DST fold 2026-04-05: date end vs timed deadline, next day warns", bounds: { shoot: "2026-04-01", deadline: "2026-04-05T02:30" }, schedule: range(date("2026-04-05"), date("2026-04-06")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
+  { name: "DST gap 2026-10-04: end 02:29 vs deadline 02:30", bounds: { shoot: "2026-10-01", deadline: "2026-10-04T02:30" }, schedule: range(timed("2026-10-04T01:00"), timed("2026-10-04T02:29")), expected: [], text: null },
+  { name: "DST gap 2026-10-04: end 03:00 vs deadline 03:00", bounds: { shoot: "2026-10-01", deadline: "2026-10-04T03:00" }, schedule: range(timed("2026-10-04T01:00"), timed("2026-10-04T03:00")), expected: [], text: null },
+  { name: "DST gap 2026-10-04: end 03:01 vs deadline 03:00", bounds: { shoot: "2026-10-01", deadline: "2026-10-04T03:00" }, schedule: range(timed("2026-10-04T01:00"), timed("2026-10-04T03:01")), expected: [W.endsAfterDeadline], text: "Ends after the project deadline." },
   // Both at once: start warning first, then end; text joined by one space.
   { name: "before the shoot AND after the deadline", bounds: { deadline: DEADLINE }, schedule: range(date("2026-04-01"), date("2026-07-01")), expected: [W.startsBeforeShoot, W.endsAfterDeadline], text: "Starts before the shoot date. Ends after the project deadline." },
   // Nothing to check.
-  { name: "unscheduled", bounds: { deadline: DEADLINE }, schedule: { state: "unscheduled" }, expected: [], text: null },
-  { name: "no deadline → no upper warning", bounds: {}, schedule: dueOnly(date("2030-01-01")), expected: [], text: null },
+  { name: "no deadline → no upper warning", bounds: {}, schedule: range(date("2030-01-01"), date("2030-01-02")), expected: [], text: null },
 ];
 
 describe("scheduleWindowWarnings — one rule, both surfaces", () => {
@@ -136,7 +128,7 @@ describe("scheduleWindowWarnings — one rule, both surfaces", () => {
   });
 
   it("no lower bound and no deadline → []", () => {
-    expect(scheduleWindowWarnings(dueOnly(date("2000-01-01")), { lower: null, deadlineLocalCivil: null })).toEqual([]);
+    expect(scheduleWindowWarnings(range(date("2000-01-01"), date("2000-01-02")), { lower: null, deadlineLocalCivil: null })).toEqual([]);
   });
 });
 
@@ -182,6 +174,5 @@ describe("scheduleWarningText", () => {
   it("joins messages with one space, or returns null for none", () => {
     expect(scheduleWarningText([])).toBeNull();
     expect(scheduleWarningText([W.startsBeforeShoot, W.endsAfterDeadline])).toBe("Starts before the shoot date. Ends after the project deadline.");
-    expect(scheduleWarningText([W.dueAfterDeadline])).toBe("Due after the project deadline.");
   });
 });

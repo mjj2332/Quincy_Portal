@@ -6,7 +6,7 @@
  * The ONLY app file that imports `components/reui/event-calendar/` — pinned by
  * `harness-reachability.guard.test.ts` (`ALLOWED_VENDOR_SCHEDULING_CONSUMERS`, an exact-file entry
  * scoped to that one tree) and `ProductionEventCalendar.import-boundary.guard.test.ts`. The rail,
- * facets, unscheduled list and dialogs are presentational siblings that never import the tree.
+ * facets and dialogs are presentational siblings that never import the tree.
  *
  * Writes (round 3): the shared scheduling controller (`useSchedulingController`,
  * `lib/use-scheduling-commands.tsx`) owns every write, exactly as `ProductionGantt.tsx` composes it —
@@ -24,9 +24,6 @@
  *   back. A local `pending` range holds the dropped chip where it landed until the controller's
  *   overlay replaces it or the command settles / cancels (a Deadline has no overlay before its
  *   confirmation, so `pending` is what holds it; Cancel's revert restores the original position).
- * - Unscheduled rows are external drag sources (`useEventCalendarExternalDrop`, called inside the
- *   provider) → a `place` proposal. `canDrop` refuses only while blocked / settling or without
- *   permission — never on bounds.
  * - "Reschedule…": the vendor chip is itself a `<button>`, so the action cannot live inside it. A
  *   chip click (`onEventClick`) selects the event; the selection strip under the nav carries the
  *   `data-focus-key="calendar-move:<id>"` action that opens the move dialog (Deadline) or the
@@ -42,29 +39,24 @@
  *
  * Layout: rail beside the grid; below `RAIL_SHEET_QUERY` (a JS media query — no shell breakpoint
  * literal, no `lg:`) the rail moves into a `reui/sheet` opened from a button beside the nav. The rail
- * renders INSIDE `<EventCalendar>` in both places (the sheet portals the DOM, not the React tree), so
- * the external-drop hook has its provider.
+ * renders INSIDE `<EventCalendar>` in both places (the sheet portals the DOM, not the React tree).
  *
  * Phone gate: a coarse pointer at ≤720px turns drag and resize (and so keyboard Adjust) off in
- * week / day / days, and the unscheduled rows fall back to their Schedule actions.
+ * week / day / days.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import {
   deriveProductionCalendarWindow,
   formatSydneyCivilMinute,
   type CalendarEventDto,
-  type CalendarUnscheduledEntryDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type DashboardCalendarState,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
-  type ProjectCalendarUnscheduledEntryDto,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { applyOptimisticOverlay, type CalendarSettleState } from "../lib/production-calendar-interaction";
 import { effectiveCalendarEventPermissions } from "../lib/production-calendar-permissions";
 import { productionCalendarFiltersFor, useProductionCalendarRange } from "../lib/production-calendar-query";
-import { unscheduledChecklistDraggable, unscheduledProjectDraggable } from "../lib/production-calendar-unscheduled";
 import {
   calendarViewToSubview,
   PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
@@ -74,7 +66,7 @@ import {
   toProductionEventCalendarEvents,
   type ProductionEventCalendarData,
 } from "../lib/production-event-calendar-adapter";
-import { eventCalendarDropToProposal, eventCalendarUpdateToProposal, type EventCalendarDropTargetLike, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
+import { eventCalendarUpdateToProposal, type EventCalendarUpdateLike } from "../lib/production-event-calendar-scheduling";
 import { calendarScheduleBounds, type ScheduleBounds } from "../lib/schedule-bounds";
 import { useCalendarSchedulingPort, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
@@ -84,7 +76,6 @@ import { cn } from "@/lib/utils";
 import { EventCalendar } from "./reui/event-calendar/event-calendar";
 import { EventCalendarNav } from "./reui/event-calendar/event-calendar-nav";
 import { EventCalendarContent } from "./reui/event-calendar/event-calendar-content";
-import { useEventCalendarExternalDrop } from "./reui/event-calendar/event-calendar-dnd";
 import { Button } from "./reui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
@@ -97,7 +88,6 @@ import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { ProductionEventCalendarDialogs, type ProductionEventCalendarDeadlineConfirm } from "./ProductionEventCalendarDialogs";
 import { ProductionEventCalendarFacets } from "./ProductionEventCalendarFacets";
 import { ProductionEventCalendarRail, type ProductionEventCalendarUpNext } from "./ProductionEventCalendarRail";
-import { ProductionEventCalendarUnscheduledList, type ProductionEventCalendarUnscheduledListProps } from "./ProductionEventCalendarUnscheduledList";
 
 export type ProductionEventCalendarProps = {
   identity: DashboardIdentity;
@@ -111,8 +101,8 @@ export type ProductionEventCalendarProps = {
   onOpenProject?: (projectId: string) => void;
   /**
    * #260: how many projects this range draws under the Calendar's filters (the projects its events
-   * and unscheduled entries reference), for the Dashboard search chip. `null` while no response has
-   * landed, when a truncated unscheduled list means the count is not known, and on unmount.
+   * reference), for the Dashboard search chip. `null` while no response has
+   * landed and on unmount.
    */
   onShownProjectsChange?: (count: number | null) => void;
 };
@@ -123,10 +113,6 @@ const PHONE_QUERY = "(max-width: 720px)";
 const COARSE_QUERY = "(pointer: coarse)";
 const CALENDAR_VIEWS = ["month", "week", "day", "days", "agenda"] as const;
 const TIME_GRID_SUBVIEWS = new Set(["week", "day", "days"]);
-const EMPTY_FACETS = { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } };
-/** An unscheduled item dropped on a minute column lands as a one-hour block. */
-const EXTERNAL_DROP_MINUTES = 60;
-const NEEDS_ATTENTION = "Schedule data needs attention. Repair is unavailable in Calendar.";
 const OVERLAP = "Overlaps another task";
 
 type PendingRange = { eventId: string; start: Date; end: Date; allDay: boolean };
@@ -156,11 +142,7 @@ function calendarResetKey(calendar: DashboardCalendarState): string {
   return `${calendar.date}|${calendar.subview}|${calendar.layers.join(",")}|${calendar.editorIds.join(",")}|${calendar.includeUnassigned}|${calendar.stageKeys.join(",")}|${calendar.showCompletedChecklist}|${calendar.showDeliveredProjects}|${calendar.overdueOnly}|${calendar.search}|${calendar.myTasks}`;
 }
 
-function canDragUnscheduledEntry(entry: CalendarUnscheduledEntryDto): boolean {
-  return entry.kind === "project_deadline" ? unscheduledProjectDraggable(entry) : unscheduledChecklistDraggable(entry);
-}
-
-function ChipContent({ id, data, title, needsAttention }: { id: string; data: ProductionEventCalendarData | undefined; title: string; needsAttention: boolean }): JSX.Element {
+function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
   const dto = data?.dto;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
   const assignee = dto?.kind === "checklist" ? dto.assignee : null;
@@ -170,36 +152,9 @@ function ChipContent({ id, data, title, needsAttention }: { id: string; data: Pr
     <span className="flex w-full min-w-0 items-center gap-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {overlap && <span className="sr-only">{OVERLAP}</span>}
-      {needsAttention && <span className="sr-only">{NEEDS_ATTENTION}</span>}
       {assignee && <InitialsAvatar name={assignee.name} className="size-4 shrink-0 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)]" />}
     </span>
   );
-}
-
-/**
- * The unscheduled list as an external drag source. Its own component so the vendor hook is called
- * INSIDE `<EventCalendar>` (the hook reads the calendar's context).
- */
-function UnscheduledDragSource({ dragEnabled, canDrop, onDrop, ...list }: Omit<ProductionEventCalendarUnscheduledListProps, "beginDrag"> & {
-  dragEnabled: boolean;
-  canDrop: (entry: CalendarUnscheduledEntryDto) => boolean;
-  onDrop: (entry: CalendarUnscheduledEntryDto, target: EventCalendarDropTargetLike) => void;
-}): JSX.Element {
-  const { begin } = useEventCalendarExternalDrop<ProductionEventCalendarData, CalendarUnscheduledEntryDto>();
-  // A drag outlives the render that started it: read the CURRENT gate at every hover and at drop,
-  // never the one captured at pointer-down (a command started mid-drag must refuse the drop).
-  const latest = useRef({ canDrop, onDrop });
-  latest.current = { canDrop, onDrop };
-  const beginDrag = useCallback((event: ReactPointerEvent<HTMLElement>, entry: CalendarUnscheduledEntryDto) => {
-    begin(event, {
-      payload: entry,
-      durationMinutes: EXTERNAL_DROP_MINUTES,
-      preferAllDay: true,
-      canDrop: (_target, payload) => latest.current.canDrop(payload),
-      onDrop: (target, payload) => latest.current.onDrop(payload, target),
-    });
-  }, [begin]);
-  return <ProductionEventCalendarUnscheduledList {...list} beginDrag={dragEnabled ? beginDrag : undefined} />;
 }
 
 export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange }: ProductionEventCalendarProps): JSX.Element {
@@ -274,8 +229,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const source: ProductionCalendarRangeResponse | null = commands.acceptedResponse ?? (!blocked ? query.data ?? null : null);
   boundsRef.current = useMemo(() => new Map((source?.projectBounds ?? query.data?.projectBounds ?? []).map((bound) => [bound.projectId, calendarScheduleBounds(bound)])), [source?.projectBounds, query.data?.projectBounds]);
 
-  const unscheduledFacet = query.data?.filterFacets.unscheduled;
-  const shownProjects = !query.data?.projectBounds || unscheduledFacet?.project.truncated || unscheduledFacet?.checklist.truncated ? null : query.data.projectBounds.length;
+  const shownProjects = query.data?.projectBounds ? query.data.projectBounds.length : null;
   useEffect(() => { onShownProjectsChange?.(shownProjects); }, [onShownProjectsChange, shownProjects]);
   useEffect(() => () => onShownProjectsChange?.(null), [onShownProjectsChange]);
 
@@ -305,9 +259,8 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     role: identity.role,
     interactionBlocked: blocked,
     settlePending: settling,
-    checklistNeedsAttention: commands.checklistNeedsAttention,
     deadlineMovementDisabled: commands.deadlineMovementDisabled,
-  })), [source?.events, calendar.subview, identity.role, blocked, settling, commands.checklistNeedsAttention, commands.deadlineMovementDisabled]);
+  })), [source?.events, calendar.subview, identity.role, blocked, settling, commands.deadlineMovementDisabled]);
   const displayEvents = useMemo(() => applyOptimisticOverlay(renderEvents, commands.optimisticOverlay), [renderEvents, commands.optimisticOverlay]);
   const dtoById = useMemo(() => new Map(displayEvents.map((event) => [event.id, event])), [displayEvents]);
 
@@ -347,45 +300,13 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => { setSelectedId(null); }, [resetKey, identity.principalId, identity.role, identity.authorizationEpoch]);
   const selected = selectedId ? dtoById.get(selectedId) ?? null : null;
-  const selectedNeedsAttention = selected ? commands.checklistNeedsAttention.has(selected.id) : false;
   const selectedHref = selected ? projectHrefFor?.(selected.project.id) : undefined;
   const selectedAction = (() => {
     if (!selected || !live) return null;
     if (selected.kind === "project_deadline") return selected.permissions.canDrag ? { label: "Reschedule…", run: () => commands.openMoveDialog(selected) } : null;
-    if (selectedNeedsAttention || !selected.permissions.canOpenScheduleEditor) return null;
-    return { label: `${checklistScheduleEditorButtonLabel(selected)}…`, run: () => commands.openChecklistScheduleEditor(selected) };
+    if (!selected.permissions.canOpenScheduleEditor) return null;
+    return { label: `${checklistScheduleEditorButtonLabel()}…`, run: () => commands.openChecklistScheduleEditor(selected) };
   })();
-
-  // ---------------------------------------------------------------------------------------------
-  // Unscheduled.
-  // ---------------------------------------------------------------------------------------------
-
-  const overlay = commands.optimisticOverlay;
-  const sourceUnscheduled = useMemo(() => source?.unscheduled ?? [], [source?.unscheduled]);
-  const renderUnscheduled = useMemo(() => overlay && "kind" in overlay && overlay.kind === "reschedule-unscheduled"
-    ? sourceUnscheduled.filter((entry) => entry.id !== overlay.entryId)
-    : sourceUnscheduled, [overlay, sourceUnscheduled]);
-  const unscheduledFacets = useMemo(() => {
-    const facets = source?.filterFacets.unscheduled ?? EMPTY_FACETS;
-    if (!overlay || !("kind" in overlay) || overlay.kind !== "reschedule-unscheduled") return facets;
-    const sourceEntry = sourceUnscheduled.find((entry) => entry.id === overlay.entryId);
-    const facetKey = (sourceEntry?.kind ?? overlay.asEvent.kind) === "project_deadline" ? "project" : "checklist";
-    const facet = facets[facetKey];
-    return { ...facets, [facetKey]: { matched: Math.max(0, facet.matched - 1), returned: Math.max(0, facet.returned - 1), truncated: facet.truncated } };
-  }, [overlay, source?.filterFacets.unscheduled, sourceUnscheduled]);
-  const projectEntries = useMemo(() => renderUnscheduled.filter((entry): entry is ProjectCalendarUnscheduledEntryDto => entry.kind === "project_deadline"), [renderUnscheduled]);
-  const checklistEntries = useMemo(() => renderUnscheduled.filter((entry): entry is ChecklistCalendarUnscheduledEntryDto => entry.kind === "checklist"), [renderUnscheduled]);
-
-  const canDropEntry = useCallback((entry: CalendarUnscheduledEntryDto) => live && calendar.subview !== "agenda" && !gated && canDragUnscheduledEntry(entry), [calendar.subview, gated, live]);
-  const dropEntry = useCallback((entry: CalendarUnscheduledEntryDto, target: EventCalendarDropTargetLike) => {
-    if (!canDropEntry(entry)) return;
-    const planned = eventCalendarDropToProposal(entry as ChecklistCalendarUnscheduledEntryDto | ProjectCalendarUnscheduledEntryDto, target);
-    if (planned.kind !== "proposal") {
-      commands.announceLifecycle("invalid", { entity: entry.kind === "checklist" ? "checklist" : "deadline" });
-      return;
-    }
-    commands.submitProposal(planned.proposal);
-  }, [canDropEntry, commands]);
 
   // ---------------------------------------------------------------------------------------------
   // Render.
@@ -408,23 +329,6 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
       onOpenUpNext={(event) => { const civil = eventCivilDate(event); if (civil !== calendar.date) navigate({ date: civil }); setRailOpen(false); }}
       className={narrow ? "min-h-0 flex-1" : "min-h-0 border-r border-border"}
       facets={<ProductionEventCalendarFacets filters={filters} facetPeople={query.data?.filterFacets.people ?? []} disabled={loading || blocked} onChange={(next) => navigate(next)} />}
-      unscheduled={(
-        <UnscheduledDragSource
-          projectEntries={projectEntries}
-          checklistEntries={checklistEntries}
-          facets={unscheduledFacets}
-          subview={calendar.subview}
-          onScheduleProject={(entry) => { if (canDragUnscheduledEntry(entry)) commands.openUnscheduledProjectDialog(entry); }}
-          onScheduleChecklist={commands.openUnscheduledChecklistScheduleEditor}
-          disabled={blocked || settling}
-          dragSuppressed={gated}
-          dragEnabled={!commands.accessLost}
-          canDrop={canDropEntry}
-          onDrop={dropEntry}
-          projectHrefFor={projectHrefFor}
-          onOpenProject={onOpenProject}
-        />
-      )}
     />
   );
 
@@ -475,10 +379,10 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data)}
-          renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} needsAttention={commands.checklistNeedsAttention.has(String(occurrence.event.id))} />}
+          renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
         >
           {/* One definite height for rail + grid, and a `minmax(0,1fr)` row: an `auto` row grows to
-              the rail's content (52 unscheduled rows → 5.6k px), which stretched the month rows and
+              the rail's content (a long Up next list → thousands of px), which stretched the month rows and
               kept the rail's ScrollArea from ever scrolling. Bounded, the rail scrolls inside its
               column and the content fills the rest of the column. */}
           <div className={cn("grid h-[min(760px,calc(100svh-220px))] min-h-[480px] grid-rows-[minmax(0,1fr)] items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")} data-testid="event-calendar-body">
@@ -505,7 +409,6 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                     {selectedHref ? <ProjectCalendarAnchor href={selectedHref} onOpenProject={() => onOpenProject?.(selected.project.id)}>{selected.project.street}</ProjectCalendarAnchor> : selected.project.street}
                   </span>
                   {selected.kind === "checklist" && selected.status.sameAssigneeOverlap === true && <span className="text-signal-caution-text">{OVERLAP}</span>}
-                  {selectedNeedsAttention && <span className="text-signal-critical" role="status">{NEEDS_ATTENTION}</span>}
                   {selectedAction && (
                     <Button type="button" variant="outline" size="sm" className="max-[721px]:min-h-[44px]" data-focus-key={`calendar-move:${selected.id}`} onClick={selectedAction.run}>
                       {selectedAction.label}
@@ -533,7 +436,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
               >
                 <SheetHeader className="border-b border-border">
                   <SheetTitle>Calendar</SheetTitle>
-                  <SheetDescription className="sr-only">Mini month, up next, filters and unscheduled work.</SheetDescription>
+                  <SheetDescription className="sr-only">Mini month, up next and filters.</SheetDescription>
                 </SheetHeader>
                 {rail}
               </SheetContent>

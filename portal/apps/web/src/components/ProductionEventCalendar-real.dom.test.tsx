@@ -32,10 +32,9 @@ const response = adminProductionCalendarRangeResponseSchema.parse({
   },
   events: [
     { id: "project-deadline:project", kind: "project_deadline", title: "Project handoff", project, timing: { allDay: false, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
-    { id: "checklist:item", kind: "checklist", title: "Select hero images", project, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, timing: { allDay: true, start: "2026-08-13", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "due_only", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-13" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } },
+    { id: "checklist:item", kind: "checklist", title: "Select hero images", project, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, timing: { allDay: true, start: "2026-08-13", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-13" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } },
   ],
-  unscheduled: [],
-  filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+  filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee },
 });
 
 let host: HTMLDivElement;

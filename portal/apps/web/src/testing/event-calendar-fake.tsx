@@ -8,7 +8,6 @@
  *   vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
  *   vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
  *   vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
- *   vi.mock("./reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
  *
  * `eventCalendarFake.lastProps` records the props of the most recent `<EventCalendar>` render, so a
  * test can assert the controlled view/date/interactions and invoke a callback (`onSlotClick`,
@@ -24,9 +23,6 @@
  *   the original instants from it), records and returns the result (`false` = the vendor would snap
  *   back; `"deferred"` = the consumer owns it).
  * - `eventCalendarFake.click(id)` calls `onEventClick` with that event's occurrence.
- * - `useEventCalendarExternalDrop().begin(e, options)` records `options` in `lastDrag`; when
- *   `nextDropTarget` is set it runs `canDrop` and, if allowed, `onDrop` immediately (else
- *   `onCancel`). `lastDropAccepted` records the verdict.
  */
 import type { ReactNode } from "react";
 
@@ -52,22 +48,9 @@ export type FakeUpdateInput = {
   granularity?: "day" | "minute";
 };
 
-export type FakeDropTarget = { start: Date; end: Date; allDay: boolean; view: string; dayGranular: boolean; resourceId?: string };
-export type FakeDropOptions = {
-  payload: unknown;
-  durationMinutes: number;
-  preferAllDay?: boolean;
-  canDrop?: (target: FakeDropTarget, payload: unknown) => boolean;
-  onDrop: (target: FakeDropTarget, payload: unknown) => void;
-  onCancel?: () => void;
-};
-
 type FakeState = {
   lastProps: FakeCalendarProps | null;
   updateResults: unknown[];
-  lastDrag: FakeDropOptions | null;
-  nextDropTarget: FakeDropTarget | null;
-  lastDropAccepted: boolean | null;
   reset: () => void;
   event: (id: string) => FakeEvent | undefined;
   update: (id: string, input: FakeUpdateInput) => unknown;
@@ -77,15 +60,9 @@ type FakeState = {
 export const eventCalendarFake: FakeState = {
   lastProps: null,
   updateResults: [],
-  lastDrag: null,
-  nextDropTarget: null,
-  lastDropAccepted: null,
   reset() {
     this.lastProps = null;
     this.updateResults = [];
-    this.lastDrag = null;
-    this.nextDropTarget = null;
-    this.lastDropAccepted = null;
   },
   event(id) {
     return this.lastProps?.events?.find((candidate) => candidate.id === id);
@@ -136,21 +113,6 @@ function FakeEventCalendar(props: FakeCalendarProps) {
   );
 }
 
-function useFakeExternalDrop() {
-  return {
-    begin(_e: unknown, options: FakeDropOptions) {
-      eventCalendarFake.lastDrag = options;
-      const target = eventCalendarFake.nextDropTarget;
-      if (!target) return;
-      const accepted = options.canDrop?.(target, options.payload) ?? true;
-      eventCalendarFake.lastDropAccepted = accepted;
-      if (accepted) options.onDrop(target, options.payload);
-      else options.onCancel?.();
-    },
-  };
-}
-
 export const eventCalendarModule = { EventCalendar: FakeEventCalendar };
 export const eventCalendarNavModule = { EventCalendarNav: () => <div data-testid="event-calendar-fake-nav" /> };
 export const eventCalendarContentModule = { EventCalendarContent: () => <div data-testid="event-calendar-fake-content" /> };
-export const eventCalendarDndModule = { useEventCalendarExternalDrop: useFakeExternalDrop };

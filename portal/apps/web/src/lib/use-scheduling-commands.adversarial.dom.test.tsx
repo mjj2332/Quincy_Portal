@@ -27,8 +27,7 @@ function response(events: ProjectDeadlineCalendarEventDto[] = []): ProductionCal
   return adminProductionCalendarRangeResponseSchema.parse({
     range: { start: "2026-08-10", end: "2026-08-24", date: "2026-08-12", subview: "month", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: productionCalendarFiltersFor(calendar) },
     events,
-    unscheduled: [],
-    filterFacets: { projects: [{ id: projectId, street: project.street }], people: [], myTasksUserId: projectId, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+    filterFacets: { projects: [{ id: projectId, street: project.street }], people: [], myTasksUserId: projectId },
   });
 }
 

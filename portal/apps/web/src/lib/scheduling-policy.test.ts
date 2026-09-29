@@ -5,14 +5,12 @@ import {
   mapChecklistMoveToCommand,
   mapChecklistStartResizeToCommand,
   mapProjectDeadlineMoveToCommand,
-  mapUnscheduledChecklistDropToCommand,
   mapUnscheduledProjectDropToCommand,
   normalizeChecklistSchedule,
   resolveSydneyCivilMinute,
   PRODUCTION_CALENDAR_ZONE,
   type CalendarMappingResult,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type SaveChecklistScheduleRequest,
@@ -51,17 +49,11 @@ const project = () => ({
 const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
 const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
 const rangeSchedule = (start: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
-const unscheduledSchedule = (version = 4) => ({ state: "unscheduled" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null });
-
 function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof EDITOR_STAGE> {
   const timing = schedule.start.kind === "date"
     ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
     : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
-  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } };
-}
-
-function checklistUnscheduledEntry(): ChecklistCalendarUnscheduledEntryDto<typeof EDITOR_STAGE> {
-  return { id: `checklist:${PERSON_ID}`, kind: "checklist", reason: "unscheduled", title: "Select hero images", project: project(), assignee: person, schedule: unscheduledSchedule(), permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 function projectEvent(deadlineLocalCivil = "2026-08-27T09:00"): ProjectDeadlineCalendarEventDto<typeof EDITOR_STAGE> {
@@ -115,18 +107,6 @@ describe("planSchedulingProposal", () => {
     const plan = planSchedulingProposal(proposal);
     const direct = mapChecklistStartResizeToCommand({ event: source, target });
     if (!direct.ok) throw new Error("expected mapChecklistStartResizeToCommand to succeed");
-    if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
-    if (plan.value.kind !== "checklist") throw new Error(`expected a checklist plan, got ${plan.value.kind}`);
-    expect(plan.value).toEqual({ kind: "checklist", request: direct.value, schedule: direct.value.schedule, timing: expectedChecklistTiming(direct), warnings: [] });
-  });
-
-  it("places an unscheduled checklist entry exactly as mapUnscheduledChecklistDropToCommand", () => {
-    const entry = checklistUnscheduledEntry();
-    const target = { subview: "month" as const, targetDate: "2026-08-29" };
-    const proposal: SchedulingProposal = { kind: "place", entity: "checklist", entry, target };
-    const plan = planSchedulingProposal(proposal);
-    const direct = mapUnscheduledChecklistDropToCommand({ event: entry, target });
-    if (!direct.ok) throw new Error("expected mapUnscheduledChecklistDropToCommand to succeed");
     if (!plan.ok) throw new Error("expected planSchedulingProposal to succeed");
     if (plan.value.kind !== "checklist") throw new Error(`expected a checklist plan, got ${plan.value.kind}`);
     expect(plan.value).toEqual({ kind: "checklist", request: direct.value, schedule: direct.value.schedule, timing: expectedChecklistTiming(direct), warnings: [] });
@@ -201,18 +181,6 @@ describe("planSchedulingProposal", () => {
     const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: null } });
     expect(plan.ok).toBe(true);
     if (plan.ok && plan.value.kind === "checklist") expect(plan.value.warnings).toEqual([{ code: "subtask_before_project_shoot", message: "Starts before the shoot date.", endpoint: "start" }]);
-  });
-
-  it("warns on a due_only placed before the shoot date, at the end endpoint", () => {
-    const entry = checklistUnscheduledEntry();
-    const target = { subview: "month" as const, targetDate: "2026-08-09" };
-    const proposal: SchedulingProposal = { kind: "place", entity: "checklist", entry, target };
-    const plan = planSchedulingProposal(proposal, { bounds: { lower: { civilDate: "2026-08-10", kind: "shoot" }, deadlineLocalCivil: null } });
-    expect(plan.ok).toBe(true);
-    if (plan.ok && plan.value.kind === "checklist") {
-      expect(plan.value.schedule).toEqual({ state: "due_only", end: { kind: "date", localCivil: "2026-08-09" } });
-      expect(plan.value.warnings).toEqual([{ code: "subtask_before_project_shoot", message: "Due before the shoot date.", endpoint: "end" }]);
-    }
   });
 
   it("a warning is never a rejection (ok stays true)", () => {

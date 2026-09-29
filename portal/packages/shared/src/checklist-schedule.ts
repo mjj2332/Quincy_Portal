@@ -11,17 +11,16 @@ export type ChecklistScheduleEndpointInput =
   | { kind: "date"; localCivil: string }
   | { kind: "timed"; localCivil: string; disambiguation?: SydneyCivilDisambiguation };
 
-export type InitialChecklistScheduleInput =
-  | { state: "unscheduled" }
-  | { state: "due_only"; end: ChecklistScheduleEndpointInput }
-  | { state: "range"; start: ChecklistScheduleEndpointInput; end: ChecklistScheduleEndpointInput };
-
 /** A Subtask's schedule is always a range (ADR 0011): the only shape the write paths accept. */
-export type RangeChecklistScheduleInput = Extract<InitialChecklistScheduleInput, { state: "range" }>;
+export type RangeChecklistScheduleInput = {
+  state: "range";
+  start: ChecklistScheduleEndpointInput;
+  end: ChecklistScheduleEndpointInput;
+};
 
 export type SaveChecklistScheduleRequest = {
   expectedVersion: number;
-  schedule: InitialChecklistScheduleInput;
+  schedule: RangeChecklistScheduleInput;
 };
 
 export type ChecklistScheduleEndpointDto = {
@@ -30,45 +29,18 @@ export type ChecklistScheduleEndpointDto = {
   instant: string | null;
   utcOffsetMinutes: number | null;
   fold: 0 | 1 | null;
-  resolution: "stored" | "derived_unambiguous";
+  resolution: "stored";
 };
 
-export type ChecklistScheduleErrorReason = "invalid_literal" | "nonexistent_local_time" | "repeated_local_time";
-
-export type ChecklistScheduleDto =
-  | {
-      state: "unscheduled" | "due_only" | "range";
-      version: number;
-      zone: typeof CHECKLIST_SCHEDULE_ZONE;
-      start: ChecklistScheduleEndpointDto | null;
-      end: ChecklistScheduleEndpointDto | null;
-      due: string | null;
-    }
-  | {
-      state: "legacy_unresolved";
-      version: 0;
-      zone: typeof CHECKLIST_SCHEDULE_ZONE;
-      start: null;
-      end: null;
-      due: string;
-      error: {
-        code: "subtask_schedule_legacy_unresolved";
-        reason: ChecklistScheduleErrorReason;
-        foldChoices?: Array<{ disambiguation: SydneyCivilDisambiguation; utcOffsetMinutes: number }>;
-      };
-    }
-  | {
-      state: "invalid";
-      version: number;
-      zone: null;
-      start: null;
-      end: null;
-      due: string | null;
-      error: {
-        code: "subtask_schedule_storage_invalid";
-        reason: "shape_mismatch" | "resolution_mismatch" | "ordering_invalid";
-      };
-    };
+/** Every Subtask schedule on the wire is a range (ADR 0011). */
+export type ChecklistScheduleDto = {
+  state: "range";
+  version: number;
+  zone: typeof CHECKLIST_SCHEDULE_ZONE;
+  start: ChecklistScheduleEndpointDto;
+  end: ChecklistScheduleEndpointDto;
+  due: string;
+};
 
 export type ChecklistScheduleStorage = {
   dueDate: string | null;
@@ -86,7 +58,7 @@ export type ChecklistScheduleStorage = {
 };
 
 export type NormalizedChecklistSchedule = ChecklistScheduleStorage & {
-  state: "unscheduled" | "due_only" | "range";
+  state: "range";
   startChanged: boolean;
   endChanged: boolean;
 };
@@ -98,6 +70,7 @@ export type ChecklistScheduleValidationError = {
     | "subtask_schedule_repeated_local_time"
     | "subtask_schedule_resolver_defect"
     | "subtask_schedule_mixed_endpoint_kinds"
+    | "subtask_schedule_not_a_range"
     | "subtask_schedule_start_without_end"
     | "subtask_schedule_invalid_order"
     | "subtask_schedule_invalid_version";
@@ -159,35 +132,22 @@ function resolveEndpoint(input: ChecklistScheduleEndpointInput, endpoint: "start
   return { ok: true, value: { kind: "timed", localCivil: input.localCivil, resolution: resolved.value } };
 }
 
-function empty(version: number): NormalizedChecklistSchedule {
+/** Zero-valued storage the range branch of `normalizeChecklistSchedule` spreads over. */
+function zeroStorage(version: number): NormalizedChecklistSchedule {
   return {
-    state: "unscheduled", scheduleVersion: version, dueDate: null, scheduleStartKind: null, scheduleStartCivil: null,
+    state: "range", scheduleVersion: version, dueDate: null, scheduleStartKind: null, scheduleStartCivil: null,
     scheduleStartAt: null, scheduleStartUtcOffsetMinutes: null, scheduleStartFold: null,
     scheduleEndKind: null, scheduleEndAt: null, scheduleEndUtcOffsetMinutes: null, scheduleEndFold: null,
     scheduleZone: null, startChanged: true, endChanged: true,
   };
 }
 
-function fromEndpoint(end: { kind: "date"; localCivil: string } | { kind: "timed"; localCivil: string; resolution: SydneyCivilResolution }, version: number): NormalizedChecklistSchedule {
-  return {
-    ...empty(version), state: "due_only", dueDate: end.localCivil, scheduleEndKind: end.kind, scheduleZone: CHECKLIST_SCHEDULE_ZONE,
-    scheduleEndAt: end.kind === "timed" ? end.resolution.epochMs : null,
-    scheduleEndUtcOffsetMinutes: end.kind === "timed" ? end.resolution.utcOffsetMinutes : null,
-    scheduleEndFold: end.kind === "timed" ? end.resolution.fold : null,
-    startChanged: false, endChanged: true,
-  };
-}
-
 function endpointCivil(value: ChecklistScheduleEndpointInput): string { return value.localCivil; }
 
-export function normalizeChecklistSchedule(input: InitialChecklistScheduleInput, version: number): ChecklistScheduleNormalizationResult {
+export function normalizeChecklistSchedule(input: RangeChecklistScheduleInput, version: number): ChecklistScheduleNormalizationResult {
   if (!Number.isSafeInteger(version) || version < 0) return invalid("subtask_schedule_invalid_version", "Schedule version must be a nonnegative integer.");
-  if (input.state === "unscheduled") return { ok: true, value: empty(version) };
-  if (input.state === "due_only") {
-    const end = resolveEndpoint(input.end, "end");
-    if (!end.ok) return end;
-    return { ok: true, value: fromEndpoint(end.value, version) };
-  }
+  // Runtime guard: the type is range-only, but a caller may hold an untyped value.
+  if ((input as { state?: unknown }).state !== "range") return invalid("subtask_schedule_not_a_range", "A Subtask schedule is always a range with a start and an end.");
   if (!input.start || !input.end) return invalid("subtask_schedule_start_without_end", "A range needs both a start and an end.");
   const start = resolveEndpoint(input.start, "start");
   if (!start.ok) return start;
@@ -201,7 +161,7 @@ export function normalizeChecklistSchedule(input: InitialChecklistScheduleInput,
   return {
     ok: true,
     value: {
-      ...empty(version), state: "range", dueDate: end.value.localCivil,
+      ...zeroStorage(version), state: "range", dueDate: end.value.localCivil,
       scheduleStartKind: start.value.kind, scheduleStartCivil: start.value.localCivil,
       scheduleStartAt: startResolution?.epochMs ?? null,
       scheduleStartUtcOffsetMinutes: startResolution?.utcOffsetMinutes ?? null,
@@ -216,35 +176,27 @@ export function normalizeChecklistSchedule(input: InitialChecklistScheduleInput,
   };
 }
 
-function endpointDto(kind: "date" | "timed", localCivil: string, resolution: "stored" | "derived_unambiguous", resolved: SydneyCivilResolution | null): ChecklistScheduleEndpointDto {
+export type ChecklistScheduleStorageErrorReason = "not_a_range" | "shape_mismatch" | "resolution_mismatch" | "ordering_invalid";
+
+/**
+ * Thrown when a persisted row is not a valid range (ADR 0011). #340 rejects every non-range
+ * write and #341 converted the legacy rows, so this is a defect, not a state: the read fails
+ * loud instead of hiding the Subtask. The message carries the reason only, never row content.
+ */
+export class ChecklistScheduleStorageError extends Error {
+  readonly reason: ChecklistScheduleStorageErrorReason;
+  constructor(reason: ChecklistScheduleStorageErrorReason) {
+    super(`Subtask schedule storage is not a valid range (${reason}).`);
+    this.name = "ChecklistScheduleStorageError";
+    this.reason = reason;
+  }
+}
+
+function endpointDto(kind: "date" | "timed", localCivil: string, resolved: SydneyCivilResolution | null): ChecklistScheduleEndpointDto {
   return {
     kind, localCivil, instant: resolved?.instant ?? null,
-    utcOffsetMinutes: resolved?.utcOffsetMinutes ?? null, fold: resolved?.fold ?? null, resolution,
+    utcOffsetMinutes: resolved?.utcOffsetMinutes ?? null, fold: resolved?.fold ?? null, resolution: "stored",
   };
-}
-
-function invalidDto(row: ChecklistScheduleStorage, reason: "shape_mismatch" | "resolution_mismatch" | "ordering_invalid"): ChecklistScheduleDto {
-  return { state: "invalid", version: Number.isSafeInteger(row.scheduleVersion) && row.scheduleVersion >= 0 ? row.scheduleVersion : 0, zone: null, start: null, end: null, due: row.dueDate, error: { code: "subtask_schedule_storage_invalid", reason } };
-}
-
-function allMetadataNull(row: ChecklistScheduleStorage): boolean {
-  return row.scheduleStartKind === null && row.scheduleStartCivil === null && row.scheduleStartAt === null
-    && row.scheduleStartUtcOffsetMinutes === null && row.scheduleStartFold === null && row.scheduleEndKind === null
-    && row.scheduleEndAt === null && row.scheduleEndUtcOffsetMinutes === null && row.scheduleEndFold === null
-    && row.scheduleZone === null;
-}
-
-function legacy(row: ChecklistScheduleStorage): ChecklistScheduleDto {
-  if (row.dueDate === null) return { state: "unscheduled", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: null, due: null };
-  if (isChecklistCalendarDate(row.dueDate)) return { state: "due_only", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: endpointDto("date", row.dueDate, "stored", null), due: row.dueDate };
-  if (!isChecklistCivilMinute(row.dueDate)) return { state: "legacy_unresolved", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: null, due: row.dueDate, error: { code: "subtask_schedule_legacy_unresolved", reason: "invalid_literal" } };
-  const resolved = resolveSydneyCivilMinute(row.dueDate);
-  if (!resolved.ok) {
-    if (resolved.code === "repeated_local_time") return { state: "legacy_unresolved", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: null, due: row.dueDate, error: { code: "subtask_schedule_legacy_unresolved", reason: "repeated_local_time", foldChoices: resolved.choices } };
-    if (resolved.code === "resolver_defect") return invalidDto(row, "resolution_mismatch");
-    return { state: "legacy_unresolved", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: null, due: row.dueDate, error: { code: "subtask_schedule_legacy_unresolved", reason: resolved.code === "nonexistent_local_time" ? "nonexistent_local_time" : "invalid_literal" } };
-  }
-  return { state: "due_only", version: 0, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: endpointDto("timed", row.dueDate, "derived_unambiguous", resolved.value), due: row.dueDate };
 }
 
 function storedResolution(localCivil: string, at: number, offset: number, fold: number): SydneyCivilResolution | null {
@@ -254,48 +206,26 @@ function storedResolution(localCivil: string, at: number, offset: number, fold: 
   return result.value;
 }
 
-/** Serialize every persisted row into exactly one of the five public states. */
+/** Serialize a persisted row as its range, or throw `ChecklistScheduleStorageError`. */
 export function serializeChecklistSchedule(row: ChecklistScheduleStorage): ChecklistScheduleDto {
-  if (!Number.isSafeInteger(row.scheduleVersion) || row.scheduleVersion < 0) return invalidDto(row, "shape_mismatch");
-  if (row.scheduleVersion === 0) return allMetadataNull(row) ? legacy(row) : invalidDto(row, "shape_mismatch");
-  const startPresent = row.scheduleStartKind !== null || row.scheduleStartCivil !== null || row.scheduleStartAt !== null || row.scheduleStartUtcOffsetMinutes !== null || row.scheduleStartFold !== null;
-  const endPresent = row.scheduleEndKind !== null || row.dueDate !== null || row.scheduleEndAt !== null || row.scheduleEndUtcOffsetMinutes !== null || row.scheduleEndFold !== null;
-  // Clearing a versioned schedule clears the zone too. A zone on an otherwise
-  // empty row is therefore metadata drift, while populated states require the
-  // one supported civil-time zone.
-  if (!startPresent && !endPresent) {
-    return row.scheduleZone === null
-      ? { state: "unscheduled", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: null, due: null }
-      : invalidDto(row, "shape_mismatch");
-  }
-  if (row.scheduleZone !== CHECKLIST_SCHEDULE_ZONE) return invalidDto(row, "shape_mismatch");
-  if (row.scheduleStartKind === null && row.scheduleStartCivil === null && row.scheduleStartAt === null && row.scheduleStartUtcOffsetMinutes === null && row.scheduleStartFold === null) {
-    if (row.scheduleEndKind === null || row.dueDate === null) return invalidDto(row, "shape_mismatch");
-    if (row.scheduleEndKind === "date") {
-      if (!isChecklistCalendarDate(row.dueDate) || row.scheduleEndAt !== null || row.scheduleEndUtcOffsetMinutes !== null || row.scheduleEndFold !== null) return invalidDto(row, "resolution_mismatch");
-      return { state: "due_only", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: endpointDto("date", row.dueDate, "stored", null), due: row.dueDate };
-    }
-    if (!isChecklistCivilMinute(row.dueDate) || row.scheduleEndAt === null || row.scheduleEndUtcOffsetMinutes === null || row.scheduleEndFold === null) return invalidDto(row, "resolution_mismatch");
-    const resolution = storedResolution(row.dueDate, row.scheduleEndAt, row.scheduleEndUtcOffsetMinutes, row.scheduleEndFold);
-    if (!resolution) return invalidDto(row, "resolution_mismatch");
-    return { state: "due_only", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: null, end: endpointDto("timed", row.dueDate, "stored", resolution), due: row.dueDate };
-  }
-  if (row.scheduleStartKind === null || row.scheduleStartCivil === null || row.scheduleEndKind === null || row.dueDate === null || row.scheduleStartKind !== row.scheduleEndKind) return invalidDto(row, "shape_mismatch");
+  if (!Number.isSafeInteger(row.scheduleVersion) || row.scheduleVersion < 1) throw new ChecklistScheduleStorageError("not_a_range");
+  if (row.scheduleZone !== CHECKLIST_SCHEDULE_ZONE) throw new ChecklistScheduleStorageError("not_a_range");
+  if (row.scheduleStartKind === null || row.scheduleStartCivil === null || row.scheduleEndKind === null || row.dueDate === null || row.scheduleStartKind !== row.scheduleEndKind) throw new ChecklistScheduleStorageError("not_a_range");
   if (row.scheduleStartKind === "date") {
     if (!isChecklistCalendarDate(row.scheduleStartCivil) || !isChecklistCalendarDate(row.dueDate)
       || row.scheduleStartAt !== null || row.scheduleStartUtcOffsetMinutes !== null || row.scheduleStartFold !== null
-      || row.scheduleEndAt !== null || row.scheduleEndUtcOffsetMinutes !== null || row.scheduleEndFold !== null) return invalidDto(row, "resolution_mismatch");
-    if (row.scheduleStartCivil > row.dueDate) return invalidDto(row, "ordering_invalid");
-    return { state: "range", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: endpointDto("date", row.scheduleStartCivil, "stored", null), end: endpointDto("date", row.dueDate, "stored", null), due: row.dueDate };
+      || row.scheduleEndAt !== null || row.scheduleEndUtcOffsetMinutes !== null || row.scheduleEndFold !== null) throw new ChecklistScheduleStorageError("resolution_mismatch");
+    if (row.scheduleStartCivil > row.dueDate) throw new ChecklistScheduleStorageError("ordering_invalid");
+    return { state: "range", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: endpointDto("date", row.scheduleStartCivil, null), end: endpointDto("date", row.dueDate, null), due: row.dueDate };
   }
   if (!isChecklistCivilMinute(row.scheduleStartCivil) || !isChecklistCivilMinute(row.dueDate)
     || row.scheduleStartAt === null || row.scheduleStartUtcOffsetMinutes === null || row.scheduleStartFold === null
-    || row.scheduleEndAt === null || row.scheduleEndUtcOffsetMinutes === null || row.scheduleEndFold === null) return invalidDto(row, "resolution_mismatch");
+    || row.scheduleEndAt === null || row.scheduleEndUtcOffsetMinutes === null || row.scheduleEndFold === null) throw new ChecklistScheduleStorageError("resolution_mismatch");
   const start = storedResolution(row.scheduleStartCivil, row.scheduleStartAt, row.scheduleStartUtcOffsetMinutes, row.scheduleStartFold);
   const end = storedResolution(row.dueDate, row.scheduleEndAt, row.scheduleEndUtcOffsetMinutes, row.scheduleEndFold);
-  if (!start || !end) return invalidDto(row, "resolution_mismatch");
-  if (start.epochMs >= end.epochMs) return invalidDto(row, "ordering_invalid");
-  return { state: "range", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: endpointDto("timed", row.scheduleStartCivil, "stored", start), end: endpointDto("timed", row.dueDate, "stored", end), due: row.dueDate };
+  if (!start || !end) throw new ChecklistScheduleStorageError("resolution_mismatch");
+  if (start.epochMs >= end.epochMs) throw new ChecklistScheduleStorageError("ordering_invalid");
+  return { state: "range", version: row.scheduleVersion, zone: CHECKLIST_SCHEDULE_ZONE, start: endpointDto("timed", row.scheduleStartCivil, start), end: endpointDto("timed", row.dueDate, end), due: row.dueDate };
 }
 
 export function checklistScheduleStorageEqual(a: ChecklistScheduleStorage, b: ChecklistScheduleStorage): boolean {

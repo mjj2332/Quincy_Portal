@@ -19,8 +19,8 @@ import type { CalendarEventDto } from "@quincy/shared";
 import {
   checklistMutationBody,
   deadlineEvent,
-  dueEvent,
-  dueSchedule,
+  oneDayEvent,
+  oneDaySchedule,
   PROJECT_ID,
   rangeEvent,
   rangeResponse,
@@ -81,12 +81,11 @@ function patchedSchedule(fetch: Awaited<ReturnType<typeof mount>>) {
 }
 
 describe("ProductionEventCalendar resize edges on the real vendor tree", () => {
-  it("draws grips on both edges of a checklist range, and none on a Deadline or a due-only item", async () => {
-    await mount([rangeEvent(timed("2026-08-12T10:00"), timed("2026-08-12T11:00")), deadlineEvent("2026-08-13T09:00"), dueEvent(timed("2026-08-14T10:00"), { id: "checklist:77777777-7777-4777-8777-777777777777" })]);
+  it("draws grips on both edges of a checklist range, and none on a Deadline", async () => {
+    await mount([rangeEvent(timed("2026-08-12T10:00"), timed("2026-08-12T11:00")), deadlineEvent("2026-08-13T09:00")]);
     const grips = (id: string) => [...chip(id).querySelectorAll("[data-testid^=event-calendar-resize-handle-]")].map((grip) => grip.getAttribute("data-testid"));
     expect(grips(CHECKLIST_ID)).toEqual(["event-calendar-resize-handle-start", "event-calendar-resize-handle-end"]);
     expect(grips(DEADLINE_ID)).toEqual([]);
-    expect(grips("checklist:77777777-7777-4777-8777-777777777777")).toEqual([]);
   });
 
   it("START edge (keyboard): PATCHes the start only", async () => {
@@ -114,13 +113,5 @@ describe("ProductionEventCalendar resize edges on the real vendor tree", () => {
     await adjust(DEADLINE_ID, ["s", "e", "ArrowDown"]);
     expect(document.querySelector('[data-testid="gantt-deadline-confirm"]')?.textContent).toContain("Move Deadline");
     expect(fetch.puts()).toHaveLength(0);
-  });
-
-  it("a due-only item refuses S / E: the session stays a move of its due time", async () => {
-    const event = dueEvent(timed("2026-08-12T10:00"));
-    const fetch = await mount([event], dueSchedule(timed("2026-08-12T10:15"), 3));
-    await adjust(CHECKLIST_ID, ["s", "e", "ArrowDown"]);
-    expect(fetch.patches()).toHaveLength(1);
-    expect(patchedSchedule(fetch)).toEqual({ state: "due_only", end: { kind: "timed", localCivil: "2026-08-12T10:15" } });
   });
 });

@@ -73,8 +73,8 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     done: false,
     position: taskSeq,
     assignee: null,
-    schedule: unscheduledSchedule(),
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+    schedule: oneDayRange("2026-03-05"),
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     ...overrides,
   };
 }
@@ -87,40 +87,13 @@ function timedEndpoint(localCivil: string, instant: string, utcOffsetMinutes: nu
   return { kind: "timed", localCivil, instant, utcOffsetMinutes, fold, resolution: "stored" };
 }
 
-function unscheduledSchedule(): ChecklistScheduleDto {
-  return { state: "unscheduled", version: 1, zone: "Australia/Sydney", start: null, end: null, due: null };
-}
-
-function dueOnlySchedule(end: ChecklistScheduleEndpointDto): ChecklistScheduleDto {
-  return { state: "due_only", version: 1, zone: "Australia/Sydney", start: null, end, due: end.instant ?? end.localCivil };
+/** A one-day date range: the shape every former due-only Subtask takes (ADR 0011). */
+function oneDayRange(civil: string): ChecklistScheduleDto {
+  return rangeSchedule(dateEndpoint(civil), dateEndpoint(civil));
 }
 
 function rangeSchedule(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto): ChecklistScheduleDto {
   return { state: "range", version: 1, zone: "Australia/Sydney", start, end, due: end.instant ?? end.localCivil };
-}
-
-function legacyUnresolvedSchedule(): ChecklistScheduleDto {
-  return {
-    state: "legacy_unresolved",
-    version: 0,
-    zone: "Australia/Sydney",
-    start: null,
-    end: null,
-    due: "2026-04-05T02:30",
-    error: { code: "subtask_schedule_legacy_unresolved", reason: "repeated_local_time" },
-  };
-}
-
-function invalidSchedule(): ChecklistScheduleDto {
-  return {
-    state: "invalid",
-    version: 1,
-    zone: null,
-    start: null,
-    end: null,
-    due: null,
-    error: { code: "subtask_schedule_storage_invalid", reason: "shape_mismatch" },
-  };
 }
 
 const NOW = new Date("2026-06-15T00:00:00.000Z");
@@ -142,7 +115,7 @@ describe("readOnly invariant", () => {
     const project = makeProject({
       shootDateCivil: "2026-03-01",
       children: {
-        rows: [makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) })],
+        rows: [makeTask({ schedule: oneDayRange("2026-03-05") })],
         total: 1,
         returned: 1,
         truncated: false,
@@ -159,61 +132,28 @@ describe("readOnly invariant", () => {
 // Five schedule kinds
 // ---------------------------------------------------------------------------
 
-describe("schedule kind: unscheduled", () => {
-  it("produces a resource node, no event, and an 'unscheduled' attention entry", () => {
-    const task = makeTask({ schedule: unscheduledSchedule() });
-    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const taskResourceId = `task:${task.id}`;
-    expect(eventsFor(model, taskResourceId)).toEqual([]);
-    expect(attentionFor(model, taskResourceId)).toMatchObject({ kind: "task", reason: "unscheduled" });
-    expect(model.resources[0]?.children?.some((child) => child.id === taskResourceId)).toBe(true);
-  });
-});
-
-describe("schedule kind: legacy_unresolved", () => {
-  it("produces a resource node, no event, and a 'legacy_unresolved' attention entry", () => {
-    const task = makeTask({ schedule: legacyUnresolvedSchedule() });
-    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const taskResourceId = `task:${task.id}`;
-    expect(eventsFor(model, taskResourceId)).toEqual([]);
-    expect(attentionFor(model, taskResourceId)).toMatchObject({ kind: "task", reason: "legacy_unresolved" });
-  });
-});
-
-describe("schedule kind: invalid", () => {
-  it("produces a resource node, no event, and an 'invalid' attention entry", () => {
-    const task = makeTask({ schedule: invalidSchedule() });
-    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const taskResourceId = `task:${task.id}`;
-    expect(eventsFor(model, taskResourceId)).toEqual([]);
-    expect(attentionFor(model, taskResourceId)).toMatchObject({ kind: "task", reason: "invalid" });
-  });
-});
-
-describe("schedule kind: due_only", () => {
-  it("date endpoint produces a zero-length allDay event (gantt-bar.tsx renders start===end as a milestone)", () => {
-    const task = makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) });
+describe("schedule kind: one-day range", () => {
+  it("a one-day date range is a positive-width allDay bar: Sydney midnight to the next Sydney midnight", () => {
+    const task = makeTask({ schedule: oneDayRange("2026-03-05") });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
     expect(event).toBeDefined();
-    expect(event!.start.getTime()).toBe(event!.end.getTime());
     expect(event!.allDay).toBe(true);
+    expect(event!.start.toISOString()).toBe("2026-03-04T13:00:00.000Z");
+    expect(event!.end.toISOString()).toBe("2026-03-05T13:00:00.000Z");
+    expect(event!.end.getTime()).toBeGreaterThan(event!.start.getTime());
   });
 
-  it("timed endpoint produces a zero-length non-allDay event anchored on the stored instant", () => {
-    const instant = "2026-03-05T04:30:00.000Z";
-    const task = makeTask({ schedule: dueOnlySchedule(timedEndpoint("2026-03-05T15:30", instant, 660, 0)) });
-    const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
-    const model = buildProductionGanttModel([project], { now: NOW });
-    const [event] = eventsFor(model, `task:${task.id}`);
-    expect(event).toBeDefined();
-    expect(event!.start.getTime()).toBe(new Date(instant).getTime());
-    expect(event!.end.getTime()).toBe(new Date(instant).getTime());
-    expect(event!.allDay).toBe(false);
+  it("a Subtask is never drawn as a milestone: no task event has zero length", () => {
+    const rows = [
+      makeTask({ schedule: oneDayRange("2026-03-05") }),
+      makeTask({ schedule: rangeSchedule(timedEndpoint("2026-03-05T09:00", "2026-03-04T22:00:00.000Z", 660, 0), timedEndpoint("2026-03-05T09:30", "2026-03-04T22:30:00.000Z", 660, 0)) }),
+    ];
+    const model = buildProductionGanttModel([makeProject({ children: { rows, total: 2, returned: 2, truncated: false, nextCursor: null } })], { now: NOW });
+    const taskEvents = model.events.filter((event) => event.resourceId?.startsWith("task:"));
+    expect(taskEvents).toHaveLength(2);
+    for (const event of taskEvents) expect(event.end.getTime()).toBeGreaterThan(event.start.getTime());
   });
 });
 
@@ -278,7 +218,7 @@ describe("pitfall 2: a stored timed endpoint always uses its own instant, never 
   const laterInstant = "2026-04-04T16:30:00.000Z";
 
   it("fold 0 (earlier occurrence) resolves to its own stored instant", () => {
-    const task = makeTask({ schedule: dueOnlySchedule(timedEndpoint(repeatedLocalCivil, earlierInstant, 660, 0)) });
+    const task = makeTask({ schedule: rangeSchedule(timedEndpoint(repeatedLocalCivil, earlierInstant, 660, 0), timedEndpoint("2026-04-05T03:30", "2026-04-04T17:30:00.000Z", 600, 0)) });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
@@ -286,7 +226,7 @@ describe("pitfall 2: a stored timed endpoint always uses its own instant, never 
   });
 
   it("fold 1 (later occurrence) resolves to ITS OWN stored instant, one hour after fold 0 — not dropped, not merged", () => {
-    const task = makeTask({ schedule: dueOnlySchedule(timedEndpoint(repeatedLocalCivil, laterInstant, 600, 1)) });
+    const task = makeTask({ schedule: rangeSchedule(timedEndpoint(repeatedLocalCivil, laterInstant, 600, 1), timedEndpoint("2026-04-05T03:30", "2026-04-04T17:30:00.000Z", 600, 0)) });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
@@ -385,7 +325,7 @@ describe("project bar edge cases", () => {
 
 describe("id stability across repeated input", () => {
   it("the same input produces the same resource/event ids on every call", () => {
-    const task = makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) });
+    const task = makeTask({ schedule: oneDayRange("2026-03-05") });
     const project = makeProject({
       shootDateCivil: "2026-03-01",
       children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null },
@@ -438,9 +378,9 @@ function attentionSignatures(model: ReturnType<typeof buildProductionGanttModel>
 describe("S5: merge-order independence", () => {
   it("a project's children produce the same model regardless of the order they arrived in", () => {
     const tasks = [
-      makeTask({ position: 3, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) }),
-      makeTask({ position: 1, schedule: dueOnlySchedule(dateEndpoint("2026-03-01")) }),
-      makeTask({ position: 2, schedule: unscheduledSchedule() }),
+      makeTask({ position: 3, schedule: oneDayRange("2026-03-05") }),
+      makeTask({ position: 1, schedule: oneDayRange("2026-03-01") }),
+      makeTask({ position: 2, schedule: oneDayRange("2026-03-05") }),
     ];
     const projectAllAtOnce = makeProject({
       shootDateCivil: "2026-01-15",
@@ -503,7 +443,7 @@ describe("S5: PRODUCTION_GANTT_DRAW_CAP", () => {
     const tippingProject = makeProject({
       shootDateCivil: "2026-01-01",
       children: {
-        rows: Array.from({ length: 5 }, () => makeTask({ schedule: unscheduledSchedule() })),
+        rows: Array.from({ length: 5 }, () => makeTask({ schedule: oneDayRange("2026-03-05") })),
         total: 5,
         returned: 5,
         truncated: false,
@@ -523,8 +463,8 @@ describe("S5: PRODUCTION_GANTT_DRAW_CAP", () => {
     // The project's pinned row would make 2001 — without the exemption the whole project (and the
     // new bar) would drop out; with it, inclusion is decided on the real rows alone.
     const bulk = makeChildlessProjects(PRODUCTION_GANTT_DRAW_CAP - 2);
-    const real = makeTask({ schedule: unscheduledSchedule() });
-    const pinned = makeTask({ schedule: unscheduledSchedule() });
+    const real = makeTask({ schedule: oneDayRange("2026-03-05") });
+    const pinned = makeTask({ schedule: oneDayRange("2026-03-05") });
     const edge = makeProject({
       shootDateCivil: "2026-01-01",
       children: { rows: [real, pinned], total: 2, returned: 2, truncated: false, nextCursor: null },
@@ -542,8 +482,8 @@ describe("S5: PRODUCTION_GANTT_DRAW_CAP", () => {
 
   it("#344: an exempt row does not free budget for a project that would not fit on its real rows", () => {
     const bulk = makeChildlessProjects(PRODUCTION_GANTT_DRAW_CAP - 1);
-    const pinned = makeTask({ schedule: unscheduledSchedule() });
-    const real = makeTask({ schedule: unscheduledSchedule() });
+    const pinned = makeTask({ schedule: oneDayRange("2026-03-05") });
+    const real = makeTask({ schedule: oneDayRange("2026-03-05") });
     const over = makeProject({
       shootDateCivil: "2026-01-01",
       children: { rows: [real, pinned], total: 2, returned: 2, truncated: false, nextCursor: null },
@@ -589,7 +529,7 @@ describe("fix-220-sol1 #3: includedProjectIds", () => {
 
 describe("fix-220-sol1 #4: progress mapping", () => {
   it("a done task's event carries progress: 100", () => {
-    const task = makeTask({ done: true, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) });
+    const task = makeTask({ done: true, schedule: oneDayRange("2026-03-05") });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
@@ -597,7 +537,7 @@ describe("fix-220-sol1 #4: progress mapping", () => {
   });
 
   it("a not-done task's event carries no progress field at all", () => {
-    const task = makeTask({ done: false, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) });
+    const task = makeTask({ done: false, schedule: oneDayRange("2026-03-05") });
     const project = makeProject({ children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null } });
     const model = buildProductionGanttModel([project], { now: NOW });
     const [event] = eventsFor(model, `task:${task.id}`);
@@ -672,7 +612,7 @@ describe("interactive option (#221)", () => {
   }
 
   it("interactive:false (and omitted) adds no interaction keys at all", () => {
-    const task = makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-06-10")) });
+    const task = makeTask({ schedule: oneDayRange("2026-06-10") });
     for (const event of [taskEvent(task), taskEvent(task, false)]) {
       expect(event.readOnly).toBe(true);
       expect(Object.keys(event)).not.toContain("draggable");
@@ -681,16 +621,18 @@ describe("interactive option (#221)", () => {
     }
   });
 
-  it("due_only task: draggable per canDrag, never resizable", () => {
-    const dragging = taskEvent(makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-06-10")) }), true);
-    expect([dragging.readOnly, dragging.draggable, dragging.resizable]).toEqual([false, true, false]);
-    const locked = taskEvent(makeTask({ schedule: dueOnlySchedule(dateEndpoint("2026-06-10")), permissions: { canDrag: false, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } }), true);
+  it("one-day range task: draggable per canDrag, resizable per canResize (a positive-width bar with both grips)", () => {
+    const dragging = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10") }), true);
+    expect([dragging.readOnly, dragging.draggable, dragging.resizable]).toEqual([false, true, true]);
+    const resizeOnly = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10"), permissions: { canDrag: false, canResize: true, canOpenScheduleEditor: true } }), true);
+    expect([resizeOnly.readOnly, resizeOnly.draggable, resizeOnly.resizable]).toEqual([false, false, true]);
+    const locked = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10"), permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true } }), true);
     expect([locked.readOnly, locked.draggable, locked.resizable]).toEqual([true, false, false]);
   });
 
   it("range task: draggable per canDrag, resizable per canResize, readOnly only when neither", () => {
     const schedule = rangeSchedule(dateEndpoint("2026-06-10"), dateEndpoint("2026-06-12"));
-    const perms = (canDrag: boolean, canResize: boolean) => ({ canDrag, canResize, canOpenScheduleEditor: true, canScheduleRange: true });
+    const perms = (canDrag: boolean, canResize: boolean) => ({ canDrag, canResize, canOpenScheduleEditor: true });
     const resizeOnly = taskEvent(makeTask({ schedule, permissions: perms(false, true) }), true);
     expect([resizeOnly.readOnly, resizeOnly.draggable, resizeOnly.resizable]).toEqual([false, false, true]);
     const neither = taskEvent(makeTask({ schedule, permissions: perms(false, false) }), true);
@@ -737,7 +679,7 @@ describe("#257: stage pattern class", () => {
     const projectId = `11111111-1111-4111-8111-${stageKey === "edited_review" ? "000000000257" : "000000000258"}`;
     const rows = [
       makeTask({ projectId, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-04")) }),
-      makeTask({ projectId, schedule: dueOnlySchedule(dateEndpoint("2026-03-05")) }),
+      makeTask({ projectId, schedule: oneDayRange("2026-03-05") }),
     ];
     return makeProject({
       id: projectId,
@@ -762,8 +704,8 @@ describe("#257: stage pattern class", () => {
   });
 
   it("the hatch sheds itself on completed and zero-length (diamond) bars", () => {
-    // The due_only child above is a milestone; without the opt-out the stripes
-    // would paint the transparent shell behind its diamond.
+    // A project whose Deadline precedes its start draws as a milestone diamond; without the opt-out
+    // the stripes would paint the transparent shell behind it.
     expect(STAGE_HATCH_CLASS.split(" ")).toEqual(
       expect.arrayContaining(["data-completed:bg-none", "data-milestone:bg-none"]),
     );

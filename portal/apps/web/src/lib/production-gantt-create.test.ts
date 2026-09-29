@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import { PRODUCTION_GANTT_DRAW_CAP, type GanttProjectRowDto } from "@quincy/shared";
 import { buildPinnedGanttModel, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, withPinnedCreatedRows } from "./production-gantt-create";
 
-const schedule = { state: "unscheduled", version: 0, zone: "Australia/Sydney", start: null, end: null, due: null } as never;
+const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
+// The server applies the Project default range on a title-only create (#339): every Subtask is a range (ADR 0011).
+const schedule = { state: "range", version: 1, zone: "Australia/Sydney", start: dateEndpoint("2026-08-01"), end: dateEndpoint("2026-08-02"), due: "2026-08-02" } as never;
 const created = { id: "t1", title: "New", done: false, position: 9, schedule };
 
 function project(id: string, ids: string[], truncated = false): GanttProjectRowDto {
@@ -17,7 +19,7 @@ function project(id: string, ids: string[], truncated = false): GanttProjectRowD
 describe("production-gantt-create (#344)", () => {
   it("builds an unassigned, read-only child row", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(pin.row).toMatchObject({ id: "t1", projectId: "p1", title: "New", assignee: null, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false } });
+    expect(pin.row).toMatchObject({ id: "t1", projectId: "p1", title: "New", assignee: null, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false } });
     expect(pin.hiddenAtStamp).toBeNull();
   });
 
@@ -228,7 +230,7 @@ function ganttProject(id: string, ids: string[]): GanttProjectRowDto {
     delivered: false,
     permissions: { canEditDeadline: false, canEditChildren: true },
     children: {
-      rows: ids.map((rowId, index) => ({ id: rowId, projectId: id, title: rowId, done: false, position: index, assignee: null, schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false } })),
+      rows: ids.map((rowId, index) => ({ id: rowId, projectId: id, title: rowId, done: false, position: index, assignee: null, schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false } })),
       total: ids.length, returned: ids.length, truncated: false, nextCursor: null,
     },
   } as unknown as GanttProjectRowDto;

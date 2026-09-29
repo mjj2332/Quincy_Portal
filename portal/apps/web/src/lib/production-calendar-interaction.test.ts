@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChecklistCalendarEventDto, ChecklistCalendarUnscheduledEntryDto } from "@quincy/shared";
+import type { ChecklistCalendarEventDto } from "@quincy/shared";
 import { ApiError } from "./api";
 import {
   applyOptimisticOverlay,
@@ -36,46 +36,6 @@ describe("Production Calendar interaction model", () => {
     expect(snapshot).toMatchObject({ principalId: "principal", authorizationEpoch: 4, capturedNow: 123, event: { project: { checklist: { completed: 1 } } }, filters: { layers: ["project", "checklist"] } });
   });
 
-  it("deep-clones checklist schedule errors in an interaction snapshot", () => {
-    const project = { id: "project", street: "Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false };
-    const legacy: ChecklistCalendarUnscheduledEntryDto = {
-      id: "checklist:legacy",
-      kind: "checklist",
-      title: "Legacy checklist",
-      project,
-      assignee: null,
-      reason: "schedule_needs_attention",
-      attentionReason: "legacy_unresolved",
-      schedule: {
-        state: "legacy_unresolved",
-        version: 0,
-        zone: "Australia/Sydney",
-        start: null,
-        end: null,
-        due: "2026-04-05T02:30",
-        error: { code: "subtask_schedule_legacy_unresolved", reason: "repeated_local_time", foldChoices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }] },
-      },
-      permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
-    };
-    const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
-    const snapshot = beginCalendarInteraction({ event: legacy, filters, principalId: "principal", authorizationEpoch: 4, focus: { eventId: legacy.id, control: "event" }, capturedNow: 123 });
-
-    legacy.schedule.error.reason = "invalid_literal";
-    legacy.schedule.error.foldChoices![0]!.disambiguation = "later";
-    expect(snapshot.event.schedule).toMatchObject({ error: { reason: "repeated_local_time", foldChoices: [{ disambiguation: "earlier" }] } });
-
-    const invalid: ChecklistCalendarUnscheduledEntryDto = {
-      ...legacy,
-      id: "checklist:invalid",
-      attentionReason: "invalid",
-      schedule: { state: "invalid", version: 3, zone: null, start: null, end: null, due: null, error: { code: "subtask_schedule_storage_invalid", reason: "shape_mismatch" } },
-      permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false },
-    };
-    const invalidSnapshot = beginCalendarInteraction({ event: invalid, filters, principalId: "principal", authorizationEpoch: 4, focus: { eventId: invalid.id, control: "event" }, capturedNow: 123 });
-    invalid.schedule.error.reason = "ordering_invalid";
-    expect(invalidSnapshot.event.schedule).toMatchObject({ error: { reason: "shape_mismatch" } });
-  });
-
   it("deep-clones a valid range checklist schedule's endpoints and assignee", () => {
     const project = { id: "project", street: "Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 2 }, delivered: false };
     const range: ChecklistCalendarEventDto = {
@@ -91,7 +51,7 @@ describe("Production Calendar interaction model", () => {
         start: { kind: "date", localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
         end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
       },
-      permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+      permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     };
     const filters = { layers: ["checklist"] as ["checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false };
     const snapshot = beginCalendarInteraction({ event: range, filters, principalId: "principal", authorizationEpoch: 1, focus: { eventId: range.id, control: "event" }, capturedNow: 1 });
@@ -208,9 +168,9 @@ describe("Production Calendar interaction model", () => {
     expect(rollbackToBaseline(events as never)).toEqual(events);
   });
 
-  it("adds an unscheduled synthetic event until the authoritative settle", () => {
+  it("adds the placed Project Deadline as a synthetic event until the authoritative settle", () => {
     const baseline = [{ id: "checklist:scheduled", kind: "checklist" as const, timing: { allDay: true as const, start: "2026-08-12", end: null }, title: "Existing" }];
-    const synthetic = { id: "checklist:unscheduled", kind: "checklist" as const, timing: { allDay: true as const, start: "2026-08-20", end: null }, title: "Moved" };
+    const synthetic = { id: "project-deadline:placed", kind: "project_deadline" as const, timing: { allDay: false as const, start: "2026-08-20T00:00:00.000Z", end: null }, title: "Placed" };
     expect(applyOptimisticOverlay(baseline as never, { kind: "reschedule-unscheduled", entryId: synthetic.id, timing: synthetic.timing, asEvent: synthetic as never })).toEqual([...baseline, synthetic]);
   });
 });
@@ -221,19 +181,19 @@ describe("checklist calendar failure classification", () => {
   it.each([
     ["subtask_schedule_version_conflict", { refetch: true, retainDraft: false }],
     ["subtask_item_conflict", { refetch: true, retainDraft: false }],
-    ["subtask_schedule_storage_invalid", { refetch: false, needsAttention: true }],
     ["subtask_schedule_reload_required", { refetch: true, mappingDefect: true }],
     ["subtask_schedule_nonexistent_local_time", { refetch: false }],
     ["subtask_schedule_repeated_local_time", { refetch: false, askFold: true }],
     ["subtask_schedule_invalid_order", { refetch: false }],
     ["subtask_schedule_mixed_endpoint_kinds", { refetch: false }],
     ["subtask_schedule_missing_endpoint", { refetch: false }],
+    ["subtask_schedule_not_a_range", { refetch: false }],
     ["subtask_schedule_start_without_end", { refetch: false }],
     ["subtask_schedule_invalid_local_time", { refetch: false }],
     ["subtask_schedule_invalid_version", { refetch: false }],
     ["subtask_schedule_resolver_defect", { refetch: false }],
   ] as const)("classifies %s without retry", (code, expected) => {
-    const status = code === "subtask_schedule_storage_invalid" ? 422 : code === "subtask_schedule_version_conflict" || code === "subtask_item_conflict" ? 409 : 400;
+    const status = code === "subtask_schedule_version_conflict" || code === "subtask_item_conflict" ? 409 : 400;
     const result = classifyChecklistFailure(new ApiError("failure", status, { code }), { eventId: checklistEventId });
     expect(result).toMatchObject({ code, retry: false, ...expected });
   });

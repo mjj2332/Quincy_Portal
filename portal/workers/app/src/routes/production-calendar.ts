@@ -6,7 +6,6 @@ import {
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
   PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS,
   PRODUCTION_CALENDAR_MAX_STAGE_KEYS,
-  PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND,
   ROLE_LABELS,
   STAGE_PRESENTATION_KEYS,
   calendarChecklistEntityId,
@@ -18,29 +17,28 @@ import {
   productionCalendarRangeQuerySchema,
   resolveSydneyCivilMinute,
   roleHasCapability,
-  serializeChecklistSchedule,
   shiftSydneyCalendarDate,
   stageTransportKeyForRole,
   type CalendarEventDto,
   type CalendarPerson,
-  type CalendarUnscheduledEntryDto,
+  type ChecklistScheduleDto,
   type ProductionCalendarProjectBounds,
   type ProductionCalendarRangeQuery,
   type ProductionCalendarRangeResponse,
   type Role,
   type StageKey,
-  type UnscheduledChecklistScheduleDto,
 } from "@quincy/shared";
 import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
 import { authorizedProjectsBaseCte, parseReminderOffsets } from "../lib/production-scope-sql";
+import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import type { AppEnv } from "../env";
 
 type CalendarRole = AppEnv["Variables"]["user"]["role"];
 
 type CalendarSqlRow = {
-  row_kind: "project" | "checklist_candidate" | "unscheduled_project" | "density";
+  row_kind: "project" | "checklist_candidate" | "density";
   scheduled_total: number | null;
   unscheduled_rank: number | null;
   unscheduled_matched: number | null;
@@ -297,48 +295,21 @@ candidate_subtasks_raw AS (
     COALESCE(cc.completed, 0) AS checklist_completed, COALESCE(cc.total, 0) AS checklist_total,
     vp.can_collaborate, vp.agency_display_name, vp.agent_display_name,
     vp.deadline_at, vp.deadline_local_civil, vp.deadline_version, vp.deadline_reminder_offsets_json,
-    CASE WHEN
-      (s.schedule_version = 0 AND s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL
-        AND s.schedule_start_at IS NULL AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
-        AND s.schedule_end_kind IS NULL AND s.schedule_end_at IS NULL AND s.schedule_end_utc_offset_minutes IS NULL
-        AND s.schedule_end_fold IS NULL AND s.schedule_zone IS NULL
-        AND (s.due_date IS NULL OR length(s.due_date) = 10 OR length(s.due_date) = 16))
-      OR (s.schedule_version > 0 AND (
-        (s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL AND s.schedule_start_at IS NULL
-          AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
+    -- ADR 0011: a Subtask is a range. Only the two range shapes are coarse-valid; any other row
+    -- (legacy, due-only, unscheduled, malformed) stays visible to the handler, which fails loud on it
+    -- rather than letting SQL hide a Subtask.
+    CASE WHEN s.schedule_version > 0 AND s.schedule_zone = 'Australia/Sydney' AND (
+        (s.schedule_start_kind = 'date' AND length(s.schedule_start_civil) = 10
           AND s.schedule_end_kind = 'date' AND length(s.due_date) = 10
-          AND s.schedule_zone = 'Australia/Sydney' AND s.schedule_end_at IS NULL
-          AND s.schedule_end_utc_offset_minutes IS NULL AND s.schedule_end_fold IS NULL)
-        OR (s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL AND s.schedule_start_at IS NULL
-          AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
-          AND s.schedule_end_kind = 'timed' AND length(s.due_date) = 16
-          AND s.schedule_zone = 'Australia/Sydney' AND s.schedule_end_at IS NOT NULL
-          AND s.schedule_end_utc_offset_minutes IS NOT NULL AND s.schedule_end_fold IS NOT NULL)
-        OR (s.schedule_start_kind = 'date' AND length(s.schedule_start_civil) = 10
-          AND s.schedule_end_kind = 'date' AND length(s.due_date) = 10
-          AND s.schedule_zone = 'Australia/Sydney' AND s.schedule_start_at IS NULL
+          AND s.schedule_start_at IS NULL
           AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
           AND s.schedule_end_at IS NULL AND s.schedule_end_utc_offset_minutes IS NULL AND s.schedule_end_fold IS NULL)
         OR (s.schedule_start_kind = 'timed' AND length(s.schedule_start_civil) = 16
           AND s.schedule_end_kind = 'timed' AND length(s.due_date) = 16
-          AND s.schedule_zone = 'Australia/Sydney' AND s.schedule_start_at IS NOT NULL
+          AND s.schedule_start_at IS NOT NULL
           AND s.schedule_start_utc_offset_minutes IS NOT NULL AND s.schedule_start_fold IS NOT NULL
           AND s.schedule_end_at IS NOT NULL AND s.schedule_end_utc_offset_minutes IS NOT NULL AND s.schedule_end_fold IS NOT NULL)
-        OR (s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL AND s.schedule_start_at IS NULL
-          AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
-          AND s.schedule_end_kind IS NULL AND s.due_date IS NULL AND s.schedule_end_at IS NULL
-          AND s.schedule_end_utc_offset_minutes IS NULL AND s.schedule_end_fold IS NULL AND s.schedule_zone IS NULL)
-      )) THEN 1 ELSE 0 END AS coarse_shape,
-    CASE WHEN
-      (s.schedule_version = 0 AND s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL
-        AND s.schedule_start_at IS NULL AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
-        AND s.schedule_end_kind IS NULL AND s.schedule_end_at IS NULL AND s.schedule_end_utc_offset_minutes IS NULL
-        AND s.schedule_end_fold IS NULL AND s.schedule_zone IS NULL AND s.due_date IS NULL)
-      OR (s.schedule_version > 0 AND s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL
-        AND s.schedule_start_at IS NULL AND s.schedule_start_utc_offset_minutes IS NULL AND s.schedule_start_fold IS NULL
-        AND s.schedule_end_kind IS NULL AND s.due_date IS NULL AND s.schedule_end_at IS NULL
-        AND s.schedule_end_utc_offset_minutes IS NULL AND s.schedule_end_fold IS NULL AND s.schedule_zone IS NULL)
-      THEN 1 ELSE 0 END AS coarse_unscheduled
+      ) THEN 1 ELSE 0 END AS coarse_shape
   FROM authorized_projects_base vp
   INNER JOIN project_subtasks s ON s.project_id = vp.project_id
   LEFT JOIN user assignee ON assignee.id = s.assignee_id
@@ -346,19 +317,14 @@ candidate_subtasks_raw AS (
   CROSS JOIN request r
   WHERE r.checklist_layer = 1
     AND (r.show_completed = 1 OR s.done = 0)
-    -- overdue_only constrains scheduled checklist EVENTS only (matching the project
-    -- branch, which lets a null-deadline project through). A checklist row with no
-    -- schedule data at all is a plain unscheduled entry — it has no due date to be
-    -- "overdue" against and must stay visible in the Unscheduled panel regardless.
+    -- overdue_only constrains Subtask ranges by their end (a Project with no Deadline still passes
+    -- the project branch).
     AND (r.overdue_only = 0
-      OR (s.schedule_start_kind IS NULL AND s.schedule_start_civil IS NULL AND s.schedule_start_at IS NULL
-        AND s.schedule_end_kind IS NULL AND s.schedule_end_at IS NULL AND s.due_date IS NULL)
       OR (s.done = 0 AND (
         (s.schedule_end_kind = 'timed' AND s.schedule_end_at < r.now)
         OR (s.schedule_end_kind = 'date' AND s.due_date < r.today_date)
         OR (s.schedule_start_kind = 'date' AND s.due_date < r.today_date)
         OR (s.schedule_start_kind = 'timed' AND s.schedule_end_at < r.now)
-        OR (s.schedule_version = 0 AND s.schedule_start_kind IS NULL AND s.schedule_end_kind IS NULL AND instr(COALESCE(s.due_date, ''), 'T') > 0)
       )))
     AND ${checklistCandidateSearch}
 ),
@@ -373,13 +339,7 @@ range_candidate_subtasks AS (
   SELECT c.*
   FROM candidate_subtasks_unfiltered c
   CROSS JOIN request r
-  WHERE c.coarse_shape = 0 OR c.coarse_unscheduled = 1
-    OR (c.schedule_version = 0 AND length(c.due_date) = 10
-      AND c.due_date >= r.start_date AND c.due_date < r.end_date)
-    OR (c.schedule_version = 0 AND length(c.due_date) = 16
-      AND substr(c.due_date, 1, 10) >= r.start_date AND substr(c.due_date, 1, 10) < r.end_date)
-    OR (c.schedule_start_kind IS NULL AND c.schedule_end_kind = 'date' AND c.due_date >= r.start_date AND c.due_date < r.end_date)
-    OR (c.schedule_start_kind IS NULL AND c.schedule_end_kind = 'timed' AND c.schedule_end_at >= r.start_instant AND c.schedule_end_at < r.end_instant)
+  WHERE c.coarse_shape = 0
     OR (c.schedule_start_kind = 'date' AND c.schedule_end_kind = 'date' AND c.schedule_start_civil < r.end_date AND c.due_date >= r.start_date)
     OR (c.schedule_start_kind = 'timed' AND c.schedule_start_at < r.end_instant AND c.schedule_end_at > r.start_instant)
 ),
@@ -432,15 +392,12 @@ checklist_filtered_candidates AS (
 project_event_candidates AS (
   SELECT * FROM project_filtered_candidates WHERE deadline_at IS NOT NULL
 ),
-project_unscheduled_candidates AS (
-  SELECT * FROM project_filtered_candidates WHERE deadline_at IS NULL
-),
--- Candidate load = every row statement 1 emits: project events + project unscheduled +
--- ALL checklist candidates (in-range, out-of-range, and repair rows alike, because B1 moved
+-- Candidate load = every row statement 1 emits: project events + ALL checklist candidates (in-range and out-of-range alike, because B1 moved
 -- authoritative classification into the handler and statement 1 must carry every visible
 -- checklist row). Guarding the whole set — not just the in-range scheduled subset — bounds
 -- the number of rows the handler will deserialize and classify. Scheduled events are a subset
--- of this count, so the same ceiling still refuses any range that would produce > MAX events.
+-- of this count, so the same ceiling still refuses any range that would produce > MAX events. Projects are counted from
+-- project_filtered_candidates (including ones with no Deadline, which emit no row): a conservative overcount.
 density_candidates AS (
   SELECT project_id AS candidate_id FROM project_filtered_candidates
   UNION ALL
@@ -481,15 +438,6 @@ candidate_rows AS (
     c.schedule_zone, c.schedule_version
   FROM checklist_filtered_candidates c
   CROSS JOIN density d
-  UNION ALL
-  SELECT 'unscheduled_project', d.scheduled_total, NULL, NULL,
-    p.project_id, p.street, p.stage_key, p.delivered, COALESCE(cc.completed, 0), COALESCE(cc.total, 0),
-    p.can_collaborate, p.agency_display_name, p.agent_display_name, p.deadline_at, p.deadline_local_civil,
-    p.deadline_version, p.deadline_reminder_offsets_json, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-  FROM project_unscheduled_candidates p
-  LEFT JOIN checklist_counts cc ON cc.project_id = p.project_id
-  CROSS JOIN density d
 )
 SELECT * FROM candidate_rows
 WHERE scheduled_total <= ${PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS}
@@ -522,7 +470,7 @@ INNER JOIN projects bounds_project ON bounds_project.id = bp.project_id`;
 }
 
 function projectBoundsFor(response: ProductionCalendarRangeResponse, rows: CalendarBoundsRow[]): ProductionCalendarProjectBounds[] {
-  const referenced = new Set([...response.events, ...response.unscheduled].map((item) => item.project.id));
+  const referenced = new Set(response.events.map((item) => item.project.id));
   const byId = new Map<string, ProductionCalendarProjectBounds>();
   for (const row of rows) {
     if (!referenced.has(row.project_id) || byId.has(row.project_id)) continue;
@@ -633,14 +581,9 @@ function scheduleStorage(row: CalendarSqlRow) {
   } as const;
 }
 
-function scheduleTiming(schedule: ReturnType<typeof serializeChecklistSchedule>): { allDay: true; start: string; end: string | null } | { allDay: false; start: string; end: string | null } | null {
-  if (schedule.state === "due_only") {
-    if (!schedule.end) return null;
-    return schedule.end.kind === "date"
-      ? { allDay: true, start: schedule.end.localCivil, end: null }
-      : schedule.end.instant ? { allDay: false, start: schedule.end.instant, end: null } : null;
-  }
-  if (schedule.state !== "range" || !schedule.start || !schedule.end) return null;
+type RangeTiming = { allDay: true; start: string; end: string } | { allDay: false; start: string; end: string };
+
+function scheduleTiming(schedule: ChecklistScheduleDto): RangeTiming | null {
   if (schedule.start.kind === "date" && schedule.end.kind === "date") {
     const exclusiveEnd = shiftSydneyCalendarDate(schedule.end.localCivil, 1);
     if (!exclusiveEnd.ok) return null;
@@ -651,23 +594,14 @@ function scheduleTiming(schedule: ReturnType<typeof serializeChecklistSchedule>)
     : null;
 }
 
-function checklistOverdue(schedule: ReturnType<typeof serializeChecklistSchedule>, done: boolean, now: number, todayDate: string): boolean {
+function checklistOverdue(schedule: ChecklistScheduleDto, done: boolean, now: number, todayDate: string): boolean {
   if (done) return false;
-  if (schedule.state !== "due_only" && schedule.state !== "range") return false;
   const endpoint = schedule.end;
-  if (!endpoint) return false;
   return endpoint.kind === "date" ? endpoint.localCivil < todayDate : endpoint.instant !== null && Date.parse(endpoint.instant) < now;
 }
 
-function scheduleIntersects(schedule: ReturnType<typeof serializeChecklistSchedule>, parsed: ParsedCalendarRequest): boolean {
+function scheduleIntersects(schedule: ChecklistScheduleDto, parsed: ParsedCalendarRequest): boolean {
   const { query, startInstant, endInstant } = parsed;
-  if (schedule.state === "due_only") {
-    if (!schedule.end) return false;
-    return schedule.end.kind === "date"
-      ? schedule.end.localCivil >= query.start && schedule.end.localCivil < query.end
-      : schedule.end.instant !== null && Date.parse(schedule.end.instant) >= startInstant && Date.parse(schedule.end.instant) < endInstant;
-  }
-  if (schedule.state !== "range" || !schedule.start || !schedule.end) return false;
   if (schedule.start.kind === "date" && schedule.end.kind === "date") return schedule.start.localCivil < query.end && schedule.end.localCivil >= query.start;
   return schedule.start.instant !== null && schedule.end.instant !== null && Date.parse(schedule.start.instant) < endInstant && Date.parse(schedule.end.instant) > startInstant;
 }
@@ -691,17 +625,14 @@ function projectDeadlineEvent(row: CalendarSqlRow, role: CalendarRole, parsed: P
 }
 
 function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedCalendarRequest): CalendarEventDto | null {
+  if (row.subtask_id === null || row.subtask_title === null) return null;
   const project = projectContext(row, role);
-  const schedule = serializeChecklistSchedule(scheduleStorage(row));
-  if (schedule.state !== "due_only" && schedule.state !== "range") return null;
+  // Throws (a 500) on storage that is not a valid range: see lib/subtask-schedule.ts.
+  const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorage(row));
   const timing = scheduleTiming(schedule);
-  if (!timing || !scheduleIntersects(schedule, parsed) || row.subtask_id === null || row.subtask_title === null) return null;
+  if (!timing || !scheduleIntersects(schedule, parsed)) return null;
   const collaboration = row.can_collaborate === 1;
   const done = Boolean(row.done);
-  const range = schedule.state === "range";
-  const canOpen = collaboration;
-  // canScheduleRange stays on the wire deliberately (strict schemas; removing it would break open tabs across a deploy); #342 removes it when schedules narrow to ranges only.
-  const canRange = canOpen;
   return {
     id: calendarChecklistEntityId(row.subtask_id),
     kind: "checklist",
@@ -711,38 +642,8 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
     timing,
     status: { overdue: checklistOverdue(schedule, done, parsed.now, parsed.todayDate), delivered: project.delivered, completed: done, sameAssigneeOverlap: false },
     schedule,
-    permissions: range
-      ? { canDrag: canRange, canResize: canRange, canOpenScheduleEditor: canOpen, canScheduleRange: canRange }
-      : { canDrag: canOpen, canResize: false, canOpenScheduleEditor: canOpen, canScheduleRange: canRange },
-  } as CalendarEventDto;
-}
-
-function unscheduledProject(row: CalendarSqlRow, role: CalendarRole): CalendarUnscheduledEntryDto {
-  const project = projectContext(row, role);
-  return {
-    id: `project-deadline:${project.id}`,
-    kind: "project_deadline",
-    reason: "unscheduled",
-    title: project.street,
-    project,
-    permissions: { canDrag: roleHasCapability(role, "editProject") && !project.delivered, canResize: false },
-    deadlineVersion: Number(row.deadline_version ?? 0),
-    reminderOffsetsMinutes: [],
+    permissions: { canDrag: collaboration, canResize: collaboration, canOpenScheduleEditor: collaboration },
   };
-}
-
-function unscheduledChecklist(row: CalendarSqlRow, role: CalendarRole): CalendarUnscheduledEntryDto | null {
-  if (row.subtask_id === null || row.subtask_title === null) return null;
-  const project = projectContext(row, role);
-  const schedule = serializeChecklistSchedule(scheduleStorage(row));
-  const collaboration = row.can_collaborate === 1;
-  // canScheduleRange stays on the wire deliberately (strict schemas; removing it would break open tabs across a deploy); #342 removes it when schedules narrow to ranges only.
-  const canRange = collaboration;
-  const base = { id: calendarChecklistEntityId(row.subtask_id), kind: "checklist" as const, title: row.subtask_title, project, assignee: person(row) };
-  if (schedule.state === "unscheduled") return { ...base, reason: "unscheduled", schedule: schedule as UnscheduledChecklistScheduleDto, permissions: { canDrag: canRange, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };
-  if (schedule.state === "legacy_unresolved") return { ...base, reason: "schedule_needs_attention", attentionReason: "legacy_unresolved", schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };
-  if (schedule.state === "invalid") return { ...base, reason: "schedule_needs_attention", attentionReason: "invalid", schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false } };
-  return null;
 }
 
 function eventStart(event: CalendarEventDto): string {
@@ -752,7 +653,7 @@ function eventStart(event: CalendarEventDto): string {
 function markOverlaps(events: CalendarEventDto[]): void {
   const byAssignee = new Map<string, Array<{ event: Extract<CalendarEventDto, { kind: "checklist" }>; start: number; end: number }>>();
   for (const event of events) {
-    if (event.kind !== "checklist" || event.status.completed || event.assignee === null || event.schedule.state !== "range" || event.timing.allDay || event.timing.end === null) continue;
+    if (event.kind !== "checklist" || event.status.completed || event.assignee === null || event.timing.allDay || event.timing.end === null) continue;
     const start = Date.parse(event.timing.start);
     const end = Date.parse(event.timing.end);
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
@@ -782,35 +683,16 @@ function facetPerson(row: CalendarFacetRow): CalendarPerson | null {
 
 function responseFromRows(role: CalendarRole, parsed: ParsedCalendarRequest, rows: CalendarSqlRow[], facets: CalendarFacetRow[]): ProductionCalendarRangeResponse {
   const events: CalendarEventDto[] = [];
-  const unscheduled: CalendarUnscheduledEntryDto[] = [];
   for (const row of rows) {
     if (row.row_kind === "project") events.push(projectDeadlineEvent(row, role, parsed));
     else if (row.row_kind === "checklist_candidate") {
       const event = checklistEvent(row, role, parsed);
       if (event) events.push(event);
-      else {
-        const entry = unscheduledChecklist(row, role);
-        if (entry) unscheduled.push(entry);
-      }
-    } else if (row.row_kind === "unscheduled_project") unscheduled.push(unscheduledProject(row, role));
+    }
   }
 
-  const projectMatched = unscheduled.filter((entry) => entry.kind === "project_deadline").length;
-  const checklistMatched = unscheduled.filter((entry) => entry.kind === "checklist").length;
   markOverlaps(events);
   events.sort((a, b) => eventStart(a).localeCompare(eventStart(b)) || a.id.localeCompare(b.id));
-  unscheduled.sort((a, b) => {
-    const aOverdue = a.kind === "checklist" && a.schedule.state !== "unscheduled" ? 0 : 1;
-    const bOverdue = b.kind === "checklist" && b.schedule.state !== "unscheduled" ? 0 : 1;
-    return aOverdue - bOverdue || a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
-  });
-  const returnedByKind = { project: 0, checklist: 0 };
-  const returnedUnscheduled = unscheduled.filter((entry) => {
-    const kind = entry.kind === "project_deadline" ? "project" : "checklist";
-    if (returnedByKind[kind] >= PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND) return false;
-    returnedByKind[kind] += 1;
-    return true;
-  });
 
   const projectFacetRows = facets.filter((row) => row.facet_kind === "project");
   const people = facets.map(facetPerson).filter((item): item is CalendarPerson => item !== null).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
@@ -826,15 +708,10 @@ function responseFromRows(role: CalendarRole, parsed: ParsedCalendarRequest, row
       appliedFilters: { ...parsed.query.filters, editorIds: parsed.query.filters.editorIds.filter((id) => peopleIds.has(id)) },
     },
     events,
-    unscheduled: returnedUnscheduled,
     filterFacets: {
       projects: [...new Map(projectFacetRows.filter((row) => row.project_id !== null && row.street !== null).map((row) => [row.project_id!, { id: row.project_id!, street: row.street! }])).values()].sort((a, b) => a.street.localeCompare(b.street) || a.id.localeCompare(b.id)),
       people,
       myTasksUserId: meta?.my_tasks_user_id ?? "00000000-0000-4000-8000-000000000000",
-      unscheduled: {
-        project: { matched: projectMatched, returned: returnedByKind.project, truncated: projectMatched > PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND },
-        checklist: { matched: checklistMatched, returned: returnedByKind.checklist, truncated: checklistMatched > PRODUCTION_CALENDAR_UNSCHEDULED_LIMIT_PER_KIND },
-      },
     },
   };
   return response;

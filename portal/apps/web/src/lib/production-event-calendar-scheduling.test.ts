@@ -4,20 +4,17 @@ import {
   mapChecklistMoveToCommand,
   mapChecklistStartResizeToCommand,
   mapProjectDeadlineMoveToCommand,
-  mapUnscheduledChecklistDropToCommand,
-  mapUnscheduledProjectDropToCommand,
   resolveSydneyCivilMinute,
   type CalendarEventDto,
 } from "@quincy/shared";
 import {
-  eventCalendarDropToProposal,
   eventCalendarUpdateToProposal,
   type EventCalendarSchedulingResult,
   type EventCalendarUpdateLike,
 } from "./production-event-calendar-scheduling";
 import { toProductionEventCalendarEvent } from "./production-event-calendar-adapter";
 import type { SchedulingProposal } from "./scheduling-policy";
-import { dated, deadlineEvent, dueEvent, instantOf, rangeEvent, timed, unscheduledChecklist, unscheduledProject } from "../testing/production-calendar-fixtures";
+import { dated, deadlineEvent, instantOf, rangeEvent, timed } from "../testing/production-calendar-fixtures";
 
 const at = (localCivil: string) => new Date(instantOf(localCivil));
 const HOUR = 3_600_000;
@@ -66,11 +63,9 @@ describe("event-calendar scheduling: refusals and no-ops", () => {
     expect(eventCalendarUpdateToProposal(dto, update(dto, { start: at("2026-08-26T10:00"), end: at("2026-08-26T12:00"), granularity: undefined }))).toMatchObject({ kind: "invalid" });
   });
 
-  it("a pointer resize of a Deadline or a due-only item is invalid", () => {
+  it("a pointer resize of a Deadline is invalid", () => {
     const deadline = deadlineEvent("2026-08-27T09:00");
     expect(eventCalendarUpdateToProposal(deadline, update(deadline, { source: "resize-end", end: at("2026-08-27T11:00") }))).toMatchObject({ kind: "invalid" });
-    const due = dueEvent(timed("2026-08-27T16:00"));
-    expect(eventCalendarUpdateToProposal(due, update(due, { source: "resize-start", start: at("2026-08-27T15:00") }))).toMatchObject({ kind: "invalid" });
   });
 
   it("an unmoved drop is a no-op, at either granularity", () => {
@@ -87,13 +82,10 @@ describe("event-calendar scheduling: refusals and no-ops", () => {
     expect(eventCalendarUpdateToProposal(dto, update(dto, { source: "keyboard", start: at("2026-08-26T08:00"), end: at("2026-08-26T13:00") }))).toMatchObject({ kind: "invalid" });
   });
 
-  it("keyboard: an END-only change on a Deadline or due-only item is a no-op (the end is synthetic)", () => {
+  it("keyboard: an END-only change on a Deadline is a no-op (the end is synthetic)", () => {
     const deadline = deadlineEvent("2026-08-27T09:00");
     const displayed = toProductionEventCalendarEvent(deadline)!;
     expect(eventCalendarUpdateToProposal(deadline, update(deadline, { source: "keyboard", end: new Date(displayed.end.getTime() + HOUR) }))).toEqual({ kind: "noop" });
-    const due = dueEvent(dated("2026-08-27"));
-    const dueDisplayed = toProductionEventCalendarEvent(due)!;
-    expect(eventCalendarUpdateToProposal(due, update(due, { source: "keyboard", granularity: "day", end: new Date(dueDisplayed.end.getTime() + DAY) }))).toEqual({ kind: "noop" });
   });
 });
 
@@ -181,7 +173,7 @@ describe("event-calendar scheduling: checklist ranges", () => {
   });
 });
 
-describe("event-calendar scheduling: Deadlines and due-only items", () => {
+describe("event-calendar scheduling: Deadlines", () => {
   it("a timed Deadline moved by day cells keeps its wall time through the shared mapper", () => {
     const event = deadlineEvent("2026-08-27T09:00");
     const p = proposal(eventCalendarUpdateToProposal(event, update(event, { granularity: "day", start: at("2026-08-29T09:00"), end: at("2026-08-29T09:30") })));
@@ -203,20 +195,12 @@ describe("event-calendar scheduling: Deadlines and due-only items", () => {
     expect(p).toMatchObject({ kind: "deadline", target: { subview: "week", targetCivilMinute: "2026-08-27T10:00" } });
   });
 
-  it("a dated due-only item moves by its display start (which IS the due date)", () => {
-    const due = dueEvent(dated("2026-08-27"));
-    const p = proposal(eventCalendarUpdateToProposal(due, update(due, { granularity: "day", start: at("2026-08-30T00:00"), end: at("2026-08-31T00:00") })));
+  it("a one-day dated range moves by its display start and stays a one-day range", () => {
+    const dto = rangeEvent(dated("2026-08-27"), dated("2026-08-27"));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { granularity: "day", start: at("2026-08-30T00:00"), end: at("2026-08-31T00:00") })));
     expect(p).toMatchObject({ kind: "move", target: { subview: "month", targetDate: "2026-08-30" } });
     const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toEqual({ state: "due_only", end: { kind: "date", localCivil: "2026-08-30" } });
-  });
-
-  it("a timed due-only item moved in the time grid", () => {
-    const due = dueEvent(timed("2026-08-27T16:00"));
-    const p = proposal(eventCalendarUpdateToProposal(due, update(due, { start: at("2026-08-28T09:45"), end: at("2026-08-28T10:15") })));
-    expectLegalSubview(p);
-    const command = checklistCommand(p);
-    expect(command.ok && command.value.schedule).toMatchObject({ state: "due_only", end: { kind: "timed", localCivil: "2026-08-28T09:45" } });
+    expect(command.ok && command.value.schedule).toMatchObject({ state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } });
   });
 });
 
@@ -272,39 +256,14 @@ describe("event-calendar scheduling: DST (both 2026 Sydney transitions)", () => 
   it("never derives fold disambiguation from the dropped instant (lesson #241): the second-pass 02:30 still asks", () => {
     const secondPass = resolveSydneyCivilMinute("2026-04-05T02:30", "later");
     if (!secondPass.ok) throw new Error("fixture");
-    const due = dueEvent(timed("2026-04-04T16:00"));
+    const dto = rangeEvent(timed("2026-04-04T16:00"), timed("2026-04-04T16:30"));
     const dropped = new Date(secondPass.value.instant);
-    const p = proposal(eventCalendarUpdateToProposal(due, update(due, { start: dropped, end: new Date(dropped.getTime() + 30 * 60_000) })));
+    const p = proposal(eventCalendarUpdateToProposal(dto, update(dto, { start: dropped, end: new Date(dropped.getTime() + 30 * 60_000) })));
     expect(p.target).toMatchObject({ subview: "week", targetCivilMinute: "2026-04-05T02:30" });
     expect("disambiguation" in p).toBe(false);
     const command = checklistCommand(p);
     expect(command.ok).toBe(false);
     if (command.ok) return;
     expect(command.error.choices?.length).toBe(2);
-  });
-});
-
-describe("event-calendar scheduling: external drops of unscheduled entries", () => {
-  it("a day-cell drop places a checklist entry by date (month)", () => {
-    const entry = unscheduledChecklist();
-    const p = proposal(eventCalendarDropToProposal(entry, { start: at("2026-08-27T00:00"), dayGranular: true }));
-    expect(p).toMatchObject({ kind: "place", entity: "checklist", target: { subview: "month", targetDate: "2026-08-27" } });
-    if (p.kind !== "place" || p.entity !== "checklist") throw new Error("unreachable");
-    const command = mapUnscheduledChecklistDropToCommand({ event: p.entry, target: p.target });
-    expect(command.ok && command.value.schedule).toEqual({ state: "due_only", end: { kind: "date", localCivil: "2026-08-27" } });
-  });
-
-  it("a time-column drop places a project deadline at the dropped minute (week)", () => {
-    const entry = unscheduledProject();
-    const p = proposal(eventCalendarDropToProposal(entry, { start: at("2026-08-27T15:00"), dayGranular: false }));
-    expect(p).toMatchObject({ kind: "place", entity: "project_deadline", target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T15:00" } });
-    expectLegalSubview(p);
-    if (p.kind !== "place" || p.entity !== "project_deadline") throw new Error("unreachable");
-    const command = mapUnscheduledProjectDropToCommand({ event: p.entry, target: p.target });
-    expect(command.ok && command.value.deadline?.localCivil).toBe("2026-08-27T15:00");
-  });
-
-  it("an attention entry cannot be placed", () => {
-    expect(eventCalendarDropToProposal(unscheduledChecklist({ reason: "schedule_needs_attention" }), { start: at("2026-08-27T00:00"), dayGranular: true })).toMatchObject({ kind: "invalid" });
   });
 });

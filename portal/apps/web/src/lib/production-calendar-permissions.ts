@@ -12,18 +12,15 @@ export type CalendarPermissionContext = {
   role: Role;
   interactionBlocked: boolean;
   settlePending: boolean;
-  checklistNeedsAttention: ReadonlySet<string>;
   deadlineMovementDisabled: boolean;
 };
 
 export function effectiveCalendarEventPermissions(event: CalendarEventDto, ctx: CalendarPermissionContext): CalendarEventDto {
   if (event.kind === "checklist") {
-    const attention = ctx.checklistNeedsAttention.has(event.id);
-    const interactionAllowed = ctx.subview !== "agenda" && !ctx.interactionBlocked && !ctx.settlePending && !attention;
-    const rangeAllowed = event.schedule.state !== "range" || event.permissions.canScheduleRange;
-    const canDrag = event.permissions.canDrag && interactionAllowed && rangeAllowed;
-    const canResize = event.permissions.canResize && interactionAllowed && event.permissions.canScheduleRange;
-    const canOpenScheduleEditor = event.permissions.canOpenScheduleEditor && !ctx.interactionBlocked && !ctx.settlePending && !attention;
+    const interactionAllowed = ctx.subview !== "agenda" && !ctx.interactionBlocked && !ctx.settlePending;
+    const canDrag = event.permissions.canDrag && interactionAllowed;
+    const canResize = event.permissions.canResize && interactionAllowed;
+    const canOpenScheduleEditor = event.permissions.canOpenScheduleEditor && !ctx.interactionBlocked && !ctx.settlePending;
     if (canDrag === event.permissions.canDrag && canResize === event.permissions.canResize && canOpenScheduleEditor === event.permissions.canOpenScheduleEditor) return event;
     return { ...event, permissions: { ...event.permissions, canDrag, canResize, canOpenScheduleEditor } } as CalendarEventDto;
   }

@@ -26,14 +26,10 @@ import {
   type CalendarManipulationTarget,
   type CalendarProjectContext,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
-  type DueOnlyChecklistScheduleDto,
   type GanttChecklistRowDto,
   type GanttProjectRowDto,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
-  type RangeChecklistScheduleDto,
-  type UnscheduledChecklistScheduleDto,
 } from "@quincy/shared";
 import type { CalendarOptimisticOverlay } from "./production-calendar-interaction";
 import {
@@ -46,7 +42,6 @@ import {
   beforeLowerBound,
   endsAfterDeadline,
   scheduleBoundsFrom,
-  sydneyCivilDate,
   sydneyCivilMinute,
   type ScheduleBounds,
 } from "./schedule-bounds";
@@ -108,28 +103,20 @@ function projectContext(project: GanttProjectRowDto): CalendarProjectContext {
 // ---------------------------------------------------------------------------
 
 export function ganttChecklistSource(project: GanttProjectRowDto, row: GanttChecklistRowDto): ChecklistSource | null {
-  const schedule = row.schedule;
-  const common = {
+  const timing = timingFromChecklistSchedule(row.schedule);
+  if (!timing) return null;
+  const { canDrag, canResize, canOpenScheduleEditor } = row.permissions;
+  return {
     id: calendarChecklistEntityId(row.id),
-    kind: "checklist" as const,
+    kind: "checklist",
     title: row.title,
     project: projectContext(project),
     assignee: row.assignee ? { ...row.assignee } : null,
+    timing,
+    status: { overdue: false, delivered: project.delivered, completed: row.done, sameAssigneeOverlap: false },
+    schedule: row.schedule,
+    permissions: { canDrag, canResize, canOpenScheduleEditor },
   };
-  const { canDrag, canResize, canOpenScheduleEditor, canScheduleRange } = row.permissions;
-
-  if (schedule.state === "unscheduled") {
-    return { ...common, reason: "unscheduled", schedule: schedule as UnscheduledChecklistScheduleDto, permissions: { canDrag, canResize: false, canOpenScheduleEditor, canScheduleRange } };
-  }
-  if (schedule.state !== "due_only" && schedule.state !== "range") return null;
-
-  const timing = timingFromChecklistSchedule(schedule);
-  if (!timing) return null;
-  const status = { overdue: false, delivered: project.delivered, completed: row.done, sameAssigneeOverlap: false };
-  if (schedule.state === "due_only") {
-    return { ...common, timing, status, schedule: schedule as DueOnlyChecklistScheduleDto, permissions: { canDrag, canResize: false, canOpenScheduleEditor, canScheduleRange } };
-  }
-  return { ...common, timing, status, schedule: schedule as RangeChecklistScheduleDto, permissions: { canDrag, canResize, canOpenScheduleEditor, canScheduleRange } };
 }
 
 export function ganttDeadlineEvent(project: GanttProjectRowDto): ProjectDeadlineCalendarEventDto | null {
@@ -181,17 +168,12 @@ function dayScaleTimedTarget(instant: Date): CalendarManipulationTarget | null {
 }
 
 export function ganttEditToProposal(source: ChecklistCalendarEventDto, edit: GanttEdit): SchedulingProposal | null {
-  const schedule = source.schedule;
-  if (schedule.state === "due_only" && edit.kind !== "move") return null;
-
-  const start = schedule.state === "range" ? schedule.start : null;
-  const end = schedule.end;
-  if (!end || (schedule.state === "range" && !start)) return null;
+  const { start, end } = source.schedule;
 
   const edgeInstant = edit.kind === "resize-end" ? edit.proposedEnd : edit.proposedStart;
   const originalInstant = edit.kind === "resize-end" ? edit.eventEnd : edit.eventStart;
   const edge = edit.kind === "resize-start" ? "start" : edit.kind === "resize-end" ? "end" : null;
-  const movedEndpoint = edit.kind === "resize-end" ? end : edit.kind === "resize-start" ? start! : (start ?? end);
+  const movedEndpoint = edit.kind === "resize-end" ? end : start;
   const timed = movedEndpoint.kind === "timed";
 
   const wrap = (target: CalendarManipulationTarget): SchedulingProposal => (edge
@@ -208,7 +190,7 @@ export function ganttEditToProposal(source: ChecklistCalendarEventDto, edit: Gan
 
   if (edge === null) {
     // `checklistMoveSchedule`'s month path reads `targetDate` as the new civil date of the START
-    // endpoint (range) or the END endpoint (due_only), preserving wall time for timed endpoints.
+    // endpoint, preserving wall time for timed endpoints.
     const targetDate = shiftDate(movedEndpoint.localCivil.slice(0, 10), delta);
     return targetDate ? wrap({ subview: "month", targetDate }) : null;
   }
@@ -225,16 +207,6 @@ export function ganttEditToProposal(source: ChecklistCalendarEventDto, edit: Gan
 
   const shifted = shiftCivilMinute(movedEndpoint.localCivil, delta);
   return shifted ? wrap({ subview: "week", targetDate: shifted.slice(0, 10), targetCivilMinute: shifted }) : null;
-}
-
-export function ganttPlacementToProposal(entry: ChecklistCalendarUnscheduledEntryDto, slot: { start: Date; allDay: boolean }, scale: GanttScale): SchedulingProposal | null {
-  if (entry.reason !== "unscheduled") return null;
-  if (scale === "day" && !slot.allDay) {
-    const target = dayScaleTimedTarget(slot.start);
-    return target ? { kind: "place", entity: "checklist", entry, target } : null;
-  }
-  const targetDate = sydneyCivilDate(slot.start);
-  return targetDate ? { kind: "place", entity: "checklist", entry, target: { subview: "month", targetDate } } : null;
 }
 
 export function ganttDeadlineEditToProposal(event: ProjectDeadlineCalendarEventDto, proposedEnd: Date, originalEnd: Date, scale: GanttScale): SchedulingProposal | null {
@@ -286,7 +258,7 @@ export function deadlineStartClashText(clash: DeadlineStartClash): string {
 
 /**
  * What moving `project`'s deadline to `newDeadline` does to its LOADED checklist rows: every
- * scheduled (`range`/`due_only`) row whose after-deadline status flips either way, plus the clashes
+ * Subtask row whose after-deadline status flips either way, plus the clashes
  * (rows newly after the deadline, and a deadline before the bar start). Pure; advisory only.
  */
 export function previewDeadlineEffects(project: GanttProjectRowDto, newDeadline: { localCivil: string; instant: string }): DeadlineEffectsPreview {
@@ -294,10 +266,7 @@ export function previewDeadlineEffects(project: GanttProjectRowDto, newDeadline:
   const affected: DeadlineEffectsPreview["affected"] = [];
   const clashes: DeadlineEffectsPreview["clashes"] = [];
   for (const row of project.children.rows) {
-    const schedule = row.schedule;
-    if (schedule.state !== "range" && schedule.state !== "due_only") continue;
-    const end = schedule.end;
-    if (!end) continue;
+    const end = row.schedule.end;
     const before: DeadlineEffectStatus = endsAfterDeadline(end, oldCivil) ? "after" : "on-time";
     const after: DeadlineEffectStatus = endsAfterDeadline(end, newDeadline.localCivil) ? "after" : "on-time";
     if (before === after) continue;
@@ -367,32 +336,6 @@ function withChecklistOverlay(model: ProductionGanttModel, entityId: string, tim
   return replaceEvent(model, `task:${subtaskId}`, (event) => ({ ...event, ...instants }));
 }
 
-function withRescheduledEntry(model: ProductionGanttModel, entityId: string, timing: CalendarEventTiming): ProductionGanttModel {
-  const subtaskId = subtaskIdFromCalendarEntityId(entityId);
-  const instants = instantsFromTiming(timing);
-  if (!subtaskId || !instants) return model;
-  const resourceId = `task:${subtaskId}`;
-  const entry = model.attention.find((candidate) => candidate.resourceId === resourceId && candidate.kind === "task");
-  if (!entry || entry.kind !== "task") return model;
-  const color = model.resources.flatMap((resource) => resource.children ?? []).find((child) => child.id === resourceId)?.color;
-  const event: ProductionGanttEvent<ProductionGanttRowData> = {
-    id: resourceId,
-    title: entry.dto.title,
-    ...instants,
-    ...(color !== undefined ? { color } : {}),
-    // Pending write: not interactive until the authoritative refetch replaces it.
-    readOnly: true,
-    resourceId,
-    ...(entry.dto.done ? { progress: 100 } : {}),
-    data: { kind: "task", dto: entry.dto, hollowStart: false, missingDeadline: false },
-  };
-  return {
-    ...model,
-    events: [...model.events.filter((candidate) => candidate.id !== resourceId), event],
-    attention: model.attention.filter((candidate) => candidate !== entry),
-  };
-}
-
 /**
  * Applies the controller's in-flight overlay (and a deadline pending in the confirm dialog) to a
  * Gantt model. Pure: returns a new model and never mutates `model`; an overlay naming nothing in
@@ -406,7 +349,8 @@ export function applyGanttOptimisticOverlay(
   let next = model;
   if (overlay) {
     if ("kind" in overlay) {
-      next = withRescheduledEntry(next, overlay.entryId, overlay.timing);
+      // A Project-deadline placement (the only "reschedule-unscheduled" left): the Gantt draws it
+      // through `pendingDeadline`, so the overlay itself changes nothing here.
     } else if (overlay.eventId.startsWith(PROJECT_DEADLINE_ID_PREFIX)) {
       const instants = instantsFromTiming(overlay.timing);
       if (instants) next = withProjectBarEnd(next, overlay.eventId.slice(PROJECT_DEADLINE_ID_PREFIX.length), instants.start);

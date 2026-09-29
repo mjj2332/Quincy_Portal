@@ -95,9 +95,6 @@ export type ProductionGanttRowData = ProductionGanttRowFacts;
  * ("the adapter does not decide copy").
  */
 export type ProductionGanttAttentionReason =
-  | "unscheduled"
-  | "legacy_unresolved"
-  | "invalid"
   | "missing_deadline"
   | "deadline_before_start"
   | "resolution_failed";
@@ -161,9 +158,8 @@ interface RowBuildResult {
 }
 
 /** #221: the interaction fields for a task event, appended after the default keys. */
-function taskInteraction(row: GanttChecklistRowDto, dueOnly: boolean): Pick<ProductionGanttEvent, "readOnly" | "draggable" | "resizable"> {
+function taskInteraction(row: GanttChecklistRowDto): Pick<ProductionGanttEvent, "readOnly" | "draggable" | "resizable"> {
   const { canDrag, canResize } = row.permissions;
-  if (dueOnly) return { readOnly: !canDrag, draggable: canDrag, resizable: false };
   return { readOnly: !(canDrag || canResize), draggable: canDrag, resizable: canResize };
 }
 
@@ -179,40 +175,9 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
     resourceId,
   });
 
-  if (schedule.state === "unscheduled") return { event: null, attention: attentionFor("unscheduled") };
-  if (schedule.state === "legacy_unresolved") return { event: null, attention: attentionFor("legacy_unresolved") };
-  if (schedule.state === "invalid") return { event: null, attention: attentionFor("invalid") };
-
-  if (schedule.state === "due_only") {
-    const end = schedule.end;
-    if (!end) return { event: null, attention: attentionFor("invalid") };
-    const resolved = end.kind === "date" ? resolveCivilDayStart(end.localCivil) : resolveStoredInstant(end.instant);
-    if (!resolved.ok) return { event: null, attention: attentionFor("resolution_failed") };
-    return {
-      event: {
-        id: resourceId,
-        title: row.title,
-        start: resolved.date,
-        end: resolved.date,
-        allDay: end.kind === "date",
-        color,
-        ...(className ? { className } : {}),
-        readOnly: true,
-        resourceId,
-        // fix-220-sol1 #4: a task carries no partial-progress field, only `done` — map it to the
-        // binary 100/omitted `GanttEvent.progress` the renderer's done-check reads, rather than
-        // never populating it at all.
-        ...(row.done ? { progress: 100 } : {}),
-        data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
-        ...(interactive ? taskInteraction(row, true) : {}),
-      },
-      attention: null,
-    };
-  }
-
-  // schedule.state === "range" — start/end always share a kind.
+  // Every Subtask is a range (ADR 0011): start/end share a kind. A one-day date range resolves to
+  // [day 00:00, next day 00:00), a positive-width bar with both resize grips.
   const { start, end } = schedule;
-  if (!start || !end) return { event: null, attention: attentionFor("invalid") };
   const startResolved =
     start.kind === "date" ? resolveCivilDayStart(start.localCivil) : resolveStoredInstant(start.instant);
   if (!startResolved.ok) return { event: null, attention: attentionFor("resolution_failed") };
@@ -232,7 +197,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
       resourceId,
       ...(row.done ? { progress: 100 } : {}),
       data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
-      ...(interactive ? taskInteraction(row, false) : {}),
+      ...(interactive ? taskInteraction(row) : {}),
     },
     attention: null,
   };

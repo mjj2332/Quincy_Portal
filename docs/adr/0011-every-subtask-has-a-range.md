@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Every Subtask has a range: unscheduled and due-only are gone
@@ -16,7 +16,8 @@ and in the one-time migration of existing rows: copy the Project's shoot date to
 the copy is the Subtask's own thereafter and does not follow later Project reschedules. A missing
 or unparseable shoot date falls back to the Project's creation date, a missing Deadline makes a
 one-day range, and a range never runs backwards — any inversion collapses to one day on the
-later-known end (the Deadline, or the old due date). A former due-only Subtask keeps its due as
+later-known end (the Deadline, or the old due date). Historical: this conversion was applied once by the
+#341 backfill and no code implements it now. A former due-only Subtask keeps its due as
 the end and starts on the shoot date; a timed one starts at 00:00 studio time on that date, so
 the range never mixes a date end with a timed end.
 
