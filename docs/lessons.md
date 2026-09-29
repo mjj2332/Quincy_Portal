@@ -3249,18 +3249,31 @@ mutation against ONE entry has to decide, explicitly, what happens to the others
   fallback keep rendering the placeholder in the meantime, so refusing to accept it costs no
   loading/empty flash.
 
-**A DOM test cannot observe an optimistic cache write while a mutation is pending, in this
-component, and that is not this bug.** `Dashboard.tsx` renders the `acceptedProjects` SNAPSHOT
-(~:370), not the query cache directly, and the effect that would refresh that snapshot from a fresh
-`queryProjects` explicitly defers while `interactionBlocked` is true (~:354, which includes
-`pendingOrdering.size > 0`) — for the ENTIRE duration of a priority mutation, searched or not, on
-`main` today, independent of this fix. A rendered `<select>`/star control genuinely cannot show "2"
-while its own POST is still in flight; the correct assertion for "did the optimistic/confirmed/
-rollback write land in the right place" is `queryClient.getQueryData` on the exact key directly, not
-the rendered control — proven empirically here (a temporary render/tick trace showed the control
-stuck at the old value through every tick of even a FAST-resolving POST, with a refetch already
-fired by the first tick) before trusting it, rather than assumed from reading the effect once. Filed
-separately as its own issue; not touched by this fix.
+**A cache-write test must assert on the cache, not the rendered control.** `Dashboard.tsx` renders
+the `acceptedProjects` SNAPSHOT, not the query cache, and the accept effect deliberately defers
+while `interactionBlocked` is true (which includes `pendingOrdering.size > 0`). Until #232 that
+meant the control could not show an optimistic priority at all; since #232 it shows the
+`priorityOverlay`, which reads the same whichever cache entry the write landed in. Either way the
+rendered `<select>` says nothing about the cache key, so "did the optimistic/confirmed/rollback
+write land in the right place" is `queryClient.getQueryData` on the exact key.
+
+## An optimistic value has to outlive its own request (#232)
+
+The optimistic priority write went into the query cache, but the Dashboard renders the accepted
+snapshot, whose accept effect defers for the whole POST, so the control showed the old value for
+the full round trip. The fix is a render-time `priorityOverlay` over whichever base wins
+(`boardOverlay`, accepted snapshot, or query data), so it also covers a Board move in flight.
+Letting priority through the accept deferral would let a refetch reshuffle the Board mid-interaction,
+which is the reason the deferral exists.
+
+The trap is when the overlay entry goes away. Clearing it in `finally`, when the POST settles,
+flashes the OLD value: the queued refresh is only fired after `pendingOrdering` clears, and the
+snapshot catches up only when that refetch is accepted. A confirmed entry therefore stays until
+`acceptDashboardProjects` accepts a fetch whose `dataUpdatedAt` is no older than the confirmation.
+`boardRevision` cannot mark that point: the priority UPDATE never bumps `board_revision`. A failed
+second edit restores the first edit's confirmed entry rather than the original value. Pinned by the
+`(#232)` block in `Dashboard-priority-coordinator.dom.test.tsx`; each guard there was
+mutation-checked.
 
 ## A captured key or a captured timestamp is only as fresh as the render that captured it (#230, Sol review round 2)
 
