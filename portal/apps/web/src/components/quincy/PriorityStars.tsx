@@ -192,11 +192,12 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
               // While a write is in flight the stars ignore clicks, and the value on screen is
               // already the new one (#232). A `progress` cursor (the `aria-disabled:cursor-*`
               // idiom in `quincy/icon-button.tsx`) tells a mouse the save is running; the lit
-              // glyphs' `starpulse` tells touch and keyboard. The pulse is a scale, not an opacity
+              // glyphs' `starpulse` tells touch and keyboard (all five while a clear is saving,
+              // since none are lit). The pulse is a scale, not an opacity
               // fade: a fade is what took the disabled drag handle to 1.72:1.
               className={`group inline-grid place-items-center size-9 pointer-coarse:size-11 max-[641px]:size-11 cursor-pointer aria-disabled:cursor-progress select-none text-[18px] leading-none focus-visible:!outline-2 focus-visible:!outline-[var(--ink-900)] focus-visible:!outline-offset-[-2px] ${on ? "text-star-on" : "text-star-off"}`}
             >
-              <span aria-hidden="true" className={on ? "inline-block group-aria-disabled:motion-safe:animate-[starpulse_var(--dur-reveal)_var(--ease-standard)_infinite_alternate]" : undefined}>★</span>
+              <span aria-hidden="true" className={on || priority === null ? "inline-block group-aria-disabled:motion-safe:animate-[starpulse_var(--dur-reveal)_var(--ease-standard)_infinite_alternate]" : undefined}>★</span>
             </span>
           );
         })}
