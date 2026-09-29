@@ -1431,9 +1431,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[721px]:mb-[var(--space-5)]" />
       </div>
 
-      {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} />}
+      {/* #271: on a phone, the Gantt and Calendar charts should reach the first screen, so those two
+          views fold the notice board and hide the stat grid there (owner decision). */}
+      {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} foldOnPhone={isGanttView || isCalendarView} />}
 
-      {!viewingArchived && !searchActive && <section aria-label="Project summary" className="[display:grid] grid-cols-4 [border-block-style:solid] border-y-[length:var(--border-width-hair)] border-y-border bg-transparent mb-[var(--space-6)] max-[1080px]:grid-cols-2">
+      {!viewingArchived && !searchActive && <section aria-label="Project summary" className={cn("[display:grid] grid-cols-4 [border-block-style:solid] border-y-[length:var(--border-width-hair)] border-y-border bg-transparent mb-[var(--space-6)] max-[1080px]:grid-cols-2", (isGanttView || isCalendarView) && "max-[721px]:hidden")}>
         <div className="py-[var(--space-5)] pr-[var(--space-5)]">
           <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]">{activeCount}</div>
           <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Active shoots</div>
