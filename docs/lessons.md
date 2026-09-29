@@ -4254,10 +4254,17 @@ freezing the whole Board.
   and dnd-kit own. `boardAnimateLayoutChanges` switches dnd-kit's layout animation off outside a
   drag and its 50ms settle window, so the two never stack. Skipped under reduced motion, in the
   drop's commit, and on a sort-mode change.
-- **The FLIP alone does not stop the misclick.** A pointer star commit that re-sorts the column arms
-  a short guard: a pointer commit on a *different* card within 16px and 700ms is dropped. A pointer
-  commit is told from a keyboard one by a click point recorded in the capture phase and cleared
-  in a microtask, because a star commits on `click` and keyboard commits never produce one.
+- **The FLIP alone does not stop the misclick.** A pointer star commit whose card then moves arms
+  a short guard (`lib/star-click-guard.ts`): a pointer commit on a *different* card within 16px and
+  700ms is dropped. A pointer commit is told from a keyboard one by a click point recorded in the
+  Board's capture phase, because a star commits on `click` and keyboard commits never produce one.
+- **Trap caught in review, invisible to the tests:** the first version cleared that point in a
+  `queueMicrotask`. React dispatches capture and bubble from two *separate* native listeners on the
+  root, and on a real user click the microtask queue drains between them, so the point was gone
+  before the star's `onClick` read it and the guard never armed. A scripted `dispatchEvent` keeps
+  the stack busy, so no checkpoint runs and happy-dom passed it. Clear the point in the Board's own
+  bubble-phase `onClick` (after the star's) and on `keydown` capture; never across a phase boundary
+  in a microtask.
 - **Rule:** any code that reorders the Board outside a drag goes through the same FLIP for free.
   Do not add a second animation to `KanbanItem`. happy-dom has no layout, so the geometry is
   checked in the browser pass.

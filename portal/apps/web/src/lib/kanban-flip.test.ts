@@ -1,16 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
-import {
-  STAR_GUARD_RADIUS_PX,
-  STAR_GUARD_WINDOW_MS,
-  armStarClickGuard,
-  boardAnimateLayoutChanges,
-  flipDeltas,
-  guardAfterPointerMove,
-  playFlip,
-  shouldSwallowStarClick,
-  type FlipSnapshot,
-} from "./kanban-flip";
+import { boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } from "./kanban-flip";
 
 function snapshot(entries: Array<[string, string, number, number?]>): FlipSnapshot {
   return new Map(entries.map(([id, column, top, left = 0]) => [id, { column, top, left }]));
@@ -117,35 +107,5 @@ describe("boardAnimateLayoutChanges (#304)", () => {
   it("defers to the vendor's behaviour while sorting and in the settle window after a drop", () => {
     expect(boardAnimateLayoutChanges({ ...base, isSorting: true })).toBe(true);
     expect(boardAnimateLayoutChanges({ ...base, wasDragging: true, previousItems: base.items })).toBe(true);
-  });
-});
-
-describe("the star-click guard (#304)", () => {
-  const commit = { projectId: "a", x: 100, y: 200, at: 1_000 };
-
-  it("arms only when a re-sort plays soon after a pointer commit", () => {
-    expect(armStarClickGuard(commit, 1_050)).toEqual({ projectId: "a", x: 100, y: 200, until: 1_050 + STAR_GUARD_WINDOW_MS });
-    expect(armStarClickGuard(commit, 3_000)).toBeNull();
-    expect(armStarClickGuard(null, 1_050)).toBeNull();
-  });
-
-  it("swallows a click on a different card's stars at the same spot within the window", () => {
-    const guard = armStarClickGuard(commit, 1_050);
-    expect(shouldSwallowStarClick(guard, { projectId: "b", x: 103, y: 198 }, 1_300)).toBe(true);
-  });
-
-  it("lets through the same card, a click beyond the radius, a click after the window, and no guard", () => {
-    const guard = armStarClickGuard(commit, 1_050);
-    expect(shouldSwallowStarClick(guard, { projectId: "a", x: 100, y: 200 }, 1_300)).toBe(false);
-    expect(shouldSwallowStarClick(guard, { projectId: "b", x: 100 + STAR_GUARD_RADIUS_PX + 1, y: 200 }, 1_300)).toBe(false);
-    expect(shouldSwallowStarClick(guard, { projectId: "b", x: 100, y: 200 }, 1_050 + STAR_GUARD_WINDOW_MS + 1)).toBe(false);
-    expect(shouldSwallowStarClick(null, { projectId: "b", x: 100, y: 200 }, 1_300)).toBe(false);
-  });
-
-  it("disarms once the pointer moves beyond the radius, and survives jitter inside it", () => {
-    const guard = armStarClickGuard(commit, 1_050);
-    expect(guardAfterPointerMove(guard, { x: 104, y: 203 })).toBe(guard);
-    expect(guardAfterPointerMove(guard, { x: 100, y: 200 + STAR_GUARD_RADIUS_PX + 1 })).toBeNull();
-    expect(guardAfterPointerMove(null, { x: 0, y: 0 })).toBeNull();
   });
 });

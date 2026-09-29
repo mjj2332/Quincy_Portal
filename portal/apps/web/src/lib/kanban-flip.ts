@@ -1,7 +1,7 @@
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 
 /**
- * The Board's reorder animation (#304) and the guard that goes with it.
+ * The Board's reorder animation (#304). Its misclick guard is `lib/star-click-guard.ts`.
  *
  * A same-column reorder outside a drag — a Priority re-sort from the optimistic overlay (#232),
  * the ↑/↓ arrows, a same-Stage Move to…, a rollback — used to paint in one frame: the card jumped
@@ -77,37 +77,3 @@ export const boardAnimateLayoutChanges: AnimateLayoutChanges = (args) => {
   if (!args.isSorting && !args.wasDragging) return false;
   return defaultAnimateLayoutChanges({ ...args, wasDragging: true });
 };
-
-/**
- * The misclick guard. The FLIP shows where a re-sorted card went, but a quick second click at the
- * same spot lands on whichever card slid under the pointer — a silent write to the wrong project's
- * priority. After a pointer star commit re-sorts the column, a pointer star commit on a DIFFERENT
- * card within `STAR_GUARD_RADIUS_PX` of the first, inside `STAR_GUARD_WINDOW_MS`, is dropped.
- * Keyboard commits are never pointer commits, so they are untouched; moving the pointer away
- * disarms it.
- */
-export const STAR_GUARD_RADIUS_PX = 16;
-/** `--dur-base` (220ms) of flight plus a double-click interval. */
-export const STAR_GUARD_WINDOW_MS = 700;
-/** How long after a pointer commit a re-sort still counts as that commit's. */
-const STAR_GUARD_ARM_LATENCY_MS = 1_000;
-
-export type StarPointerCommit = { projectId: string; x: number; y: number; at: number };
-export type StarClickGuard = { projectId: string; x: number; y: number; until: number } | null;
-
-export function armStarClickGuard(commit: StarPointerCommit | null, now: number): StarClickGuard {
-  if (!commit || now - commit.at > STAR_GUARD_ARM_LATENCY_MS) return null;
-  return { projectId: commit.projectId, x: commit.x, y: commit.y, until: now + STAR_GUARD_WINDOW_MS };
-}
-
-function within(guard: NonNullable<StarClickGuard>, point: { x: number; y: number }) {
-  return Math.hypot(point.x - guard.x, point.y - guard.y) <= STAR_GUARD_RADIUS_PX;
-}
-
-export function shouldSwallowStarClick(guard: StarClickGuard, click: { projectId: string; x: number; y: number }, now: number): boolean {
-  return guard !== null && now <= guard.until && click.projectId !== guard.projectId && within(guard, click);
-}
-
-export function guardAfterPointerMove(guard: StarClickGuard, point: { x: number; y: number }): StarClickGuard {
-  return guard && within(guard, point) ? guard : null;
-}
