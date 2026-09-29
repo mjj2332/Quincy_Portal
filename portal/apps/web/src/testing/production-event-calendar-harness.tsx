@@ -80,6 +80,7 @@ export type SurfaceProps = {
   onAccessLoss?: () => void;
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
+  onShownProjectsChange?: (count: number | null) => void;
   /** Wraps the surface in a `ProjectQueryRuntimeProvider` (cross-tab invalidation tests). */
   runtime?: ProjectQueryRuntime;
 };
@@ -126,6 +127,7 @@ export function createHarness(): Harness {
         onAccessLoss={props.onAccessLoss}
         projectHrefFor={props.projectHrefFor}
         onOpenProject={props.onOpenProject}
+        onShownProjectsChange={props.onShownProjectsChange}
       />
     </QueryClientProvider>
     );
