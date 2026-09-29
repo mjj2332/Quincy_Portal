@@ -559,6 +559,19 @@ afterEach(async () => {
 });
 
 describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
+  // The fixture days and the resize aim are anchored to the visible month, which the Gantt takes from
+  // `new Date()` and the fixture from Sydney's clock. Pin `Date` (timers stay real) so neither depends
+  // on the real date, in particular on the last or first day of a month when the two disagree.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
+    resetFixture();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("1. a pointer resize-end of a range task sends one PATCH, shows the new end before the response, then the server value", async () => {
     await render();
     const before = barLabel(RANGE_TITLE);
