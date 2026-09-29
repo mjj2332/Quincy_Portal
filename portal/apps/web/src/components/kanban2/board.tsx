@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StageKey } from "@quincy/shared";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { StatusBadge } from "../atoms";
@@ -14,6 +14,17 @@ import {
   type ProjectSummary,
   type SemanticGap,
 } from "../../lib/kanban-interaction";
+import {
+  armStarClickGuard,
+  boardAnimateLayoutChanges,
+  flipDeltas,
+  guardAfterPointerMove,
+  playFlip,
+  shouldSwallowStarClick,
+  type FlipSnapshot,
+  type StarClickGuard,
+  type StarPointerCommit,
+} from "../../lib/kanban-flip";
 import type { ProjectStageKey } from "../../lib/stages";
 import { usePrefersReducedMotion } from "../../lib/use-media-query";
 import { ScrollBar } from "../reui/scroll-area";
@@ -42,6 +53,71 @@ function DropIndicator({ className }: { className: string }) {
       aria-hidden="true"
     />
   );
+}
+
+type FlipScopeProps = {
+  /** Every column's card order; the FLIP measures only when this changes. */
+  orderKey: string;
+  sort: string;
+  /** False under reduced motion and while a drag is live. */
+  enabled: boolean;
+  rootRef: RefObject<HTMLElement | null>;
+  onPlayed: () => void;
+  children: ReactNode;
+};
+
+function measureCards(root: HTMLElement): FlipSnapshot {
+  const snapshot: FlipSnapshot = new Map();
+  for (const element of root.querySelectorAll<HTMLElement>("[data-flip-id]")) {
+    const rect = element.getBoundingClientRect();
+    snapshot.set(element.dataset.flipId!, { column: element.dataset.flipColumn ?? "", left: rect.left, top: rect.top });
+  }
+  return snapshot;
+}
+
+/**
+ * The Board's reorder FLIP (#304; the maths and the DOM writes are `lib/kanban-flip.ts`). A class
+ * because `getSnapshotBeforeUpdate` is the only React hook that reads the DOM after a render but
+ * BEFORE it is committed — the "first" positions. Positions saved from the previous commit would be
+ * stale after any scroll or image load in between.
+ *
+ * Skipped unless both commits were eligible: the drop commit (drag live in the previous one) belongs
+ * to dnd-kit's overlay drop animation, and a sort-mode change reshuffles everything at once, which
+ * reads as noise rather than as a card going somewhere.
+ */
+class FlipScope extends Component<FlipScopeProps> {
+  private flights = new Map<string, () => void>();
+
+  override getSnapshotBeforeUpdate(previous: FlipScopeProps): FlipSnapshot | null {
+    const root = this.props.rootRef.current;
+    if (!root || previous.orderKey === this.props.orderKey) return null;
+    if (!previous.enabled || !this.props.enabled || previous.sort !== this.props.sort) return null;
+    // Mid-flight cards are measured WITH their transform: a second re-sort starts from where the
+    // card is on screen, not from where the first one was heading.
+    return measureCards(root);
+  }
+
+  override componentDidUpdate(_previous: FlipScopeProps, _state: unknown, before: FlipSnapshot | null) {
+    const root = this.props.rootRef.current;
+    if (!before || !root) return;
+    this.land();
+    const deltas = flipDeltas(before, measureCards(root));
+    for (const { id, dx, dy } of deltas) {
+      const element = root.querySelector<HTMLElement>(`[data-flip-id="${CSS.escape(id)}"]`);
+      if (element) this.flights.set(id, playFlip(element, dx, dy));
+    }
+    if (deltas.length > 0) this.props.onPlayed();
+  }
+
+  override componentWillUnmount() { this.land(); }
+
+  /** Snaps every card still in flight to rest, so the next measurement reads its real slot. */
+  private land() {
+    for (const cancel of this.flights.values()) cancel();
+    this.flights.clear();
+  }
+
+  override render() { return this.props.children; }
 }
 
 /**
@@ -155,6 +231,10 @@ export function ProjectKanbanBoard2({
   // mode (below) none of them ever fire — see `components/reui/kanban.tsx`'s `handleDragEnd`.
   const noopValueChange = useCallback(() => undefined, []);
   const reducedMotion = usePrefersReducedMotion();
+  const orderKey = useMemo(
+    () => activeStages.map((stage) => `${stage.key}:${(columns[stage.key] ?? []).map((item) => item.id).join(",")}`).join("|"),
+    [activeStages, columns],
+  );
 
   // A move is single-writer, so ANY pending move locks every card. A pending priority write does
   // NOT (#306): it locks only the card being saved, per card, via `orderingPending(id)` below
@@ -225,6 +305,39 @@ export function ProjectKanbanBoard2({
   // from under A's drag. A Board-side lock, not a Dashboard guard — the Dashboard still sees the drag
   // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
   const [dragActive, setDragActive] = useState(false);
+
+  // The misclick guard (#304, `lib/kanban-flip.ts`). A star commits on `click`, and only a click
+  // carries a point, so the Board records the click's point in the capture phase and forgets it
+  // once the dispatch is over: a commit that sees a point is a pointer commit, and a keyboard
+  // commit (Enter/Space on keydown) never does.
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const clickPointRef = useRef<{ x: number; y: number } | null>(null);
+  const lastPointerCommitRef = useRef<StarPointerCommit | null>(null);
+  const starGuardRef = useRef<StarClickGuard>(null);
+  const handleClickCapture = useCallback((event: React.MouseEvent) => {
+    clickPointRef.current = { x: event.clientX, y: event.clientY };
+    queueMicrotask(() => { clickPointRef.current = null; });
+  }, []);
+  const handlePointerMoveCapture = useCallback((event: React.PointerEvent) => {
+    if (starGuardRef.current) starGuardRef.current = guardAfterPointerMove(starGuardRef.current, { x: event.clientX, y: event.clientY });
+  }, []);
+  // A wheel scroll moves the Board under a still pointer, so the spot no longer means the same card.
+  const disarmStarGuard = useCallback(() => { starGuardRef.current = null; }, []);
+  const handleFlipPlayed = useCallback(() => {
+    starGuardRef.current = armStarClickGuard(lastPointerCommitRef.current, performance.now());
+    lastPointerCommitRef.current = null;
+  }, []);
+  const handlePriorityChange = useCallback((project: ProjectSummary, priority: number | null) => {
+    const click = clickPointRef.current;
+    const now = performance.now();
+    if (click) {
+      if (shouldSwallowStarClick(starGuardRef.current, { projectId: project.id, ...click }, now)) return;
+      lastPointerCommitRef.current = { projectId: project.id, ...click, at: now };
+    } else {
+      lastPointerCommitRef.current = null;
+    }
+    onPriorityChange?.(project, priority);
+  }, [onPriorityChange]);
   // The Move-to chooser's chosen position (#99), drawn with the same indicator as a drag. Forwarded
   // to the Dashboard too, which treats a live proposal as an interaction and holds refreshes for it.
   const [moveToProposal, setMoveToProposal] = useState<SemanticGap | null>(null);
@@ -460,7 +573,12 @@ export function ProjectKanbanBoard2({
           className="w-full focus-visible:!outline-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="w-max min-w-full">
+            <FlipScope orderKey={orderKey} sort={effectiveKanbanSort} enabled={!reducedMotion && !dragActive} rootRef={boardRef} onPlayed={handleFlipPlayed}>
             <div
+              ref={boardRef}
+              onClickCapture={handleClickCapture}
+              onPointerMoveCapture={handlePointerMoveCapture}
+              onWheelCapture={disarmStarGuard}
               className="kanban2 grid grid-flow-col auto-cols-[17.5rem] gap-[var(--space-4)] w-max min-w-full pb-[var(--space-2)]"
               aria-label="Project pipeline board"
               // The Dashboard's focus-restore effect (`Dashboard.tsx:409-424`) resolves three tiers by
@@ -501,15 +619,18 @@ export function ProjectKanbanBoard2({
                         // specificity than the vendor's bare `.opacity-50`, so it wins only while
                         // genuinely disabled — the real `isSortableDragging` drag ghost (a plain
                         // `opacity-50`, not gated on `data-disabled`) is untouched.
-                        <KanbanItem key={project.id} value={project.id} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}>
+                        <KanbanItem key={project.id} value={project.id} animateLayoutChanges={boardAnimateLayoutChanges} className="relative data-[disabled=true]:opacity-100" disabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}>
                           {shownProposal?.successor === project.id && <DropIndicator className="top-[calc(var(--space-3)/-2)] -translate-y-1/2" />}
+                          {/* The FLIP's own node (#304): never `KanbanItem`, whose transform React and
+                              dnd-kit own. The drop indicator stays outside it, so it never flies. */}
+                          <div data-flip-id={project.id} data-flip-column={stage.key} className="relative">
                           <KanbanCard2
                             project={project}
                             projectHref={projectHrefFor?.(project)}
                             dragDisabled={dragDisabled || pendingMoves.has(project.id) || orderingPending(project.id)}
                             canPrioritize={priorityEditable}
                             priorityPending={orderingPending(project.id)}
-                            onPriorityChange={onPriorityChange}
+                            onPriorityChange={handlePriorityChange}
                             handleRef={registerHandle}
                             controls={<div className="flex items-stretch border-t border-t-border">
                               {canReorder && <>
@@ -536,6 +657,7 @@ export function ProjectKanbanBoard2({
                               />
                             </div>}
                           />
+                          </div>
                         </KanbanItem>
                       ))}
                       {shownProposal?.successor === "end" && shownProposal.targetStageKey === semanticStageKey(stage.key) && (
@@ -546,6 +668,7 @@ export function ProjectKanbanBoard2({
                 );
               })}
             </div>
+            </FlipScope>
           </ScrollAreaPrimitive.Content>
         </ScrollAreaPrimitive.Viewport>
         {/* Paper (`--bg-canvas`) behind the bar so cards never show through it while it is stuck

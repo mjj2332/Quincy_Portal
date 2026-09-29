@@ -91,6 +91,23 @@ vi.mock("../LazyImage", () => ({
   },
 }));
 
+// #304: happy-dom has no layout, so the FLIP's DOM writes are the seam's own tests
+// (`lib/kanban-flip.test.ts`). Here only WHICH elements it is played on, and by how much, matters.
+const flip = vi.hoisted(() => ({
+  played: [] as Array<{ element: HTMLElement; dx: number; dy: number }>,
+}));
+
+vi.mock("../../lib/kanban-flip", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/kanban-flip")>();
+  return {
+    ...actual,
+    playFlip: (element: HTMLElement, dx: number, dy: number) => {
+      flip.played.push({ element, dx, dy });
+      return () => undefined;
+    },
+  };
+});
+
 const stages: readonly PipelineStage[] = [
   { key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 1, active: true },
   { key: "raw_review", label: "RAW review", displayOrder: 2, active: true },
@@ -910,7 +927,8 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     await renderBoard({ pendingOrdering: new Set(["source"]) });
     const cardWrap = host.querySelector('[data-testid="kanban2-card-wrap"]');
     expect(cardWrap, "no card wrapper rendered — the assertion below would be vacuous").not.toBeNull();
-    const item = cardWrap!.parentElement;
+    // Two levels up: the FLIP wrapper (#304) sits between the `KanbanItem` and the card.
+    const item = cardWrap!.parentElement?.parentElement ?? null;
     expect(item, "no KanbanItem wrapper found — the assertion below would be vacuous").not.toBeNull();
     expect(item!.getAttribute("data-disabled")).toBe("true");
     expect(item!.className).toContain("data-[disabled=true]:opacity-100");
@@ -1366,5 +1384,173 @@ describe("KanbanCard2 — anchor and interactive-control siblings (#83)", () => 
     const arrowUp = host.querySelector('[data-focus-key="arrow-up:source"]');
     expect(arrowUp, "no arrow rendered — the assertion below would be vacuous").not.toBeNull();
     expect(arrowUp!.closest("a")).toBeNull();
+  });
+});
+
+describe("ProjectKanbanBoard2 — reorder animation and the star-click guard (#304)", () => {
+  let restoreRects: () => void;
+  let now = 10_000;
+
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    flip.played.length = 0;
+    now = 10_000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    // A card's rect is its slot: 100px per card down its column, 300px per column across.
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect(this: HTMLElement) {
+      const id = this.dataset.flipId;
+      if (!id) return original.call(this);
+      const column = this.dataset.flipColumn ?? "";
+      const inColumn = [...document.querySelectorAll<HTMLElement>("[data-flip-id]")].filter((node) => node.dataset.flipColumn === column);
+      const columnIndex = stages.findIndex((stage) => stage.key === column);
+      return new DOMRect(columnIndex * 300, inColumn.indexOf(this) * 100, 254, 90);
+    };
+    restoreRects = () => { HTMLElement.prototype.getBoundingClientRect = original; };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+    restoreRects();
+    vi.restoreAllMocks();
+  });
+
+  // Priority sort, one column: a(3) b(2) c(1). Raising c to 5 re-sorts it to the top.
+  const column = (cPriority: number) => [
+    project("a", "awaiting_raw", { priority: 3 }),
+    project("b", "awaiting_raw", { priority: 2 }),
+    project("c", "awaiting_raw", { priority: cPriority }),
+  ];
+  const played = () => flip.played.map(({ element, dx, dy }) => ({ id: element.dataset.flipId, dx, dy }));
+
+  async function clickStar(projectStreet: string, stars: number, at: { x: number; y: number }) {
+    const { act } = await import("react");
+    const group = [...host.querySelectorAll('[role="radiogroup"]')].find((node) => node.getAttribute("aria-label") === `Priority for ${projectStreet}`);
+    const star = group?.querySelectorAll<HTMLElement>('[role="radio"]')[stars - 1];
+    expect(star, `no ${stars}-star control for ${projectStreet}`).not.toBeNull();
+    await act(async () => {
+      star!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: at.x, clientY: at.y }));
+      await Promise.resolve();
+    });
+  }
+
+  it("slides the re-sorted card from its old slot and the cards it passed, on the Board-owned wrapper", async () => {
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(5) });
+    expect(played()).toEqual([
+      { id: "c", dx: 0, dy: 200 },
+      { id: "a", dx: 0, dy: -100 },
+      { id: "b", dx: 0, dy: -100 },
+    ]);
+    // Never dnd-kit's own node: React owns `KanbanItem`'s transform, and dnd-kit measures it.
+    expect(flip.played[0]!.element.getAttribute("data-slot")).toBeNull();
+    const item = flip.played[0]!.element.parentElement as HTMLElement;
+    expect(item.style.transform).toBe("");
+  });
+
+  it("animates an arrow / Move to… reorder in Board sort the same way", async () => {
+    const order = (ids: string[]) => ids.map((id, rank) => project(id, "awaiting_raw", { boardRank: rank }));
+    await renderBoard({ projects: order(["a", "b"]) });
+    await renderBoard({ projects: order(["b", "a"]) });
+    expect(played()).toEqual([{ id: "b", dx: 0, dy: 100 }, { id: "a", dx: 0, dy: -100 }]);
+  });
+
+  it("does not animate under reduced motion", async () => {
+    const restore = mockMatchMedia(true);
+    try {
+      await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+      await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(5) });
+      expect(played()).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not animate a sort-mode change", async () => {
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "board", projects: column(1) });
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    expect(played()).toEqual([]);
+  });
+
+  it("does not animate during a drag, nor in the drop's own commit — dnd-kit owns those", async () => {
+    const { act } = await import("react");
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    await fireDnd("onDragStart", { active: { id: "c" } });
+    await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(4) });
+    const props = baseProps({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(5) });
+    await act(async () => {
+      (dnd.handlers.at(-1)?.props?.onDragEnd as (event: unknown) => void)({ active: { id: "c" }, over: null });
+      root.render(createElement(ProjectKanbanBoard2, props));
+      await Promise.resolve();
+    });
+    expect(played()).toEqual([]);
+  });
+
+  it("does not fly a card that changed column", async () => {
+    await renderBoard({ projects: [project("a", "awaiting_raw", { boardRank: 0 }), project("b", "awaiting_raw", { boardRank: 1 })] });
+    await renderBoard({ projects: [project("a", "raw_review", { boardRank: 0 }), project("b", "awaiting_raw", { boardRank: 1 })] });
+    expect(played().map((entry) => entry.id)).not.toContain("a");
+  });
+
+  it("drops a quick second click at the same spot when it lands on the card that slid under it", async () => {
+    const props = await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    await clickStar("c Street", 5, { x: 200, y: 230 });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(1);
+    now += 50;
+    await renderBoard({ ...props, projects: column(5) });
+    expect(played().length, "no re-sort played — the guard below would be vacuous").toBeGreaterThan(0);
+    now += 200;
+    // b slid into c's old slot; the pointer has not moved.
+    await clickStar("b Street", 4, { x: 202, y: 228 });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a deliberate click elsewhere, a later click, and a keyboard commit through", async () => {
+    const { act } = await import("react");
+    const props = await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    await clickStar("c Street", 5, { x: 200, y: 230 });
+    now += 50;
+    await renderBoard({ ...props, projects: column(5) });
+    await clickStar("b Street", 4, { x: 200, y: 330 });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(2);
+
+    await clickStar("c Street", 5, { x: 200, y: 230 });
+    now += 50;
+    await renderBoard({ ...props, projects: column(1) });
+    const star = host.querySelector('[aria-label="Priority for a Street"] [role="radio"][tabindex="0"]') as HTMLElement;
+    star.focus();
+    await act(async () => {
+      star.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(4);
+
+    await clickStar("c Street", 5, { x: 200, y: 230 });
+    now += 50;
+    await renderBoard({ ...props, projects: column(5) });
+    now += 800;
+    await clickStar("b Street", 4, { x: 200, y: 230 });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(6);
+  });
+
+  it("disarms the guard once the pointer moves away", async () => {
+    const { act } = await import("react");
+    const props = await renderBoard({ canPrioritize: true, effectiveKanbanSort: "priority", projects: column(1) });
+    await clickStar("c Street", 5, { x: 200, y: 230 });
+    now += 50;
+    await renderBoard({ ...props, projects: column(5) });
+    const board = host.querySelector('[data-focus-key="board"]') as HTMLElement;
+    await act(async () => {
+      board.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 200, clientY: 300 }));
+      board.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 200, clientY: 230 }));
+      await Promise.resolve();
+    });
+    await clickStar("b Street", 4, { x: 200, y: 230 });
+    expect(props.onPriorityChange).toHaveBeenCalledTimes(2);
   });
 });
