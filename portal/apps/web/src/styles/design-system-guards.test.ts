@@ -546,10 +546,18 @@ describe("guard: star colour comes from a token, never a literal", () => {
       [ink, "--ink-900"], [ink, "--ink-800"],
     ];
     const failures: string[] = [];
+    const hex = (scope: Map<string, string>, name: string) => {
+      const value = resolve(scope, name);
+      // An unresolved or non-hex value measures as NaN, and every NaN comparison below is false —
+      // the guard would pass without measuring anything. Fail loudly instead.
+      expect(value, `${name} must resolve to a #rrggbb palette value`).toMatch(/^#[0-9a-f]{6}$/i);
+      return value;
+    };
+    expect(inverseBlock, "tokens/inverse.css has no [data-surface=\"inverse\"] block").toContain("--star-off");
     for (const [scope, groundName] of grounds) {
-      const ground = resolve(scope, groundName);
-      const on = contrast(resolve(scope, "--star-on"), ground);
-      const off = contrast(resolve(scope, "--star-off"), ground);
+      const ground = hex(scope, groundName);
+      const on = contrast(hex(scope, "--star-on"), ground);
+      const off = contrast(hex(scope, "--star-off"), ground);
       const at = `${groundName} (on ${on.toFixed(2)}:1, off ${off.toFixed(2)}:1)`;
       if (off >= on) failures.push(`unlit reads as heavy as lit on ${at}`);
       if (off < 3 || on < 3) failures.push(`under the 3:1 non-text floor on ${at}`);

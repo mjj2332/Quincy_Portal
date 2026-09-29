@@ -104,6 +104,20 @@ function applyPriorityOverlay(base: ProjectSummary[], overlay: ReadonlyMap<strin
   });
 }
 
+// #306: the overlay a move's baseline may carry. A move stamps its baseline into the accepted
+// snapshot, so it must hold only SERVER-CONFIRMED priorities: a pending one could still fail, and
+// its rollback cannot reach a value already stamped. A pending re-edit falls back to the confirmed
+// value it replaced. Confirmed values must stay, because the move's response bumps the card's
+// `boardRevision` past the confirmation's, and a base row newer than the entry wins the overlay.
+function confirmedPriorities(overlay: ReadonlyMap<string, PriorityOverlayEntry>): ReadonlyMap<string, PriorityOverlayEntry> {
+  const confirmed = new Map<string, PriorityOverlayEntry>();
+  for (const [projectId, entry] of overlay) {
+    const value = entry.phase === "confirmed" ? entry : entry.prior;
+    if (value) confirmed.set(projectId, value);
+  }
+  return confirmed;
+}
+
 const noRuntimeSubscribe = () => () => undefined;
 const zeroRuntimeSnapshot = () => 0;
 
@@ -411,7 +425,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // Calendar owns its accept/settle barriers separately. Board interactionBlocked
   // remains the TB5B state machine and never incorporates either Calendar gate.
   // `searchActive` (#217 fix round 1) is deliberately NOT folded in here anymore: `interactionBlocked`
-  // means "a Board interaction is in flight" (queue refreshes, disable the view switcher) -- a
+  // means "a Board interaction is in flight" (queue refreshes; since #306 the UI lock is
+  // `movementInteractionActive`, below) -- a
   // search is not that, and the accept effect below only ever queues while `interactionBlocked` is
   // true, so a searched `queryProjects` was never being accepted (Sol's diff review, blocker 1).
   // Search still has to block Board reorder/stage-move drag specifically (positions computed
@@ -422,15 +437,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // constant's own comment above. Everything gated on `searchActive` (the chip, the stats strip,
   // the Kanban movement gates below) inherits the fix through this one flag.
   const searchActive = committedQuery !== "";
-  const interactionBlocked = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || pendingOrdering.size > 0 || activeConfirm);
+  // #306: the UI lock is NOT the data barrier. `movementInteractionActive` locks the view switcher
+  // and the sort; `interactionBlocked` is that plus a pending priority save, and is the barrier that
+  // defers accepting refetched data (a refetch must not land mid-save). A priority save is per-card:
+  // only the saving card locks (see `runBoardMovement` and `moveProjectPosition`).
+  const movementInteractionActive = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || activeConfirm);
+  const interactionBlocked = movementInteractionActive || pendingOrdering.size > 0;
   const interactionBlockedRef = useRef(interactionBlocked);
   interactionBlockedRef.current = interactionBlocked;
-  // #306: the UI lock is NOT the data barrier. `interactionBlocked` above stays the barrier that
-  // defers accepting refetched data (it must include `pendingOrdering`, so a refetch cannot land
-  // mid-save). Locking the view switcher and the sort control on a priority save served no data
-  // purpose, and a priority save is per-card: only the saving card locks (see `runBoardMovement`
-  // and `moveProjectPosition`). Move-related state still locks the switcher, as before.
-  const movementInteractionActive = Boolean(boardInteraction.activeId || boardInteraction.proposal || pendingMoves.size > 0 || activeConfirm);
   const calendarFallbackLocationRef = useRef(!effectiveRouteCalendar && !routeDashboardView && view === "calendar" && canViewProductionCalendar);
   // The location this reconciliation effect itself last processed — not merely "is the location
   // currently non-List" — so an intermediate render mid-transition (entering archived pushes its
@@ -1108,10 +1122,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     // already withhold the UI affordances that would normally reach this, but a stale drag gesture
     // in flight when a search commits must not be allowed to slip a mutation through regardless.
     if (movementBusyRef.current || movementSettlePendingRef.current || pendingMoves.size > 0 || activeConfirm || pendingOrdering.has(intent.projectId) || searchActive) return;
-    // #306: the baseline is the PRE-overlay list. `projects` carries another card's unconfirmed
-    // priority (`priorityOverlay`); stamping that into `acceptedProjects`/`boardOverlay` would make
-    // it un-rollbackable if that save then fails. The overlay is re-applied on top at render.
-    const baselineModel = boardModelFromProjects(baseProjects);
+    // #306: the baseline carries confirmed priorities only (`confirmedPriorities`). `projects` also
+    // carries another card's PENDING priority; stamping that into `acceptedProjects`/`boardOverlay`
+    // would make it un-rollbackable if that save then fails. Pending values are re-applied at render.
+    const baselineModel = boardModelFromProjects(applyPriorityOverlay(baseProjects, confirmedPriorities(priorityOverlay)));
     const movingProject = baselineModel.projects.find((project) => project.id === intent.projectId);
     if (!movingProject) {
       if (intent.origin === "move-to") {

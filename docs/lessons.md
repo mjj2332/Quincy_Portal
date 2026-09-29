@@ -4224,8 +4224,17 @@ freezing the whole Board.
   already carries `priorityOverlay`. While the lock was board-wide no move could start during a
   priority save, so it never mattered. Once another card can move, that move stamps X's
   *unconfirmed* priority into `acceptedProjects` and `boardOverlay`. If X's save then fails,
-  removing the overlay entry reveals the stamped value, not the original. The baseline must come
-  from `baseProjects` (pre-overlay); the overlay is re-applied at render.
+  removing the overlay entry reveals the stamped value, not the original.
+- **And the first fix was half wrong.** Building the baseline from the bare `baseProjects` dropped
+  *confirmed* priorities too. The move's response bumps the moving card's `boardRevision` past the
+  confirmation's, the overlay's freshness rule lets that base row win, and a card moved right after
+  its own save showed its old priority until the refetch landed. The baseline carries confirmed
+  values only (`confirmedPriorities`); pending ones are re-applied at render. Two tests pin the two
+  directions: (b) fails if a pending value gets in, (c) fails if a confirmed one is left out.
+- **Known, accepted:** the priority `UPDATE` is guarded on the card's own `board_position` and
+  `board_revision`, and a move can compact the column. A move committing inside the milliseconds
+  between the save's SELECT and UPDATE fails the save with a 409 and a rollback. Another user could
+  always trigger that, so it does not justify a board-wide lock. A move's focus restore also still
+  waits for any pending priority save to settle (`useLayoutEffect` gate); that is a sub-second delay.
 - **Rule:** before relaxing a lock, list every path the lock made unreachable. Each is a latent bug
-  the relaxation exposes. The #306 test that pins this (`Dashboard-priority-coordinator`, "a failed
-  save then rolls back to the ORIGINAL priority") was mutation-checked against the old baseline.
+  the relaxation exposes. Both #306 baseline tests in `Dashboard-priority-coordinator` were mutation-checked.

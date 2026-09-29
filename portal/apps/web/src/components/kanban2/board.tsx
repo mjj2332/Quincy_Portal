@@ -157,7 +157,7 @@ export function ProjectKanbanBoard2({
   const reducedMotion = usePrefersReducedMotion();
 
   // A move is single-writer, so ANY pending move locks every card. A pending priority write does
-  // NOT (#306): it locks only the card being saved, per card, via `pendingOrdering.has(id)` below
+  // NOT (#306): it locks only the card being saved, per card, via `orderingPending(id)` below
   // (#98 locked the whole Board, which froze every other card for the length of one star click).
   const movementLocked = movementDisabled || pendingMoves.size > 0;
   const orderingPending = (projectId: string) => pendingOrdering?.has(projectId) ?? false;

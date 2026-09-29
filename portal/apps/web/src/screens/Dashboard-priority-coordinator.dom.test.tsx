@@ -23,12 +23,15 @@ vi.mock("../components/kanban2/board", () => ({
   // that test's "was the wrong value ever selected" check with this fixture's own limits.
   // #306: `onBoardMove` is exposed as a button that moves the SECOND project ahead of the first, the
   // one Board gesture the priority-lock tests below need; the select still drives project-1 only.
+  // `move-first` moves project-1 ahead of the other card (#306 test (c): a card moved after its own
+  // priority confirmed).
   ProjectKanbanBoard2: ({ projects, onPriorityChange, onBoardMove }: { projects: Array<{ id: string; priority: number | null }>; onPriorityChange: (project: { id: string; priority: number | null }, priority: number | null) => void; onBoardMove?: (projectId: string, gap: { targetStageKey: string; successor: string }, kind: "same", focus: { path: "pointer"; projectId: string; control: "handle"; sourceStageKey: string; sourceIndex: number }) => void }) => {
     const first = projects.find((item) => item.id === "project-1") ?? projects[0]!;
     const second = projects.find((item) => item.id !== first.id);
     return <>
       <select aria-label="Priority" value={first.priority ?? ""} onChange={(event) => onPriorityChange(first, Number(event.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
       {second && <button type="button" data-testid="move-second" onClick={() => onBoardMove?.(second.id, { targetStageKey: "awaiting_raw", successor: first.id }, "same", { path: "pointer", projectId: second.id, control: "handle", sourceStageKey: "awaiting_raw", sourceIndex: 1 })}>Move second</button>}
+      {second && <button type="button" data-testid="move-first" onClick={() => onBoardMove?.(first.id, { targetStageKey: "awaiting_raw", successor: second.id }, "same", { path: "pointer", projectId: first.id, control: "handle", sourceStageKey: "awaiting_raw", sourceIndex: 1 })}>Move first</button>}
     </>;
   },
 }));
@@ -1126,9 +1129,48 @@ describe("a priority save locks only its own card (#306)", () => {
     const kanban = buttons.find((button) => button.textContent === "Kanban")!;
     expect(list.disabled).toBe(false);
     expect(kanban.disabled).toBe(false);
-    const sort = host.querySelector<HTMLElement>('[aria-label="Sort Kanban board"]')!;
+    const sort = host.querySelector<HTMLElement>('[role="combobox"][aria-label="Sort Kanban board"]')!;
     expect(sort).not.toBeNull();
     expect(sort.hasAttribute("disabled") || sort.getAttribute("aria-disabled") === "true").toBe(false);
+  });
+
+  it("(a2) still disables the view buttons and the sort control while a MOVE is in flight", async () => {
+    // The counterpart of (a): the UI lock was narrowed, not removed. A pending move is single-writer.
+    apiGetMock.mockReset().mockResolvedValue(twoProjects);
+    apiPostMock.mockReset().mockImplementation(() => new Promise(() => undefined));
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="move-second"]')).not.toBeNull());
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="move-second"]')!.click(); await Promise.resolve(); });
+    await flush();
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] button')];
+    expect(buttons.map((button) => button.textContent)).toEqual(expect.arrayContaining(["List", "Kanban"]));
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+    const sort = host.querySelector<HTMLElement>('[role="combobox"][aria-label="Sort Kanban board"]')!;
+    expect(sort.hasAttribute("disabled") || sort.getAttribute("aria-disabled") === "true").toBe(true);
+  });
+
+  it("(c) keeps a card's CONFIRMED priority when that card moves before the refetch lands", async () => {
+    // The move's baseline drops PENDING priorities (b), not confirmed ones. The move's response
+    // bumps the card's boardRevision past the confirmation's, so a baseline without the confirmed
+    // value lets the base row "win" the overlay's freshness rule and show the old priority.
+    const firstAfter = { ...project, boardPosition: 1 };
+    const secondAhead = { ...second, boardPosition: 0 };
+    apiGetMock.mockReset()
+      .mockResolvedValueOnce({ projects: [secondAhead, firstAfter], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [second.id, project.id] } } })
+      .mockImplementation(() => new Promise(() => undefined));
+    apiPostMock.mockReset().mockImplementation((path: string) => path.endsWith("/priority")
+      ? Promise.resolve({ priority: 2, boardRevision: 1 })
+      : Promise.resolve({ changed: true, project: { projectId: project.id, stageKey: "awaiting_raw", boardRevision: 2 }, board: { sourceStageKey: "awaiting_raw", targetStageKey: "awaiting_raw", orderedVisibleProjectIds: [project.id, second.id] } }));
+    await act(async () => { root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><Dashboard currentUserId="admin-1" role="admin" /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="move-first"]')).not.toBeNull());
+    const select = () => host.querySelector<HTMLSelectElement>('select[aria-label="Priority"]')!;
+    await act(async () => { select().value = "2"; select().dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); });
+    await flush();
+    expect(select().value).toBe("2");
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="move-first"]')!.click(); await Promise.resolve(); });
+    await flush();
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${project.id}/board-position`, expect.anything());
+    expect(select().value).toBe("2");
   });
 
   it("(b) lets another card move during the save, and a failed save then rolls back to the ORIGINAL priority", async () => {
@@ -1138,7 +1180,6 @@ describe("a priority save locks only its own card (#306)", () => {
     const postsBefore = apiPostMock.mock.calls.length;
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="move-second"]')!.click(); await Promise.resolve(); });
     await flush();
-    expect(apiPostMock.mock.calls.length).toBeGreaterThan(postsBefore);
     expect(apiPostMock.mock.calls.slice(postsBefore).some(([path]) => !String(path).endsWith("/priority"))).toBe(true);
     await act(async () => { post.fail(new Error("Offline")); await Promise.resolve(); });
     await flush();

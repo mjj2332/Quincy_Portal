@@ -54,8 +54,8 @@ const RATING_BUTTON =
   ICON_BUTTON_BASE + " w-[28px] max-[721px]:w-[44px] leading-none " +
   "[font:var(--weight-regular)_var(--text-lg)/1_var(--font-sans)]";
 // The star pair, not the caution/secondary roles they happened to equal: Asset rating and
-// Project priority must move together (styles/tokens/colors.css). Same computed colour on the
-// `.vpanel` paper ground, so this is a rename at the source and no change on screen.
+// Project priority must move together (styles/tokens/colors.css) — so #306's lighter unlit star
+// applies to Asset rating too, on the `.vpanel` paper and on the ink stage.
 const RATING_ON = "text-star-on";
 const RATING_OFF = "text-star-off";
 
