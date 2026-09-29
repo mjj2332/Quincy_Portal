@@ -592,7 +592,7 @@ describe("guard: star colour comes from a token, never a literal", () => {
 const CAUTION_TOKEN_BASELINE: Record<string, number> = {
   // Three `bg-warning` hits: the plain `warning` variant, plus `bg-warning/10` and its
   // `dark:bg-warning/15` sibling in the `warningOutline`-shaped variant beside it.
-  "components/reui/badge.tsx": 3,
+  "components/reui/badge.tsx": 2,
 };
 
 describe("guard: caution text uses the caution TEXT token, never the brand value", () => {

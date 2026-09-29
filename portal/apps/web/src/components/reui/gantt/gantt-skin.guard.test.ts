@@ -55,21 +55,9 @@
  * This guard scans ONLY the nine files below — it says nothing about the other vendored primitives
  * the Gantt renders through (`TooltipContent`, `PopoverContent`, `ContextMenuContent`,
  * `DropdownMenuContent`, `SwitchPrimitive`). That is NOT "checked and found clean" — it is not
- * checked at all, and as of #219 PR A standards review item 4 those files are known to carry the
- * same four classes of violation this guard exists to catch, unfixed:
- *
- *   - `components/reui/context-menu.tsx` — 1 `dark:` variant, 2 `shadow-*` classes (`shadow-md`,
- *     `shadow-lg`).
- *   - `components/reui/dropdown-menu.tsx` — 1 `dark:` variant, 2 `shadow-*` classes (`shadow-md`,
- *     `shadow-lg`), same shape as `context-menu.tsx` (shared origin).
- *   - `components/reui/switch.tsx` — 5 `dark:` variants across its two `className` sites (the
- *     root's `data-[size=…]` block and the thumb).
- *   - `components/reui/dialog.tsx:48` and `components/reui/alert-dialog.tsx:43` — one bare
- *     `bg-black/10` (the overlay scrim) each.
- *
- * Re-skinning them is a separate change, deliberately not folded into this one — see the #219 PR A
- * standards review for the filed count. This paragraph exists so a reader does not mistake this
- * guard's silence on those five files for a clean bill of health.
+ * checked by THIS guard. #239 re-skinned them (and the rest of `components/reui/`) and
+ * `components/reui/reui-skin.guard.test.ts` now holds the whole tree to no `dark:` variant, no
+ * Tailwind shadow-scale utility and no black/white paint.
  *
  * #219 PR A standards review item 12: the re-skin claimed more rules than this file mechanises.
  * MECHANISED, by the seven detectors below: no `dark:` variant, no `shadow-*` outside the

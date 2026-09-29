@@ -31,7 +31,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground",
-        outline: "border-border bg-transparent dark:bg-input/32",
+        outline: "border-border bg-transparent",
         secondary: "bg-secondary text-secondary-foreground",
         info: "bg-info text-white",
         success: "bg-success text-white",
@@ -40,33 +40,33 @@ const badgeVariants = cva(
         focus: "bg-focus text-focus-foreground",
         invert: "bg-invert text-invert-foreground",
         "primary-light":
-          "border-primary/10 bg-primary/10 text-primary dark:border-primary/25 dark:bg-primary/15 dark:text-primary",
+          "border-primary/10 bg-primary/10 text-primary",
         "warning-light":
-          "border-warning/15 bg-warning/10 text-warning-foreground dark:border-warning/25 dark:bg-warning/15 dark:text-warning",
+          "border-warning/15 bg-warning/10 text-warning-foreground",
         "success-light":
-          "border-success/15 bg-success/10 text-success-foreground dark:border-success/25 dark:bg-success/15 dark:text-success",
+          "border-success/15 bg-success/10 text-success-foreground",
         "info-light":
-          "border-info/15 bg-info/10 text-info-foreground dark:border-info/25 dark:bg-info/15 dark:text-info",
+          "border-info/15 bg-info/10 text-info-foreground",
         "destructive-light":
-          "border-destructive/15 bg-destructive/10 text-destructive-wash-foreground dark:border-destructive/25 dark:bg-destructive/15 dark:text-destructive",
+          "border-destructive/15 bg-destructive/10 text-destructive-wash-foreground",
         "invert-light":
-          "border-invert/15 bg-invert/10 text-foreground dark:border-invert/45 dark:bg-invert/35 dark:text-invert-foreground",
+          "border-invert/15 bg-invert/10 text-foreground",
         "focus-light":
-          "border-focus/15 bg-focus/10 text-focus-foreground dark:border-focus/25 dark:bg-focus/15 dark:text-focus",
+          "border-focus/15 bg-focus/10 text-focus-foreground",
         "primary-outline":
-          "bg-background border-border text-primary dark:bg-input/30",
+          "bg-background border-border text-primary",
         "warning-outline":
-          "bg-background border-border text-warning-foreground dark:bg-input/30",
+          "bg-background border-border text-warning-foreground",
         "success-outline":
-          "bg-background border-border text-success-foreground dark:bg-input/30",
+          "bg-background border-border text-success-foreground",
         "info-outline":
-          "bg-background border-border text-info-foreground dark:bg-input/30",
+          "bg-background border-border text-info-foreground",
         "destructive-outline":
-          "bg-background border-border text-destructive-wash-foreground dark:bg-input/30",
+          "bg-background border-border text-destructive-wash-foreground",
         "invert-outline":
-          "bg-background border-border text-invert-foreground dark:bg-input/30",
+          "bg-background border-border text-invert-foreground",
         "focus-outline":
-          "bg-background border-border text-focus-foreground dark:bg-input/30",
+          "bg-background border-border text-focus-foreground",
       },
       // Correction 2: every size's text-*/leading-* utility is dropped — see the base comment
       // above. All five sizes now share the same base type size; they differ only in box
