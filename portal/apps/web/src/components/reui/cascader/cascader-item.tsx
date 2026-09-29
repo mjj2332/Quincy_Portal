@@ -77,8 +77,9 @@ const INDICATOR_CLASS =
 
 // The row's type, gap, radius and icon size per style. No horizontal padding:
 // every row pairs this with `ROW_FLUSH_CLASS` or `ROW_GUTTER_CLASS`.
+// Quincy adaptation (#324): the descendant recolour skips avatar subtrees, see combobox.tsx.
 const ROW_THEME_CLASS =
-  "data-highlighted:bg-accent data-highlighted:text-accent-foreground not-data-[variant=destructive]:data-highlighted:**:text-accent-foreground [&_svg:not([class*='size-'])]:size-4 rounded-md py-1"
+  "data-highlighted:bg-accent data-highlighted:text-accent-foreground not-data-[variant=destructive]:data-highlighted:[&_*:not([data-slot=avatar]):not([data-slot=avatar]_*)]:text-accent-foreground [&_svg:not([class*='size-'])]:size-4 rounded-md py-1"
 
 /**
  * The row's gap and type, per style, held apart from the rest of the theme.
