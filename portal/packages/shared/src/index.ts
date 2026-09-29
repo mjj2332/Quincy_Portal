@@ -2,6 +2,7 @@ export * from "./capabilities";
 export * from "./stages";
 export * from "./stage-move";
 export * from "./media";
+export * from "./workspace-tab";
 export * from "./xmp";
 export * from "./crypto";
 export * from "./tonomo";

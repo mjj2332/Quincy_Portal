@@ -9,6 +9,8 @@ import {
 } from "./production-calendar";
 import { isSydneyCalendarDate } from "./sydney-civil-time";
 import { STAGE_PRESENTATION_KEYS, type StagePresentationKey } from "./stage-move";
+import { notificationWorkspaceTab } from "./notification-types";
+import { WORKSPACE_TABS, type WorkspaceTab } from "./workspace-tab";
 
 /**
  * The small, deliberately closed URL contract for the authenticated staff SPA.
@@ -128,7 +130,9 @@ export type DashboardRoute =
 export type StaffRoute =
   | DashboardRoute
   | { kind: "create-project" }
-  | { kind: "project"; projectId: string; collaboration?: "open" }
+  /** `arrivalTab` is the one-shot Workspace-tab arrival intent (#337): consumed once on arrival,
+   * then stripped from the URL. */
+  | { kind: "project"; projectId: string; arrivalTab?: WorkspaceTab }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
   | { kind: "notices" }
@@ -140,7 +144,20 @@ export type StaffRoute =
 export const CANONICAL_LOWERCASE_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const UUID = CANONICAL_LOWERCASE_UUID_REGEX;
 const reservedRoots = new Set(["api", "media", "__transform-source", "d"]);
-const COLLABORATION_NOTIFICATION_TYPES = new Set(["mentioned", "subtask_assigned", "subtask_due_today", "project_collaboration_activity"]);
+/**
+ * #337: the one query string each Workspace tab's arrival intent is spelled as. Collaboration's
+ * `collaboration=open` is FROZEN: `projectActivityDeepLink` (project-activity.ts) builds its
+ * expected deep link through `staffPathFor`, and `parseProjectActivityRow` rejects any persisted
+ * `deep_link_path` that is not byte-equal -- a new spelling would invalidate every stored
+ * `project_collaboration` activity row and in-flight outbox payload. `tab=collaboration` is
+ * deliberately NOT accepted: one spelling per tab keeps parse/serialise a strict round trip.
+ */
+function projectArrivalQuery(tab: WorkspaceTab): string {
+  return tab === "collaboration" ? "collaboration=open" : `tab=${tab}`;
+}
+const PROJECT_ARRIVAL_BY_QUERY: ReadonlyMap<string, WorkspaceTab> = new Map(
+  WORKSPACE_TABS.map((tab) => [projectArrivalQuery(tab), tab]),
+);
 const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
@@ -444,7 +461,9 @@ function parseDashboardGanttLocation(params: URLSearchParams): DashboardGanttRou
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
- * the one-shot collaboration arrival intent on an otherwise canonical project route. */
+ * the one-shot Workspace-tab arrival intent on an otherwise canonical project route:
+ * `?collaboration=open` (Collaboration's only spelling -- frozen by persisted activity deep links,
+ * see `projectArrivalQuery`) or `?tab=<collection kind>`. */
 export function parseStaffLocation(location: string): StaffRoute {
   if (typeof location !== "string" || unsafeText(location) || location.includes("#")) return { kind: "not-found" };
   const question = location.indexOf("?");
@@ -452,7 +471,10 @@ export function parseStaffLocation(location: string): StaffRoute {
   const pathname = location.slice(0, question);
   const query = location.slice(question + 1);
   const route = parseStaffPathname(pathname);
-  if (route.kind === "project" && query === "collaboration=open") return { ...route, collaboration: "open" };
+  if (route.kind === "project") {
+    const arrivalTab = PROJECT_ARRIVAL_BY_QUERY.get(query);
+    return arrivalTab ? { ...route, arrivalTab } : { kind: "not-found" };
+  }
   if (route.kind !== "dashboard" || pathname !== "/") return { kind: "not-found" };
   const params = parseDashboardQuery(query);
   if (params === null) return { kind: "not-found" };
@@ -578,7 +600,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       return qs ? `/?${qs}` : "/";
     }
     case "create-project": return "/projects/new";
-    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;
+    case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.arrivalTab ? `?${projectArrivalQuery(route.arrivalTab)}` : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
     case "notices": return "/notices";
@@ -591,7 +613,8 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
  * notification has no project (e.g. a notice-board mention). */
 export function projectNotificationRoute(projectId: string | null, type: string): StaffRoute | undefined {
   if (!projectId) return undefined;
-  return { kind: "project", projectId, ...(COLLABORATION_NOTIFICATION_TYPES.has(type) ? { collaboration: "open" as const } : {}) };
+  const arrivalTab = notificationWorkspaceTab(type);
+  return { kind: "project", projectId, ...(arrivalTab ? { arrivalTab } : {}) };
 }
 
 /** Only canonical, relative staff locations are valid OAuth return destinations. */

@@ -229,7 +229,7 @@ export type ParsedProjectActivityIntent = Omit<ProjectActivityIntent, "activity"
 
 function expectedDeepLink(type: ProjectActivityType, projectId: string): { kind: DeepLinkKind; path: string } {
   return PROJECT_ACTIVITY_REGISTRY[type].deepLinkKind === "project_collaboration"
-    ? { kind: "project_collaboration", path: staffPathFor({ kind: "project", projectId, collaboration: "open" }) }
+    ? { kind: "project_collaboration", path: staffPathFor({ kind: "project", projectId, arrivalTab: "collaboration" }) }
     : { kind: "project", path: staffPathFor({ kind: "project", projectId }) };
 }
 

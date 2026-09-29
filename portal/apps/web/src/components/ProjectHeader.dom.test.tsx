@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CollectionKind } from "@quincy/shared";
+import type { CollectionKind, WorkspaceTab } from "@quincy/shared";
 import { ProjectHeader } from "./ProjectHeader";
 import type { ProjectDetail } from "../lib/project-data";
 
@@ -359,22 +359,28 @@ describe("Project header Stage control", () => {
 
   it("puts Collaboration last in the same tablist, emits it when clicked, and marks it selected when active", () => {
     const onActiveTabChange = vi.fn();
-    const tabRef = { current: null as HTMLButtonElement | null };
-    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} collaborationTabRef={tabRef} />);
+    const tabRefs = { current: new Map<WorkspaceTab, HTMLButtonElement>() };
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} workspaceTabRefs={tabRefs} />);
     expect(host.querySelectorAll('[role="tablist"]')).toHaveLength(1);
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs.map((button) => button.textContent?.replace(/[0-9—]+$/, ""))).toEqual(["RAW", "Edited", "Video", "Floorplan", "Copy", "Collaboration"]);
     const collaboration = tabs.at(-1)!;
-    expect(tabRef.current).toBe(collaboration);
+    // #337: every trigger is registered under its own tab, so an arrival can focus whichever it selected.
+    expect(tabRefs.current.get("collaboration")).toBe(collaboration);
+    expect([...tabRefs.current.keys()].sort()).toEqual(["collaboration", "copy", "edited", "floorplan", "raw", "video"]);
+    expect(tabRefs.current.get("edited")).toBe(tabs[1]);
     expect(collaboration.id).toBe("project-workspace-tab-collaboration");
     expect(collaboration.getAttribute("aria-controls")).toBe("project-workspace-panel-collaboration");
     act(() => collaboration.click());
     expect(onActiveTabChange).toHaveBeenCalledWith("collaboration");
-    act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab="collaboration" onActiveTabChange={onActiveTabChange} collaborationTabRef={tabRef} />); });
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab="collaboration" onActiveTabChange={onActiveTabChange} workspaceTabRefs={tabRefs} />); });
     const after = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(after.filter((button) => button.getAttribute("aria-selected") === "true").map((button) => button.textContent)).toEqual(["Collaboration"]);
-    expect(tabRef.current).toBe(after.at(-1));
-    expect(tabRef.current!.isConnected).toBe(true);
+    expect(tabRefs.current.get("collaboration")).toBe(after.at(-1));
+    expect(tabRefs.current.get("collaboration")!.isConnected).toBe(true);
+    // A Collection that leaves the strip (denied) drops out of the registry.
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab="collaboration" onActiveTabChange={onActiveTabChange} workspaceTabRefs={tabRefs} />); });
+    expect([...tabRefs.current.keys()].sort()).toEqual(["collaboration", "raw"]);
   });
 
   it("badges the Collaboration tab with the unread count, capped at 99+, with an accessible count", () => {

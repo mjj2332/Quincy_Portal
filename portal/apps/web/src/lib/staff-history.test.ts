@@ -56,6 +56,7 @@ describe("staff search codec", () => {
       "view=calendar&date=2026-08-30&sub=agenda&layers=project%2Cchecklist&mine=1&q=smith+street",
       "view=list",
       "collaboration=open",
+      "tab=edited",
       "view=list&detail=123e4567-e89b-42d3-a456-426614174000",
     ]) {
       expect(stringifyStaffSearch(parseStaffSearch(`?${raw}`))).toBe(`?${raw}`);
@@ -162,6 +163,11 @@ describe("the property the read-only history rests on", () => {
     "/projects/new",
     `/projects/${projectId}`,
     `/projects/${projectId}?collaboration=open`,
+    `/projects/${projectId}?tab=raw`,
+    `/projects/${projectId}?tab=edited`,
+    `/projects/${projectId}?tab=video`,
+    `/projects/${projectId}?tab=floorplan`,
+    `/projects/${projectId}?tab=copy`,
     `/projects/${projectId}/edit`,
     "/admin",
     "/settings/notifications",

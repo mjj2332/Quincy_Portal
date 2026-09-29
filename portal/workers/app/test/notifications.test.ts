@@ -123,7 +123,7 @@ describe("notifications API and recipient selection", () => {
     await notifyProject(testEnv, projectId, "raw_ready");
     expect((await database.DB.prepare("SELECT user_id FROM notifications WHERE project_id = ? AND type = 'raw_ready'").bind(projectId).all<{ user_id: string }>()).results).toEqual([{ user_id: adminId }]);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}`) }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining(`https://portal.test/projects/${projectId}?tab=raw`) }));
   });
 
   it("includes active admins for every project event", async () => {

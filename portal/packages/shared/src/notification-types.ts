@@ -1,3 +1,5 @@
+import type { WorkspaceTab } from "./workspace-tab";
+
 export const NOTIFICATION_TYPES = [
   "raw_ready",
   "edited_landed",
@@ -15,6 +17,33 @@ export const NOTIFICATION_TYPES = [
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+/**
+ * #337: the Workspace tab a Project notification opens on. An exhaustive `Record` over the
+ * declared union, so adding a type without a mapping fails the typecheck (and the key-parity test
+ * in `notification-types.test.ts` fails at runtime).
+ */
+export const NOTIFICATION_WORKSPACE_TAB: Readonly<Record<NotificationType, WorkspaceTab>> = Object.freeze({
+  raw_ready: "raw",
+  sent_to_editing: "raw",
+  autohdr_stalled: "raw",
+  edited_landed: "edited",
+  delivered: "edited",
+  comment_added: "collaboration",
+  assigned_to_project: "collaboration",
+  mentioned: "collaboration",
+  subtask_assigned: "collaboration",
+  subtask_due_today: "collaboration",
+  project_deadline_reminder: "collaboration",
+  project_activity: "collaboration",
+  project_collaboration_activity: "collaboration",
+});
+
+/** The mapped tab for a stored notification type, or undefined for one the app no longer declares
+ * (`notifications.type` is free text). Own keys only, so `toString`/`__proto__` never match. */
+export function notificationWorkspaceTab(type: string): WorkspaceTab | undefined {
+  return Object.hasOwn(NOTIFICATION_WORKSPACE_TAB, type) ? NOTIFICATION_WORKSPACE_TAB[type as NotificationType] : undefined;
+}
 
 /**
  * The two notification types #114's row grid tones with `text-warning` (never

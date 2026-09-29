@@ -10,7 +10,21 @@ vi.mock("./lib/auth", () => ({ useSession: () => sessionState.value, stopImperso
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unknown }) => children }));
 vi.mock("./components/quincy/RailedShell", () => ({ RailedShell: ({ children }: { children: ReactNode }) => <><header />{children}</> }));
 vi.mock("./screens/Dashboard", () => ({ Dashboard: ({ calendar }: { calendar?: unknown }) => <main>Dashboard<span data-calendar-route={calendar ? "present" : "absent"} /></main> }));
-vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId, collaborationOpenSignal, onCollaborationOpenSignalConsumed }: { projectId: string; collaborationOpenSignal?: number; onCollaborationOpenSignalConsumed?: (signal: number) => void }) => { seenSignals.push(collaborationOpenSignal); return <main><button type="button" onClick={() => collaborationOpenSignal !== undefined && onCollaborationOpenSignalConsumed?.(collaborationOpenSignal)}>consume {projectId}</button><span data-signal={String(collaborationOpenSignal)} /></main>; } }));
+const ackDuringNextRender = vi.hoisted(() => ({ armed: false }));
+vi.mock("./screens/ProjectWorkspace", async () => {
+  const { useLayoutEffect } = await import("react");
+  return { ProjectWorkspace: ({ projectId, arrivalSignal, arrivalTab, onArrivalConsumed }: { projectId: string; arrivalSignal?: number; arrivalTab?: string; onArrivalConsumed?: (signal: number) => void }) => {
+    seenSignals.push(arrivalSignal);
+    // Acknowledges whatever signal this render received, inside the commit -- before the shell's own
+    // passive effect has observed a new location. Models a Workspace that finishes loading then.
+    useLayoutEffect(() => {
+      if (!ackDuringNextRender.armed) return;
+      ackDuringNextRender.armed = false;
+      if (arrivalSignal !== undefined) onArrivalConsumed?.(arrivalSignal);
+    });
+    return <main><button type="button" onClick={() => arrivalSignal !== undefined && onArrivalConsumed?.(arrivalSignal)}>consume {projectId}</button><span data-signal={String(arrivalSignal)} data-arrival-tab={String(arrivalTab)} /></main>;
+  } };
+});
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>Sign in</main> }));
 vi.mock("./screens/Admin", () => ({ Admin: () => <main>Admin</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>Create</main> }));
@@ -34,7 +48,7 @@ async function renderAt(path: string) {
 }
 async function click(element: Element) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); }); }
 
-afterEach(async () => { if (root) await act(async () => root!.unmount()); root = null; document.body.replaceChildren(); seenSignals.splice(0); window.history.replaceState(null, "", "/"); });
+afterEach(async () => { if (root) await act(async () => root!.unmount()); root = null; document.body.replaceChildren(); seenSignals.splice(0); ackDuringNextRender.armed = false; window.history.replaceState(null, "", "/"); });
 
 describe("App Dashboard route transport", () => {
   it.each([
@@ -113,6 +127,45 @@ describe("App Dashboard route transport", () => {
     expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}`);
     await act(async () => { window.history.pushState(null, "", `/projects/${projectId}?collaboration=open`); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("2");
+    await click(host.querySelector("button")!);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}`);
+  });
+
+  it("#337: hands a Collection tab arrival to the Workspace once and cleans it to the bare Project URL", async () => {
+    const projectId = "123e4567-e89b-42d3-a456-426614174000";
+    const host = await renderAt(`/projects/${projectId}?tab=edited`);
+    const marker = () => host.querySelector("[data-signal]")!;
+    expect(marker().getAttribute("data-signal")).toBe("1");
+    expect(marker().getAttribute("data-arrival-tab")).toBe("edited");
+    await click(host.querySelector("button")!);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}`);
+    expect(marker().getAttribute("data-signal")).toBe("undefined");
+
+    // A different tab's arrival on the same Project is a fresh signal carrying its own tab...
+    await act(async () => { window.history.pushState(null, "", `/projects/${projectId}?tab=raw`); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(marker().getAttribute("data-signal")).toBe("2");
+    expect(marker().getAttribute("data-arrival-tab")).toBe("raw");
+    // ...and so is switching straight to the Collaboration spelling before the first is acknowledged.
+    await act(async () => { window.history.pushState(null, "", `/projects/${projectId}?collaboration=open`); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(marker().getAttribute("data-signal")).toBe("3");
+    expect(marker().getAttribute("data-arrival-tab")).toBe("collaboration");
+    await click(host.querySelector("button")!);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}`);
+  });
+
+  it("#337: a stale arrival's acknowledgement never strips a newer arrival's tab", async () => {
+    const projectId = "123e4567-e89b-42d3-a456-426614174000";
+    const host = await renderAt(`/projects/${projectId}?tab=raw`);
+    expect(host.querySelector("[data-signal]")!.getAttribute("data-arrival-tab")).toBe("raw");
+    // The Raw arrival is still unconsumed when an Edited notification for the same Project is clicked;
+    // the Workspace acknowledges during the very commit that renders the new location.
+    ackDuringNextRender.armed = true;
+    await act(async () => { window.history.pushState(null, "", `/projects/${projectId}?tab=edited`); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(ackDuringNextRender.armed).toBe(false);
+    expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}?tab=edited`);
+    const marker = host.querySelector("[data-signal]")!;
+    expect(marker.getAttribute("data-arrival-tab")).toBe("edited");
+    expect(marker.getAttribute("data-signal")).toBe("2");
     await click(host.querySelector("button")!);
     expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}`);
   });

@@ -37,7 +37,7 @@
  */
 import { createContext, use, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
-import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role } from "@quincy/shared";
+import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role, type WorkspaceTab } from "@quincy/shared";
 import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from "./router";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
@@ -70,6 +70,10 @@ export function ShellIdentityProvider({ user, impersonating, children }: { user:
   return <ShellIdentityContext value={value}>{children}</ShellIdentityContext>;
 }
 
+/** #337: a Project route's one-shot Workspace-tab arrival (`?tab=<kind>` / `?collaboration=open`),
+ * numbered so a repeat arrival at an identical URL is still a fresh signal. */
+type ArrivalIntent = { projectId: string; tab: WorkspaceTab; signal: number; location: string };
+
 /** Everything the root route computes once and the leaves below it consume. */
 type ShellState = {
   user: SessionUser;
@@ -79,8 +83,8 @@ type ShellState = {
   navigate: (path: string, message?: string, replace?: boolean) => void;
   clearNotice: () => void;
   dashboardCalendar: DashboardCalendarState | null;
-  collaborationIntent: { projectId: string; signal: number } | null;
-  acknowledgeCollaborationSignal: (projectId: string, signal: number) => void;
+  arrivalIntent: ArrivalIntent | null;
+  acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
 };
 
 const ShellStateContext = createContext<ShellState | null>(null);
@@ -191,8 +195,8 @@ function ShellRoute() {
   const [notice, setNotice] = useState<Notice>(null);
   const restored = useRef(false);
   const lastObservedIntentLocationRef = useRef<string | null>(null);
-  const collaborationSignalRef = useRef(0);
-  const [collaborationIntent, setCollaborationIntent] = useState<{ projectId: string; signal: number } | null>(null);
+  const arrivalSignalRef = useRef(0);
+  const [arrivalIntent, setArrivalIntent] = useState<ArrivalIntent | null>(null);
   const { can } = useCapabilities();
   const canAccessAdmin = can("adminBackend");
   const canViewNoticeBoard = can("viewNoticeBoard");
@@ -217,20 +221,24 @@ function ShellRoute() {
   }, [completeLocation, history]);
 
   useEffect(() => {
-    if (route.kind === "project" && route.collaboration === "open") {
+    if (route.kind === "project" && route.arrivalTab !== undefined) {
       if (lastObservedIntentLocationRef.current !== completeLocation) {
         lastObservedIntentLocationRef.current = completeLocation;
-        const signal = ++collaborationSignalRef.current;
-        setCollaborationIntent({ projectId: route.projectId, signal });
+        const signal = ++arrivalSignalRef.current;
+        setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal, location: completeLocation });
       }
       return;
     }
     lastObservedIntentLocationRef.current = null;
-    setCollaborationIntent(null);
+    setArrivalIntent(null);
   }, [completeLocation, route]);
 
-  const acknowledgeCollaborationSignal = (projectId: string, signal: number) => {
-    if (route.kind !== "project" || route.projectId !== projectId || route.collaboration !== "open" || collaborationIntent?.projectId !== projectId || collaborationIntent.signal !== signal) return;
+  // The intent observed for the CURRENT location only. Between a location change and the effect above
+  // observing it, the stored intent still describes the previous URL; it is neither handed to the
+  // Workspace nor acknowledgeable then, so a stale acknowledgement can never strip a newer arrival.
+  const currentArrivalIntent = route.kind === "project" && route.arrivalTab !== undefined && arrivalIntent?.location === completeLocation && arrivalIntent.projectId === route.projectId && arrivalIntent.tab === route.arrivalTab ? arrivalIntent : null;
+  const acknowledgeArrivalSignal = (projectId: string, signal: number) => {
+    if (currentArrivalIntent?.projectId !== projectId || currentArrivalIntent.signal !== signal) return;
     lastObservedIntentLocationRef.current = null;
     history.replace(staffPathFor({ kind: "project", projectId }));
   };
@@ -305,7 +313,7 @@ function ShellRoute() {
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
-    dashboardCalendar, collaborationIntent, acknowledgeCollaborationSignal,
+    dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal,
   };
 
   const routedContent = blocked
@@ -346,15 +354,16 @@ const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId",
   component: function ProjectLeaf() {
-    const { route, notice, pathname, clearNotice, collaborationIntent, acknowledgeCollaborationSignal } = useShell();
+    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal } = useShell();
     if (route.kind !== "project") return <NotAvailable />;
     return <ProjectWorkspace
       key={route.projectId}
       projectId={route.projectId}
       notice={notice?.path === pathname ? notice.message : null}
       onNoticeShown={clearNotice}
-      collaborationOpenSignal={collaborationIntent?.projectId === route.projectId ? collaborationIntent.signal : undefined}
-      onCollaborationOpenSignalConsumed={(signal) => acknowledgeCollaborationSignal(route.projectId, signal)}
+      arrivalSignal={arrivalIntent?.projectId === route.projectId ? arrivalIntent.signal : undefined}
+      arrivalTab={arrivalIntent?.projectId === route.projectId ? arrivalIntent.tab : undefined}
+      onArrivalConsumed={(signal) => acknowledgeArrivalSignal(route.projectId, signal)}
     />;
   },
 });

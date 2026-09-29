@@ -70,7 +70,8 @@ describe("dashboardSearchOf", () => {
     const routes: StaffRoute[] = [
       { kind: "create-project" },
       { kind: "project", projectId: "123e4567-e89b-42d3-a456-426614174000" },
-      { kind: "project", projectId: "123e4567-e89b-42d3-a456-426614174000", collaboration: "open" },
+      { kind: "project", projectId: "123e4567-e89b-42d3-a456-426614174000", arrivalTab: "collaboration" },
+      { kind: "project", projectId: "123e4567-e89b-42d3-a456-426614174000", arrivalTab: "raw" },
       { kind: "edit-project", projectId: "123e4567-e89b-42d3-a456-426614174000" },
       { kind: "admin" },
       { kind: "notifications" },

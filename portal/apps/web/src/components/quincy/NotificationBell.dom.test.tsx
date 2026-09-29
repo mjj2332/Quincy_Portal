@@ -504,11 +504,11 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.activeElement).toBe(firstItemAfter);
   });
 
-  it("links every project notification, opening collaboration only for collaboration types, then marks them read without waiting", async () => {
+  it("#337: links every project notification to its mapped Workspace tab, then marks them read without waiting", async () => {
     // The full 11-type fixture Topbar.dom.test.tsx's own version of this test used — every
     // notification type the model routes, not just a sampled subset.
     const projectId = "11111111-1111-4111-8111-111111111111";
-    apiGetMock.mockResolvedValue({ notifications: [
+    const rows = [
       notification({ id: "project-mention", projectId, type: "mentioned", title: "You were mentioned", body: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "board-mention", projectId: null, type: "mentioned", title: "You were mentioned", body: "Notice", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-subtask", projectId, type: "subtask_assigned", title: "Subtask assigned", body: "Checklist", createdAt: "2026-08-17T00:00:00.000Z" }),
@@ -520,16 +520,35 @@ describe("NotificationBell panel (Popover)", () => {
       notification({ id: "project-delivered", projectId, type: "delivered", title: "Delivered", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-comment", projectId, type: "comment_added", title: "Comment", createdAt: "2026-08-17T00:00:00.000Z" }),
       notification({ id: "project-assigned", projectId, type: "assigned_to_project", title: "Assigned", createdAt: "2026-08-17T00:00:00.000Z" }),
-    ], unreadCount: 11 });
+    ];
+    apiGetMock.mockResolvedValue({ notifications: rows, unreadCount: 11 });
     // Held unresolved — proving the link activation navigates without waiting on the read POST.
     let resolvePost: ((value: unknown) => void) | undefined;
     apiPostMock.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
     const trigger = await renderPanel();
     await click(trigger);
-    const collabLinks = document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`);
-    expect(collabLinks).toHaveLength(3);
-    expect([...collabLinks].map((link) => link.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("You were mentioned"), expect.stringContaining("Subtask assigned"), expect.stringContaining("Due today")]));
-    expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(7);
+    // Written out from #337's table, row by row -- independent of the implementation map.
+    const expectedHref: Record<string, string> = {
+      "project-mention": `/projects/${projectId}?collaboration=open`,
+      "project-subtask": `/projects/${projectId}?collaboration=open`,
+      "project-due": `/projects/${projectId}?collaboration=open`,
+      "project-raw": `/projects/${projectId}?tab=raw`,
+      "project-edited": `/projects/${projectId}?tab=edited`,
+      "project-editing": `/projects/${projectId}?tab=raw`,
+      "project-stalled": `/projects/${projectId}?tab=raw`,
+      "project-delivered": `/projects/${projectId}?tab=edited`,
+      "project-comment": `/projects/${projectId}?collaboration=open`,
+      "project-assigned": `/projects/${projectId}?collaboration=open`,
+    };
+    const projectLinks = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/projects/"]')];
+    expect(projectLinks.map((link) => link.getAttribute("href")).sort()).toEqual(Object.values(expectedHref).sort());
+    for (const row of rows.filter((item) => item.projectId !== null)) {
+      const link = projectLinks.find((item) => item.textContent?.trim() === row.title);
+      expect(link?.getAttribute("href"), row.id).toBe(expectedHref[row.id]);
+    }
+    expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(0);
+    const collabLinks = [...document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`)];
+    expect(collabLinks[0]!.textContent).toContain("You were mentioned");
     const unrouted = [...document.querySelectorAll('[data-testid="rail-notification-item"][data-notification-route="none"]')];
     // The board mention has no project, so it stays a plain row — but keeps its fixed copy.
     expect(unrouted.map((row) => row.textContent)).toEqual([expect.stringContaining("You were mentioned")]);

@@ -23,6 +23,7 @@ import {
   roleHasCapability,
   isProjectAssignmentEligible,
   staffPathFor,
+  projectNotificationRoute,
   truncateForEmail,
   formatSydneyInstant,
   formatSydneyCivil,
@@ -39,6 +40,16 @@ export const NOTIFICATION_QUEUE_STUCK_MS = 30 * 60_000;
 export const NOTIFICATION_RECOVERY_LIMIT = 100;
 export const NOTIFICATION_QUEUE_MAX_DELAY_SECONDS = 12 * 60 * 60;
 export const PROJECT_DEADLINE_OPERATIONAL_TARGET_MS = 120_000;
+/** #337: every Project notification email links to the Workspace tab its type maps to, through the
+ * same `projectNotificationRoute` + `staffPathFor` the in-app list uses, so the two cannot drift.
+ * (Persisted activity deep links are not rebuilt here -- see the broad-activity resolver.) */
+function projectNotificationUrl(env: Pick<Env, "APP_ORIGIN">, projectId: string, type: NotificationType): string {
+  const route = projectNotificationRoute(projectId, type);
+  // Unreachable for a non-empty projectId: `projectNotificationRoute` returns a project route for it.
+  if (route?.kind !== "project") throw new Error(`No project route for a ${type} notification.`);
+  return `${env.APP_ORIGIN}${staffPathFor(route)}`;
+}
+
 const htmlEscape = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));
 
 type OutboxRow = {
@@ -378,7 +389,7 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
   if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
   const copy = externalNotificationCopy({ type: payload.legacy.type });
   if (!copy) return suppressed("external_policy_suppressed");
-  const projectPath = `${env.APP_ORIGIN}/projects/${row.projectId}`;
+  const projectPath = projectNotificationUrl(env, row.projectId, payload.legacy.type);
   return {
     ok: true,
     kind: "legacy",
@@ -456,7 +467,7 @@ async function resolveStaffSubtaskAssignedRecipient(env: Env, outbox: OutboxRow)
   if (row.assignmentCurrent !== 1) return suppressed("subtask_changed");
   if (row.eligible !== 1) return suppressed("recipient_ineligible");
   const copy = { title: "Subtask assigned", body: "You have been assigned a project subtask." };
-  const collaborationPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: row.projectId, collaboration: "open" })}`;
+  const collaborationPath = projectNotificationUrl(env, row.projectId, "subtask_assigned");
   return {
     ok: true,
     kind: "legacy",
@@ -513,7 +524,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
   if (expectedType === "subtask_due_today" && (!("dueDate" in payload.assignment) || payload.assignment.dueDate !== row.subtaskDueDate || payload.assignment.claimAt !== row.subtaskDueReminderSentAt)) return suppressed("subtask_changed");
   const copy = externalNotificationCopy({ type: expectedType });
   if (!copy) return suppressed("external_policy_suppressed");
-  const projectPath = `${env.APP_ORIGIN}/projects/${row.projectId}`;
+  const projectPath = projectNotificationUrl(env, row.projectId, expectedType);
   return {
     ok: true,
     kind: "legacy",
@@ -571,7 +582,7 @@ async function resolveDeadlineReminderRecipient(env: Env, outbox: OutboxRow): Pr
   if (result.membershipId !== payload.authorizationAtOccurrence.membershipCycle || result.membershipRole !== "editor" || result.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt || result.membershipCreatedAt > result.occurrenceFiredAt) return suppressed("membership_cycle_changed");
   if (result.recipientRole === "external_editor" && result.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
   if (authorizationEpochMismatch(result)) return suppressed("authorization_epoch_changed");
-  const projectPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: result.projectId })}`;
+  const projectPath = projectNotificationUrl(env, result.projectId, "project_deadline_reminder");
   if (result.recipientRole === "external_editor") {
     if (!externalNotificationChannels("project_deadline_reminder").length) return suppressed("external_policy_suppressed");
     const copy = externalNotificationCopy({ type: "project_deadline_reminder" });
@@ -838,7 +849,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     if (!exact) return suppressed("membership_cycle_changed");
     if (first.recipientRole === "external_editor" && first.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
     if (authorizationEpochMismatch(first)) return suppressed("authorization_epoch_changed");
-    const projectPath = `${env.APP_ORIGIN}/projects/${first.projectId}`;
+    const projectPath = projectNotificationUrl(env, first.projectId, "assigned_to_project");
     if (first.recipientRole === "external_editor") {
       if (!externalNotificationChannels("assigned_to_project").length) return suppressed("external_policy_suppressed");
       const copy = externalNotificationCopy({ type: "assigned_to_project" });
@@ -896,7 +907,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
   }
   if (first.recipientRole === "external_editor" && first.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
   if (authorizationEpochMismatch(first)) return suppressed("authorization_epoch_changed");
-  const commentPath = `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId: first.projectId, collaboration: "open" })}`;
+  const commentPath = projectNotificationUrl(env, first.projectId, "mentioned");
   if (first.recipientRole === "external_editor") {
     if (!externalNotificationChannels("mentioned").length) return suppressed("external_policy_suppressed");
     const copy = externalNotificationCopy({ type: "mentioned" });

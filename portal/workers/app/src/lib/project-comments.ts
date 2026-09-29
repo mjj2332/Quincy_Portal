@@ -205,7 +205,7 @@ export function createProjectCommentActivityIntent(input: {
       occurredAt: input.occurredAt.toISOString(),
       source: { kind: "project_comment", id: input.commentId, key: sourceKey },
       safePayload: { commentId: input.commentId },
-      deepLink: { kind: "project_collaboration", path: staffPathFor({ kind: "project", projectId: input.projectId, collaboration: "open" }) },
+      deepLink: { kind: "project_collaboration", path: staffPathFor({ kind: "project", projectId: input.projectId, arrivalTab: "collaboration" }) },
     },
     broadDelivery: {
       registryKey,
