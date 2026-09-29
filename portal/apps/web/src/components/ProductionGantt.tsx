@@ -560,17 +560,12 @@ type GanttChildPageState = {
  * improvement: it now catches an add/delete ANYWHERE in a project's checklist (page one or not) that
  * changes the project's total row count, which the row-content fields above alone could not.
  *
- * **The residual gap sol2's finding actually described is NOT closed by this, and there is no
- * complete client-side fix for it** (sol2's own assessment, matching what's implemented here): a
- * title/done/position/assignee/schedule EDIT to a row that already lives only in a merged
- * CONTINUATION page (page 2+) changes none of `children.nextCursor`, `children.total`, or any page-one
- * row's fields — nothing this signature reads — so it produces no seed-signature mismatch and the
- * stale copy of that row stays cached until the identity/filter tuple itself changes (a full
- * generation reset, which re-walks everything from scratch) or the user reloads. A `retry` does not
- * help either: it RESUMES from the existing cursor forward, it never revisits rows already behind
- * that cursor. The only complete fix is server-side — a per-project child-collection revision counter
- * that bumps on every visible mutation, included here in place of (not alongside) hand-picked row
- * fields — which is Sol's own proposal and is out of scope for this slice.
+ * **The residual gap sol2's finding described — an EDIT to a row that lives only on a continuation
+ * page (page 2+) — is closed by `children.revision` (#246).** Such an edit changes none of
+ * `nextCursor`, `total` or any page-one row, so the fields above alone cannot see it. The server now
+ * sends a project-wide revision (the latest `updated_at` over ALL the project's visible rows, the
+ * same scope as `total`) when the page request carries `rev=1`, which `buildGanttPageQuery` always
+ * sends; any edit anywhere moves it, the signature changes, and the cached chain is re-walked.
  *
  * **Considered and declined: force a full re-walk from page one on every project-list refetch**
  * (ignoring seed-signature equality entirely, poll-driven every `staleTime`/`refetchInterval` tick —
@@ -586,6 +581,8 @@ function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"])
   return JSON.stringify([
     children.nextCursor,
     children.total,
+    // #246: the server's project-wide revision — closes the page-2+ content-edit gap described above.
+    children.revision ?? null,
     children.rows.map((row) => [row.id, row.done, row.position, row.title, row.assignee?.id ?? null, row.schedule.version]),
   ]);
 }
