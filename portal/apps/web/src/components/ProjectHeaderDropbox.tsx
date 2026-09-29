@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/reui/popover";
 import { buttonClasses } from "./quincy/Button";
@@ -36,6 +36,7 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
   onSyncDropbox: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const popupRef = useRef<HTMLDivElement>(null);
   const state = dropboxState(project, autohdrBlocked);
 
   return <Popover open={open} onOpenChange={setOpen}>
@@ -48,7 +49,10 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
       <StatusPill tone={state.tone}>{state.label}</StatusPill>
       <ChevronDown aria-hidden="true" className={TRIGGER_CHEVRON} />
     </PopoverTrigger>
-    <PopoverContent align="start" aria-label="Dropbox" className={POPOVER_CONTENT}>
+    {/* #325: focus the popover itself on open. With no Open-in-Dropbox link the first tabbable
+        element is Sync from Dropbox, which changes data: an Enter that opened the popover must not
+        leave the user one keypress from a sync. */}
+    <PopoverContent align="start" aria-label="Dropbox" className={POPOVER_CONTENT} initialFocus={popupRef} ref={popupRef}>
       <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-3)]">
         <PopoverTitle className="!font-medium">Dropbox</PopoverTitle>
         <StatusPill tone={state.tone}>{state.label}</StatusPill>

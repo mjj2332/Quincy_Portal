@@ -119,7 +119,9 @@ function StageControl({ project, currentStageKey, stages, contractEnabled, pendi
       >
         <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      {/* #325: options are nowrap, so the registry's `w-(--anchor-width)` clipped a long Stage
+          ("Awaiting RAW · Smoke"). Never narrower than the trigger, never wider than the viewport. */}
+      <SelectContent className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
         {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => (
           <SelectItem value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>
             <StageOption stageKey={stage.key} label={stage.label} />

@@ -441,6 +441,33 @@ describe("Project header Stage control", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  // #325: the popup took the trigger's width and every option is `whitespace-nowrap`, so a long
+  // Stage ("Awaiting RAW · Smoke") was clipped at the right edge. It may grow past the anchor now,
+  // never narrower than it, and never past the viewport.
+  it("lets the Stage popup grow past the trigger's width instead of clipping a long option (#325)", async () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    await openStage(stageTrigger()!);
+    // The listbox sits inside the positioned popup; the popup is the ancestor that carries the width.
+    let popup = document.querySelector<HTMLElement>('[role="listbox"]')!;
+    while (!popup.className.includes("max-h-(--available-height)")) popup = popup.parentElement!;
+    const classes = popup.className.split(/\s+/);
+    expect(classes).toContain("w-auto");
+    expect(classes).toContain("min-w-(--anchor-width)");
+    expect(classes).toContain("max-w-(--available-width)");
+    expect(classes).not.toContain("w-(--anchor-width)");
+  });
+
+  // #325: with no Open-in-Dropbox link, the first tabbable element was Sync from Dropbox, so an
+  // Enter that opened the popover left the user one keypress from a sync. Focus lands on the
+  // popover itself; Sync stays one Tab away.
+  it("opens the Dropbox popover focused on itself, not on Sync from Dropbox (#325)", async () => {
+    render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
+    const dialog = await openDropbox();
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    expect(document.activeElement).not.toBe(dialog.querySelector('[data-testid="dropbox-sync"]'));
+    expect(document.activeElement).toBe(dialog);
+  });
+
   it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", async () => {
     render(<ProjectHeader {...baseProps(project())} stageMovePending />);
     const trigger = stageTrigger()!;
