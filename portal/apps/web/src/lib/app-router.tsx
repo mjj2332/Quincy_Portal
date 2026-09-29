@@ -72,7 +72,7 @@ export function ShellIdentityProvider({ user, impersonating, children }: { user:
 
 /** #337: a Project route's one-shot Workspace-tab arrival (`?tab=<kind>` / `?collaboration=open`),
  * numbered so a repeat arrival at an identical URL is still a fresh signal. */
-type ArrivalIntent = { projectId: string; tab: WorkspaceTab; signal: number };
+type ArrivalIntent = { projectId: string; tab: WorkspaceTab; signal: number; location: string };
 
 /** Everything the root route computes once and the leaves below it consume. */
 type ShellState = {
@@ -225,7 +225,7 @@ function ShellRoute() {
       if (lastObservedIntentLocationRef.current !== completeLocation) {
         lastObservedIntentLocationRef.current = completeLocation;
         const signal = ++arrivalSignalRef.current;
-        setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal });
+        setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal, location: completeLocation });
       }
       return;
     }
@@ -233,8 +233,12 @@ function ShellRoute() {
     setArrivalIntent(null);
   }, [completeLocation, route]);
 
+  // The intent observed for the CURRENT location only. Between a location change and the effect above
+  // observing it, the stored intent still describes the previous URL; it is neither handed to the
+  // Workspace nor acknowledgeable then, so a stale acknowledgement can never strip a newer arrival.
+  const currentArrivalIntent = route.kind === "project" && route.arrivalTab !== undefined && arrivalIntent?.location === completeLocation && arrivalIntent.projectId === route.projectId && arrivalIntent.tab === route.arrivalTab ? arrivalIntent : null;
   const acknowledgeArrivalSignal = (projectId: string, signal: number) => {
-    if (route.kind !== "project" || route.projectId !== projectId || route.arrivalTab === undefined || arrivalIntent?.projectId !== projectId || arrivalIntent.signal !== signal) return;
+    if (currentArrivalIntent?.projectId !== projectId || currentArrivalIntent.signal !== signal) return;
     lastObservedIntentLocationRef.current = null;
     history.replace(staffPathFor({ kind: "project", projectId }));
   };
@@ -309,7 +313,7 @@ function ShellRoute() {
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
-    dashboardCalendar, arrivalIntent, acknowledgeArrivalSignal,
+    dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal,
   };
 
   const routedContent = blocked

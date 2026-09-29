@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
@@ -186,19 +186,22 @@ export function ProjectHeader({
   // fold (Collaboration is last and the default) would be out of view. `nearest` on both axes keeps
   // the page itself from scrolling vertically.
   const tabsRef = useRef<HTMLDivElement>(null);
-  // One stable callback per tab: a fresh ref callback every render makes Base UI's trigger re-run
-  // its own ref registration (a state update), which loops.
-  const tabRefCallbacks = useMemo(() => new Map<WorkspaceTab, (element: HTMLButtonElement | null) => void>(), [workspaceTabRefs]);
+  // One stable callback per tab for the component's lifetime: a fresh ref callback every render makes
+  // Base UI's trigger re-run its own ref registration (a state update), which loops. A `useRef` Map,
+  // not `useMemo`, because React may discard a memo; the registry prop is read through a ref.
+  const tabRefCallbacks = useRef(new Map<WorkspaceTab, (element: HTMLButtonElement | null) => void>());
+  const workspaceTabRefsRef = useRef(workspaceTabRefs);
+  workspaceTabRefsRef.current = workspaceTabRefs;
   const tabRef = (tab: WorkspaceTab) => {
-    let callback = tabRefCallbacks.get(tab);
+    let callback = tabRefCallbacks.current.get(tab);
     if (!callback) {
       callback = (element) => {
-        const refs = workspaceTabRefs?.current;
+        const refs = workspaceTabRefsRef.current?.current;
         if (!refs) return;
         if (element) refs.set(tab, element);
         else refs.delete(tab);
       };
-      tabRefCallbacks.set(tab, callback);
+      tabRefCallbacks.current.set(tab, callback);
     }
     return callback;
   };

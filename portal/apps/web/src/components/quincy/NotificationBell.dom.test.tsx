@@ -2,8 +2,7 @@ import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStaffNavigation } from "../../lib/staff-navigation";
-import { parseStaffLocation, staffPathFor } from "../../lib/router";
-import { NOTIFICATION_WORKSPACE_TAB, type NotificationType } from "@quincy/shared";
+import { parseStaffLocation } from "../../lib/router";
 import { SidebarProvider } from "@/components/reui/sidebar";
 import { NavigationRail } from "./NavigationRail";
 import { NotificationBell, alignOffsetFor, type NotificationBellProps } from "./NotificationBell";
@@ -528,17 +527,25 @@ describe("NotificationBell panel (Popover)", () => {
     apiPostMock.mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
     const trigger = await renderPanel();
     await click(trigger);
-    // Expectations come from the shared map, so this row set follows the table rather than copying it.
-    const expectedHrefs = rows
-      .filter((row) => row.projectId !== null)
-      .map((row) => staffPathFor({ kind: "project", projectId, arrivalTab: NOTIFICATION_WORKSPACE_TAB[row.type as NotificationType] }))
-      .sort();
+    // Written out from #337's table, row by row -- independent of the implementation map.
+    const expectedHref: Record<string, string> = {
+      "project-mention": `/projects/${projectId}?collaboration=open`,
+      "project-subtask": `/projects/${projectId}?collaboration=open`,
+      "project-due": `/projects/${projectId}?collaboration=open`,
+      "project-raw": `/projects/${projectId}?tab=raw`,
+      "project-edited": `/projects/${projectId}?tab=edited`,
+      "project-editing": `/projects/${projectId}?tab=raw`,
+      "project-stalled": `/projects/${projectId}?tab=raw`,
+      "project-delivered": `/projects/${projectId}?tab=edited`,
+      "project-comment": `/projects/${projectId}?collaboration=open`,
+      "project-assigned": `/projects/${projectId}?collaboration=open`,
+    };
     const projectLinks = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/projects/"]')];
-    expect(projectLinks.map((link) => link.getAttribute("href")).sort()).toEqual(expectedHrefs);
-    // The three spellings the table produces for these ten rows.
-    expect(document.querySelectorAll(`a[href="/projects/${projectId}?collaboration=open"]`)).toHaveLength(5);
-    expect(document.querySelectorAll(`a[href="/projects/${projectId}?tab=raw"]`)).toHaveLength(3);
-    expect(document.querySelectorAll(`a[href="/projects/${projectId}?tab=edited"]`)).toHaveLength(2);
+    expect(projectLinks.map((link) => link.getAttribute("href")).sort()).toEqual(Object.values(expectedHref).sort());
+    for (const row of rows.filter((item) => item.projectId !== null)) {
+      const link = projectLinks.find((item) => item.textContent?.trim() === row.title);
+      expect(link?.getAttribute("href"), row.id).toBe(expectedHref[row.id]);
+    }
     expect(document.querySelectorAll(`a[href="/projects/${projectId}"]`)).toHaveLength(0);
     const collabLinks = [...document.querySelectorAll<HTMLAnchorElement>(`a[href="/projects/${projectId}?collaboration=open"]`)];
     expect(collabLinks[0]!.textContent).toContain("You were mentioned");

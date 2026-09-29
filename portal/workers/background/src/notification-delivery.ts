@@ -16,7 +16,6 @@ import {
   EXTERNAL_PROJECT_ACTIVITY_POLICY,
   EXTERNAL_LEGACY_NOTIFICATION_POLICY,
   NOTIFICATION_TYPES,
-  NOTIFICATION_WORKSPACE_TAB,
   externalNotificationCopy,
   externalNotificationChannels,
   parseExternalNotificationOutboxPayload,
@@ -24,6 +23,7 @@ import {
   roleHasCapability,
   isProjectAssignmentEligible,
   staffPathFor,
+  projectNotificationRoute,
   truncateForEmail,
   formatSydneyInstant,
   formatSydneyCivil,
@@ -41,10 +41,13 @@ export const NOTIFICATION_RECOVERY_LIMIT = 100;
 export const NOTIFICATION_QUEUE_MAX_DELAY_SECONDS = 12 * 60 * 60;
 export const PROJECT_DEADLINE_OPERATIONAL_TARGET_MS = 120_000;
 /** #337: every Project notification email links to the Workspace tab its type maps to, through the
- * same shared map + `staffPathFor` the in-app list uses. (Persisted activity deep links are not
- * rebuilt here -- see the broad-activity resolver.) */
+ * same `projectNotificationRoute` + `staffPathFor` the in-app list uses, so the two cannot drift.
+ * (Persisted activity deep links are not rebuilt here -- see the broad-activity resolver.) */
 function projectNotificationUrl(env: Pick<Env, "APP_ORIGIN">, projectId: string, type: NotificationType): string {
-  return `${env.APP_ORIGIN}${staffPathFor({ kind: "project", projectId, arrivalTab: NOTIFICATION_WORKSPACE_TAB[type] })}`;
+  const route = projectNotificationRoute(projectId, type);
+  // Unreachable for a non-empty projectId: `projectNotificationRoute` returns a project route for it.
+  if (route?.kind !== "project") throw new Error(`No project route for a ${type} notification.`);
+  return `${env.APP_ORIGIN}${staffPathFor(route)}`;
 }
 
 const htmlEscape = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));

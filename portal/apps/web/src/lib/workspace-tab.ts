@@ -1,6 +1,7 @@
 import { COLLECTION_KINDS, isCollectionTab, type CollectionKind, type WorkspaceTab } from "@quincy/shared";
 
-/** The Project workspace's selected tab: one of the five Collections, or Project collaboration. */
+/** Re-exported for the web app: the Workspace tab union (the five Collections, then Project
+ * collaboration) lives in `@quincy/shared` since #337, where routes and notifications also use it. */
 export { isCollectionTab, type WorkspaceTab };
 
 /** The Collection tabs the Workspace strip renders: every Collection for a role that can view
