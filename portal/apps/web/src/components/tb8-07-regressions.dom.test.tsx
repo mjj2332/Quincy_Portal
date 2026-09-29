@@ -150,14 +150,19 @@ describe("TB8-07 — the app.css retirement is complete (§8c)", () => {
     }
   });
 
-  it("keeps the two blocks that are deliberately still CSS, with their reasons recorded", () => {
-    // The prose block (two renderers must agree on one stored document) and the panel geometry
-    // (eight interacting env()/custom-property declarations). Both carry a comment saying so, so
-    // the next sweep reads them as decisions rather than leftovers.
+  it("keeps the prose block deliberately CSS, and no longer carries the retired collaboration overlay CSS or its toggle", () => {
+    // The prose block (two renderers must agree on one stored document) stays CSS on purpose and says so.
+    // The panel geometry block existed only for the floating overlay; #336 made collaboration a Workspace tab
+    // (an in-flow panel styled in Tailwind), so none of the overlay selectors, the toggle or the impersonation
+    // offsets may remain.
     expect(css).toContain(".rich-text__task-item");
-    expect(css).toContain(".project-collaboration__wrap");
-    expect(css).toContain("KEPT AS CSS DELIBERATELY");
     expect(css).toContain("kept as CSS deliberately");
+    expect(css).not.toContain(".project-collaboration__wrap");
+    expect(css).not.toContain(".project-collaboration__toggle");
+    expect(css).not.toContain(".project-collaboration--overlay");
+    expect(css).not.toContain(".project-collaboration--standalone");
+    expect(css).not.toContain("--project-collaboration-");
+    expect(css).not.toContain("KEPT AS CSS DELIBERATELY");
   });
 });
 

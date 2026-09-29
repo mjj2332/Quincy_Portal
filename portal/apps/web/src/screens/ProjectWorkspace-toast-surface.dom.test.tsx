@@ -214,6 +214,10 @@ describe("ProjectWorkspace toast surface (#110 AC3)", () => {
     });
     await render(<ProjectWorkspace projectId="p1" />);
     await flush();
+    // Every Project opens on Collaboration (#336); open RAW so the full workspace's Collection content is on screen.
+    const rawTab = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.startsWith("RAW"))!;
+    await act(async () => { rawTab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await flush(20);
     expect(host.querySelector('[aria-label^="Select "]')).not.toBeNull();
 
     await act(async () => { pushToast("Announced from the full workspace"); await Promise.resolve(); });

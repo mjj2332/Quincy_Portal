@@ -153,7 +153,8 @@ describe("Project header Stage control", () => {
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
     expect(host.querySelector('section[aria-label="Project Overview"]')).not.toBeNull();
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
-    expect(tabs).toHaveLength(2);
+    expect(tabs).toHaveLength(3);
+    expect(tabs.at(-1)!.textContent).toContain("Collaboration");
     const rawTab = tabs.find((button) => button.textContent?.includes("RAW"))!;
     const editedTab = tabs.find((button) => button.textContent?.includes("Edited"))!;
     expect(rawTab.getAttribute("aria-selected")).toBe("true");
@@ -165,7 +166,7 @@ describe("Project header Stage control", () => {
   it("renders only the passed-in available tabs, with exactly one selected and every other unselected", () => {
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "video", "copy"] as CollectionKind[]} activeTab={"video" as CollectionKind} />);
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
-    expect(tabs).toHaveLength(3);
+    expect(tabs).toHaveLength(4);
     expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
     expect(tabs.some((button) => button.textContent?.includes("Floorplan"))).toBe(false);
     const selected = tabs.filter((button) => button.getAttribute("aria-selected") === "true");
@@ -179,19 +180,21 @@ describe("Project header Stage control", () => {
   it("renders a single available tab as the only switcher entry, selected", () => {
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
-    expect(tabs).toHaveLength(1);
+    expect(tabs).toHaveLength(2);
     expect(tabs[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(tabs[1]!.textContent).toContain("Collaboration");
+    expect(tabs[1]!.getAttribute("aria-selected")).toBe("false");
   });
 
   it("drops a switcher tab from the list the instant it is no longer in availableTabs, without renaming or reordering the rest", () => {
     const onActiveTabChange = vi.fn();
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
-    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')]).toHaveLength(3);
+    expect([...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')]).toHaveLength(4);
     act(() => {
       root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "video"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} />);
     });
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
-    expect(tabs).toHaveLength(2);
+    expect(tabs).toHaveLength(3);
     expect(tabs.some((button) => button.textContent?.includes("Edited"))).toBe(false);
     expect(tabs.some((button) => button.textContent?.includes("Video"))).toBe(true);
     const raw = tabs.find((button) => button.textContent?.includes("RAW"))!;
@@ -342,13 +345,51 @@ describe("Project header Stage control", () => {
     expect(host.textContent).toContain("Handle with care");
   });
 
-  it("labels the tab strip Collections and does not point tabs at a tabpanel that does not exist", () => {
+  it("labels the tab strip Workspace and does not point tabs at a tabpanel that does not exist", () => {
     render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited"] as CollectionKind[]} activeTab={"raw" as CollectionKind} />);
     const tablist = host.querySelector('[role="tablist"]');
-    expect(tablist?.getAttribute("aria-label")).toBe("Collections");
+    expect(tablist?.getAttribute("aria-label")).toBe("Workspace");
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
     expect(tabs.length).toBeGreaterThan(0);
-    for (const tab of tabs) expect(tab.hasAttribute("aria-controls")).toBe(false);
+    // Collection tabs' panels are not tabpanels, so they carry no aria-controls; Collaboration's panel is a real tabpanel.
+    for (const tab of tabs.filter((button) => !button.textContent?.includes("Collaboration"))) expect(tab.hasAttribute("aria-controls")).toBe(false);
+    const collaboration = tabs.find((button) => button.textContent?.includes("Collaboration"))!;
+    expect(collaboration.getAttribute("aria-controls")).toBe("project-workspace-panel-collaboration");
+  });
+
+  it("puts Collaboration last in the same tablist, emits it when clicked, and marks it selected when active", () => {
+    const onActiveTabChange = vi.fn();
+    const tabRef = { current: null as HTMLButtonElement | null };
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab={"raw" as CollectionKind} onActiveTabChange={onActiveTabChange} collaborationTabRef={tabRef} />);
+    expect(host.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
+    expect(tabs.map((button) => button.textContent?.replace(/[0-9—]+$/, ""))).toEqual(["RAW", "Edited", "Video", "Floorplan", "Copy", "Collaboration"]);
+    const collaboration = tabs.at(-1)!;
+    expect(tabRef.current).toBe(collaboration);
+    expect(collaboration.id).toBe("project-workspace-tab-collaboration");
+    expect(collaboration.getAttribute("aria-controls")).toBe("project-workspace-panel-collaboration");
+    act(() => collaboration.click());
+    expect(onActiveTabChange).toHaveBeenCalledWith("collaboration");
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw", "edited", "video", "floorplan", "copy"] as CollectionKind[]} activeTab="collaboration" onActiveTabChange={onActiveTabChange} collaborationTabRef={tabRef} />); });
+    const after = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')];
+    expect(after.filter((button) => button.getAttribute("aria-selected") === "true").map((button) => button.textContent)).toEqual(["Collaboration"]);
+    expect(tabRef.current).toBe(after.at(-1));
+    expect(tabRef.current!.isConnected).toBe(true);
+  });
+
+  it("badges the Collaboration tab with the unread count, capped at 99+, with an accessible count", () => {
+    render(<ProjectHeader {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} collaborationUnread={1} />);
+    const tab = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].at(-1)!;
+    expect(tab().querySelector('[data-testid="project-collaboration-tab-unread"]')?.textContent).toBe("1");
+    expect(tab().querySelector('[data-testid="project-collaboration-tab-unread"]')?.getAttribute("aria-hidden")).toBe("true");
+    expect(tab().textContent).toContain("1 unread comment");
+    expect(tab().textContent).not.toContain("1 unread comments");
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} collaborationUnread={250} />); });
+    expect(tab().querySelector('[data-testid="project-collaboration-tab-unread"]')?.textContent).toBe("99+");
+    expect(tab().textContent).toContain("250 unread comments");
+    act(() => { root.render(<ProjectHeader {...baseProps(project())} availableTabs={["raw"] as CollectionKind[]} activeTab={"raw" as CollectionKind} collaborationUnread={0} />); });
+    expect(tab().querySelector('[data-testid="project-collaboration-tab-unread"]')).toBeNull();
+    expect(tab().textContent).toBe("Collaboration");
   });
 
   it("does not re-emit the active Collection when its own tab is clicked again", () => {
@@ -359,7 +400,8 @@ describe("Project header Stage control", () => {
     expect(onActiveTabChange).not.toHaveBeenCalled();
   });
 
-  // Arrow-key movement between tabs is Base UI composite navigation; happy-dom does not drive it. #206 covers it in a real browser.
+  // Arrow-key movement between tabs is Base UI composite navigation; happy-dom does not drive it. #206 covers it in a real browser,
+  // and the #336 browser pass covers Arrow / Home / End across all six Workspace tabs. Structure and selection are asserted in the two tests above; roving tabindex is Base UI composite behaviour and is covered by the browser pass.
 
   it("keeps the street heading as the property label target", () => {
     render(<ProjectHeader {...baseProps(project())} />);
@@ -486,5 +528,32 @@ describe("Project header Stage control", () => {
     // readOnly while the disabled reason is present: opening it must not surface a listbox.
     await openStage(trigger);
     expect(document.querySelector('[role="listbox"]')).toBeNull();
+  });
+});
+
+describe("Project header tab strip", () => {
+  beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); roleState.role = "editor"; });
+  afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); vi.restoreAllMocks(); });
+  const props = (activeTab: "raw" | "collaboration") => ({
+    project: project(), activeTab, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
+    canEdit: false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
+  });
+
+  it("scrolls the selected tab into view on mount and when the selection changes, without vertical page scroll", () => {
+    const calls: Array<{ text: string | null; arg: unknown }> = [];
+    Element.prototype.scrollIntoView = function (this: Element, arg?: unknown) { calls.push({ text: this.textContent, arg }); };
+    render(<ProjectHeader {...props("collaboration")} />);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.text).toContain("Collaboration");
+    expect(calls[0]!.arg).toEqual({ block: "nearest", inline: "nearest" });
+    act(() => { root.render(<ProjectHeader {...props("raw")} />); });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.text).toContain("RAW");
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("does not throw where scrollIntoView is unavailable", () => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    expect(() => render(<ProjectHeader {...props("collaboration")} />)).not.toThrow();
   });
 });
