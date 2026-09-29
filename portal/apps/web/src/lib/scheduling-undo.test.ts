@@ -23,7 +23,7 @@ function checklistEvent(version: number, start: string, end: string): ChecklistC
     timing: { allDay: true, start, end },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule,
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 

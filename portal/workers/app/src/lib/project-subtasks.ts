@@ -6,10 +6,8 @@ import {
   defaultSubtaskRange,
   effectiveDeadlineLocalCivil,
   normalizeChecklistSchedule,
-  serializeChecklistSchedule,
   type ChecklistScheduleDto,
   type ChecklistScheduleStorage,
-  type InitialChecklistScheduleInput,
   type RangeChecklistScheduleInput,
   type SaveChecklistScheduleRequest,
   type NormalizedChecklistSchedule,
@@ -22,6 +20,7 @@ import type { AppEnv, SessionUser } from "../env";
 import { auditMeta } from "./audit";
 import { newId } from "./ids";
 import { notifySubtaskAssignee } from "./notifications";
+import { serializeSubtaskSchedule } from "./subtask-schedule";
 import { projectMentionableUsers } from "./project-collaboration";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
 
@@ -71,15 +70,14 @@ export type ProjectSubtaskCommandResult =
   | { outcome: "forbidden" }
   | { outcome: "not_found"; target: "project" | "subtask" }
   | { outcome: "schedule_conflict"; current: ChecklistScheduleDto; currentSubtask?: ProjectSubtaskDto }
-  | { outcome: "item_conflict"; current: ChecklistScheduleDto; currentSubtask: ProjectSubtaskDto }
-  | { outcome: "storage_invalid"; current: ChecklistScheduleDto & { state: "invalid" } };
+  | { outcome: "item_conflict"; current: ChecklistScheduleDto; currentSubtask: ProjectSubtaskDto };
 
 export type SaveProjectSubtaskInput = {
   env: AppEnv["Bindings"];
   projectId: string;
   principal: SessionUser;
   operation:
-    | { kind: "create"; item: CreateItemInput; schedule?: InitialChecklistScheduleInput }
+    | { kind: "create"; item: CreateItemInput; schedule?: RangeChecklistScheduleInput }
     | { kind: "update"; subtaskId: string; itemPatch?: ItemPatch; scheduleRequest?: SaveChecklistScheduleRequest };
   now?: number;
 };
@@ -110,7 +108,7 @@ function scheduleStorage(row: SubtaskRow["subtask"]): ChecklistScheduleStorage {
 }
 
 export function serializeProjectSubtask(row: SubtaskRow): ProjectSubtaskDto {
-  const schedule = serializeChecklistSchedule(scheduleStorage(row.subtask));
+  const schedule = serializeSubtaskSchedule(row.subtask.id, scheduleStorage(row.subtask));
   return {
     id: row.subtask.id,
     title: row.subtask.title,
@@ -142,23 +140,18 @@ function rawScheduleEqual(a: ChecklistScheduleStorage, b: ChecklistScheduleStora
 }
 
 function scheduleEndpointEqual(left: ChecklistScheduleDto["start"], right: ChecklistScheduleDto["start"]): boolean {
-  if (!left || !right) return left === right;
   return left.kind === right.kind && left.localCivil === right.localCivil && left.instant === right.instant && left.utcOffsetMinutes === right.utcOffsetMinutes && left.fold === right.fold;
 }
 
 function semanticScheduleEqual(a: ChecklistScheduleDto, b: ChecklistScheduleDto): boolean {
-  if ((a.state === "legacy_unresolved") || (b.state === "legacy_unresolved") || a.state === "invalid" || b.state === "invalid") return false;
-  return a.state === b.state && a.due === b.due && scheduleEndpointEqual(a.start, b.start) && scheduleEndpointEqual(a.end, b.end);
+  return a.due === b.due && scheduleEndpointEqual(a.start, b.start) && scheduleEndpointEqual(a.end, b.end);
 }
 
 function scheduleDiff(current: ChecklistScheduleDto, next: ChecklistScheduleDto): { startChanged: boolean; endChanged: boolean } {
-  const startChanged = current.state === "legacy_unresolved" || next.state === "legacy_unresolved"
-    ? true
-    : !scheduleEndpointEqual(current.start, next.start);
-  const endChanged = current.state === "legacy_unresolved" || next.state === "legacy_unresolved"
-    ? true
-    : !scheduleEndpointEqual(current.end, next.end) || current.due !== next.due;
-  return { startChanged, endChanged };
+  return {
+    startChanged: !scheduleEndpointEqual(current.start, next.start),
+    endChanged: !scheduleEndpointEqual(current.end, next.end) || current.due !== next.due,
+  };
 }
 
 export function scheduleActivityBroadMode(endChanged: boolean): "emit" | "activity_only" {
@@ -197,7 +190,7 @@ function activityFor(itemId: string, projectId: string, actorId: string, now: nu
   };
 }
 
-function scheduleActivityFor(itemId: string, projectId: string, actorId: string, now: number, title: string, state: "unscheduled" | "due_only" | "range", version: number): ProjectActivityIntent {
+function scheduleActivityFor(itemId: string, projectId: string, actorId: string, now: number, title: string, state: "range", version: number): ProjectActivityIntent {
   const activityId = newId();
   const safePayload = { itemId, checklistTitle: title, scheduleState: state, version } as const;
   return {
@@ -264,9 +257,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   const existing = await subtaskQuery(db, projectId, operation.subtaskId).get();
   if (!existing) return { outcome: "not_found", target: "subtask" };
   const existingStorage = scheduleStorage(existing.subtask);
-  const currentDto = serializeChecklistSchedule(existingStorage);
+  const currentDto = serializeSubtaskSchedule(existing.subtask.id, existingStorage);
   const scheduleBearing = operation.scheduleRequest !== undefined;
-  if (scheduleBearing && currentDto.state === "invalid") return { outcome: "storage_invalid", current: currentDto };
 
   let requested: RangeChecklistScheduleInput | null = null;
   let expectedVersion: number | null = null;
@@ -284,9 +276,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   let startChanged = false;
   let endChanged = false;
   if (requested) {
-    // Scheduled candidates use the versioned metadata shape even when they
-    // are compared with a legacy version-0 due date. The version is not part
-    // of semantic equality; it only keeps the candidate serializable.
+    // The version is not part of semantic equality; it only keeps the candidate serializable.
     const candidateVersion = Math.max(1, existingStorage.scheduleVersion);
     const candidateResult = normalizeChecklistSchedule(requested, candidateVersion);
     if (!candidateResult.ok) return invalidRequest(candidateResult.error.code, candidateResult.error.message, candidateResult.error.endpoint ? { endpoint: candidateResult.error.endpoint, ...(candidateResult.error.choices ? { choices: candidateResult.error.choices } : {}) } : undefined);
@@ -346,7 +336,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const current = await subtaskQuery(db, projectId, operation.subtaskId).get();
     if (!current) return { outcome: "not_found", target: "subtask" };
     const authoritativeStorage = scheduleStorage(current.subtask);
-    const authoritativeSchedule = serializeChecklistSchedule(authoritativeStorage);
+    const authoritativeSchedule = serializeSubtaskSchedule(current.subtask.id, authoritativeStorage);
     if (scheduleBearing && (!rawScheduleEqual(authoritativeStorage, existingStorage) || authoritativeStorage.scheduleVersion !== existingStorage.scheduleVersion)) return { outcome: "schedule_conflict", current: authoritativeSchedule, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(current) } : {}) };
     if (scheduleBearing) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current) };
     return { outcome: "noop", item: serializeProjectSubtask(current), broadPublicationIds: [], assignmentNotice: null };

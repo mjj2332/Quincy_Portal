@@ -2,7 +2,7 @@
  * #222 — the event-calendar's left rail, composed after ReUI block `event-calendar-2`'s
  * `calendar-rail.tsx` (local source: the main checkout's `tmp/ReUI_Full_Source_Code/reui-blocks-main/
  * components/event-calendar-2/components/calendar-rail.tsx`; the ReUI MCP was down): a mini month
- * with busy dots, an Up next list, then the filters and the unscheduled list as slots.
+ * with busy dots, an Up next list, then the filters as a slot.
  * Presentational; never imports `components/reui/event-calendar/` (not even a type).
  *
  * Adapted from the block, on purpose:
@@ -39,7 +39,6 @@ export type ProductionEventCalendarRailProps = {
   upNext: ProductionEventCalendarUpNext;
   onOpenUpNext: (event: CalendarEventDto) => void;
   facets: ReactNode;
-  unscheduled: ReactNode;
   className?: string;
 };
 
@@ -127,7 +126,7 @@ function upNextDetail(event: CalendarEventDto): string {
   return event.kind === "project_deadline" ? "Deadline" : event.project.street;
 }
 
-export function ProductionEventCalendarRail({ date, onDateChange, events, nowCivil, upNext, onOpenUpNext, facets, unscheduled, className }: ProductionEventCalendarRailProps): JSX.Element {
+export function ProductionEventCalendarRail({ date, onDateChange, events, nowCivil, upNext, onOpenUpNext, facets, className }: ProductionEventCalendarRailProps): JSX.Element {
   // The painted month is its own state (browse ahead without moving the grid), pulled back during
   // render whenever the calendar date lands in another month — the block's pattern.
   const dateMonth = date.slice(0, 7);
@@ -200,7 +199,6 @@ export function ProductionEventCalendarRail({ date, onDateChange, events, nowCiv
           </section>
 
           {facets}
-          {unscheduled}
         </div>
       </ScrollArea>
     </aside>

@@ -2,8 +2,8 @@
  * #222 — the pure bridge from the vendored ReUI event calendar's proposals to the shared scheduling
  * controller's `SchedulingProposal`.
  *
- * A vendor update (drag, resize-start, resize-end, keyboard Adjust commit) or an external drop of an
- * unscheduled entry becomes exactly one of: a `SchedulingProposal`, a no-op, or an invalid edit.
+ * A vendor update (drag, resize-start, resize-end, keyboard Adjust commit) becomes exactly one of: a
+ * `SchedulingProposal`, a no-op, or an invalid edit.
  *
  * Rules:
  * - The edge comes from `source`. A `keyboard` commit names no edge, so it is classified from the
@@ -12,7 +12,7 @@
  * - The target subview is `"month"` when the proposal's granularity is `"day"` and `"week"` when it
  *   is `"minute"` — NEVER the UI view name: the shared mappers answer anything else (`day`, `days`,
  *   `agenda`) with `unsupported_subview`, or treat it inconsistently.
- * - A Deadline's or due-only item's `end` is the adapter's synthetic display end, so it is ignored:
+ * - A Deadline's `end` is the adapter's synthetic display end, so it is ignored:
  *   a pointer resize is invalid and a keyboard end-only change is a no-op.
  * - The DTO's endpoint KIND wins over the vendor's `allDay` flag: a timed range dropped on the
  *   all-day lane moves by date and keeps its wall time; a dated endpoint stays dated.
@@ -21,8 +21,8 @@
  * - `source: "api"` and a missing `granularity` are invalid: neither carries geometry to trust.
  *
  * Import boundary: like `production-gantt-scheduling.ts`, this file must never import
- * `@/components/reui/event-calendar/**`, not even `import type`. `EventCalendarUpdateLike` and
- * `EventCalendarDropTargetLike` are local structural subsets of the vendor's proposal/drop types.
+ * `@/components/reui/event-calendar/**`, not even `import type`. `EventCalendarUpdateLike` is a
+ * local structural subset of the vendor's proposal type.
  * The DTO is an explicit argument, never read back from the vendor event's `data`.
  */
 import {
@@ -32,9 +32,7 @@ import {
   type CalendarEventDto,
   type CalendarManipulationTarget,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleEndpointDto,
-  type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
 import type { SchedulingProposal } from "./scheduling-policy";
@@ -50,9 +48,6 @@ export type EventCalendarUpdateLike = {
   granularity?: "day" | "minute";
 };
 
-/** Structural subset of the vendor's `EventCalendarExternalDropTarget`. */
-export type EventCalendarDropTargetLike = { start: Date; dayGranular: boolean };
-
 export type EventCalendarSchedulingResult =
   | { kind: "proposal"; proposal: SchedulingProposal }
   | { kind: "noop" }
@@ -63,7 +58,6 @@ export type EventCalendarInvalidReason =
   | "missing_granularity"
   | "resize_unsupported"
   | "compound_edit"
-  | "unschedulable"
   | "invalid_instant";
 
 type Granularity = "day" | "minute";
@@ -176,13 +170,6 @@ function deadlineProposal(event: ProjectDeadlineCalendarEventDto, update: EventC
 
 function checklistProposal(source: ChecklistCalendarEventDto, update: EventCalendarUpdateLike, granularity: Granularity, kind: EditKind): EventCalendarSchedulingResult {
   const schedule = source.schedule;
-  if (schedule.state === "due_only") {
-    if (!schedule.end) return invalid("unschedulable");
-    // The display start IS the due endpoint.
-    const target = endpointTarget(schedule.end, update.start, update.event.start, granularity, false);
-    return toResult(target, (t) => ({ kind: "move", entity: "checklist", source, target: t }));
-  }
-  if (schedule.state !== "range" || !schedule.start || !schedule.end) return invalid("unschedulable");
 
   if (kind === "move") {
     const target = endpointTarget(schedule.start, update.start, update.event.start, granularity, false);
@@ -207,26 +194,11 @@ export function eventCalendarUpdateToProposal(dto: CalendarEventDto, update: Eve
   const granularity = update.granularity;
   if (granularity !== "day" && granularity !== "minute") return invalid("missing_granularity");
 
-  const pointOnly = dto.kind === "project_deadline" || dto.schedule.state === "due_only";
+  const pointOnly = dto.kind === "project_deadline";
   const kind = editKind(update, pointOnly, granularity);
   if (kind === "none") return NOOP;
   if (kind === "compound") return invalid("compound_edit");
   if (kind === "resize_unsupported") return invalid("resize_unsupported");
 
   return dto.kind === "project_deadline" ? deadlineProposal(dto, update, granularity) : checklistProposal(dto, update, granularity, kind);
-}
-
-// ---------------------------------------------------------------------------
-// External drop → placement
-// ---------------------------------------------------------------------------
-
-/** An unscheduled entry dropped on the calendar: a day cell places by date, a column by minute. */
-export function eventCalendarDropToProposal(entry: ChecklistCalendarUnscheduledEntryDto | ProjectCalendarUnscheduledEntryDto, drop: EventCalendarDropTargetLike): EventCalendarSchedulingResult {
-  const minute = civilMinute(drop.start);
-  if (!minute) return invalid("invalid_instant");
-  const date = minute.slice(0, 10);
-  const target: CalendarManipulationTarget = drop.dayGranular ? { subview: "month", targetDate: date } : { subview: "week", targetDate: date, targetCivilMinute: minute };
-  if (entry.kind === "project_deadline") return found({ kind: "place", entity: "project_deadline", entry, target });
-  if (entry.reason !== "unscheduled") return invalid("unschedulable");
-  return found({ kind: "place", entity: "checklist", entry, target });
 }

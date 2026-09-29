@@ -15,7 +15,7 @@ if (!Element.prototype.getAnimations) {
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type ChecklistCalendarUnscheduledEntryDto, type ChecklistScheduleDto, type ProductionCalendarProjectBounds } from "@quincy/shared";
+import { type ChecklistScheduleDto, type ProductionCalendarProjectBounds } from "@quincy/shared";
 import { clearToasts } from "../lib/toast-store";
 import { ToastViewport } from "./quincy/ToastViewport";
 import {
@@ -23,21 +23,21 @@ import {
   dated,
   deadlineEvent,
   deadlineSaveBody,
-  dueEvent,
-  dueSchedule,
+  oneDayEvent,
+  rangeEvent,
+  rangeSchedule,
+  oneDaySchedule,
   instantOf,
   PROJECT_ID,
   PROJECT_STREET,
   rangeResponse,
   SUBTASK_ID,
-  unscheduledChecklist,
 } from "../testing/production-calendar-fixtures";
 import {
   calendarState,
   chipStart,
   clickTestId,
   createHarness,
-  dropUnscheduled,
   flush,
   json,
   liveRegion,
@@ -55,7 +55,6 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: fals
 vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
-vi.mock("./reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 const ID = `checklist:${SUBTASK_ID}`;
 const at = (civil: string) => new Date(instantOf(civil));
@@ -88,10 +87,6 @@ async function click(element: HTMLElement): Promise<void> {
   await act(async () => { element.click(); await Promise.resolve(); await Promise.resolve(); });
 }
 
-function unscheduledRow(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`[data-unscheduled-id="${ID}"]`);
-}
-
 function undoButtons(): HTMLButtonElement[] {
   return [...document.body.querySelectorAll<HTMLButtonElement>('[data-testid="toast-action"]')];
 }
@@ -99,18 +94,15 @@ function undoButtons(): HTMLButtonElement[] {
 type ChecklistServer = { schedule: ChecklistScheduleDto };
 
 /**
- * A stateful checklist server: one due-only subtask. A PATCH at the current version applies its
- * schedule (due-only date or unscheduled) at version + 1; every range GET draws the current copy.
+ * A stateful checklist server: one one-day range subtask. A PATCH at the current version applies its
+ * range schedule at version + 1; every range GET draws the current copy.
  */
 function checklistServer(initial: ChecklistScheduleDto, options: { projectBounds?: ProductionCalendarProjectBounds[] } = {}) {
-  const base = dueEvent(dated("2026-08-12"));
+  const base = oneDayEvent(dated("2026-08-12"));
   const server: ChecklistServer = { schedule: initial };
   const range = () => {
     const { schedule } = server;
-    if (schedule.state === "unscheduled") {
-      return rangeResponse({ unscheduled: [{ ...unscheduledChecklist(), schedule } as ChecklistCalendarUnscheduledEntryDto], projectBounds: options.projectBounds });
-    }
-    return rangeResponse({ events: [dueEvent(schedule.end!, { version: schedule.version })], projectBounds: options.projectBounds });
+    return rangeResponse({ events: [rangeEvent(schedule.start, schedule.end, { version: schedule.version })], projectBounds: options.projectBounds });
   };
   // `hold()` parks every later main-range GET until `release()` — a settle refetch held open.
   // `fail(status)` answers every later main-range GET with that error status.
@@ -134,12 +126,10 @@ function checklistServer(initial: ChecklistScheduleDto, options: { projectBounds
       return json(range());
     },
     patch: (_url, body) => {
-      const request = (body as { schedule: { expectedVersion: number; schedule: { state: string; end?: { localCivil: string } } } }).schedule;
+      const request = (body as { schedule: { expectedVersion: number; schedule: { state: string; start: { localCivil: string }; end: { localCivil: string } } } }).schedule;
       if (request.expectedVersion !== server.schedule.version) return json({ error: "changed", code: "subtask_schedule_version_conflict", current: { version: server.schedule.version } }, 409);
       const version = server.schedule.version + 1;
-      server.schedule = request.schedule.state === "unscheduled"
-        ? { state: "unscheduled", version, zone: "Australia/Sydney", start: null, end: null, due: null } as ChecklistScheduleDto
-        : dueSchedule(dated(request.schedule.end!.localCivil), version);
+      server.schedule = rangeSchedule(dated(request.schedule.start.localCivil), dated(request.schedule.end.localCivil), version);
       if (garbleNextPatch) { garbleNextPatch = false; return json({ unreadable: true }); }
       return json(checklistMutationBody(base, server.schedule));
     },
@@ -173,7 +163,7 @@ function deadlineServer(civil: string, version: number) {
 
 describe("ProductionEventCalendar Undo toast (#291)", () => {
   it("1a. a clean checklist save raises a success \"Schedule saved.\" toast with Undo", async () => {
-    checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await h.render(calendarState("month"));
     expect(await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true })).toBe("deferred");
     await flush(20);
@@ -184,22 +174,22 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
   });
 
   it("1b. a warned save's toast is caution-toned with the warning; the live region alone announces it", async () => {
-    checklistServer(dueSchedule(dated("2026-08-12"), 2), { projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00" }] });
+    checklistServer(oneDaySchedule(dated("2026-08-12"), 2), { projectBounds: [{ projectId: PROJECT_ID, shootDate: "2026-08-01", createdAt: "2026-07-01T00:00:00.000Z", deadlineLocalCivil: "2026-08-14T17:00" }] });
     await h.render(calendarState("month"));
     await proposeUpdate(ID, { start: day("2026-08-20"), allDay: true });
     await flush(20);
     expect(toasts()).toHaveLength(1);
     expect(toasts()[0]!.getAttribute("data-tone")).toBe("caution");
-    expect(toasts()[0]!.textContent).toContain("Schedule saved. Due after the project deadline.");
+    expect(toasts()[0]!.textContent).toContain("Schedule saved. Ends after the project deadline.");
     // The toast's message is aria-hidden (`announcedElsewhere`): the warning is announced once, by
     // the controller's live region.
     const message = [...toasts()[0]!.querySelectorAll("span")].find((span) => span.textContent?.includes("Schedule saved."));
     expect(message?.getAttribute("aria-hidden")).toBe("true");
-    expect(liveRegion()).toBe(`Saved the checklist schedule for ${PROJECT_STREET}. Warning: Due after the project deadline.`);
+    expect(liveRegion()).toBe(`Saved the checklist schedule for ${PROJECT_STREET}. Warning: Ends after the project deadline.`);
   });
 
   it("2. Undo sends one PATCH at the saved version restoring the prior schedule; the refetch puts the chip back and announces \"Change undone.\"", async () => {
-    const { server, fetch } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    const { server, fetch } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await h.render(calendarState("month"));
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
@@ -209,28 +199,12 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
     await click(undoButtons()[0]!);
     await flush(20);
     expect(fetch.patches()).toHaveLength(2);
-    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-12" } } } });
+    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-12" } } } });
     expect(server.schedule.version).toBe(4);
     expect(fetch.rangeGets().length).toBeGreaterThan(getsBefore);
     expect(chipStart(ID)).toBe(day("2026-08-12").toISOString());
     expect(liveRegion()).toBe("Change undone.");
     expect(undoButtons()).toHaveLength(0);
-  });
-
-  it("3. Undoing an unscheduled placement PATCHes {state: \"unscheduled\"} and the row returns to the unscheduled list", async () => {
-    const { fetch } = checklistServer({ state: "unscheduled", version: 4, zone: "Australia/Sydney", start: null, end: null, due: null } as ChecklistScheduleDto);
-    await h.render(calendarState("month"));
-    expect(await dropUnscheduled(ID, { start: day("2026-08-20"), dayGranular: true })).toBe(true);
-    await flush(20);
-    expect(fetch.patches()).toHaveLength(1);
-    expect(unscheduledRow()).toBeNull();
-
-    await click(undoButtons()[0]!);
-    await flush(20);
-    expect(fetch.patches()).toHaveLength(2);
-    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 5, schedule: { state: "unscheduled" } } });
-    expect(unscheduledRow()).not.toBeNull();
-    expect(chipStart(ID)).toBeUndefined();
   });
 
   it("4. a confirmed Deadline raises \"Deadline saved.\" whose Undo sends one PUT restoring the old Deadline; Cancel and a no-op raise no toast", async () => {
@@ -264,7 +238,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
   });
 
   it("5. an Undo clicked while the save's settle refetch is still open runs nothing and re-offers the toast", async () => {
-    const { fetch, hold, release } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    const { fetch, hold, release } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await h.render(calendarState("month"));
     hold();
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
@@ -283,12 +257,12 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
     await click(undoButtons()[0]!);
     await flush(20);
     expect(fetch.patches()).toHaveLength(2);
-    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-12" } } } });
+    expect(fetch.patches()[1]!.body).toEqual({ schedule: { expectedVersion: 3, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-12" } } } });
   });
 
   describe("6. the live Undo is dismissed", () => {
     async function saved() {
-      const server = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+      const server = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
       await h.render(calendarState("month"));
       await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
       await flush(20);
@@ -319,7 +293,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
 
     it("on access loss (a 401 on the save's settle refetch)", async () => {
       const onAccessLoss = vi.fn();
-      const { fail, fetch } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+      const { fail, fetch } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
       await h.render(calendarState("month"), { onAccessLoss });
       fail(401);
       await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
@@ -332,7 +306,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
 
   it("7. a failed refetch after a successful Undo enters settle recovery instead of announcing \"Change undone.\" over the stale state", async () => {
     const settle: Array<{ pending: boolean; recoveryReason: string | null }> = [];
-    const { server, fetch, fail } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    const { server, fetch, fail } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await h.render(calendarState("month"), { onSettleStateChange: (state) => settle.push(state) });
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
@@ -373,7 +347,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
 
   it("8. an undecodable Undo response whose refetch then fails enters settle recovery, never \"Reloaded the latest\"", async () => {
     const settle: Array<{ pending: boolean; recoveryReason: string | null }> = [];
-    const { server, fetch, fail, garble } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    const { server, fetch, fail, garble } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await h.render(calendarState("month"), { onSettleStateChange: (state) => settle.push(state) });
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
@@ -392,7 +366,7 @@ describe("ProductionEventCalendar Undo toast (#291)", () => {
   it("9. while an Undo's refetch is in flight the accept gate is released and settle is pending, as after a forward save", async () => {
     const gate: boolean[] = [];
     const settle: Array<{ pending: boolean; recoveryReason: string | null }> = [];
-    const { fetch, hold, release } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    const { fetch, hold, release } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await h.render(calendarState("month"), { onAcceptGateChange: (blocked) => gate.push(blocked), onSettleStateChange: (state) => settle.push(state) });
     await proposeUpdate(ID, { start: day("2026-08-15"), allDay: true });
     await flush(20);
@@ -442,7 +416,7 @@ describe("ProductionEventCalendar Up next rail after a save or Undo (#295)", () 
   }
 
   it("a checklist save and its Undo each refresh the rail once, and the main range once", async () => {
-    const { fetch } = checklistServer(dueSchedule(dated("2026-08-12"), 2));
+    const { fetch } = checklistServer(oneDaySchedule(dated("2026-08-12"), 2));
     await renderBeforeFixtures();
     expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
 
@@ -457,18 +431,6 @@ describe("ProductionEventCalendar Up next rail after a save or Undo (#295)", () 
     await flush(20);
     expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
     expect(upNextItems()).toEqual([expect.stringContaining("Wed 12 Aug · All day")]);
-  });
-
-  it("placing an unscheduled item refreshes the rail once", async () => {
-    const { fetch } = checklistServer({ state: "unscheduled", version: 4, zone: "Australia/Sydney", start: null, end: null, due: null } as ChecklistScheduleDto);
-    await renderBeforeFixtures();
-    expect(upNextItems()).toEqual([]);
-
-    const before = counts(fetch);
-    expect(await dropUnscheduled(ID, { start: day("2026-08-20"), dayGranular: true })).toBe(true);
-    await flush(20);
-    expect(counts(fetch)).toEqual({ main: before.main + 1, rail: before.rail + 1 });
-    expect(upNextItems()).toEqual([expect.stringContaining("Thu 20 Aug · All day")]);
   });
 
   it("a confirmed Deadline save and its Undo each refresh the rail once; a no-op does not", async () => {

@@ -7,8 +7,7 @@
  * `components/reui/gantt/` itself.
  *
  * Renders the production schedule: shoot -> deadline project bars (`summaryBars={false}` — a
- * project bar is its own shoot/deadline pair, never a child rollup), checklist bars / due-only
- * milestones, and an inert attention treatment for anything `lib/production-gantt-adapter.ts` could
+ * project bar is its own shoot/deadline pair, never a child rollup), checklist range bars, and an inert attention treatment for anything `lib/production-gantt-adapter.ts` could
  * not place on the timeline at all. See that adapter's own header for why its exported types
  * (`ProductionGanttResource`/`ProductionGanttEvent`) are local, structural shapes rather than a
  * re-export of the vendor's `GanttResource`/`GanttEvent` — this file is the first (and only) place
@@ -20,7 +19,7 @@
  *
  * ## #221 — writes
  * Checklist (subtask) schedules are writable here: move and resize a scheduled task bar (pointer
- * or keyboard Adjust), and place an unscheduled task by clicking or dragging on its row. Undo is a
+ * or keyboard Adjust). Every Subtask is a range (ADR 0011), so there is nothing to place. Undo is a
  * toast action (one live Undo at a time), raised by the shared wrapper
  * (`useSchedulingControllerWithUndoToast`, `lib/use-scheduling-undo-toast.ts` — #291).
  *
@@ -70,14 +69,9 @@
  * (the row's own status node announces it); 401/403 goes through the port's access-loss path, like a
  * child page. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
  *
- * Still read-only: `legacy_unresolved` / `invalid` rows, which the adapter
- * routes to `attention` with no event at all. `interactions` stays CONTROLLED and is switched off
- * while an interaction is open, the post-save refetch is pending, or access was lost.
- *
- * `gantt-view.tsx`'s placement hint is offered only where `canSelectSlot` says yes — an
- * unscheduled task row whose permissions allow `canDrag`. `dragCreate` is on because the row's
- * click-to-place path is gated on it; `canSelectSlot` vetoes the press everywhere else, so every
- * other row still pans.
+ * `interactions` stays CONTROLLED and is switched off while an interaction is open, the post-save
+ * refetch is pending, or access was lost. `selectSlot` is always off and `dragCreate` is not set
+ * (#342): no row takes a click-to-place, so every empty slot pans.
  *
  * ## A real vendor contract this file had to work around (build spec S6 was wrong about ONE part)
  * `gantt-bar.tsx` computes its bar content as
@@ -94,8 +88,8 @@
  * `consumerOwnsContent = children !== undefined || !!viewConfig.renderEvent` — TRUE the MOMENT a
  * `renderEvent` prop exists on `<Gantt>` AT ALL, evaluated from the prop's mere presence, never
  * from what a given call to it returns. There is no way to make `renderEvent` present for one bar
- * and absent for the next; the prop lives on the shared `<Gantt>` element. So every `due_only`
- * checklist milestone in this Gantt loses the vendor's own diamond the moment ANY `renderEvent` is
+ * and absent for the next; the prop lives on the shared `<Gantt>` element. So the Project's
+ * inverted-Deadline milestone in this Gantt loses the vendor's own diamond the moment ANY `renderEvent` is
  * supplied at all, including one that returns `undefined` for that exact bar — `renderGanttEventContent`
  * below reproduces that one look itself, because there is no other way to keep it. Flagged here
  * rather than silently routed around, per the build spec's own request.
@@ -117,13 +111,13 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDeadlineCalendarEventDto } from "@quincy/shared";
+import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import { Gantt, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
-import type { GanttProposedUpdate, GanttResource, GanttScale, GanttSlotDraft, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
+import type { GanttProposedUpdate, GanttResource, GanttScale, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
 import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { hashKey, useQueryClient } from "@tanstack/react-query";
@@ -135,7 +129,6 @@ import type { CalendarSettleState } from "../lib/production-calendar-interaction
 import { type SchedulingCommittedInfo, type SchedulingDeadlineConfirmInput } from "../lib/use-scheduling-commands";
 import { useSchedulingControllerWithUndoToast } from "../lib/use-scheduling-undo-toast";
 import type { ChecklistMutationResult } from "../lib/scheduling-types";
-import type { ChecklistSource } from "../lib/scheduling-policy";
 import {
   applyGanttOptimisticOverlay,
   ganttChecklistSource,
@@ -144,7 +137,6 @@ import {
   ganttDeadlineEntry,
   ganttDeadlineEvent,
   ganttEditToProposal,
-  ganttPlacementToProposal,
   previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
@@ -255,19 +247,13 @@ export function shouldFetchNextProjectPage(
 }
 
 const ATTENTION_TEXT: Record<ProductionGanttAttentionReason, string> = {
-  unscheduled: "Unscheduled",
   missing_deadline: "Deadline not set",
-  legacy_unresolved: "Needs repair",
-  invalid: "Schedule needs repair",
   deadline_before_start: "Deadline before shoot",
   resolution_failed: "Schedule could not be resolved",
 };
 
-/** The reasons that keep the ProductionCalendarUnscheduledPanel's own critical treatment — a
- * genuinely broken schedule, not merely an absent one. */
+/** The reasons drawn in the critical colour: a genuinely broken schedule, not merely an absent one. */
 const CRITICAL_ATTENTION_REASONS = new Set<ProductionGanttAttentionReason>([
-  "legacy_unresolved",
-  "invalid",
   "resolution_failed",
 ]);
 
@@ -403,8 +389,10 @@ function GanttResourceLabel({
  * that ELEMENT's child, not the return value `renderEvent`'s own `??` chain is checking.
  */
 function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRenderEventProps<ProductionGanttRowData>) {
-  const milestone = occurrence.start.getTime() === occurrence.end.getTime();
   const data = occurrence.event.data;
+  // A Subtask is always a range and never zero-length (ADR 0011), so only the inverted-Deadline
+  // Project bar (`production-gantt-adapter.ts`) is ever drawn as a milestone.
+  const milestone = data?.kind === "project" && occurrence.start.getTime() === occurrence.end.getTime();
   const hollowStart = data?.kind === "project" && data.hollowStart;
   const done = occurrence.event.progress === 100;
 
@@ -1338,26 +1326,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return scheduleWarningText(ganttEditWarnings(target.project, target.source, ganttEditFor(update, target.kind, scale)));
   }, [deadlineEditFor, editFor, scale]);
 
-  // Placement: only an unscheduled task row whose permissions allow `canDrag` takes a slot.
-  const placeableEntryByResourceId = useMemo(() => {
-    const map = new Map<string, Extract<ChecklistSource, { reason: "unscheduled" }>>();
-    for (const project of displayProjects) {
-      for (const row of project.children.rows) {
-        if (row.schedule.state !== "unscheduled" || !row.permissions.canDrag) continue;
-        const source = ganttChecklistSource(project, row);
-        if (source && "reason" in source && source.reason === "unscheduled") map.set(`task:${row.id}`, source);
-      }
-    }
-    return map;
-  }, [displayProjects]);
-  const canSelectSlot = useCallback((slot: GanttSlotDraft) => slot.resourceId !== undefined && placeableEntryByResourceId.has(slot.resourceId), [placeableEntryByResourceId]);
-  const handleSelectSlot = useCallback((slot: GanttSlotDraft) => {
-    const entry = slot.resourceId ? placeableEntryByResourceId.get(slot.resourceId) : undefined;
-    if (!entry) return;
-    const proposal = ganttPlacementToProposal(entry, { start: slot.start, allDay: slot.allDay }, scale);
-    if (proposal) commands.submitProposal(proposal);
-  }, [commands, placeableEntryByResourceId, scale]);
-
   // ---------------------------------------------------------------------------------------------
   // #344 — "+ Add task" on each expanded Project. The vendored tree owns the row and its input;
   // this owns the write. Title only: the server applies the Project's default range (#339), and the
@@ -1454,7 +1422,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (next.length !== pins.length || next.some((pin, index) => pin !== pins[index])) setPins(next);
   }, [pins, displayProjects, dataFetchSeq, generationKey, isChildListAuthoritative, drawnProjectIds]);
 
-  const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: live }), [live]);
+  const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: false }), [live]);
 
   // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
@@ -1532,8 +1500,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
             dropWarning={dropWarning}
-            onSelectSlot={handleSelectSlot}
-            canSelectSlot={canSelectSlot}
             parentScheduling={false}
             summaryBars={false}
             baselineBars={false}
@@ -1541,7 +1507,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             scheduleMode="single"
             rowCheckboxes={false}
             barLabel="auto"
-            dragCreate
             displayScheduleHint
             displayCreateTaskHint={false}
             canCreateTask={canCreateTask}

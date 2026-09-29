@@ -4,7 +4,6 @@ import {
   adminProductionCalendarRangeResponseSchema,
   calendarChecklistEntityId,
   calendarEventSchemaFor,
-  calendarUnscheduledEntrySchemaFor,
   CALENDAR_CHECKLIST_ID_PREFIX,
   deriveProductionCalendarWindow,
   editorProductionCalendarRangeResponseSchema,
@@ -12,7 +11,6 @@ import {
   mapChecklistEndResizeToCommand,
   mapChecklistMoveToCommand,
   mapProjectDeadlineMoveToCommand,
-  mapUnscheduledChecklistDropToCommand,
   mapUnscheduledProjectDropToCommand,
   previewProjectDeadlineReminderConsequences,
   productionCalendarFiltersSchema,
@@ -24,13 +22,7 @@ import {
   shiftSydneyCivilPreservingWallTime,
   subtaskIdFromCalendarEntityId,
   type CalendarEventDto,
-  type CalendarUnscheduledEntryDto,
   type ChecklistCalendarEventDto,
-  type DueOnlyChecklistScheduleDto,
-  type InvalidChecklistScheduleDto,
-  type LegacyUnresolvedChecklistScheduleDto,
-  type RangeChecklistScheduleDto,
-  type UnscheduledChecklistScheduleDto,
 } from "../src/production-calendar";
 import { STAGE_KEYS, STAGE_PRESENTATION_KEYS } from "../src/stage-move";
 
@@ -49,11 +41,7 @@ const project = (stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) => ({
 });
 const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
 const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
-const dueSchedule = (end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "due_only" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: null, end, due: end.localCivil });
 const rangeSchedule = (start: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
-const unscheduledSchedule = (version = 4) => ({ state: "unscheduled" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null });
-const legacySchedule: LegacyUnresolvedChecklistScheduleDto = { state: "legacy_unresolved", version: 0, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: "2026-10-04T02:30", error: { code: "subtask_schedule_legacy_unresolved", reason: "nonexistent_local_time" } };
-const invalidSchedule: InvalidChecklistScheduleDto = { state: "invalid", version: 2, zone: null, start: null, end: null, due: "bad", error: { code: "subtask_schedule_storage_invalid", reason: "shape_mismatch" } };
 
 function projectEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, deadlineLocalCivil = "2026-08-27T09:00"): CalendarEventDto<typeof stageKey> {
   return {
@@ -70,17 +58,11 @@ function projectEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, deadli
   };
 }
 
-function checklistEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, schedule: ReturnType<typeof dueSchedule> | ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof stageKey> {
-  const timing = schedule.state === "range"
-    ? schedule.start.kind === "date"
-      ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
-      : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant }
-    : schedule.end.kind === "date"
-      ? { allDay: true as const, start: schedule.end.localCivil, end: null }
-      : { allDay: false as const, start: schedule.end.instant!, end: null };
-  return schedule.state === "range"
-    ? { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(stageKey), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } }
-    : { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(stageKey), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
+function checklistEvent(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE, schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof stageKey> {
+  const timing = schedule.start.kind === "date"
+    ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
+    : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(stageKey), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 function response(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) {
@@ -89,12 +71,8 @@ function response(stageKey: typeof ADMIN_STAGE | typeof EDITOR_STAGE) {
       start: "2026-08-24", end: "2026-09-05", date: "2026-08-27", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE,
       appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
     },
-    events: [projectEvent(stageKey), checklistEvent(stageKey, dueSchedule(dateEndpoint("2026-08-27")))],
-    unscheduled: [
-      { id: `project-deadline:${PROJECT_ID}`, kind: "project_deadline" as const, reason: "unscheduled" as const, title: "Deadline", project: project(stageKey), permissions: { canDrag: true, canResize: false as const }, deadlineVersion: 8, reminderOffsetsMinutes: [] as [] },
-      { id: `checklist:${PERSON_ID}`, kind: "checklist" as const, reason: "unscheduled" as const, title: "Select hero images", project: project(stageKey), assignee: person, schedule: unscheduledSchedule(), permissions: { canDrag: true, canResize: false as const, canOpenScheduleEditor: true, canScheduleRange: true } },
-    ],
-    filterFacets: { projects: [{ id: PROJECT_ID, street: "1 Example Street" }], people: [person], myTasksUserId: PERSON_ID, unscheduled: { project: { matched: 1, returned: 1, truncated: false }, checklist: { matched: 1, returned: 1, truncated: false } } },
+    events: [projectEvent(stageKey), checklistEvent(stageKey, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")))],
+    filterFacets: { projects: [{ id: PROJECT_ID, street: "1 Example Street" }], people: [person], myTasksUserId: PERSON_ID },
   };
 }
 
@@ -233,29 +211,31 @@ describe("TB5C strict role-safe DTOs", () => {
     }
   });
 
-  it("accepts every checklist source state only in its matching projection branch", () => {
+  it("accepts only range checklist schedules in the event schema (ADR 0011)", () => {
     const stage = z.enum(STAGE_PRESENTATION_KEYS);
     const eventSchema = calendarEventSchemaFor(stage);
-    const entrySchema = calendarUnscheduledEntrySchemaFor(stage);
-    const due = checklistEvent(EDITOR_STAGE, dueSchedule(dateEndpoint("2026-08-27")));
+    const oneDay = checklistEvent(EDITOR_STAGE, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-27")));
     const range = checklistEvent(EDITOR_STAGE, rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-28")));
-    const plain = { id: "checklist:plain", kind: "checklist" as const, reason: "unscheduled" as const, title: "Plain", project: project(EDITOR_STAGE), assignee: null, schedule: unscheduledSchedule(), permissions: { canDrag: true, canResize: false as const, canOpenScheduleEditor: true, canScheduleRange: true } };
-    const legacy = { id: "checklist:legacy", kind: "checklist" as const, reason: "schedule_needs_attention" as const, attentionReason: "legacy_unresolved" as const, title: "Legacy", project: project(EDITOR_STAGE), assignee: null, schedule: legacySchedule, permissions: { canDrag: false as const, canResize: false as const, canOpenScheduleEditor: true, canScheduleRange: true } };
-    const invalid = { id: "checklist:invalid", kind: "checklist" as const, reason: "schedule_needs_attention" as const, attentionReason: "invalid" as const, title: "Invalid", project: project(EDITOR_STAGE), assignee: null, schedule: invalidSchedule, permissions: { canDrag: false as const, canResize: false as const, canOpenScheduleEditor: false as const, canScheduleRange: false as const } };
-    expect(eventSchema.safeParse(due).success).toBe(true);
+    expect(eventSchema.safeParse(oneDay).success).toBe(true);
     expect(eventSchema.safeParse(range).success).toBe(true);
-    expect(entrySchema.safeParse(plain).success).toBe(true);
-    expect(entrySchema.safeParse(legacy).success).toBe(true);
-    expect(entrySchema.safeParse(invalid).success).toBe(true);
-    expect(eventSchema.safeParse({ ...due, schedule: unscheduledSchedule() }).success).toBe(false);
-    expect(entrySchema.safeParse({ ...plain, schedule: legacySchedule }).success).toBe(false);
-    expect(entrySchema.safeParse({ ...legacy, attentionReason: "invalid", schedule: legacySchedule }).success).toBe(false);
-    expect(entrySchema.safeParse({ ...invalid, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false } }).success).toBe(false);
-    expect(entrySchema.safeParse({ ...invalid, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canScheduleRange: false } }).success).toBe(false);
-    expect(eventSchema.safeParse({ ...due, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } }).success).toBe(false);
-    expectTypeOf<DueOnlyChecklistScheduleDto>().not.toBeNever();
-    expectTypeOf<RangeChecklistScheduleDto>().not.toBeNever();
-    expectTypeOf<UnscheduledChecklistScheduleDto>().not.toBeNever();
+    expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, state: "due_only", start: null } }).success).toBe(false);
+    expect(eventSchema.safeParse({ ...range, schedule: { state: "unscheduled", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null } }).success).toBe(false);
+    expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, state: "legacy_unresolved" } }).success).toBe(false);
+    expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, start: null } }).success).toBe(false);
+    expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, due: null } }).success).toBe(false);
+    expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, end: { ...range.schedule.end, resolution: "derived_unambiguous" } } }).success).toBe(false);
+    expect(eventSchema.safeParse({ ...range, permissions: { ...range.permissions, canScheduleRange: true } }).success).toBe(false);
+    // A stored version is at least 1: the serializer throws on 0, so the schema refuses it too.
+    expect(eventSchema.safeParse({ ...range, schedule: { ...range.schedule, version: 0 } }).success).toBe(false);
+  });
+
+  it("has no unscheduled array and no unscheduled facets in any role's response", () => {
+    for (const [schema, stage] of [[adminProductionCalendarRangeResponseSchema, ADMIN_STAGE], [editorProductionCalendarRangeResponseSchema, EDITOR_STAGE], [externalCalendarRangeSchema, EDITOR_STAGE]] as const) {
+      const body = response(stage);
+      expect(schema.safeParse(body).success).toBe(true);
+      expect(schema.safeParse({ ...body, unscheduled: [] }).success).toBe(false);
+      expect(schema.safeParse({ ...body, filterFacets: { ...body.filterFacets, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } } }).success).toBe(false);
+    }
   });
 });
 
@@ -291,13 +271,6 @@ describe("TB5C Sydney mapping contract", () => {
     const resized = mapChecklistEndResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-29" } });
     expect(resized).toMatchObject({ ok: true, value: { schedule: { start: { localCivil: "2026-08-27" }, end: { localCivil: "2026-08-28" } } } });
     expect(mapChecklistEndResizeToCommand({ event: allDay, target: { subview: "month", targetDate: "2026-08-29", edge: "start" } })).toMatchObject({ ok: false, error: { code: "start_resize_unsupported" } });
-  });
-
-  it("maps Unscheduled checklist Month/Week defaults and validates them before returning", () => {
-    const event: CalendarUnscheduledEntryDto<typeof EDITOR_STAGE> = { id: "checklist:unscheduled", kind: "checklist", reason: "unscheduled", title: "Unscheduled", project: project(EDITOR_STAGE), assignee: null, schedule: unscheduledSchedule(6), permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
-    expect(mapUnscheduledChecklistDropToCommand({ event, target: { subview: "month", targetDate: "2026-08-29" } })).toMatchObject({ ok: true, value: { expectedVersion: 6, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } } });
-    expect(mapUnscheduledChecklistDropToCommand({ event, target: { subview: "week", targetDate: "2026-10-03", targetCivilMinute: "2026-10-03T10:07" } })).toMatchObject({ ok: true, value: { schedule: { state: "range", start: { localCivil: "2026-10-03T10:00" }, end: { localCivil: "2026-10-03T11:00" } } } });
-    expect(mapUnscheduledChecklistDropToCommand({ event, target: { subview: "agenda", targetDate: "2026-08-29" } })).toMatchObject({ ok: false, error: { code: "unsupported_subview" } });
   });
 });
 

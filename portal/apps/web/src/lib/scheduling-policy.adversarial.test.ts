@@ -3,8 +3,7 @@ import {
   PRODUCTION_CALENDAR_ZONE,
   resolveSydneyCivilMinute,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
-  type InitialChecklistScheduleInput,
+  type RangeChecklistScheduleInput,
   type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
 } from "@quincy/shared";
@@ -33,20 +32,7 @@ function rangeEvent(start: string, end: string): ChecklistCalendarEventDto {
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
-  };
-}
-
-function unscheduledChecklist(): ChecklistCalendarUnscheduledEntryDto {
-  return {
-    id: "checklist:one",
-    kind: "checklist",
-    reason: "unscheduled",
-    title: "Select hero images",
-    project,
-    assignee: person,
-    schedule: { state: "unscheduled", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null },
-    permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 
@@ -72,13 +58,13 @@ function deadlineEvent(localCivil: string): ProjectDeadlineCalendarEventDto {
 
 describe("scheduling policy adversarial boundaries", () => {
   it("warns only strictly past timed minutes and date-only dates at both DST edges", () => {
-    const cases: Array<[InitialChecklistScheduleInput, string, boolean]> = [
-      [{ state: "due_only", end: { kind: "timed", localCivil: "2026-04-05T02:30" } }, "2026-04-05T02:30", false],
-      [{ state: "due_only", end: { kind: "timed", localCivil: "2026-04-05T02:31" } }, "2026-04-05T02:30", true],
-      [{ state: "due_only", end: { kind: "timed", localCivil: "2026-10-04T03:00" } }, "2026-10-04T03:00", false],
-      [{ state: "due_only", end: { kind: "timed", localCivil: "2026-10-04T03:01" } }, "2026-10-04T03:00", true],
-      [{ state: "due_only", end: { kind: "date", localCivil: "2026-04-05" } }, "2026-04-05T02:30", false],
-      [{ state: "due_only", end: { kind: "date", localCivil: "2026-04-06" } }, "2026-04-05T02:30", true],
+    const cases: Array<[RangeChecklistScheduleInput, string, boolean]> = [
+      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30" } }, "2026-04-05T02:30", false],
+      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:31" } }, "2026-04-05T02:30", true],
+      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-10-04T03:00" } }, "2026-10-04T03:00", false],
+      [{ state: "range", start: { kind: "timed", localCivil: "2000-01-01T00:00" }, end: { kind: "timed", localCivil: "2026-10-04T03:01" } }, "2026-10-04T03:00", true],
+      [{ state: "range", start: { kind: "date", localCivil: "2000-01-01" }, end: { kind: "date", localCivil: "2026-04-05" } }, "2026-04-05T02:30", false],
+      [{ state: "range", start: { kind: "date", localCivil: "2000-01-01" }, end: { kind: "date", localCivil: "2026-04-06" } }, "2026-04-05T02:30", true],
     ];
     for (const [schedule, deadlineLocalCivil, shouldWarn] of cases) {
       const warnings = scheduleWindowWarnings(schedule, { lower: null, deadlineLocalCivil });
@@ -110,18 +96,6 @@ describe("scheduling policy adversarial boundaries", () => {
     const plan = planSchedulingProposal(proposal);
     expect(plan).toMatchObject({ ok: true, value: { kind: "checklist", request: { schedule: { start: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } } } } });
     if (plan.ok && plan.value.kind === "checklist") expect(plan.value.timing).toEqual({ allDay: false, start: "2026-04-04T16:30:00.000Z", end: "2026-04-04T18:00:00.000Z" });
-  });
-
-  it("propagates a fold choice independently for both endpoints when placing a checklist", () => {
-    const proposal: SchedulingProposal = {
-      kind: "place",
-      entity: "checklist",
-      entry: unscheduledChecklist(),
-      target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T02:30" },
-      disambiguation: { start: "later" },
-    };
-    const plan = planSchedulingProposal(proposal);
-    expect(plan).toMatchObject({ ok: true, value: { kind: "checklist", request: { schedule: { state: "range", start: { disambiguation: "later" }, end: { localCivil: "2026-04-05T03:30" } } } } });
   });
 
   it("reports a deadline placement fold before confirmation and succeeds with the chosen occurrence", () => {

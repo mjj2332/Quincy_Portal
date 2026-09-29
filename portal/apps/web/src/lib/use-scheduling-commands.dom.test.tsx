@@ -3,7 +3,7 @@
  * `useSchedulingCommands`. Drives the hook directly (no FullCalendar handler in the loop) with a
  * small harness component, and asserts the network call `planSchedulingProposal` +
  * `runChecklistMutation`/`runConfirmedProposal` produce for each `SchedulingProposal` kind: move,
- * end-resize, start-resize, place (checklist), and a deadline move.
+ * end-resize, start-resize, and a deadline move.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -16,10 +16,8 @@ import {
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleDto,
   type DashboardCalendarState,
-  type ProjectCalendarUnscheduledEntryDto,
   type ProjectDeadlineCalendarEventDto,
   type ProductionCalendarRangeResponse,
 } from "@quincy/shared";
@@ -40,7 +38,6 @@ const assigneeId = "22222222-2222-4222-8222-222222222222";
 // `calendarChecklistEntityId` exactly like the real worker serializer does, so a regression in
 // the parse/re-mint boundary shows up as a fixture mismatch, not a silently honest-looking id.
 const subtaskId = "33333333-4333-4333-8333-333333333333";
-const unscheduledSubtaskId = "44444444-4444-4444-8444-444444444444";
 const project = { id: projectId, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 1, total: 3 }, delivered: false };
 const person = { id: assigneeId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true };
 const identity: DashboardIdentity = { principalId: projectId, role: "admin", authorizationEpoch: 0 };
@@ -60,15 +57,7 @@ function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarE
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
-  };
-}
-
-function unscheduledEntry(): ChecklistCalendarUnscheduledEntryDto {
-  return {
-    id: calendarChecklistEntityId(unscheduledSubtaskId), kind: "checklist", reason: "unscheduled", title: "Draft the gallery blurb", project, assignee: person,
-    schedule: { state: "unscheduled", version: 2, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null },
-    permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
   };
 }
 
@@ -83,11 +72,8 @@ function deadlineEvent(deadlineLocalCivil = "2026-08-27T09:00", version = 8): Pr
   };
 }
 
-function unscheduledProjectEntry(version = 8): ProjectCalendarUnscheduledEntryDto {
-  return { id: `project-deadline:${projectId}`, kind: "project_deadline", reason: "unscheduled", title: "Project handoff", project, permissions: { canDrag: true, canResize: false }, deadlineVersion: version, reminderOffsetsMinutes: [] };
-}
 
-function mutationBody(event: ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto, schedule: ChecklistScheduleDto) {
+function mutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistScheduleDto) {
   // The subtasks route's PATCH response carries the BARE subtask uuid, never the
   // `checklist:`-prefixed Calendar entity id (#227) — mirror that here so a regression in
   // `adoptChecklistResult`'s re-mint (`calendarChecklistEntityId`) shows up as a broken test
@@ -96,11 +82,11 @@ function mutationBody(event: ChecklistCalendarEventDto | ChecklistCalendarUnsche
   return { id: bareId, title: event.title, done: false, assignee: { id: person.id, name: person.name }, position: 1, schedule };
 }
 
-function response(range: { events: ProductionCalendarRangeResponse["events"]; unscheduled: ProductionCalendarRangeResponse["unscheduled"] }): ProductionCalendarRangeResponse {
+function response(range: { events: ProductionCalendarRangeResponse["events"] }): ProductionCalendarRangeResponse {
   const raw = {
     range: { start: "2026-08-10", end: "2026-08-24", date: "2026-08-12", subview: "month" as const, zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"] as ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false } },
-    events: range.events, unscheduled: range.unscheduled,
-    filterFacets: { projects: [{ id: projectId, street: project.street }], people: [person], myTasksUserId: assigneeId, unscheduled: { project: { matched: range.unscheduled.filter((entry) => entry.kind === "project_deadline").length, returned: range.unscheduled.filter((entry) => entry.kind === "project_deadline").length, truncated: false }, checklist: { matched: range.unscheduled.filter((entry) => entry.kind === "checklist").length, returned: range.unscheduled.filter((entry) => entry.kind === "checklist").length, truncated: false } } },
+    events: range.events,
+    filterFacets: { projects: [{ id: projectId, street: project.street }], people: [person], myTasksUserId: assigneeId },
   };
   return adminProductionCalendarRangeResponseSchema.parse(raw);
 }
@@ -163,7 +149,7 @@ describe("useSchedulingCommands submitProposal", () => {
 
   it("submits a move proposal through the checklist mutate path", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
-    await render(response({ events: [source], unscheduled: [] }));
+    await render(response({ events: [source] }));
     const proposal: SchedulingProposal = { kind: "move", entity: "checklist", source, target: { subview: "month", targetDate: "2026-08-28" } };
     await submit(proposal, mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-28T09:00"), end: timedEndpoint("2026-08-28T11:00"), due: "2026-08-28T11:00" }));
     expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-28T09:00" }, end: { kind: "timed", localCivil: "2026-08-28T11:00" } } } }]);
@@ -171,7 +157,7 @@ describe("useSchedulingCommands submitProposal", () => {
 
   it("submits an end-resize proposal through the checklist mutate path", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
-    await render(response({ events: [source], unscheduled: [] }));
+    await render(response({ events: [source] }));
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "end", target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T12:00" } };
     await submit(proposal, mutationBody(source, { ...source.schedule, version: 5, end: timedEndpoint("2026-08-27T12:00"), due: "2026-08-27T12:00" }));
     expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-27T09:00", disambiguation: "earlier" }, end: { kind: "timed", localCivil: "2026-08-27T12:00" } } } }]);
@@ -179,23 +165,15 @@ describe("useSchedulingCommands submitProposal", () => {
 
   it("submits a start-resize proposal (mapChecklistStartResizeToCommand) through the checklist mutate path", async () => {
     const source = rangeEvent("2026-08-27T09:00", "2026-08-27T11:00");
-    await render(response({ events: [source], unscheduled: [] }));
+    await render(response({ events: [source] }));
     const proposal: SchedulingProposal = { kind: "resize", entity: "checklist", source, edge: "start", target: { subview: "week", targetDate: "2026-08-27", targetCivilMinute: "2026-08-27T08:00" } };
     await submit(proposal, mutationBody(source, { ...source.schedule, version: 5, start: timedEndpoint("2026-08-27T08:00"), due: "2026-08-27T11:00" }));
     expect(patchBodies).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-27T08:00" }, end: { kind: "timed", localCivil: "2026-08-27T11:00", disambiguation: "earlier" } } } }]);
   });
 
-  it("submits a place proposal (unscheduled checklist entry) through the checklist mutate path", async () => {
-    const entry = unscheduledEntry();
-    await render(response({ events: [], unscheduled: [entry] }));
-    const proposal: SchedulingProposal = { kind: "place", entity: "checklist", entry, target: { subview: "month", targetDate: "2026-08-29" } };
-    await submit(proposal, mutationBody(entry, { state: "due_only", version: 3, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date", localCivil: "2026-08-29", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-29" }));
-    expect(patchBodies).toEqual([{ schedule: { expectedVersion: 2, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } } } ]);
-  });
-
   it("submits a deadline proposal through the confirm+mutate path", async () => {
     const event = deadlineEvent("2026-08-27T09:00", 8);
-    await render(response({ events: [event], unscheduled: [] }));
+    await render(response({ events: [event] }));
     const proposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "month", targetDate: "2026-08-29" } };
     await act(async () => { commandsRef!.submitProposal(proposal); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
@@ -206,7 +184,7 @@ describe("useSchedulingCommands submitProposal", () => {
   // §216 fix round 2 item 1
   it("rejects a second submitProposal while the first is pending confirmation, with no side effects", async () => {
     const event = deadlineEvent("2026-08-27T09:00", 8);
-    await render(response({ events: [event], unscheduled: [] }));
+    await render(response({ events: [event] }));
     let resolveConfirm: (value: boolean) => void = () => {};
     (confirm as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<boolean>((resolve) => { resolveConfirm = resolve; }));
 
@@ -231,10 +209,10 @@ describe("useSchedulingCommands submitProposal", () => {
   });
 
   // §216 fix round 2 item 2
-  it("seeds the fold dialog with the attempted target civil time (not the pre-move/'Not scheduled' one), and completes the retry with the chosen fold", async () => {
-    const entry = unscheduledProjectEntry(8);
-    await render(response({ events: [], unscheduled: [entry] }));
-    const proposal: SchedulingProposal = { kind: "place", entity: "project_deadline", entry, target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T02:30" } };
+  it("seeds the fold dialog with the attempted target civil time (not the pre-move one), and completes the retry with the chosen fold", async () => {
+    const event = deadlineEvent("2026-08-27T09:00", 8);
+    await render(response({ events: [event] }));
+    const proposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T02:30" } };
     await act(async () => { commandsRef!.submitProposal(proposal); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); await Promise.resolve(); });
 
@@ -244,13 +222,13 @@ describe("useSchedulingCommands submitProposal", () => {
     await act(async () => { commandsRef!.submitMoveDialog("2026-04-05T02:30", "later"); await Promise.resolve(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await Promise.resolve(); });
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [] }]);
+    expect(putBodies).toEqual([{ expectedVersion: 8, deadline: { localCivil: "2026-04-05T02:30", disambiguation: "later" }, reminderOffsetsMinutes: [1440, 60] }]);
   });
 
   // §216 fix round 3 item 1
   it("releases the lock on a generic-invalid deadline error for a DRAG (not just a placement) — a following submitProposal is then accepted (lock-release regression)", async () => {
     const event = deadlineEvent("2026-08-27T09:00", 8);
-    await render(response({ events: [event], unscheduled: [] }));
+    await render(response({ events: [event] }));
 
     // target.subview:"agenda" fails mapProjectDeadlineMoveToCommand with unsupported_subview — a
     // "generic-invalid" error (neither repeated_local_time nor nonexistent_local_time) for a
@@ -285,7 +263,7 @@ describe("useSchedulingCommands submitProposal", () => {
     const eventA = deadlineEvent("2026-08-27T09:00", 8);
     const projectB = { id: "33333333-3333-4333-8333-333333333333", street: "44 Bridge Road", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false };
     const eventB: ProjectDeadlineCalendarEventDto = { ...deadlineEvent("2026-09-03T09:00", 8), id: `project-deadline:${projectB.id}`, project: projectB };
-    await render(response({ events: [], unscheduled: [] }));
+    await render(response({ events: [] }));
 
     // Step 1: an invalid DRAG (not placement) proposal for A. target.subview:"agenda" hits the
     // generic-invalid branch (neither repeated_local_time nor nonexistent_local_time) — same
@@ -325,7 +303,7 @@ describe("useSchedulingCommands submitProposal", () => {
   // can, since each builds the snapshot from the very event it passes alongside it.
   it("retries a deadline DRAG onto a repeated local time through the fold dialog, mapping from the accepted snapshot's version/offsets", async () => {
     const event = deadlineEvent("2026-03-30T02:30", 8);
-    await render(response({ events: [event], unscheduled: [] }));
+    await render(response({ events: [event] }));
     const revertable = { revert: vi.fn() };
     const proposal: SchedulingProposal = { kind: "deadline", entity: "project_deadline", event, target: { subview: "week", targetDate: "2026-04-05", targetCivilMinute: "2026-04-05T02:30" } };
     await act(async () => { commandsRef!.submitProposal(proposal, { revertable }); await Promise.resolve(); });

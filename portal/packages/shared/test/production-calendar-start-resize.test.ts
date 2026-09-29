@@ -19,20 +19,13 @@ const project = () => ({
 });
 const dateEndpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
 const timedEndpoint = (localCivil: string, instant: string, fold: 0 | 1 = 0) => ({ kind: "timed" as const, localCivil, instant, utcOffsetMinutes: fold === 1 ? 600 : 660, fold, resolution: "stored" as const });
-const dueSchedule = (end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "due_only" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start: null, end, due: end.localCivil });
 const rangeSchedule = (start: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, end: ReturnType<typeof dateEndpoint> | ReturnType<typeof timedEndpoint>, version = 4) => ({ state: "range" as const, version, zone: PRODUCTION_CALENDAR_ZONE, start, end, due: end.localCivil });
 
-function checklistEvent(schedule: ReturnType<typeof dueSchedule> | ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof EDITOR_STAGE> {
-  const timing = schedule.state === "range"
-    ? schedule.start.kind === "date"
-      ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
-      : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant }
-    : schedule.end.kind === "date"
-      ? { allDay: true as const, start: schedule.end.localCivil, end: null }
-      : { allDay: false as const, start: schedule.end.instant!, end: null };
-  return schedule.state === "range"
-    ? { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } }
-    : { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true } };
+function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCalendarEventDto<typeof EDITOR_STAGE> {
+  const timing = schedule.start.kind === "date"
+    ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
+    : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 describe("TB5C mapChecklistStartResizeToCommand", () => {
@@ -78,12 +71,6 @@ describe("TB5C mapChecklistStartResizeToCommand", () => {
     const allDay = checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-29")));
     const resized = mapChecklistStartResizeToCommand({ event: allDay, edge: "end", target: { subview: "month", targetDate: "2026-08-26" } });
     expect(resized).toMatchObject({ ok: false, error: { code: "end_resize_not_this_mapper" } });
-  });
-
-  it("rejects a due_only schedule with unsupported_schedule_state", () => {
-    const due = checklistEvent(dueSchedule(dateEndpoint("2026-08-27")));
-    const resized = mapChecklistStartResizeToCommand({ event: due, target: { subview: "month", targetDate: "2026-08-26" } });
-    expect(resized).toMatchObject({ ok: false, error: { code: "unsupported_schedule_state" } });
   });
 
   it("returns subtask_schedule_invalid_order when the new start is at or after the end", () => {

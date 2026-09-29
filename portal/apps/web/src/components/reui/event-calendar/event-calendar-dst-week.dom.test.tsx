@@ -14,11 +14,10 @@
  * writes styles, so a live render shows no height or top at all. The geometry cases therefore
  * render with `renderToStaticMarkup` and read the raw `style` attribute, which no CSS parser has
  * touched. The pointer cases need real handlers, so they render live and stub one column's rect
- * at 1px = 1 wall-clock minute, the same convention `event-calendar-external-drop.dom.test`
- * uses. Columns are found by `[data-ec-day]`, the attribute `event-calendar-dnd.tsx` itself reads,
+ * at 1px = 1 wall-clock minute. Columns are found by `[data-ec-day]`, the attribute `event-calendar-dnd.tsx` itself reads,
  * not by a vendor-authored `data-slot` (guard F, issue #92).
  */
-import { act, useEffect, type ReactNode } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,7 +26,6 @@ import { TZDate } from "@date-fns/tz";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 import { EventCalendar } from "./event-calendar";
 import { EventCalendarContent } from "./event-calendar-content";
-import { useEventCalendarExternalDrop, type EventCalendarExternalDropOptions } from "./event-calendar-dnd";
 import type { CalendarEvent } from "./event-calendar-types";
 
 // happy-dom has no `Element#getAnimations`; base-ui's ScrollArea viewport calls it on a timer once
@@ -104,45 +102,55 @@ function blockFor(title: string): HTMLElement {
 
 const event = (id: string, start: Date, end: Date): CalendarEvent => ({ id, title: id, start, end });
 
-type Begin = (e: React.PointerEvent, options: EventCalendarExternalDropOptions<string>) => void;
-
-/** A tray stand-in: hands the gesture's `begin` out, and is the pointerdown origin. */
-function Tray({ beginRef }: { beginRef: { current: Begin | null } }) {
-  const { begin } = useEventCalendarExternalDrop<unknown, string>();
-  useEffect(() => {
-    beginRef.current = begin;
-  });
-  return <div data-testid="tray-origin" />;
-}
-
 /**
- * Drags a 60-minute tray item onto column 0 of the REAL week view and releases at `clientY`,
- * with every column stubbed 100px wide and 1440px tall (1px = 1 wall-clock minute). This is the
- * gesture engine's pointer path (`pointerMinutes` in event-calendar-dnd.tsx), shared by move,
- * resize and drag-create; `onSlotClick` above is the column's own, separate one.
+ * Moves a 60-minute 09:00 event within column 0 of the REAL week view by dragging it to the noon
+ * mark, with every column stubbed 100px wide and 1440px tall (1px = 1 wall-clock minute). This is
+ * the gesture engine's pointer path (`pointerMinutes` in event-calendar-dnd.tsx), shared by move,
+ * resize and drag-create; `onSlotClick` above is the column's own, separate one. The chip is grabbed
+ * 10 minutes below its top edge, so a release at y = 730 puts its top at the 720 mark.
  */
-async function dropOnFirstColumn(date: Date, clientY: number): Promise<Date> {
-  const beginRef: { current: Begin | null } = { current: null };
-  act(() => root.render(week(date, [], undefined, <Tray beginRef={beginRef} />)));
+async function moveToNoon(date: Date): Promise<Date> {
+  const onEventUpdate = vi.fn(() => ({ ok: true }) as never);
+  const day = new TZDate(date.getFullYear(), date.getMonth(), date.getDate(), 9, 0, 0, 0, TZ);
+  const ev = event("moved", day, new TZDate(date.getFullYear(), date.getMonth(), date.getDate(), 10, 0, 0, 0, TZ));
+  act(() =>
+    root.render(
+      <EventCalendar events={[ev]} view="week" date={date} timeZone={TZ} onEventUpdate={onEventUpdate}>
+        <EventCalendarContent />
+      </EventCalendar>
+    )
+  );
   timeColumns().forEach((column, i) => {
     column.getBoundingClientRect = () => new DOMRect(i * 100, 0, 100, 1440);
   });
-  const onDrop = vi.fn();
-  const origin = host.querySelector<HTMLElement>('[data-testid="tray-origin"]')!;
+  // happy-dom rects are all zero, which reads as "pointer past the scroller's bottom edge" and
+  // auto-scrolls the track on every frame. Give every other element a tall box so it never does.
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return this.hasAttribute("data-ec-day") ? realRect.call(this) : new DOMRect(0, 0, 700, 1440);
+  };
+  try {
+    return await drag();
+  } finally {
+    Element.prototype.getBoundingClientRect = realRect;
+  }
+
+  async function drag(): Promise<Date> {
+  const chip = host.querySelector<HTMLElement>("[data-ec-event-id]")!;
   await act(async () => {
-    beginRef.current!(
-      { button: 0, pointerType: "mouse", clientX: 50, clientY: clientY - 20, currentTarget: origin } as unknown as React.PointerEvent,
-      { payload: "tray-item", durationMinutes: 60, onDrop }
-    );
+    chip.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse", clientX: 50, clientY: 550 }));
   });
   for (const type of ["pointermove", "pointerup"]) {
     await act(async () => {
-      window.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: 50, clientY }));
+      window.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: 50, clientY: 730 }));
       await Promise.resolve();
     });
   }
-  expect(onDrop).toHaveBeenCalledTimes(1);
-  return new Date((onDrop.mock.calls[0]![0] as { start: Date }).start.getTime());
+  expect(onEventUpdate).toHaveBeenCalledTimes(1);
+  const [update] = onEventUpdate.mock.calls[0] as unknown as [{ start: Date; source: string }];
+  expect(update.source).toBe("drag");
+  return new Date(update.start.getTime());
+  }
 }
 
 describe("week view across a DST transition (#241)", () => {
@@ -229,13 +237,13 @@ describe("week view across a DST transition (#241)", () => {
     );
   });
 
-  it("reads a drop at the noon mark of the 25-hour day as noon", async () => {
-    expect((await dropOnFirstColumn(AUTUMN_SUNDAY, 720)).toISOString()).toBe("2026-04-05T02:00:00.000Z");
+  it("moves an event to the noon mark of the 25-hour day as noon", async () => {
+    expect((await moveToNoon(AUTUMN_SUNDAY)).toISOString()).toBe("2026-04-05T02:00:00.000Z");
   });
 
-  it("reads a drop at the noon mark of the 23-hour day as noon", async () => {
+  it("moves an event to the noon mark of the 23-hour day as noon", async () => {
     // Noon +11:00. Scaled to 23 elapsed hours this pixel would be 11:30 elapsed = 12:30.
-    expect((await dropOnFirstColumn(SPRING_SUNDAY, 720)).toISOString()).toBe("2026-10-04T01:00:00.000Z");
+    expect((await moveToNoon(SPRING_SUNDAY)).toISOString()).toBe("2026-10-04T01:00:00.000Z");
   });
 });
 

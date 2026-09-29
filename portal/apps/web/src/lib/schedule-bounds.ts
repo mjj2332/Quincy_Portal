@@ -19,7 +19,7 @@
 import {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
-  type InitialChecklistScheduleInput,
+  type RangeChecklistScheduleInput,
   type ProductionCalendarProjectBounds,
 } from "@quincy/shared";
 
@@ -87,28 +87,24 @@ export function endsAfterDeadline(end: { kind: string; localCivil: string }, dea
 }
 
 /**
- * Advisory only. A `range` checks its START against the lower bound, a `due_only` its end (its only
- * endpoint); both check the end against the deadline. `null` bounds (none known) → `[]`.
+ * Advisory only. A range checks its START against the lower bound and its end against the deadline.
+ * `null` bounds (none known) → `[]`.
  */
-export function scheduleWindowWarnings(schedule: InitialChecklistScheduleInput, bounds: ScheduleBounds | null): SchedulingWarning[] {
-  if (!bounds || schedule.state === "unscheduled") return [];
-  const dueOnly = schedule.state === "due_only";
+export function scheduleWindowWarnings(schedule: RangeChecklistScheduleInput, bounds: ScheduleBounds | null): SchedulingWarning[] {
+  if (!bounds) return [];
   const warnings: SchedulingWarning[] = [];
 
-  if (bounds.lower) {
-    const endpoint = dueOnly ? schedule.end : schedule.start;
-    if (beforeLowerBound(endpoint.localCivil, bounds.lower)) {
-      const shoot = bounds.lower.kind === "shoot";
-      warnings.push({
-        code: shoot ? "subtask_before_project_shoot" : "subtask_before_project_created",
-        message: `${dueOnly ? "Due" : "Starts"} before ${shoot ? "the shoot date" : "the project was created"}.`,
-        endpoint: dueOnly ? "end" : "start",
-      });
-    }
+  if (bounds.lower && beforeLowerBound(schedule.start.localCivil, bounds.lower)) {
+    const shoot = bounds.lower.kind === "shoot";
+    warnings.push({
+      code: shoot ? "subtask_before_project_shoot" : "subtask_before_project_created",
+      message: `Starts before ${shoot ? "the shoot date" : "the project was created"}.`,
+      endpoint: "start",
+    });
   }
 
   if (endsAfterDeadline(schedule.end, bounds.deadlineLocalCivil)) {
-    warnings.push({ code: "subtask_after_project_deadline", message: `${dueOnly ? "Due" : "Ends"} after the project deadline.`, endpoint: "end" });
+    warnings.push({ code: "subtask_after_project_deadline", message: "Ends after the project deadline.", endpoint: "end" });
   }
 
   return warnings;

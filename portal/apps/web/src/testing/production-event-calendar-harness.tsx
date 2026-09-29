@@ -1,6 +1,6 @@
 /**
  * #222 round 3 — the shared mount/fetch/DOM helpers for the `ProductionEventCalendar-*` DOM
- * suites (checklist, deadline, unscheduled, reconciliation, unmount, phone). Test-only.
+ * suites (checklist, deadline, reconciliation, unmount, phone). Test-only.
  *
  * Each suite still declares its own `vi.mock`s (they are hoisted per file) — the vendor tree via
  * `testing/event-calendar-fake.tsx`, and `../lib/auth`. This file only mounts the surface and
@@ -228,23 +228,4 @@ export function mainRangeQuery(client: QueryClient) {
   const main = queries.find((query) => JSON.stringify(query.queryKey).includes("bounds")) ?? queries[0];
   if (!main) throw new Error("Calendar query was not created");
   return main;
-}
-
-/**
- * Drags an unscheduled row onto `target` through the fake external-drop hook: a primary
- * `pointerdown` on the row calls the surface's `beginDrag`, and the fake runs `canDrop` → `onDrop`
- * at once. Returns the fake's verdict (`null` = the row never started a drag: no drag source).
- */
-export async function dropUnscheduled(entryId: string, target: { start: Date; dayGranular: boolean }): Promise<boolean | null> {
-  const row = document.querySelector<HTMLElement>(`[data-unscheduled-id="${entryId}"]`);
-  if (!row) throw new Error(`no unscheduled row ${entryId}`);
-  eventCalendarFake.lastDropAccepted = null;
-  eventCalendarFake.nextDropTarget = { start: target.start, end: new Date(target.start.getTime() + 3_600_000), allDay: target.dayGranular, view: target.dayGranular ? "month" : "week", dayGranular: target.dayGranular };
-  await act(async () => {
-    row.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true }));
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  eventCalendarFake.nextDropTarget = null;
-  return eventCalendarFake.lastDropAccepted;
 }

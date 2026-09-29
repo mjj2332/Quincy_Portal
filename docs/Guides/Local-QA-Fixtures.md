@@ -187,7 +187,7 @@ On the Production Gantt a project draws a bar only when it has a deadline (`apps
 | Complete 40 of 40 | Edited review | Progress is exactly 100%, the completed checkmark renders |
 | Zero progress | Editing · autoHDR | Progress is emitted as `0`, not omitted |
 | Delivered | Delivered | The one project reaching `--signal-positive` — **only visible with the delivered filter on**. It keeps its deadline, as a project does in the app when it is delivered. Its reminders are modelled as saved and then delivered at the apply instant: any that would be pending is `superseded` / `project_delivered` with `updated_at` = the apply instant, which is what delivery does to it (`buildDeadlineSuppressionBundle`); one already elapsed at apply stays `skipped`. None is pending |
-| Schedule edges | RAW review | Every checklist schedule state and endpoint kind (`unscheduled`, `due_only`, `range`, both `date` and `timed`), all three `legacy_unresolved` reasons, and the DST fold canary (see below) |
+| Schedule edges | RAW review | Ranges only (ADR 0011): a one-day date range, a multi-day date range, a timed range, a DST-spring timed range, and both DST fold canaries as timed ranges ending at the fall repeated hour (earlier and later). There are no unscheduled, due-only or legacy rows: the read side fails loud on them |
 | No deadline, no shoot date | Awaiting RAW | `missing_deadline` attention (flagged hollow-start) and **no bar** — deliberately left without a deadline |
 | Hollow start, has deadline | Editing · autoHDR | A hollow-start bar that still carries a deadline marker (deadline anchor + 14 days, 17:00) |
 | Deadline before start | Edited review | Zero-length bar + `deadline_before_start` attention (deadline anchor + 2 days 09:00, shoot anchor + 10) |

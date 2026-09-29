@@ -24,10 +24,8 @@ import {
   isSydneyCalendarDate,
   productionGanttChildPageSchema,
   roleHasCapability,
-  serializeChecklistSchedule,
   stageTransportKeyForRole,
   type CalendarPerson,
-  type ChecklistScheduleDto,
   type GanttChecklistRowDto,
   type GanttChildCursor,
   type GanttProjectCursor,
@@ -43,6 +41,7 @@ import { requireCapability } from "../middleware/capability";
 import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
 import { authorizedProjectsBaseCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
+import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
 import { activeEditorRefsByProject } from "../lib/project-editors";
 import type { AppEnv } from "../env";
 
@@ -646,23 +645,13 @@ function ganttPerson(row: { assignee_id: string | null; assignee_name: string | 
   return { id: row.assignee_id, name: row.assignee_name, roleLabel: ROLE_LABELS[role] ?? row.assignee_role, isExternal: role === "external_editor", active: Boolean(row.assignee_active) };
 }
 
-/** Mirrors `checklistEvent`/`unscheduledChecklist`'s own permission derivation
- * (`production-calendar.ts`) exactly, unified into one function since a Gantt row is never split
- * into separate "event" vs. "unscheduled" buckets. Invalid schedules get every permission false. */
-function ganttChecklistPermissions(schedule: ChecklistScheduleDto, canCollaborate: boolean): GanttChecklistRowDto["permissions"] {
-  if (schedule.state === "invalid") return { canDrag: false, canResize: false, canOpenScheduleEditor: false, canScheduleRange: false };
-  const canOpen = canCollaborate;
-  // canScheduleRange stays on the wire deliberately (strict schemas; removing it would break open tabs across a deploy); #342 removes it when schedules narrow to ranges only.
-  const canRange = canOpen;
-  if (schedule.state === "legacy_unresolved") return { canDrag: false, canResize: false, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };
-  if (schedule.state === "unscheduled") return { canDrag: canRange, canResize: false, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };
-  if (schedule.state === "range") return { canDrag: canRange, canResize: canRange, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };
-  // due_only
-  return { canDrag: canOpen, canResize: false, canOpenScheduleEditor: canOpen, canScheduleRange: canRange };
+/** Every Subtask is a range (ADR 0011), so every permission is the caller's collaboration access. */
+function ganttChecklistPermissions(canCollaborate: boolean): GanttChecklistRowDto["permissions"] {
+  return { canDrag: canCollaborate, canResize: canCollaborate, canOpenScheduleEditor: canCollaborate };
 }
 
 export function serializeGanttChecklistRow(row: GanttChildBaseRow): GanttChecklistRowDto {
-  const schedule = serializeChecklistSchedule(scheduleStorageFromChildRow(row));
+  const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorageFromChildRow(row));
   const canCollaborate = row.can_collaborate === 1;
   return {
     id: row.subtask_id,
@@ -672,7 +661,7 @@ export function serializeGanttChecklistRow(row: GanttChildBaseRow): GanttCheckli
     position: Number(row.position),
     assignee: ganttPerson(row),
     schedule,
-    permissions: ganttChecklistPermissions(schedule, canCollaborate),
+    permissions: ganttChecklistPermissions(canCollaborate),
   };
 }
 

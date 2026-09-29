@@ -230,7 +230,7 @@ export type GanttChecklistRowDto = {
   position: number;
   assignee: CalendarPerson | null;
   schedule: ChecklistScheduleDto;
-  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canScheduleRange: boolean };
+  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean };
 };
 
 export type ProductionGanttResponse<TStage extends StageTransportKey = StageTransportKey> = {
@@ -271,7 +271,6 @@ const ganttChecklistPermissionsSchema = z.object({
   canDrag: z.boolean(),
   canResize: z.boolean(),
   canOpenScheduleEditor: z.boolean(),
-  canScheduleRange: z.boolean(),
 }).strict();
 
 function ganttChecklistRowSchema(): z.ZodType<GanttChecklistRowDto> {

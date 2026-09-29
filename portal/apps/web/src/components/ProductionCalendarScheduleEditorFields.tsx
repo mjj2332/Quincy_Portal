@@ -17,13 +17,10 @@ import {
   normalizeChecklistSchedule,
   resolveSydneyCivilMinute,
   type ChecklistCalendarEventDto,
-  type ChecklistCalendarUnscheduledEntryDto,
   type ChecklistScheduleDto,
   type ChecklistScheduleEndpointInput,
   type ChecklistScheduleValidationError,
-  type InitialChecklistScheduleInput,
   type RangeChecklistScheduleInput,
-  oneDaySubtaskRange,
 } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { FieldLegend, FieldSet } from "./reui/field";
@@ -66,7 +63,7 @@ const EDITOR_ERROR =
   "bg-[color-mix(in_srgb,var(--signal-critical)_8%,transparent)] text-signal-critical " +
   "[font:400_12px/1.4_var(--font-sans)]";
 
-export type ChecklistScheduleEditorEvent = ChecklistCalendarEventDto | ChecklistCalendarUnscheduledEntryDto;
+export type ChecklistScheduleEditorEvent = ChecklistCalendarEventDto;
 type EndpointKind = "date" | "timed";
 type EndpointDraft = { date: string; time: string; disambiguation?: "earlier" | "later" };
 export type ChecklistScheduleDraft = { kind: EndpointKind; start: EndpointDraft; end: EndpointDraft };
@@ -86,39 +83,17 @@ function endpointDraft(value: ChecklistScheduleEndpointInput | { kind: EndpointK
   return { date: parts.date, time: parts.time, disambiguation };
 }
 
-const blankDraft = (): ChecklistScheduleDraft => ({ kind: "date", start: { date: "", time: "" }, end: { date: "", time: "" } });
-
 function draftFromRange(value: RangeChecklistScheduleInput): ChecklistScheduleDraft {
   const kind = value.end.kind;
   return { kind, start: endpointDraft(value.start, kind), end: endpointDraft(value.end, kind) };
 }
 
-// A legacy row (unscheduled, due only) seeds a one-day range on its due for the user to confirm.
-// The Project's shoot date and Deadline are not on the calendar entry, so the shared default range is not available here.
-// An unusable due seeds blank fields rather than garbage.
-function seedFromDue(end: ChecklistScheduleEndpointInput | null): ChecklistScheduleDraft {
-  const range = end ? oneDaySubtaskRange(end) : null;
-  return range ? draftFromRange(range) : blankDraft();
-}
-
 function scheduleDraft(value: ChecklistScheduleDto): ChecklistScheduleDraft {
-  if (value.state === "invalid" || value.state === "unscheduled") return blankDraft();
-  if (value.state === "legacy_unresolved") return seedFromDue({ kind: value.due.includes("T") ? "timed" : "date", localCivil: value.due });
-  if (value.state === "due_only") {
-    const end = value.end;
-    if (!end) return blankDraft();
-    // Keep a stored fold as the end's occurrence, as a range end would.
-    const disambiguation = end.kind === "timed" ? foldToDisambiguation(end.fold) : undefined;
-    return seedFromDue(end.kind === "timed" ? { kind: "timed", localCivil: end.localCivil, ...(disambiguation ? { disambiguation } : {}) } : { kind: "date", localCivil: end.localCivil });
-  }
-  const kind = value.end?.kind ?? value.start?.kind ?? "date";
-  return { kind, start: endpointDraft(value.start, kind), end: endpointDraft(value.end, kind) };
+  return { kind: value.end.kind, start: endpointDraft(value.start, value.end.kind), end: endpointDraft(value.end, value.end.kind) };
 }
 
-// A retained or server-returned draft can still carry a legacy shape: it seeds a one-day range too.
-function draftFromInput(value: InitialChecklistScheduleInput): ChecklistScheduleDraft {
-  if (value.state === "range") return draftFromRange(value);
-  return value.state === "due_only" ? seedFromDue(value.end) : blankDraft();
+function draftFromInput(value: RangeChecklistScheduleInput): ChecklistScheduleDraft {
+  return draftFromRange(value);
 }
 
 function toEndpointInput(value: EndpointDraft, kind: EndpointKind): ChecklistScheduleEndpointInput {
@@ -145,7 +120,7 @@ function endpointLabel(which: "start" | "end"): string { return which === "start
 export type ChecklistScheduleDraftInput = {
   event: ChecklistScheduleEditorEvent;
   onSubmit: (schedule: RangeChecklistScheduleInput) => void;
-  initialSchedule?: InitialChecklistScheduleInput;
+  initialSchedule?: RangeChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
@@ -223,11 +198,6 @@ export function ProductionCalendarScheduleEditorFields({ state }: ProductionCale
   </div>;
 }
 
-function entryLabel(event: ChecklistScheduleEditorEvent): string {
-  if ("reason" in event && event.reason === "schedule_needs_attention" && event.attentionReason === "legacy_unresolved") return "Repair schedule";
-  return event.schedule.state === "unscheduled" ? "Schedule" : "Reschedule";
-}
-
-export function checklistScheduleEditorButtonLabel(event: ChecklistScheduleEditorEvent): string {
-  return entryLabel(event);
+export function checklistScheduleEditorButtonLabel(): string {
+  return "Reschedule";
 }

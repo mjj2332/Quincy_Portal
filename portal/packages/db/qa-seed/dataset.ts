@@ -10,12 +10,10 @@
  * carries a deadline) — so it is the one input capable of making two
  * applies at the same anchor differ; see the comment above `anchorReferenceInstantMs` below.
  *
- * Every subtask's `ChecklistScheduleStorage` is produced by `normalizeChecklistSchedule` (thrown on
- * `ok: false`) and round-tripped through `serializeChecklistSchedule` to assert the state it claims
- * to build — except the four deliberate `legacy_unresolved`/legacy `due_only` rows in the
- * schedule-edges project, which bypass normalization on purpose (the legacy free-text `due_date`
- * column was never normalized when the app itself wrote it) and are asserted the same way, directly
- * against `serializeChecklistSchedule`.
+ * Every subtask's `ChecklistScheduleStorage` is a range (ADR 0011): produced by
+ * `normalizeChecklistSchedule` (thrown on `ok: false`) and round-tripped through
+ * `serializeChecklistSchedule`, which throws on any storage that is not a valid range. There are no
+ * unscheduled, due-only or legacy rows: the read side fails loud on them (#342).
  */
 import {
   PROJECT_ASSIGNMENT_ELIGIBLE_ROLES,
@@ -30,7 +28,7 @@ import {
   shiftSydneyCalendarDate,
   sydneyCivilParts,
   type ChecklistScheduleStorage,
-  type InitialChecklistScheduleInput,
+  type RangeChecklistScheduleInput,
   type StageKey,
 } from "@quincy/shared";
 import { fixtureId } from "./ids";
@@ -160,28 +158,13 @@ export function resolveDstTransitions(anchor: string): { spring: string; fall: s
 // Schedule construction helpers
 // ---------------------------------------------------------------------------
 
-function normalizedSchedule(input: InitialChecklistScheduleInput, version: number, expectedState: "unscheduled" | "due_only" | "range"): ChecklistScheduleStorage {
+function normalizedSchedule(input: RangeChecklistScheduleInput, version: number): ChecklistScheduleStorage {
   const result = normalizeChecklistSchedule(input, version);
   if (!result.ok) throw new Error(`normalizeChecklistSchedule rejected ${JSON.stringify(input)} (v${version}): ${result.error.message}`);
   const storage: ChecklistScheduleStorage = { ...result.value };
-  const dto = serializeChecklistSchedule(storage);
-  if (dto.state !== expectedState) throw new Error(`Round-trip mismatch building ${JSON.stringify(input)}: expected ${expectedState}, got ${dto.state}.`);
+  serializeChecklistSchedule(storage); // throws unless the storage is a valid range
   return storage;
 }
-
-const EMPTY_SCHEDULE_FIELDS = {
-  scheduleStartKind: null, scheduleStartCivil: null, scheduleStartAt: null, scheduleStartUtcOffsetMinutes: null, scheduleStartFold: null,
-  scheduleEndKind: null, scheduleEndAt: null, scheduleEndUtcOffsetMinutes: null, scheduleEndFold: null, scheduleZone: null,
-} as const;
-
-function legacySchedule(dueDate: string, expectedState: "due_only" | "legacy_unresolved"): ChecklistScheduleStorage {
-  const storage: ChecklistScheduleStorage = { dueDate, ...EMPTY_SCHEDULE_FIELDS, scheduleVersion: 0 };
-  const dto = serializeChecklistSchedule(storage);
-  if (dto.state !== expectedState) throw new Error(`Legacy round-trip mismatch for ${JSON.stringify(dueDate)}: expected ${expectedState}, got ${dto.state}.`);
-  return storage;
-}
-
-const UNSCHEDULED_V0 = normalizedSchedule({ state: "unscheduled" }, 0, "unscheduled");
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -306,27 +289,29 @@ function buildDeadlineOccurrences(projectId: string, stageKey: StageKey, deadlin
 }
 
 // ---------------------------------------------------------------------------
-// Bulk (board-shape) subtasks — deliberately plain: every schedule-state variety lives in the
+// Bulk (board-shape) subtasks — deliberately plain: every schedule variety lives in the
 // schedule-edges project below, so these can stay cheap to build at fixture scale (up to 260 rows).
 // ---------------------------------------------------------------------------
 
-function bulkSubtasks(projectId: string, projectKey: string, total: number, doneCount: number, baseCreatedAtMs: number): FixtureSubtaskRow[] {
+function bulkSubtasks(projectId: string, projectKey: string, total: number, doneCount: number, baseCreatedAtMs: number, anchor: string): FixtureSubtaskRow[] {
   if (doneCount > total) throw new Error(`doneCount (${doneCount}) cannot exceed total (${total}) for ${projectKey}.`);
   const rows: FixtureSubtaskRow[] = [];
   for (let index = 0; index < total; index += 1) {
     const done = index < doneCount;
     const createdAtMs = baseCreatedAtMs + index * 1_000;
+    // A one-day range, spread over two weeks from the anchor so bulk rows do not pile on one day.
+    const day = mustShift(anchor, index % 14);
     rows.push({
       id: fixtureId(`subtask:${projectKey}:${index}`), projectId, projectKey,
       title: `QA fixture subtask ${String(index + 1).padStart(3, "0")}/${total}`,
-      done, index, storage: UNSCHEDULED_V0, createdAtMs, updatedAtMs: done ? createdAtMs + 61_000 : createdAtMs,
+      done, index, storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: day }, end: { kind: "date", localCivil: day } }, 1), createdAtMs, updatedAtMs: done ? createdAtMs + 61_000 : createdAtMs,
     });
   }
   return rows;
 }
 
 // ---------------------------------------------------------------------------
-// The schedule-edges project — every state/endpoint-kind/legacy-reason combination the checklist
+// The schedule-edges project — every range shape (date/timed, one-day, DST) the checklist
 // schedule contract supports, per `checklist-schedule.ts` and the DST canary requirement.
 // ---------------------------------------------------------------------------
 
@@ -336,23 +321,17 @@ function buildScheduleEdgeRows(anchor: string, dst: { spring: string; fall: stri
   const plus = (n: number) => mustShift(anchor, n);
   const dayBefore = (date: string) => mustShift(date, -1);
   return [
-    { titleSuffix: "unscheduled (cleared, v1)", storage: normalizedSchedule({ state: "unscheduled" }, 1, "unscheduled") },
-    { titleSuffix: "unscheduled (new, v0)", storage: UNSCHEDULED_V0 },
-    { titleSuffix: "due date milestone", storage: normalizedSchedule({ state: "due_only", end: { kind: "date", localCivil: plus(10) } }, 1, "due_only"), done: true },
-    { titleSuffix: "due timed milestone", storage: normalizedSchedule({ state: "due_only", end: { kind: "timed", localCivil: `${plus(10)}T14:00` } }, 1, "due_only") },
-    { titleSuffix: "all-day range", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: plus(5) }, end: { kind: "date", localCivil: plus(8) } }, 1, "range"), done: true },
-    { titleSuffix: "timed range", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${plus(5)}T09:00` }, end: { kind: "timed", localCivil: `${plus(5)}T17:00` } }, 1, "range") },
-    { titleSuffix: "spring-forward day range (23h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.spring }, end: { kind: "date", localCivil: dst.spring } }, 1, "range") },
-    { titleSuffix: "fall-back day range (25h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.fall }, end: { kind: "date", localCivil: dst.fall } }, 1, "range"), done: true },
-    { titleSuffix: "timed range across the gap (tight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.spring}T01:30` }, end: { kind: "timed", localCivil: `${dst.spring}T03:30` } }, 1, "range") },
-    { titleSuffix: "timed range across the gap (overnight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dayBefore(dst.spring)}T22:00` }, end: { kind: "timed", localCivil: `${dst.spring}T06:00` } }, 1, "range") },
-    { titleSuffix: "timed range across the fold", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T03:30` } }, 1, "range") },
-    { titleSuffix: "Fold canary — earlier", storage: normalizedSchedule({ state: "due_only", end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "earlier" } }, 1, "due_only") },
-    { titleSuffix: "Fold canary — later", storage: normalizedSchedule({ state: "due_only", end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "later" } }, 1, "due_only") },
-    { titleSuffix: "legacy due date (stored, valid)", storage: legacySchedule(plus(40), "due_only") },
-    { titleSuffix: "legacy due date (invalid literal)", storage: legacySchedule("next Tuesday", "legacy_unresolved") },
-    { titleSuffix: "legacy due date (repeated local time)", storage: legacySchedule(`${dst.fall}T02:30`, "legacy_unresolved") },
-    { titleSuffix: "legacy due date (nonexistent local time)", storage: legacySchedule(`${dst.spring}T02:30`, "legacy_unresolved") },
+    { titleSuffix: "one-day date range", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: plus(10) }, end: { kind: "date", localCivil: plus(10) } }, 1), done: true },
+    { titleSuffix: "one-day timed range", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${plus(10)}T13:00` }, end: { kind: "timed", localCivil: `${plus(10)}T14:00` } }, 1) },
+    { titleSuffix: "all-day range", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: plus(5) }, end: { kind: "date", localCivil: plus(8) } }, 1), done: true },
+    { titleSuffix: "timed range", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${plus(5)}T09:00` }, end: { kind: "timed", localCivil: `${plus(5)}T17:00` } }, 1) },
+    { titleSuffix: "spring-forward day range (23h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.spring }, end: { kind: "date", localCivil: dst.spring } }, 1) },
+    { titleSuffix: "fall-back day range (25h)", storage: normalizedSchedule({ state: "range", start: { kind: "date", localCivil: dst.fall }, end: { kind: "date", localCivil: dst.fall } }, 1), done: true },
+    { titleSuffix: "timed range across the gap (tight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.spring}T01:30` }, end: { kind: "timed", localCivil: `${dst.spring}T03:30` } }, 1) },
+    { titleSuffix: "timed range across the gap (overnight)", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dayBefore(dst.spring)}T22:00` }, end: { kind: "timed", localCivil: `${dst.spring}T06:00` } }, 1) },
+    { titleSuffix: "timed range across the fold", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T03:30` } }, 1) },
+    { titleSuffix: "Fold canary — earlier", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "earlier" } }, 1) },
+    { titleSuffix: "Fold canary — later", storage: normalizedSchedule({ state: "range", start: { kind: "timed", localCivil: `${dst.fall}T01:30` }, end: { kind: "timed", localCivil: `${dst.fall}T02:30`, disambiguation: "later" } }, 1) },
   ];
 }
 
@@ -386,22 +365,22 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   // P01 — pagination: far more not-done rows than 2x the child page limit.
   {
     const { project: p, createdAtMs } = project("pagination", "Pagination 260", "awaiting_raw", { priority: 1, shootDate: mustShift(anchor, 3), deadlineLocalCivil: `${mustShift(anchor, 10)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 260, 0, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 260, 0, createdAtMs, anchor) });
   }
   // P02 — near-complete: completed === total - 1.
   {
     const { project: p, createdAtMs } = project("near-complete", "Near-complete 199 of 200", "raw_review", { priority: 2, shootDate: mustShift(anchor, 6), deadlineLocalCivil: `${mustShift(anchor, 13)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 200, 199, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 200, 199, createdAtMs, anchor) });
   }
   // P03 — complete: completed === total > 0.
   {
     const { project: p, createdAtMs } = project("complete", "Complete 40 of 40", "edited_review", { priority: 3, shootDate: mustShift(anchor, -4), deadlineLocalCivil: `${mustShift(anchor, 3)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 40, 40, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 40, 40, createdAtMs, anchor) });
   }
   // P04 — zero: completed === 0 && total > 0.
   {
     const { project: p, createdAtMs } = project("zero", "Zero progress", "editing_autohdr", { priority: 4, shootDate: mustShift(anchor, 1), deadlineLocalCivil: `${mustShift(anchor, 8)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 12, 0, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 12, 0, createdAtMs, anchor) });
   }
   // P05 — delivered: carries a deadline so it draws a bar in the `--signal-positive` hue. In the app a
   // project keeps its deadline when delivered (only later deadline EDITS are refused), and delivery
@@ -409,9 +388,9 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   // and none is pending (see `buildDeadlineOccurrences`).
   {
     const { project: p, createdAtMs } = project("delivered", "Delivered", "delivered", { priority: 5, shootDate: mustShift(anchor, -10), deadlineLocalCivil: `${mustShift(anchor, -3)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 6, 3, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 6, 3, createdAtMs, anchor) });
   }
-  // P06 — schedule-edges: the full checklist-schedule state/endpoint/legacy-reason/DST census.
+  // P06 — schedule-edges: the full checklist-schedule range/endpoint/DST census.
   {
     const { project: p, createdAtMs } = project("schedule-edges", "Schedule edges", "raw_review", { shootDate: mustShift(anchor, 2), deadlineLocalCivil: `${mustShift(anchor, 9)}T17:00` });
     const edgeRows = buildScheduleEdgeRows(anchor, dst);
@@ -428,22 +407,22 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
   // P07 — no deadline, no shoot date.
   {
     const { project: p, createdAtMs } = project("no-deadline-no-shoot", "No deadline no shoot", "awaiting_raw", { shootDate: null });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs, anchor) });
   }
   // P08 — hollow start (no shoot date) with a deadline.
   {
     const { project: p, createdAtMs } = project("hollow-start", "Hollow start", "editing_autohdr", { shootDate: null, deadlineLocalCivil: `${mustShift(anchor, 14)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 1, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 1, createdAtMs, anchor) });
   }
   // P09 — deadline strictly before the shoot-date start.
   {
     const { project: p, createdAtMs } = project("deadline-before-start", "Deadline before start", "edited_review", { shootDate: mustShift(anchor, 10), deadlineLocalCivil: `${mustShift(anchor, 2)}T09:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs, anchor) });
   }
   // P10 — invalid shoot_date literal (2026 is not a leap year, so Feb 30 is always out of range).
   {
     const { project: p, createdAtMs } = project("invalid-shoot-date", "Invalid shoot date", "raw_review", { shootDate: "2026-02-30", deadlineLocalCivil: `${mustShift(anchor, 7)}T17:00` });
-    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs) });
+    builds.push({ project: p, subtasks: bulkSubtasks(p.id, p.key, 5, 0, createdAtMs, anchor) });
   }
 
   return builds;
@@ -489,7 +468,7 @@ function buildDensityTier(anchor: string, referenceInstantMs: number): ProjectBu
       boardRevision: stageKey === "awaiting_raw" ? 0 : 1, notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=density · key=${key}`,
       deadline: null, services: ["raw"], createdAtMs, updatedAtMs: createdAtMs,
     };
-    builds.push({ project, subtasks: bulkSubtasks(project.id, key, DENSITY_SUBTASKS_PER_PROJECT, 0, createdAtMs) });
+    builds.push({ project, subtasks: bulkSubtasks(project.id, key, DENSITY_SUBTASKS_PER_PROJECT, 0, createdAtMs, anchor) });
   }
   return builds;
 }

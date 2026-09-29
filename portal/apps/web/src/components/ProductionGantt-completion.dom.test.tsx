@@ -51,9 +51,12 @@ const DONE_TASK_PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const DONE_TASK_ID = "22222222-2222-4222-8222-111111111111";
 const DONE_TASK_TITLE = "Done checklist task";
 
-const MILESTONE_PROJECT_ID = "11111111-1111-4111-8111-222222222222";
-const MILESTONE_TASK_ID = "22222222-2222-4222-8222-222222222222";
-const MILESTONE_TASK_TITLE = "Due-only milestone task";
+const NOT_DONE_PROJECT_ID = "11111111-1111-4111-8111-222222222222";
+const NOT_DONE_TASK_ID = "22222222-2222-4222-8222-222222222222";
+const NOT_DONE_TASK_TITLE = "Not-done range task";
+
+const INVERTED_PROJECT_ID = "11111111-1111-4111-8111-777777777777";
+const INVERTED_STREET = "7 Inverted Deadline Street";
 
 const PARTIAL_PROGRESS_PROJECT_ID = "11111111-1111-4111-8111-333333333333";
 const PARTIAL_PROGRESS_STREET = "3 Partial Progress Street";
@@ -94,14 +97,14 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> & { id: string; proje
     position: 0,
     assignee: null,
     schedule: {
-      state: "due_only",
+      state: "range",
       version: 1,
       zone: PRODUCTION_GANTT_ZONE,
-      start: null,
+      start: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
       end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
       due: isoDate(2),
     },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
     ...overrides,
   };
 }
@@ -180,9 +183,6 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
             projectId: DONE_TASK_PROJECT_ID,
             title: DONE_TASK_TITLE,
             done: true,
-            // A due_only task is always zero-length (a milestone) — the done checkmark, like the
-            // vendor's OWN done check (`gantt-bar.tsx:1080`, `!milestone`), never applies to a
-            // milestone bar. A ranged schedule is a real, non-milestone bar instead.
             schedule: {
               state: "range",
               version: 1,
@@ -208,10 +208,10 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
 
   it("a not-done checklist task's bar carries no data-completed and no done checkmark", async () => {
     const project = makeProject({
-      id: MILESTONE_PROJECT_ID,
+      id: NOT_DONE_PROJECT_ID,
       street: "2 Not Done Street",
       children: {
-        rows: [makeTask({ id: MILESTONE_TASK_ID, projectId: MILESTONE_PROJECT_ID, title: MILESTONE_TASK_TITLE, done: false })],
+        rows: [makeTask({ id: NOT_DONE_TASK_ID, projectId: NOT_DONE_PROJECT_ID, title: NOT_DONE_TASK_TITLE, done: false })],
         total: 1,
         returned: 1,
         truncated: false,
@@ -219,25 +219,21 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
       },
     });
     await render(host, root, [project]);
-    const bar = findByAriaLabelIncluding(host, MILESTONE_TASK_TITLE);
+    const bar = findByAriaLabelIncluding(host, NOT_DONE_TASK_TITLE);
     expect(bar.getAttribute("data-completed")).toBeNull();
     expect(bar.querySelector('[data-testid="gantt-done-mark"]')).toBeNull();
   });
 
-  it("selecting a due-only milestone task bar adds the reproduced selected ring to its diamond", async () => {
+  it("selecting an inverted-Deadline Project bar adds the reproduced selected ring to its diamond", async () => {
     const project = makeProject({
-      id: MILESTONE_PROJECT_ID,
-      street: "2 Milestone Street",
-      children: {
-        rows: [makeTask({ id: MILESTONE_TASK_ID, projectId: MILESTONE_PROJECT_ID, title: MILESTONE_TASK_TITLE })],
-        total: 1,
-        returned: 1,
-        truncated: false,
-        nextCursor: null,
-      },
+      id: INVERTED_PROJECT_ID,
+      street: INVERTED_STREET,
+      deadline: { at: `${isoDate(-2)}T05:00:00.000Z`, localCivil: `${isoDate(-2)}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
     });
     await render(host, root, [project]);
-    const bar = findByAriaLabelIncluding(host, MILESTONE_TASK_TITLE);
+    const bar = findByAriaLabelIncluding(host, INVERTED_STREET);
+    const markers = host.querySelectorAll('[data-testid="gantt-milestone-marker"]');
+    expect(markers.length).toBe(1);
     const marker = bar.querySelector('[data-testid="gantt-milestone-marker"]');
     expect(marker).not.toBeNull();
     expect(marker!.className).not.toMatch(/ring-ring\/50/);

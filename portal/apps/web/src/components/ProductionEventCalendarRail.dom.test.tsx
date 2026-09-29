@@ -1,6 +1,6 @@
 /**
  * #222 step 6 — the event-calendar rail: mini month (busy dots, day select → civil date), Up next
- * (a read-only agenda list), and the facets / unscheduled slots. Guard F: Quincy `data-testid`s.
+ * (a read-only agenda list), and the facets slot. Guard F: Quincy `data-testid`s.
  */
 if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
@@ -20,7 +20,7 @@ function deadline(id: string, start: string, civil: string): CalendarEventDto {
   return { id: `project-deadline:${id}`, kind: "project_deadline", title: "Deadline", project: { ...project, street: `${id} Street` }, timing: { allDay: false, start, end: null }, status, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: civil, deadlineVersion: 1, reminderOffsetsMinutes: [] };
 }
 function range(id: string, start: string, end: string): CalendarEventDto {
-  return { id: `checklist:${id}`, kind: "checklist", title: `Task ${id}`, project, assignee: null, timing: { allDay: true, start, end }, status: { ...status, completed: false }, schedule: { state: "range", version: 1, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: start, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: end, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: null }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true } } as CalendarEventDto;
+  return { id: `checklist:${id}`, kind: "checklist", title: `Task ${id}`, project, assignee: null, timing: { allDay: true, start, end }, status: { ...status, completed: false }, schedule: { state: "range", version: 1, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: start, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: end, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: end }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } } as CalendarEventDto;
 }
 
 let host: HTMLDivElement;
@@ -33,7 +33,7 @@ async function render(overrides: Partial<Props> = {}) {
   const props: Props = {
     date: "2026-08-12", onDateChange: vi.fn(), events: [], nowCivil: "2026-08-12T08:00",
     upNext: { status: "ready", events: [] }, onOpenUpNext: vi.fn(),
-    facets: <div data-testid="facets-slot" />, unscheduled: <div data-testid="unscheduled-slot" />,
+    facets: <div data-testid="facets-slot" />,
     ...overrides,
   };
   await act(async () => { root.render(<ProductionEventCalendarRail {...props} />); await Promise.resolve(); });
@@ -101,10 +101,9 @@ describe("ProductionEventCalendarRail — Up next", () => {
 });
 
 describe("ProductionEventCalendarRail — slots", () => {
-  it("renders the facets and unscheduled slots in the rail", async () => {
+  it("renders the facets slot in the rail", async () => {
     await render();
     const rail = host.querySelector('[data-testid="event-calendar-rail"]')!;
     expect(rail.querySelector('[data-testid="facets-slot"]')).not.toBeNull();
-    expect(rail.querySelector('[data-testid="unscheduled-slot"]')).not.toBeNull();
   });
 });

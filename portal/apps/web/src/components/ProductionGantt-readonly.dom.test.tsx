@@ -3,10 +3,10 @@
  * inspecting props: `Space` on a focused project bar must not open Adjust mode, and no bar may
  * render a resize grip. Since #221 PR B2 checklist rows and the project's deadline edge are
  * writable, so this pins what stays read-only: a PROJECT bar whose viewer lacks
- * `permissions.canEditDeadline`, and a `due_only` milestone, which never renders grips — the
+ * `permissions.canEditDeadline`, and a checklist task locked read-only, which never renders grips — the
  * writable paths are covered by `ProductionGantt.writes.dom.test.tsx`. (Until #224 the fixture
  * granted `canEditDeadline` and passed only while its deadline fell past the visible month, which
- * clipped the bar's end edge; the milestone test failed in the last two days of every month.)
+ * clipped the bar's end edge; the diamond test failed in the last two days of every month.)
  * `gantt-bar-adjust-keyboard.dom.test.tsx` and `gantt-bar-resize-grips.dom.test.tsx` already prove the VENDOR's own `readOnly`/`interactions`
  * contract in isolation; this proves `ProductionGantt.tsx`'s actual composition of it — the real
  * props this file passes to `<Gantt>`, through the real adapter, end to end.
@@ -62,7 +62,7 @@ function isoDate(daysFromToday: number): string {
 const SHOOT_DATE = isoDate(0);
 const DEADLINE_DATE = isoDate(5);
 
-function ganttResponse() {
+function ganttResponse(deadlineDate: string = DEADLINE_DATE) {
   return adminProductionGanttResponseSchema.parse({
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
@@ -80,7 +80,7 @@ function ganttResponse() {
         shootDateCivil: SHOOT_DATE,
         createdAt: SHOOT_DATE + "T00:00:00.000Z",
         barStartDate: SHOOT_DATE,
-        deadline: { at: `${DEADLINE_DATE}T05:00:00.000Z`, localCivil: `${DEADLINE_DATE}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
+        deadline: { at: `${deadlineDate}T05:00:00.000Z`, localCivil: `${deadlineDate}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
         deadlineVersion: 1,
         editors: [],
         checklist: { completed: 0, total: 1 },
@@ -95,14 +95,14 @@ function ganttResponse() {
               position: 0,
               assignee: null,
               schedule: {
-                state: "due_only",
+                state: "range",
                 version: 1,
-                zone: PRODUCTION_GANTT_ZONE,
-                start: null,
-                end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
+                zone: PRODUCTION_GANTT_ZONE, start: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
                 due: isoDate(2),
               },
-              permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true },
+              // The task itself is locked so the panel's only possible grip would be the Project's
+              // (which `canEditDeadline: false` withholds).
+              permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true },
             },
           ],
           total: 1,
@@ -203,25 +203,26 @@ describe("ProductionGantt — read-only boundary", () => {
     expect(host.querySelector('[data-testid="production-gantt-too-many"]')).toBeNull();
   });
 
-  // Proves `renderGanttEventContent` (see that function's own header comment in
-  // `ProductionGantt.tsx`) actually paints the milestone diamond in a real render: a `due_only`
-  // child task shows exactly one `gantt-milestone-marker`, and it is on the task's own bar, not
-  // the project's ranged bar (which must fall through to the vendor's stock `defaultContent`
-  // instead, per that same header's `undefined`-fallthrough contract).
-  it("paints exactly one milestone diamond, on the due-only task row and not the project's range bar", async () => {
+  // Checklist tasks are always ranges (ADR 0011), so a task row never paints the milestone diamond;
+  // the only diamond left is the inverted-Deadline Project one. This Project's Deadline sits BEFORE
+  // its shoot date, so exactly one `gantt-milestone-marker` is painted, on the Project row.
+  it("paints exactly one milestone diamond, on the inverted-Deadline Project row, and none on the task row", async () => {
+    apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse(isoDate(-3))) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
     await render(host, root);
-    findBarButton(host); // sanity: the project's own range bar still rendered
-
-    // A milestone bar is `labelOutside` (this file's own header comment on `defaultContent`'s
-    // fallthrough): the vendor paints its title in a SIBLING span positioned `after` the button,
-    // not inside it, so `textContent` (used for the project's own ranged bar above) can't find it
-    // here — `aria-label` (`gantt-bar.tsx`'s own accessible name, which always includes the title
-    // regardless of where the visible label paints) is the reliable seam for a milestone bar.
-    const taskBar = [...host.querySelectorAll("button")].find((candidate) => candidate.getAttribute("aria-label")?.includes(TASK_TITLE));
-    if (!taskBar) throw new Error(`no bar button found for "${TASK_TITLE}"`);
 
     const markers = host.querySelectorAll('[data-testid="gantt-milestone-marker"]');
     expect(markers.length).toBe(1);
-    expect(taskBar.contains(markers[0]!)).toBe(true);
+    const projectBar = [...host.querySelectorAll<HTMLElement>("[data-gantt-resource] button")].find((b) => b.getAttribute("aria-label")?.includes(PROJECT_STREET));
+    expect(projectBar).toBeDefined();
+    expect(projectBar!.contains(markers[0]!)).toBe(true);
+    const taskBar = [...host.querySelectorAll("button")].find((b) => b.getAttribute("aria-label")?.includes(TASK_TITLE));
+    expect(taskBar).toBeDefined();
+    expect(taskBar!.querySelector('[data-testid="gantt-milestone-marker"]')).toBeNull();
+  });
+
+  it("paints no milestone diamond when the Project's Deadline is not inverted", async () => {
+    await render(host, root);
+    findBarButton(host);
+    expect(host.querySelectorAll('[data-testid="gantt-milestone-marker"]').length).toBe(0);
   });
 });

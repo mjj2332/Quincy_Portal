@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0011
 ---
 
 # External drop into the event-calendar is SPLIT: the hit-testing lives inside the vendored tree, the Quincy policy does not

@@ -28,8 +28,6 @@ const archivedProjectId = "80dddddd-dddd-4ddd-8ddd-dddddddddddd";
 const notesOnlyProjectId = "80eeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const assigneeOnlyEditorId = "80555555-5555-4555-8555-555555555555";
 const assigneeOnlyProjectId = "80fffff0-ffff-4fff-8fff-fffffffffff0";
-const legacyProjectId = "80fffff1-ffff-4fff-8fff-fffffffffff1";
-const invalidProjectId = "80fffff2-ffff-4fff-8fff-fffffffffff2";
 const boundaryProjectId = "80fffff3-ffff-4fff-8fff-fffffffffff3";
 const overlapProjectId = "80fffff4-ffff-4fff-8fff-fffffffffff4";
 const denseProjectId = "80fffff5-ffff-4fff-8fff-fffffffffff5";
@@ -96,24 +94,30 @@ async function insertMember(projectId: string, userId: string, roleOnProject: "e
   await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), projectId, userId, roleOnProject, Date.now()).run();
 }
 
+/** Every Subtask is a range (ADR 0011). A missing start defaults to the end's day (date) or an hour before it (timed); no schedule at all is a far-off one-day range outside every window here. */
 async function insertSubtask(projectId: string, title: string, assigneeId: string | null, schedule: {
-  dueDate?: string | null;
   start?: string;
   end?: string;
   startKind?: "date" | "timed";
   endKind?: "date" | "timed";
-  version?: number;
 } = {}): Promise<string> {
   const id = crypto.randomUUID();
-  const start = schedule.startKind === "timed" && schedule.start ? instant(schedule.start) : null;
-  const end = schedule.endKind === "timed" && schedule.end ? instant(schedule.end) : null;
+  const endKind = schedule.endKind ?? "date";
+  const endCivil = schedule.end ?? "2027-03-01";
+  const startKind = schedule.startKind ?? endKind;
+  const start = startKind === "timed" ? instant(schedule.start ?? oneHourBefore(endCivil)) : null;
+  const end = endKind === "timed" ? instant(endCivil) : null;
   const now = Date.now();
   await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    // TB4D stores the end's civil string in `due_date` for every scheduled state
-    // (due_only and range alike — there is no `schedule_end_civil` column). Mirror that
-    // here so the range endpoint's schedule-shape validation matches real data.
-    .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId, assigneeId ? 1 : 0, schedule.dueDate ?? schedule.end ?? null, schedule.startKind ?? null, schedule.start ?? null, start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, schedule.endKind ?? null, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, schedule.version === undefined ? null : "Australia/Sydney", schedule.version ?? 0, adminId, now, now).run();
+    // The end's civil string is stored in `due_date` (there is no `schedule_end_civil` column).
+    .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId, assigneeId ? 1 : 0, endCivil, startKind, schedule.start ?? (startKind === "timed" ? oneHourBefore(endCivil) : endCivil), start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, endKind, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, "Australia/Sydney", 1, adminId, now, now).run();
   return id;
+}
+
+function oneHourBefore(civilMinute: string): string {
+  const shifted = new Date(`${civilMinute}:00Z`);
+  shifted.setUTCHours(shifted.getUTCHours() - 1);
+  return shifted.toISOString().slice(0, 16);
 }
 
 const rangeNoLayers = "start=2026-08-24&end=2026-09-05&date=2026-08-27&sub=month&scope=active";
@@ -140,50 +144,27 @@ beforeAll(async () => {
   await insertMember(memberProjectId, externalId, "editor");
   await insertMember(memberProjectId, editorId, "editor");
   await insertMember(memberProjectId, photographerId, "photographer");
-  await insertSubtask(memberProjectId, "Date milestone", externalId, { dueDate: "2026-08-27", end: "2026-08-27", endKind: "date", version: 1 });
-  await insertSubtask(memberProjectId, "Timed range", externalId, { start: "2026-08-26T09:00", end: "2026-08-27T11:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(memberProjectId, "Unassigned checklist", null);
-  await insertSubtask(editorOnlyProjectId, "Non-member read-only checklist", null);
+  await insertSubtask(memberProjectId, "One-day date range", externalId, { end: "2026-08-27", endKind: "date" });
+  await insertSubtask(memberProjectId, "Timed range", externalId, { start: "2026-08-26T09:00", end: "2026-08-27T11:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(memberProjectId, "Unassigned checklist", null, { end: "2026-08-27", endKind: "date" });
+  await insertSubtask(editorOnlyProjectId, "Non-member read-only checklist", null, { end: "2026-08-27", endKind: "date" });
 
   await insertProject(assigneeOnlyProjectId, "6 Assignee Only Street", "editing_autohdr");
-  await insertSubtask(assigneeOnlyProjectId, "Assignee without editor membership", assigneeOnlyEditorId, { dueDate: "2026-08-27", end: "2026-08-27", endKind: "date", version: 1 });
-
-  await insertProject(legacyProjectId, "7 Legacy Schedule Street", "editing_autohdr");
-  await insertSubtask(legacyProjectId, "Legacy date milestone", null, { dueDate: "2026-08-27" });
-  await insertSubtask(legacyProjectId, "Legacy timed milestone", null, { dueDate: "2026-08-27T12:00" });
-  await insertSubtask(legacyProjectId, "Legacy bad literal", null, { dueDate: "not-a-date" });
-  await insertSubtask(legacyProjectId, "Legacy DST gap", null, { dueDate: "2026-10-04T02:30" });
-
-  await insertProject(invalidProjectId, "8 Invalid Schedule Street", "editing_autohdr");
-  const partial = await insertSubtask(invalidProjectId, "Invalid partial metadata", null, { end: "2026-08-27T12:00", endKind: "timed", version: 1 });
-  const drift = await insertSubtask(invalidProjectId, "Invalid zone drift", null, { dueDate: "2026-08-27", end: "2026-08-27", endKind: "date", version: 1 });
-  const resolution = await insertSubtask(invalidProjectId, "Invalid resolution mismatch", null, { end: "2026-08-27T13:00", endKind: "timed", version: 1 });
-  const reversed = await insertSubtask(invalidProjectId, "Invalid reversed range", null, { start: "2026-08-28T12:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed", version: 1 });
-  await database.DB.prepare("UPDATE project_subtasks SET schedule_zone = NULL WHERE id = ?").bind(partial).run();
-  await database.DB.exec("PRAGMA ignore_check_constraints = ON");
-  await database.DB.prepare("UPDATE project_subtasks SET schedule_zone = 'UTC' WHERE id = ?").bind(drift).run();
-  await database.DB.exec("PRAGMA ignore_check_constraints = OFF");
-  await database.DB.prepare("UPDATE project_subtasks SET schedule_end_at = schedule_end_at + 60000 WHERE id = ?").bind(resolution).run();
+  await insertSubtask(assigneeOnlyProjectId, "Assignee without editor membership", assigneeOnlyEditorId, { end: "2026-08-27", endKind: "date" });
 
   await insertProject(boundaryProjectId, "9 Boundary Schedule Street", "editing_autohdr");
   await database.DB.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = ?, deadline_zone = 'Australia/Sydney', deadline_utc_offset_minutes = ?, deadline_fold = 0, deadline_reminder_offsets_json = '[]', deadline_version = 1 WHERE id = ?")
     .bind(instant("2026-08-27T00:00").epochMs, "2026-08-27T00:00", instant("2026-08-27T00:00").utcOffsetMinutes, boundaryProjectId).run();
-  await insertSubtask(boundaryProjectId, "Boundary timed milestone start", null, { end: "2026-08-27T00:00", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed milestone end", null, { end: "2026-08-28T00:00", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed milestone inside start", null, { end: "2026-08-27T00:01", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed milestone outside start", null, { end: "2026-08-26T23:59", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed milestone inside end", null, { end: "2026-08-27T23:59", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed milestone outside end", null, { end: "2026-08-28T00:01", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed range start", null, { start: "2026-08-27T00:00", end: "2026-08-27T01:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed range end", null, { start: "2026-08-28T00:00", end: "2026-08-28T01:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed range inside start", null, { start: "2026-08-27T00:01", end: "2026-08-27T01:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed range outside start", null, { start: "2026-08-26T23:00", end: "2026-08-27T00:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed range inside end", null, { start: "2026-08-27T23:59", end: "2026-08-28T01:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary timed range outside end", null, { start: "2026-08-28T00:01", end: "2026-08-28T01:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary date milestone start", null, { end: "2026-08-27", endKind: "date", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary date milestone end", null, { end: "2026-08-28", endKind: "date", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary date range start", null, { start: "2026-08-26", end: "2026-08-27", startKind: "date", endKind: "date", version: 1 });
-  await insertSubtask(boundaryProjectId, "Boundary date range end", null, { start: "2026-08-28", end: "2026-08-29", startKind: "date", endKind: "date", version: 1 });
+  await insertSubtask(boundaryProjectId, "Boundary timed range start", null, { start: "2026-08-27T00:00", end: "2026-08-27T01:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(boundaryProjectId, "Boundary timed range end", null, { start: "2026-08-28T00:00", end: "2026-08-28T01:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(boundaryProjectId, "Boundary timed range inside start", null, { start: "2026-08-27T00:01", end: "2026-08-27T01:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(boundaryProjectId, "Boundary timed range outside start", null, { start: "2026-08-26T23:00", end: "2026-08-27T00:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(boundaryProjectId, "Boundary timed range inside end", null, { start: "2026-08-27T23:59", end: "2026-08-28T01:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(boundaryProjectId, "Boundary timed range outside end", null, { start: "2026-08-28T00:01", end: "2026-08-28T01:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(boundaryProjectId, "Boundary date milestone start", null, { end: "2026-08-27", endKind: "date" });
+  await insertSubtask(boundaryProjectId, "Boundary date milestone end", null, { end: "2026-08-28", endKind: "date" });
+  await insertSubtask(boundaryProjectId, "Boundary date range start", null, { start: "2026-08-26", end: "2026-08-27", startKind: "date", endKind: "date" });
+  await insertSubtask(boundaryProjectId, "Boundary date range end", null, { start: "2026-08-28", end: "2026-08-29", startKind: "date", endKind: "date" });
   for (const [street, civil] of [
     ["Deadline Boundary Start", "2026-08-27T00:00"],
     ["Deadline Boundary End", "2026-08-28T00:00"],
@@ -199,18 +180,17 @@ beforeAll(async () => {
   }
 
   await insertProject(overlapProjectId, "10 Overlap Schedule Street", "editing_autohdr");
-  await insertSubtask(overlapProjectId, "Overlap first", editorId, { start: "2026-08-27T09:00", end: "2026-08-27T11:00", startKind: "timed", endKind: "timed", version: 1 });
-  await insertSubtask(overlapProjectId, "Overlap second", editorId, { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed", version: 1 });
-  const touching = await insertSubtask(overlapProjectId, "Overlap touching", editorId, { start: "2026-08-27T12:00", end: "2026-08-27T13:00", startKind: "timed", endKind: "timed", version: 1 });
-  const completed = await insertSubtask(overlapProjectId, "Overlap completed", editorId, { start: "2026-08-27T10:30", end: "2026-08-27T11:30", startKind: "timed", endKind: "timed", version: 1 });
+  await insertSubtask(overlapProjectId, "Overlap first", editorId, { start: "2026-08-27T09:00", end: "2026-08-27T11:00", startKind: "timed", endKind: "timed" });
+  await insertSubtask(overlapProjectId, "Overlap second", editorId, { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed" });
+  const touching = await insertSubtask(overlapProjectId, "Overlap touching", editorId, { start: "2026-08-27T12:00", end: "2026-08-27T13:00", startKind: "timed", endKind: "timed" });
+  const completed = await insertSubtask(overlapProjectId, "Overlap completed", editorId, { start: "2026-08-27T10:30", end: "2026-08-27T11:30", startKind: "timed", endKind: "timed" });
   await database.DB.prepare("UPDATE project_subtasks SET done = 1 WHERE id = ?").bind(completed).run();
-  await insertSubtask(overlapProjectId, "Overlap due only", editorId, { end: "2026-08-27T14:00", endKind: "timed", version: 1 });
-  await insertSubtask(overlapProjectId, "Overlap date only", editorId, { start: "2026-08-27", end: "2026-08-28", startKind: "date", endKind: "date", version: 1 });
-  await insertSubtask(overlapProjectId, "Overlap unassigned", null, { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed", version: 1 });
+  await insertSubtask(overlapProjectId, "Overlap date only", editorId, { start: "2026-08-27", end: "2026-08-28", startKind: "date", endKind: "date" });
+  await insertSubtask(overlapProjectId, "Overlap unassigned", null, { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed" });
 
   await insertProject(externalRemovedProjectId, "11 External Removed Street", "editing_autohdr");
   await insertMember(externalRemovedProjectId, externalId, "editor");
-  await insertSubtask(externalRemovedProjectId, "Removed assignment checklist", externalId, { end: "2026-08-27T12:00", endKind: "timed", version: 1 });
+  await insertSubtask(externalRemovedProjectId, "Removed assignment checklist", externalId, { end: "2026-08-27T12:00", endKind: "timed" });
   await insertProject(externalArchivedProjectId, "12 External Archived Street", "editing_autohdr");
   await insertMember(externalArchivedProjectId, externalId, "editor");
   await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), externalArchivedProjectId).run();
@@ -218,20 +198,10 @@ beforeAll(async () => {
   await insertProject(foreignProjectId, "14 Foreign Project Street", "editing_autohdr");
   await insertUser("80666666-6666-4666-8666-666666666666", "editor", "tb5c-calendar-foreign");
   await insertMember(foreignProjectId, "80666666-6666-4666-8666-666666666666", "editor");
-  await insertSubtask(foreignProjectId, "Foreign checklist", "80666666-6666-4666-8666-666666666666", { end: "2026-08-27T12:00", endKind: "timed", version: 1 });
+  await insertSubtask(foreignProjectId, "Foreign checklist", "80666666-6666-4666-8666-666666666666", { end: "2026-08-27T12:00", endKind: "timed" });
 
   await insertProject(idContractProjectId, "16 Id Contract Street", "editing_autohdr");
-  await insertSubtask(idContractProjectId, "Id contract scheduled checklist", null, { dueDate: "2026-08-27", end: "2026-08-27", endKind: "date", version: 1 });
-  await insertSubtask(idContractProjectId, "Id contract unscheduled checklist", null);
-
-  for (let i = 0; i < 51; i += 1) {
-    await insertProject(crypto.randomUUID(), `Truncation Project ${String(i).padStart(2, "0")}`, "editing_autohdr");
-  }
-  const truncationChecklistProjectId = crypto.randomUUID();
-  await insertProject(truncationChecklistProjectId, "Truncation Checklist Host", "editing_autohdr");
-  for (let i = 0; i < 51; i += 1) {
-    await insertSubtask(truncationChecklistProjectId, `Truncation Checklist ${String(i).padStart(2, "0")}`, null);
-  }
+  await insertSubtask(idContractProjectId, "Id contract scheduled checklist", null, { end: "2026-08-27", endKind: "date" });
 
   await insertProject(denseProjectId, "15 Density Street", "editing_autohdr");
   // Every dense row is done=1 so it is excluded from the default (completed=0) candidate set —
@@ -261,10 +231,19 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(external.events.find((event) => event.kind === "project_deadline")?.project.stageKey).toBe("editing");
     const editorChecklist = editor.events.find((event) => event.kind === "checklist" && event.title === "Timed range");
     expect(editorChecklist?.permissions.canDrag).toBe(true);
-    const nonMember = editor.unscheduled.find((entry) => entry.kind === "checklist" && entry.title === "Non-member read-only checklist");
+    const nonMember = editor.events.find((entry) => entry.kind === "checklist" && entry.title === "Non-member read-only checklist");
     expect(nonMember?.permissions.canDrag).toBe(false);
-    expect(external.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
+    expect(external.events.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
     expect(external.events.find((event) => event.kind === "project_deadline")?.permissions.canDrag).toBe(false);
+  });
+
+  it("has no Unscheduled surface (ADR 0011): no `unscheduled` list, no facet counts, and a deadline-less Project with nothing in range is absent", async () => {
+    const raw = await (await request(`/api/production-calendar?${range}&bounds=1`, tokens.admin)).json() as { unscheduled?: unknown; filterFacets: Record<string, unknown>; events: Array<{ project: { id: string } }>; projectBounds: Array<{ projectId: string }> };
+    expect(raw).not.toHaveProperty("unscheduled");
+    expect(raw.filterFacets).not.toHaveProperty("unscheduled");
+    const referenced = new Set(raw.events.map((event) => event.project.id));
+    expect(referenced.has(externalUnassignedProjectId)).toBe(false);
+    expect(new Set(raw.projectBounds.map((bound) => bound.projectId))).toEqual(referenced);
   });
 
   it("uses exactly two bounded Calendar reads and never performs a project fan-out", async () => {
@@ -362,28 +341,6 @@ describe("TB5C production Calendar range endpoint", () => {
     }
   });
 
-  it("classifies legacy date and timed schedules in the handler and retains unresolved legacy rows", async () => {
-    const body = await adminCalendar(`/api/production-calendar?${range}&q=Legacy`);
-    const events = body.events.filter((event) => event.kind === "checklist");
-    expect(events.map((event) => event.title).sort()).toEqual(["Legacy date milestone", "Legacy timed milestone"]);
-    expect(events.every((event) => event.schedule.state === "due_only")).toBe(true);
-    const attention = body.unscheduled.filter((entry) => entry.kind === "checklist");
-    expect(attention.map((entry) => [entry.title, entry.reason])).toEqual(expect.arrayContaining([
-      ["Legacy bad literal", "schedule_needs_attention"],
-      ["Legacy DST gap", "schedule_needs_attention"],
-    ]));
-    expect(attention.filter((entry) => entry.reason === "schedule_needs_attention").every((entry) => entry.attentionReason === "legacy_unresolved" && !entry.permissions.canDrag)).toBe(true);
-  });
-
-  it("returns every coarse-corrupt versioned row as invalid repair work", async () => {
-    const body = await adminCalendar(`/api/production-calendar?${range}&q=Invalid`);
-    const invalid = body.unscheduled.filter((entry) => entry.kind === "checklist");
-    expect(invalid).toHaveLength(4);
-    expect(invalid.every((entry) => entry.reason === "schedule_needs_attention" && entry.attentionReason === "invalid")).toBe(true);
-    expect(invalid.every((entry) => !entry.permissions.canDrag && !entry.permissions.canResize && !entry.permissions.canOpenScheduleEditor && !entry.permissions.canScheduleRange)).toBe(true);
-    expect(body.events.some((event) => event.kind === "checklist" && event.title.startsWith("Invalid"))).toBe(false);
-  });
-
   it("uses the exact inclusive/exclusive boundaries for project and checklist schedules", async () => {
     const boundaryRange = "start=2026-08-27&end=2026-08-28&date=2026-08-27&sub=agenda&scope=active&layers=project,checklist&q=Boundary";
     const body = await adminCalendar(`/api/production-calendar?${boundaryRange}`);
@@ -391,9 +348,6 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(names).toEqual([
       "Boundary date milestone start",
       "Boundary date range start",
-      "Boundary timed milestone inside end",
-      "Boundary timed milestone inside start",
-      "Boundary timed milestone start",
       "Boundary timed range inside end",
       "Boundary timed range inside start",
       "Boundary timed range start",
@@ -405,7 +359,6 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(names).not.toEqual(expect.arrayContaining([
       "Boundary date milestone end",
       "Boundary date range end",
-      "Boundary timed milestone end",
       "Boundary timed range end",
       "Deadline Boundary End",
       "Deadline Boundary Outside End",
@@ -437,8 +390,8 @@ describe("TB5C production Calendar range endpoint", () => {
     // #288: known creation instants, emitted as ISO (the Calendar's created-at lower-bound fallback)
     await database.DB.prepare("UPDATE projects SET created_at = ? WHERE id = ?").bind(Date.UTC(2026, 6, 1, 2, 3, 4, 567), memberProjectId).run();
     await database.DB.prepare("UPDATE projects SET created_at = ? WHERE id = ?").bind(Date.UTC(2026, 7, 11, 14, 0, 0, 0), editorOnlyProjectId).run();
-    const referenced = (body: { events: Array<{ project: { id: string } }>; unscheduled: Array<{ project: { id: string } }> }) =>
-      new Set([...body.events, ...body.unscheduled].map((item) => item.project.id));
+    const referenced = (body: { events: Array<{ project: { id: string } }> }) =>
+      new Set(body.events.map((item) => item.project.id));
 
     // Without the param (every old bundle): the key is absent from the JSON, not merely undefined.
     const plain = await (await request(`/api/production-calendar?${range}`, tokens.admin)).json() as Record<string, unknown>;
@@ -527,22 +480,6 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(deadlineEvents(withMine).length).toBeGreaterThan(0);
   });
 
-  it("caps each unscheduled kind in JavaScript with matched counts and deterministic order", async () => {
-    const projects = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=project&q=Truncation%20Project`);
-    expect(projects.filterFacets.unscheduled.project).toEqual({ matched: 51, returned: 50, truncated: true });
-    expect(projects.unscheduled).toHaveLength(50);
-    expect(projects.unscheduled[0]?.title).toBe("Truncation Project 00");
-    expect(projects.unscheduled.at(-1)?.title).toBe("Truncation Project 49");
-    expect(projects.unscheduled.some((entry) => entry.title === "Truncation Project 50")).toBe(false);
-
-    const checklists = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Truncation%20Checklist`);
-    expect(checklists.filterFacets.unscheduled.checklist).toEqual({ matched: 51, returned: 50, truncated: true });
-    expect(checklists.unscheduled).toHaveLength(50);
-    expect(checklists.unscheduled[0]?.title).toBe("Truncation Checklist 00");
-    expect(checklists.unscheduled.at(-1)?.title).toBe("Truncation Checklist 49");
-    expect(checklists.unscheduled.some((entry) => entry.title === "Truncation Checklist 50")).toBe(false);
-  });
-
   it("marks only overlapping incomplete timed ranges for the same assignee", async () => {
     const body = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Overlap&completed=1`);
     const byTitle = new Map(body.events.filter((event) => event.kind === "checklist").map((event) => [event.title, event]));
@@ -550,7 +487,6 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(byTitle.get("Overlap second")?.status.sameAssigneeOverlap).toBe(true);
     expect(byTitle.get("Overlap touching")?.status.sameAssigneeOverlap).toBe(false);
     expect(byTitle.get("Overlap completed")?.status.sameAssigneeOverlap).toBe(false);
-    expect(byTitle.get("Overlap due only")?.status.sameAssigneeOverlap).toBe(false);
     expect(byTitle.get("Overlap date only")?.status.sameAssigneeOverlap).toBe(false);
     expect(byTitle.get("Overlap unassigned")?.status.sameAssigneeOverlap).toBe(false);
   });
@@ -566,16 +502,14 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(completedDefault.events).toHaveLength(0);
     expect(completed.events.map((event) => event.title)).toEqual(["Overlap completed"]);
 
-    const overdue = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Date%20milestone&overdue=1`);
+    const overdue = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=One-day%20date%20range&overdue=1`);
     expect(overdue.events.find((event) => event.kind === "checklist")?.status.overdue).toBe(true);
 
-    // overdue_only constrains scheduled events, not the Unscheduled panel: an
-    // unscheduled checklist entry has no due date to be "overdue" and must stay
-    // visible (matching the project branch, which lets a null-deadline project through).
+    // overdue_only keeps only the overdue scheduled ranges: this one ended in the past.
     const overdueDefault = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Unassigned%20checklist`);
-    expect(overdueDefault.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
-    const overdueUnscheduled = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Unassigned%20checklist&overdue=1`);
-    expect(overdueUnscheduled.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist" && entry.reason === "unscheduled")).toBe(true);
+    expect(overdueDefault.events.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
+    const overdueRange = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=checklist&q=Unassigned%20checklist&overdue=1`);
+    expect(overdueRange.events.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist" && entry.status.overdue)).toBe(true);
 
     const projectOnly = await adminCalendar(`/api/production-calendar?${rangeNoLayers}&layers=project&q=Calendar`);
     expect(projectOnly.events.every((event) => event.kind === "project_deadline")).toBe(true);
@@ -584,27 +518,25 @@ describe("TB5C production Calendar range endpoint", () => {
 
     const selected = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${editorId}`);
     const withUnassigned = await adminCalendar(`/api/production-calendar?${range}&q=Calendar&editors=${editorId}&unassigned=1`);
-    expect(withUnassigned.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
-    expect(selected.unscheduled.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(false);
+    expect(withUnassigned.events.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(true);
+    expect(selected.events.some((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist")).toBe(false);
   });
 
   it("removes an External assignment from the complete calendar projection", async () => {
     await database.DB.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").bind(externalRemovedProjectId, externalId).run();
     const body = externalCalendarRangeSchema.parse(await (await request(`/api/production-calendar?${range}&q=External`, tokens.external)).json());
     expect(body.events).toHaveLength(0);
-    expect(body.unscheduled).toHaveLength(0);
     expect(body.filterFacets.projects.some((project) => project.id === externalRemovedProjectId || project.id === externalArchivedProjectId || project.id === externalUnassignedProjectId)).toBe(false);
     expect(body.filterFacets.people.some((person) => person.id === "80666666-6666-4666-8666-666666666666")).toBe(false);
   });
 
-  it("gives an external collaborator drag, resize and range scheduling on ranges and Unscheduled entries", async () => {
+  it("gives an external collaborator drag, resize and schedule-editor access on ranges", async () => {
     const body = externalCalendarRangeSchema.parse(await (await request(`/api/production-calendar?${range}&q=Calendar`, tokens.external)).json());
     const rangeEvent = body.events.find((event) => event.kind === "checklist" && event.title === "Timed range");
-    expect(rangeEvent?.permissions).toMatchObject({ canDrag: true, canResize: true, canScheduleRange: true, canOpenScheduleEditor: true });
-    const dueEvent = body.events.find((event) => event.kind === "checklist" && event.title === "Date milestone");
-    expect(dueEvent?.permissions).toMatchObject({ canDrag: true, canResize: false, canScheduleRange: true, canOpenScheduleEditor: true });
-    const unscheduled = body.unscheduled.find((entry) => entry.kind === "checklist" && entry.title === "Unassigned checklist");
-    expect(unscheduled?.permissions).toMatchObject({ canDrag: true, canResize: false, canScheduleRange: true, canOpenScheduleEditor: true });
+    expect(rangeEvent?.permissions).toMatchObject({ canDrag: true, canResize: true, canOpenScheduleEditor: true });
+    const oneDay = body.events.find((event) => event.kind === "checklist" && event.title === "One-day date range");
+    expect(oneDay?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true });
+    expect(rangeEvent?.permissions).not.toHaveProperty("canScheduleRange");
   });
 
   it("refuses a real 10,001-row scheduled query before executing the facet statement", async () => {
@@ -633,19 +565,16 @@ describe("TB5C production Calendar range endpoint", () => {
     expect(allCalls).toBe(1);
   });
 
-  it("mints checklist event/unscheduled ids that PATCH /subtasks rejects verbatim but accepts once unwrapped (#226)", async () => {
+  it("mints checklist event ids that PATCH /subtasks rejects verbatim but accepts once unwrapped (#226)", async () => {
     const body = await adminCalendar(`/api/production-calendar?${range}&q=Id%20Contract`);
     const scheduledEvent = body.events.find((event) => event.kind === "checklist" && event.title === "Id contract scheduled checklist");
     expect(scheduledEvent).toBeDefined();
-    const unscheduledEntry = body.unscheduled.find((entry) => entry.kind === "checklist" && entry.title === "Id contract unscheduled checklist");
-    expect(unscheduledEntry).toBeDefined();
-    if (!scheduledEvent || !unscheduledEntry) return;
+    if (!scheduledEvent) return;
 
     // The Calendar's entity id is `checklist:<subtaskId>` — every DOM id, focus
     // descriptor, and optimistic overlay on the client depends on that prefix
     // staying on the wire. It must never be sent verbatim to the subtasks route.
     expect(scheduledEvent.id.startsWith("checklist:")).toBe(true);
-    expect(unscheduledEntry.id.startsWith("checklist:")).toBe(true);
 
     const rawPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${scheduledEvent.id}`, tokens.admin, {
       schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } },
@@ -660,20 +589,6 @@ describe("TB5C production Calendar range endpoint", () => {
     });
     expect(unwrappedPatch.status).toBe(200);
     await expect(unwrappedPatch.json()).resolves.toMatchObject({ schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } });
-
-    const rawUnscheduledPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unscheduledEntry.id}`, tokens.admin, {
-      schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } } },
-    });
-    expect(rawUnscheduledPatch.status).toBe(400);
-    await expect(rawUnscheduledPatch.json()).resolves.toMatchObject({ error: "Invalid project or subtask id" });
-
-    const unwrappedUnscheduledId = subtaskIdFromCalendarEntityId(unscheduledEntry.id);
-    expect(unwrappedUnscheduledId).not.toBeNull();
-    const unwrappedUnscheduledPatch = await patchRequest(`/api/projects/${idContractProjectId}/subtasks/${unwrappedUnscheduledId}`, tokens.admin, {
-      schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } } },
-    });
-    expect(unwrappedUnscheduledPatch.status).toBe(200);
-    await expect(unwrappedUnscheduledPatch.json()).resolves.toMatchObject({ schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-30" }, end: { kind: "date", localCivil: "2026-08-30" } } });
   });
 });
 

@@ -15,7 +15,7 @@ import {
   toProductionEventCalendarEvent,
   toProductionEventCalendarEvents,
 } from "./production-event-calendar-adapter";
-import { dated, deadlineEvent, dueEvent, instantOf, rangeEvent, timed } from "../testing/production-calendar-fixtures";
+import { dated, deadlineEvent, instantOf, rangeEvent, timed } from "../testing/production-calendar-fixtures";
 
 const at = (localCivil: string) => new Date(instantOf(localCivil));
 
@@ -60,19 +60,7 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(event.data).toMatchObject({ shape: "deadline", syntheticEnd: true });
   });
 
-  it("gives a due-only item a display end: +display minutes when timed, the next midnight when dated", () => {
-    const timedDue = toProductionEventCalendarEvent(dueEvent(timed("2026-08-27T16:00")))!;
-    expect(timedDue.allDay).toBe(false);
-    expect(timedDue.end.getTime() - timedDue.start.getTime()).toBe(PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES * 60_000);
-    expect(timedDue.data).toMatchObject({ shape: "due", syntheticEnd: true });
-    const datedDue = toProductionEventCalendarEvent(dueEvent(dated("2026-08-27")))!;
-    expect(datedDue.allDay).toBe(true);
-    expect(datedDue.start).toEqual(at("2026-08-27T00:00"));
-    expect(datedDue.end).toEqual(at("2026-08-28T00:00"));
-    expect(datedDue.data.syntheticEnd).toBe(true);
-  });
-
-  it("per-kind drag/resize flags: range edges follow canResize, Deadline and due-only never resize", () => {
+  it("per-kind drag/resize flags: range edges follow canResize, a Deadline never resizes", () => {
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!;
     expect(range).toMatchObject({ draggable: true, resizable: true, resizableEdges: { start: true, end: true } });
     const lockedRange = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { canDrag: false, canResize: false }))!;
@@ -81,9 +69,6 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(deadline).toMatchObject({ draggable: true, resizable: false });
     expect(deadline.resizableEdges).toBeUndefined();
     expect(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00", { canDrag: false }))!.draggable).toBe(false);
-    const due = toProductionEventCalendarEvent(dueEvent(dated("2026-08-27")))!;
-    expect(due).toMatchObject({ draggable: true, resizable: false });
-    expect(due.resizableEdges).toBeUndefined();
     // never readOnly: the Reschedule affordance must stay reachable on a locked event
     expect(lockedRange.readOnly).toBeUndefined();
   });
@@ -159,7 +144,6 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     const branches = {
       deadline: toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!,
       "active checklist range": toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!,
-      "active due": toProductionEventCalendarEvent(dueEvent(dated("2026-08-27")))!,
       done: toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }))!,
     };
     for (const [branch, event] of Object.entries(branches)) {

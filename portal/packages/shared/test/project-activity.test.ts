@@ -201,6 +201,14 @@ describe("TB4C project activity registry", () => {
     expect(parseProjectActivityIntent(intentFor("project.checklist.schedule_changed"))).not.toBeNull();
   });
 
+  it("still parses historic schedule_changed rows written before ADR 0011 (unscheduled, due_only)", () => {
+    for (const scheduleState of ["unscheduled", "due_only", "range"]) {
+      const base = intentFor("project.checklist.schedule_changed");
+      const intent = { ...base, activity: { ...base.activity, safePayload: { ...(base.activity.safePayload as Record<string, unknown>), scheduleState } } };
+      expect(parseProjectActivityIntent(intent), scheduleState).not.toBeNull();
+    }
+  });
+
   it("rejects each independent schedule source-identity mismatch", () => {
     const base = intentFor("project.checklist.schedule_changed");
     const source = base.activity.source;

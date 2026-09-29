@@ -25,7 +25,7 @@
  * (docs/lessons.md, "Sibling retained dialogs must namespace their open-token keys").
  */
 import { useId, useRef, useState, type JSX } from "react";
-import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation, InitialChecklistScheduleInput } from "@quincy/shared";
+import type { ProjectDeadlineCalendarEventDto, ProjectDeadlineDisambiguation, RangeChecklistScheduleInput } from "@quincy/shared";
 import type { SchedulingController } from "../lib/use-scheduling-commands";
 import { useOpenToken } from "../lib/use-open-token";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
@@ -175,15 +175,14 @@ export function ProductionEventCalendarFoldChoice({ open, eyebrow, endpoint, cho
 export type ProductionEventCalendarScheduleEditorSheetProps = {
   open: boolean;
   event: ChecklistScheduleEditorEvent;
-  onSubmit: (schedule: InitialChecklistScheduleInput) => void;
+  onSubmit: (schedule: RangeChecklistScheduleInput) => void;
   onCancel: () => void;
-  initialSchedule?: InitialChecklistScheduleInput;
+  initialSchedule?: RangeChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
 export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubmit, onCancel, initialSchedule, validationError }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
   const state = useChecklistScheduleDraft({ event, onSubmit, initialSchedule, validationError });
-  if (event.schedule.state === "invalid") return null;
   return (
     <Sheet open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
       <SheetContent

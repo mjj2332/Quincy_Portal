@@ -28,7 +28,6 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: fals
 vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
-vi.mock("./reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
@@ -45,10 +44,9 @@ function rawResponse(stageKey: "editing_autohdr" | "editing", events = true) {
     },
     events: events ? [
       { id: "project-deadline:project", kind: "project_deadline" as const, title: "Project handoff", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false }, timing: { allDay: false as const, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: true, delivered: false, completed: false as const, sameAssigneeOverlap: false as const }, permissions: { canDrag: true, canResize: false as const }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
-      { id: "checklist:item", kind: "checklist" as const, title: "Select hero images", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false }, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: stageKey === "editing", active: true }, timing: { allDay: true as const, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: true, sameAssigneeOverlap: false }, schedule: { state: "due_only" as const, version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date" as const, localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: "2026-08-12" }, permissions: { canDrag: true, canResize: false as const, canOpenScheduleEditor: true, canScheduleRange: true } },
+      { id: "checklist:item", kind: "checklist" as const, title: "Select hero images", project: { id: principal, street: "12 Harbour Street", stageKey, checklist: { completed: 3, total: 5 }, delivered: false }, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: stageKey === "editing", active: true }, timing: { allDay: true as const, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed: true, sameAssigneeOverlap: false }, schedule: { state: "range" as const, version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date" as const, localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: "2026-08-12" }, permissions: { canDrag: true, canResize: false as const, canOpenScheduleEditor: true } },
     ] : [],
-    unscheduled: [],
-    filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+    filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee },
   };
 }
 
@@ -108,10 +106,8 @@ describe("ProductionEventCalendar container", () => {
     expect(error?.textContent).not.toContain("Try again");
   });
 
-  it("renders the empty state and the bounded unscheduled list", async () => {
+  it("renders the empty state", async () => {
     const empty = rawResponse("editing_autohdr", false);
-    (empty as { unscheduled: unknown[] }).unscheduled = [{ id: "unscheduled", kind: "project_deadline", reason: "unscheduled", title: "Hidden", project: { id: principal, street: "Hidden Street", stageKey: "editing_autohdr", checklist: { completed: 0, total: 0 }, delivered: false }, permissions: { canDrag: true, canResize: false }, deadlineVersion: 1, reminderOffsetsMinutes: [] }];
-    empty.filterFacets.unscheduled.project = { matched: 1, returned: 1, truncated: false };
     await renderCalendar(calendar(), adminProductionCalendarRangeResponseSchema.parse(empty));
     const status = host.querySelector<HTMLElement>('[data-testid="event-calendar-empty"]')!;
     expect(status.textContent).toBe("No scheduled work in this range.");
@@ -122,8 +118,7 @@ describe("ProductionEventCalendar container", () => {
     expect(status.className).toContain("text-muted-foreground");
     expect(status.parentElement).toBe(host.querySelector('[data-testid="event-calendar-fake-nav"]')?.parentElement ?? null);
     const rail = host.querySelector('[data-testid="event-calendar-rail"]')!;
-    expect(rail.textContent).toContain("Hidden Street");
-    expect(rail.textContent).toContain("Unscheduled projects");
+    expect(rail.textContent).not.toContain("Unscheduled");
   });
 
   it.each([

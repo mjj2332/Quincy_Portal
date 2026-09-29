@@ -30,7 +30,6 @@ vi.mock("../components/kanban2/board", () => ({ ProjectKanbanBoard2: () => <div 
 vi.mock("../components/reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("../components/reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("../components/reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
-vi.mock("../components/reui/event-calendar/event-calendar-dnd", async () => (await import("../testing/event-calendar-fake")).eventCalendarDndModule);
 
 // `filterFacets.myTasksUserId` is `z.string().uuid()`, NOT nullable
 // (`packages/shared/src/production-calendar.ts:586`) -- a real UUID here, not `null`. This file's
@@ -43,7 +42,7 @@ const noOneId = "00000000-0000-4000-8000-000000000000";
 function calendarResponse(date: string) {
   return adminProductionCalendarRangeResponseSchema.parse({
     range: { start: "2026-08-24", end: "2026-08-31", date, subview: "week", zone: PRODUCTION_CALENDAR_ZONE, appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], showCompletedChecklist: false, showDeliveredProjects: false, overdueOnly: false, search: "Probe", myTasks: false } },
-    events: [], unscheduled: [], filterFacets: { projects: [], people: [], myTasksUserId: noOneId, unscheduled: { project: { matched: 0, returned: 0, truncated: false }, checklist: { matched: 0, returned: 0, truncated: false } } },
+    events: [], filterFacets: { projects: [], people: [], myTasksUserId: noOneId },
   });
 }
 

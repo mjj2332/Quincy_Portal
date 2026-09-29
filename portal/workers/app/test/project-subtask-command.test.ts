@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { ChecklistScheduleStorageError } from "@quincy/shared";
 import type { Env, SessionUser } from "../src/env";
 import { saveProjectSubtask, finalizeProjectSubtaskCommandResult, type ProjectSubtaskCommandResult, type ProjectSubtaskDto } from "../src/lib/project-subtasks";
 
@@ -161,6 +162,7 @@ describe("saveProjectSubtask command boundary", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project_subtask.update'").bind(item.item.id).first()).toEqual({ count: 0 });
   });
 
+  const STILL_A_RANGE = new Set(["due_date", "schedule_start_civil"]);
   it("fences every schedule column and leaves the losing writer footprint empty", async () => {
     const axes: Array<[string, string]> = [
       ["due_date", "'2027-01-02'"], ["schedule_start_kind", "'timed'"], ["schedule_start_civil", "'2027-01-01'"],
@@ -175,8 +177,11 @@ describe("saveProjectSubtask command boundary", () => {
       const beforeOutbox = (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count;
       const calls = { count: 0 };
       const db = faultDb(async (databaseForFault) => { await databaseForFault.prepare(`UPDATE project_subtasks SET ${column} = ${value} WHERE id = ?`).bind(created.item.id).run(); }, calls);
-      const result = await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: db } }));
-      expect(result.outcome, column).toBe("schedule_conflict"); expect(calls.count, column).toBe(1);
+      // The concurrent writer left the row a still-valid range (only its due / start civil moved) or
+      // corrupted it (ADR 0011). A corrupt current schedule is not served as a conflict payload: the
+      // command fails loud, and the fenced UPDATE has still already lost, so the footprint is empty.
+      const outcome = await (async () => { try { return (await saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId: created.item.id, scheduleRequest: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-03" } } } }, { env: { ...baseEnv, DB: db } }))).outcome; } catch (error) { return error instanceof ChecklistScheduleStorageError ? "storage_error" : Promise.reject(error); } })();
+      expect(outcome, column).toBe(STILL_A_RANGE.has(column) ? "schedule_conflict" : "storage_error"); expect(calls.count, column).toBe(1);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ?").bind(created.item.id).first<{ count: number }>())!.count).toBe(beforeAudit);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeActivity);
       expect((await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(commandProjectId).first<{ count: number }>())!.count).toBe(beforeOutbox);

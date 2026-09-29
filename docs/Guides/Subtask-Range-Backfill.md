@@ -1,5 +1,11 @@
 # Subtask ranges: one-off backfill (#341)
 
+> **Historical (#342).** The backfill is spent. `subtask-range-backfill.ts`, its dry-run SQL and its
+> test were removed in #342, because they cannot typecheck against the range-only serializer. They were
+> last carried at main commit `746375c2`: check that commit out and re-run from there if a D1 restore
+> ever brings legacy rows back. `subtask-range-backfill-verify.sql` is kept (it is #343's precondition
+> and the merge gate for #342). The rest of this page describes the procedure as it was run.
+
 Every Subtask that is not already a range (unscheduled, due-only, legacy unresolved or invalid) is
 converted once to a range, computed by the shared `defaultSubtaskRange` (ADR 0011). This is an
 operator-run backfill, **not a D1 migration**. It touches live data: **get the owner's explicit

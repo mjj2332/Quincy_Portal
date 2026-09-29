@@ -92,7 +92,8 @@ async function insertMember(projectId: string, userId: string, roleOnProject: "e
 async function insertSubtask(projectId: string, title: string, position: number, done = false): Promise<string> {
   const id = crypto.randomUUID();
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)")
+  // Every Subtask is a range (ADR 0011): a one-day date range.
+  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, '2026-08-27', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
     .bind(id, projectId, title, done ? 1 : 0, position, adminId, now, now).run();
   return id;
 }
@@ -321,26 +322,20 @@ describe("production-gantt", () => {
     await expect(response.json()).resolves.toEqual({ projectId: noDeadlineProjectId, children: { rows: [], total: 0, returned: 0, truncated: false, nextCursor: null } });
   });
 
-  it("lets a collaborating external editor drag, resize and range-schedule range, due-only and unscheduled children", async () => {
+  it("lets a collaborating external editor drag, resize and edit the schedule of range children", async () => {
     const rangeId = crypto.randomUUID();
-    const dueOnlyId = crypto.randomUUID();
     const now = Date.now();
     try {
       await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Gantt range child', 0, 500, 0, '2026-08-28', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
         .bind(rangeId, memberProjectId, adminId, now, now).run();
-      await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Gantt due-only child', 0, 501, 0, '2026-08-29', 0, ?, ?, ?)")
-        .bind(dueOnlyId, memberProjectId, adminId, now, now).run();
       const response = await request(`/api/production-gantt?scope=active&childrenOf=${memberProjectId}`, tokens.external);
       expect(response.status).toBe(200);
-      const body = await response.json() as { children: { rows: Array<{ id: string; title: string; permissions: Record<string, boolean> }> } };
+      const body = await response.json() as { children: { rows: Array<{ id: string; title: string; schedule: { state: string }; permissions: Record<string, boolean> }> } };
       const rangeRow = body.children.rows.find((row) => row.id === rangeId);
-      expect(rangeRow?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true, canScheduleRange: true });
-      const dueOnlyRow = body.children.rows.find((row) => row.id === dueOnlyId);
-      expect(dueOnlyRow?.permissions).toEqual({ canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true });
-      const unscheduledRow = body.children.rows.find((row) => row.title === "Prep listing");
-      expect(unscheduledRow?.permissions).toEqual({ canDrag: true, canResize: false, canOpenScheduleEditor: true, canScheduleRange: true });
+      expect(rangeRow?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true });
+      expect(body.children.rows.every((row) => row.schedule.state === "range")).toBe(true);
     } finally {
-      await database.DB.prepare("DELETE FROM project_subtasks WHERE id IN (?, ?)").bind(rangeId, dueOnlyId).run();
+      await database.DB.prepare("DELETE FROM project_subtasks WHERE id = ?").bind(rangeId).run();
     }
   });
 
@@ -456,10 +451,10 @@ describe("production-gantt", () => {
 
     beforeAll(async () => {
       await insertProject(drawCapProjectId, "20 Draw Cap Street", "awaiting_raw");
-      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < ${PRODUCTION_GANTT_DRAW_CAP - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('92000000-0000-4000-8000-%012d', n), '${drawCapProjectId}', printf('Draw cap row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
+      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 1000 + b.n * 100 + c.n * 10 + d.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d WHERE a.n * 1000 + b.n * 100 + c.n * 10 + d.n < ${PRODUCTION_GANTT_DRAW_CAP - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) SELECT printf('92000000-0000-4000-8000-%012d', n), '${drawCapProjectId}', printf('Draw cap row %05d', n), 0, n, 0, '2026-08-27', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, '${adminId}', 0, 0 FROM numbers`);
 
       await insertProject(maxRowsProjectId, "21 Max Rows Street", "edited_review");
-      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d CROSS JOIN digits e WHERE a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n < ${PRODUCTION_GANTT_MAX_MATCHED_ROWS - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, created_by, created_at, updated_at) SELECT printf('93000000-0000-4000-8000-%012d', n), '${maxRowsProjectId}', printf('Max rows row %05d', n), 0, n, 0, '${adminId}', 0, 0 FROM numbers`);
+      await database.DB.exec(`WITH digits(n) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)), numbers(n) AS (SELECT a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n + 1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d CROSS JOIN digits e WHERE a.n * 10000 + b.n * 1000 + c.n * 100 + d.n * 10 + e.n < ${PRODUCTION_GANTT_MAX_MATCHED_ROWS - 1}) INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) SELECT printf('93000000-0000-4000-8000-%012d', n), '${maxRowsProjectId}', printf('Max rows row %05d', n), 0, n, 0, '2026-08-27', 'date', '2026-08-27', 'date', 'Australia/Sydney', 1, '${adminId}', 0, 0 FROM numbers`);
     });
 
     it("matchedRows exactly at DRAW_CAP is not yet tooManyToDraw", async () => {

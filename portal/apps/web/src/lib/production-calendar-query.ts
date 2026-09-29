@@ -97,60 +97,17 @@ const mutationEndpointSchema = z.object({
   instant: z.string().nullable(),
   utcOffsetMinutes: z.number().int().nullable(),
   fold: z.union([z.literal(0), z.literal(1)]).nullable(),
-  resolution: z.enum(["stored", "derived_unambiguous"]),
+  resolution: z.literal("stored"),
 }).strict();
 
-const mutationScheduleSchema: z.ZodType<ChecklistScheduleDto> = z.union([
-  z.object({
-    state: z.literal("unscheduled"),
-    version: z.number().int().nonnegative(),
-    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
-    start: z.null(),
-    end: z.null(),
-    due: z.null(),
-  }).strict(),
-  z.object({
-    state: z.literal("due_only"),
-    version: z.number().int().nonnegative(),
-    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
-    start: z.null(),
-    end: mutationEndpointSchema,
-    due: z.string(),
-  }).strict(),
-  z.object({
-    state: z.literal("range"),
-    version: z.number().int().nonnegative(),
-    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
-    start: mutationEndpointSchema,
-    end: mutationEndpointSchema,
-    due: z.string().nullable(),
-  }).strict(),
-  z.object({
-    state: z.literal("legacy_unresolved"),
-    version: z.literal(0),
-    zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
-    start: z.null(),
-    end: z.null(),
-    due: z.string(),
-    error: z.object({
-      code: z.literal("subtask_schedule_legacy_unresolved"),
-      reason: z.enum(["invalid_literal", "nonexistent_local_time", "repeated_local_time"]),
-      foldChoices: z.array(z.object({ disambiguation: z.enum(["earlier", "later"]), utcOffsetMinutes: z.number().int() }).passthrough()).optional(),
-    }).passthrough(),
-  }).passthrough(),
-  z.object({
-    state: z.literal("invalid"),
-    version: z.number().int().nonnegative(),
-    zone: z.null(),
-    start: z.null(),
-    end: z.null(),
-    due: z.string().nullable(),
-    error: z.object({
-      code: z.literal("subtask_schedule_storage_invalid"),
-      reason: z.enum(["shape_mismatch", "resolution_mismatch", "ordering_invalid"]),
-    }).passthrough(),
-  }).passthrough(),
-]) as z.ZodType<ChecklistScheduleDto>;
+const mutationScheduleSchema: z.ZodType<ChecklistScheduleDto> = z.object({
+  state: z.literal("range"),
+  version: z.number().int().min(1),
+  zone: z.literal(CHECKLIST_SCHEDULE_ZONE),
+  start: mutationEndpointSchema,
+  end: mutationEndpointSchema,
+  due: z.string(),
+}).strict();
 
 // The internal Worker DTO has no compile-time link to @quincy/shared. This
 // decoder intentionally accepts additive top-level Worker fields so an
