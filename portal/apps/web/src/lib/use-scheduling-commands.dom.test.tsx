@@ -281,7 +281,7 @@ describe("useSchedulingCommands submitProposal", () => {
   // `cancelMoveDialog` is guarded on an open dialog, so the round 3 item 1 clear on the
   // generic-invalid branch is now defensive; this test pins what the Calendar can actually reach:
   // after A's invalid drag, B is accepted and B's cancelled confirmation names B, never A.
-  it("does not leak event A's street into event B's cancelled-confirmation announcement, after A's invalid drag (snapshot-clearing regression)", async () => {
+  it("after A's invalid drag, B's cancelled-confirmation announcement names B and never A", async () => {
     const eventA = deadlineEvent("2026-08-27T09:00", 8);
     const projectB = { id: "33333333-3333-4333-8333-333333333333", street: "44 Bridge Road", stageKey: "editing_autohdr" as const, checklist: { completed: 0, total: 2 }, delivered: false };
     const eventB: ProjectDeadlineCalendarEventDto = { ...deadlineEvent("2026-09-03T09:00", 8), id: `project-deadline:${projectB.id}`, project: projectB };
