@@ -181,6 +181,12 @@ export type ProductionGanttProps = {
   onAcceptGateChange?: (blocked: boolean) => void;
   onSettleStateChange?: (state: CalendarSettleState) => void;
   onAccessLoss?: () => void;
+  /**
+   * #260: how many projects this Gantt draws under its filters (the server's
+   * `density.matchedProjects`, which counts search AND filters), for the Dashboard search chip.
+   * `null` until the current filters' first page lands, and on unmount.
+   */
+  onShownProjectsChange?: (count: number | null) => void;
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
@@ -629,7 +635,7 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
   return { ...model, events };
 }
 
-export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
   const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
@@ -1023,6 +1029,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // partway). Both are honoured: the server signal fires the notice immediately, the adapter's own
   // cap remains the backstop against whatever this client has actually built a model for.
   const firstPageDensity = query.data?.pages[0]?.density;
+  const shownProjects = query.isPlaceholderData ? null : firstPageDensity?.matchedProjects ?? null;
+  useEffect(() => { onShownProjectsChange?.(shownProjects); }, [onShownProjectsChange, shownProjects]);
+  useEffect(() => () => onShownProjectsChange?.(null), [onShownProjectsChange]);
   const tooManyToDraw = (firstPageDensity?.tooManyToDraw ?? false) || model.tooManyToDraw;
 
   // fix-220-sol1b: one signature per CURRENT project, memoized on `projects` alone (not `childState`)
