@@ -49,7 +49,7 @@ import type { AppEnv } from "../env";
 
 type GanttRole = AppEnv["Variables"]["user"]["role"];
 
-const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor"]);
+const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor", "facets"]);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 /** Canonical decimal only: no leading zero, no leading `+`, no whitespace. */
@@ -101,6 +101,8 @@ export type ParsedGanttPageQuery = {
   stageKeys: StagePresentationKey[];
   delivered: boolean;
   completed: boolean;
+  /** #274: `facets=1` asks for the Editor field's options. Page one only. */
+  facets: boolean;
 };
 
 export type ParsedGanttChildQuery = {
@@ -155,6 +157,8 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   const rawCursor = valueFor("cursor");
   const rawLimit = valueFor("limit");
 
+  const facetsFlag = valueFor("facets");
+  if (facetsFlag !== undefined && (facetsFlag !== "1" || rawCursor !== undefined || childrenOf !== undefined)) return parseFailure("facets=1 is valid only on a first page.", "gantt_query_invalid");
   if (childrenOf !== undefined) {
     if (rawCursor !== undefined || rawLimit !== undefined) return parseFailure("childrenOf cannot be combined with cursor or limit.", "gantt_query_invalid");
     if (!UUID_RE.test(childrenOf)) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
@@ -218,6 +222,7 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
     stageKeys: canonicalStageOrder(rawStages),
     delivered: deliveredFlag === "1",
     completed: completedFlag === "1",
+    facets: facetsFlag === "1",
   };
 }
 
@@ -226,7 +231,7 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
 // ---------------------------------------------------------------------------
 
 type GanttProjectSqlRow = {
-  row_kind: "project" | "meta";
+  row_kind: "project" | "meta" | "person";
   project_id: string | null;
   street: string | null;
   suburb: string | null;
@@ -246,6 +251,11 @@ type GanttProjectSqlRow = {
   checklist_total: number | null;
   matched_projects: number | null;
   matched_rows: number | null;
+  valid_editor_ids_json: string | null;
+  person_id: string | null;
+  person_name: string | null;
+  person_role: string | null;
+  person_active: number | null;
 };
 
 /** `projectSearchSql`'s street/suburb/agency/agent clause, widened with an `EXISTS` over
@@ -312,7 +322,7 @@ export function productionGanttProjectsSql(role: GanttRole): string {
   return `WITH
 request AS (
   SELECT ?1 AS me, ?2 AS search, ?3 AS include_delivered, ?4 AS include_completed,
-    ?5 AS cursor_start, ?6 AS cursor_id
+    ?5 AS cursor_start, ?6 AS cursor_id, ?10 AS include_facets
 ),
 request_editors AS (SELECT value AS person_id FROM json_each(?7)),
 request_stages AS (SELECT value AS stage_key FROM json_each(?8)),
@@ -321,11 +331,16 @@ ${authorizedProjectsBaseCte(role, {
   searchPredicate,
   extraColumns: `p.shoot_date, p.created_at, ${BAR_START_DATE_EXPR}`,
 })},
+-- #274: every active editor on a project this viewer can see, independent of the other filters.
+-- Validity does not depend on Stage, Show or search, so an editor with no project in the chosen
+-- Stage narrows the view to nothing rather than dropping out of the filter and widening it.
 authorized_people_base AS (
-  SELECT DISTINCT u.id AS person_id
-  FROM authorized_projects_base acp
-  INNER JOIN project_members pm ON pm.project_id = acp.project_id AND pm.role_on_project = 'editor'
+  SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
+  FROM projects p
+  ${productionRoleSql(role).from}
+  INNER JOIN project_members pm ON pm.project_id = p.id AND pm.role_on_project = 'editor'
   INNER JOIN user u ON u.id = pm.user_id
+  WHERE p.archived_at IS NULL AND u.active = 1
 ),
 valid_selected_editors AS (
   SELECT re.person_id
@@ -384,12 +399,20 @@ project_rows AS (
 SELECT 'project' AS row_kind, project_id, street, suburb, stage_key, delivered, agency_display_name,
   agent_display_name, deadline_at, deadline_local_civil, deadline_version, deadline_reminder_offsets_json,
   can_collaborate, shoot_date, created_at, bar_start_date, checklist_completed, checklist_total,
-  NULL AS matched_projects, NULL AS matched_rows
+  NULL AS matched_projects, NULL AS matched_rows, NULL AS valid_editor_ids_json,
+  NULL AS person_id, NULL AS person_name, NULL AS person_role, NULL AS person_active
 FROM project_rows
 UNION ALL
 SELECT 'meta', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-  d.matched_projects, d.matched_rows
-FROM density d`;
+  d.matched_projects, d.matched_rows, (SELECT json_group_array(person_id) FROM valid_selected_editors),
+  NULL, NULL, NULL, NULL
+FROM density d
+UNION ALL
+SELECT 'person', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, ap.person_id, ap.person_name, ap.person_role, ap.person_active
+FROM authorized_people_base ap
+CROSS JOIN request r
+WHERE r.include_facets = 1`;
 }
 
 function ganttPageBindValues(userId: string, parsed: ParsedGanttPageQuery): unknown[] {
@@ -404,6 +427,7 @@ function ganttPageBindValues(userId: string, parsed: ParsedGanttPageQuery): unkn
     JSON.stringify(parsed.editorIds),
     JSON.stringify(stageKeys),
     parsed.limit + 1,
+    parsed.facets ? 1 : 0,
   ];
 }
 
@@ -596,6 +620,16 @@ function scheduleStorageFromChildRow(row: GanttChildBaseRow) {
     scheduleZone: row.schedule_zone,
     scheduleVersion: Number(row.schedule_version ?? 0),
   } as const;
+}
+
+function parseValidEditorIds(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function ganttPerson(row: { assignee_id: string | null; assignee_name: string | null; assignee_role: string | null; assignee_active: number | null }): CalendarPerson | null {
@@ -810,12 +844,21 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })
     : null;
 
+  // #274: echo only the editor ids the filter actually applied, on every page (the meta row carries
+  // them), and the option list only when page one asked for it.
+  const validEditorIds = new Set(parseValidEditorIds(meta?.valid_editor_ids_json ?? null));
+  const people = rows
+    .filter((row) => row.row_kind === "person")
+    .map((row) => ganttPerson({ assignee_id: row.person_id, assignee_name: row.person_name, assignee_role: row.person_role, assignee_active: row.person_active }))
+    .filter((person): person is CalendarPerson => person !== null)
+    .sort((left, right) => left.name.localeCompare(right.name) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+
   const response: ProductionGanttResponse = {
     scope: "active",
     zone: PRODUCTION_GANTT_ZONE,
     appliedFilters: {
       q: parsed.q,
-      editorIds: parsed.editorIds,
+      editorIds: parsed.editorIds.filter((id) => validEditorIds.has(id)),
       stageKeys: parsed.stageKeys,
       includeDelivered: parsed.delivered,
       includeCompletedChecklist: parsed.completed,
@@ -823,6 +866,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     projects,
     page: { limit: parsed.limit, returned: projects.length, nextCursor },
     density: { matchedProjects, matchedRows, drawCap: PRODUCTION_GANTT_DRAW_CAP, tooManyToDraw: matchedRows > PRODUCTION_GANTT_DRAW_CAP },
+    ...(parsed.facets ? { filterFacets: { people } } : {}),
   };
   return c.json(parseGanttResponse(role, response));
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adminProductionGanttResponseSchema,
+  editorProductionGanttResponseSchema,
   decodeGanttChildCursor,
   decodeGanttProjectCursor,
   encodeGanttChildCursor,
@@ -152,6 +153,16 @@ function baseResponse(): ProductionGanttResponse {
 describe("response schema", () => {
   it("parses a well-formed admin response", () => {
     expect(() => adminProductionGanttResponseSchema.parse(baseResponse())).not.toThrow();
+  });
+
+  // #274: the Editor field's options, opt-in (`facets=1`) so an old bundle's strict decoder never sees the key.
+  it("parses a response with and without filterFacets.people, and rejects an unknown key inside it", () => {
+    const person = { id: "11111111-1111-4111-8111-111111111111", name: "Alice Editor", roleLabel: "Editor", isExternal: false, active: true };
+    expect(() => adminProductionGanttResponseSchema.parse(baseResponse())).not.toThrow();
+    expect(() => adminProductionGanttResponseSchema.parse({ ...baseResponse(), filterFacets: { people: [person] } })).not.toThrow();
+    expect(() => editorProductionGanttResponseSchema.parse({ ...baseResponse(), filterFacets: { people: [] } })).not.toThrow();
+    expect(() => adminProductionGanttResponseSchema.parse({ ...baseResponse(), filterFacets: { people: [person], extra: 1 } })).toThrow();
+    expect(() => adminProductionGanttResponseSchema.parse({ ...baseResponse(), filterFacets: null })).toThrow();
   });
 
   it("rejects an unknown top-level field (.strict())", () => {

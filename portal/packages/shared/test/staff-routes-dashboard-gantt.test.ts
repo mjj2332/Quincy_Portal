@@ -22,10 +22,10 @@ describe("Dashboard Gantt route arm (#255)", () => {
     for (const [location, route] of [
       ["/?view=gantt", { kind: "dashboard", dashboardView: "gantt" }],
       ["/?view=gantt&q=smith", { kind: "dashboard", dashboardView: "gantt", search: "smith" }],
-      ["/?view=gantt&stages=raw_review", { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: false } }],
-      ["/?view=gantt&stages=raw_review&completed=1", { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: true } }],
-      ["/?view=gantt&delivered=1", { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: [], delivered: true, completed: false } }],
-      ["/?view=gantt&stages=awaiting_raw%2Cediting%2Cdelivered&completed=1&delivered=1&q=smith", { kind: "dashboard", dashboardView: "gantt", search: "smith", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], delivered: true, completed: true } }],
+      ["/?view=gantt&stages=raw_review", { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: false, editorIds: [] } }],
+      ["/?view=gantt&stages=raw_review&completed=1", { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: true, editorIds: [] } }],
+      ["/?view=gantt&delivered=1", { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: [], delivered: true, completed: false, editorIds: [] } }],
+      ["/?view=gantt&stages=awaiting_raw%2Cediting%2Cdelivered&completed=1&delivered=1&q=smith", { kind: "dashboard", dashboardView: "gantt", search: "smith", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], delivered: true, completed: true, editorIds: [] } }],
     ] as const) {
       expect(parseStaffLocation(location), location).toEqual(route);
     }
@@ -46,7 +46,6 @@ describe("Dashboard Gantt route arm (#255)", () => {
       "/?view=gantt&stages=raw_review&stages=delivered",
       "/?view=gantt&delivered=1&delivered=1",
       "/?view=gantt&view=gantt",
-      "/?view=gantt&editors=11111111-1111-4111-8111-111111111111",
       "/?view=gantt&unassigned=1",
       "/?view=gantt&overdue=1",
       "/?view=gantt&mine=1",
@@ -61,29 +60,53 @@ describe("Dashboard Gantt route arm (#255)", () => {
     }
   });
 
+  it("accepts an editors list, sorted, as the Editor facet (#274)", () => {
+    expect(parseStaffLocation("/?view=gantt&editors=22222222-2222-4222-8222-222222222222%2C11111111-1111-4111-8111-111111111111")).toEqual({
+      kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: [], delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] },
+    });
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: false, editorIds: ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"] } }))
+      .toBe("/?view=gantt&editors=11111111-1111-4111-8111-111111111111%2C22222222-2222-4222-8222-222222222222&stages=raw_review");
+    expect(isDefaultGanttFacet({ stageKeys: [], delivered: false, completed: false, editorIds: ["11111111-1111-4111-8111-111111111111"] })).toBe(false);
+  });
+
+  it("rejects a malformed editors list exactly as the Calendar arm does (#274)", () => {
+    const tooMany = Array.from({ length: 51 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`).join("%2C");
+    for (const location of [
+      "/?view=gantt&editors=",
+      "/?view=gantt&editors=not-a-uuid",
+      "/?view=gantt&editors=AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      "/?view=gantt&editors=11111111-1111-4111-8111-111111111111%2C11111111-1111-4111-8111-111111111111",
+      "/?view=gantt&editors=11111111-1111-4111-8111-111111111111%2C",
+      "/?view=gantt&editors=11111111-1111-4111-8111-111111111111&editors=22222222-2222-4222-8222-222222222222",
+      `/?view=gantt&editors=${tooMany}`,
+    ]) {
+      expect(parseStaffLocation(location), location).toEqual({ kind: "not-found" });
+    }
+  });
+
   it("canonicalises non-canonical stage order on parse and on serialize", () => {
     expect(parseStaffLocation("/?view=gantt&stages=delivered%2Cawaiting_raw%2Cediting")).toEqual({
-      kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], delivered: false, completed: false },
+      kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["awaiting_raw", "editing", "delivered"], delivered: false, completed: false, editorIds: [] },
     });
     // Parameter order is a serializer concern; the parser accepts any order.
     expect(parseStaffLocation("/?completed=1&stages=raw_review&view=gantt")).toEqual({
-      kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: true },
+      kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["raw_review"], delivered: false, completed: true, editorIds: [] },
     });
     expect(safeStaffDestination("/?completed=1&stages=raw_review&view=gantt")).toBe("/?view=gantt&stages=raw_review&completed=1");
 
-    const unordered: DashboardGanttRoute = { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["delivered", "raw_review", "delivered", "awaiting_raw"], delivered: true, completed: false } };
+    const unordered: DashboardGanttRoute = { kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: ["delivered", "raw_review", "delivered", "awaiting_raw"], delivered: true, completed: false, editorIds: [] } };
     expect(staffPathFor(unordered)).toBe("/?view=gantt&stages=awaiting_raw%2Craw_review%2Cdelivered&delivered=1");
   });
 
   it("serialises an absent or all-default facet to the bare Gantt URL (plus q)", () => {
     expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt" })).toBe("/?view=gantt");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: [], delivered: false, completed: false } })).toBe("/?view=gantt");
-    expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt", search: "smith", gantt: { stageKeys: [], delivered: false, completed: false } })).toBe("/?view=gantt&q=smith");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt", gantt: { stageKeys: [], delivered: false, completed: false, editorIds: [] } })).toBe("/?view=gantt");
+    expect(staffPathFor({ kind: "dashboard", dashboardView: "gantt", search: "smith", gantt: { stageKeys: [], delivered: false, completed: false, editorIds: [] } })).toBe("/?view=gantt&q=smith");
     expect(isDefaultGanttFacet(undefined)).toBe(true);
-    expect(isDefaultGanttFacet({ stageKeys: [], delivered: false, completed: false })).toBe(true);
-    expect(isDefaultGanttFacet({ stageKeys: ["raw_review"], delivered: false, completed: false })).toBe(false);
-    expect(isDefaultGanttFacet({ stageKeys: [], delivered: true, completed: false })).toBe(false);
-    expect(isDefaultGanttFacet({ stageKeys: [], delivered: false, completed: true })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], delivered: false, completed: false, editorIds: [] })).toBe(true);
+    expect(isDefaultGanttFacet({ stageKeys: ["raw_review"], delivered: false, completed: false, editorIds: [] })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], delivered: true, completed: false, editorIds: [] })).toBe(false);
+    expect(isDefaultGanttFacet({ stageKeys: [], delivered: false, completed: true, editorIds: [] })).toBe(false);
   });
 
   it("is a serialize -> parse -> serialize fixed point over every facet combination", () => {
@@ -94,12 +117,14 @@ describe("Dashboard Gantt route arm (#255)", () => {
       for (const delivered of [false, true]) {
         for (const completed of [false, true]) {
           for (const search of [undefined, "smith street"]) {
-            const route: DashboardGanttRoute = { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), gantt: { stageKeys, delivered, completed } };
+            for (const editorIds of [[], ["11111111-1111-4111-8111-111111111111"], ["22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"]]) {
+            const route: DashboardGanttRoute = { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), gantt: { stageKeys, delivered, completed, editorIds } };
             const location = staffPathFor(route);
             const parsed = parseStaffLocation(location);
             expect(parsed.kind, location).toBe("dashboard");
             expect(staffPathFor(parsed as Serializable), location).toBe(location);
             expect(safeStaffDestination(location), location).toBe(location);
+            }
           }
         }
       }
