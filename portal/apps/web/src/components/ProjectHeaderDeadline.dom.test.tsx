@@ -395,4 +395,27 @@ describe("ProjectHeaderDeadline", () => {
     expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/deadline`, expect.objectContaining({ deadline: null }));
   });
+
+  // #325: at 390px the popover is capped to the available height and scrolls, which left Clear
+  // and Save below the fold. The action row sticks to the popover's bottom edge instead, on its
+  // own background so scrolled content passes under it.
+  it("pins the Clear / Save row to the bottom of the scrolling popover (#325)", async () => {
+    const host = await mount(scheduleAt("2026-10-01T06:00:00.000Z"));
+    const dialog = await openTrigger(host);
+    const save = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Save")!;
+    const row = save.parentElement!;
+    expect([...row.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Clear", "Save"]);
+    const classes = row.className.split(/\s+/);
+    expect(classes).toContain("sticky");
+    expect(classes).toContain("bg-popover");
+    expect(classes.some((c) => /^-?bottom-/.test(c))).toBe(true);
+    // #325 design review: the row's own pb-2.5 (which covers the popup's padding while pinned)
+    // stacked on the popup's p-2.5 whenever the row sat in flow, doubling the bottom gap. A
+    // matching negative margin cancels it, so the gap is 10px pinned or not.
+    expect(classes).toContain("pb-2.5");
+    expect(classes).toContain("-mb-2.5");
+    // Review: a control Tabbed to below the fold scrolls only to the popover's edge, under the
+    // pinned row (WCAG 2.4.11). The popover's scroll padding reserves the row's height.
+    expect(dialog.className.split(/\s+/)).toContain("scroll-pb-18");
+  });
 });

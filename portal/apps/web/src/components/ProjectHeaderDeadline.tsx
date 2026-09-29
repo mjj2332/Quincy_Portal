@@ -81,7 +81,9 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit }: {
       {due && <StatusPill tone={due.tone}>{due.label}</StatusPill>}
       <ChevronDown aria-hidden="true" className={TRIGGER_CHEVRON} />
     </PopoverTrigger>
-    <PopoverContent align="start" aria-label="Deadline" className={POPOVER_CONTENT}>
+    {/* #325: `scroll-pb-18` (72px) reserves the pinned Clear / Save row (44px buttons + 8px + 10px)
+        so a control focused below the fold scrolls clear of it, not under it (WCAG 2.4.11). */}
+    <PopoverContent align="start" aria-label="Deadline" className={cn(POPOVER_CONTENT, "scroll-pb-18")}>
       <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
       <ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={() => setOpen(false)} />
     </PopoverContent>

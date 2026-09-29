@@ -362,7 +362,11 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
         <button type="button" className={buttonClasses("text", { className: "min-h-[44px]" })} onClick={reapplyDraft}>Review and reapply my draft</button>
       </div>
     </div>}
-    <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
+    {/* #325: pinned to the bottom of the scrolling popover (capped to the available height at
+        390px), so Clear / Save never sit below the fold. `-bottom-2.5` + `pb-2.5` cover the
+        popup's own p-2.5, so scrolled content passes under the row, not beside it; `-mb-2.5` cancels
+        that padding when the row sits in flow, so the gap stays 10px either way. */}
+    <div className="sticky -bottom-2.5 -mb-2.5 pb-2.5 pt-[var(--space-2)] bg-popover flex flex-wrap justify-end gap-[var(--space-2)]">
       {deadline && <button type="button" className={buttonClasses("secondary", { className: "min-h-[44px]" })} onClick={() => void clear()} disabled={saving}>Clear</button>}
       <button type="submit" className={buttonClasses("primary", { className: "min-h-[44px]" })} disabled={saving || Boolean(foldChoices.length > 0 && !fold)}>{saving ? "Saving…" : "Save"}</button>
     </div>
