@@ -541,13 +541,23 @@ describe("NoticeBoard foldOnPhone (#271)", () => {
     expect(window.localStorage.getItem(KEY)).toBe("true");
   });
 
-  it("drops the subtitle line on a phone, so the folded board is one line", async () => {
+  it("drops the subtitle only while folded, so the folded board is one line and the opened board matches List", async () => {
     phone(true);
     const host = mount();
+    const subtitle = () => [...toggleOf(host).querySelectorAll("span")].find((span) => span.textContent === "Messages for the production desk");
     await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
-    const subtitle = [...toggleOf(host).querySelectorAll("span")].find((span) => span.textContent === "Messages for the production desk")!;
-    expect(subtitle.className).toContain("max-[721px]:hidden");
-    await render(<NoticeBoard currentUserId="user-a" />);
-    expect([...toggleOf(host).querySelectorAll("span")].find((span) => span.textContent === "Messages for the production desk")!.className).not.toContain("max-[721px]:hidden");
+    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("false");
+    expect(subtitle()!.className.split(/\s+/)).toContain("hidden");
+    await act(async () => toggleOf(host).click());
+    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
+    expect(subtitle()!.className.split(/\s+/)).not.toContain("hidden");
+  });
+
+  it("never hides the subtitle on a desktop", async () => {
+    phone(false);
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
+    const span = [...toggleOf(host).querySelectorAll("span")].find((el) => el.textContent === "Messages for the production desk")!;
+    expect(span.className.split(/\s+/)).not.toContain("hidden");
   });
 });

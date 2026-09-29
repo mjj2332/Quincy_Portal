@@ -196,7 +196,7 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
     >
       <span className="flex flex-col gap-[var(--space-1)] flex-1 min-w-0">
         <Eyebrow>Staff notice board</Eyebrow>
-        <span className={cn("[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", foldOnPhone && "max-[721px]:hidden")}>Messages for the production desk</span>
+        <span className={cn("[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", folded && "hidden")}>Messages for the production desk</span>
       </span>
       {hasUnread && (
         <>
