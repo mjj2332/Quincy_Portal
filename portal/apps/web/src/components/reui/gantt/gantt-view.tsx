@@ -64,6 +64,9 @@
  * `text-foreground-secondary` (the thin 12px strokes measured 1.7-2.0:1, under WCAG 1.4.11's 3:1
  * for a control's graphic; the hairline border is unchanged), and the drop-target row's VALID tint
  * (`bg-muted/40`, a delta of 2) was removed. Warning and invalid tints stay.
+ * Its design review then gave `PlusIcon` the same `strokeWidth={2.5}` as `MinusIcon` (the darker
+ * colour had inverted #219's weight balance), and Zoom out's `border-border` became
+ * `border-t-border`: the ghost Button's base `border` meant it coloured all four sides.
  *
  * This file: the largest of the 9 (~4.4k lines) — row virtualization, the resource tree, row
  * expand/collapse, the timeline grid, and the scroll-synced header. Six `IconPlaceholder`
@@ -3030,7 +3033,9 @@ function GanttView({
                       />
                     }
                   >
-                    <PlusIcon className="size-3" aria-hidden="true" />
+                    {/* #237: strokeWidth 2.5 to match MinusIcon below. At greige-600 the plus's arms fell to
+                        2.6:1 while the heavier minus held 3.9:1, inverting #219's balance. */}
+                    <PlusIcon className="size-3" strokeWidth={2.5} aria-hidden="true" />
                   </TooltipTrigger>
                   <TooltipContent side="left">
                     {settings.i18n.labels.zoomIn}
@@ -3048,7 +3053,7 @@ function GanttView({
                         // header's own comment above for why. #219 PR A fix (dr-219a LOW #7, part
                         // 3): `size-5!` -> `size-11!` (44px target) and `rounded-t-none` ->
                         // `rounded-none` - see the sibling zoom-in button's own comment above.
-                        className="text-foreground-secondary hover:text-foreground border-border size-11! rounded-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+                        className="text-foreground-secondary hover:text-foreground border-t-border size-11! rounded-none border-t aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
                         onClick={() => {
                           if (!canZoomOut) return
                           if (viewConfig.zoom === undefined) anchorZoomCenter()

@@ -78,7 +78,7 @@ function findZoomGlyph(label: "Zoom in" | "Zoom out"): SVGSVGElement {
 }
 
 describe("the zoom control's minus glyph is compensated for lacking a plus glyph's crossing-point reinforcement (#219 PR A, dr2-219a LOW #6)", () => {
-  it("the minus icon's stroke-width is explicitly heavier than the plus icon's", async () => {
+  it("both glyphs carry the same explicit 2.5 stroke (#237 rebalance)", async () => {
     await render(
       <Gantt resources={RESOURCES} events={[]} date={START} scale="day" timeZone="UTC">
         <GanttView />
@@ -93,7 +93,11 @@ describe("the zoom control's minus glyph is compensated for lacking a plus glyph
 
     expect(Number.isNaN(plusStrokeWidth)).toBe(false);
     expect(Number.isNaN(minusStrokeWidth)).toBe(false);
-    expect(minusStrokeWidth).toBeGreaterThan(plusStrokeWidth);
+    // #237 design review: once the glyphs moved to greige-600, the plus's ARMS measured 2.6:1
+    // (only the crossing pixel reached 4.63:1) while the minus's 2.5 stroke held 3.9:1 end to end —
+    // #219's balance inverted. Both glyphs now carry the same heavier stroke, so their arms match.
+    expect(minusStrokeWidth).toBe(2.5);
+    expect(plusStrokeWidth).toBe(minusStrokeWidth);
   });
 });
 
@@ -113,5 +117,21 @@ describe("the zoom control's glyphs clear the 3:1 non-text floor (#237)", () => 
     const classes = button.className.split(/\s+/);
     expect(classes).toContain("text-foreground-secondary");
     expect(classes).not.toContain("text-muted-foreground");
+  });
+});
+
+// #237 design review: the ghost Button's base is `border border-transparent`, so Zoom out's
+// `border-border` coloured all four sides, drawing a frame inside the capsule's own border. Only
+// its top divider should paint.
+describe("Zoom out draws only its top divider (#237)", () => {
+  it("colours border-top, not all four sides", async () => {
+    await render(
+      <Gantt resources={RESOURCES} events={[]} date={START} scale="day" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+    const classes = host.querySelector<HTMLElement>('[aria-label="Zoom out"]')!.className.split(/\s+/);
+    expect(classes).toContain("border-t-border");
+    expect(classes).not.toContain("border-border");
   });
 });
