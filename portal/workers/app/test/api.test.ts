@@ -959,6 +959,20 @@ describe("staff app API", () => {
     expect(annotationMarkup.status).toBe(200);
     expect(annotationMarkup.headers.get("cache-control")).toBe("private, no-store");
     expect(annotationMarkup.headers.get("x-content-type-options")).toBe("nosniff");
+    // #283: an external editor's edit and delete clean up the stroke objects they leave behind.
+    const externalMedia = (env as unknown as { MEDIA: R2Bucket }).MEDIA;
+    const strokeKeyOf = async () => (await database.DB.prepare("SELECT stroke_r2_key FROM annotations WHERE id = ?").bind(annotationBody.id).first<{ stroke_r2_key: string | null }>())?.stroke_r2_key ?? null;
+    const firstKey = await strokeKeyOf();
+    expect(firstKey).toBeTruthy();
+    const externalEdit = await SELF.fetch(`https://portal.test/api/annotations/${annotationBody.id}`, { method: "PATCH", headers: { cookie: externalCookie, "content-type": "application/json" }, body: JSON.stringify({ strokes: [{ points: [{ x: 0.3, y: 0.4 }], color: "#3f5b3a", width: 2 }] }) });
+    expect(externalEdit.status).toBe(200);
+    const secondKey = await strokeKeyOf();
+    expect(secondKey).toBeTruthy();
+    expect(secondKey).not.toBe(firstKey);
+    expect(await externalMedia.get(firstKey!)).toBeNull();
+    expect(await externalMedia.get(secondKey!)).not.toBeNull();
+    expect((await SELF.fetch(`https://portal.test/api/annotations/${annotationBody.id}`, { method: "DELETE", headers: { cookie: externalCookie } })).status).toBe(200);
+    expect(await externalMedia.get(secondKey!)).toBeNull();
 
     const createUpload = async () => SELF.fetch("https://portal.test/api/external-uploads", {
       method: "POST", headers: { cookie: externalCookie, origin: authEnv.APP_ORIGIN, "content-type": "application/json" },
@@ -2367,6 +2381,8 @@ describe("staff app API", () => {
     expect(object).not.toBeNull();
     const stored = JSON.parse(await object!.text());
     expect(stored).toEqual(replacementStrokes);
+    // #283: the replaced object is deleted once the row points at the new one.
+    expect(await mediaEnv.MEDIA.get(originalKey!)).toBeNull();
 
     const storedRow = await database.DB.prepare("SELECT stroke_r2_key, edited_at FROM annotations WHERE id = ?").bind(annotationId).first<{ stroke_r2_key: string; edited_at: number }>();
     expect(storedRow?.stroke_r2_key).toBe(updated.strokeR2Key);
@@ -2410,7 +2426,7 @@ describe("staff app API", () => {
     expect(storedRow).toEqual({ stroke_r2_key: originalKey, edited_at: null });
   });
 
-  it("clears an annotation's drawing on PATCH strokes: [] while preserving the old R2 object", async () => {
+  it("clears an annotation's drawing on PATCH strokes: [] and deletes the old R2 object (#283)", async () => {
     const initialStrokes = [{ points: [{ x: 0.4, y: 0.4 }, { x: 0.45, y: 0.42 }], color: "#f0a020", width: 4 }];
     const { annotationId, strokeR2Key: originalKey } = await createEditableAnnotation(initialStrokes);
     expect(originalKey).toBeTruthy();
@@ -2428,14 +2444,14 @@ describe("staff app API", () => {
 
     const mediaEnv = env as unknown as { MEDIA: R2Bucket };
     const oldObject = await mediaEnv.MEDIA.get(originalKey!);
-    expect(oldObject).not.toBeNull();
+    expect(oldObject).toBeNull();
 
     const storedRow = await database.DB.prepare("SELECT stroke_r2_key, edited_at FROM annotations WHERE id = ?").bind(annotationId).first<{ stroke_r2_key: string | null; edited_at: number }>();
     expect(storedRow?.stroke_r2_key).toBeNull();
     expect(storedRow?.edited_at).toEqual(expect.any(Number));
   });
 
-  it("deletes an author's annotation while retaining its stroke object", async () => {
+  it("deletes an author's annotation and its stroke object (#283)", async () => {
     const strokes = [{ points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.3 }], color: "#e64b3c", width: 4 }];
     const { annotationId, strokeR2Key } = await createEditableAnnotation(strokes);
     expect(strokeR2Key).toBeTruthy();
@@ -2450,7 +2466,7 @@ describe("staff app API", () => {
     const storedRow = await database.DB.prepare("SELECT id FROM annotations WHERE id = ?").bind(annotationId).first<{ id: string }>();
     expect(storedRow).toBeNull();
     const mediaEnv = env as unknown as { MEDIA: R2Bucket };
-    expect(await mediaEnv.MEDIA.get(strokeR2Key!)).not.toBeNull();
+    expect(await mediaEnv.MEDIA.get(strokeR2Key!)).toBeNull();
   });
 
   it("prevents a fellow project member from deleting another author's annotation", async () => {
