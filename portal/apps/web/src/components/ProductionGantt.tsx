@@ -147,6 +147,7 @@ import {
 } from "../lib/production-gantt-adapter";
 import {
   DEFAULT_GANTT_FACET_FILTERS,
+  ganttShowDeliveredRecovery,
   ganttFacetFor,
   ganttFacetKey,
   ganttLegendEntries,
@@ -158,7 +159,7 @@ import { useStages } from "../lib/stages";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
-import { buttonClasses } from "./quincy/Button";
+import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
 import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
@@ -181,6 +182,12 @@ export type ProductionGanttProps = {
   onAcceptGateChange?: (blocked: boolean) => void;
   onSettleStateChange?: (state: CalendarSettleState) => void;
   onAccessLoss?: () => void;
+  /**
+   * #260: how many projects this Gantt draws under its filters (the server's
+   * `density.matchedProjects`, which counts search AND filters), for the Dashboard search chip.
+   * `null` until the current filters' first page lands, and on unmount.
+   */
+  onShownProjectsChange?: (count: number | null) => void;
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
@@ -560,17 +567,12 @@ type GanttChildPageState = {
  * improvement: it now catches an add/delete ANYWHERE in a project's checklist (page one or not) that
  * changes the project's total row count, which the row-content fields above alone could not.
  *
- * **The residual gap sol2's finding actually described is NOT closed by this, and there is no
- * complete client-side fix for it** (sol2's own assessment, matching what's implemented here): a
- * title/done/position/assignee/schedule EDIT to a row that already lives only in a merged
- * CONTINUATION page (page 2+) changes none of `children.nextCursor`, `children.total`, or any page-one
- * row's fields — nothing this signature reads — so it produces no seed-signature mismatch and the
- * stale copy of that row stays cached until the identity/filter tuple itself changes (a full
- * generation reset, which re-walks everything from scratch) or the user reloads. A `retry` does not
- * help either: it RESUMES from the existing cursor forward, it never revisits rows already behind
- * that cursor. The only complete fix is server-side — a per-project child-collection revision counter
- * that bumps on every visible mutation, included here in place of (not alongside) hand-picked row
- * fields — which is Sol's own proposal and is out of scope for this slice.
+ * **The residual gap sol2's finding described — an EDIT to a row that lives only on a continuation
+ * page (page 2+) — is closed by `children.revision` (#246).** Such an edit changes none of
+ * `nextCursor`, `total` or any page-one row, so the fields above alone cannot see it. The server now
+ * sends a project-wide revision (the latest `updated_at` over ALL the project's visible rows, the
+ * same scope as `total`) when the page request carries `rev=1`, which `buildGanttPageQuery` always
+ * sends; any edit anywhere moves it, the signature changes, and the cached chain is re-walked.
  *
  * **Considered and declined: force a full re-walk from page one on every project-list refetch**
  * (ignoring seed-signature equality entirely, poll-driven every `staleTime`/`refetchInterval` tick —
@@ -586,6 +588,8 @@ function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"])
   return JSON.stringify([
     children.nextCursor,
     children.total,
+    // #246: the server's project-wide revision — closes the page-2+ content-edit gap described above.
+    children.revision ?? null,
     children.rows.map((row) => [row.id, row.done, row.position, row.title, row.assignee?.id ?? null, row.schedule.version]),
   ]);
 }
@@ -629,7 +633,7 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
   return { ...model, events };
 }
 
-export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
   const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
@@ -664,11 +668,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // other filter change arms it, so the bar's own edits never scroll the page.
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const scrollToFiltersPendingRef = useRef(false);
-  const clearFiltersFromEmptyState = useCallback(() => {
+  // #270: the empty state's Show delivered projects takes the same path — its button unmounts too.
+  const writeFiltersFromEmptyState = useCallback((next: ProductionGanttFacetFilters) => {
     scrollToFiltersPendingRef.current = true;
-    onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
+    onFiltersChange(next);
     filtersTriggerRef.current?.focus({ preventScroll: true });
   }, [onFiltersChange]);
+  const clearFiltersFromEmptyState = useCallback(() => writeFiltersFromEmptyState(DEFAULT_GANTT_FACET_FILTERS), [writeFiltersFromEmptyState]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
 
@@ -1025,6 +1031,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const firstPageDensity = query.data?.pages[0]?.density;
   // #274: the Editor field's options ride on page one only.
   const filterPeople = query.data?.pages[0]?.filterFacets?.people;
+  const shownProjects = query.isPlaceholderData ? null : firstPageDensity?.matchedProjects ?? null;
+  useEffect(() => { onShownProjectsChange?.(shownProjects); }, [onShownProjectsChange, shownProjects]);
+  useEffect(() => () => onShownProjectsChange?.(null), [onShownProjectsChange]);
   const tooManyToDraw = (firstPageDensity?.tooManyToDraw ?? false) || model.tooManyToDraw;
 
   // fix-220-sol1b: one signature per CURRENT project, memoized on `projects` alone (not `childState`)
@@ -1351,6 +1360,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     // chart is built from.
     const showEmpty = projects.length === 0 && !hasNextPage;
     const facetFiltersDefault = editorIds.length === 0 && ganttFacetFor(facetFilters) === undefined;
+    const showDeliveredRecovery = ganttShowDeliveredRecovery(facetFilters);
     body = (
       <div className="grid gap-[var(--space-3)]" data-testid="production-gantt">
         {tooManyToDraw && (
@@ -1364,8 +1374,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
           ) : (
             <EmptyState role="status" data-testid="production-gantt-empty" title="No projects match these filters.">
               Change or clear the filters above to see more projects.
-              <div>
-                <button type="button" className={buttonClasses("text", { className: "mt-[var(--space-4)]" })} onClick={clearFiltersFromEmptyState}>
+              <div className="flex flex-wrap justify-center gap-x-[var(--space-4)] gap-y-[var(--space-2)] mt-[var(--space-4)]">
+                {/* #270: Stage = Delivered with delivered projects hidden draws nothing for a known
+                    reason (a cold link is never rewritten on load), so offer that specific fix. */}
+                {showDeliveredRecovery && (
+                  <QuincyButton variant="text" type="button" onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery)}>
+                    Show delivered projects
+                  </QuincyButton>
+                )}
+                <button type="button" className={buttonClasses("text")} onClick={clearFiltersFromEmptyState}>
                   Clear filters
                 </button>
               </div>

@@ -200,6 +200,14 @@ export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransport
     /** Rows on THIS page only. */
     returned: number;
     /**
+     * #246: a project-wide child-collection revision — the latest `updated_at` over ALL this
+     * project's visible checklist rows (same scope as `total`, never per page), so it moves on any
+     * edit to any row, including one that lives only on a continuation page. Present ONLY on the
+     * embedded children of a page request that asked for it (`rev=1`): old bundles never send the
+     * param, so their `.strict()` decoders never see the key.
+     */
+    revision?: number;
+    /**
      * More rows remain after this page/cursor. **NOT** `total > returned` (fix-218-r4 #3: that
      * was the contract's documented meaning, but it was wrong) — `total` is the full-project
      * count and `returned` is just this page's, so a fully-drained continuation page correctly
@@ -284,6 +292,7 @@ function ganttChildrenSchema() {
     rows: z.array(ganttChecklistRowSchema()),
     total: z.number().int().nonnegative(),
     returned: z.number().int().nonnegative(),
+    revision: z.number().int().nonnegative().optional(),
     truncated: z.boolean(),
     nextCursor: z.string().max(CURSOR_MAX_ENCODED_BYTES).nullable(),
   }).strict();

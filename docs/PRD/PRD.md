@@ -460,7 +460,7 @@ Six npm workspaces — three deployable Workers, one SPA, two shared libraries:
 | Primitive | Resource | Holds |
 |---|---|---|
 | **D1** (SQLite) | `quincy-portal` | All relational metadata — projects, assets, collections, selections, ratings/labels/decisions, comments, annotations (strokes → R2), publishes, `webhook_events`, `jobs`, `audit_log`, auth tables, `integration_connections`, `pipeline_stages`, agencies/agents. |
-| **R2** | `quincy-portal-media` | Original media (private), edited assets, annotation stroke JSON, PDFs, cached renditions. **Immutable** — edits/deletes write new keys; old objects retained. Bucket versioning on. |
+| **R2** | `quincy-portal-media` | Original media (private), edited assets, annotation stroke JSON, PDFs, cached renditions. **Immutable** — edits/deletes write new keys; old objects retained. Bucket versioning on. **Exception (#283):** annotation stroke JSON is deleted once no row points at it — after an annotation delete, after an edit repoints the row, and with its asset on a permanent asset delete. |
 | **KV** | `quincy-portal-sessions` | better-auth session store (with D1). |
 | **Queues** | `quincy-ingest` | Ingest / processing jobs (consumed by the background Worker). |
 | **Workflows** | — | Durable multi-step autoHDR round-trip (selected RAW → Dropbox → returned edits). |

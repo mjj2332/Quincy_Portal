@@ -333,8 +333,21 @@ function isLegacyNotificationType(value: string): value is NotificationType {
   return (NOTIFICATION_TYPES as readonly string[]).includes(value);
 }
 
+/**
+ * #319: `payload_json` is TEXT, and the shared strict parser takes the decoded object (it rejects
+ * a string outright). Passing the column straight through suppressed every external-editor
+ * occurrence as `payload_invalid`. Malformed JSON is still `null`, and still suppressed.
+ */
+function parseExternalOutboxJson(value: string): ExternalNotificationOutboxPayload | null {
+  try {
+    return parseExternalNotificationOutboxPayload(JSON.parse(value) as unknown);
+  } catch {
+    return null;
+  }
+}
+
 async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
-  const payload = parseExternalNotificationOutboxPayload(outbox.payload_json);
+  const payload = parseExternalOutboxJson(outbox.payload_json);
   if (!payload || !("legacy" in payload) || payload.event.type !== "project.external_safe.direct") return suppressed("payload_invalid");
   if (!isLegacyNotificationType(payload.legacy.type)) return suppressed("external_policy_suppressed");
   const policy = EXTERNAL_LEGACY_NOTIFICATION_POLICY[payload.legacy.type];
@@ -345,6 +358,7 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
       o.source_key AS sourceKey, o.project_id AS projectId, o.actor_id AS actorId,
       o.recipient_id AS recipientId, o.payload_json AS payloadJson,
       o.recipient_authorization_epoch AS recipientAuthorizationEpoch,
+      o.recipient_membership_cycle_id AS recipientMembershipCycleId,
       recipient.authorization_epoch AS currentAuthorizationEpoch,
       recipient.active AS recipientActive, recipient.role AS recipientRole,
       recipient.name AS recipientName, recipient.email AS recipientEmail,
@@ -383,7 +397,7 @@ async function resolveExternalSafeDirectRecipient(env: Env, outbox: OutboxRow): 
 }
 
 async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
-  const payload = parseExternalNotificationOutboxPayload(outbox.payload_json);
+  const payload = parseExternalOutboxJson(outbox.payload_json);
   if (!payload || !("assignment" in payload) || payload.event.type !== outbox.event_type) return suppressed("payload_invalid");
   const expectedType = outbox.event_type === "project.subtask.assigned" ? "subtask_assigned" : outbox.event_type === "project.subtask.due_today" ? "subtask_due_today" : null;
   if (!expectedType || payload.event.sourceKey !== outbox.source_key || payload.event.recipientId !== outbox.recipient_id) return suppressed("payload_invalid");

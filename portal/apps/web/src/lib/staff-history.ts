@@ -85,7 +85,21 @@ export function stringifyStaffSearch(search: StaffSearch): string {
  * PrincipalFreshnessBoundary, InternalLink — keep navigating through that same adapter, and the
  * subscription below is how the router learns about the writes they make.
  */
-export function createStaffRouterHistory(adapter: HistoryAdapter): { history: RouterHistory; connect: () => () => void } {
+/** The raw pathname of an adapter location (`/path?query` — staff locations carry no hash). */
+function pathnameOf(location: string): string {
+  const query = location.indexOf("?");
+  return query === -1 ? location : location.slice(0, query);
+}
+
+export type StaffRouterHistoryOptions = {
+  /**
+   * Called for every adapter location change, just before the router is notified. #266: the
+   * router uses it to decide whether this render resets the scroll to the top.
+   */
+  beforeNotify?: (change: { pathnameChanged: boolean }) => void;
+};
+
+export function createStaffRouterHistory(adapter: HistoryAdapter, options: StaffRouterHistoryOptions = {}): { history: RouterHistory; connect: () => () => void } {
   const history = createHistory({
     // Raw, unsanitised. See the module comment: this is the arrival path.
     getLocation: () => parseHref(adapter.getLocation(), undefined),
@@ -113,12 +127,21 @@ export function createStaffRouterHistory(adapter: HistoryAdapter): { history: Ro
    * the Shell's parsed route moves on. Re-subscribing per effect run is what makes the double
    * invocation harmless.
    */
-  const connect = () => adapter.subscribe(() => {
-    // "REPLACE" describes the router's bookkeeping, not the browser operation that happened: the
-    // entry already exists by the time we hear about it, so the router must adopt the new location
-    // without creating another one. The action type only feeds scroll restoration, which is off.
-    history.notify({ type: "REPLACE" });
-  });
+  const connect = () => {
+    let pathname = pathnameOf(adapter.getLocation());
+    return adapter.subscribe(() => {
+      const next = pathnameOf(adapter.getLocation());
+      // #266: the router scrolls to the top after every render it is notified of. Only a real
+      // screen change (a new pathname) should; a query-only change — a filter, a search commit, a
+      // view switch — keeps the reader where they are.
+      options.beforeNotify?.({ pathnameChanged: next !== pathname });
+      pathname = next;
+      // "REPLACE" describes the router's bookkeeping, not the browser operation that happened: the
+      // entry already exists by the time we hear about it, so the router must adopt the new
+      // location without creating another one. Restoring saved scroll positions stays off.
+      history.notify({ type: "REPLACE" });
+    });
+  };
 
   return { history, connect };
 }

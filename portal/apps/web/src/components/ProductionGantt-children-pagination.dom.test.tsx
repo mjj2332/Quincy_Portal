@@ -75,6 +75,7 @@ function projectRow(overrides: {
   total: number;
   truncated: boolean;
   nextCursor: string | null;
+  revision?: number;
 }): GanttProjectRowDto {
   return {
     id: PROJECT_ID,
@@ -93,7 +94,7 @@ function projectRow(overrides: {
     editors: [],
     checklist: { completed: 0, total: overrides.total },
     permissions: { canEditDeadline: true, canEditChildren: true },
-    children: { rows: overrides.rows, total: overrides.total, returned: overrides.rows.length, truncated: overrides.truncated, nextCursor: overrides.nextCursor },
+    children: { rows: overrides.rows, total: overrides.total, returned: overrides.rows.length, truncated: overrides.truncated, nextCursor: overrides.nextCursor, ...(overrides.revision === undefined ? {} : { revision: overrides.revision }) },
   };
 }
 
@@ -390,6 +391,38 @@ describe("ProductionGantt — child-page pagination (fix-220-sol1 #1, #2, #3)", 
     expect(childRequestCount).toBe(1);
     expect(findByText(host, "Idempotent embedded task")).toBeDefined();
     expect(findByText(host, "Idempotent continuation task")).toBeDefined();
+  });
+
+  it("#246: re-walks a project when only its revision moves (an edit on a continuation page), and asks for it with rev=1", async () => {
+    let revision = 100;
+    let continuationTitle = "Continuation before the edit";
+    let childRequestCount = 0;
+    apiGetMock.mockImplementation((path: string) => {
+      if (path.includes("childrenOf=")) {
+        childRequestCount += 1;
+        return Promise.resolve(childPageResponse([task("22222222-2222-4222-8222-00000000000e", continuationTitle, 1)], 2, false, null));
+      }
+      expect(new URLSearchParams(path.slice(path.indexOf("?") + 1)).get("rev")).toBe("1");
+      return Promise.resolve(
+        listResponse(projectRow({ rows: [task("22222222-2222-4222-8222-00000000000d", "Unchanged embedded task", 0)], total: 2, truncated: true, nextCursor: "cursor-1", revision })),
+      );
+    });
+
+    await renderWithQuery("");
+    expect(findByText(host, "Continuation before the edit")).toBeDefined();
+    expect(childRequestCount).toBe(1);
+
+    // The page-two row is edited: page one, total and nextCursor are all unchanged; only the revision moves.
+    revision = 200;
+    continuationTitle = "Continuation after the edit";
+    await act(async () => {
+      await client.refetchQueries();
+    });
+    await settle();
+
+    expect(childRequestCount).toBe(2);
+    expect(findByText(host, "Continuation after the edit")).toBeDefined();
+    expect(findByText(host, "Continuation before the edit")).toBeUndefined();
   });
 
   it("aborts an in-flight chain on re-seed and discards its late response, never letting it overwrite the fresh state (fix-220-sol1b #3)", async () => {
