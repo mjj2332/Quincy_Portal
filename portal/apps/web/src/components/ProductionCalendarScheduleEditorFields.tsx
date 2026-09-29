@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { FieldLegend, FieldSet } from "./reui/field";
 import { Input } from "./reui/input";
+import { POPOVER_LABEL } from "./AnchoredPopover";
 import { NativeSelect } from "./quincy/NativeSelect";
 import { utcOffsetLabel } from "../lib/sydney-time-labels";
 
@@ -35,7 +36,7 @@ import { utcOffsetLabel } from "../lib/sydney-time-labels";
 // background and the `max-[721px]:min-h-[44px]` floor. This is the compact type/padding plus the
 // coarse-pointer half of the 44px floor that the calendar dialogs layer on top of it.
 export const FIELD_COMPACT =
-  "[font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
+  "text-foreground [font:400_13px/1.3_var(--font-sans)] tracking-normal px-[6px] py-[4px] pointer-coarse:min-h-[44px]";
 
 // The Sydney-occurrence radios, shared with the Calendar's move and fold dialogs
 // (`ProductionEventCalendarDialogs.tsx`) so every fold choice reads the same.
@@ -48,10 +49,9 @@ export const FOLD_LEGEND = "mb-[var(--space-2)] text-foreground data-[variant=le
 
 const EDITOR = "grid gap-[16px]";
 const EDITOR_INTRO = "m-0 text-foreground-secondary [font:400_14px/1.5_var(--font-body-serif)]";
-const ENDPOINT_MODE_LABEL = "grid gap-[6px] text-muted-foreground text-[11px] tracking-[.04em]";
-// FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background and the
-// `max-[721px]:min-h-[44px]` floor. `max-w-[360px]` overrides its `w-full`.
-const EDITOR_SELECT = cn("max-w-[360px]", FIELD_COMPACT);
+// FIELD_BOX (shared by NativeSelect) already carries the border, radius, field background, the
+// `max-[721px]:min-h-[44px]` floor and `w-full`, so the lone mode select lines up with the Start/End grid.
+const EDITOR_SELECT = FIELD_COMPACT;
 const EDITOR_ENDPOINTS = "grid grid-cols-2 gap-[16px] max-[721px]:grid-cols-1";
 const EDITOR_ENDPOINT = "grid gap-[10px] min-w-0 m-0 p-[14px] border border-solid border-border";
 const EDITOR_ENDPOINT_LEGEND = "px-[4px] text-foreground text-[12px] font-semibold";
@@ -212,7 +212,7 @@ export function ProductionCalendarScheduleEditorFields({ state }: ProductionCale
 
   return <div className={EDITOR}>
     <p className={EDITOR_INTRO}>Sydney civil time is saved exactly as entered. Both endpoints use the same mode.</p>
-    <label className={ENDPOINT_MODE_LABEL} htmlFor={`${groupId}-mode`}>Endpoint mode
+    <label className={POPOVER_LABEL} htmlFor={`${groupId}-mode`}>Date or time
       <NativeSelect className={EDITOR_SELECT} id={`${groupId}-mode`} aria-label="Checklist endpoint mode" value={draft.kind} onChange={(input) => setDraft((current) => ({ ...current, kind: input.target.value as EndpointKind }))}>
         <option value="date">Date</option>
         <option value="timed">Timed · Australia/Sydney</option>

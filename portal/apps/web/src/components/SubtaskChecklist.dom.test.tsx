@@ -126,6 +126,8 @@ describe("SubtaskChecklist", () => {
     await click(schedule); const group = portal("subtask-popover-task-1-schedule"); expect(group).not.toBeNull();
     // Only the Date / Timed choice remains; a legacy due-only row opens as a one-day range on its due date.
     expect(group.querySelectorAll("select")).toHaveLength(1); expect(group.textContent).not.toContain("Due only"); expect(group.textContent).not.toContain("Unscheduled");
+    // The popover scrolls under AnchoredPopover's height cap, so Save/Cancel are pinned to the bottom of it, and the mode label reads "Date or time".
+    expect(saveButton(group).parentElement!.classList.contains("sticky")).toBe(true); expect(saveButton(group).parentElement!.classList.contains("bottom-0")).toBe(true); expect(group.textContent).toContain("Date or time");
     expect(dateInputs(group).map((input) => input.value)).toEqual([`${year}-05-30`, `${year}-05-30`]);
     await click(saveButton(group));
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: `${year}-05-30` }, end: { kind: "date", localCivil: `${year}-05-30` } } } });
