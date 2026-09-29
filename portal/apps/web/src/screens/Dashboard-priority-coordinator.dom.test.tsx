@@ -960,6 +960,10 @@ describe("updateProjects never manufactures an entry for a key removed while a s
 // `pendingOrdering` is non-empty -- so the optimistic cache write alone never reached the control.
 // These assert on the RENDERED control, not the cache: that is the whole bug.
 describe("an optimistic priority change is rendered while its POST is pending (#232)", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // A priority write never bumps `board_revision` (workers/app/src/routes/projects.ts), so every
+  // response and refetched row here keeps the fixture's revision 1, as the real server does.
   function heldPost() {
     let settle!: (value: { priority: number; boardRevision: number }) => void;
     let fail!: (reason: unknown) => void;
@@ -989,9 +993,9 @@ describe("an optimistic priority change is rendered while its POST is pending (#
     const post = heldPost();
     const value = await renderAndChooseTwo();
     let releaseGet!: () => void;
-    apiGetMock.mockImplementation(() => new Promise((resolve) => { releaseGet = () => resolve({ projects: [{ ...project, priority: 2, boardRevision: 2 }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } }); }));
+    apiGetMock.mockImplementation(() => new Promise((resolve) => { releaseGet = () => resolve({ projects: [{ ...project, priority: 2, boardRevision: 1 }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } }); }));
     const getsBefore = apiGetMock.mock.calls.length;
-    await act(async () => { post.settle({ priority: 2, boardRevision: 2 }); await Promise.resolve(); });
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
     await flush();
     expect(apiGetMock.mock.calls.length).toBeGreaterThan(getsBefore);
     expect(value()).toBe("2");
@@ -1010,14 +1014,14 @@ describe("an optimistic priority change is rendered while its POST is pending (#
   });
 
   function boardWith(priority: number) {
-    return { projects: [{ ...project, priority, boardRevision: 2 }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } };
+    return { projects: [{ ...project, priority, boardRevision: 1 }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: [project.id] } } };
   }
 
   it("keeps the confirmed priority when the follow-up refetch fails", async () => {
     const post = heldPost();
     const value = await renderAndChooseTwo();
     apiGetMock.mockRejectedValue(new Error("Offline"));
-    await act(async () => { post.settle({ priority: 2, boardRevision: 2 }); await Promise.resolve(); });
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
     await flush();
     await flush();
     expect(value()).toBe("2");
@@ -1027,16 +1031,41 @@ describe("an optimistic priority change is rendered while its POST is pending (#
     const post = heldPost();
     const value = await renderAndChooseTwo();
     apiGetMock.mockResolvedValue(boardWith(3));
-    await act(async () => { post.settle({ priority: 2, boardRevision: 2 }); await Promise.resolve(); });
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
     await flush();
     await vi.waitFor(() => expect(value()).toBe("3"));
+  });
+
+  // Pins the behaviour, not the `confirmedAt` comparison: that stale result is never ACCEPTED at all
+  // (the accept effect defers while blocked, and the queued `refetch()` supersedes it), which is why
+  // the prune may key on `dataUpdatedAt` at all.
+  it("a fetch already in flight when the POST confirms lands AFTER the confirmation but carries the old priority -- it never clears the confirmed value", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 1));
+    const post = heldPost();
+    const value = await renderAndChooseTwo();
+    let releaseStale!: () => void;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { releaseStale = () => resolve(boardWith(1)); }));
+    let releaseFresh!: () => void;
+    apiGetMock.mockImplementationOnce(() => new Promise((resolve) => { releaseFresh = () => resolve(boardWith(2)); }));
+    // Started before the POST resolves, the way a window-focus refetch would be.
+    await act(async () => { void queryClient.refetchQueries({ queryKey: dashboardProjectsKey("admin-1", "admin", 0, false) }); await Promise.resolve(); });
+    await act(async () => { post.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+    await act(async () => { releaseStale(); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
+    await act(async () => { releaseFresh?.(); await Promise.resolve(); });
+    await flush();
+    expect(value()).toBe("2");
   });
 
   it("a second edit that fails falls back to the first edit's confirmed value, not the original", async () => {
     const first = heldPost();
     const value = await renderAndChooseTwo();
     apiGetMock.mockImplementation(() => new Promise(() => undefined));
-    await act(async () => { first.settle({ priority: 2, boardRevision: 2 }); await Promise.resolve(); });
+    await act(async () => { first.settle({ priority: 2, boardRevision: 1 }); await Promise.resolve(); });
     await flush();
     expect(value()).toBe("2");
     const second = heldPost();

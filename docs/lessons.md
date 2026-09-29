@@ -3271,9 +3271,13 @@ flashes the OLD value: the queued refresh is only fired after `pendingOrdering` 
 snapshot catches up only when that refetch is accepted. A confirmed entry therefore stays until
 `acceptDashboardProjects` accepts a fetch whose `dataUpdatedAt` is no older than the confirmation.
 `boardRevision` cannot mark that point: the priority UPDATE never bumps `board_revision`. A failed
-second edit restores the first edit's confirmed entry rather than the original value. Pinned by the
-`(#232)` block in `Dashboard-priority-coordinator.dom.test.tsx`; each guard there was
-mutation-checked.
+second edit restores the first edit's confirmed entry rather than the original value.
+`dataUpdatedAt` is stamped on ARRIVAL, so a fetch started before the POST could in principle look
+"newer" than the confirmation while carrying the old value; it is never accepted, because the accept
+effect defers while blocked and the queued `refetch()` supersedes it. That test pins the behaviour;
+if either of those ever changes, the prune needs a fetch-start signal instead. Pinned by the `(#232)`
+block in `Dashboard-priority-coordinator.dom.test.tsx`; the revert-trap, re-edit restore and
+third-party-wins tests each fail when their guard is removed.
 
 ## A captured key or a captured timestamp is only as fresh as the render that captured it (#230, Sol review round 2)
 
