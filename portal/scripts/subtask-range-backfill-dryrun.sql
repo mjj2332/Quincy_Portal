@@ -8,6 +8,9 @@
 --   2. Get the owner's explicit approval to proceed.
 --   3. Run this through `--command "$(grep -v '^--' ...)"`, not `--file` (a remote --file run returns
 --      import counts, not rows). See docs/Guides/Subtask-Range-Backfill.md for the exact command.
+--
+-- Two statements, two result sets: every Subtask, then every existing backfill audit row. `prepare` refuses
+-- output without both, and refuses while any audit is unpaired (its Subtask still at the audit's old version).
 SELECT
   s.id AS subtask_id,
   s.project_id AS project_id,
@@ -36,3 +39,14 @@ SELECT
 FROM project_subtasks s
 JOIN projects p ON p.id = s.project_id
 ORDER BY p.street, s.project_id, s.position, s.id;
+SELECT
+  a.id AS audit_id,
+  a.target_id AS audit_subtask_id,
+  json_extract(a.meta_json, '$.fromVersion') AS audit_from_version,
+  json_extract(a.meta_json, '$.proposal') AS audit_proposal,
+  a.created_at AS audit_created_at
+FROM audit_log a
+WHERE a.action = 'project_subtask.update'
+  AND a.target_type = 'project_subtask'
+  AND json_extract(a.meta_json, '$.source') = 'subtask_range_backfill'
+ORDER BY a.created_at, a.id;

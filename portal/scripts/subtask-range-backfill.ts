@@ -64,6 +64,33 @@ export type DryrunRow = {
   archived_at: number | null;
 };
 
+/** One row of the dry run's second statement: an existing backfill audit. */
+export type DryrunAuditRow = {
+  audit_id: string;
+  audit_subtask_id: string | null;
+  audit_from_version: number | null;
+  audit_proposal: string | null;
+  audit_created_at: number;
+};
+
+export type DryrunData = { subtasks: DryrunRow[]; audits: DryrunAuditRow[] };
+
+/**
+ * A backfill audit whose conversion never happened: its Subtask still holds the audit's old version. A new
+ * cycle must not start while one exists; the operator inspects and removes it by hand.
+ */
+export type UnpairedAudit = {
+  auditId: string;
+  subtaskId: string;
+  fromVersion: number;
+  createdAt: number;
+  proposal: unknown;
+  /** Read-only: the audit and the Subtask's current schedule. */
+  inspectSql: string;
+  /** Deletes only this audit, and only while it is still unpaired. For the operator, after confirming. */
+  removeSql: string;
+};
+
 type FromState = Exclude<ChecklistScheduleDto["state"], "range">;
 
 /** What happens to due_reminder_sent_at: kept as is, stamped (COALESCE) so no stale reminder fires, or cleared (re-armed). */
@@ -100,6 +127,8 @@ export type RangeBackfillManifest = {
   /** The Sydney date the manifest was prepared on; apply.sql must be generated on the same date. */
   sydneyToday: string;
   counts: { scanned: number; alreadyRange: number; converting: number; byState: Partial<Record<FromState, number>> };
+  /** Non-empty means prepare refused: apply refuses the manifest too. */
+  unpairedAudits: UnpairedAudit[];
   rows: RangeBackfillManifestRow[];
 };
 
@@ -151,13 +180,20 @@ function hexText(value: string): string {
   return `CAST(X'${Buffer.from(value, "utf8").toString("hex")}' AS TEXT)`;
 }
 
+/** The proposed schedule as stored, in column order: what the audit records and what its id digests. */
+function proposalJson(proposal: ChecklistScheduleStorage): string {
+  return JSON.stringify(storageOnly(proposal));
+}
+
 /**
- * The audit id of one conversion: a UUIDv5 of (subtask id, old schedule_version). Every apply file generated for
- * the same conversion carries the same id, so NOT EXISTS on it writes the audit at most once across files.
+ * The audit id of one conversion: a UUIDv5 of (subtask id, old schedule_version, digest of the proposed schedule).
+ * Every apply file generated for the same conversion carries the same id, so NOT EXISTS on it writes the audit at
+ * most once across files; a different proposal for the same row gets a different id.
  */
-export function rangeBackfillAuditId(subtaskId: string, oldScheduleVersion: number): string {
+export function rangeBackfillAuditId(subtaskId: string, oldScheduleVersion: number, proposal: ChecklistScheduleStorage): string {
   const namespace = Buffer.from(AUDIT_ID_NAMESPACE.replaceAll("-", ""), "hex");
-  const hash = Buffer.from(createHash("sha1").update(namespace).update(`${subtaskId}:${oldScheduleVersion}`, "utf8").digest("hex"), "hex");
+  const digest = createHash("sha256").update(proposalJson(proposal), "utf8").digest("hex");
+  const hash = Buffer.from(createHash("sha1").update(namespace).update(`${subtaskId}:${oldScheduleVersion}:${digest}`, "utf8").digest("hex"), "hex");
   hash[6] = (hash[6]! & 0x0f) | 0x50;
   hash[8] = (hash[8]! & 0x3f) | 0x80;
   const hex = hash.toString("hex").slice(0, 32);
@@ -269,19 +305,46 @@ function requireSydneyDate(value: string, label: string): string {
   return value;
 }
 
-/** Accepts the `wrangler d1 execute --json` wrapper (`[{ results: [...] }]`) or a bare array of rows. */
-export function extractDryrunRows(parsed: unknown): DryrunRow[] {
+/**
+ * Reads `wrangler d1 execute --json --command` output of the dry run: exactly two result sets, every Subtask then
+ * every existing backfill audit. Anything else (a --file run, bare rows, a dry run without the audit read) is refused.
+ */
+export function extractDryrunRows(parsed: unknown): DryrunData {
   if (!Array.isArray(parsed)) throw new Error("Dry-run JSON must be an array.");
-  if (parsed.length === 0) return [];
-  let rows: unknown[] = parsed;
-  const [first] = parsed;
-  if (first && typeof first === "object" && !Array.isArray(first) && Array.isArray((first as { results?: unknown }).results)) {
-    rows = parsed.flatMap((entry) => (entry as { results?: unknown[] }).results ?? []);
+  const sets = parsed.map((entry) => (entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as { results?: unknown }).results : undefined));
+  if (sets.length !== 2 || sets.some((set) => !Array.isArray(set))) {
+    throw new Error("Dry-run JSON must hold two result sets (Subtasks, then backfill audits): run the whole subtask-range-backfill-dryrun.sql with `wrangler d1 execute --remote --json --command` (see docs/Guides/Subtask-Range-Backfill.md).");
   }
-  if (rows.some((row) => !row || typeof row !== "object" || !("subtask_id" in row))) {
+  const [subtasks, audits] = sets as [unknown[], unknown[]];
+  if (subtasks.some((row) => !row || typeof row !== "object" || !("subtask_id" in row))) {
     throw new Error("Dry-run rows have no subtask_id. Produce the dry run with `wrangler d1 execute --remote --json --command` (see docs/Guides/Subtask-Range-Backfill.md); a remote --file run returns import counts, not rows.");
   }
-  return rows as DryrunRow[];
+  if (audits.some((row) => !row || typeof row !== "object" || !("audit_id" in row))) throw new Error("Dry-run audit rows have no audit_id.");
+  return { subtasks: subtasks as DryrunRow[], audits: audits as DryrunAuditRow[] };
+}
+
+function unpairedAudits(data: DryrunData): UnpairedAudit[] {
+  const versions = new Map(data.subtasks.map((row) => [row.subtask_id, row.schedule_version]));
+  const unpaired: UnpairedAudit[] = [];
+  for (const audit of data.audits) {
+    const auditId = requireUuid(audit.audit_id, "audit_id");
+    const subtaskId = requireUuid(audit.audit_subtask_id, `audit ${auditId} target_id`);
+    const fromVersion = requireInteger(audit.audit_from_version, `audit ${auditId} fromVersion`);
+    const current = versions.get(subtaskId);
+    // Paired: the Subtask moved past the audit's old version (or no longer exists). Unpaired: it never converted.
+    if (current === undefined || current !== fromVersion) continue;
+    const id = sqlLiteral(auditId);
+    unpaired.push({
+      auditId,
+      subtaskId,
+      fromVersion,
+      createdAt: requireInteger(audit.audit_created_at, `audit ${auditId} created_at`),
+      proposal: audit.audit_proposal === null ? null : JSON.parse(audit.audit_proposal),
+      inspectSql: `SELECT a.id, a.target_id, a.created_at, a.meta_json, s.schedule_version, s.due_date, s.schedule_start_civil, s.schedule_end_kind, s.schedule_end_at FROM audit_log a LEFT JOIN project_subtasks s ON s.id = a.target_id WHERE a.id = ${id}`,
+      removeSql: `DELETE FROM audit_log WHERE id = ${id} AND action = 'project_subtask.update' AND json_extract(meta_json, '$.source') = 'subtask_range_backfill' AND EXISTS (SELECT 1 FROM project_subtasks WHERE id = ${sqlLiteral(subtaskId)} AND schedule_version = ${fromVersion})`,
+    });
+  }
+  return unpaired;
 }
 
 function escapeCell(value: string): string {
@@ -302,6 +365,29 @@ const REMINDER_TEXT: Record<ReminderAction, string> = {
   armed: "armed (fires when due, if assigned and open)",
 };
 
+function unpairedSection(manifest: RangeBackfillManifest): string[] {
+  const unpaired = manifest.unpairedAudits;
+  if (unpaired.length === 0) return [];
+  const lines = [
+    `## REFUSED: ${unpaired.length} unpaired backfill audit(s)`,
+    "",
+    "Each audit below was written by an earlier apply run whose UPDATE never happened: the Subtask still holds the",
+    "audit's old schedule_version. Do not approve or apply anything from this manifest (`apply` refuses it).",
+    "For each: run the inspect query (read-only), confirm the Subtask was never converted, then run the remove",
+    "statement, which deletes only that audit and only while it is still unpaired. Then start again from the dry run.",
+    "",
+  ];
+  for (const audit of unpaired) {
+    lines.push(
+      `- Audit \`${audit.auditId}\` for Subtask \`${audit.subtaskId}\` (old version ${audit.fromVersion}, written ${formatSydneyCivilMinute(audit.createdAt)} Sydney)`,
+      `  - Inspect: \`${audit.inspectSql}\``,
+      `  - Remove after confirming: \`${audit.removeSql}\``,
+    );
+  }
+  lines.push("", "The rows this manifest would convert are listed below for reference only.", "");
+  return lines;
+}
+
 function buildReview(manifest: RangeBackfillManifest): string {
   const { counts } = manifest;
   const byState = Object.entries(counts.byState).map(([state, n]) => `${state} ${n}`).join(", ") || "none";
@@ -314,6 +400,7 @@ function buildReview(manifest: RangeBackfillManifest): string {
     "a due-only row keeps its due as the end. Unscheduled, legacy and invalid rows take the Project default and drop",
     "their old literal (shown below).",
     "",
+    ...unpairedSection(manifest),
     "| Street | Subtask | From | Old due | Old v | Shoot date | Deadline | Created (Sydney) | New range | New v | Reminder |",
     "|---|---|---|---|---|---|---|---|---|---|---|",
   ];
@@ -332,8 +419,9 @@ function buildReview(manifest: RangeBackfillManifest): string {
  * Pure: classifies every dry-run row with the shared serializer and proposes a range for each non-range row.
  * Returns the manifest (JSON the apply step reads) and review.md (what the owner approves).
  */
-export function prepareRangeBackfill(rows: DryrunRow[], options: { sydneyToday: string }): { manifest: RangeBackfillManifest; review: string } {
+export function prepareRangeBackfill(data: DryrunData, options: { sydneyToday: string }): { manifest: RangeBackfillManifest; review: string } {
   const sydneyToday = requireSydneyDate(options.sydneyToday, "sydneyToday");
+  const rows = data.subtasks;
   const manifestRows: RangeBackfillManifestRow[] = [];
   const byState: Partial<Record<FromState, number>> = {};
   let alreadyRange = 0;
@@ -377,6 +465,7 @@ export function prepareRangeBackfill(rows: DryrunRow[], options: { sydneyToday: 
     issue: 341,
     sydneyToday,
     counts: { scanned: rows.length, alreadyRange, converting: manifestRows.length, byState },
+    unpairedAudits: unpairedAudits(data),
     rows: manifestRows,
   };
   return { manifest, review: buildReview(manifest) };
@@ -400,8 +489,9 @@ export const RANGE_BACKFILL_SQL_HEADER = [
   "--      this file changes nothing: redo the dry run, review, approval and generation.",
   "--   Per row, the audit INSERT comes first, then the UPDATE. Both are guarded by the row's full reviewed",
   "--   snapshot (schedule, version, title, done, assignee, reminder stamp) and the Project inputs, so a row",
-  "--   edited after the dry run gets neither. The audit id is derived from the subtask id and old version, so",
-  "--   it is written at most once; the UPDATE also requires it. No notification, activity or outbox rows.",
+  "--   edited after the dry run gets neither. The audit id is derived from the subtask id, old version and",
+  "--   proposed schedule, so it is written at most once; the UPDATE also requires it. An audit left without its",
+  "--   UPDATE makes the next prepare refuse. No notification, activity or outbox rows.",
 ].join("\n");
 
 /**
@@ -421,6 +511,10 @@ export function buildRangeBackfillSql(
   const now = options.nowSql ?? NOW_MS_SQL;
   const sydneyToday = requireSydneyDate(options.sydneyToday, "sydneyToday");
   if (manifest?.kind !== "subtask_range_backfill" || !Array.isArray(manifest.rows)) throw new Error("Not a subtask range backfill manifest.");
+  if (!Array.isArray(manifest.unpairedAudits)) throw new Error("The manifest has no unpaired-audit check. Re-run the dry run and prepare.");
+  if (manifest.unpairedAudits.length > 0) {
+    throw new Error(`The manifest records ${manifest.unpairedAudits.length} unpaired backfill audit(s); prepare refused it. Resolve them (see review.md), then re-run the dry run and prepare.`);
+  }
   if (manifest.sydneyToday !== sydneyToday) {
     throw new Error(`The manifest was prepared on ${manifest.sydneyToday} (Sydney) but today is ${sydneyToday}. Re-run the dry run and prepare, and have the owner review again.`);
   }
@@ -476,8 +570,8 @@ export function buildRangeBackfillSql(
       `  AND EXISTS (SELECT 1 FROM projects WHERE id=${sqlLiteral(projectId)} AND shoot_date IS ${sqlLiteral(project.shootDate)} AND created_at IS ${sqlLiteral(project.createdAt)} AND deadline_at IS ${sqlLiteral(project.deadlineAt)} AND deadline_local_civil IS ${sqlLiteral(project.deadlineLocalCivil)})\n` +
       `  AND ${onPreparationDay}`;
 
-    const auditId = rangeBackfillAuditId(subtaskId, old.scheduleVersion);
-    const meta = `json_object('actor','system','source','subtask_range_backfill','issue',341,'runId',${sqlLiteral(runId)},'projectId',${sqlLiteral(projectId)},'fromState',${sqlLiteral(row.fromState)},'fromVersion',${sqlLiteral(old.scheduleVersion)},'fields',json('["schedule"]'),'scheduleState','range','scheduleVersion',${sqlLiteral(next.scheduleVersion)},'reminder',${sqlLiteral(reminder)})`;
+    const auditId = rangeBackfillAuditId(subtaskId, old.scheduleVersion, next);
+    const meta = `json_object('actor','system','source','subtask_range_backfill','issue',341,'runId',${sqlLiteral(runId)},'projectId',${sqlLiteral(projectId)},'fromState',${sqlLiteral(row.fromState)},'fromVersion',${sqlLiteral(old.scheduleVersion)},'fields',json('["schedule"]'),'scheduleState','range','scheduleVersion',${sqlLiteral(next.scheduleVersion)},'reminder',${sqlLiteral(reminder)},'proposal',json(${sqlLiteral(proposalJson(next))}))`;
     // Audit first, while the row still holds its reviewed snapshot. If the run stops before the UPDATE, a re-run
     // skips this (the id exists) and the UPDATE still applies (the row is unchanged).
     blocks.push(
@@ -517,10 +611,19 @@ function main(): void {
   const { mode, flags } = parseArgs(process.argv.slice(2));
   const sydneyToday = formatSydneyCivilMinute(Date.now()).slice(0, 10);
   if (mode === "prepare") {
-    const rows = extractDryrunRows(JSON.parse(readFileSync(flags.dryrun!, "utf8")));
-    const { manifest, review } = prepareRangeBackfill(rows, { sydneyToday });
+    const data = extractDryrunRows(JSON.parse(readFileSync(flags.dryrun!, "utf8")));
+    const { manifest, review } = prepareRangeBackfill(data, { sydneyToday });
     writeFileSync(flags.manifest!, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     writeFileSync(flags.review!, review, "utf8");
+    if (manifest.unpairedAudits.length > 0) {
+      console.error(`REFUSED: ${manifest.unpairedAudits.length} unpaired backfill audit(s). Nothing may be applied from this manifest.`);
+      for (const audit of manifest.unpairedAudits) {
+        console.error(`\nAudit ${audit.auditId} (Subtask ${audit.subtaskId}, old version ${audit.fromVersion})\n  inspect: ${audit.inspectSql}\n  remove after confirming: ${audit.removeSql}`);
+      }
+      console.error(`\nThe same list is in ${flags.review}. After removing them, re-run the dry run and prepare.`);
+      process.exitCode = 1;
+      return;
+    }
     console.log(`Scanned ${manifest.counts.scanned}; already range ${manifest.counts.alreadyRange}; converting ${manifest.counts.converting}. Wrote ${flags.manifest} and ${flags.review}.`);
     return;
   }

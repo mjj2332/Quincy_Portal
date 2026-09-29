@@ -11,7 +11,8 @@ converted row bumps its `schedule_version` and gets one system `project_subtask.
 
 Files, all under `portal/scripts/`:
 
-- `subtask-range-backfill-dryrun.sql`: SELECT only. Returns **every** Subtask with its Project's inputs.
+- `subtask-range-backfill-dryrun.sql`: SELECT only, two statements. Returns **every** Subtask with its
+  Project's inputs, then every existing backfill audit row (its Subtask, recorded old version and proposal).
 - `subtask-range-backfill.ts`: `prepare` classifies the rows and writes the manifest and review;
   `apply` turns an approved manifest into `apply.sql`. It does no database IO.
 - `subtask-range-backfill-verify.sql`: SELECT only. Counts Subtasks without a complete range.
@@ -35,13 +36,27 @@ the repository**, because they hold Subtask titles and street names.
    `npx wrangler d1 execute quincy-portal --remote --json --config workers/app/wrangler.jsonc --command "$(grep -v '^--' scripts/subtask-range-backfill-dryrun.sql)" > <scratch>/subtask-ranges-dryrun.json`
    Use `--command`, not `--file`: a remote `--file` run goes through D1's import endpoint and returns
    query counts rather than rows, and `prepare` refuses that output. The `grep` strips the header
-   comments so they are not sent as statements.
+   comments so they are not sent as statements. The output must hold two result sets (Subtasks, then
+   backfill audits); `prepare` refuses anything else.
 4. Prepare the manifest and the review:
    `npx --no-install tsx scripts/subtask-range-backfill.ts prepare --dryrun <scratch>/subtask-ranges-dryrun.json --manifest <scratch>/subtask-ranges-manifest.json --review <scratch>/subtask-ranges-review.md`
    Each row is classified by the shared `serializeChecklistSchedule`, not by SQL, which cannot see DST
    resolution mismatches, non-calendar dates or cleared versioned rows. `review.md` lists only the rows to
    convert: street, title, done/assigned, old state and literal, old version, the Project inputs, the new
    range, the new version, and what happens to the due reminder.
+
+   **Unpaired audits refuse the cycle.** An audit is unpaired when its Subtask still holds the audit's
+   recorded old `schedule_version`: an earlier apply wrote the audit but its UPDATE never ran (the run
+   stopped between them, and the row or its Project then changed, so the UPDATE's guard skipped it). If
+   any exist, `prepare` still writes the manifest and `review.md` but exits non-zero, lists each one
+   (in its output and at the top of `review.md`, under **REFUSED**) with two statements, and `apply`
+   refuses that manifest. For each unpaired audit:
+   - run its **inspect** query (read-only) with `--remote --json --command "<inspect>"`, and confirm the
+     Subtask was never converted (its `schedule_version` equals the audit's `fromVersion`);
+   - then run its **remove** statement with `--remote --command "<remove>"`. It deletes only that audit,
+     and only while it is still unpaired, so it is a no-op if the conversion has since happened.
+
+   `prepare` never deletes anything itself. After removing them, start again from step 3.
 5. **The owner reads `review.md` and approves it in chat.** Do not go further without that approval.
 6. Generate the apply file from that approved manifest, **on the same Sydney day as step 4**:
    `npx --no-install tsx scripts/subtask-range-backfill.ts apply --manifest <scratch>/subtask-ranges-manifest.json --out <scratch>/subtask-ranges-apply.sql`
@@ -64,8 +79,9 @@ the repository**, because they hold Subtask titles and street names.
    Every statement in the file also checks D1's clock against the preparation day (Sydney midnight to
    the next Sydney midnight, DST-aware). **Run on any other Sydney day, the file is a no-op**: it reports
    success and changes nothing. In that case redo the whole cycle: dry run (step 3) → prepare (4) →
-   owner review and approval (5) → generate (6) → apply. If an earlier run had stopped partway, the new
-   file skips the audits already written (same audit ids) and applies the pending conversions.
+   owner review and approval (5) → generate (6) → apply. If an earlier run had stopped partway, its
+   audits without an UPDATE are unpaired, and `prepare` refuses until they are inspected and removed
+   (step 4).
 9. Verify, and paste both outputs into the #341 PR:
    - `npx wrangler d1 execute quincy-portal --remote --json --config workers/app/wrangler.jsonc --command "$(grep -v '^--' scripts/subtask-range-backfill-verify.sql)"`
      must return `without_complete_range: 0`.
@@ -119,11 +135,17 @@ row the 08:00 scan claims after the dry run is skipped.
 - **Same day only.** Every statement also requires D1's clock to be inside the preparation Sydney day,
   `[start, end)` in epoch ms, computed by the generator with DST handled. See step 8.
 - **Audit first, once.** Per row the audit INSERT runs first, then the UPDATE. The audit id is a UUIDv5
-  of the subtask id and its old `schedule_version`, so every file generated for that conversion carries
-  the same id, and `NOT EXISTS` on it writes the audit at most once, even across two files from one
-  manifest. The UPDATE additionally requires that audit to exist, so no row converts unaudited. A run
-  that stopped between the two is completed by a re-run: the audit is skipped (it exists) and the
-  UPDATE applies (the row is still old).
+  of the subtask id, its old `schedule_version` and a SHA-256 digest of the proposed schedule, so every
+  file generated for that conversion carries the same id, and a different proposal for the same row can
+  never reuse an older audit's id. The audit's `meta.proposal` records the proposed schedule. `NOT EXISTS` on
+  the id writes the audit at most once, even across two files from one manifest. The UPDATE additionally
+  requires that audit to exist, so no row converts unaudited. A run that stopped between the two is
+  completed by re-running the same file that day: the audit is skipped (it exists) and the UPDATE applies
+  (the row is still old).
+- **Unpaired audits are detected, not repaired.** `wrangler d1 execute --file` is not atomic across
+  statements, so an audit can survive without its UPDATE (the run stopped, then the row or Project
+  changed). The next dry run reads every backfill audit, and `prepare` and `apply` refuse while any is
+  unpaired (step 4). The operator inspects and removes it by hand.
 - A second run matches nothing: every converted row has moved to its new version.
 - Streets never appear in `apply.sql`. Titles appear only hex-encoded (they are part of the guard).
   Other stored values outside a small safe alphabet are written as hex literals.

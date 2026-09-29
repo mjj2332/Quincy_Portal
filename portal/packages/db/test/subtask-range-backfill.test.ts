@@ -128,11 +128,23 @@ function freshDb(): SqliteDatabase {
   return db;
 }
 
-function runDryrun(db: SqliteDatabase): DryrunRow[] {
-  const rows = db.prepare(DRYRUN_SQL).all() as DryrunRow[];
+/** The dry run's statements, as `grep -v '^--'` leaves them for `--command`. */
+function dryrunStatements(): string[] {
   const stripped = DRYRUN_SQL.split("\n").filter((line) => !line.startsWith("--")).join("\n");
-  expect(db.prepare(stripped).all()).toEqual(rows);
-  return rows;
+  return stripped.split(/;\s*\n/).map((part) => part.trim().replace(/;$/, "")).filter(Boolean);
+}
+
+/** What `wrangler d1 execute --json --command` prints: one result set per statement. */
+function dryrunOutput(db: SqliteDatabase): Array<{ results: unknown[]; success: boolean }> {
+  return dryrunStatements().map((statement) => ({ results: db.prepare(statement).all(), success: true }));
+}
+
+function runDryrun(db: SqliteDatabase): DryrunRow[] {
+  return dryrunOutput(db)[0]!.results as DryrunRow[];
+}
+
+function dryrun(db: SqliteDatabase) {
+  return extractDryrunRows(dryrunOutput(db));
 }
 
 function verifyCount(db: SqliteDatabase): number {
@@ -146,7 +158,7 @@ function sequentialIds(): () => string {
 }
 
 function generate(db: SqliteDatabase, nowSql = CLOCK): { manifest: RangeBackfillManifest; sql: string; review: string } {
-  const prepared = prepareRangeBackfill(extractDryrunRows([{ results: runDryrun(db) }]), { sydneyToday: TODAY });
+  const prepared = prepareRangeBackfill(dryrun(db), { sydneyToday: TODAY });
   // The manifest is written to disk and read back by the apply step.
   const manifest = JSON.parse(JSON.stringify(prepared.manifest)) as RangeBackfillManifest;
   const { sql } = buildRangeBackfillSql(manifest, { sydneyToday: TODAY, newId: sequentialIds(), nowSql });
@@ -267,7 +279,9 @@ describe("subtask range backfill (#341)", () => {
     }
     expect(otherTableCounts(db)).toEqual({ outbox: 0, ledger: 0, activity: 0, notifications: 0 });
     expect(verifyCount(db)).toBe(0);
-    expect(prepareRangeBackfill(runDryrun(db), { sydneyToday: TODAY }).manifest.counts.converting).toBe(0);
+    const reprepared = prepareRangeBackfill(dryrun(db), { sydneyToday: TODAY }).manifest;
+    expect(reprepared.counts.converting).toBe(0);
+    expect(reprepared.unpairedAudits).toEqual([]); // every audit is paired with its conversion
     db.close();
   });
 
@@ -401,7 +415,7 @@ describe("subtask range backfill (#341)", () => {
     for (const id of skipped) expect(audited).not.toContain(id);
     expect(audited).toHaveLength(CONVERTING.length - skipped.length);
     expect(verifyCount(db)).toBe(skipped.length);
-    expect(prepareRangeBackfill(runDryrun(db), { sydneyToday: TODAY }).manifest.rows.map((r) => r.subtaskId).sort()).toEqual([...skipped].sort());
+    expect(prepareRangeBackfill(dryrun(db), { sydneyToday: TODAY }).manifest.rows.map((r) => r.subtaskId).sort()).toEqual([...skipped].sort());
     db.close();
   });
 
@@ -420,6 +434,59 @@ describe("subtask range backfill (#341)", () => {
     db.close();
   });
 
+  it("refuses to prepare while a backfill audit has no conversion (interrupted, then the Project changed)", () => {
+    const db = freshDb();
+    const { sql } = generate(db);
+    // The run stopped after the audit INSERTs, before any UPDATE.
+    for (const statement of statementsOf(sql).filter((s) => s.startsWith("INSERT"))) db.exec(statement);
+    // Then Alpha's Deadline moved, so re-running the old file skips Alpha's UPDATEs but keeps their audits.
+    db.prepare("UPDATE projects SET deadline_at = ?, deadline_local_civil = '2026-10-30T18:00' WHERE id = ?").run(Date.UTC(2026, 9, 30, 7), PROJECT.alpha);
+    db.exec(sql);
+    const alpha = [SUBTASK.unscheduledV0, SUBTASK.dueDateV0, SUBTASK.dueTimedV0, SUBTASK.legacyLiteral, SUBTASK.invalidShape].sort();
+    expect(verifyCount(db)).toBe(alpha.length);
+
+    const prepared = prepareRangeBackfill(dryrun(db), { sydneyToday: TODAY });
+    const unpaired = prepared.manifest.unpairedAudits;
+    expect(unpaired.map((audit) => audit.subtaskId).sort()).toEqual(alpha);
+    for (const audit of unpaired) {
+      expect(prepared.review).toContain(audit.auditId);
+      expect(prepared.review).toContain(audit.inspectSql);
+      expect(prepared.review).toContain(audit.removeSql);
+      expect(audit.removeSql.startsWith("DELETE FROM audit_log")).toBe(true);
+      expect(audit.inspectSql.startsWith("SELECT")).toBe(true);
+    }
+    expect(prepared.review).toMatch(/REFUSED/);
+    // prepare deletes nothing itself.
+    expect(backfillAudits(db)).toHaveLength(CONVERTING.length);
+    // The generator refuses the manifest, even after it is written and read back.
+    expect(() => buildRangeBackfillSql(JSON.parse(JSON.stringify(prepared.manifest)), { sydneyToday: TODAY, newId: sequentialIds(), nowSql: CLOCK })).toThrow(/unpaired/i);
+
+    // The inspect query is read-only and shows the row still at its old version.
+    for (const audit of unpaired) expect(db.prepare(audit.inspectSql).all()).toHaveLength(1);
+    // After the operator confirms and removes them, a new cycle converts with the new Deadline and audits once.
+    for (const audit of unpaired) db.exec(audit.removeSql);
+    const again = generate(db);
+    expect(again.manifest.unpairedAudits).toEqual([]);
+    db.exec(again.sql);
+    expect(verifyCount(db)).toBe(0);
+    expect(backfillAudits(db)).toHaveLength(CONVERTING.length);
+    const audit = backfillAudits(db).find((row) => row.target_id === SUBTASK.unscheduledV0)!;
+    expect(JSON.parse(audit.meta_json as string).proposal).toEqual(storage(subtasks(db).get(SUBTASK.unscheduledV0)!));
+    expect(subtasks(db).get(SUBTASK.unscheduledV0)!.due_date).toBe("2026-10-30");
+    db.close();
+  });
+
+  it("a remove statement deletes nothing once the audit's conversion has happened", () => {
+    const db = freshDb();
+    const { sql } = generate(db);
+    for (const statement of statementsOf(sql).filter((s) => s.startsWith("INSERT"))) db.exec(statement);
+    const [audit] = prepareRangeBackfill(dryrun(db), { sydneyToday: TODAY }).manifest.unpairedAudits;
+    db.exec(sql); // the operator re-ran the same file instead: the conversion completed
+    db.exec(audit!.removeSql);
+    expect(backfillAudits(db)).toHaveLength(CONVERTING.length);
+    db.close();
+  });
+
   it("skips a row edited after the dry run (schedule or Project input) and writes no audit for it", () => {
     const db = freshDb();
     const { sql } = generate(db);
@@ -434,7 +501,7 @@ describe("subtask range backfill (#341)", () => {
     expect(audited).not.toContain(SUBTASK.futureLegacy);
     expect(audited).toHaveLength(CONVERTING.length - 2);
     expect(verifyCount(db)).toBe(2);
-    const next = prepareRangeBackfill(runDryrun(db), { sydneyToday: TODAY }).manifest;
+    const next = prepareRangeBackfill(dryrun(db), { sydneyToday: TODAY }).manifest;
     expect(next.rows.map((row) => row.subtaskId).sort()).toEqual([SUBTASK.dueDateV0, SUBTASK.futureLegacy].sort());
     db.close();
   });
@@ -464,12 +531,17 @@ describe("subtask range backfill generator (pure)", () => {
 
   it("accepts the wrangler --json wrapper or bare rows, and refuses rows without subtask_id", () => {
     const db = freshDb();
+    const output = dryrunOutput(db);
     const rows = runDryrun(db);
     db.close();
-    expect(extractDryrunRows([{ results: rows, success: true }])).toEqual(rows);
-    expect(extractDryrunRows(rows)).toEqual(rows);
-    expect(extractDryrunRows([])).toEqual([]);
-    expect(() => extractDryrunRows([{ results: [{ changes: 3 }] }])).toThrow(/subtask_id/);
+    expect(output).toHaveLength(2);
+    expect(extractDryrunRows(output)).toEqual({ subtasks: rows, audits: [] });
+    // The audit read is required: a dry run without it (or bare rows) is refused, not read as "no audits".
+    expect(() => extractDryrunRows([output[0]])).toThrow(/two result sets/);
+    expect(() => extractDryrunRows(rows)).toThrow(/two result sets/);
+    expect(() => extractDryrunRows([])).toThrow(/two result sets/);
+    expect(() => extractDryrunRows([{ results: [{ changes: 3 }] }, { results: [] }])).toThrow(/subtask_id/);
+    expect(() => extractDryrunRows([{ results: rows }, { results: [{ changes: 3 }] }])).toThrow(/audit_id/);
     expect(() => extractDryrunRows({})).toThrow(/array/);
   });
 
@@ -477,7 +549,7 @@ describe("subtask range backfill generator (pure)", () => {
     const db = freshDb();
     const rows = runDryrun(db).map((row) => (row.subtask_id === SUBTASK.unscheduledV0 ? { ...row, subtask_id: "not-a-uuid" } : row));
     db.close();
-    expect(() => prepareRangeBackfill(rows, { sydneyToday: TODAY })).toThrow(/subtask_id/);
+    expect(() => prepareRangeBackfill({ subtasks: rows, audits: [] }, { sydneyToday: TODAY })).toThrow(/subtask_id/);
   });
 
   it("refuses a manifest whose proposed values the shared function does not reproduce", () => {
@@ -492,7 +564,7 @@ describe("subtask range backfill generator (pure)", () => {
   });
 
   it("an empty manifest gives a header and no statements", () => {
-    const { manifest } = prepareRangeBackfill([], { sydneyToday: TODAY });
+    const { manifest } = prepareRangeBackfill({ subtasks: [], audits: [] }, { sydneyToday: TODAY });
     const { sql } = buildRangeBackfillSql(manifest, { sydneyToday: TODAY, newId: sequentialIds() });
     expect(sql.startsWith("-- Subtask range backfill (#341)")).toBe(true);
     expect(statementsOf(sql)).toEqual([]);
@@ -515,11 +587,21 @@ describe("subtask range backfill generator (pure)", () => {
     expect(() => sydneyDayWindowMs("2026-02-30")).toThrow();
   });
 
-  it("derives a stable UUIDv5 audit id from the subtask id and old version", () => {
-    const id = rangeBackfillAuditId(SUBTASK.unscheduledV0, 0);
+  it("derives a stable UUIDv5 audit id from the subtask id, old version and proposed schedule", () => {
+    const proposal = manifestFor().rows.find((row) => row.subtaskId === SUBTASK.unscheduledV0)!.proposed.storage;
+    const id = rangeBackfillAuditId(SUBTASK.unscheduledV0, 0, proposal);
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 0)).toBe(id);
-    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 1)).not.toBe(id);
-    expect(rangeBackfillAuditId(SUBTASK.unscheduledV2, 0)).not.toBe(id);
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 0, { ...proposal })).toBe(id);
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 1, proposal)).not.toBe(id);
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV2, 0, proposal)).not.toBe(id);
+    // A different proposal can never reuse an older audit id.
+    expect(rangeBackfillAuditId(SUBTASK.unscheduledV0, 0, { ...proposal, dueDate: "2026-10-30" })).not.toBe(id);
+  });
+
+  it("refuses a manifest without an unpaired-audit check, or with unpaired audits recorded", () => {
+    const manifest = manifestFor();
+    const missing = { ...manifest } as Partial<RangeBackfillManifest>;
+    delete missing.unpairedAudits;
+    expect(() => buildRangeBackfillSql(missing as RangeBackfillManifest, { sydneyToday: TODAY, newId: sequentialIds() })).toThrow(/unpaired/i);
   });
 });
