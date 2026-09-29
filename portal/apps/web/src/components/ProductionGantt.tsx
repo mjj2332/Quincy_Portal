@@ -147,6 +147,7 @@ import {
 } from "../lib/production-gantt-adapter";
 import {
   DEFAULT_GANTT_FACET_FILTERS,
+  ganttShowDeliveredRecovery,
   ganttFacetFor,
   ganttFacetKey,
   ganttLegendEntries,
@@ -664,11 +665,13 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // other filter change arms it, so the bar's own edits never scroll the page.
   const filtersTriggerRef = useRef<HTMLButtonElement | null>(null);
   const scrollToFiltersPendingRef = useRef(false);
-  const clearFiltersFromEmptyState = useCallback(() => {
+  // #270: the empty state's Show delivered projects takes the same path — its button unmounts too.
+  const writeFiltersFromEmptyState = useCallback((next: ProductionGanttFacetFilters) => {
     scrollToFiltersPendingRef.current = true;
-    onFiltersChange(DEFAULT_GANTT_FACET_FILTERS);
+    onFiltersChange(next);
     filtersTriggerRef.current?.focus({ preventScroll: true });
   }, [onFiltersChange]);
+  const clearFiltersFromEmptyState = useCallback(() => writeFiltersFromEmptyState(DEFAULT_GANTT_FACET_FILTERS), [writeFiltersFromEmptyState]);
   const query = useProductionGanttProjects(identity, filters);
   const projects = query.data?.projects ?? [];
 
@@ -1349,6 +1352,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     // chart is built from.
     const showEmpty = projects.length === 0 && !hasNextPage;
     const facetFiltersDefault = editorIds.length === 0 && ganttFacetFor(facetFilters) === undefined;
+    const showDeliveredRecovery = ganttShowDeliveredRecovery(facetFilters);
     body = (
       <div className="grid gap-[var(--space-3)]" data-testid="production-gantt">
         {tooManyToDraw && (
@@ -1362,8 +1366,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
           ) : (
             <EmptyState role="status" data-testid="production-gantt-empty" title="No projects match these filters.">
               Change or clear the filters above to see more projects.
-              <div>
-                <button type="button" className={buttonClasses("text", { className: "mt-[var(--space-4)]" })} onClick={clearFiltersFromEmptyState}>
+              <div className="flex flex-wrap justify-center gap-x-[var(--space-4)] mt-[var(--space-4)]">
+                {/* #270: Stage = Delivered with delivered projects hidden draws nothing for a known
+                    reason (a cold link is never rewritten on load), so offer that specific fix. */}
+                {showDeliveredRecovery && (
+                  <button type="button" className={buttonClasses("text")} onClick={() => writeFiltersFromEmptyState(showDeliveredRecovery)}>
+                    Show delivered projects
+                  </button>
+                )}
+                <button type="button" className={buttonClasses("text")} onClick={clearFiltersFromEmptyState}>
                   Clear filters
                 </button>
               </div>

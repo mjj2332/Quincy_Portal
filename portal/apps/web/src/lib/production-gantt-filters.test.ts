@@ -7,6 +7,8 @@ import {
   ganttFacetFor,
   ganttFacetKey,
   ganttFacetForWrite,
+  ganttPairingNotice,
+  ganttShowDeliveredRecovery,
   ganttFacetToQuery,
   ganttFiltersFromRoute,
   ganttLegendEntries,
@@ -288,5 +290,37 @@ describe("the Delivered pair: Stage = Delivered and Show -> Delivered (#255)", (
       const target = facet(["raw_review"], false, true);
       expect(queryToGanttFacet(ganttQueryForFacet(root([rule("a", "stage", ["raw_review", "delivered"]), rule("b", "show", ["completed"])]), target))).toEqual(target);
     });
+  });
+});
+
+describe("saying why the Delivered pair fired (#269) and offering its recovery (#270)", () => {
+  const facet = (stageKeys: ProductionGanttFacetFilters["stageKeys"], delivered: boolean, completed = false): ProductionGanttFacetFilters => ({ editorIds: [], stageKeys, delivered, completed });
+
+  it("names the Show change when picking Stage = Delivered turned delivered projects on", () => {
+    const edit = facet(["editing", "delivered"], false);
+    expect(ganttPairingNotice(edit, ganttFacetForWrite(facet(["editing"], false), edit))).toBe("Also showing delivered projects.");
+  });
+
+  it("names the Stage change when hiding delivered projects dropped Delivered from Stage", () => {
+    const edit = facet(["editing", "delivered"], false);
+    expect(ganttPairingNotice(edit, ganttFacetForWrite(facet(["editing", "delivered"], true), edit))).toBe("Removed Delivered from Stage.");
+  });
+
+  it("says nothing when the write was the user's edit as made", () => {
+    for (const [previous, edit] of [
+      [facet([], false), facet(["editing"], false)],
+      [facet(["delivered"], true), facet(["delivered", "editing"], true)],
+      [facet(["editing"], true), facet(["editing"], false)],
+    ] as const) {
+      expect(ganttPairingNotice(edit, ganttFacetForWrite(previous, edit))).toBeNull();
+    }
+  });
+
+  it("offers Show delivered projects only for Stage = Delivered with delivered projects hidden, keeping the other filters", () => {
+    expect(ganttShowDeliveredRecovery(facet(["delivered"], false, true))).toEqual(facet(["delivered"], true, true));
+    expect(ganttShowDeliveredRecovery(facet(["editing", "delivered"], false))).toEqual(facet(["editing", "delivered"], true));
+    expect(ganttShowDeliveredRecovery(facet(["delivered"], true))).toBeNull();
+    expect(ganttShowDeliveredRecovery(facet(["editing"], false))).toBeNull();
+    expect(ganttShowDeliveredRecovery(facet([], false))).toBeNull();
   });
 });
