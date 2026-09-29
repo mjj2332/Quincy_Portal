@@ -4167,3 +4167,25 @@ Deleting FullCalendar looked like `rm` plus test legs. Three things made it a tw
   Modal move dialog to the ReUI alert-dialog needed no `finalFocus`: 6c pins focus arriving in the
   confirmation and 6e pins Cancel returning it to Set deadline.
 
+
+## A test written against an adapter can pin an invariant only that adapter could break (2026-09-29)
+
+`submitDeadlineProposal` was the FullCalendar handlers' entry point into the scheduling controller,
+and it outlived FullCalendar (#224) with no production caller. Two tests in
+`use-scheduling-commands.dom.test.tsx` still drove it. Moving them to `submitProposal`, the entry
+point `ProductionEventCalendar` uses, showed that neither invariant could be written the same way:
+
+- **The stale-snapshot leak** needed an entry point that ran a proposal *without*
+  `acceptForInteraction`. Only the adapter did that. Every surviving entry point accepts first, and
+  `cancelMoveDialog` returns early when no dialog is open. So the generic-invalid branch's
+  `snapshotRef` clear is now defensive. The test now pins the case the Calendar can reach: B's
+  cancelled announcement names B and never A.
+- **"Map from `snapshot.event`, not the positional `event`"** needed the two to disagree. No
+  surviving caller can make that happen: `beginCalendarInteraction` clones the event it is handed,
+  and each caller passes that same event alongside the snapshot. The test now drives
+  `mapAndRunDropProposal` through its one remaining caller, a drag's fold-dialog retry
+  (`submitMoveDialog`), and pins the snapshot's version and offsets in the PUT.
+- **Rule:** when you delete an adapter, re-derive each of its tests from a production entry point.
+  Do not keep the old assertions as they were: an assertion the new path can never violate passes
+  whatever the code does. Mutation-check the replacement, and write down which invariant became
+  unreachable.
