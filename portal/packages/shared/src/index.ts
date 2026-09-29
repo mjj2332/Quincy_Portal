@@ -31,6 +31,7 @@ export {
 } from "./sydney-civil-time";
 export type { SydneyCivilDisambiguation, SydneyCivilParts, SydneyCivilResolution } from "./sydney-civil-time";
 export * from "./checklist-schedule";
+export * from "./default-subtask-range";
 export * from "./checklist-schedule-config";
 export * from "./project-activity";
 export * from "./project-activity-feed";

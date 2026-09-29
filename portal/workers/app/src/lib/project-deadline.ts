@@ -24,6 +24,11 @@ export class ProjectDeadlineError extends Error {
   }
 }
 
+/** A Project's Deadline as Sydney local civil, or null while no Deadline is set (deadline_at null). */
+export function effectiveDeadlineLocalCivil(project: { deadlineAt: number | null; deadlineLocalCivil: string | null }): string | null {
+  return project.deadlineAt === null ? null : project.deadlineLocalCivil;
+}
+
 type ProjectDeadlineProjectRow = {
   id: string;
   street: string;
