@@ -175,15 +175,14 @@ export function ProductionEventCalendarFoldChoice({ open, eyebrow, endpoint, cho
 export type ProductionEventCalendarScheduleEditorSheetProps = {
   open: boolean;
   event: ChecklistScheduleEditorEvent;
-  rangesEnabled: boolean;
   onSubmit: (schedule: InitialChecklistScheduleInput) => void;
   onCancel: () => void;
   initialSchedule?: InitialChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
 };
 
-export function ProductionEventCalendarScheduleEditorSheet({ open, event, rangesEnabled, onSubmit, onCancel, initialSchedule, validationError }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
-  const state = useChecklistScheduleDraft({ event, rangesEnabled, onSubmit, initialSchedule, validationError });
+export function ProductionEventCalendarScheduleEditorSheet({ open, event, onSubmit, onCancel, initialSchedule, validationError }: ProductionEventCalendarScheduleEditorSheetProps): JSX.Element | null {
+  const state = useChecklistScheduleDraft({ event, onSubmit, initialSchedule, validationError });
   if (event.schedule.state === "invalid") return null;
   return (
     <Sheet open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
@@ -206,7 +205,7 @@ export function ProductionEventCalendarScheduleEditorSheet({ open, event, ranges
           <SheetDescription className="sr-only">{event.project.street}</SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-auto px-[var(--space-6)] pb-[var(--space-6)]">
-          <ProductionCalendarScheduleEditorFields rangesEnabled={rangesEnabled} state={state} />
+          <ProductionCalendarScheduleEditorFields state={state} />
         </div>
         <SheetFooter className="flex-row justify-end gap-[var(--space-3)] px-[var(--space-6)] py-[var(--space-5)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border">
           <Button type="button" variant="outline" data-testid="event-calendar-schedule-cancel" onClick={onCancel}>Cancel</Button>
@@ -240,11 +239,10 @@ export type ProductionEventCalendarDeadlineConfirm = {
 
 export type ProductionEventCalendarDialogsProps = {
   commands: ProductionEventCalendarDialogCommands;
-  rangesEnabled: boolean;
   deadlineConfirm: ProductionEventCalendarDeadlineConfirm | null;
 };
 
-export function ProductionEventCalendarDialogs({ commands, rangesEnabled, deadlineConfirm }: ProductionEventCalendarDialogsProps): JSX.Element {
+export function ProductionEventCalendarDialogs({ commands, deadlineConfirm }: ProductionEventCalendarDialogsProps): JSX.Element {
   const { moveDialog, scheduleEditor, checklistFold } = commands;
 
   const moveRetained = useRef<typeof moveDialog>(null);
@@ -295,7 +293,6 @@ export function ProductionEventCalendarDialogs({ commands, rangesEnabled, deadli
           key={`schedule-editor:${editorToken}:${editor.source.id}:${JSON.stringify(editor.initialSchedule ?? null)}`}
           open={scheduleEditor !== null}
           event={editor.source}
-          rangesEnabled={rangesEnabled && editor.source.permissions.canScheduleRange}
           initialSchedule={editor.initialSchedule}
           validationError={editor.validationError}
           onSubmit={commands.submitScheduleEditor}

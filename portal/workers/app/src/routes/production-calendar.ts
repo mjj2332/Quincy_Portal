@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import {
-  CHECKLIST_SCHEDULE_RANGES_ENABLED,
   EXTERNAL_API_RESPONSE_SCHEMAS,
   PRODUCTION_CALENDAR_MAX_EDITOR_IDS,
   PRODUCTION_CALENDAR_MAX_ENCODED_QUERY_BYTES,
@@ -701,7 +700,7 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
   const done = Boolean(row.done);
   const range = schedule.state === "range";
   const canOpen = collaboration;
-  const canRange = canOpen && CHECKLIST_SCHEDULE_RANGES_ENABLED;
+  const canRange = canOpen;
   return {
     id: calendarChecklistEntityId(row.subtask_id),
     kind: "checklist",
@@ -736,7 +735,7 @@ function unscheduledChecklist(row: CalendarSqlRow, role: CalendarRole): Calendar
   const project = projectContext(row, role);
   const schedule = serializeChecklistSchedule(scheduleStorage(row));
   const collaboration = row.can_collaborate === 1;
-  const canRange = collaboration && CHECKLIST_SCHEDULE_RANGES_ENABLED;
+  const canRange = collaboration;
   const base = { id: calendarChecklistEntityId(row.subtask_id), kind: "checklist" as const, title: row.subtask_title, project, assignee: person(row) };
   if (schedule.state === "unscheduled") return { ...base, reason: "unscheduled", schedule: schedule as UnscheduledChecklistScheduleDto, permissions: { canDrag: canRange, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };
   if (schedule.state === "legacy_unresolved") return { ...base, reason: "schedule_needs_attention", attentionReason: "legacy_unresolved", schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: collaboration, canScheduleRange: canRange } };

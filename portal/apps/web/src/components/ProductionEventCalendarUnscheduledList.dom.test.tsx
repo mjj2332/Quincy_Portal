@@ -41,7 +41,7 @@ function listProps(overrides: Partial<Props> = {}): Props {
   return {
     projectEntries, checklistEntries,
     facets: overrides.facets ?? { project: { matched: projectEntries.length, returned: projectEntries.length, truncated: false }, checklist: { matched: checklistEntries.length, returned: checklistEntries.length, truncated: false } },
-    subview: "month", rangesEnabled: true, onScheduleProject: vi.fn(), onScheduleChecklist: vi.fn(), beginDrag: vi.fn(),
+    subview: "month", onScheduleProject: vi.fn(), onScheduleChecklist: vi.fn(), beginDrag: vi.fn(),
     ...overrides,
   };
 }
@@ -102,7 +102,7 @@ describe("ProductionEventCalendarUnscheduledList", () => {
     expect(beginDrag).not.toHaveBeenCalled();
   });
 
-  it("enforces checklist attention branches, Agenda actions, and inert mode", async () => {
+  it("enforces checklist attention branches, Agenda actions, and server permission denial", async () => {
     const onScheduleChecklist = vi.fn();
     await render(listProps({ checklistEntries: [checklistEntry(), legacyEntry(), invalidEntry()], onScheduleChecklist }));
     expect(host.querySelector<HTMLElement>('[data-unscheduled-id="checklist:one"]')?.dataset.dragSource).toBe("true");
@@ -121,7 +121,7 @@ describe("ProductionEventCalendarUnscheduledList", () => {
     expect(host.textContent).toContain("Schedule Deadline");
     expect(host.textContent).toContain("Repair schedule");
 
-    await render(listProps({ rangesEnabled: false, checklistEntries: [checklistEntry()] }));
+    await render(listProps({ checklistEntries: [checklistEntry("checklist:one", true, false)] }));
     const inert = host.querySelector<HTMLElement>('[data-unscheduled-id="checklist:one"]')!;
     expect(inert.dataset.dragSource).toBeUndefined();
     expect(inert.querySelector('[data-testid="event-calendar-unscheduled-action"]')?.textContent).toBe("Schedule");

@@ -355,10 +355,10 @@ describe("ProductionEventCalendar unscheduled external drops", () => {
     expect(endDate().value).toBe("2026-08-12");
   });
 
-  it("keeps checklist external drop inert when the server withholds range scheduling, while the editor still saves due-only", async () => {
-    const inertChecklist = { ...unscheduledChecklist, permissions: { ...unscheduledChecklist.permissions, canScheduleRange: false } };
-    const fetch = await mount("week", [inertChecklist]);
-    expect(row(inertChecklist.id)?.getAttribute("data-drag-source")).toBeNull();
+  it("keeps checklist external drop disabled when the server denies range scheduling permission, while the editor still saves due-only", async () => {
+    const deniedChecklist = { ...unscheduledChecklist, permissions: { ...unscheduledChecklist.permissions, canScheduleRange: false } };
+    const fetch = await mount("week", [deniedChecklist]);
+    expect(row(deniedChecklist.id)?.getAttribute("data-drag-source")).toBeNull();
     await act(async () => { h.host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-unscheduled-action"]')!.click(); await Promise.resolve(); });
     await clickTestId("event-calendar-schedule-submit");
     expect(fetch.patches().map((call) => call.body)).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-12" } } } }]);

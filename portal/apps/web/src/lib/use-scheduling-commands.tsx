@@ -7,7 +7,6 @@ import {
   type ProjectDeadlineReminderConsequence,
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
-  CHECKLIST_SCHEDULE_RANGES_ENABLED,
   type CalendarEventTiming,
   type CalendarManipulationTarget,
   type CalendarUnscheduledEntryDto,
@@ -286,7 +285,6 @@ export type SchedulingController<TBaseline> = {
   accessLost: boolean;
   checklistNeedsAttention: Set<string>;
   deadlineMovementDisabled: boolean;
-  checklistRangeSchedulingDisabled: boolean;
   moveDialog: MoveDialogState | null;
   scheduleEditor: ScheduleEditorState | null;
   checklistFold: ChecklistFoldState | null;
@@ -441,7 +439,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const [scheduleEditor, setScheduleEditor] = useState<ScheduleEditorState | null>(null);
   const [checklistFold, setChecklistFold] = useState<ChecklistFoldState | null>(null);
   const [deadlineMovementDisabled, setDeadlineMovementDisabled] = useState(false);
-  const [checklistRangeSchedulingDisabled, setChecklistRangeSchedulingDisabled] = useState(false);
   const [checklistNeedsAttention, setChecklistNeedsAttention] = useState<Set<string>>(() => new Set());
   const [announcement, setAnnouncement] = useState("");
   const [calendarAccessLost, setCalendarAccessLost] = useState(false);
@@ -469,12 +466,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   // The confirm this hook currently has open, so unmount can withdraw exactly that one
   // request rather than leaving it stranded over whatever view replaced this component.
   const openConfirmControllerRef = useRef<AbortController | null>(null);
-
-  // §216 correction #0.1: no data source yet for the out-of-bounds warning here (bounds arrive
-  // with #218/#221). §216 §0's rangesEnabled circularity note: this is computed from the hook's
-  // OWN state so every internal validation stays zero-render-lag — the parent independently
-  // derives the same boolean from `checklistRangeSchedulingDisabled` (below) for its own render.
-  const rangesEnabled = CHECKLIST_SCHEDULE_RANGES_ENABLED && !checklistRangeSchedulingDisabled;
 
   const setAcceptGate = useCallback((blocked: boolean) => {
     acceptGateRef.current = blocked;
@@ -512,7 +503,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     if (settleRef.current.pending) setSettle({ type: "refetch-succeeded" });
     setChecklistNeedsAttention((current) => port.healNeedsAttention(current, copy));
     setDeadlineMovementDisabled(false);
-    setChecklistRangeSchedulingDisabled(false);
   }, [setSettle]);
 
   useEffect(() => { onAcceptGateChange?.(calendarInteractionBlocked); }, [calendarInteractionBlocked, onAcceptGateChange]);
@@ -1126,7 +1116,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       proposal.operation.drop?.revert();
       proposal.operation.resize?.revert();
       setOverlay(null);
-      if (action?.rangeDisabled) setChecklistRangeSchedulingDisabled(true);
       if (action?.needsAttention) setChecklistNeedsAttention((current) => new Set(current).add(proposal.source.id));
 
       if (action?.askFold) {
@@ -1207,10 +1196,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       return;
     }
     if (planned.value.kind !== "checklist") return;
-    if (!rangesEnabled && planned.value.schedule.state === "range") {
-      finishChecklistInteraction(operation, event, { kind: "range-disabled" });
-      return;
-    }
     const mutationProposal: ChecklistProposal = {
       snapshot,
       source: event,
@@ -1223,7 +1208,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       ...(planned.value.warnings.length ? { warnings: planned.value.warnings } : {}),
     };
     void runChecklistMutation(mutationProposal);
-  }, [announceChecklistLifecycle, finishChecklistInteraction, rangesEnabled, runChecklistMutation]);
+  }, [announceChecklistLifecycle, finishChecklistInteraction, runChecklistMutation]);
 
   const mapChecklistCommand = useCallback((snapshot: ChecklistSnapshot, event: ChecklistSource, target: CalendarManipulationTarget, operation: ChecklistOperationInfo, disambiguation?: ChecklistDisambiguation, edge?: "start" | "end") => {
     const proposal: SchedulingProposal = edge === "start"
@@ -1299,10 +1284,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const handleScheduleEditorSubmit = useCallback((schedule: InitialChecklistScheduleInput) => {
     const state = scheduleEditor;
     if (!state || accessLostRef.current) return;
-    if ((!rangesEnabled || !state.source.permissions.canScheduleRange) && schedule.state === "range") {
-      setScheduleEditor({ ...state, initialSchedule: schedule, validationError: { code: "subtask_schedule_ranges_disabled", message: "Range scheduling is unavailable in this app version." } });
-      return;
-    }
     const normalized = normalizeChecklistSchedule(schedule, state.source.schedule.version);
     if (!normalized.ok) {
       setScheduleEditor({ ...state, initialSchedule: schedule, validationError: normalized.error });
@@ -1318,7 +1299,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     };
     setScheduleEditor(null);
     void runChecklistMutation(proposal);
-  }, [rangesEnabled, runChecklistMutation, scheduleEditor]);
+  }, [runChecklistMutation, scheduleEditor]);
 
   const handleScheduleEditorCancel = useCallback(() => {
     const state = scheduleEditor;
@@ -1450,7 +1431,6 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     accessLost: calendarAccessLost,
     checklistNeedsAttention,
     deadlineMovementDisabled,
-    checklistRangeSchedulingDisabled,
     moveDialog,
     scheduleEditor,
     checklistFold,

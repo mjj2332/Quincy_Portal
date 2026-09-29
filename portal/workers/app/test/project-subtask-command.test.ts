@@ -77,7 +77,6 @@ describe("saveProjectSubtask finalizer boundary", () => {
   it("does nothing for every non-success result arm", async () => {
     const results: ProjectSubtaskCommandResult[] = [
       { outcome: "invalid_request", status: 400, code: "bad", message: "bad" },
-      { outcome: "invalid_request", status: 503, code: "subtask_schedule_ranges_disabled", message: "disabled" },
       { outcome: "forbidden" },
       { outcome: "not_found", target: "project" },
       { outcome: "schedule_conflict", current: {} as never },

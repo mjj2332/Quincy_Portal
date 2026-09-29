@@ -156,17 +156,17 @@ describe("ProductionEventCalendarFoldChoice (alert-dialog shell)", () => {
 describe("ProductionEventCalendarScheduleEditorSheet (sheet shell)", () => {
   async function renderSheet(props: Partial<ComponentProps<typeof ProductionEventCalendarScheduleEditorSheet>> = {}) {
     const onSubmit = props.onSubmit ?? vi.fn();
-    await render(<ProductionEventCalendarScheduleEditorSheet open event={dueEvent} rangesEnabled onSubmit={onSubmit} onCancel={vi.fn()} {...props} />);
+    await render(<ProductionEventCalendarScheduleEditorSheet open event={dueEvent} onSubmit={onSubmit} onCancel={vi.fn()} {...props} />);
     return onSubmit;
   }
 
-  it("offers the three states and disables Range in inert mode", async () => {
-    await renderSheet({ rangesEnabled: false });
+  it("offers the three states with Range enabled", async () => {
+    await renderSheet();
     const sheet = byTestId("event-calendar-schedule-editor")!;
     expect(sheet.textContent).toContain("Schedule checklist item");
     expect(sheet.textContent).toContain("12 Harbour Street");
     const range = [...document.body.querySelector<HTMLSelectElement>('[aria-label="Checklist schedule state"]')!.options].find((option) => option.value === "range")!;
-    expect(range.disabled).toBe(true);
+    expect(range.disabled).toBe(false);
   });
 
   it("surfaces local preflight errors and does not submit", async () => {
@@ -306,7 +306,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
   const editorState = { source: dueEvent, snapshot: {} as never };
 
   it("renders nothing until the controller opens a dialog", async () => {
-    await render(<ProductionEventCalendarDialogs commands={commands()} rangesEnabled deadlineConfirm={null} />);
+    await render(<ProductionEventCalendarDialogs commands={commands()} deadlineConfirm={null} />);
     expect(byTestId("event-calendar-move-dialog")).toBeNull();
     expect(byTestId("event-calendar-fold-choice")).toBeNull();
     expect(byTestId("event-calendar-schedule-editor")).toBeNull();
@@ -315,7 +315,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
 
   it("wires the move dialog to submitMoveDialog / cancelMoveDialog", async () => {
     const wired = commands({ moveDialog: moveState });
-    await render(<ProductionEventCalendarDialogs commands={wired} rangesEnabled deadlineConfirm={null} />);
+    await render(<ProductionEventCalendarDialogs commands={wired} deadlineConfirm={null} />);
     expect(input("Deadline date").value).toBe("2026-08-12");
     await click(byTestId("event-calendar-move-submit")!);
     expect(wired.submitMoveDialog).toHaveBeenCalledWith("2026-08-12T10:00", undefined);
@@ -325,7 +325,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
 
   it("wires the fold choice and the schedule editor", async () => {
     const wired = commands({ checklistFold: foldState, scheduleEditor: editorState });
-    await render(<ProductionEventCalendarDialogs commands={wired} rangesEnabled deadlineConfirm={null} />);
+    await render(<ProductionEventCalendarDialogs commands={wired} deadlineConfirm={null} />);
     expect(byTestId("event-calendar-fold-choice")?.textContent).toContain("Start occurs twice in Sydney");
     await click(document.body.querySelector<HTMLInputElement>('[aria-label="start later occurrence"]')!);
     await click(byTestId("event-calendar-fold-submit")!);
@@ -344,7 +344,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
         { offsetMinutes: 60, label: "shifted_wall_clock_hour" as const, oldFireAt: "old-3", newFireAt: "new-3", oldLocalCivil: "2026-04-05T09:00", newLocalCivil: "2026-10-04T08:00" },
       ],
     };
-    await render(<ProductionEventCalendarDialogs commands={commands()} rangesEnabled deadlineConfirm={{ state, resolve }} />);
+    await render(<ProductionEventCalendarDialogs commands={commands()} deadlineConfirm={{ state, resolve }} />);
     const confirmation = byTestId("calendar-move-confirmation")!.textContent;
     expect(confirmation).toContain("2026-08-10 09:30");
     expect(confirmation).toContain("1 day before");
@@ -357,7 +357,7 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
 
   it("empty reminders read as none set", async () => {
     const state = { street: "12 Harbour Street", oldCivil: "2026-08-10T09:30", newCivil: "2026-08-20T09:30", scheduling: false, preview: null, consequences: [] };
-    await render(<ProductionEventCalendarDialogs commands={commands()} rangesEnabled deadlineConfirm={{ state, resolve: vi.fn() }} />);
+    await render(<ProductionEventCalendarDialogs commands={commands()} deadlineConfirm={{ state, resolve: vi.fn() }} />);
     expect(byTestId("calendar-move-confirmation")!.textContent).toContain("No reminders are set.");
   });
 
@@ -366,11 +366,11 @@ describe("ProductionEventCalendarDialogs (wired to the scheduling controller's d
   it("keeps sibling retained dialogs apart once each has opened (prefixed open-token keys)", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      await render(<ProductionEventCalendarDialogs commands={commands({ moveDialog: moveState })} rangesEnabled deadlineConfirm={null} />);
-      await render(<ProductionEventCalendarDialogs commands={commands()} rangesEnabled deadlineConfirm={null} />);
-      await render(<ProductionEventCalendarDialogs commands={commands({ checklistFold: foldState })} rangesEnabled deadlineConfirm={null} />);
-      await render(<ProductionEventCalendarDialogs commands={commands()} rangesEnabled deadlineConfirm={null} />);
-      await render(<ProductionEventCalendarDialogs commands={commands({ scheduleEditor: editorState })} rangesEnabled deadlineConfirm={null} />);
+      await render(<ProductionEventCalendarDialogs commands={commands({ moveDialog: moveState })} deadlineConfirm={null} />);
+      await render(<ProductionEventCalendarDialogs commands={commands()} deadlineConfirm={null} />);
+      await render(<ProductionEventCalendarDialogs commands={commands({ checklistFold: foldState })} deadlineConfirm={null} />);
+      await render(<ProductionEventCalendarDialogs commands={commands()} deadlineConfirm={null} />);
+      await render(<ProductionEventCalendarDialogs commands={commands({ scheduleEditor: editorState })} deadlineConfirm={null} />);
       expect(byTestId("event-calendar-schedule-editor")).not.toBeNull();
       expect(errors.mock.calls.some((call) => String(call[0]).includes("same key"))).toBe(false);
     } finally {

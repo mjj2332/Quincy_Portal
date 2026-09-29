@@ -41,7 +41,6 @@ export type ProductionEventCalendarUnscheduledListProps = {
   checklistEntries: ChecklistCalendarUnscheduledEntryDto[];
   facets: { project: UnscheduledFacet; checklist: UnscheduledFacet };
   subview: ProductionCalendarSubview;
-  rangesEnabled: boolean;
   onScheduleProject: (entry: ProjectCalendarUnscheduledEntryDto) => void;
   onScheduleChecklist: (entry: ChecklistCalendarUnscheduledEntryDto) => void;
   beginDrag?: ProductionEventCalendarBeginDrag;
@@ -137,10 +136,9 @@ function ProjectRow({ entry, actionMode, disabled, beginDrag, onSchedule, projec
   );
 }
 
-function ChecklistRow({ entry, actionMode, rangesEnabled, disabled, beginDrag, onSchedule, projectHrefFor, onOpenProject }: {
+function ChecklistRow({ entry, actionMode, disabled, beginDrag, onSchedule, projectHrefFor, onOpenProject }: {
   entry: ChecklistCalendarUnscheduledEntryDto;
   actionMode: boolean;
-  rangesEnabled: boolean;
   disabled: boolean;
   beginDrag?: ProductionEventCalendarBeginDrag;
   onSchedule: (entry: ChecklistCalendarUnscheduledEntryDto) => void;
@@ -150,7 +148,7 @@ function ChecklistRow({ entry, actionMode, rangesEnabled, disabled, beginDrag, o
   const attention = entry.reason === "schedule_needs_attention";
   const legacy = attention && entry.attentionReason === "legacy_unresolved";
   const invalid = attention && entry.attentionReason === "invalid";
-  const canDrag = !actionMode && unscheduledChecklistDraggable(entry, rangesEnabled);
+  const canDrag = !actionMode && unscheduledChecklistDraggable(entry);
   const showAction = entry.permissions.canOpenScheduleEditor && !canDrag;
   return (
     <Item
@@ -195,7 +193,7 @@ function Section({ label, facet, empty, children }: { label: string; facet: Unsc
   );
 }
 
-export function ProductionEventCalendarUnscheduledList({ projectEntries, checklistEntries, facets, subview, rangesEnabled, onScheduleProject, onScheduleChecklist, beginDrag, disabled = false, dragSuppressed = false, projectHrefFor, onOpenProject }: ProductionEventCalendarUnscheduledListProps): JSX.Element {
+export function ProductionEventCalendarUnscheduledList({ projectEntries, checklistEntries, facets, subview, onScheduleProject, onScheduleChecklist, beginDrag, disabled = false, dragSuppressed = false, projectHrefFor, onOpenProject }: ProductionEventCalendarUnscheduledListProps): JSX.Element {
   const actionMode = !beginDrag || disabled || dragSuppressed || subview === "agenda";
   return (
     <div className={cn("grid gap-[var(--space-4)] min-w-0", disabled && "opacity-[.62]")} aria-label="Unscheduled work" role="group" aria-disabled={disabled || undefined}>
@@ -203,7 +201,7 @@ export function ProductionEventCalendarUnscheduledList({ projectEntries, checkli
         {projectEntries.map((entry) => <ProjectRow key={entry.id} entry={entry} actionMode={actionMode} disabled={disabled} beginDrag={beginDrag} onSchedule={onScheduleProject} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} />)}
       </Section>
       <Section label="Unscheduled checklist items" facet={facets.checklist} empty={checklistEntries.length === 0}>
-        {checklistEntries.map((entry) => <ChecklistRow key={entry.id} entry={entry} actionMode={actionMode} rangesEnabled={rangesEnabled} disabled={disabled} beginDrag={beginDrag} onSchedule={onScheduleChecklist} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} />)}
+        {checklistEntries.map((entry) => <ChecklistRow key={entry.id} entry={entry} actionMode={actionMode} disabled={disabled} beginDrag={beginDrag} onSchedule={onScheduleChecklist} projectHrefFor={projectHrefFor} onOpenProject={onOpenProject} />)}
       </Section>
     </div>
   );
