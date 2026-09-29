@@ -60,6 +60,11 @@ function dueSchedule(localCivil: string) {
   return { state: "due_only" as const, version: 5, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: { kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: localCivil };
 }
 
+function dateRangeSchedule(start: string, end: string) {
+  const endpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
+  return { state: "range" as const, version: 5, zone: PRODUCTION_CALENDAR_ZONE, start: endpoint(start), end: endpoint(end), due: end };
+}
+
 function timedSchedule(localCivil: string) {
   const resolved = resolveSydneyCivilMinute(localCivil);
   if (!resolved.ok) throw new Error(`Could not resolve fixture ${localCivil}`);
@@ -74,8 +79,9 @@ function mutationResponse(entry: ChecklistCalendarUnscheduledEntryDto, schedule:
 
 const savedDeadline = (version = 8) => json({ changed: true, current: { version, deadline: { localCivil: "2026-08-20T17:00", instant: instantOf("2026-08-20T17:00") }, reminderOffsetsMinutes: [] }, eventIntent: null, publicationIds: [] });
 const defaultPatch = (_url: string, body: unknown) => {
-  const schedule = (body as { schedule: { schedule: { state: string; end: { localCivil: string }; start?: { localCivil: string } } } }).schedule.schedule;
-  return json(mutationResponse(unscheduledChecklist, schedule.state === "due_only" ? dueSchedule(schedule.end.localCivil) : timedSchedule(schedule.start!.localCivil)));
+  const schedule = (body as { schedule: { schedule: { state: string; end: { kind: string; localCivil: string }; start?: { localCivil: string } } } }).schedule.schedule;
+  if (schedule.state === "due_only") return json(mutationResponse(unscheduledChecklist, dueSchedule(schedule.end.localCivil)));
+  return json(mutationResponse(unscheduledChecklist, schedule.end.kind === "date" ? dateRangeSchedule(schedule.start!.localCivil, schedule.end.localCivil) : timedSchedule(schedule.start!.localCivil)));
 };
 
 let h: Harness;
@@ -184,6 +190,20 @@ describe("ProductionEventCalendar unscheduled external drops", () => {
     expect(fetch.rangeGets().length).toBeGreaterThan(1);
   });
 
+  // #340: the API now rejects the legacy due-only payload a Month drop still sends (until #342 removes that gesture).
+  // The 400 carries no `code`, so the generic failure path must roll the optimistic move back and announce it.
+  it("rolls back a Month drop the API rejects with a code-less 400, and announces the failure", async () => {
+    const fetch = await mount("month", [unscheduledChecklist], { patch: () => json({ error: "Invalid input", details: [{ path: ["schedule", "schedule", "state"], message: "Invalid input" }] }, 400) });
+    await dropUnscheduled(unscheduledChecklist.id, DAY("2026-08-20"));
+    await flush(20);
+    expect(fetch.patches()).toHaveLength(1);
+    expect(eventIds()).not.toContain(unscheduledChecklist.id);
+    expect(row(unscheduledChecklist.id)).not.toBeNull();
+    expect(row(unscheduledChecklist.id)?.getAttribute("data-drag-source")).toBe("true");
+    expect(liveRegion()).toContain("could not be saved");
+    expect(fetch.rangeGets().length).toBeGreaterThan(1);
+  });
+
   it("rolls back a failed project mutation and refetches the authoritative range", async () => {
     const fetch = await mount("month", [unscheduledProject], { put: () => json({ error: "server exploded" }, 500) });
     await dropUnscheduled(unscheduledProject.id, DAY("2026-08-20"));
@@ -289,10 +309,15 @@ describe("ProductionEventCalendar unscheduled external drops", () => {
     const repair = h.host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${legacyChecklist.id}"] [data-testid="event-calendar-unscheduled-action"]`);
     expect(repair?.textContent).toBe("Repair schedule");
     await act(async () => { repair!.click(); await Promise.resolve(); });
+    // The legacy due (a nonexistent Sydney time) cannot seed a range, so the fields open blank.
+    expect(byLabel("Checklist schedule state")).toBeNull();
+    expect(byLabel("Checklist start date")?.value).toBe("");
+    expect(byLabel("Checklist end date")?.value).toBe("");
     await setValue(byLabel<HTMLSelectElement>("Checklist endpoint mode"), "date");
+    await setValue(byLabel("Checklist start date"), "2026-08-20");
     await setValue(byLabel("Checklist end date"), "2026-08-20");
     await clickTestId("event-calendar-schedule-submit");
-    expect(fetch.patches().map((call) => call.body)).toEqual([{ schedule: { expectedVersion: 0, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-20" } } } }]);
+    expect(fetch.patches().map((call) => call.body)).toEqual([{ schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-20" }, end: { kind: "date", localCivil: "2026-08-20" } } } }]);
     expect(JSON.stringify(fetch.patches()[0]!.body)).not.toContain("dueDate");
   });
 
@@ -341,9 +366,10 @@ describe("ProductionEventCalendar unscheduled external drops", () => {
     await mount("agenda", [unscheduledChecklist]);
     const action = () => h.host.querySelector<HTMLButtonElement>(`[data-unscheduled-id="${unscheduledChecklist.id}"] [data-testid="event-calendar-unscheduled-action"]`)!;
     await act(async () => { action().click(); await Promise.resolve(); });
-    const stateSelect = () => byLabel<HTMLSelectElement>("Checklist schedule state")!;
+    const startDate = () => byLabel("Checklist start date")!;
     const endDate = () => byLabel("Checklist end date")!;
-    expect(stateSelect().value).toBe("due_only");
+    expect(byLabel("Checklist schedule state")).toBeNull();
+    expect(startDate().value).toBe("2026-08-12");
     expect(endDate().value).toBe("2026-08-12");
     await setValue(endDate(), "2026-09-30");
     expect(endDate().value).toBe("2026-09-30");
@@ -351,16 +377,16 @@ describe("ProductionEventCalendar unscheduled external drops", () => {
     await flush(200);
     await act(async () => { action().click(); await Promise.resolve(); });
     expect(document.querySelector('[data-testid="event-calendar-schedule-editor"]')).not.toBeNull();
-    expect(stateSelect().value).toBe("due_only");
+    expect(startDate().value).toBe("2026-08-12");
     expect(endDate().value).toBe("2026-08-12");
   });
 
-  it("keeps checklist external drop disabled when the server denies range scheduling permission, while the editor still saves due-only", async () => {
+  it("keeps checklist external drop disabled when the server denies range scheduling permission, while the editor still saves a one-day range", async () => {
     const deniedChecklist = { ...unscheduledChecklist, permissions: { ...unscheduledChecklist.permissions, canScheduleRange: false } };
     const fetch = await mount("week", [deniedChecklist]);
     expect(row(deniedChecklist.id)?.getAttribute("data-drag-source")).toBeNull();
     await act(async () => { h.host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-unscheduled-action"]')!.click(); await Promise.resolve(); });
     await clickTestId("event-calendar-schedule-submit");
-    expect(fetch.patches().map((call) => call.body)).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-12" } } } }]);
+    expect(fetch.patches().map((call) => call.body)).toEqual([{ schedule: { expectedVersion: 4, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-12" } } } }]);
   });
 });

@@ -29,7 +29,7 @@ beforeAll(async () => {
 });
 
 describe("project subtasks API", () => {
-  it("creates and cycles every writable schedule state, preserves exact civil metadata, and keeps the legacy adapter bounded", async () => {
+  it("creates and cycles every writable schedule shape (date range, one day, timed range), preserving exact civil metadata", async () => {
     const rangeResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
       title: "TB4D date range",
       schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } },
@@ -38,31 +38,17 @@ describe("project subtasks API", () => {
     const range = await rangeResponse.json() as { id: string; schedule: { state: string; version: number; start: { kind: string; localCivil: string }; end: { kind: string; localCivil: string }; zone: string }; dueDate: string };
     expect(range).toMatchObject({ schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } }, dueDate: "2026-08-28" });
 
-    const dueOnly = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-29" } } } });
-    expect(dueOnly.status).toBe(200); expect(await dueOnly.json()).toMatchObject({ schedule: { state: "due_only", version: 2, end: { kind: "date", localCivil: "2026-08-29" } }, dueDate: "2026-08-29" });
-    const timed = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 2, schedule: { state: "due_only", end: { kind: "timed", localCivil: "2026-08-30T09:15" } } } });
-    expect(timed.status).toBe(200); expect(await timed.json()).toMatchObject({ schedule: { state: "due_only", version: 3, end: { kind: "timed", localCivil: "2026-08-30T09:15", utcOffsetMinutes: 600, fold: 0 } }, dueDate: "2026-08-30T09:15" });
-    const cleared = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 3, schedule: { state: "unscheduled" } } });
-    expect(cleared.status).toBe(200); expect(await cleared.json()).toMatchObject({ schedule: { state: "unscheduled", version: 4, start: null, end: null, due: null }, dueDate: null });
+    const oneDay = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } } } });
+    expect(oneDay.status).toBe(200); expect(await oneDay.json()).toMatchObject({ schedule: { state: "range", version: 2, start: { kind: "date", localCivil: "2026-08-29" }, end: { kind: "date", localCivil: "2026-08-29" } }, dueDate: "2026-08-29" });
+    const timed = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 2, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-30T08:00" }, end: { kind: "timed", localCivil: "2026-08-30T09:15" } } } });
+    expect(timed.status).toBe(200); expect(await timed.json()).toMatchObject({ schedule: { state: "range", version: 3, start: { kind: "timed", localCivil: "2026-08-30T08:00", utcOffsetMinutes: 600, fold: 0 }, end: { kind: "timed", localCivil: "2026-08-30T09:15", utcOffsetMinutes: 600, fold: 0 } }, dueDate: "2026-08-30T09:15" });
+    const backToDates = await request(`/api/projects/${projectId}/subtasks/${range.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 3, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-04" } } } });
+    expect(backToDates.status).toBe(200); expect(await backToDates.json()).toMatchObject({ schedule: { state: "range", version: 4, start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-04" } }, dueDate: "2026-09-04" });
 
     const timedRange = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "TB4D timed range", schedule: { state: "range", start: { kind: "timed", localCivil: "2026-10-04T01:30" }, end: { kind: "timed", localCivil: "2026-10-04T03:30" } } });
     expect(timedRange.status).toBe(201); const timedRangeBody = await timedRange.json() as { id: string; schedule: { start: { instant: string }; end: { instant: string } } }; expect(Date.parse(timedRangeBody.schedule.start.instant)).toBeLessThan(Date.parse(timedRangeBody.schedule.end.instant));
-
-    const both = await request(`/api/projects/${projectId}/subtasks/${timedRangeBody.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "unscheduled" } }, dueDate: null });
-    expect(both.status).toBe(400); expect(await both.json()).toMatchObject({ code: "subtask_schedule_inputs_conflict" });
-    const stale = await request(`/api/projects/${projectId}/subtasks/${timedRangeBody.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: { state: "unscheduled" } } });
+    const stale = await request(`/api/projects/${projectId}/subtasks/${timedRangeBody.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "date", localCivil: "2026-10-05" }, end: { kind: "date", localCivil: "2026-10-06" } } } });
     expect(stale.status).toBe(409); expect(await stale.json()).toMatchObject({ code: "subtask_schedule_version_conflict", current: { state: "range", version: 1 } });
-
-    const legacyId = crypto.randomUUID(); const now = Date.now();
-    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D legacy adapter', 0, 999999, 0, '2026-09-01', ?, ?, ?)").bind(legacyId, projectId, editorId, now, now).run();
-    const legacy = await request(`/api/projects/${projectId}/subtasks/${legacyId}`, "subtasks-editor-token", "PATCH", { dueDate: "2026-09-02" });
-    expect(legacy.status).toBe(200); expect(await legacy.json()).toMatchObject({ dueDate: "2026-09-02", schedule: { state: "due_only", version: 0 } });
-    expect(await database.DB.prepare("SELECT due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version FROM project_subtasks WHERE id = ?").bind(legacyId).first()).toEqual({ due_date: "2026-09-02", schedule_start_kind: null, schedule_start_civil: null, schedule_start_at: null, schedule_start_utc_offset_minutes: null, schedule_start_fold: null, schedule_end_kind: null, schedule_end_at: null, schedule_end_utc_offset_minutes: null, schedule_end_fold: null, schedule_zone: null, schedule_version: 0 });
-    const legacyAgain = await request(`/api/projects/${projectId}/subtasks/${legacyId}`, "subtasks-editor-token", "PATCH", { dueDate: "2026-09-03" });
-    expect(legacyAgain.status).toBe(200); expect(await legacyAgain.json()).toMatchObject({ dueDate: "2026-09-03", schedule: { state: "due_only", version: 0 } });
-    expect(JSON.parse((await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project_subtask.update' AND target_id = ? ORDER BY rowid DESC LIMIT 1").bind(legacyId).first<{ meta_json: string }>())!.meta_json)).toMatchObject({ fields: ["dueDate"] });
-    const bounded = await request(`/api/projects/${projectId}/subtasks/${timedRangeBody.id}`, "subtasks-editor-token", "PATCH", { dueDate: "2026-09-03" });
-    expect(bounded.status).toBe(400); expect(await bounded.json()).toMatchObject({ code: "subtask_schedule_reload_required" });
   });
 
   it("returns invalid storage as 422 only for schedule-bearing writes while item edits preserve the invalid DTO", async () => {
@@ -70,7 +56,7 @@ describe("project subtasks API", () => {
     await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'TB4D corrupt', 0, 999998, 0, 'Australia/Sydney', 1, ?, ?, ?)").bind(id, projectId, editorId, now, now).run();
     const itemEdit = await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { title: "TB4D repaired label" });
     expect(itemEdit.status).toBe(200); expect(await itemEdit.json()).toMatchObject({ title: "TB4D repaired label", schedule: { state: "invalid", error: { reason: "shape_mismatch" } } });
-    const scheduleEdit = await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "unscheduled" } } });
+    const scheduleEdit = await request(`/api/projects/${projectId}/subtasks/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } });
     expect(scheduleEdit.status).toBe(422); expect(await scheduleEdit.json()).toMatchObject({ code: "subtask_schedule_storage_invalid", current: { state: "invalid", error: { reason: "shape_mismatch" } } });
   });
 
@@ -82,10 +68,10 @@ describe("project subtasks API", () => {
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-photographer-token")).status).toBe(200);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-outsider-token")).status).toBe(403);
-    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: " ", dueDate: "2026-02-29" })).status).toBe(400);
-    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad time", dueDate: "2028-02-29T24:00" })).status).toBe(400);
+    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: " ", schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } })).status).toBe(400);
+    expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad date", schedule: { state: "range", start: { kind: "date", localCivil: "2027-02-29" }, end: { kind: "date", localCivil: "2027-03-01" } } })).status).toBe(400);
     expect((await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Bad assignee", assigneeId: outsiderId })).status).toBe(400);
-    const firstResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "First", assigneeId: photographerId, dueDate: "2028-02-29" });
+    const firstResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "First", assigneeId: photographerId, schedule: { state: "range", start: { kind: "date", localCivil: "2028-02-28" }, end: { kind: "date", localCivil: "2028-02-29" } } });
     expect(firstResponse.status).toBe(201); const first = await firstResponse.json() as { id: string; position: number; assignmentVersion: number; dueDate: string | null };
     expect(first).toMatchObject({ position: 1024, assignmentVersion: 1, dueDate: "2028-02-29" });
     const second = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Second" })).json() as { id: string; position: number };
@@ -99,8 +85,8 @@ describe("project subtasks API", () => {
     expect((await reassigned.json() as { assignmentVersion: number }).assignmentVersion).toBe(2); expect(await notificationCount()).toBe(2);
     // Retrying the same persisted assignee is not another assignment event.
     await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { assigneeId: adminId }); expect(await notificationCount()).toBe(2);
-    const cleared = await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { dueDate: null, assigneeId: null });
-    expect(await cleared.json()).toMatchObject({ dueDate: null, assignee: null, assignmentVersion: 3 });
+    const cleared = await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { assigneeId: null });
+    expect(await cleared.json()).toMatchObject({ dueDate: "2028-02-29", assignee: null, assignmentVersion: 3 });
     const reassignedAgain = await request(`/api/projects/${projectId}/subtasks/${first.id}`, "subtasks-editor-token", "PATCH", { assigneeId: adminId });
     expect(await reassignedAgain.json()).toMatchObject({ assignmentVersion: 4 }); expect(await notificationCount()).toBe(3);
     expect((await database.DB.prepare("SELECT source_key FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND project_id = ? ORDER BY source_key").bind(projectId).all()).results.map((row) => (row as { source_key: string }).source_key)).toEqual(expect.arrayContaining([`subtask-assignment:${first.id}:2`, `subtask-assignment:${first.id}:4`]));
@@ -114,7 +100,7 @@ describe("project subtasks API", () => {
   });
 
   it("keeps absent optional fields unchanged, does access-before-existence checks, and never audits missing mutations", async () => {
-    const task = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Null semantics", dueDate: "2026-12-01" })).json() as { id: string; dueDate: string };
+    const task = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Null semantics", schedule: { state: "range", start: { kind: "date", localCivil: "2026-11-28" }, end: { kind: "date", localCivil: "2026-12-01" } } })).json() as { id: string; dueDate: string };
     const unchanged = await (await request(`/api/projects/${projectId}/subtasks/${task.id}`, "subtasks-editor-token", "PATCH", { done: true })).json() as { dueDate: string | null };
     expect(unchanged.dueDate).toBe("2026-12-01");
     const missingProject = crypto.randomUUID(); const missingTask = crypto.randomUUID();
@@ -180,37 +166,34 @@ describe("project subtasks API", () => {
     expect((await database.DB.prepare("SELECT id, position, updated_at FROM project_subtasks WHERE project_id = ? ORDER BY position, id").bind(midpointProject).all()).results).toEqual([{ id: before, position: 1024, updated_at: now }, { id: target, position: 1024.5, updated_at: expect.any(Number) }, { id: after, position: 1025, updated_at: now }]);
   });
 
-  it("accepts literal due times and clears a sent reminder when the due date is rescheduled", async () => {
+  it("clears a sent reminder when the range end is rescheduled, and the next end day fires again", async () => {
     const firstMorning = Date.UTC(2026, 7, 17, 22);
     const nextMorning = Date.UTC(2026, 7, 18, 22);
     const scheduleActivityCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE event_type = 'project.checklist.schedule_changed' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const scheduleOutboxCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const beforeScheduleActivityCount = await scheduleActivityCount();
     const beforeScheduleOutboxCount = await scheduleOutboxCount();
-    const dueResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeId: photographerId, dueDate: "2026-08-18T14:30" });
+    const dueResponse = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "Reschedule reminder", assigneeId: photographerId, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-08-18T09:00" }, end: { kind: "timed", localCivil: "2026-08-18T14:30" } } });
     expect(dueResponse.status).toBe(201);
     const due = await dueResponse.json() as { id: string; dueDate: string; schedule: { state: string; version: number; end: { kind: string; localCivil: string; resolution: string } } };
-    expect(due).toMatchObject({ dueDate: "2026-08-18T14:30", schedule: { state: "due_only", version: 0, end: { kind: "timed", localCivil: "2026-08-18T14:30", resolution: "derived_unambiguous" } } });
-    expect(await database.DB.prepare("SELECT schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ schedule_start_kind: null, schedule_start_civil: null, schedule_start_at: null, schedule_start_utc_offset_minutes: null, schedule_start_fold: null, schedule_end_kind: null, schedule_end_at: null, schedule_end_utc_offset_minutes: null, schedule_end_fold: null, schedule_zone: null, schedule_version: 0 });
+    expect(due).toMatchObject({ dueDate: "2026-08-18T14:30", schedule: { state: "range", version: 1, end: { kind: "timed", localCivil: "2026-08-18T14:30" } } });
     expect(await scheduleActivityCount()).toBe(beforeScheduleActivityCount);
     expect(await scheduleOutboxCount()).toBe(beforeScheduleOutboxCount);
     const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "reschedule" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
     expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: firstMorning });
-    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: due.schedule.version, schedule: { state: "due_only", end: { kind: "date", localCivil: "2026-08-19" } } } })).status).toBe(200);
+    expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: due.schedule.version, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-18" }, end: { kind: "date", localCivil: "2026-08-19" } } } })).status).toBe(200);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(due.id).first()).toEqual({ due_reminder_sent_at: null });
     expect(await scanDueSubtasks(reminderEnv, nextMorning)).toBe(1);
     expect((await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE type = 'subtask_due_today' AND project_id = ? AND user_id = ?").bind(projectId, photographerId).first<{ count: number }>())!.count).toBe(2);
     expect((await request(`/api/projects/${projectId}/subtasks/${due.id}`, "subtasks-editor-token", "DELETE")).status).toBe(200);
   });
 
-  it("treats adding a start to a version-0 timed due as a pure start edit", async () => {
-    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
-      title: "Pure start comparison",
-      dueDate: "2026-08-18T14:30",
-    });
-    expect(created.status).toBe(201);
-    const item = await created.json() as { id: string; schedule: { version: number } };
+  it("treats a range that only adds a start to a version-0 timed due as a pure start edit", async () => {
+    // A pre-#341 row (version 0, timed due only) stays editable through a range at expectedVersion 0.
+    const legacyId = crypto.randomUUID(); const seededAt = Date.now();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, 'Pure start comparison', 0, 999991, 0, '2026-08-18T14:30', ?, ?, ?)").bind(legacyId, projectId, editorId, seededAt, seededAt).run();
+    const item = { id: legacyId, schedule: { version: 0 } };
     const claimedAt = Date.UTC(2026, 7, 17, 22);
     await database.DB.prepare("UPDATE project_subtasks SET due_reminder_sent_at = ? WHERE id = ?").bind(claimedAt, item.id).run();
     const activityBefore = (await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE event_type = 'project.checklist.schedule_changed' AND project_id = ?").bind(projectId).first<{ count: number }>())!.count;
@@ -226,12 +209,12 @@ describe("project subtasks API", () => {
   });
 
   it("emits one broad schedule notification when a schedule change moves the end", async () => {
-    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "End change broadcast", schedule: { state: "unscheduled" } });
+    const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", { title: "End change broadcast", schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2026-12-31" } } });
     expect(created.status).toBe(201);
     const item = await created.json() as { id: string; schedule: { version: number } };
     const broadCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox o JOIN project_activity_events a ON a.id = o.source_key WHERE o.event_type = 'project.activity.broad' AND a.event_type = 'project.checklist.schedule_changed' AND o.project_id = ?").bind(projectId).first<{ count: number }>())!.count;
     const before = await broadCount();
-    const dueOnly = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: item.schedule.version, schedule: { state: "due_only", end: { kind: "date", localCivil: "2027-01-01" } } } });
+    const dueOnly = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-30" }, end: { kind: "date", localCivil: "2027-01-01" } } } });
     expect(dueOnly.status).toBe(200);
     expect(await broadCount()).toBe(before + 1);
   });
@@ -241,14 +224,14 @@ describe("project subtasks API", () => {
     const created = await request(`/api/projects/${projectId}/subtasks`, "subtasks-editor-token", "POST", {
       title: "Fold-only reminder",
       assigneeId: photographerId,
-      schedule: { state: "due_only", end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" } },
+      schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "earlier" } },
     });
     expect(created.status).toBe(201);
     const item = await created.json() as { id: string; dueDate: string; schedule: { version: number; end: { fold: number } } };
     const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "fold" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
     expect(await scanDueSubtasks(reminderEnv, firstMorning)).toBe(1);
     const changed = await request(`/api/projects/${projectId}/subtasks/${item.id}`, "subtasks-editor-token", "PATCH", {
-      schedule: { expectedVersion: item.schedule.version, schedule: { state: "due_only", end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } } },
+      schedule: { expectedVersion: item.schedule.version, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-04-05T00:00" }, end: { kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" } } },
     });
     expect(changed.status).toBe(200);
     const changedItem = await changed.json() as { dueDate: string; schedule: { end: { fold: number } } };
@@ -404,12 +387,12 @@ describe("default Subtask range (#339)", () => {
     expect(item.dueDate).toBe(end);
   });
 
-  it("keeps an explicit schedule and an explicit unscheduled create unchanged", async () => {
+  it("keeps an explicit range unchanged and rejects an explicit unscheduled create (#340)", async () => {
     const id = await seedProject({ shootDate: "2026-11-02", deadlineLocalCivil: "2026-11-06T17:00" });
     const explicit = await create(id, { title: "Explicit", schedule: { state: "range", start: { kind: "date", localCivil: "2026-12-01" }, end: { kind: "date", localCivil: "2026-12-03" } } });
     expect(explicit.schedule).toMatchObject({ state: "range", start: { localCivil: "2026-12-01" }, end: { localCivil: "2026-12-03" } });
-    const unscheduled = await create(id, { title: "Explicit unscheduled", schedule: { state: "unscheduled" } });
-    expect(unscheduled.schedule).toMatchObject({ state: "unscheduled", version: 0 });
+    const unscheduled = await request(`/api/projects/${id}/subtasks`, "subtasks-admin-token", "POST", { title: "Explicit unscheduled", schedule: { state: "unscheduled" } });
+    expect(unscheduled.status).toBe(400);
   });
 
   it("does not move existing Subtasks when the Project's shoot date or Deadline changes later", async () => {
@@ -449,5 +432,106 @@ describe("default Subtask range (#339)", () => {
     const dueMorning = Date.UTC(2026, 10, 5, 21); // 2026-11-06 08:00 in Sydney (AEDT)
     await scanDueSubtasks(reminderEnv, dueMorning);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: dueMorning });
+  });
+});
+
+describe("ranges only (#340)", () => {
+  const base = () => `/api/projects/${projectId}/subtasks`;
+  const day = (localCivil: string) => ({ kind: "date", localCivil }) as const;
+  const range = (start: string, end: string) => ({ state: "range", start: day(start), end: day(end) }) as const;
+  const auditCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action LIKE 'project_subtask.%'").first<{ count: number }>())!.count;
+  const rowCount = async () => (await database.DB.prepare("SELECT count(*) AS count FROM project_subtasks WHERE project_id = ?").bind(projectId).first<{ count: number }>())!.count;
+  const legacyColumns = "due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version";
+  async function createRange(title: string, extra: Record<string, unknown> = {}, schedule: unknown = range("2026-09-01", "2026-09-03")) {
+    const response = await request(base(), "subtasks-editor-token", "POST", { title, schedule, ...extra });
+    expect(response.status).toBe(201);
+    return await response.json() as { id: string; dueDate: string; schedule: { version: number; start: { localCivil: string }; end: { localCivil: string } } };
+  }
+  async function seedLegacy(title: string, dueDate: string) {
+    const id = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 999990, 0, ?, ?, ?, ?)").bind(id, projectId, title, dueDate, editorId, now, now).run();
+    return id;
+  }
+
+  it("rejects an unscheduled or due-only create with a validation error and writes nothing", async () => {
+    const audits = await auditCount(); const rows = await rowCount();
+    for (const schedule of [{ state: "unscheduled" }, { state: "due_only", end: day("2026-08-18") }]) {
+      const response = await request(base(), "subtasks-editor-token", "POST", { title: "Nope", schedule });
+      expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    }
+    expect(await auditCount()).toBe(audits); expect(await rowCount()).toBe(rows);
+  });
+
+  it("removes the legacy single dueDate create input", async () => {
+    const audits = await auditCount(); const rows = await rowCount();
+    const response = await request(base(), "subtasks-editor-token", "POST", { title: "Legacy", dueDate: "2026-08-18" });
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    expect(await auditCount()).toBe(audits); expect(await rowCount()).toBe(rows);
+  });
+
+  it("rejects unscheduled, due-only and legacy dueDate updates without touching the row", async () => {
+    const item = await createRange("Range then legacy writes");
+    const audits = await auditCount();
+    for (const body of [
+      { schedule: { expectedVersion: item.schedule.version, schedule: { state: "due_only", end: day("2026-09-04") } } },
+      { schedule: { expectedVersion: item.schedule.version, schedule: { state: "unscheduled" } } },
+      { dueDate: "2026-09-02" },
+      { dueDate: null },
+    ]) {
+      const response = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", body);
+      expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ error: "Invalid input" });
+    }
+    expect(await auditCount()).toBe(audits);
+    expect(await database.DB.prepare("SELECT due_date, schedule_version FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_date: "2026-09-03", schedule_version: 1 });
+  });
+
+  it("rejects a legacy dueDate write against a version-0 row and leaves its bytes unchanged", async () => {
+    const id = await seedLegacy("Legacy row", "2026-09-01");
+    const before = await database.DB.prepare(`SELECT ${legacyColumns} FROM project_subtasks WHERE id = ?`).bind(id).first();
+    const response = await request(`${base()}/${id}`, "subtasks-editor-token", "PATCH", { dueDate: "2026-09-02" });
+    expect(response.status).toBe(400);
+    expect(await database.DB.prepare(`SELECT ${legacyColumns} FROM project_subtasks WHERE id = ?`).bind(id).first()).toEqual(before);
+  });
+
+  it("still lists and item-edits a legacy row, and lets a range replace it at version 0", async () => {
+    const id = await seedLegacy("Legacy editable", "2026-09-01");
+    const listed = await (await request(base(), "subtasks-editor-token")).json() as { subtasks: Array<{ id: string; schedule: { state: string } }> };
+    expect(listed.subtasks.find((entry) => entry.id === id)?.schedule.state).toBe("due_only");
+    expect((await request(`${base()}/${id}`, "subtasks-editor-token", "PATCH", { title: "Legacy renamed" })).status).toBe(200);
+    const replaced = await request(`${base()}/${id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: range("2026-09-01", "2026-09-01") } });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ dueDate: "2026-09-01", schedule: { state: "range", version: 1 } });
+  });
+
+  it("stores a date range with start = end as a one-day range", async () => {
+    const item = await createRange("One day", {}, range("2026-09-10", "2026-09-10"));
+    expect(item).toMatchObject({ dueDate: "2026-09-10", schedule: { state: "range", start: { localCivil: "2026-09-10" }, end: { localCivil: "2026-09-10" } } });
+  });
+
+  it("rejects timed start = end (an instant is not a day)", async () => {
+    const at = { kind: "timed", localCivil: "2026-09-10T09:00" } as const;
+    const response = await request(base(), "subtasks-editor-token", "POST", { title: "Instant", schedule: { state: "range", start: at, end: at } });
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ code: "subtask_schedule_invalid_order" });
+  });
+
+  it("keeps the expected-version lock: a stale range PATCH is a 409 with the current schedule", async () => {
+    const item = await createRange("Locked");
+    const stale = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 0, schedule: range("2026-09-05", "2026-09-06") } });
+    expect(stale.status).toBe(409); expect(await stale.json()).toMatchObject({ code: "subtask_schedule_version_conflict", current: { state: "range", version: 1 } });
+    const fresh = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: range("2026-09-05", "2026-09-06") } });
+    expect(fresh.status).toBe(200); expect(await fresh.json()).toMatchObject({ schedule: { version: 2 } });
+  });
+
+  it("fires the due-day reminder on the range END day, and again after the end moves", async () => {
+    const reminderEnv = { ...baseEnv, DB: database.DB, EMAIL: { send: vi.fn().mockResolvedValue({ messageId: "range-end" }) }, NOTIFICATIONS_FROM_ADDRESS: "studio@example.test" } as unknown as Env;
+    const item = await createRange("Reminder on end", { assigneeId: photographerId }, { state: "range", start: { kind: "timed", localCivil: "2026-11-02T00:00" }, end: { kind: "timed", localCivil: "2026-11-06T15:00" } });
+    const startMorning = Date.UTC(2026, 10, 1, 21); // 2026-11-02 08:00 Sydney
+    const endMorning = Date.UTC(2026, 10, 5, 21); // 2026-11-06 08:00 Sydney
+    expect(await scanDueSubtasks(reminderEnv, startMorning)).toBe(0);
+    expect(await scanDueSubtasks(reminderEnv, endMorning)).toBe(1);
+    const moved = await request(`${base()}/${item.id}`, "subtasks-editor-token", "PATCH", { schedule: { expectedVersion: 1, schedule: { state: "range", start: { kind: "timed", localCivil: "2026-11-02T00:00" }, end: { kind: "timed", localCivil: "2026-11-09T15:00" } } } });
+    expect(moved.status).toBe(200);
+    expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: null });
+    expect(await scanDueSubtasks(reminderEnv, Date.UTC(2026, 10, 8, 21))).toBe(1); // 2026-11-09 08:00
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultSubtaskRange } from "../src/default-subtask-range";
+import { defaultSubtaskRange, oneDaySubtaskRange } from "../src/default-subtask-range";
 import { normalizeChecklistSchedule } from "../src/checklist-schedule";
 
 // 2026-06-30T15:00Z is 2026-07-01 01:00 in Sydney: the UTC and Sydney dates differ.
@@ -101,5 +101,28 @@ describe("defaultSubtaskRange with an unusable existing end", () => {
 
   it("throws on a non-finite creation time", () => {
     expect(() => defaultSubtaskRange({ shootDate: null, deadlineLocalCivil: null, projectCreatedAt: Number.NaN })).toThrow(RangeError);
+  });
+});
+
+describe("oneDaySubtaskRange (#340)", () => {
+  it("makes a date end a one-day range", () => {
+    expect(oneDaySubtaskRange(date("2026-09-10"))).toEqual({ state: "range", start: date("2026-09-10"), end: date("2026-09-10") });
+  });
+  it("starts a timed end at 00:00 of its day", () => {
+    expect(oneDaySubtaskRange(timed("2026-09-10T09:00"))).toEqual({ state: "range", start: timed("2026-09-10T00:00"), end: timed("2026-09-10T09:00") });
+  });
+  it("starts a timed end at exactly 00:00 on the previous day, so start < end", () => {
+    expect(oneDaySubtaskRange(timed("2026-09-10T00:00"))).toEqual({ state: "range", start: timed("2026-09-09T00:00"), end: timed("2026-09-10T00:00") });
+  });
+  it("keeps a repeated-fold end's disambiguation", () => {
+    const range = oneDaySubtaskRange(timed("2026-04-05T02:30", "later"));
+    expect(range).toEqual({ state: "range", start: timed("2026-04-05T00:00"), end: timed("2026-04-05T02:30", "later") });
+    expect(normalizeChecklistSchedule(range!, 1).ok).toBe(true);
+  });
+  it("returns null for an end it cannot resolve", () => {
+    expect(oneDaySubtaskRange(date("not-a-date"))).toBeNull();
+    expect(oneDaySubtaskRange(date("2026-02-30"))).toBeNull();
+    expect(oneDaySubtaskRange(timed("2026-09-10T25:00"))).toBeNull();
+    expect(oneDaySubtaskRange(timed("nonsense"))).toBeNull();
   });
 });

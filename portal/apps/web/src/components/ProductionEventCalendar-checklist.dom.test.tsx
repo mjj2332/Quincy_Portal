@@ -105,7 +105,8 @@ describe("ProductionEventCalendar checklist writes", () => {
     const fetch = await mount([event]);
     expect(fetch.rangeGets()).toHaveLength(1);
     await openReschedule("checklist:");
-    expect(byLabel("Checklist schedule state")).not.toBeNull();
+    expect(byLabel("Checklist schedule state")).toBeNull();
+    expect(byLabel("Checklist endpoint mode")).not.toBeNull();
 
     h.client.setQueryData(mainRangeQuery(h.client).queryKey, rangeResponse({ events: [{ ...event, title: "Queued update" }] }));
     await flush(0);
@@ -137,33 +138,6 @@ describe("ProductionEventCalendar checklist writes", () => {
     await flush(5);
     expect(eventCalendarFake.lastProps?.events).toHaveLength(1);
     expect(eventCalendarFake.lastProps?.events?.[0]?.id).toBe(ID);
-    release();
-    await flush(10);
-  });
-
-  it("adopts a PATCH result that becomes unscheduled as exactly one unscheduled row keyed by the entity id (#226)", async () => {
-    const event = dueEvent(dated("2026-08-12"));
-    const unscheduled: ChecklistScheduleDto = { state: "unscheduled", version: 3, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null };
-    let release!: () => void;
-    let gets = 0;
-    const range = rangeResponse({ events: [event] });
-    const fetch = stubCalendarFetch({
-      range: (url) => {
-        if (!url.includes("bounds=1")) return json(range);
-        gets += 1;
-        return gets === 1 ? json(range) : new Promise<Response>((resolve) => { release = () => resolve(json(range)); });
-      },
-      patch: () => json(checklistMutationBody(event, unscheduled)),
-    });
-    await h.render(calendarState("month"));
-    await openReschedule(ID);
-    await setValue(byLabel<HTMLSelectElement>("Checklist schedule state"), "unscheduled");
-    await clickTestId("event-calendar-schedule-submit");
-    await flush(5);
-    expect(fetch.patches()).toHaveLength(1);
-    expect(eventCalendarFake.lastProps?.events).toHaveLength(0);
-    const rows = [...h.host.querySelectorAll("[data-unscheduled-id]")];
-    expect(rows.map((row) => row.getAttribute("data-unscheduled-id"))).toEqual([ID]);
     release();
     await flush(10);
   });
@@ -418,7 +392,6 @@ describe("ProductionEventCalendar checklist writes", () => {
     const event = rangeEvent(timed("2026-08-12T10:00"), timed("2026-08-12T11:00"), { version: 7 });
     const fetch = await mount([event]);
     await openReschedule(ID);
-    await setValue(byLabel<HTMLSelectElement>("Checklist schedule state"), "range");
     await setValue(byLabel<HTMLSelectElement>("Checklist endpoint mode"), "timed");
     await setValue(byLabel("Checklist start date"), "2026-04-05");
     await setValue(byLabel("Checklist start time"), "02:30");
@@ -433,31 +406,21 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(JSON.stringify(fetch.patches()[0]!.body)).not.toContain("dueDate");
   });
 
-  it("converts due-only to range through the schedule editor sheet", async () => {
+  it("opens a due-only entry as a one-day range and saves the extended range (#340)", async () => {
     const event = dueEvent(dated("2026-08-12"), { version: 4 });
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, rangeSchedule(dated("2026-08-12"), dated("2026-08-13"), 5))) });
     await openReschedule(ID);
-    await setValue(byLabel<HTMLSelectElement>("Checklist schedule state"), "range");
-    await setValue(byLabel("Checklist start date"), "2026-08-12");
+    expect(byLabel("Checklist start date")?.value).toBe("2026-08-12");
+    expect(byLabel("Checklist end date")?.value).toBe("2026-08-12");
     await setValue(byLabel("Checklist end date"), "2026-08-13");
     await clickTestId("event-calendar-schedule-submit");
     expect(scheduleOf(fetch.patches()[0]!)).toEqual({ expectedVersion: 4, schedule: { state: "range", start: { kind: "date", localCivil: "2026-08-12" }, end: { kind: "date", localCivil: "2026-08-13" } } });
-  });
-
-  it("converts a range to unscheduled without touching the legacy dueDate branch", async () => {
-    const event = rangeEvent(dated("2026-08-12"), dated("2026-08-13"), { version: 7 });
-    const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, { state: "unscheduled", version: 8, zone: PRODUCTION_CALENDAR_ZONE, start: null, end: null, due: null })) });
-    await openReschedule(ID);
-    await setValue(byLabel<HTMLSelectElement>("Checklist schedule state"), "unscheduled");
-    await clickTestId("event-calendar-schedule-submit");
-    expect(fetch.patches()[0]!.body).toEqual({ schedule: { expectedVersion: 7, schedule: { state: "unscheduled" } } });
   });
 
   it("retains the editor draft after a schedule-version conflict and never retries", async () => {
     const event = dueEvent(dated("2026-08-12"));
     const fetch = await mount([event], { patch: () => json({ code: "subtask_schedule_version_conflict", message: "conflict" }, 409) });
     await openReschedule(ID);
-    await setValue(byLabel<HTMLSelectElement>("Checklist schedule state"), "due_only");
     await setValue(byLabel("Checklist end date"), "2026-08-15");
     await clickTestId("event-calendar-schedule-submit");
     await flush(10);
@@ -629,7 +592,7 @@ describe("ProductionEventCalendar checklist writes", () => {
 });
 
 describe("ProductionEventCalendar checklist editor Range option", () => {
-  it("offers Range in the editor and never renders an invalid-entry action", async () => {
+  it("offers no state picker in the editor and never renders an invalid-entry action", async () => {
     const event = rangeEvent(dated("2026-08-12"), dated("2026-08-13"));
     const invalid = {
       id: "checklist:55555555-5555-4555-8555-555555555555", kind: "checklist", reason: "schedule_needs_attention", attentionReason: "invalid", title: "Broken", project: event.project, assignee: null,
@@ -639,9 +602,9 @@ describe("ProductionEventCalendar checklist editor Range option", () => {
     stubCalendarFetch({ range: rangeResponse({ events: [event], unscheduled: [invalid] }) });
     await h.render(calendarState("month"));
     await openReschedule(ID);
-    const selector = byLabel<HTMLSelectElement>("Checklist schedule state");
-    expect(selector).not.toBeNull();
-    expect([...selector!.options].find((option) => option.value === "range")?.disabled).toBe(false);
+    expect(byLabel("Checklist schedule state")).toBeNull();
+    expect(byLabel("Checklist start date")).not.toBeNull();
+    expect(byLabel("Checklist end date")).not.toBeNull();
     expect(h.host.querySelector(`[data-unscheduled-id="${invalid.id}"] button`)).toBeNull();
   });
 });

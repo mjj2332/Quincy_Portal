@@ -1275,8 +1275,10 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
   const openUnscheduledChecklistScheduleEditor = useCallback((entry: ChecklistCalendarUnscheduledEntryDto) => {
+    // A one-day range on the placement date, for the user to confirm (ADR 0011: every Subtask has a range).
+    const placementDate = portRef.current.defaultPlacementDate();
     const initialSchedule: InitialChecklistScheduleInput | undefined = entry.reason === "unscheduled"
-      ? { state: "due_only", end: { kind: "date", localCivil: portRef.current.defaultPlacementDate() } }
+      ? { state: "range", start: { kind: "date", localCivil: placementDate }, end: { kind: "date", localCivil: placementDate } }
       : undefined;
     openChecklistScheduleEditor(entry, initialSchedule);
   }, [openChecklistScheduleEditor]);

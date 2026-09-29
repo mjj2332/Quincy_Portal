@@ -23,35 +23,17 @@ const idParam = z.string().uuid();
 const TITLE_MAX_LENGTH = 500;
 const POSITION_STEP = 1024;
 
-function isCalendarDateTime(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1) return false;
-  const daysInMonth = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  if (day > daysInMonth[month - 1]!) return false;
-  if (match[4] !== undefined) {
-    const hour = Number(match[4]); const minute = Number(match[5]);
-    if (hour > 23 || minute > 59) return false;
-  }
-  return true;
-}
-
 const titleInput = z.string().trim().min(1).max(TITLE_MAX_LENGTH);
-const dueDateInput = z.string().refine(isCalendarDateTime, "Expected a calendar-valid YYYY-MM-DD date or YYYY-MM-DDTHH:MM date-time");
 const endpointInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("date"), localCivil: z.string() }).strict(),
   z.object({ kind: z.literal("timed"), localCivil: z.string(), disambiguation: z.enum(["earlier", "later"]).optional() }).strict(),
 ]);
-const scheduleInput = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("unscheduled") }).strict(),
-  z.object({ state: z.literal("due_only"), end: endpointInput }).strict(),
-  z.object({ state: z.literal("range"), start: endpointInput, end: endpointInput }).strict(),
-]);
+// A Subtask is always a range (ADR 0011): unscheduled and due-only payloads are rejected here, before any read.
+const scheduleInput = z.object({ state: z.literal("range"), start: endpointInput, end: endpointInput }).strict();
 const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput }).strict();
-const createInput = z.object({ title: titleInput, assigneeId: idParam.optional(), schedule: scheduleInput.optional(), dueDate: dueDateInput.optional() }).strict();
+const createInput = z.object({ title: titleInput, assigneeId: idParam.optional(), schedule: scheduleInput.optional() }).strict();
 const updateInput = z.object({
-  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), schedule: scheduleRequestInput.optional(), dueDate: dueDateInput.nullable().optional(),
+  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), schedule: scheduleRequestInput.optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
 const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.nullable() }).strict().refine((value) => value.beforeId !== value.afterId || value.beforeId === null, "Neighbors must be distinct");
 
@@ -155,7 +137,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/proj
     env: c.env,
     projectId,
     principal: c.get("user"),
-    operation: { kind: "create", item: { title: data.title, assigneeId: data.assigneeId ?? null }, schedule: data.schedule, legacyDueDate: data.dueDate },
+    operation: { kind: "create", item: { title: data.title, assigneeId: data.assigneeId ?? null }, schedule: data.schedule },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
   return await commandResponse(c, projectId, result, result.outcome === "created" ? 201 : 200);
@@ -167,7 +149,6 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminal
   if (c.get("user").role === "external_editor" && !await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
   const data = await jsonInput(c, updateInput); if (data instanceof Response) return data;
   const hasSchedule = hasField(data, "schedule");
-  const hasDueDate = hasField(data, "dueDate");
   const itemPatch: ItemPatch = {};
   if (hasField(data, "title")) itemPatch.title = data.title;
   if (hasField(data, "done")) itemPatch.done = data.done;
@@ -181,7 +162,6 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminal
       subtaskId,
       itemPatch: Object.keys(itemPatch).length ? itemPatch : undefined,
       scheduleRequest: hasSchedule ? data.schedule : undefined,
-      legacyDueDatePatch: hasDueDate ? data.dueDate : undefined,
     },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
