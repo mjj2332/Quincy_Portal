@@ -55,6 +55,7 @@ import { Admin } from "../screens/Admin";
 import { CreateProject } from "../screens/CreateProject";
 import { EditProject } from "../screens/EditProject";
 import { NotificationPreferences } from "../screens/NotificationPreferences";
+import { NoticeBoardPage } from "../screens/NoticeBoardPage";
 import { Notifications } from "../screens/Notifications";
 import { buttonClasses } from "../components/quincy/Button";
 
@@ -194,6 +195,7 @@ function ShellRoute() {
   const [collaborationIntent, setCollaborationIntent] = useState<{ projectId: string; signal: number } | null>(null);
   const { can } = useCapabilities();
   const canAccessAdmin = can("adminBackend");
+  const canViewNoticeBoard = can("viewNoticeBoard");
   const canCreateProject = can("createProject");
   const canEditProject = can("editProject");
   const blocked = (route.kind === "admin" && !canAccessAdmin)
@@ -297,9 +299,9 @@ function ShellRoute() {
   const navigation = useMemo(() => withLiveDashboardSearch(buildStaffNavigation(
     route,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
-    { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar") },
+    { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar"), viewNoticeBoard: canViewNoticeBoard },
     publishedDashboardView,
-  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, route, user.role]);
+  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, canViewNoticeBoard, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, route, user.role]);
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
@@ -377,6 +379,19 @@ const adminRoute = createRoute({
   },
 });
 
+// #334 — not in the shell's redirecting `blocked` set on purpose: an external editor stays at
+// `/notices` and gets the standard unavailable view rather than a bounce to the Dashboard.
+const noticesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/notices",
+  component: function NoticesLeaf() {
+    const { route, user } = useShell();
+    const { can } = useCapabilities();
+    if (route.kind !== "notices" || !can("viewNoticeBoard")) return <NotAvailable />;
+    return <NoticeBoardPage currentUserId={user.id} />;
+  },
+});
+
 const notificationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings/notifications",
@@ -403,7 +418,7 @@ const notificationPreferencesRoute = createRoute({
 // removed: deleting it changed no test, because the root already renders the same view inside the
 // same chrome. A route that cannot be observed to do anything is decoration, not defence.
 const routeTree = rootRoute.addChildren([
-  dashboardRoute, createProjectRoute, projectRoute, editProjectRoute, adminRoute, notificationsRoute,
+  dashboardRoute, createProjectRoute, projectRoute, editProjectRoute, adminRoute, noticesRoute, notificationsRoute,
   notificationPreferencesRoute,
 ]);
 

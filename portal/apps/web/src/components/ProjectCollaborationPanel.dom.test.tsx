@@ -469,7 +469,7 @@ describe("ProjectCollaborationPanel", () => {
       ? Promise.resolve({ notifications: [], unreadCount: 0 })
       : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
     const host = mount();
-    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", { adminBackend: true, viewProductionCalendar: true });
+    const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true });
     await render(
       <>
         <SidebarProvider open onOpenChange={() => {}}>

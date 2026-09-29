@@ -16,6 +16,25 @@ _Avoid_: Job, listing, shoot
 One media file in a Project, at a known point in the RAW-to-delivered progression.
 _Avoid_: Image, photo, file, frame
 
+**Collection**:
+One of a Project's five Asset buckets: Raw, Edited, Video, Floorplan, Copy. Holds Assets
+(or links) and nothing else.
+_Avoid_: Folder, gallery, tab
+
+**Project collaboration**:
+A Project's discussion, subtasks and activity history. Not a Collection: it holds no Assets.
+_Avoid_: Comments panel, chat
+
+**Workspace tab**:
+One selectable view of a Project's workspace: each Collection, plus Project collaboration.
+Project collaboration is the tab a Project opens on.
+_Avoid_: Collection (for the Collaboration tab)
+
+**Notice board**:
+The studio-wide staff bulletin, not tied to any Project. Has a page of its own, not a
+Dashboard section.
+_Avoid_: Announcements, news feed
+
 **Stage**:
 The pipeline step a Project currently occupies. Keys are fixed in code; labels, active
 state and display order are admin configuration.

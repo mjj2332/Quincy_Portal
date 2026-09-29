@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { StaffRoute } from "./router";
 import { buildStaffBreadcrumb, buildStaffNavigation, type StaffNavigationCapabilities, type StaffNavigationItem } from "./staff-navigation";
 
-const all: StaffNavigationCapabilities = { adminBackend: true, viewProductionCalendar: true };
-const noAdmin: StaffNavigationCapabilities = { adminBackend: false, viewProductionCalendar: true };
-const noCalendar: StaffNavigationCapabilities = { adminBackend: true, viewProductionCalendar: false };
+const all: StaffNavigationCapabilities = { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true };
+const noAdmin: StaffNavigationCapabilities = { adminBackend: false, viewProductionCalendar: true, viewNoticeBoard: true };
+const noCalendar: StaffNavigationCapabilities = { adminBackend: true, viewProductionCalendar: false, viewNoticeBoard: true };
 
 const bareDashboard: StaffRoute = { kind: "dashboard" };
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -31,7 +31,7 @@ describe("the staff navigation model", () => {
 
   describe("item order and identity", () => {
     it("puts Dashboard before Admin", () => {
-      expect(items(bareDashboard).map((item) => item.id)).toEqual(["dashboard", "admin"]);
+      expect(items(bareDashboard).map((item) => item.id)).toEqual(["dashboard", "notices", "admin"]);
     });
 
     it("orders the Dashboard children List, Kanban, Gantt, Calendar — the shipped control's order (#220)", () => {
@@ -55,7 +55,7 @@ describe("the staff navigation model", () => {
     });
 
     it("points Dashboard itself at the root and Admin at /admin", () => {
-      expect(items(bareDashboard).map((item) => item.href)).toEqual(["/", "/admin"]);
+      expect(items(bareDashboard).map((item) => item.href)).toEqual(["/", "/notices", "/admin"]);
     });
   });
 
@@ -65,7 +65,12 @@ describe("the staff navigation model", () => {
     });
 
     it("omits Admin without the capability", () => {
-      expect(items(bareDashboard, "kanban", noAdmin).map((item) => item.id)).toEqual(["dashboard"]);
+      expect(items(bareDashboard, "kanban", noAdmin).map((item) => item.id)).toEqual(["dashboard", "notices"]);
+    });
+
+    it("omits Notice board without the capability", () => {
+      const noNotices = { ...all, viewNoticeBoard: false };
+      expect(items(bareDashboard, "kanban", noNotices).map((item) => item.id)).toEqual(["dashboard", "admin"]);
     });
   });
 
@@ -158,6 +163,7 @@ describe("the staff navigation model", () => {
       ["project", { kind: "project", projectId } as StaffRoute, "project"],
       ["edit-project", { kind: "edit-project", projectId } as StaffRoute, "edit-project"],
       ["admin", { kind: "admin" } as StaffRoute, "admin"],
+      ["notices", { kind: "notices" } as StaffRoute, "notices"],
       ["notifications", { kind: "notifications" } as StaffRoute, "notifications"],
       ["notification-preferences", { kind: "notification-preferences" } as StaffRoute, "notifications"],
       ["not-found", { kind: "not-found" } as StaffRoute, "not-found"],
@@ -182,7 +188,7 @@ describe("an explicit Calendar location without the capability", () => {
   // Reported by Luna. The shell replaces such a location with "/", so this is a transient frame
   // rather than a way into the Calendar — but a nav tree with NOTHING marked active is still the
   // wrong thing to paint while the redirect is pending, and it is what the model used to return.
-  const WITHOUT_CALENDAR = { adminBackend: true, viewProductionCalendar: false };
+  const WITHOUT_CALENDAR = { adminBackend: true, viewProductionCalendar: false, viewNoticeBoard: true };
 
   it("marks a real child active instead of nothing, for the bare intent", () => {
     const navigation = buildStaffNavigation(
@@ -212,7 +218,7 @@ describe("an explicit Calendar location without the capability", () => {
     const navigation = buildStaffNavigation(
       { kind: "dashboard", dashboardView: "calendar" },
       "list",
-      { adminBackend: true, viewProductionCalendar: true },
+      { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true },
     );
     const children = navigation.groups[0]!.items[0]!.children ?? [];
     expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Calendar"]);
@@ -235,10 +241,33 @@ describe("an explicit Calendar location without the capability", () => {
     const navigation = buildStaffNavigation(
       { kind: "dashboard", dashboardView: "gantt" },
       "list",
-      { adminBackend: true, viewProductionCalendar: true },
+      { adminBackend: true, viewProductionCalendar: true, viewNoticeBoard: true },
     );
     const children = navigation.groups[0]!.items[0]!.children ?? [];
     expect(children.filter((child) => child.active).map((child) => child.label)).toEqual(["Gantt"]);
+  });
+});
+
+describe("the Notice board item (#334)", () => {
+  const notices: StaffRoute = { kind: "notices" };
+  const noticeItem = (route: StaffRoute) => items(route).find((item) => item.id === "notices");
+
+  it("is active on /notices, inactive on the Dashboard, and has no children or badge", () => {
+    expect(noticeItem(notices)).toMatchObject({ label: "Notice board", href: "/notices", active: true });
+    expect(noticeItem(notices)?.children).toBeUndefined();
+    expect(noticeItem(bareDashboard)?.active).toBe(false);
+    expect(items(notices).find((item) => item.id === "dashboard")?.active).toBe(false);
+  });
+
+  it("leaves the Dashboard group collapsed on /notices", () => {
+    expect(buildStaffNavigation(notices, "kanban", all).expandedItemId).toBeNull();
+  });
+
+  it("reads Home › Notice board(null) as the breadcrumb", () => {
+    expect(buildStaffBreadcrumb(buildStaffNavigation(notices, "kanban", all))).toEqual([
+      { label: "Home", href: "/" },
+      { label: "Notice board", href: null },
+    ]);
   });
 });
 

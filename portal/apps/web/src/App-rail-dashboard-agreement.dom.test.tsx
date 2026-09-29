@@ -93,7 +93,7 @@ vi.mock("./components/reui/event-calendar/event-calendar", async () => (await im
 vi.mock("./components/reui/event-calendar/event-calendar-nav", async () => (await import("./testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./components/reui/event-calendar/event-calendar-content", async () => (await import("./testing/event-calendar-fake")).eventCalendarContentModule);
 vi.mock("./components/reui/event-calendar/event-calendar-dnd", async () => (await import("./testing/event-calendar-fake")).eventCalendarDndModule);
-vi.mock("./components/NoticeBoard", () => ({ NoticeBoard: () => null }));
+vi.mock("./components/NoticeBoard", () => ({ NoticeBoard: () => <section data-testid="notice-board-marker" /> }));
 // `Dashboard` navigates to a project by pushing a location; the real `ProjectWorkspace` fetches
 // its own project graph, which is out of scope for a rail/Dashboard agreement check — a stub with
 // an unambiguous marker is enough for the lifecycle sequence's "unmounts cleanly" assertion.
@@ -932,5 +932,71 @@ describe("off-Dashboard, the draft reaches the URL exactly once through the rail
     expect(currentUrl()).toBe("/?q=smith");
     pushSpy.mockRestore();
     replaceSpy.mockRestore();
+  });
+});
+
+describe("the Dashboard sheds the Notice board and summary strip; /notices hosts the board (#334)", () => {
+  function signInAs(role: string) {
+    sessionState.value = { data: { user: { id: "r1", name: "Role", role } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
+  }
+
+  it.each([
+    ["admin", ["list", "kanban", "gantt", "calendar"]],
+    ["editor", ["list", "kanban", "gantt", "calendar"]],
+    ["photographer", ["list", "kanban"]],
+    ["external_editor", ["list"]],
+  ])("%s: no Notice board and no project summary on any view, the toolbar follows the heading", async (role, views) => {
+    signInAs(role);
+    for (const view of views) {
+      const host = await renderApp(`/?view=${view}`);
+      expect(host.querySelector('[data-testid="notice-board-marker"]'), `${role} ${view}`).toBeNull();
+      expect(host.querySelector('[aria-label="Project summary"]'), `${role} ${view}`).toBeNull();
+      const main = host.querySelector("main")!;
+      expect(main.children[1]?.getAttribute("data-testid"), `${role} ${view}`).toBe("dashboard-toolbar");
+      if (root) await act(async () => root!.unmount());
+      root = null;
+      document.body.replaceChildren();
+    }
+  });
+
+  it("admin: the Active/Archived toggle still works and the Archived scope has no strip or board either", async () => {
+    const host = await renderApp("/?view=list");
+    await clickButtonLabelled(host, "Archived");
+    expect(host.textContent).toContain("Archived projects");
+    expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Project summary"]')).toBeNull();
+  });
+
+  it("at /notices the board sits in the page frame under the Notice board heading, with the rail item active", async () => {
+    const host = await renderApp("/notices");
+    const main = host.querySelector("main")!;
+    expect(main.querySelector("h1")?.textContent).toBe("Notice board");
+    expect(main.querySelector('[data-testid="notice-board-marker"]')).not.toBeNull();
+    const item = [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
+    expect(item.getAttribute("aria-current")).toBe("page");
+    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).toBeNull();
+  });
+
+  it("the rail item mounts the board from the Dashboard, and Back returns to a Dashboard without it", async () => {
+    const host = await renderApp("/");
+    expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
+    const item = [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
+    await click(item);
+    expect(currentUrl()).toBe("/notices");
+    expect(host.querySelector('[data-testid="notice-board-marker"]')).not.toBeNull();
+    await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await settle();
+    expect(currentUrl()).toBe("/");
+    expect(host.querySelector('[data-testid="dashboard-toolbar"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
+  });
+
+  it("an external editor at /notices sees the unavailable view, no board, and no rail item", async () => {
+    signInAs("external_editor");
+    const host = await renderApp("/notices");
+    expect(currentUrl()).toBe("/notices");
+    expect(host.textContent).toContain("That page is not available.");
+    expect(host.querySelector('[data-testid="notice-board-marker"]')).toBeNull();
+    expect([...host.querySelectorAll('[data-testid="navigation-rail-link"]')].map((a) => a.textContent?.trim())).toEqual(["Dashboard"]);
   });
 });

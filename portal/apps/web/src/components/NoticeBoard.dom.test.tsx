@@ -494,70 +494,21 @@ describe("NoticeBoard disclosure and polling", () => {
   });
 });
 
-describe("NoticeBoard foldOnPhone (#271)", () => {
+describe("NoticeBoard on a phone (#334)", () => {
   const KEY = "quincy:dashboard:noticeboard:v2";
-  function phone(matches: boolean) {
-    Object.defineProperty(window, "matchMedia", { configurable: true, value: (query: string) => ({ matches: matches && query.includes("721px"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false }) });
-  }
   const toggleOf = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[data-slot="notice-board-toggle"]')!;
 
-  beforeEach(() => {
+  it("does not fold on a phone: open by default, panel visible, subtitle shown", async () => {
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: (query: string) => ({ matches: query.includes("721px"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false }) });
     apiGetMock.mockImplementation((path) => path.includes("read-marker")
       ? Promise.resolve({ marker: null, latest: { postId: oldPost.id, createdAt: oldPost.createdAt }, unreadCount: 0 })
       : Promise.resolve({ posts: [oldPost] }));
-  });
-
-  it("starts folded on a phone without writing that to storage, and opens (and persists) on a tap", async () => {
-    phone(true);
-    window.localStorage.setItem(KEY, "true");
-    const host = mount();
-    await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("false");
-    expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/notice-board/posts"))).toBe(false);
-    expect(window.localStorage.getItem(KEY)).toBe("true");
-    await click(toggleOf(host));
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
-    expect(window.localStorage.getItem(KEY)).toBe("true");
-  });
-
-  it("stays as stored on a desktop", async () => {
-    phone(false);
-    window.localStorage.setItem(KEY, "true");
-    const host = mount();
-    await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("folds when a phone view switches to Gantt/Calendar, and restores the stored state when it switches back", async () => {
-    phone(true);
-    window.localStorage.setItem(KEY, "true");
+    window.localStorage.removeItem(KEY);
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
     expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
-    await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("false");
-    await render(<NoticeBoard currentUserId="user-a" />);
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
-    expect(window.localStorage.getItem(KEY)).toBe("true");
-  });
-
-  it("drops the subtitle only while folded, so the folded board is one line and the opened board matches List", async () => {
-    phone(true);
-    const host = mount();
-    const subtitle = () => [...toggleOf(host).querySelectorAll("span")].find((span) => span.textContent === "Messages for the production desk");
-    await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("false");
-    expect(subtitle()!.className.split(/\s+/)).toContain("hidden");
-    await act(async () => toggleOf(host).click());
-    expect(toggleOf(host).getAttribute("aria-expanded")).toBe("true");
-    expect(subtitle()!.className.split(/\s+/)).not.toContain("hidden");
-  });
-
-  it("never hides the subtitle on a desktop", async () => {
-    phone(false);
-    const host = mount();
-    await render(<NoticeBoard currentUserId="user-a" foldOnPhone />);
-    const span = [...toggleOf(host).querySelectorAll("span")].find((el) => el.textContent === "Messages for the production desk")!;
-    expect(span.className.split(/\s+/)).not.toContain("hidden");
+    expect(host.querySelector<HTMLElement>(`#${CSS.escape(toggleOf(host).getAttribute("aria-controls")!)}`)!.hidden).toBe(false);
+    const subtitle = [...toggleOf(host).querySelectorAll("span")].find((span) => span.textContent === "Messages for the production desk")!;
+    expect(subtitle.className.split(/\s+/)).not.toContain("hidden");
   });
 });

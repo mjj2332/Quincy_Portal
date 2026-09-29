@@ -20,7 +20,7 @@ async function render(value: ReactNode) {
   await act(async () => { root!.render(value); await Promise.resolve(); await Promise.resolve(); });
 }
 
-describe("Dashboard notice-board capability gate", () => {
+describe("Dashboard no longer hosts the Notice board (#334)", () => {
   beforeEach(() => {
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path) => {
@@ -39,8 +39,9 @@ describe("Dashboard notice-board capability gate", () => {
     document.body.replaceChildren();
   });
 
-  it("renders NoticeBoard for a photographer", async () => {
+  it("renders no Notice board for a photographer who holds the capability, and never fetches it", async () => {
     await render(<Dashboard currentUserId="photographer-1" />);
-    expect(document.querySelector('[aria-label="Notice board"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Notice board"]')).toBeNull();
+    expect(apiGetMock.mock.calls.some(([path]) => path.startsWith("/api/notice-board"))).toBe(false);
   });
 });

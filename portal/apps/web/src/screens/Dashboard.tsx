@@ -10,7 +10,6 @@ import { useStages } from "../lib/stages";
 import { DASHBOARD_CALENDAR_LAST_DATE_KEY, DASHBOARD_CALENDAR_SUBVIEW_KEY, focusTargetAfterClearingSearch, formatDashboardDate, initializeDashboardCalendarState, initializeDashboardView, initializeKanbanSortMode, type DashboardView, type KanbanSortMode } from "./dashboard-helpers";
 import { publishDashboardView, releaseDashboardView } from "../lib/dashboard-view-store";
 import { InternalLink } from "../components/InternalLink";
-import { NoticeBoard } from "../components/NoticeBoard";
 import { pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
@@ -229,7 +228,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canMoveStagesCapability = can("moveProjectStage");
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
-  const canViewNoticeBoard = can("viewNoticeBoard");
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   const history = locationStore();
   const currentLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
@@ -276,7 +274,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // render: a role without Calendar capability, a Back/Forward to a q-less URL, and a cold deep
   // link all resolve correctly on their very first commit. Every render-time consumer below reads
   // this ONE value instead of the store: the projects query, the search-counts query,
-  // `searchActive` (and everything gated on it -- the chip, the stats strip, the Kanban movement
+  // `searchActive` (and everything gated on it -- the chip, the Kanban movement
   // gates), the chip's own text, and the Calendar (`calendar={calendarState && { ...calendarState,
   // search: committedQuery }}` further down -- `calendarState.search` itself stays for
   // URL-serialisation bookkeeping, e.g. `JSON.stringify` equality checks and
@@ -437,7 +435,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   // `sameStageReorderEnabled` / `movementDisabled` / `runBoardMovement`'s own guard, not smuggled
   // in through this flag.
   // #217 build, step 4: `committedQuery`, the render-derived route accessor -- see that
-  // constant's own comment above. Everything gated on `searchActive` (the chip, the stats strip,
+  // constant's own comment above. Everything gated on `searchActive` (the chip,
   // the Kanban movement gates below) inherits the fix through this one flag.
   const searchActive = committedQuery !== "";
   // #306: the UI lock is NOT the data barrier. `movementInteractionActive` locks the view switcher
@@ -982,9 +980,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
   }, [projectsQuery.refetch]);
 
-  const activeCount = projects.filter((project) => project.stageKey !== "delivered").length;
-  const needsReviewCount = projects.filter((project) => project.stageKey === "raw_review" || project.stageKey === "edited_review").length;
-  const deliveredCount = projects.filter((project) => project.stageKey === "delivered").length;
   const activeStages = stages.filter((stage) => stage.active);
   const kanbanSortOptions: SelectOption<KanbanSortMode>[] = useMemo(() => {
     const options: SelectOption<KanbanSortMode>[] = [{ value: "board", label: "Board order" }];
@@ -1433,29 +1428,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         </div>
         <hr className="basis-full m-0 mb-[var(--space-6)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary max-[721px]:mb-[var(--space-5)]" />
       </div>
-
-      {/* #271: on a phone, the Gantt and Calendar charts should reach the first screen, so those two
-          views fold the notice board and hide the stat grid there (owner decision). */}
-      {canViewNoticeBoard && <NoticeBoard currentUserId={currentUserId} foldOnPhone={isGanttView || isCalendarView} />}
-
-      {!viewingArchived && !searchActive && <section aria-label="Project summary" className={cn("[display:grid] grid-cols-4 [border-block-style:solid] border-y-[length:var(--border-width-hair)] border-y-border bg-transparent mb-[var(--space-6)] max-[1080px]:grid-cols-2", (isGanttView || isCalendarView) && "max-[721px]:hidden")}>
-        <div className="py-[var(--space-5)] pr-[var(--space-5)]">
-          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]">{activeCount}</div>
-          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Active shoots</div>
-        </div>
-        <div className="py-[var(--space-5)] pr-[var(--space-5)] pl-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border">
-          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]"><span className="size-[7px] rounded-[var(--radius-pill)] shrink-0 self-center bg-signal-caution" />{needsReviewCount}</div>
-          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Needs review</div>
-        </div>
-        <div className="py-[var(--space-5)] pr-[var(--space-5)] pl-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border max-[1080px]:pl-0 max-[1080px]:border-l-0 max-[1080px]:[border-top-style:solid] max-[1080px]:border-t-[length:var(--border-width-hair)] max-[1080px]:border-t-border">
-          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]"><span className="size-[7px] rounded-[var(--radius-pill)] shrink-0 self-center bg-signal-positive" />{deliveredCount}</div>
-          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">Delivered</div>
-        </div>
-        <div className="py-[var(--space-5)] pr-[var(--space-5)] pl-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border max-[1080px]:[border-top-style:solid] max-[1080px]:border-t-[length:var(--border-width-hair)] max-[1080px]:border-t-border">
-          <div className="[font:var(--type-h2)] tracking-[var(--tracking-tight)] flex items-baseline gap-[var(--space-2)] tabular-nums max-[390px]:[font:var(--type-h3)]">{projects.length}</div>
-          <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary mt-[var(--space-2)]">All projects</div>
-        </div>
-      </section>}
 
       <div data-testid="dashboard-toolbar" tabIndex={-1} className={cn(
         "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +

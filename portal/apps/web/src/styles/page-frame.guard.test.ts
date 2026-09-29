@@ -268,6 +268,7 @@ const FRAME_MANIFEST: Record<string, FrameCounts> = {
   "screens/CreateProject.tsx": { full: 0, capped: 1 },
   "screens/EditProject.tsx": { full: 0, capped: 1 },
   "screens/Admin.tsx": { full: 0, capped: 1 },
+  "screens/NoticeBoardPage.tsx": { full: 0, capped: 1 },
   "screens/Notifications.tsx": { full: 0, capped: 1 },
   "screens/NotificationPreferences.tsx": { full: 0, capped: 1 },
   "lib/app-router.tsx": { full: 0, capped: 2 },

@@ -151,6 +151,7 @@ describe("NotificationBell", () => {
     const navigation = buildStaffNavigation(parseStaffLocation("/"), "kanban", {
       adminBackend: true,
       viewProductionCalendar: true,
+      viewNoticeBoard: true,
     });
     // #122: `NavigationRail` is built on base-nova's full `reui/sidebar.tsx`, whose primitives
     // throw outside a `SidebarProvider` — see `NavigationRail.dom.test.tsx`'s own `renderInProvider`.

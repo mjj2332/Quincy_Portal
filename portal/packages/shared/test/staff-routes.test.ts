@@ -44,6 +44,7 @@ describe("shared staff route contract", () => {
       [`/projects/${projectId}?collaboration=open`, { kind: "project", projectId, collaboration: "open" }],
       [`/projects/${projectId}/edit`, { kind: "edit-project", projectId }],
       ["/admin", { kind: "admin" }],
+      ["/notices", { kind: "notices" }],
       ["/settings/notifications", { kind: "notifications" }],
       ["/settings/notifications/preferences", { kind: "notification-preferences" }],
     ];
@@ -54,6 +55,13 @@ describe("shared staff route contract", () => {
       expect(safeStaffDestination(location)).toBe(location);
     }
     expect(parseStaffPathname(`/projects/${projectId.toUpperCase()}`)).toEqual({ kind: "not-found" });
+  });
+
+  it("rejects every non-canonical spelling of /notices", () => {
+    for (const bad of ["/notices/", "/notices/x", "/notices?x=1", "/%6eotices", "/Notices", "/notices#a"]) {
+      expect(parseStaffLocation(bad)).toEqual({ kind: "not-found" });
+      expect(safeStaffDestination(bad)).toBeNull();
+    }
   });
 
   it("checks the 3-segment notification-preferences arm before the 2-segment notifications arm", () => {

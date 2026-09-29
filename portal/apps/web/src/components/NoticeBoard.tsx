@@ -50,8 +50,6 @@ export type { NoticeBoardPost };
 
 function readStorage(key: string): string | null { try { return window.localStorage.getItem(key); } catch { return null; } }
 function readOpen(): boolean { return readStorage(COLLAPSE_KEY) !== "false"; }
-const PHONE_QUERY = "(max-width: 721px)";
-function onPhone(): boolean { try { return window.matchMedia?.(PHONE_QUERY).matches ?? false; } catch { return false; } }
 function relativeTime(value: string): string {
   const timestamp = new Date(value).valueOf(); if (!Number.isFinite(timestamp)) return "Unknown time";
   const seconds = Math.round((timestamp - Date.now()) / 1000);
@@ -61,24 +59,12 @@ function relativeTime(value: string): string {
   return "just now";
 }
 
-/**
- * `foldOnPhone` (#271): the Gantt and Calendar views pass it so, on a phone, the board starts folded
- * and the chart reaches the first screen. The fold is not a preference: it is never written to
- * storage, a tap opens the board as usual (and persists that), and leaving those views restores the
- * stored state. It is re-evaluated when the prop changes, not on every resize.
- */
-export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUserId: string; foldOnPhone?: boolean }) {
+export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const queryClient = useQueryClient();
   const panelId = useId();
   const [open, setOpen] = useState(readOpen);
   const lastPersistedOpen = useRef(open);
-  const [folded, setFolded] = useState(() => foldOnPhone && onPhone());
-  const [seenFoldOnPhone, setSeenFoldOnPhone] = useState(foldOnPhone);
-  if (seenFoldOnPhone !== foldOnPhone) {
-    setSeenFoldOnPhone(foldOnPhone);
-    setFolded(foldOnPhone && onPhone());
-  }
-  const expanded = open && !folded;
+  const expanded = open;
   const [content, setContent] = useState<RichTextDoc>(EMPTY_DOC);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<RichTextDoc>(EMPTY_DOC);
@@ -187,16 +173,11 @@ export function NoticeBoard({ currentUserId, foldOnPhone = false }: { currentUse
       type="button"
       aria-expanded={expanded}
       aria-controls={panelId}
-      onClick={() => {
-        if (folded) {
-          setFolded(false);
-          setOpen(true);
-        } else setOpen((value) => !value);
-      }}
+      onClick={() => setOpen((value) => !value)}
     >
       <span className="flex flex-col gap-[var(--space-1)] flex-1 min-w-0">
         <Eyebrow>Staff notice board</Eyebrow>
-        <span className={cn("[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", folded && "hidden")}>Messages for the production desk</span>
+        <span className="[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">Messages for the production desk</span>
       </span>
       {hasUnread && (
         <>

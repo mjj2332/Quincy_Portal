@@ -28,6 +28,7 @@ vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId }:
 vi.mock("./screens/Admin", () => ({ Admin: ({ currentUserId }: { currentUserId: string }) => <main>ADMIN SCREEN {currentUserId}</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>CREATE SCREEN</main> }));
 vi.mock("./screens/EditProject", () => ({ EditProject: ({ projectId }: { projectId: string }) => <main>EDIT SCREEN {projectId}</main> }));
+vi.mock("./screens/NoticeBoardPage", () => ({ NoticeBoardPage: ({ currentUserId }: { currentUserId: string }) => <main>NOTICES SCREEN {currentUserId}</main> }));
 vi.mock("./screens/Notifications", () => ({ Notifications: () => <main>NOTIFICATIONS LIST SCREEN</main> }));
 vi.mock("./screens/NotificationPreferences", () => ({ NotificationPreferences: () => <main>NOTIFICATIONS PREFERENCES SCREEN</main> }));
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>SIGN IN</main> }));
@@ -66,6 +67,7 @@ describe("every route kind resolves to its screen through the router", () => {
     [`/projects/${projectId}`, `PROJECT SCREEN ${projectId}`],
     [`/projects/${projectId}/edit`, `EDIT SCREEN ${projectId}`],
     ["/admin", "ADMIN SCREEN u1"],
+    ["/notices", "NOTICES SCREEN u1"],
     ["/settings/notifications", "NOTIFICATIONS LIST SCREEN"],
     ["/settings/notifications/preferences", "NOTIFICATIONS PREFERENCES SCREEN"],
   ])("%s mounts %s", async (path, expected) => {
@@ -84,6 +86,9 @@ describe("the parser overrules the router's matcher, and the URL is left alone",
     [`/projects/${projectId}/more`, "unknown trailing segment"],
     ["/%61dmin", "percent-encoded spelling of /admin"],
     ["/admin?tab=users", "query on a route whose contract has none"],
+    ["/notices/", "trailing slash on /notices"],
+    ["/%6eotices", "percent-encoded spelling of /notices"],
+    ["/notices?x=1", "query on /notices"],
     [`/?view=list&detail=${projectId}`, "retired dashboard facet"],
     ["/unknown", "unroutable path"],
   ])("%s renders not-available (%s)", async (path) => {
@@ -104,6 +109,41 @@ describe("the parser overrules the router's matcher, and the URL is left alone",
       expect(host.querySelector("header")).not.toBeNull();
     },
   );
+});
+
+describe("/notices by role (#334)", () => {
+  function signInAs(id: string, role: string) {
+    sessionState.value = { data: { user: { id, name: "Test", role } }, isPending: false, refetch: vi.fn<() => Promise<void>>() };
+  }
+
+  it.each(["admin", "editor", "photographer"])("mounts the Notice board page for %s", async (role) => {
+    signInAs("r1", role);
+    const host = await renderAt("/notices");
+    expect(host.textContent).toContain("NOTICES SCREEN r1");
+    expect(window.location.pathname).toBe("/notices");
+  });
+
+  it("shows an external editor the standard unavailable view at the unchanged URL", async () => {
+    signInAs("x1", "external_editor");
+    const host = await renderAt("/notices");
+    expect(window.location.pathname).toBe("/notices");
+    expect(host.textContent).toContain("That page is not available.");
+    expect(host.textContent).not.toContain("NOTICES SCREEN");
+  });
+
+  it("follows Back/Forward between the Dashboard and /notices under StrictMode", async () => {
+    window.history.replaceState(null, "", "/");
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<StrictMode><App /></StrictMode>); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+    await act(async () => { window.history.pushState(null, "", "/notices"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("NOTICES SCREEN u1");
+    await act(async () => { window.history.pushState(null, "", "/"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+    expect(host.textContent).not.toContain("NOTICES SCREEN");
+  });
 });
 
 describe("capability redirects still run above the route tree", () => {

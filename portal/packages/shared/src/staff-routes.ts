@@ -131,6 +131,7 @@ export type StaffRoute =
   | { kind: "project"; projectId: string; collaboration?: "open" }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
+  | { kind: "notices" }
   | { kind: "notifications" }
   | { kind: "notification-preferences" }
   | { kind: "not-found" }
@@ -224,6 +225,7 @@ export function parseStaffPathname(pathname: string): StaffRoute {
   if (reservedRoots.has(segments[0]!)) return { kind: "reserved" };
 
   if (segments.length === 1 && segments[0] === "admin") return { kind: "admin" };
+  if (segments.length === 1 && segments[0] === "notices") return { kind: "notices" };
   // Checked BEFORE the 2-segment "notifications" arm below: both share the same two leading
   // segments, so the longer, more specific match must win or it would never be reached.
   if (segments.length === 3 && segments[0] === "settings" && segments[1] === "notifications" && segments[2] === "preferences") return { kind: "notification-preferences" };
@@ -579,6 +581,7 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
     case "project": return `/projects/${encodeURIComponent(route.projectId)}${route.collaboration === "open" ? "?collaboration=open" : ""}`;
     case "edit-project": return `/projects/${encodeURIComponent(route.projectId)}/edit`;
     case "admin": return "/admin";
+    case "notices": return "/notices";
     case "notifications": return "/settings/notifications";
     case "notification-preferences": return "/settings/notifications/preferences";
   }
@@ -595,7 +598,7 @@ export function projectNotificationRoute(projectId: string | null, type: string)
 export function safeStaffDestination(value: unknown): string | null {
   if (typeof value !== "string" || unsafeText(value) || value.includes("#") || !value.startsWith("/") || value.startsWith("//")) return null;
   const route = parseStaffLocation(value);
-  if (route.kind !== "dashboard" && route.kind !== "create-project" && route.kind !== "project" && route.kind !== "edit-project" && route.kind !== "admin" && route.kind !== "notifications" && route.kind !== "notification-preferences") return null;
+  if (route.kind !== "dashboard" && route.kind !== "create-project" && route.kind !== "project" && route.kind !== "edit-project" && route.kind !== "admin" && route.kind !== "notices" && route.kind !== "notifications" && route.kind !== "notification-preferences") return null;
   const canonical = staffPathFor(route);
   return parseStaffLocation(canonical).kind === "not-found" ? null : canonical;
 }

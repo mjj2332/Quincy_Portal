@@ -45,6 +45,7 @@ vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unkn
 vi.mock("./screens/Dashboard", () => ({ Dashboard: () => <main>Dashboard</main> }));
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: () => <main>Project</main> }));
 vi.mock("./screens/SignIn", () => ({ SignIn: () => <main>Sign in</main> }));
+vi.mock("./screens/NoticeBoardPage", () => ({ NoticeBoardPage: () => <main>Notices</main> }));
 vi.mock("./screens/Admin", () => ({ Admin: () => <main>Admin</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>Create</main> }));
 vi.mock("./screens/EditProject", () => ({ EditProject: () => <main>Edit</main> }));
@@ -262,6 +263,17 @@ function railToggle(host: ParentNode) {
 function sheetTrigger(host: ParentNode) {
   return host.querySelector<HTMLButtonElement>('[data-testid="shell-header-sheet-trigger"]');
 }
+
+describe("the wide rail on /notices (#334)", () => {
+  it("marks Notice board current and reads Home › Notice board in the breadcrumb", async () => {
+    const host = await renderAt("/notices");
+    const link = [...host.querySelectorAll('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
+    expect(link.getAttribute("aria-current")).toBe("page");
+    const crumb = host.querySelector('[data-testid="shell-breadcrumb"]')!;
+    expect(crumb.textContent).toContain("Home");
+    expect(crumb.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe("Notice board");
+  });
+});
 
 describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () => {
   it("flips data-state via the header toggle, writes storage, and a remount with a pre-set collapsed starts collapsed", async () => {
@@ -513,6 +525,34 @@ describe("the railed shell's collapse, header, breadcrumb and Sheet (#112)", () 
         await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
         expect(window.location.pathname).toBe("/settings/notifications/preferences");
       }
+    });
+
+    it("reaches Notice board inside the open Sheet, and marks it current there (#334)", async () => {
+      {
+        const host = await renderAt("/");
+        await resizeTo(600);
+        await tick();
+        await click(sheetTrigger(host)!);
+        const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+        const link = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
+          .find((a) => a.textContent?.trim() === "Notice board")! as HTMLAnchorElement;
+        expect(link.getAttribute("href")).toBe("/notices");
+        await click(link);
+        await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+        expect(window.location.pathname).toBe("/notices");
+        expect(document.body.textContent).not.toContain("That page is not available.");
+        if (root) await act(async () => root!.unmount());
+        root = null;
+        document.body.replaceChildren();
+      }
+      const host = await renderAt("/notices");
+      await resizeTo(600);
+      await tick();
+      await click(sheetTrigger(host)!);
+      const sheet = document.querySelector('[data-testid="rail-sheet"]')!;
+      const link = [...sheet.querySelectorAll('[data-testid="navigation-rail-link"]')]
+        .find((a) => a.textContent?.trim() === "Notice board")!;
+      expect(link.getAttribute("aria-current")).toBe("page");
     });
 
     it("gives Admin aria-current inside the Sheet when it is the active route (#113)", async () => {
