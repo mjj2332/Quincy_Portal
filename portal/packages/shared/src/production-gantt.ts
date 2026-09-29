@@ -240,6 +240,12 @@ export type ProductionGanttResponse<TStage extends StageTransportKey = StageTran
   projects: GanttProjectRowDto<TStage>[];
   page: { limit: number; returned: number; nextCursor: string | null };
   density: { matchedProjects: number; matchedRows: number; drawCap: number; tooManyToDraw: boolean };
+  /**
+   * #274: the Editor field's options — every active editor on a project this viewer can see,
+   * independent of the other filters. Present only when the request sent `facets=1` (page one
+   * only), so an old bundle's strict decoder never meets the key (the #246 `rev=1` pattern).
+   */
+  filterFacets?: { people: CalendarPerson[] };
 };
 
 export type ProductionGanttChildPageResponse = { projectId: string; children: GanttProjectRowDto["children"] };
@@ -339,6 +345,7 @@ export function productionGanttResponseSchemaFor<TStage extends StageTransportKe
       drawCap: z.literal(PRODUCTION_GANTT_DRAW_CAP),
       tooManyToDraw: z.boolean(),
     }).strict(),
+    filterFacets: z.object({ people: z.array(calendarPersonZodSchema) }).strict().optional(),
   }).strict();
 }
 

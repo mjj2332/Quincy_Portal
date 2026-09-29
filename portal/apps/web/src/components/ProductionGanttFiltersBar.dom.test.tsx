@@ -9,6 +9,7 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { CalendarPerson } from "@quincy/shared";
 import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters, type StageFilterOption } from "../lib/production-gantt-filters";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 
@@ -25,6 +26,15 @@ const stageOptions: StageFilterOption[] = [
   { key: "delivered", label: "Delivered" },
 ];
 
+const ALEX = "0a000000-0000-4000-8000-000000000001";
+const BEA = "0b000000-0000-4000-8000-000000000002";
+const STALE = "0c000000-0000-4000-8000-000000000003";
+const people: CalendarPerson[] = [
+  { id: BEA, name: "Bea Editor", roleLabel: "Editor", isExternal: false, active: true },
+  { id: ALEX.toUpperCase(), name: "Alex Admin", roleLabel: "Admin", isExternal: false, active: true },
+];
+let barPeople: readonly CalendarPerson[] = [];
+
 let root: Root | null = null;
 let host: HTMLElement;
 let pushes: ProductionGanttFacetFilters[];
@@ -39,6 +49,7 @@ function Harness({ initial, echo }: { initial: ProductionGanttFacetFilters; echo
     <ProductionGanttFiltersBar
       filters={filters}
       stageOptions={stageOptions}
+      people={barPeople}
       triggerRef={triggerRefValue}
       onFiltersChange={(next) => {
         pushes.push(next);
@@ -105,8 +116,15 @@ function options(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('[role="option"]')];
 }
 
+/** An option's spoken label: its text without the decorative (`aria-hidden`) icon, e.g. an avatar's initials. */
+function optionLabel(candidate: HTMLElement): string {
+  const copy = candidate.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+  return copy.textContent?.trim() ?? "";
+}
+
 function option(name: string): HTMLElement {
-  const match = options().find((candidate) => candidate.textContent?.trim() === name);
+  const match = options().find((candidate) => optionLabel(candidate) === name);
   if (!match) throw new Error(`no option "${name}" in [${options().map((candidate) => candidate.textContent).join(", ")}]`);
   return match;
 }
@@ -126,7 +144,7 @@ async function press(element: Element, key: string) {
 }
 
 /** Opens the picker, picks the field, its one condition, then the named values. */
-async function addFilter(field: "Stage" | "Show", condition: string, values: string[]) {
+async function addFilter(field: "Stage" | "Show" | "Editor", condition: string, values: string[]) {
   await click(addTrigger());
   await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toContain(field));
   await click(option(field));
@@ -144,12 +162,58 @@ beforeEach(() => {
   root = createRoot(host);
   pushes = [];
   triggerRefValue = { current: null };
+  barPeople = [];
 });
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
   root = null;
   host.remove();
+});
+
+describe("ProductionGanttFiltersBar: the Editor field (#274)", () => {
+  it("offers Editor first, once the server has listed people, each with an initials avatar", async () => {
+    barPeople = people;
+    await render();
+    await click(addTrigger());
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Editor", "Stage", "Show"]));
+    await click(option("Editor"));
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["is any of"]));
+    await click(option("is any of"));
+    await waitFor(() => option("Alex Admin"));
+    expect(options().map(optionLabel)).toEqual(["Bea Editor", "Alex Admin"]);
+    expect(options().map((candidate) => candidate.querySelector('[aria-hidden="true"]')?.textContent)).toEqual(["BE", "AA"]);
+    // The highlighted row paints --accent (ink), the avatar's own fill: a paper ring keeps its circle
+    // visible there (#274 design review).
+    const avatar = options()[0]!.querySelector<HTMLElement>('[aria-hidden="true"]')!;
+    expect(avatar.className).toContain("[[data-highlighted]_&]:ring-1");
+    expect(avatar.className).toContain("[[data-highlighted]_&]:ring-[var(--paper-050)]");
+  });
+
+  it("writes the picked editors as sorted lowercase ids, independent of Stage and Show", async () => {
+    barPeople = people;
+    await render({ editorIds: [], stageKeys: ["editing"], delivered: false, completed: false });
+    await addFilter("Editor", "is any of", ["Bea Editor"]);
+    expect(pushes.at(-1)).toEqual({ editorIds: [BEA], stageKeys: ["editing"], delivered: false, completed: false });
+    await click(option("Alex Admin"));
+    await waitFor(() => expect(pushes.at(-1)).toEqual({ editorIds: [ALEX, BEA], stageKeys: ["editing"], delivered: false, completed: false }));
+  });
+
+  it("renders an editor id the server no longer lists as 'Unknown editor (not applied)', which can still be removed", async () => {
+    barPeople = people;
+    await render({ editorIds: [STALE], stageKeys: [], delivered: false, completed: false });
+    expect(chipNames()).toEqual(["Editor is any of Unknown editor (not applied)"]);
+    await click(button("Unknown editor (not applied)", chips()[0]!));
+    await waitFor(() => expect(option("Unknown editor (not applied)").getAttribute("aria-selected")).toBe("true"));
+    await click(option("Unknown editor (not applied)"));
+    await waitFor(() => expect(pushes.at(-1)?.editorIds).toEqual([]));
+  });
+
+  it("does not offer Editor while there is nobody to pick", async () => {
+    await render();
+    await click(addTrigger());
+    await waitFor(() => expect(options().map((candidate) => candidate.textContent?.trim())).toEqual(["Stage", "Show"]));
+  });
 });
 
 describe("ProductionGanttFiltersBar (#255)", () => {

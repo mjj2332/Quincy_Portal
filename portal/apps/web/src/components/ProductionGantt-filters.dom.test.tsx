@@ -143,12 +143,19 @@ function addTrigger(host: HTMLElement): HTMLButtonElement {
   return element;
 }
 
+/** An option's spoken label: its text without the decorative (`aria-hidden`) icon, e.g. an avatar's initials. */
+function optionLabel(candidate: Element): string {
+  const copy = candidate.cloneNode(true) as Element;
+  copy.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+  return copy.textContent?.trim() ?? "";
+}
+
 function optionNames(): string[] {
-  return [...document.querySelectorAll('[role="option"]')].map((candidate) => candidate.textContent?.trim() ?? "");
+  return [...document.querySelectorAll('[role="option"]')].map(optionLabel);
 }
 
 function option(name: string): HTMLElement {
-  const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => candidate.textContent?.trim() === name);
+  const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((candidate) => optionLabel(candidate) === name);
   if (!match) throw new Error(`no option "${name}" in [${optionNames().join(", ")}]`);
   return match;
 }
@@ -403,6 +410,24 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     const labels = legendLabels(host);
     expect(labels).toEqual(["Awaiting RAW", "RAW review", "Editing", "Edited review", "Delivered"]);
     for (const raw of ["awaiting_raw", "raw_review", "editing", "editing_autohdr", "edited_review", "delivered"]) expect(labels).not.toContain(raw);
+  });
+
+  it("#274: offers the Editor field from page one's people, and sends the picked editor as editors=", async () => {
+    const editorId = "0b000000-0000-4000-8000-000000000002";
+    apiGetMock.mockImplementation(() => Promise.resolve({
+      ...ganttResponse(),
+      filterFacets: { people: [{ id: editorId, name: "Bea Editor", roleLabel: "Editor", isExternal: false, active: true }] },
+    }));
+    await render();
+    expect(lastListQuery().get("facets")).toBe("1");
+    await click(addTrigger(host));
+    await waitFor(() => expect(optionNames()).toEqual(["Editor", "Stage", "Show"]));
+    await click(option("Editor"));
+    await waitFor(() => option("is any of"));
+    await click(option("is any of"));
+    await waitFor(() => option("Bea Editor"));
+    await click(option("Bea Editor"));
+    await waitFor(() => expect(lastListQuery().get("editors")).toBe(editorId));
   });
 
   it("carries the draw-cap banner copy that points at the filters above", async () => {

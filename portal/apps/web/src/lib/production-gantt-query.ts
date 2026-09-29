@@ -27,7 +27,7 @@ export type ProductionGanttFilters = {
 
 const DEFAULT_FILTERS: ProductionGanttFilters = { q: "", editorIds: [], stageKeys: [], delivered: false, completed: false };
 
-function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: string | undefined): string {
+export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: string | undefined): string {
   const params = new URLSearchParams();
   params.set("scope", "active");
   // #246: ask for each project's child-collection revision, so a content edit to a checklist row
@@ -40,6 +40,8 @@ function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: string | u
   if (filters.completed) params.set("completed", "1");
   if (filters.limit) params.set("limit", String(filters.limit));
   if (cursor) params.set("cursor", cursor);
+  // #274: the Editor field's options come with page one; the server refuses them on a continuation.
+  else params.set("facets", "1");
   return params.toString();
 }
 

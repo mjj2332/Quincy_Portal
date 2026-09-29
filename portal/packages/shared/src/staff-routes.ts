@@ -68,6 +68,8 @@ export type DashboardGanttFacet = {
   stageKeys: StagePresentationKey[];
   delivered: boolean;
   completed: boolean;
+  /** #274: the Editor field, sorted canonical lowercase UUIDs. */
+  editorIds: string[];
 };
 
 /**
@@ -142,7 +144,7 @@ const calendarParameterNames = new Set([
   "view", "date", "sub", "layers", "editors", "unassigned", "stages", "completed", "delivered", "overdue", "mine", "q",
 ]);
 const dashboardListKanbanParameterNames = new Set(["view", "q"]);
-const dashboardGanttParameterNames = new Set(["view", "q", "stages", "delivered", "completed"]);
+const dashboardGanttParameterNames = new Set(["view", "q", "editors", "stages", "delivered", "completed"]);
 const calendarFilterDefaults = productionCalendarFiltersSchema.parse({});
 
 /** Shared with the Calendar facet's own `q` (`calendarPathFor`'s `normalizeDashboardSearchText`
@@ -325,9 +327,8 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
   const layers = canonicalKnownList(rawLayers as Array<(typeof PRODUCTION_CALENDAR_LAYERS)[number]>, PRODUCTION_CALENDAR_LAYERS);
   if (layers.length === 0) return null;
 
-  const rawEditors = params.get("editors");
-  const editorValues = rawEditors === null ? [] : parseCalendarList(rawEditors);
-  if (editorValues === null || editorValues.length > PRODUCTION_CALENDAR_MAX_EDITOR_IDS || editorValues.some((value) => !UUID.test(value)) || new Set(editorValues).size !== editorValues.length) return null;
+  const editorIds = parseEditorIdsParam(params);
+  if (editorIds === null) return null;
 
   const stageKeys = parseStageKeysParam(params);
   if (stageKeys === null) return null;
@@ -351,7 +352,7 @@ function parseCalendarLocation(params: URLSearchParams): DashboardCalendarState 
     date,
     subview: subview as DashboardCalendarState["subview"],
     layers,
-    editorIds: [...editorValues].sort(),
+    editorIds,
     includeUnassigned,
     stageKeys,
     showCompletedChecklist,
@@ -404,7 +405,16 @@ function parseDashboardListKanbanLocation(params: URLSearchParams): DashboardLis
  * app's own route builder both use it, so "default means absent" cannot drift. (The serializer
  * writes only non-default params field by field, so an all-default facet writes nothing.) */
 export function isDefaultGanttFacet(facet: DashboardGanttFacet | undefined): boolean {
-  return facet === undefined || (facet.stageKeys.length === 0 && !facet.delivered && !facet.completed);
+  return facet === undefined || (facet.stageKeys.length === 0 && !facet.delivered && !facet.completed && facet.editorIds.length === 0);
+}
+
+/** Parses the `editors` list with the Calendar arm's rules (lowercase UUIDs, no duplicates, the
+ * shared cap) and returns it sorted, so both arms canonicalise it the same way (#274). */
+function parseEditorIdsParam(params: URLSearchParams): string[] | null {
+  const rawEditors = params.get("editors");
+  const editorValues = rawEditors === null ? [] : parseCalendarList(rawEditors);
+  if (editorValues === null || editorValues.length > PRODUCTION_CALENDAR_MAX_EDITOR_IDS || editorValues.some((value) => !UUID.test(value)) || new Set(editorValues).size !== editorValues.length) return null;
+  return [...editorValues].sort();
 }
 
 /** Parses the stage list with the Calendar arm's own parser, cap and canonical order. */
@@ -420,13 +430,14 @@ function parseDashboardGanttLocation(params: URLSearchParams): DashboardGanttRou
     if (!dashboardGanttParameterNames.has(name)) return null;
   }
   if (params.get("view") !== "gantt") return null;
+  const editorIds = parseEditorIdsParam(params);
   const stageKeys = parseStageKeysParam(params);
   const delivered = parseCalendarFlag(params, "delivered");
   const completed = parseCalendarFlag(params, "completed");
-  if (stageKeys === null || delivered === null || completed === null) return null;
+  if (editorIds === null || stageKeys === null || delivered === null || completed === null) return null;
   const search = parseDashboardSearch(params);
   if (search === null) return null;
-  const gantt: DashboardGanttFacet = { stageKeys, delivered, completed };
+  const gantt: DashboardGanttFacet = { stageKeys, delivered, completed, editorIds };
   return { kind: "dashboard", dashboardView: "gantt", ...(search ? { search } : {}), ...(isDefaultGanttFacet(gantt) ? {} : { gantt }) };
 }
 
@@ -551,7 +562,11 @@ export function staffPathFor(route: Exclude<StaffRoute, { kind: "not-found" } | 
       // #255: the Gantt arm's own facets, through the same writer the Calendar arm uses for its
       // `stages`/`completed`/`delivered` — only non-default values, so an all-default facet
       // serialises to the bare `/?view=gantt`.
-      if ("gantt" in route && route.gantt) setStageAndFlagParams(params, route.gantt);
+      if ("gantt" in route && route.gantt) {
+        // #274: `editors` before `stages`, the Calendar arm's order.
+        if (route.gantt.editorIds.length > 0) params.set("editors", serializedList(route.gantt.editorIds, []));
+        setStageAndFlagParams(params, route.gantt);
+      }
       const search = route.search;
       if (search !== undefined) {
         const safeSearch = normalizeDashboardSearchText(search);
