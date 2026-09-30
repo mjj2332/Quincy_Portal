@@ -109,6 +109,7 @@ type Reply = { status: number; body: unknown };
 let requests: Request[];
 let patchReply: ((body: PatchBody, subtaskId: string) => Promise<Reply> | Reply) | null;
 let getGate: Promise<void> | null;
+let getFails: boolean;
 
 function scheduleFromInput(input: ScheduleInput, version: number): ChecklistScheduleDto {
   const endpoint = (value: ScheduleInput["end"]) => (value ? (value.kind === "timed" ? timedEndpoint(value.localCivil, value.disambiguation) : dateEndpoint(value.localCivil)) : null);
@@ -207,6 +208,7 @@ beforeEach(() => {
   requests = [];
   patchReply = null;
   getGate = null;
+  getFails = false;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -225,6 +227,7 @@ beforeEach(() => {
     }
     if (method === "GET" && url.startsWith("/api/production-gantt")) {
       if (getGate) await getGate;
+      if (getFails) return json({ status: 500, body: { error: "The schedule is unavailable." } });
       return json({ status: 200, body: ganttResponse() });
     }
     const subtask = /^\/api\/projects\/[^/]+\/subtasks\/([^/?]+)$/.exec(url);
@@ -552,6 +555,19 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await openDue(RANGE_TITLE);
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(liveRegionText()).not.toBe("");
+  });
+
+  it("R21 a background refetch that fails while the picker is open replaces the chart and releases the gate", async () => {
+    await render();
+    await openDue(RANGE_TITLE);
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(true);
+    getFails = true;
+    await act(async () => { await client.refetchQueries({ queryKey: ["production-gantt"] }); });
+    await flush(4);
+    await waitFor(() => expect(host.textContent).toContain("The production schedule is unavailable."));
+    expect(picker(RANGE_TITLE)).toBeNull();
+    expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
+    expect(patches()).toHaveLength(0);
   });
 
   it("R20 the Due column is not rendered at 720px and returns at 721px, and an open picker cannot strand the gate when it narrows", async () => {

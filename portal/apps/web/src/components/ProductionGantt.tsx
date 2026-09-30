@@ -1202,12 +1202,14 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return retained;
   }, []);
   useEffect(() => { retainedSchedules.current.clear(); }, [generationKey]);
-  // The cell that draws the editor is gone (the Due column hides at <= 720px, or the row left the chart): a session no one can
-  // see would hold the lock and the accept gate, so it is cancelled. Not a save; nothing was sent.
+  // The cell that draws the editor is gone (the Due column hides at <= 720px, the row left the chart, or a failed refetch
+  // replaced the whole chart with its error state while the cached rows remain): a session no one can see would hold the
+  // lock and the accept gate, so it is cancelled. Not a save; nothing was sent.
+  const chartReplaced = query.isPending || query.isError;
   const dueEditorRowVisible = dueEditorSubtaskId ? [...assigneeCellByChecklistResourceId.values()].some((cell) => cell.row.id === dueEditorSubtaskId) : true;
   useEffect(() => {
-    if (dueEditorSubtaskId && (narrowTree || !dueEditorRowVisible)) commands.cancelScheduleEditor();
-  }, [dueEditorSubtaskId, narrowTree, dueEditorRowVisible, commands]);
+    if (dueEditorSubtaskId && (narrowTree || chartReplaced || !dueEditorRowVisible)) commands.cancelScheduleEditor();
+  }, [dueEditorSubtaskId, narrowTree, chartReplaced, dueEditorRowVisible, commands]);
   const openDueEditor = useCallback((cell: GanttAssigneeCell) => {
     const project = projectById.get(cell.projectId);
     const source = project ? ganttChecklistSource(project, cell.row) : null;

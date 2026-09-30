@@ -79,7 +79,7 @@ describe("SubtaskScheduleControl (#372)", () => {
     expect(document.activeElement).toBe(endDate());
   });
 
-  it("S2b the default initial focus stays on the first control (the Date-or-time select)", async () => {
+  it("S2b without initialFocus the picker does not land on the End field", async () => {
     await mount({ trigger: customTrigger });
     await click(host.querySelector<HTMLButtonElement>('[data-testid="custom-trigger"]')!);
     await settle();
