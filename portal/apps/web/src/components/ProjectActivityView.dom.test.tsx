@@ -54,6 +54,15 @@ describe("ProjectActivityView", () => {
     expect(fetchNextPage).toHaveBeenCalledOnce();
   });
 
+  it("labels an activity row older than today with a date, never a bare clock time", () => {
+    queryState.value = internalPage;
+    useProjectActivityQueryMock.mockReturnValue(state({ data: internalPage }));
+    render();
+    const label = host.querySelector("time")!.textContent ?? "";
+    expect(label).toMatch(/\d{1,2} [A-Z][a-z]{2}( \d{4})?$|^Yesterday$/);
+    expect(label).not.toMatch(/\d:\d{2}\s?[AP]M/i);
+  });
+
   it("shows an error and refetches when Retry is clicked", () => {
     useProjectActivityQueryMock.mockReturnValue(state({ isError: true, error: new Error("Offline") }));
     render();

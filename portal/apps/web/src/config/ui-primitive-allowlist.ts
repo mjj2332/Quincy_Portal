@@ -32,7 +32,6 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProjectActivityView.tsx": { count: 3, ledger: "baseline (#262)" },
   "components/ProjectCollaborationPanel.tsx": { count: 5, ledger: "baseline (#262)" },
   "components/ProjectDeadlineControl.tsx": { count: 13, ledger: "baseline (#262)" },
-  "components/ProjectDiscussionThread.tsx": { count: 6, ledger: "baseline (#262)" },
   "components/ProjectFields.tsx": { count: 5, ledger: "baseline (#262)" },
   "components/ProjectHeaderDropbox.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProjectTeamCombobox.tsx": { count: 2, ledger: "baseline (#262)" },
