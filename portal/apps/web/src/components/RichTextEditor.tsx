@@ -247,7 +247,12 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const linkSelection = useRef<{ from: number; to: number } | undefined>(undefined);
   const linkWasActive = useRef(false);
   const returnFocusToLinkTrigger = useRef(false);
-  const [query, setQuery] = useState<string | null>(null);
+  const [rawQuery, setQuery] = useState<string | null>(null);
+  // #375: Esc / an outside press closes the mention list and it stays closed until the content
+  // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
+  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const query = mentionDismissed ? null : rawQuery;
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkHref, setLinkHref] = useState("");
@@ -288,12 +293,23 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
       if (serialised === valueRef.current) return;
-      valueRef.current = serialised; onChangeRef.current(doc); setNestingBlocked(false); setQuery(mentionQuery(next));
+      valueRef.current = serialised; onChangeRef.current(doc); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
 
   useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
+  useEffect(() => {
+    if (query === null) return;
+    // Bubble phase on purpose: the Project sheet snapshots "is a layer open" at window-capture,
+    // which must still see this list open for the very press that dismisses it.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && wrapperRef.current?.contains(event.target)) return;
+      setMentionDismissed(true);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [query]);
   useEffect(() => {
     if (!editor) return;
     const announce = () => setNestingBlocked(true);
@@ -369,7 +385,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     closeLinkDialog({ returnFocus: false });
   };
   const canUseHeading = !disabled && (editor.can().toggleHeading({ level: 2 }) || editor.can().toggleHeading({ level: 3 }));
-  return <div className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
+  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     <div className="flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card" role="toolbar" aria-label="Formatting">
       <ToolbarGroup>
         <ToolbarButton label="Bold" active={editor.isActive("bold")} disabled={disabled || !editor.can().toggleBold()} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></ToolbarButton>
@@ -431,7 +447,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       {linkError && <p id={linkErrorId} className={FIELD_ERROR} role="alert">{linkError}</p>}
     </Modal>
     <EditorContent editor={editor} />
-    <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onAccessibilityChange={setMentionA11y} />
+    <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     <div className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>
     <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
   </div>;

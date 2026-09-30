@@ -181,6 +181,7 @@ export function AnchoredPopover({
         style={floatingStyles}
         role={role}
         aria-label={label}
+        data-quincy-layer=""
         data-open={status === "open" ? "" : undefined}
         onKeyDown={onKeyDown}
       >{children}</div>
