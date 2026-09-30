@@ -23,6 +23,7 @@ import { notifySubtaskAssignee } from "./notifications";
 import { serializeSubtaskSchedule } from "./subtask-schedule";
 import { projectMentionableUsers } from "./project-collaboration";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
+import { publishOutboxDetached } from "../lib/server-timing";
 
 export const POSITION_STEP = 1024;
 
@@ -354,7 +355,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
 export async function finalizeProjectSubtaskCommandResult(input: { env: AppEnv["Bindings"]; executionCtx: { waitUntil(promise: Promise<unknown>): void }; result: ProjectSubtaskCommandResult }): Promise<void> {
   const result = input.result;
   if (result.outcome !== "created" && result.outcome !== "updated") return;
-  if (result.broadPublicationIds.length) input.executionCtx.waitUntil(publishNotificationOutbox(input.env.NOTIFICATION_QUEUE, input.env.DB, result.broadPublicationIds));
+  if (result.broadPublicationIds.length) input.executionCtx.waitUntil(publishOutboxDetached(input.env.NOTIFICATION_QUEUE, input.env.DB, result.broadPublicationIds));
   if (result.assignmentNotice) await notifySubtaskAssignee(input.env, result.assignmentNotice);
 }
 

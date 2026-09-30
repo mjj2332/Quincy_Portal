@@ -26,6 +26,7 @@ import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
 import { cn } from "../lib/utils";
 import { invalidateProjectSurfaces, useOptionalProjectQueryClient } from "../lib/project-data";
 import { createDashboardBoardInvalidatedMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { markDashboardData } from "../lib/boot-timing";
 import { dashboardProjectsKey, dashboardProjectsKeyPrefix, isDashboardProjectsQueryFor, useDashboardProjectSearch, useDashboardProjects } from "../lib/dashboard-projects";
 import { searchChipCountText } from "../lib/dashboard-search-chip";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
@@ -359,6 +360,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const viewingArchived = projectScope === "archived";
   const identity = { principalId: currentUserId, role, authorizationEpoch } as const;
   const projectsQuery = useDashboardProjects(viewingArchived, identity, committedQuery);
+  // #361: first Dashboard data, for boot timing (a no-op after the first call and off a Dashboard landing).
+  const firstDataReady = projectsQuery.isSuccess && !projectsQuery.isPlaceholderData;
+  useEffect(() => { if (firstDataReady) markDashboardData(view); }, [firstDataReady, view]);
   const searchCountsQuery = useDashboardProjectSearch(viewingArchived, identity, committedQuery);
   // #260: the projects the Gantt / Calendar actually draws under its own filters (the chip's "shown").
   const [viewShownProjects, setViewShownProjects] = useState<number | null>(null);

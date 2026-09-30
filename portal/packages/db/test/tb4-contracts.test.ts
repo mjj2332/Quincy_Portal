@@ -61,7 +61,7 @@ describe("TB4 implementation contracts", () => {
 
   it("4. has one project-assignment outbox producer and leaves Notice Board direct", () => {
     expect(commentRoutes).not.toContain("notifyMentions");
-    expect(commentRoutes).toContain("waitUntil(publishNotificationOutbox");
+    expect(commentRoutes).toContain("waitUntil(publishOutboxDetached(");
     expect(noticeRoutes).toContain("notifyNoticeBoardMentions");
     expect(notifications).toContain("notifyNoticeBoardMentions");
     expect(notifications).not.toContain("notifyProjectAssignments");

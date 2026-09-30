@@ -4372,6 +4372,20 @@ remove the legacy readers) still applies.
   loops (Base UI re-registers the trigger with a state update on each ref change). Keep per-item
   ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).
 
+## Server-Timing / D1 metering (#361)
+
+- **Never build the metered `env` or `DB` per request.** `getAuth` (#360) and `boardSchemaVariant`
+  cache on the identity of `env` and `env.DB`; a fresh wrapper per request silently rebuilds
+  better-auth and re-runs the `sqlite_master` probe every time and no test notices. `derivedEnv`
+  and `meteredD1` in `lib/server-timing.ts` are memoised per raw object, and the per-request
+  numbers travel through `AsyncLocalStorage`. `server-timing.test.ts` pins `authInstanceBuildCount() === 1`.
+- **Meter statements by shadowing methods on the genuine `D1PreparedStatement`, not with a Proxy:**
+  `DB.batch()` must receive real statements. A statement someone else already wrapped (a test's
+  Proxy overriding `bind`) is left unmetered: shadowing it recurses through the real statement.
+- **D1 `meta` (rows read, region) is partial.** Only `.all()`, `.run()` and `.batch()` return it;
+  `.first()`, `.raw()` and Drizzle's field-selecting reads do not. Do not turn `raw()` into `all()`
+  to get it (object rows collapse duplicate column names in joins). `d1-meta` is the coverage counter.
+
 ## Thumbnails moved from `no-store` to `private, max-age=300` (#362, 2026-09-30)
 
 - **Change:** an authorised `thumb`/`web` rendition served from `GET /media/asset/:assetId/:variant`

@@ -4,10 +4,14 @@ import { eq } from "drizzle-orm";
 import { getSession } from "../auth";
 import type { AppEnv, SessionUser } from "../env";
 import { ROLES } from "@quincy/shared";
+import { mark, timingStorage } from "../lib/server-timing";
 import { assertImpersonationSessionAllowed, impersonationDisabledResponse } from "../lib/impersonation";
 
 export const requireSession: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const authStartedAt = performance.now();
   const session = await getSession(c);
+  mark("auth", authStartedAt);
+  const principalStartedAt = performance.now();
   const user = session?.user;
   const role = user?.role;
   const sessionValue = session?.session;
@@ -31,6 +35,10 @@ export const requireSession: MiddlewareHandler<AppEnv> = async (c, next) => {
     try { await assertImpersonationSessionAllowed(c.env, user.id, impersonatedBy); }
     catch { return impersonationDisabledResponse(c); }
   }
+  mark("principal", principalStartedAt);
+  const timing = timingStorage.getStore();
+  if (timing) timing.authenticated = true;
   c.set("user", { id: current.id, email: current.email, name: current.name, role: current.role, active: true, authorizationEpoch: current.authorizationEpoch, impersonatedBy } as SessionUser);
-  await next();
+  const handlerStartedAt = performance.now();
+  try { await next(); } finally { mark("handler", handlerStartedAt); }
 };

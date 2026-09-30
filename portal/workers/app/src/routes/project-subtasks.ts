@@ -9,10 +9,11 @@ import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
-import { externalChecklistItemSchema, externalChecklistListResponseSchema, ROLE_LABELS, publishNotificationOutbox, projectActivityDeepLink, type ChecklistScheduleStorage, type ProjectActivityIntent } from "@quincy/shared";
+import { externalChecklistItemSchema, externalChecklistListResponseSchema, ROLE_LABELS, projectActivityDeepLink, type ChecklistScheduleStorage, type ProjectActivityIntent } from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
+import { publishOutboxDetached } from "../lib/server-timing";
 import {
   finalizeProjectSubtaskCommandResult,
   saveProjectSubtask,
@@ -238,6 +239,6 @@ projectSubtasksRoutes.delete("/projects/:projectId/subtasks/:subtaskId", termina
     return c.json({ error: "Subtask not found" }, 404);
   }
   const publicationIds = rowsFromD1<{ id: string }>(results[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
-  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ ok: true });
 }));

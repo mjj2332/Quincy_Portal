@@ -7,7 +7,6 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { newId } from "../lib/ids";
-import { publishNotificationOutbox } from "@quincy/shared";
 import { projectMentionableUsers } from "../lib/project-collaboration";
 import { projectStageForRole } from "./stages";
 import {
@@ -25,6 +24,7 @@ import { resolveVisibleProject } from "../lib/visible-project-scope";
 import { assignedSubtaskCounts } from "../lib/external-project-query";
 import { EXTERNAL_API_RESPONSE_SCHEMAS, ROLE_LABELS, externalCommentListResponseSchema, externalCommentSchema } from "@quincy/shared";
 import { stageTransportKeyForRole, type StageKey } from "@quincy/shared";
+import { publishOutboxDetached } from "../lib/server-timing";
 
 const MAX_LIMIT = 50;
 const COMMENT_BODY_MAX_LENGTH = 10_000;
@@ -113,7 +113,7 @@ projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/proj
   const db = createDb(c.env.DB); const currentUser = c.get("user"); const id = newId(); const createdAt = new Date();
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), commentId: id, mentionedUserId, createdAt }));
   const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt });
-  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+  c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be created" }, 500);
   return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(serializeProjectComment(result.comment)) : serializeProjectComment(result.comment), 201);
 }));
@@ -130,7 +130,7 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminal
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
   const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt });
-  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+  c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
   return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse(serializeProjectComment(result.comment)) : serializeProjectComment(result.comment));
 }));
@@ -143,7 +143,7 @@ projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", termina
   // impersonation caveat on this rule in AGENTS.md.
   const currentUser = c.get("user"); if (existing.comment.authorId !== currentUser.id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
   const result = await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, occurredAt: new Date() });
-  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+  c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   return c.json({ ok: true });
 }));
 
