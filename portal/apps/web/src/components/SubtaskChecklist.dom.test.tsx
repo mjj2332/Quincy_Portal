@@ -35,12 +35,16 @@ vi.mock("../lib/api", async (importOriginal) => { const actual = await importOri
 const projectId = "11111111-1111-4111-8111-111111111111";
 const year = new Date().getFullYear();
 const rangeOf = (day: string, version = 0) => { const endpoint = { kind: "date" as const, localCivil: day, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }; return { state: "range" as const, version, zone: "Australia/Sydney" as const, start: endpoint, end: endpoint, due: day }; };
-const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: { id: "user-2", name: "Nora Jones" }, assignmentVersion: 0, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
-const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignee: null, dueDate: `${year}-06-01`, schedule: rangeOf(`${year}-06-01`) };
+const person = (id: string, name: string) => ({ id, name, roleLabel: "Editor", isExternal: false, active: true });
+const nora = person("20000000-0000-4000-8000-000000000002", "Nora Jones"); const ada = person("30000000-0000-4000-8000-000000000003", "Ada Smith"); const ben = person("40000000-0000-4000-8000-000000000004", "Ben Ortiz"); const cy = person("50000000-0000-4000-8000-000000000005", "Cy Young"); const dee = person("60000000-0000-4000-8000-000000000006", "Dee Park");
+let optionsResponse: { candidates: Array<{ id: string; name: string; role: string }>; multiAssignee: boolean };
+const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: { id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones" }, assignees: [nora], assignmentVersion: 1, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignee: null, assignees: [], assignmentVersion: 0, dueDate: `${year}-06-01`, schedule: rangeOf(`${year}-06-01`) };
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 function mount() { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); return host; }
-async function render() { await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} />); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); }
+// The checklist query now delivers a few timer ticks after mount (the retired mentionable-users request used to keep this act open long enough by itself), so wait for it to leave its loading state.
+async function render() { await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} />); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); }); }
 async function click(element: Element) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); }); }
 async function keydown(element: Element, key: string) { await act(async () => { element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); await new Promise((resolve) => window.setTimeout(resolve, 0)); }); }
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); }
@@ -52,9 +56,17 @@ function portal(id: string) { return document.getElementById(id)!; }
 function dateInputs(scope: Element) { return [...scope.querySelectorAll<HTMLInputElement>('input[type="date"]')]; }
 function timeInputs(scope: Element) { return [...scope.querySelectorAll<HTMLInputElement>('input[type="time"]')]; }
 async function selectValue(select: HTMLSelectElement, value: string) { select.value = value; await act(async () => { select.dispatchEvent(new Event("change", { bubbles: true })); await Promise.resolve(); }); }
+async function waitFor(assertion: () => void, timeoutMs = 1500) { const start = Date.now(); for (;;) { try { assertion(); return; } catch (error) { if (Date.now() - start > timeoutMs) throw error; await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); }); } } }
+const pickerOptions = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+const optionName = (option: HTMLElement) => option.querySelector('[data-testid="assignee-option-name"]')!.textContent!.trim();
+async function openAssignees(trigger: Element) { await act(async () => { trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); (trigger as HTMLElement).click(); await Promise.resolve(); }); await waitFor(() => expect(pickerOptions().map(optionName)).toContain("Dee Park")); }
+async function pickAssignee(name: string) { const option = pickerOptions().find((candidate) => optionName(candidate) === name); if (!option) throw new Error(`No option ${name}`); await act(async () => { option.click(); await Promise.resolve(); }); }
+async function closeAssignees() { const active = document.activeElement ?? document.body; await act(async () => { active.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await waitFor(() => expect(document.querySelector('[role="listbox"]')).toBeNull()); await flush(); }
+const assigneeTrigger = (host: HTMLElement, title = "Call client") => item(host, title).querySelector<HTMLButtonElement>(`[aria-label="Assignees for ${title}"]`)!;
+const stackLabels = (scope: Element) => [...scope.querySelectorAll('[role="img"]')].map((element) => element.getAttribute("aria-label"));
 function saveButton(scope: Element) { return [...scope.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!; }
 
-beforeEach(() => { floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }, { id: "user-3", name: "Ada Smith", role: "photographer" }] }) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
+beforeEach(() => { optionsResponse = { candidates: [{ id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones", role: "editor" }, { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith", role: "photographer" }, { id: "40000000-0000-4000-8000-000000000004", name: "Ben Ortiz", role: "editor" }, { id: "50000000-0000-4000-8000-000000000005", name: "Cy Young", role: "editor" }, { id: "60000000-0000-4000-8000-000000000006", name: "Dee Park", role: "editor" }], multiAssignee: true }; floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) || "assignees" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
 
 describe("SubtaskChecklist", () => {
@@ -83,7 +95,7 @@ describe("SubtaskChecklist", () => {
     queryClient.setQueryData(subtasksKey, [task, second]);
     let patchSettled = false;
     apiGetMock.mockImplementation((path) => {
-      if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+      if (path.includes("subtask-assignee-options")) return Promise.resolve(optionsResponse);
       return Promise.resolve({ subtasks: patchSettled ? [updated, second] : [task, second] });
     });
     let resolvePatch!: (value: unknown) => void;
@@ -123,7 +135,7 @@ describe("SubtaskChecklist", () => {
   });
 
   it("edits a one-day range row and a timed range, and never offers a mode picker (start = end is one day)", async () => {
-    const host = mount(); await render(); const first = item(host, "Call client"); const schedule = first.querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!; const assignee = first.querySelector<HTMLButtonElement>('[aria-label="Assignee for Call client"]')!;
+    const host = mount(); await render(); const first = item(host, "Call client"); const schedule = first.querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!; const assignee = first.querySelector<HTMLButtonElement>('[aria-label="Assignees for Call client"]')!;
     await click(schedule); const group = portal("subtask-popover-task-1-schedule"); expect(group).not.toBeNull();
     // Only the Date / Timed choice remains;.
     expect(group.querySelectorAll("select")).toHaveLength(1); expect(group.textContent).not.toContain("Due only"); expect(group.textContent).not.toContain("Unscheduled");
@@ -139,13 +151,13 @@ describe("SubtaskChecklist", () => {
     await typeInto(startDate!, `${year}-06-01`); await typeInto(endDate!, `${year}-06-01`); await typeInto(startTime!, "09:00"); await typeInto(endTime!, "09:30"); expect(saveButton(editor).disabled).toBe(false); await click(saveButton(editor));
     expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { schedule: { expectedVersion: 0, schedule: { state: "range", start: { kind: "timed", localCivil: `${year}-06-01T09:00` }, end: { kind: "timed", localCivil: `${year}-06-01T09:30` } } } });
     await click(schedule); const clearing = portal("subtask-popover-task-1-schedule"); await typeInto(dateInputs(clearing)[0]!, ""); expect(saveButton(clearing).disabled).toBe(true);
-    await click(assignee); expect(portal("subtask-popover-task-1-assignee")).not.toBeNull(); const search = portal("subtask-popover-task-1-assignee").querySelector<HTMLInputElement>('input[type="search"]')!; await typeInto(search, "Ada"); expect(portal("subtask-popover-task-1-assignee").textContent).toContain("Ada Smith"); await click([...portal("subtask-popover-task-1-assignee").querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Ada Smith"))!); expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assigneeId: "user-3" });
+    await openAssignees(assignee); await pickAssignee("Ada Smith"); await closeAssignees(); expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003"], remove: [] } });
   });
 
   it("lets an existing range be edited: the control is enabled, offers only the endpoint kind, and saves a versioned range PATCH", async () => {
     const endpoint = (localCivil: string) => ({ kind: "date" as const, localCivil, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const });
     const rangeTask = { ...task, id: "range-1", title: "Existing range", position: 512, dueDate: `${year}-06-02`, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: endpoint(`${year}-06-01`), end: endpoint(`${year}-06-02`), due: `${year}-06-02` } };
-    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve({ subtasks: [rangeTask, second] }));
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [rangeTask, second] }));
     apiPatchMock.mockResolvedValue(rangeTask);
     const host = mount(); await render();
     const control = item(host, "Existing range").querySelector<HTMLButtonElement>('[aria-label="Schedule for Existing range"]')!;
@@ -172,7 +184,7 @@ describe("SubtaskChecklist", () => {
     const host = mount();
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); });
     let deleted = false;
-    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve({ subtasks: deleted ? [second] : [task, second] }));
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: deleted ? [second] : [task, second] }));
     apiDeleteMock.mockImplementation(async () => { deleted = true; return { ok: true }; });
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Actions for Call client"]')!);
     await click(portal("subtask-popover-task-1-actions").querySelector("button")!);
@@ -185,7 +197,7 @@ describe("SubtaskChecklist", () => {
 
   it("shows the full authoritative item on an item conflict with explicit discard and reapply choices", async () => {
     const host = mount(); await render();
-    const latest = { ...task, title: "Authoritative title", done: true, assignee: { id: "user-3", name: "Ada Smith" }, schedule: { state: "range", version: 2, zone: "Australia/Sydney", start: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
+    const latest = { ...task, title: "Authoritative title", done: true, assignee: { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith" }, assignees: [ada], schedule: { state: "range", version: 2, zone: "Australia/Sydney", start: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed", 409, { code: "subtask_item_conflict", current: latest.schedule, currentSubtask: latest }));
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const draft = portal("subtask-popover-task-1-schedule"); await typeInto(draft.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(draft));
@@ -228,7 +240,7 @@ describe("SubtaskChecklist", () => {
   it("submits the schedule version captured at editor open after a late versioned refresh", async () => {
     const versionOne = { ...task, schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "timed" as const, localCivil: `${year}-06-01T00:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: null, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil: `${year}-06-01T09:00`, instant: "2026-06-01T23:00:00.000Z", utcOffsetMinutes: 600, fold: 0 as const, resolution: "stored" as const }, due: `${year}-06-01T09:00` } };
     const versionTwo = { ...versionOne, title: "Late version 2", dueDate: `${year}-06-02T09:00`, schedule: { ...versionOne.schedule, version: 2, end: { ...versionOne.schedule.end, localCivil: `${year}-06-02T09:00`, instant: "2026-06-02T23:00:00.000Z" }, due: `${year}-06-02T09:00` } };
-    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }] }) : Promise.resolve({ subtasks: [versionOne, second] }));
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [versionOne, second] }));
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const runtime = new ProjectQueryRuntime(queryClient, "subtask-version-refresh-test");
     queryClient.setQueryData(projectDataKeys.subtasks(projectId), [versionOne, second]);
@@ -256,7 +268,7 @@ describe("SubtaskChecklist", () => {
   it.each([[0 as const, "earlier", 660], [1 as const, "later", 600]])("seeds a timed range endpoint's stored fold %s into the popover as the %s Sydney occurrence", async (fold, disambiguation, offset) => {
     // 02:30 on 2026-04-05 happens twice in Sydney (DST ends): fold 0 is +11:00, fold 1 is +10:00.
     const repeated = { ...task, dueDate: "2026-04-05T02:30", schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: { kind: "timed" as const, localCivil: "2026-04-05T00:00", instant: null, utcOffsetMinutes: 660, fold: null, resolution: "stored" as const }, end: { kind: "timed" as const, localCivil: "2026-04-05T02:30", instant: null, utcOffsetMinutes: offset, fold, resolution: "stored" as const }, due: "2026-04-05T02:30" } };
-    apiGetMock.mockImplementation((path) => path.includes("mentionable-users") ? Promise.resolve({ users: [{ id: "user-2", name: "Nora Jones", role: "editor" }] }) : Promise.resolve({ subtasks: [repeated, second] }));
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [repeated, second] }));
     const host = mount(); await render();
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const editor = portal("subtask-popover-task-1-schedule");
@@ -307,41 +319,29 @@ describe("SubtaskChecklist", () => {
 
   it("derives pure reorder neighbors and mounts grip-only activators", async () => {
     expect(reorderNeighbors(["a", "b", "c"], "c", "a")).toMatchObject({ beforeId: null, afterId: "a" }); expect(reorderNeighbors(["a", "b", "c"], "a", "b")).toMatchObject({ beforeId: "b", afterId: "c" }); expect(reorderNeighbors(["a", "b", "c"], "b", "c")).toMatchObject({ beforeId: "c", afterId: null }); expect(reorderNeighbors(["a", "b"], "a", null)).toBeNull(); expect(reorderNeighbors(["a", "b"], "a", "a")).toBeNull();
-    const host = mount(); await render(); const row = item(host, "Call client"); const grip = row.querySelector<HTMLButtonElement>('[aria-label="Reorder Call client"]')!; expect(grip.getAttribute("aria-roledescription")).toBe("sortable"); expect(grip.getAttribute("aria-describedby")).toMatch(/^DndDescribedBy-/); for (const control of [row.querySelector("input"), row.querySelector('[data-testid="subtask-checklist-title"]'), row.querySelector('[aria-label="Schedule for Call client"]'), row.querySelector('[aria-label="Assignee for Call client"]'), row.querySelector('[aria-label="Actions for Call client"]')]) { expect(control?.getAttribute("aria-roledescription")).toBeNull(); expect(control?.getAttribute("aria-describedby")).toBeNull(); }
+    const host = mount(); await render(); const row = item(host, "Call client"); const grip = row.querySelector<HTMLButtonElement>('[aria-label="Reorder Call client"]')!; expect(grip.getAttribute("aria-roledescription")).toBe("sortable"); expect(grip.getAttribute("aria-describedby")).toMatch(/^DndDescribedBy-/); for (const control of [row.querySelector("input"), row.querySelector('[data-testid="subtask-checklist-title"]'), row.querySelector('[aria-label="Schedule for Call client"]'), row.querySelector('[aria-label="Assignees for Call client"]'), row.querySelector('[aria-label="Actions for Call client"]')]) { expect(control?.getAttribute("aria-roledescription")).toBeNull(); expect(control?.getAttribute("aria-describedby")).toBeNull(); }
     const surviving = row.querySelector<HTMLButtonElement>('[aria-label="Reorder Call client"]')!; scheduleReorderFocus(new Map([["task-1", surviving]]), "task-1", 0, false, null, projectId); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(surviving);
     const nearest = document.createElement("button"); const last = document.createElement("button"); document.body.append(nearest, last); scheduleReorderFocus(new Map([["next", nearest], ["last", last]]), "missing", 0, false, null, projectId); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(nearest); scheduleReorderFocus(new Map([["next", nearest], ["last", last]]), "missing", 99, false, null, projectId); await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); }); expect(document.activeElement).toBe(last);
   });
 
-  it("moves the Assignee popover's keyboard highlight with Arrow keys and selects with Enter (§10.3)", async () => {
-    // Regression coverage for the keyboard-highlight tracking added to `AssigneeControl` (round
-    // 3) — it previously had no `activeIndex`/Arrow-key wiring at all, unlike the retired
-    // `ProjectTeamControl`'s `TeamPicker` (replaced by `ProjectTeamCombobox` in #204).
+  it("moves the picker's highlight with Arrow keys and toggles with Enter, committing once on Escape (§10.3)", async () => {
     const host = mount(); await render();
-    const trigger = item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Assignee for Call client"]')!;
-    await click(trigger);
-    const popover = portal("subtask-popover-task-1-assignee");
-    const members = () => [...popover.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-
-    expect(members().map((member) => member.textContent)).toEqual(["Nora Joneseditor", "Ada Smithphotographer"]);
-    expect(members()[0]?.getAttribute("aria-current")).toBe("true");
-    expect(members()[1]?.getAttribute("aria-current")).toBeNull();
-    // The current assignee (Nora Jones, `task.assignee.id === "user-2"`) is marked selected.
-    expect(members()[0]?.getAttribute("aria-selected")).toBe("true");
-    expect(members()[1]?.getAttribute("aria-selected")).toBe("false");
-
-    await keydown(popover, "ArrowDown");
-    expect(members()[0]?.getAttribute("aria-current")).toBeNull();
-    expect(members()[1]?.getAttribute("aria-current")).toBe("true");
-
-    await keydown(popover, "ArrowUp");
-    expect(members()[0]?.getAttribute("aria-current")).toBe("true");
-    expect(members()[1]?.getAttribute("aria-current")).toBeNull();
-
-    // Enter activates the highlighted (first) member — toggling the current assignee off, since
-    // `AssigneeControl`'s `onSelect` treats re-selecting the current assignee as unassignment.
-    await keydown(popover, "Enter");
-    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
-    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assigneeId: null });
+    await openAssignees(assigneeTrigger(host));
+    const search = document.querySelector<HTMLInputElement>('input[placeholder="Search people…"]')!;
+    expect(pickerOptions().map(optionName)).toEqual(["Nora Jones", "Ada Smith", "Ben Ortiz", "Cy Young", "Dee Park"]);
+    // The current assignee is listed first and checked.
+    expect(pickerOptions()[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(pickerOptions()[1]?.getAttribute("aria-selected")).toBe("false");
+    // ArrowDown highlights the first row (the current assignee); Enter unpicks her.
+    await keydown(search, "ArrowDown"); await keydown(search, "Enter");
+    await waitFor(() => expect(pickerOptions()[0]?.getAttribute("aria-selected")).toBe("false"));
+    // The next row is picked the same way.
+    await keydown(search, "ArrowDown"); await keydown(search, "Enter");
+    await waitFor(() => expect(pickerOptions()[1]?.getAttribute("aria-selected")).toBe("true"));
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    await closeAssignees();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003"], remove: ["20000000-0000-4000-8000-000000000002"] } });
   });
 
   it("does not reload the checklist when a parent re-render passes a new onAccessFailure identity", async () => {
@@ -350,8 +350,120 @@ describe("SubtaskChecklist", () => {
       await act(async () => { localRoot.render(<SubtaskChecklist projectId={projectId} onAccessFailure={() => {}} />); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
       expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1);
       for (let index = 0; index < 5; index += 1) await act(async () => { localRoot.render(<SubtaskChecklist projectId={projectId} onAccessFailure={() => {}} />); await Promise.resolve(); });
-      expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1); expect(apiGetMock.mock.calls.filter(([path]) => path.includes("mentionable-users")).length).toBe(1);
+      expect(apiGetMock.mock.calls.filter(([path]) => path.includes("/subtasks")).length).toBe(1); expect(apiGetMock.mock.calls.filter(([path]) => path.includes("subtask-assignee-options")).length).toBe(0);
     } finally { await act(async () => localRoot.unmount()); }
+  });
+});
+
+describe("SubtaskChecklist assignees (#368)", () => {
+  const withAssignees = (people: typeof nora[], version = 1) => ({ ...task, assignee: people[0] ?? null, assignees: people, assignmentVersion: version });
+  const patchUrl = `/api/projects/${projectId}/subtasks/task-1`;
+
+  it("picks four people and commits one PATCH on close; the trigger then shows three avatars and +1", async () => {
+    const host = mount(); await render();
+    apiPatchMock.mockResolvedValueOnce(withAssignees([nora, ada, ben, cy, dee], 2));
+    await openAssignees(assigneeTrigger(host));
+    for (const name of ["Ada Smith", "Ben Ortiz", "Cy Young", "Dee Park"]) await pickAssignee(name);
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    await closeAssignees();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003", "40000000-0000-4000-8000-000000000004", "50000000-0000-4000-8000-000000000005", "60000000-0000-4000-8000-000000000006"], remove: [] } });
+    await flush();
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ada Smith", "Ben Ortiz", "2 more Assignees"]);
+  });
+
+  it("shows three avatars and a single +1 for four assignees", async () => {
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("subtask-assignee-options") ? optionsResponse : { subtasks: [withAssignees([nora, ada, ben, cy]), second] }));
+    const host = mount(); await render();
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ada Smith", "Ben Ortiz", "1 more Assignee"]);
+    expect(assigneeTrigger(host).textContent).toContain("+1");
+  });
+
+  it("unchecking one person commits one PATCH that only removes them", async () => {
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("subtask-assignee-options") ? optionsResponse : { subtasks: [withAssignees([nora, ada]), second] }));
+    const host = mount(); await render();
+    apiPatchMock.mockResolvedValueOnce(withAssignees([nora], 2));
+    await openAssignees(assigneeTrigger(host));
+    await pickAssignee("Ada Smith");
+    await closeAssignees();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { assignees: { expectedVersion: 1, add: [], remove: ["30000000-0000-4000-8000-000000000003"] } });
+  });
+
+  it("ticking Done sends exactly one PATCH for the Subtask, however many assignees it has", async () => {
+    apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("subtask-assignee-options") ? optionsResponse : { subtasks: [withAssignees([nora, ada, ben]), second] }));
+    const host = mount(); await render();
+    apiPatchMock.mockResolvedValueOnce({ ...withAssignees([nora, ada, ben]), done: true });
+    await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { done: true });
+  });
+
+  it("single mode (gate closed): picking Ben while Nora is assigned replaces her in one PATCH", async () => {
+    optionsResponse = { ...optionsResponse, multiAssignee: false };
+    const host = mount(); await render();
+    apiPatchMock.mockResolvedValueOnce(withAssignees([ben], 2));
+    await openAssignees(assigneeTrigger(host));
+    await pickAssignee("Ben Ortiz");
+    await waitFor(() => expect(pickerOptions().filter((option) => option.getAttribute("aria-selected") === "true").map(optionName)).toEqual(["Ben Ortiz"]));
+    await closeAssignees();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { assignees: { expectedVersion: 1, add: ["40000000-0000-4000-8000-000000000004"], remove: ["20000000-0000-4000-8000-000000000002"] } });
+    await flush();
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Ben Ortiz"]);
+  });
+
+  it("an assignment-version conflict shows the latest assignees and says so", async () => {
+    const host = mount(); await render();
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Assignees changed", 409, { code: "subtask_assignment_version_conflict", currentSubtask: withAssignees([ada, cy], 4) }));
+    await openAssignees(assigneeTrigger(host));
+    await pickAssignee("Ben Ortiz");
+    await closeAssignees();
+    await flush();
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Ada Smith", "Cy Young"]);
+    expect(host.textContent).toContain("Assignees changed elsewhere — showing the latest.");
+  });
+
+  it("an item conflict from a lost assignee write refetches the checklist and keeps the user informed", async () => {
+    const host = mount(); await render();
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed; review the latest item before saving.", 409, { code: "subtask_item_conflict", current: task.schedule, currentSubtask: withAssignees([nora, dee], 3) }));
+    await openAssignees(assigneeTrigger(host));
+    await pickAssignee("Ben Ortiz");
+    await closeAssignees();
+    await flush();
+    expect(host.textContent).toContain("Checklist item changed");
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Dee Park"]);
+  });
+
+  it("a disabled-gate refusal says only one assignee is allowed", async () => {
+    const host = mount(); await render();
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Only one assignee is allowed", 409, { code: "subtask_multi_assignee_disabled" }));
+    await openAssignees(assigneeTrigger(host));
+    await pickAssignee("Ben Ortiz");
+    await closeAssignees();
+    await flush();
+    expect(host.textContent).toContain("Only one assignee is allowed right now.");
+  });
+
+  it("the composer sends every picked person as assigneeIds", async () => {
+    const host = mount(); await render();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "+ Add an item")!);
+    const composerTrigger = host.querySelector<HTMLButtonElement>('[aria-label="Assignees for new subtask"]')!;
+    await openAssignees(composerTrigger);
+    await pickAssignee("Ada Smith"); await pickAssignee("Ben Ortiz");
+    await closeAssignees();
+    expect(stackLabels(composerTrigger)).toEqual(["Ada Smith", "Ben Ortiz"]);
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="Add a subtask…"]')!, "Schedule staging");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Schedule staging", assigneeIds: ["30000000-0000-4000-8000-000000000003", "40000000-0000-4000-8000-000000000004"] });
+  });
+
+  it("the composer omits assigneeIds when nobody is picked", async () => {
+    const host = mount(); await render();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "+ Add an item")!);
+    await typeInto(host.querySelector<HTMLInputElement>('input[placeholder="Add a subtask…"]')!, "Plain");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Add")!);
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks`, { title: "Plain" });
   });
 });
 
