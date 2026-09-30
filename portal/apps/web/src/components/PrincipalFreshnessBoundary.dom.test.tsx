@@ -1,6 +1,6 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { productionCalendarKey } from "../lib/production-calendar-query";
 import { projectDataKeys } from "../lib/project-data";
@@ -51,6 +51,14 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
   let runtime: ProjectQueryRuntime | undefined;
 
   beforeEach(() => {
+    // The boundary diffs the snapshots it RENDERED (`previous.current`), not the cache. With
+    // react-query's default scheduler the observer->React notification is its own setTimeout(0),
+    // so a cache write and the render of it are two separate events: under a loaded runner the
+    // poll below could see the first snapshot in the cache before the boundary rendered it, the
+    // test then overwrote it, and the boundary only ever rendered the second -- no prior, no purge.
+    // A synchronous scheduler makes the cache write and the React update one event, so "in the
+    // cache after an act" means "committed by the boundary". Restored in afterEach.
+    notifyManager.setScheduler((callback) => callback());
     apiGetMock.mockReset();
     sessionRefetchMock.mockReset();
     window.history.replaceState(null, "", "/");
@@ -66,6 +74,7 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     runtime = undefined;
     client.clear();
     host.remove();
+    notifyManager.setScheduler(defaultScheduler);
   });
 
   async function flush() {
@@ -75,8 +84,9 @@ describe("PrincipalFreshnessBoundary Calendar purge", () => {
     await Promise.resolve();
   }
 
-  // The boundary purge is an async useQuery-observer -> re-render -> effect chain.
-  // A fixed tick count is flaky under parallel-worker load, so poll the outcome.
+  // The purge itself is async (tombstones, removals), so poll its outcome rather than count ticks.
+  // Polling the cache alone never proved the boundary had rendered a snapshot -- that ordering is
+  // what the synchronous notifyManager scheduler in beforeEach guarantees.
   async function waitFor(assertion: () => void) {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       try { assertion(); return; } catch { /* not settled yet */ }
