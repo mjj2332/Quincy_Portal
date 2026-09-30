@@ -300,9 +300,8 @@ function dashboardViewControlActive(host: ParentNode): string | null {
 }
 
 /**
- * `detail: 1`, not a bare synthetic click: `InternalLink`'s `shouldInterceptInternalLink`
- * (`lib/router.ts`) treats `event.detail === 0` as keyboard-issued and deliberately does not
- * `preventDefault()`, so a `detail: 0` click never reaches `locationStore().push()`. Lifted from
+ * `detail: 1` is realism (a pointer click), not a requirement: since #366 `InternalLink`'s
+ * `shouldInterceptInternalLink` (`lib/router.ts`) intercepts keyboard `detail: 0` clicks too. Lifted from
  * `App-navigation-rail-shell.dom.test.tsx`'s own `click()`, which explains the same thing at
  * greater length.
  */
@@ -514,11 +513,12 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     });
     await settle();
 
-    expect(host.textContent).toContain("Project workspace");
-    // The Dashboard group closes off its own route (`staff-navigation.ts`'s `expandedItemId`), so
-    // no child link is even rendered here — there is nothing left that COULD wrongly claim current.
-    expect(activeRailChild(host)).toBeNull();
-    expect(readDashboardView()).toBeNull();
+    // #366: the Project renders in a sheet (portalled to <body>) over a Dashboard that STAYS
+    // MOUNTED, so the view it published is still the truth — and the rail, which models the
+    // backdrop while a sheet is open, still says Kanban rather than going blank.
+    expect(document.body.textContent).toContain("Project workspace");
+    expect(activeRailChild(host)).toBe("Kanban");
+    expect(readDashboardView()).toBe("kanban");
 
     await act(async () => {
       locationStore().push("/");
@@ -529,6 +529,15 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
     expect(activeRailChild(host)).toBe("Kanban");
     expect(readDashboardView()).toBe("kanban");
+    // Leaving for a non-Dashboard screen unmounts the Dashboard: no stale child, and the store clears.
+    await act(async () => {
+      locationStore().push("/admin");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await settle();
+    expect(activeRailChild(host)).toBeNull();
+    expect(readDashboardView()).toBeNull();
   });
 
   it("a role without the Calendar capability at an explicit Calendar URL never disagrees with the rail", async () => {

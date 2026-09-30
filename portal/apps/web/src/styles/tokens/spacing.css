@@ -72,6 +72,9 @@
      surface moves with the rail — see that block's own comment for why the redeclaration, not just
      this default, is what makes it actually move. */
   --app-rail-inline-size: 0px;
+  --toast-inset-inline-end: max(var(--space-5), env(safe-area-inset-right));
+  --toast-inset-block-end: max(var(--space-5), env(safe-area-inset-bottom));
+  --impersonation-banner-height: 42px;
   --toast-inset-inline-start: calc(var(--app-rail-inline-size) + max(var(--space-5), env(safe-area-inset-left)));
 
   /* ---- Overlay motion presets ----------------------------------------

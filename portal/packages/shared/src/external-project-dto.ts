@@ -154,7 +154,11 @@ export const externalChecklistItemSchema = z.object({
   title: z.string(),
   done: z.boolean(),
   position: z.number().int(),
+  /** The first named assignee (kept until #368's PR8); `assignees` is the list. */
   assignee: externalPersonSchema.nullable(),
+  /** Assignees on the Project's team; everyone else is only counted in `otherAssigneeCount`. */
+  assignees: z.array(externalPersonSchema),
+  otherAssigneeCount: z.number().int().nonnegative(),
   assignmentVersion: z.number().int().nonnegative(),
   dueDate: z.string().nullable(),
   schedule: externalScheduleSchema,

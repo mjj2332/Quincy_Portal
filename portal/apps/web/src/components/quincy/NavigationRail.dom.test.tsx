@@ -116,9 +116,8 @@ async function renderInSheet(navigation: StaffNavigation, options: { user?: { na
   );
 }
 
-/** A real MouseEvent, `detail: 1` — `InternalLink`'s interception treats `detail === 0` as a
- * synthetic/keyboard click and does not intercept it, so a bare `.click()` never reaches
- * `locationStore().push()`. Mirrors `App-navigation-rail-shell.dom.test.tsx`'s own `click()`. */
+/** A real MouseEvent, `detail: 1` — realism (a pointer click); since #366 `InternalLink` also
+ * intercepts keyboard `detail: 0` clicks. Mirrors `App-navigation-rail-shell.dom.test.tsx`'s own `click()`. */
 async function click(element: Element) {
   await act(async () => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));

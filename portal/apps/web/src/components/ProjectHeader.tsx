@@ -3,6 +3,7 @@ import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
+import { useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
 import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
@@ -184,6 +185,8 @@ export function ProjectHeader({
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
 }) {
+  const dashboardReturn = useDashboardReturnLink();
+  const inSheet = useInProjectSheet();
   const { presentationStageKey, stages } = useStages();
   const { can } = useCapabilities();
   const currentStageKey = presentationStageKey(project.stageKey);
@@ -218,7 +221,7 @@ export function ProjectHeader({
 
   return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
     <div className="project-header__identity">
-      <InternalLink className={DASHBOARD_CRUMB} to="/">← Dashboard</InternalLink>
+      {!inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>}
       <h2 id="project-overview-property"
           className="[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground [text-wrap:pretty]">
         {project.street}
