@@ -6,6 +6,7 @@ import { Sheet, SheetClose, SheetContent, SheetTitle } from "@/components/reui/s
 import { shouldInterceptInternalLink } from "../../lib/router";
 import { OverlayContainerContext } from "../OverlayContainerContext";
 import { hasOpenInnerLayer } from "./project-sheet-layers";
+import { ToastViewport } from "./ToastViewport";
 
 /**
  * The Project sheet — #366. The Project route floating over the live Dashboard: a right-anchored
@@ -29,7 +30,7 @@ import { hasOpenInnerLayer } from "./project-sheet-layers";
  */
 export type ProjectSheetProps = {
   open: boolean;
-  /** `"edit"` arrives with #374; the sheet already takes it so that change adds no props. */
+  /** `"edit"` (#374) is the edit form: the only kind that owns a toast viewport (the Workspace renders its own). */
   kind: "project" | "edit";
   /** Remounts the body when the sheet's subject changes. */
   sheetKey: string;
@@ -88,6 +89,41 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
     };
   }, [open, slot]);
 
+  // E6 (#374): a project <-> edit switch re-keys the body, so the focused control (the "Edit details"
+  // link, or Cancel/Save) unmounts and focus falls to <body>. Recover it — but ONLY if it was lost:
+  // child effects run before this one, and the Workspace's own arrival focus (#337) must win on a
+  // return. The first open is skipped: `initialFocus` owns it. The router hands the new leaf to the
+  // body a render after the key changes, so when the initial-focus target is not there yet the popup
+  // holds focus (keeping the trap) and a MutationObserver moves it once the target mounts.
+  const previousKeyRef = useRef(sheetKey);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (previousKeyRef.current === sheetKey) return;
+    previousKeyRef.current = sheetKey;
+    const popup = popupRef.current;
+    const body = bodyRef.current;
+    if (!open || !popup || !body) return;
+    // "Lost" = <body>, outside the popup, or the popup itself (where the dialog's focus manager parks
+    // focus when the focused control unmounts). Anything deeper is somewhere a child put it on purpose.
+    const lost = () => {
+      const active = document.activeElement;
+      return !active || active === document.body || active === popup || !popup.contains(active);
+    };
+    if (!lost()) return;
+    const target = () => body.querySelector<HTMLElement>("[data-sheet-initial-focus]");
+    const found = target();
+    if (found) { found.focus(); return; }
+    popup.focus();
+    const observer = new MutationObserver(() => {
+      const late = target();
+      if (!late) return;
+      observer.disconnect();
+      if (lost()) late.focus();
+    });
+    observer.observe(body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [sheetKey, open]);
+
   const handleOpenChange = useCallback((next: boolean, details: { reason: string; cancel: () => void; allowPropagation: () => void }) => {
     if (next) return;
     if (details.reason === "escape-key" || details.reason === "outside-press") {
@@ -127,10 +163,11 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         >
           <XIcon aria-hidden />
         </SheetClose>
-        <div key={sheetKey} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div key={sheetKey} ref={bodyRef} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <ProjectSheetContext.Provider value={context}>
             <OverlayContainerContext.Provider value={slot}>{children}</OverlayContainerContext.Provider>
           </ProjectSheetContext.Provider>
+          {kind === "edit" ? <ToastViewport testId="project-sheet-toast-viewport" /> : null}
         </div>
         {/* §4.2a: every popover / select / menu portals here — inside the trap, above z-95's floor. */}
         <div ref={setSlot} data-testid="project-sheet-overlay-slot" />

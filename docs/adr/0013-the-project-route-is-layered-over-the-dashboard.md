@@ -57,3 +57,29 @@ leaf that unmounted the Dashboard, which then re-mounted cold on return.
   (the rail is under the modal scrim), so the requirement is restated and tested as: any navigation
   to a non-sheet location closes the sheet.
 - Popover / menu / mention arms of the layer predicate arrive with #375.
+
+## Amendment (#374): Edit is a sheet child; return by traversal
+
+`/projects/<id>/edit` is a child of the same pathless dashboard layer as the Project route, so the
+Dashboard and the sheet popup stay mounted across project <-> edit; only the sheet's body swaps
+(`ProjectSheet kind="edit"`). `edit-project` joins `isSheetLocation` / `isDashboardLayerLocation`, so
+a push project -> edit is `depth + 1` with `prev` = the project URL, and closing from the form is
+`history.go(-depth)` as before. A cold edit link is stateless and closes by `replace`, as a cold
+Project link does.
+
+- **Save / Cancel / Archive / Restore return by traversal.** When `history.state.quincySheet.prev`
+  parses as this project's workspace, the shell sets the notice and calls `history.go(-1)`; otherwise
+  (cold edit link, stale state) it `replace`s with the workspace. Pushing the workspace URL instead
+  would leave `[dashboard, project, edit, project]`: Back from the saved workspace would reopen a
+  stale edit form and closing would unwind three entries. Traversal restores `[dashboard, project]`
+  and the workspace re-lands the tab the URL named, as a fresh arrival.
+- **Late completions are guarded.** The callbacks re-read the location when they run; if the viewer
+  has left the edit form for this project, a resolved save only toasts (no replace, no traversal).
+- **Permanent delete closes the sheet** (`closeProjectSheet()` + a toast) rather than `replace("/")`,
+  which would discard the remembered backdrop and leave sheet entries in history.
+- **One live region per route:** `ProjectSheet` renders a `ToastViewport` only for `kind="edit"`
+  (the Workspace renders its own).
+- **Focus:** after a project <-> edit switch, if focus was lost the sheet moves it to
+  `[data-sheet-initial-focus]` (the form's heading), else the popup; if the target has not mounted yet
+  the popup holds focus and an observer moves it on arrival. A focus the child set on purpose (the
+  Workspace's arrival focus) is never overridden.

@@ -6,7 +6,7 @@ import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE } 
 /**
  * #366 — the Project sheet over the LIVE Dashboard, through the real `App`, the real rail, the
  * real Dashboard and the real `RailedShell` (so the nested-Root case is exercised). `ProjectWorkspace`
- * and `EditProject` are stubs: this file owns the layering, history, focus and layer-gate
+ * is a stub (#374: `EditProject` is REAL, so the edit-in-sheet contract runs through the real form): this file owns the layering, history, focus and layer-gate
  * contract; the real Workspace inside a sheet is `screens/ProjectWorkspace-sheet.dom.test.tsx`.
  *
  * Harness lifted from `App-rail-dashboard-agreement.dom.test.tsx` (mocks, shims, `renderApp`).
@@ -34,11 +34,13 @@ vi.mock("./lib/auth", () => ({
 }));
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
+const apiPatchMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
 vi.mock("./lib/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("./lib/api")>(),
   apiGet: (path: string) => apiGetMock(path),
   apiPut: vi.fn<() => Promise<unknown>>(),
   apiPost: vi.fn<() => Promise<unknown>>(),
+  apiPatch: (path: string, body: unknown) => apiPatchMock(path, body),
 }));
 
 const calendarEventFixture = vi.hoisted(() => ({ enabled: false }));
@@ -61,18 +63,37 @@ vi.mock("./components/ProductionGantt", async () => {
   };
 });
 vi.mock("./screens/Admin", () => ({ Admin: () => <main data-testid="admin-stub">Admin</main> }));
-vi.mock("./screens/EditProject", () => ({ EditProject: () => <main data-testid="edit-stub">Edit</main> }));
 // A stand-in Workspace: one focusable inner control, the arrival it was handed, and a REAL
 // `ToastViewport` (exactly as the real Workspace renders one) so the one-viewport rule is checked.
+// #374: it also carries the real "Edit details" InternalLink, shows the street it fetched on mount
+// (so a Save is visible after the return remounts it), focuses its tab trigger on an arrival (as the
+// real Workspace's #337 does) and turns the shell `notice` into a toast (as the real one does).
 vi.mock("./screens/ProjectWorkspace", async () => {
+  const { useEffect, useRef } = await import("react");
   const { ToastViewport } = await import("./components/quincy/ToastViewport");
+  const { InternalLink } = await import("./components/InternalLink");
+  const { useQuery } = await import("@tanstack/react-query");
+  const { projectDetailQueryOptions } = await import("./lib/project-data");
+  const { pushToast } = await import("./lib/toast-store");
   return {
-    ProjectWorkspace: ({ projectId, arrivalTab }: { projectId: string; arrivalTab?: string }) => (
-      <main data-testid="ws-stub" data-project-id={projectId} data-arrival-tab={String(arrivalTab)}>
-        <button type="button">inner</button>
-        <ToastViewport />
-      </main>
-    ),
+    ProjectWorkspace: ({ projectId, arrivalTab, arrivalSignal, notice, onNoticeShown }: { projectId: string; arrivalTab?: string; arrivalSignal?: number; notice?: string | null; onNoticeShown?: () => void }) => {
+      // Reads through the REAL project-detail query (the key the real ProjectWorkspace and the edit
+      // form's setQueryData publish to), never the mocked server directly (#374).
+      const detail = useQuery({ ...projectDetailQueryOptions(projectId), staleTime: 60_000 });
+      const street = (detail.data as { street?: string } | undefined)?.street ?? "";
+      const trigger = useRef<HTMLButtonElement | null>(null);
+      useEffect(() => { if (arrivalTab !== undefined) trigger.current?.focus(); }, [arrivalTab, arrivalSignal]);
+      useEffect(() => { if (notice) { pushToast(notice); onNoticeShown?.(); } }, [notice, onNoticeShown]);
+      return (
+        <main data-testid="ws-stub" data-project-id={projectId} data-arrival-tab={String(arrivalTab)}>
+          <button type="button">inner</button>
+          <button type="button" ref={trigger} data-testid="ws-tab-trigger">Collaboration</button>
+          <span data-testid="ws-street">{street}</span>
+          <InternalLink data-testid="ws-edit-link" to={`/projects/${projectId}/edit`}>Edit details</InternalLink>
+          <ToastViewport />
+        </main>
+      );
+    },
   };
 });
 
@@ -88,8 +109,20 @@ if (!Element.prototype.getAnimations) {
 
 let root: Root | null = null;
 
+/** When set, the project-detail GET never answers, so a street shown after Save can only have come
+ *  from the edit form's query-cache publication (the invalidation refetch is stuck). */
+const detailReadsHang = { value: false };
 const PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 const PROJECT_PATH = `/projects/${PROJECT_ID}`;
+const EDIT_PATH = `${PROJECT_PATH}/edit`;
+const serverProject = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
+function freshServerProject(archivedAt: string | null = null) {
+  return {
+    id: "10000000-0000-4000-8000-000000000001", street: "1 Active Street", suburb: null, postcode: null, agencyName: null, agentName: null, agentEmail: null, agentPhone: null,
+    shootDate: null, timeWindow: null, orderNo: null, orderId: null, invoiceAmount: null, paymentStatus: null, notes: null, productionNotes: null, rawFolderLink: null, rawFolderPath: null,
+    monitoredRawFolder: null, archivedAt, collections: [],
+  };
+}
 const STAGES = [{ key: "awaiting_raw", label: "Awaiting raw", displayOrder: 1, active: true }];
 
 function projectsResponse() {
@@ -182,8 +215,16 @@ beforeEach(async () => {
   clearToasts();
   setViewportWidth(1024);
   apiGetMock.mockReset();
+  apiPatchMock.mockReset();
+  detailReadsHang.value = false;
+  serverProject.value = freshServerProject();
+  apiPatchMock.mockImplementation((_path, body) => {
+    serverProject.value = { ...serverProject.value!, ...(body as Record<string, unknown>) };
+    return Promise.resolve(serverProject.value);
+  });
   calendarEventFixture.enabled = false;
   apiGetMock.mockImplementation((path: string) => {
+    if (path === `/api/projects/${PROJECT_ID}`) return detailReadsHang.value ? new Promise(() => undefined) : Promise.resolve({ ...serverProject.value });
     if (path.startsWith("/api/notifications")) return Promise.resolve({ notifications: [], unreadCount: 0 });
     if (path.startsWith("/api/stages")) return Promise.resolve({ stages: STAGES });
     if (path.startsWith("/api/production-calendar")) return Promise.resolve(calendarRangeResponse(path));
@@ -272,7 +313,8 @@ describe("open from each Dashboard view (#366)", () => {
     const from = currentUrl();
     const main = dashboardMain(host);
     expect(main).not.toBeNull();
-    const projectCalls = () => apiGetMock.mock.calls.filter(([path]) => String(path).startsWith("/api/projects")).length;
+    // The Dashboard's own project reads; the stub Workspace's detail read (#374) is not the Dashboard refetching.
+    const projectCalls = () => apiGetMock.mock.calls.filter(([path]) => String(path).startsWith("/api/projects") && path !== `/api/projects/${PROJECT_ID}`).length;
     const callsBefore = projectCalls();
     const opener = await openerFor(host, view);
     expect(opener).not.toBeNull();
@@ -539,5 +581,272 @@ describe("a search typed just before the sheet opens survives it (#366)", () => 
     await settle();
     expect(input().value).toBe("jones");
     expect(currentUrl()).toBe("/?view=list&q=jones");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// #374 — Edit Project details inside the sheet. The REAL EditProject; the stub Workspace above.
+// ---------------------------------------------------------------------------------------------
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function editStreet(value: string) {
+  await act(async () => { setInputValue(sheet()!.querySelector<HTMLInputElement>("#project-street")!, value); await Promise.resolve(); });
+}
+
+async function submitForm() {
+  await act(async () => {
+    sheet()!.querySelector('[data-testid="edit-project-form"]')!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+  await settle();
+}
+
+const cancelLink = () => [...sheet()!.querySelectorAll("a")].find((a) => a.textContent === "Cancel")!;
+const editForm = () => sheet()?.querySelector('[data-testid="edit-project-form"]') ?? null;
+
+/** Dashboard -> project sheet -> edit form, through real clicks. */
+async function openEditFromList() {
+  const host = await renderDashboardAt("list");
+  const from = currentUrl();
+  const main = dashboardMain(host);
+  await click(host.querySelector('[data-testid="project-list-row"]')!);
+  await click(sheet()!.querySelector('[data-testid="ws-edit-link"]')!);
+  return { host, from, main };
+}
+
+describe("Edit details opens the form inside the sheet (#374)", () => {
+  it("shows the real form in the sheet with the SAME Dashboard <main> mounted, depth 2, prev = the project URL", async () => {
+    const { host, from, main } = await openEditFromList();
+    expect(currentUrl()).toBe(EDIT_PATH);
+    expect(editForm()).not.toBeNull();
+    expect(dashboardMain(host)).toBe(main);
+    expect(window.history.state).toEqual({ quincySheet: { v: 1, backdrop: from, depth: 2, prev: PROJECT_PATH } });
+    expect(mountedToastViewports()).toBe(1);
+    expect(sheet()!.querySelector('[data-testid="project-sheet-toast-viewport"]')).not.toBeNull();
+  });
+
+  it("moves focus to the 'Edit shoot' heading when the opener link unmounts", async () => {
+    await openEditFromList();
+    const heading = sheet()!.querySelector("h1");
+    expect(heading?.textContent).toBe("Edit shoot");
+    expect(document.activeElement).toBe(heading);
+  });
+});
+
+describe("Save and Cancel return by traversal (#374)", () => {
+  it("Save: PATCH, then history.go(-1), no push; after the traversal the Workspace shows the new street and one toast, in the sheet", async () => {
+    const { host, from } = await openEditFromList();
+    const main = dashboardMain(host);
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const push = vi.spyOn(window.history, "pushState");
+    await editStreet("2 Changed Street");
+    detailReadsHang.value = true;
+    await submitForm();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock.mock.calls[0]![1]).toMatchObject({ street: "2 Changed Street" });
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(-1);
+    expect(push).not.toHaveBeenCalled();
+
+    await traverseTo(PROJECT_PATH, { quincySheet: { v: 1, backdrop: from, depth: 1, prev: from } });
+    expect(editForm()).toBeNull();
+    expect(sheet()!.querySelector('[data-testid="ws-street"]')?.textContent).toBe("2 Changed Street");
+    const toasts = sheet()!.querySelectorAll('[data-testid="toast"]');
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]!.textContent).toContain("Shoot details saved.");
+    expect(mountedToastViewports()).toBe(1);
+    expect(dashboardMain(host)).toBe(main);
+  });
+
+  it("Cancel: go(-1); after the traversal the Workspace is unchanged and no toast is shown", async () => {
+    const { from } = await openEditFromList();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await editStreet("Typed but discarded");
+    await click(cancelLink());
+    expect(go).toHaveBeenCalledWith(-1);
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    await traverseTo(PROJECT_PATH, { quincySheet: { v: 1, backdrop: from, depth: 1, prev: from } });
+    expect(editForm()).toBeNull();
+    expect(sheet()!.querySelector('[data-testid="ws-street"]')?.textContent).toBe("1 Active Street");
+    expect(sheet()!.querySelectorAll('[data-testid="toast"]')).toHaveLength(0);
+  });
+
+  it("Cancel re-lands the tab the previous URL named: focus goes to the tab trigger, not the popup", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "list");
+    const entry = { quincySheet: { v: 1, backdrop: "/?view=list", depth: 1, prev: "/?view=list" } };
+    await renderApp(`${PROJECT_PATH}?collaboration=open`, entry);
+    await click(sheet()!.querySelector('[data-testid="ws-edit-link"]')!);
+    expect(window.history.state).toEqual({ quincySheet: { v: 1, backdrop: "/?view=list", depth: 2, prev: `${PROJECT_PATH}?collaboration=open` } });
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await click(cancelLink());
+    expect(go).toHaveBeenCalledWith(-1);
+    await traverseTo(`${PROJECT_PATH}?collaboration=open`, entry);
+    expect(sheet()!.querySelector('[data-testid="ws-stub"]')?.getAttribute("data-arrival-tab")).toBe("collaboration");
+    expect(document.activeElement).toBe(sheet()!.querySelector('[data-testid="ws-tab-trigger"]'));
+  });
+
+  it("a cancel whose previous entry is another location replaces with the workspace instead of walking history", async () => {
+    // A stateful entry whose `prev` is NOT this project (a hand-edited or stale state).
+    window.localStorage.setItem("quincy:dashboard:view", "list");
+    await renderApp(EDIT_PATH, { quincySheet: { v: 1, backdrop: "/?view=list", depth: 2, prev: "/?view=list" } });
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const replace = vi.spyOn(window.history, "replaceState");
+    await click(cancelLink());
+    expect(go).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledWith(expect.anything(), "", PROJECT_PATH);
+  });
+});
+
+describe("a direct edit link (#374)", () => {
+  it("opens the form in the sheet over the remembered List; Cancel replaces with the workspace, never walking history", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "list");
+    const host = await renderApp(EDIT_PATH, null);
+    expect(editForm()).not.toBeNull();
+    expect(host.querySelector('[aria-label="Projects list"]')).not.toBeNull();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const replace = vi.spyOn(window.history, "replaceState");
+    await click(cancelLink());
+    expect(go).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledWith(null, "", PROJECT_PATH);
+    expect(currentUrl()).toBe(PROJECT_PATH);
+    expect(sheet()!.querySelector('[data-testid="ws-stub"]')).not.toBeNull();
+  });
+
+  it("Save from a direct link also replaces, and the Workspace shows the new street", async () => {
+    window.localStorage.setItem("quincy:dashboard:view", "list");
+    await renderApp(EDIT_PATH, null);
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await editStreet("9 Direct Road");
+    await submitForm();
+    expect(go).not.toHaveBeenCalled();
+    expect(currentUrl()).toBe(PROJECT_PATH);
+    expect(sheet()!.querySelector('[data-testid="ws-street"]')?.textContent).toBe("9 Direct Road");
+    expect(sheet()!.querySelectorAll('[data-testid="toast"]')).toHaveLength(1);
+  });
+
+  it.each([
+    ["the close button", async () => { await click(document.querySelector('[data-testid="project-sheet-close"]')!); }],
+    ["Escape", async () => { await act(async () => { sheet()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); }); await settle(); }],
+  ])("closing from the edit form with %s lands on / with the List, same <main>", async (_name, close) => {
+    window.localStorage.setItem("quincy:dashboard:view", "list");
+    const host = await renderApp(EDIT_PATH, null);
+    const list = host.querySelector('[aria-label="Projects list"]');
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await close();
+    expect(go).not.toHaveBeenCalled();
+    expect(currentUrl()).toBe("/");
+    expect(sheet()).toBeNull();
+    expect(host.querySelector('[aria-label="Projects list"]')).toBe(list);
+  });
+});
+
+describe("closing from the edit form in-app (#374)", () => {
+  it("walks back the whole depth (go(-2)) to the Dashboard view it came from", async () => {
+    const { host, from, main } = await openEditFromList();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(-2);
+    await traverseTo(from, null);
+    expect(sheet()).toBeNull();
+    expect(dashboardMain(host)).toBe(main);
+  });
+});
+
+describe("a save that completes after the sheet was closed (#374, E3)", () => {
+  it("does not reopen the sheet or walk history: it only toasts, in the Dashboard's viewport", async () => {
+    const { host, from } = await openEditFromList();
+    let resolvePatch!: (value: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { resolvePatch = resolve; }));
+    await editStreet("3 Late Street");
+    await submitForm();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+
+    vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    await traverseTo(from, null);
+    expect(sheet()).toBeNull();
+
+    const go = vi.spyOn(window.history, "go");
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    go.mockClear();
+    await act(async () => { resolvePatch({ ...serverProject.value, street: "3 Late Street" }); await Promise.resolve(); await Promise.resolve(); });
+    await settle();
+    expect(go).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(sheet()).toBeNull();
+    expect(currentUrl()).toBe(from);
+    const inDashboard = host.querySelector('[data-testid="dashboard-toast-viewport"]');
+    expect(inDashboard?.textContent).toContain("Shoot details saved.");
+  });
+});
+
+describe("a completion that lands after a departure was requested never traverses twice (#374)", () => {
+  async function pendingSave() {
+    const opened = await openEditFromList();
+    let resolvePatch!: (value: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { resolvePatch = resolve; }));
+    await editStreet("4 Racing Street");
+    await submitForm();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    return { ...opened, finishSave: async () => { await act(async () => { resolvePatch({ ...serverProject.value, street: "4 Racing Street" }); await Promise.resolve(); await Promise.resolve(); }); await settle(); } };
+  }
+
+  it("Close, then the PATCH resolves BEFORE popstate: exactly one traversal (go(-2)), and the toast", async () => {
+    const { host, from, finishSave } = await pendingSave();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    await finishSave();
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(-2);
+    expect(back).not.toHaveBeenCalled();
+    await traverseTo(from, null);
+    expect(sheet()).toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-toast-viewport"]')?.textContent).toContain("Shoot details saved.");
+  });
+
+  it("Cancel, then the PATCH resolves BEFORE popstate: exactly one traversal (go(-1)), and the toast", async () => {
+    const { from, finishSave } = await pendingSave();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    await click(cancelLink());
+    await finishSave();
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(-1);
+    expect(back).not.toHaveBeenCalled();
+    // The late save only toasts (the sheet's viewport is still mounted until the traversal lands).
+    expect(sheet()!.textContent).toContain("Shoot details saved.");
+    await traverseTo(PROJECT_PATH, { quincySheet: { v: 1, backdrop: from, depth: 1, prev: from } });
+    expect(editForm()).toBeNull();
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("permanent delete from the edit form (#374, E4)", () => {
+  it("closes the sheet (go(-2)) and the toast lands in the Dashboard viewport", async () => {
+    serverProject.value = freshServerProject("2026-01-01T00:00:00.000Z");
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { host, from } = await openEditFromList();
+      const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+      await act(async () => { setInputValue(sheet()!.querySelector<HTMLInputElement>("#project-delete-confirmation")!, "1 Active Street"); await Promise.resolve(); });
+      const del = [...sheet()!.querySelectorAll("button")].find((b) => b.textContent === "Delete project permanently")!;
+      await click(del);
+      await act(async () => { confirmStore.resolve(true); await Promise.resolve(); await Promise.resolve(); });
+      await settle();
+      expect(fetchMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}`, expect.objectContaining({ method: "DELETE" }));
+      expect(go).toHaveBeenCalledWith(-2);
+      await traverseTo(from, null);
+      expect(sheet()).toBeNull();
+      expect(host.querySelector('[data-testid="dashboard-toast-viewport"]')?.textContent).toContain("Project permanently deleted.");
+    } finally { vi.unstubAllGlobals(); }
   });
 });
