@@ -99,9 +99,14 @@ export type LinkClick = {
   currentTarget: { href: string; target: string; download: string };
 };
 
-/** Keyboard-generated anchor clicks have detail 0 and must retain native behavior. */
+/**
+ * An unmodified primary activation — pointer or keyboard — becomes an SPA push; modified clicks,
+ * other buttons, `target`, `download` and non-staff destinations keep native behaviour. (#366:
+ * keyboard Enter used to be excluded via `detail === 0`; it is now intercepted, and
+ * Ctrl/Meta/Shift/Alt+Enter still carry modifier flags so they still open natively.)
+ */
 export function shouldInterceptInternalLink(event: LinkClick, origin: string): boolean {
-  if (event.defaultPrevented || event.button !== 0 || event.detail === 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
   const anchor = event.currentTarget;
   if (anchor.target || anchor.download) return false;
   try {

@@ -204,7 +204,9 @@ describe("internal-link interception", () => {
 
   it("only intercepts unmodified primary mouse navigation to a staff route", () => {
     expect(shouldInterceptInternalLink(click(), "https://portal.test")).toBe(true);
-    expect(shouldInterceptInternalLink(click({ detail: 0 }), "https://portal.test")).toBe(false);
+    expect(shouldInterceptInternalLink(click({ detail: 0 }), "https://portal.test")).toBe(true);
+    expect(shouldInterceptInternalLink(click({ detail: 0, ctrlKey: true }), "https://portal.test")).toBe(false);
+    expect(shouldInterceptInternalLink(click({ detail: 0, shiftKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ metaKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ button: 1 }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ currentTarget: { href: `https://portal.test/projects/${projectId}`, target: "_blank", download: "" } }), "https://portal.test")).toBe(false);

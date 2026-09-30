@@ -153,8 +153,8 @@ async function clickNotification() {
   await flushUntil(() => trigger.getAttribute("aria-label") !== "Notifications", "the bell's unread count");
   await click(trigger);
   await flushUntil(() => document.querySelector(`[role="dialog"] a[href^="/projects/${PROJECT_ID}"]`) !== null, "the notification row link");
-  // A pointer click (`detail: 1`), as a person makes: `InternalLink` deliberately leaves a
-  // `detail: 0` click (keyboard / programmatic `.click()`) to the browser's own navigation.
+  // A pointer click (`detail: 1`), as a person makes. (Since #366 `InternalLink` intercepts a
+  // `detail: 0` keyboard click too; `detail: 1` is realism here, not a requirement.)
   const row = document.querySelector<HTMLAnchorElement>(`[role="dialog"] a[href^="/projects/${PROJECT_ID}"]`)!;
   await act(async () => { row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })); await Promise.resolve(); await Promise.resolve(); });
 }

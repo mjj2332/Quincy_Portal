@@ -130,8 +130,8 @@ const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
  * List/Kanban map the search onto `q` directly, through `staffPathFor`. Calendar does too now
  * (#217 fix round 4, item 1, BLOCKER): the bare intent became a legal spelling for `q`
  * (`staff-routes.ts`'s `DashboardCalendarIntentRoute`) specifically because a native navigation —
- * keyboard Enter (`InternalLink`'s own `shouldInterceptInternalLink` only claims a genuine
- * left-click), cmd/middle-click, "open in new tab", a reload — loads `href` as a fresh document
+ * cmd/middle-click (`InternalLink`'s own `shouldInterceptInternalLink` only claims an unmodified
+ * primary activation), "open in new tab", a reload — loads `href` as a fresh document
  * with a COLD, empty search store, and the old bare-intent href lost the search on every one of
  * those paths. When `dashboardCalendar` is non-null (the CURRENT route is already a calendar facet
  * with known date/subview/filters), the href stays the full facet URL, mapping the search onto its

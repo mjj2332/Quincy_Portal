@@ -4368,6 +4368,8 @@ remove the legacy readers) still applies.
 - **Also found:** `InternalLink` only intercepts a pointer click (`event.detail !== 0`); a
   programmatic `.click()` in a DOM test falls through to happy-dom's own navigation, which changes
   `location` without notifying `locationStore`. Dispatch a `MouseEvent` with `detail: 1`.
+  **#366: keyboard activation is intercepted too** (the `detail === 0` exclusion is gone); `detail: 1`
+  in tests is now realism, not a requirement. Ctrl/Meta/Shift/Alt+Enter still open natively.
 - **Also found:** a ref callback created fresh on every render, handed to a Base UI `TabsTrigger`,
   loops (Base UI re-registers the trigger with a state update on each ref change). Keep per-item
   ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).

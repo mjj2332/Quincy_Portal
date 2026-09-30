@@ -300,9 +300,8 @@ function dashboardViewControlActive(host: ParentNode): string | null {
 }
 
 /**
- * `detail: 1`, not a bare synthetic click: `InternalLink`'s `shouldInterceptInternalLink`
- * (`lib/router.ts`) treats `event.detail === 0` as keyboard-issued and deliberately does not
- * `preventDefault()`, so a `detail: 0` click never reaches `locationStore().push()`. Lifted from
+ * `detail: 1` is realism (a pointer click), not a requirement: since #366 `InternalLink`'s
+ * `shouldInterceptInternalLink` (`lib/router.ts`) intercepts keyboard `detail: 0` clicks too. Lifted from
  * `App-navigation-rail-shell.dom.test.tsx`'s own `click()`, which explains the same thing at
  * greater length.
  */
