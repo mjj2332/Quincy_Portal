@@ -30,6 +30,25 @@
 //
 // Before --live: D1 backup (wrangler d1 export quincy-portal --remote --output
 // ~/quincy-d1-backups/quincy-portal-2026-10-01-pre-oct-cleanup.sql from portal/workers/app).
+//
+// Run record (2026-10-01, owner-run from their signed-in Admin session):
+//   - D1 backup quincy-portal-2026-10-01-pre-oct-cleanup.sql (29,937,241 bytes, 146 project rows,
+//     12,376 audit_log rows).
+//   - Guard shipped first (#409): 0051 applied by hand after Time Travel bookmark
+//     00000899-00000a58-000050f6-f31f4923f24902a5df4e98eb5ee3def9; seed recorded 96 tombstones
+//     (52 held by live in-scope projects at the time); new Worker versions live before --live ran.
+//   - 79/79 archived + deleted, 0 R2 objects. D1 afterwards: 146 -> 67 projects, 10 NULL shoot_date
+//     (untouched), 57 on/after 2026-09-01, 0 before. tonomo_order_tombstones 123 (79 source
+//     project_delete); audit_log holds 79 project.archive + 79 project.delete rows for them.
+//   - Residue: 0 D1 orphans across every project/asset-linked table; 0 orphan R2 objects across all
+//     7,082 keys under projects/ and renditions/.
+//   - audit_log cleanup (owner decision, reversing the 09-28 "kept by design"): after Time Travel
+//     bookmark 0000089a-00000440-000050f6-dc40016ae3d30bb50e03e5f791351454, deleted 4,643 rows —
+//     target_type 'project' rows of projects that no longer exist (except project.archive and
+//     project.delete, kept as the record of each deletion: 416 remain) plus rows of other target
+//     types whose meta_json.projectId names a deleted project. All 4,643 predate the backup above.
+//     Rows for deleted entities that carry no projectId were left, since their project can't be
+//     proven and they may belong to live projects.
 const origin = process.env.QUINCY_ORIGIN ?? "https://quincy.flamingfire.my";
 const cookie = process.env.QUINCY_SESSION_COOKIE;
 const mode = process.argv.includes("--live") ? "live" : "dry-run";
