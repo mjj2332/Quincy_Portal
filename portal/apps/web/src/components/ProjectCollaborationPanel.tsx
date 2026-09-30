@@ -90,7 +90,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     </div>;
     const panels = <>
       <div className="min-w-0 max-w-[var(--container-md)]" role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
-      <div className="min-w-0" role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={presented && activeView === "activity"} onAccessFailure={onAccessFailure} jobs={jobs} onRetryJob={onRetryJob} source={activitySource} onSourceChange={setActivitySource} /></div>
+      <div className="min-w-0 max-w-[var(--container-md)]" role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={presented && activeView === "activity"} onAccessFailure={onAccessFailure} jobs={jobs} onRetryJob={onRetryJob} source={activitySource} onSourceChange={setActivitySource} /></div>
     </>;
     return <section className={cn("grid content-start gap-[var(--space-4)] p-[var(--space-5)] bg-[var(--paper-050)]",
       embedded ? "max-[721px]:p-[var(--space-3)]" : "[border-style:solid] border-[length:var(--border-width-hair)] border-border shadow-[var(--shadow-sm)]")}

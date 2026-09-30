@@ -45,6 +45,8 @@ function isPermanentDenial(error: unknown): boolean {
 // A row is one line at body-small: [avatar] [sentence] [time]; it wraps on narrow widths.
 const ROW = "grid grid-cols-[20px_minmax(0,1fr)_auto] items-baseline gap-x-[var(--space-2)] py-[var(--space-2)] " +
   "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border last:border-b-0";
+// A Background job row has no actor, so no avatar column; a long error goes on its own line under the kind and status.
+const JOB_ROW = ROW.replace("grid-cols-[20px_minmax(0,1fr)_auto]", "grid-cols-[minmax(0,1fr)_auto]");
 const ROW_TEXT = "m-0 min-w-0 [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary";
 const ACTOR = "font-[var(--weight-medium)] text-foreground";
 const HEADING_SPACING = "pt-[var(--space-5)] pb-[var(--space-1)]";
@@ -114,13 +116,12 @@ export function ProjectActivityView({ projectId, enabled = true, onAccessFailure
       <p className={cn(META_TEXT, "m-0 !normal-case")}>Latest 20 AutoHDR sends, fetches, Editor folder passes and manual-upload publishes.</p>
       {jobBuckets.length === 0
         ? <EmptyState size="compact" role="status" title="No background jobs yet." />
-        : <DayGroups buckets={jobBuckets} idPrefix={`${idPrefix}-jobs`} renderRow={(job) => <li key={job.id} className={ROW}>
-          <span aria-hidden="true" />
+        : <DayGroups buckets={jobBuckets} idPrefix={`${idPrefix}-jobs`} renderRow={(job) => <li key={job.id} className={JOB_ROW}>
           <p className={ROW_TEXT}>
             <span className={ACTOR}>{jobKindLabel(job.kind)}</span>{" "}
             <StatusPill tone={jobStatusTone(job.status)}>{job.status}</StatusPill>
-            {job.error && <> <span className="text-destructive">{job.error}</span></>}
             {canRetryJob(job) && onRetryJob && <> <Button variant="text" className="align-baseline" onClick={() => onRetryJob(job.id)}>Retry</Button></>}
+            {job.error && <span className="block text-destructive [overflow-wrap:anywhere]">{job.error}</span>}
           </p>
           <CollaborationTimestamp instant={job.createdAt} now={now} mode="dayGrouped" />
         </li>} />}
@@ -148,7 +149,7 @@ export function ProjectActivityView({ projectId, enabled = true, onAccessFailure
       // The External payload has no `actor`; an internal-shaped item is still suppressed for External.
       const actor = !external && "actor" in item ? item.actor : null;
       return <li key={item.id} className={ROW}>
-        {actor ? <InitialsAvatar name={actor.name} className="size-5 self-center" /> : <span aria-hidden="true" />}
+        {actor ? <InitialsAvatar name={actor.name} className="size-5 self-start" /> : <span aria-hidden="true" />}
         <p className={ROW_TEXT}>{actor && <><strong className={ACTOR}>{actor.name}</strong>{" · "}</>}{item.presentation.body}</p>
         <CollaborationTimestamp instant={item.occurredAt} now={now} mode="dayGrouped" />
       </li>;
