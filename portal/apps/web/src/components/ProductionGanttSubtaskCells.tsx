@@ -71,7 +71,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
     return <time data-testid="gantt-subtask-due" dateTime={end.instant ?? end.localCivil} className="truncate text-foreground">{text}</time>;
   }
   return (
-    <span data-testid="gantt-subtask-due" className="inline-flex min-w-0 items-center" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
+    <span data-testid="gantt-subtask-due" className="flex min-w-0 flex-1 items-center" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
       <SubtaskScheduleControl<LatestSubtaskSummary>
         owner={`gantt-${row.id}`}
         label={`Schedule for ${row.title}`}
