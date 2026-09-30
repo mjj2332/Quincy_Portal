@@ -4,8 +4,9 @@ import { attachLazyImageObserver } from "./lazy-image-observer";
 class FakeIntersectionObserver {
   static instance: FakeIntersectionObserver | undefined;
   callback: IntersectionObserverCallback;
+  options: unknown;
   target: Element | undefined;
-  constructor(callback: IntersectionObserverCallback) { this.callback = callback; FakeIntersectionObserver.instance = this; }
+  constructor(callback: IntersectionObserverCallback, options?: unknown) { this.callback = callback; this.options = options; FakeIntersectionObserver.instance = this; }
   observe(target: Element) { this.target = target; }
   unobserve() {}
   disconnect() {}
@@ -22,5 +23,10 @@ describe("LazyImage intersection retry boundary", () => {
     terminal = true; // third failure replaces <img> with a visible placeholder
     FakeIntersectionObserver.instance!.fire(true);
     expect(starts).toBe(1);
+  });
+
+  it("extends both the viewport and nested scroll containers by 600px (#362)", () => {
+    attachLazyImageObserver(() => ({}) as Element, () => undefined, FakeIntersectionObserver as unknown as typeof IntersectionObserver);
+    expect(FakeIntersectionObserver.instance!.options).toMatchObject({ rootMargin: "600px", scrollMargin: "600px" });
   });
 });

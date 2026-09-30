@@ -5,6 +5,7 @@ import { externalMeResponseSchema, ROLE_CAPABILITIES } from "@quincy/shared";
 import type { AppEnv } from "./env";
 import { getAuth } from "./auth";
 import { requireSession } from "./middleware/session";
+import { mediaNoStoreByDefault } from "./middleware/media-cache-default";
 import { requireCapability } from "./middleware/capability";
 import { requireImpersonationEnabled } from "./lib/impersonation";
 import { usersRoutes } from "./routes/users";
@@ -71,7 +72,7 @@ api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlin
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));
-const media = new Hono<AppEnv>(); media.use("/*", requireSession); media.route("/", mediaRoutes); app.route("/media", media);
+const media = new Hono<AppEnv>(); media.use("/*", mediaNoStoreByDefault); media.use("/*", requireSession); media.route("/", mediaRoutes); app.route("/media", media);
 app.all("/media", terminalRoute("/media", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/media/*", terminalRoute("/media/*", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/__transform-source", terminalRoute("/__transform-source", (c) => c.notFound()));

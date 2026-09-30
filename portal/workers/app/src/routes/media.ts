@@ -67,6 +67,8 @@ export function liveTransformLocation(baseUrl: string, key: string, variant: "we
   return new URL(`/cdn-cgi/image/width=${spec.maxEdge},height=${spec.maxEdge},fit=scale-down,quality=${spec.quality},format=auto/${sourceUrl.href}`, baseUrl).href;
 }
 
+const RENDITION_CACHE_HEADERS = { "cache-control": "private, max-age=300", vary: "Cookie" } as const;
+
 mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:variant", async (c) => {
   const assetId = c.req.param("assetId"), variant = c.req.param("variant"); if (!z.string().uuid().safeParse(assetId).success || !["web", "thumb", "original"].includes(variant)) return c.json({ error: "Invalid media request" }, 400);
   if (c.get("user").role === "external_editor") {
@@ -89,7 +91,7 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
     if (!cached || (cached.contentType !== "image/webp" && cached.contentType !== "image/jpeg")) return c.json({ error: "Rendition is still processing", code: "rendition_processing", renditionStatus: "processing" }, 409);
     const object = await c.env.MEDIA.get(cached.r2Key);
     if (!object || object.httpMetadata?.contentType !== cached.contentType) return c.json({ error: "Rendition is still processing", code: "rendition_processing", renditionStatus: "processing" }, 409);
-    const headers: Record<string, string> = { "content-type": cached.contentType, "cache-control": "private, no-store", "content-length": String(object.size), "x-content-type-options": "nosniff" };
+    const headers: Record<string, string> = { "content-type": cached.contentType, ...RENDITION_CACHE_HEADERS, "content-length": String(object.size), "x-content-type-options": "nosniff" };
     if (object.httpEtag) headers.etag = object.httpEtag;
     return new Response(object.body, { headers });
   }
@@ -120,8 +122,10 @@ mediaRoutes.get("/asset/:assetId/:variant", terminalRoute("/asset/:assetId/:vari
       if (object?.httpMetadata?.contentType === cached.contentType) {
         const headers: Record<string, string> = {
           "content-type": cached.contentType,
-          // The authenticated URL must recheck project access after logout/revocation.
-          "cache-control": "private, no-store",
+          // #362: the viewer's own browser may reuse an authorised rendition for 5 minutes;
+          // `private` keeps every shared cache out and Vary: Cookie separates principals. After
+          // expiry the Worker re-runs session and project-access checks (docs/lessons.md).
+          ...RENDITION_CACHE_HEADERS,
           "content-length": String(object.size),
           "x-content-type-options": "nosniff",
         };
