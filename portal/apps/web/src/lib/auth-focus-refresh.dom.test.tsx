@@ -48,6 +48,25 @@ describe("session refresh on focus / reconnect (#360)", () => {
   const setVisibility = (state: "hidden" | "visible") => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
   const settle = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); }); };
 
+  const mount = async (signedIn: boolean) => {
+    await act(async () => {
+      const consumer = createElement(SessionConsumer);
+      root.render(createElement(QueryClientProvider, { client },
+        signedIn ? createElement(PrincipalFreshnessBoundary, { principalId: principal, role: "editor", authorizationEpoch: 0, children: consumer }) : consumer));
+    });
+    await settle();
+  };
+  const returnToTab = async () => {
+    setVisibility("hidden");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    setVisibility("visible");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await settle();
+  };
+
   beforeEach(async () => {
     apiGetMock.mockReset();
     apiGetMock.mockResolvedValue({ principal: { id: principal, role: "editor", authorizationEpoch: 0 }, authorizationFingerprint: "fp", projects: [] });
@@ -63,11 +82,6 @@ describe("session refresh on focus / reconnect (#360)", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    await act(async () => {
-      root.render(createElement(QueryClientProvider, { client },
-        createElement(PrincipalFreshnessBoundary, { principalId: principal, role: "editor", authorizationEpoch: 0, children: createElement(SessionConsumer) })));
-    });
-    await settle();
   });
 
   afterEach(async () => {
@@ -79,12 +93,26 @@ describe("session refresh on focus / reconnect (#360)", () => {
   });
 
   it("returning to a hidden tab produces exactly one session request", async () => {
-    expect(sessionCalls()).toBeGreaterThan(0);
+    await mount(true);
     const baseline = sessionCalls();
-    setVisibility("hidden");
-    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
-    setVisibility("visible");
+    expect(baseline).toBeGreaterThan(0);
+    await returnToTab();
+    expect(sessionCalls() - baseline).toBe(1);
+  });
+
+  it("an online event produces exactly one session request", async () => {
+    await mount(true);
+    const baseline = sessionCalls();
+    await act(async () => { window.dispatchEvent(new Event("online")); });
+    await settle();
+    expect(sessionCalls() - baseline).toBe(1);
+  });
+
+  it("online followed by focus inside the rate-limit window produces exactly one session request", async () => {
+    await mount(true);
+    const baseline = sessionCalls();
     await act(async () => {
+      window.dispatchEvent(new Event("online"));
       document.dispatchEvent(new Event("visibilitychange"));
       window.dispatchEvent(new Event("focus"));
     });
@@ -92,10 +120,10 @@ describe("session refresh on focus / reconnect (#360)", () => {
     expect(sessionCalls() - baseline).toBe(1);
   });
 
-  it("an online event produces exactly one session request", async () => {
+  it("a signed-out tab (no PrincipalFreshnessBoundary) still refreshes the session on return", async () => {
+    await mount(false);
     const baseline = sessionCalls();
-    await act(async () => { window.dispatchEvent(new Event("online")); });
-    await settle();
+    await returnToTab();
     expect(sessionCalls() - baseline).toBe(1);
   });
 });

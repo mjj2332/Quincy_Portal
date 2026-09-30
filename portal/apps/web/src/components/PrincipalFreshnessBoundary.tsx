@@ -77,12 +77,12 @@ function PrincipalFreshnessBoundaryInner({ principalId, role, authorizationEpoch
   });
 
   useEffect(() => {
-    // Reconnect (`online`) is deliberately not listened to here: better-auth's client refetches on it
-    // unconditionally, so a second listener doubled the request (#360).
+    // Focus and reconnect are deliberately not listened to here: better-auth's client already
+    // refetches on visibilitychange and `online` (rate-limited, for signed-in AND signed-out tabs).
+    // A second listener here doubled those requests (#360). Only the 30s poll is ours.
     const refreshSession = () => { if (document.visibilityState === "visible") void session.refetch({}); };
     const interval = window.setInterval(refreshSession, 30_000);
-    window.addEventListener("focus", refreshSession);
-    return () => { window.clearInterval(interval); window.removeEventListener("focus", refreshSession); };
+    return () => { window.clearInterval(interval); };
   }, [session.refetch]);
 
   useEffect(() => {
