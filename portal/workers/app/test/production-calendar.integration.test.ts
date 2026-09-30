@@ -113,22 +113,22 @@ async function insertSubtask(projectId: string, title: string, assigneeId: strin
   const start = startKind === "timed" ? instant(schedule.start ?? oneHourBefore(endCivil)) : null;
   const end = endKind === "timed" ? instant(endCivil) : null;
   const now = Date.now();
-  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+  await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     // The end's civil string is stored in `due_date` (there is no `schedule_end_civil` column).
-    .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId, assigneeId ? 1 : 0, endCivil, startKind, schedule.start ?? (startKind === "timed" ? oneHourBefore(endCivil) : endCivil), start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, endKind, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, "Australia/Sydney", 1, adminId, now, now).run();
-  // The relation is the source of truth (#368, read by the Calendar since #370); the column is a mirror kept for not-yet-migrated readers.
+    .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId ? 1 : 0, endCivil, startKind, schedule.start ?? (startKind === "timed" ? oneHourBefore(endCivil) : endCivil), start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, endKind, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, "Australia/Sydney", 1, adminId, now, now).run();
+  // The relation is the only place assignees live (#368, #373).
   if (assigneeId) await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(id, assigneeId, now).run();
   return id;
 }
 
-/** #370: a Subtask shared by several people. The relation is authoritative; `assignee_id` mirrors the first for old readers. */
+/** #370: a Subtask shared by several people. The relation is authoritative. */
 async function insertSharedSubtask(projectId: string, title: string, assigneeIds: string[], schedule: Parameters<typeof insertSubtask>[3] = {}): Promise<string> {
   const id = await insertSubtask(projectId, title, null, schedule);
   const now = Date.now();
   for (const [index, userId] of assigneeIds.entries()) {
     await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(id, userId, now + index).run();
   }
-  if (assigneeIds[0]) await database.DB.prepare("UPDATE project_subtasks SET assignee_id = ?, assignment_version = 1 WHERE id = ?").bind(assigneeIds[0], id).run();
+  if (assigneeIds[0]) await database.DB.prepare("UPDATE project_subtasks SET assignment_version = 1 WHERE id = ?").bind(id).run();
   return id;
 }
 
@@ -652,7 +652,7 @@ describe("#370 Calendar reads the assignee relation", () => {
   it("returns one event per Subtask whose assignees are listed in assignment order", async () => {
     const [event] = shared(await multi(""));
     expect(event?.kind === "checklist" && event.assignees.map((person) => person.id)).toEqual([multiA, multiB, multiC]);
-    expect(event?.kind === "checklist" && event.assignee?.id).toBe(multiA);
+    expect(event?.kind === "checklist" && event.assignees[0]?.id).toBe(multiA);
     expect(event?.kind === "checklist" && event.otherAssigneeCount).toBe(0);
   });
 

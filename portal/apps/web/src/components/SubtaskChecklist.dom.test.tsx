@@ -43,9 +43,9 @@ const year = new Date().getFullYear();
 const rangeOf = (day: string, version = 0) => { const endpoint = { kind: "date" as const, localCivil: day, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }; return { state: "range" as const, version, zone: "Australia/Sydney" as const, start: endpoint, end: endpoint, due: day }; };
 const person = (id: string, name: string) => ({ id, name, roleLabel: "Editor", isExternal: false, active: true });
 const nora = person("20000000-0000-4000-8000-000000000002", "Nora Jones"); const ada = person("30000000-0000-4000-8000-000000000003", "Ada Smith"); const ben = person("40000000-0000-4000-8000-000000000004", "Ben Ortiz"); const cy = person("50000000-0000-4000-8000-000000000005", "Cy Young"); const dee = person("60000000-0000-4000-8000-000000000006", "Dee Park");
-let optionsResponse: { candidates: Array<{ id: string; name: string; role: string }>; multiAssignee: boolean };
-const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: { id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones" }, assignees: [nora], assignmentVersion: 1, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
-const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignee: null, assignees: [], assignmentVersion: 0, dueDate: `${year}-06-01`, schedule: rangeOf(`${year}-06-01`) };
+let optionsResponse: { candidates: Array<{ id: string; name: string; role: string }> };
+const task = { id: "task-1", title: "Call client", done: false, position: 1024, assignees: [nora], assignmentVersion: 1, dueDate: `${year}-05-30`, schedule: rangeOf(`${year}-05-30`), createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+const second = { ...task, id: "task-2", title: "Prepare files", position: 2048, assignees: [], assignmentVersion: 0, dueDate: `${year}-06-01`, schedule: rangeOf(`${year}-06-01`) };
 let root: Root | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 function mount() { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); return host; }
@@ -72,7 +72,7 @@ const assigneeTrigger = (host: HTMLElement, title = "Call client") => item(host,
 const stackLabels = (scope: Element) => [...scope.querySelectorAll('[role="img"]')].map((element) => element.getAttribute("aria-label"));
 function saveButton(scope: Element) { return [...scope.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!; }
 
-beforeEach(() => { optionsResponse = { candidates: [{ id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones", role: "editor" }, { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith", role: "photographer" }, { id: "40000000-0000-4000-8000-000000000004", name: "Ben Ortiz", role: "editor" }, { id: "50000000-0000-4000-8000-000000000005", name: "Cy Young", role: "editor" }, { id: "60000000-0000-4000-8000-000000000006", name: "Dee Park", role: "editor" }], multiAssignee: true }; floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) || "assignees" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
+beforeEach(() => { optionsResponse = { candidates: [{ id: "20000000-0000-4000-8000-000000000002", name: "Nora Jones", role: "editor" }, { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith", role: "photographer" }, { id: "40000000-0000-4000-8000-000000000004", name: "Ben Ortiz", role: "editor" }, { id: "50000000-0000-4000-8000-000000000005", name: "Cy Young", role: "editor" }, { id: "60000000-0000-4000-8000-000000000006", name: "Dee Park", role: "editor" }] }; floating.modalValues.length = 0; apiGetMock.mockReset().mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: [task, second] })); apiPostMock.mockReset().mockResolvedValue({ ...task, id: "task-new", title: "Schedule staging", position: 3072 }); apiPatchMock.mockReset().mockImplementation((path, body) => { const base = path.includes("task-2") ? second : task; return Promise.resolve({ ...base, ...("schedule" in (body as object) || "assignees" in (body as object) ? {} : body as object) }); }); apiDeleteMock.mockReset().mockResolvedValue({ ok: true }); confirmMock.mockReset().mockResolvedValue(true); });
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
 
 describe("SubtaskChecklist", () => {
@@ -217,7 +217,7 @@ describe("SubtaskChecklist", () => {
 
   it("shows the full authoritative item on an item conflict with explicit discard and reapply choices", async () => {
     const host = mount(); await render();
-    const latest = { ...task, title: "Authoritative title", done: true, assignee: { id: "30000000-0000-4000-8000-000000000003", name: "Ada Smith" }, assignees: [ada], schedule: { state: "range", version: 2, zone: "Australia/Sydney", start: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
+    const latest = { ...task, title: "Authoritative title", done: true, assignees: [ada], schedule: { state: "range", version: 2, zone: "Australia/Sydney", start: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: `${year}-06-10` } };
     apiPatchMock.mockRejectedValueOnce(new ApiError("Checklist item changed", 409, { code: "subtask_item_conflict", current: latest.schedule, currentSubtask: latest }));
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const draft = portal("subtask-popover-task-1-schedule"); await typeInto(draft.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(draft));
@@ -419,7 +419,7 @@ describe("SubtaskChecklist", () => {
 });
 
 describe("SubtaskChecklist assignees (#368)", () => {
-  const withAssignees = (people: typeof nora[], version = 1) => ({ ...task, assignee: people[0] ?? null, assignees: people, assignmentVersion: version });
+  const withAssignees = (people: typeof nora[], version = 1) => ({ ...task, assignees: people, assignmentVersion: version });
   const patchUrl = `/api/projects/${projectId}/subtasks/task-1`;
 
   it("returns focus to the trigger after Escape commits a changed selection, while the save is in flight and after it settles (#368)", async () => {
@@ -481,20 +481,6 @@ describe("SubtaskChecklist assignees (#368)", () => {
     expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { done: true });
   });
 
-  it("single mode (gate closed): picking Ben while Nora is assigned replaces her in one PATCH", async () => {
-    optionsResponse = { ...optionsResponse, multiAssignee: false };
-    const host = mount(); await render();
-    apiPatchMock.mockResolvedValueOnce(withAssignees([ben], 2));
-    await openAssignees(assigneeTrigger(host));
-    await pickAssignee("Ben Ortiz");
-    await waitFor(() => expect(pickerOptions().filter((option) => option.getAttribute("aria-selected") === "true").map(optionName)).toEqual(["Ben Ortiz"]));
-    await closeAssignees();
-    expect(apiPatchMock).toHaveBeenCalledTimes(1);
-    expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { assignees: { expectedVersion: 1, add: ["40000000-0000-4000-8000-000000000004"], remove: ["20000000-0000-4000-8000-000000000002"] } });
-    await flush();
-    expect(stackLabels(assigneeTrigger(host))).toEqual(["Ben Ortiz"]);
-  });
-
   async function mountWithClient() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const host = mount();
@@ -549,16 +535,6 @@ describe("SubtaskChecklist assignees (#368)", () => {
     await flush();
     expect(host.textContent).toContain("Checklist item changed");
     expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Dee Park"]);
-  });
-
-  it("a disabled-gate refusal says only one assignee is allowed", async () => {
-    const host = mount(); await render();
-    apiPatchMock.mockRejectedValueOnce(new ApiError("Only one assignee is allowed", 409, { code: "subtask_multi_assignee_disabled" }));
-    await openAssignees(assigneeTrigger(host));
-    await pickAssignee("Ben Ortiz");
-    await closeAssignees();
-    await flush();
-    expect(host.textContent).toContain("Only one assignee is allowed right now.");
   });
 
   it("the composer sends every picked person as assigneeIds", async () => {

@@ -93,7 +93,6 @@ function ganttResponse(deadlineDate: string = DEADLINE_DATE) {
               title: TASK_TITLE,
               done: false,
               position: 0,
-              assignee: null,
               assignees: [],
               otherAssigneeCount: 0,
               assignmentVersion: 0,

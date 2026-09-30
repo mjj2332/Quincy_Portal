@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   SUBTASK_ACTIVITY_ASSIGNEE_IDS_MAX,
   SUBTASK_ASSIGNEE_DELTA_MAX,
-  SUBTASK_MULTI_ASSIGNEE_FLAG,
   subtaskAssigneeDeltaSchema,
   subtaskAssigneeOptionsResponseSchema,
 } from "../src/subtask-assignees";
@@ -13,8 +12,7 @@ const b = "22222222-2222-4222-8222-222222222222";
 const c = "33333333-3333-4333-8333-333333333333";
 
 describe("subtask assignee delta contract (#368)", () => {
-  it("names the gate and the bounds", () => {
-    expect(SUBTASK_MULTI_ASSIGNEE_FLAG).toBe("subtask_multi_assignee");
+  it("names the bounds", () => {
     expect(SUBTASK_ASSIGNEE_DELTA_MAX).toBe(100);
     expect(SUBTASK_ACTIVITY_ASSIGNEE_IDS_MAX).toBe(25);
   });
@@ -46,10 +44,12 @@ describe("subtask assignee delta contract (#368)", () => {
 
   it("parses the options response and registers the external surface", () => {
     const person = { id: c, name: "Casey", role: "editor" };
-    expect(subtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [person], multiAssignee: false }).success).toBe(true);
-    expect(subtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [person] }).success).toBe(false);
+    expect(subtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [person] }).success).toBe(true);
+    // The rollout gate is retired (#373): a body that still carries it is refused by the strict decoder.
+    expect(subtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [person], multiAssignee: true }).success).toBe(false);
     const external = { id: c, name: "Casey", roleLabel: "Editor", isExternal: true, active: true };
-    expect(externalSubtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [external], multiAssignee: true }).success).toBe(true);
+    expect(externalSubtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [external] }).success).toBe(true);
+    expect(externalSubtaskAssigneeOptionsResponseSchema.safeParse({ candidates: [external], multiAssignee: true }).success).toBe(false);
     expect(EXTERNAL_API_RESPONSE_SCHEMAS["subtask-assignee-options"]).toBe(externalSubtaskAssigneeOptionsResponseSchema);
   });
 });

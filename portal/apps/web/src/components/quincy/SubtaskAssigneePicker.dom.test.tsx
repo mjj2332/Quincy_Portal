@@ -80,7 +80,7 @@ async function closeWithEscape() {
 
 beforeEach(() => {
   onCommit.mockReset().mockResolvedValue(undefined);
-  apiGetMock.mockReset().mockResolvedValue({ candidates, multiAssignee: true });
+  apiGetMock.mockReset().mockResolvedValue({ candidates });
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
@@ -138,7 +138,7 @@ describe("SubtaskAssigneePicker", () => {
   });
 
   it("marks a deactivated selected person with the Inactive status pill", async () => {
-    apiGetMock.mockResolvedValue({ multiAssignee: true, candidates });
+    apiGetMock.mockResolvedValue({ candidates });
     await mount({ selected: [person("nora", "Nora Jones"), { id: "99999999-9999-4999-8999-999999999999", name: "Gone Person" }] });
     await open();
     await waitFor(() => expect(document.querySelectorAll('[data-slot="status-pill"]').length).toBe(1));
@@ -242,28 +242,6 @@ describe("SubtaskAssigneePicker", () => {
     expect(onCommit).toHaveBeenCalledTimes(1);
     expect(activeAtCommit).toBe(trigger());
     expect(document.activeElement).toBe(trigger());
-  });
-
-  it("when the gate is closed a new pick replaces the selection, and unpicking clears it", async () => {
-    apiGetMock.mockResolvedValue({ candidates, multiAssignee: false });
-    await mount({ selected: [person("nora", "Nora Jones")] });
-    await open();
-    await waitFor(() => expect(options().length).toBe(4));
-    await pick("Ada Smith");
-    await waitFor(() => expect(options().filter((option) => option.getAttribute("aria-selected") === "true").map(nameOf)).toEqual(["Ada Smith"]));
-    await pick("Ben Ortiz");
-    await closeWithEscape();
-    expect(onCommit).toHaveBeenCalledTimes(1); expect(onCommit.mock.calls[0]![0]).toEqual([ids.ben]);
-  });
-
-  it("when the gate is closed, unpicking the only person commits an empty set", async () => {
-    apiGetMock.mockResolvedValue({ candidates, multiAssignee: false });
-    await mount({ selected: [person("nora", "Nora Jones")] });
-    await open();
-    await waitFor(() => expect(options().length).toBe(4));
-    await pick("Nora Jones");
-    await closeWithEscape();
-    expect(onCommit).toHaveBeenCalledTimes(1); expect(onCommit.mock.calls[0]![0]).toEqual([]);
   });
 
   it("does not open while disabled", async () => {

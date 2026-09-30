@@ -263,9 +263,9 @@ describe("ProductionEventCalendar checklist writes", () => {
 
   it("keeps checklist collaboration role-based on server permissions, not admin-only", async () => {
     const base = oneDayEvent(dated("2026-08-12"));
-    const external = { ...base, project: { ...base.project, stageKey: "editing" as const }, assignee: { ...ASSIGNEE, isExternal: true, roleLabel: "External Editor" } } as ChecklistCalendarEventDto;
+    const external = { ...base, project: { ...base.project, stageKey: "editing" as const }, assignees: [{ ...ASSIGNEE, isExternal: true, roleLabel: "External Editor" }] } as ChecklistCalendarEventDto;
     const schedule = oneDaySchedule(dated("2026-08-13"), 3);
-    const body = { ...checklistMutationBody(external, schedule), assignee: external.assignee, assignmentVersion: 1, dueDate: schedule.due, createdBy: external.assignee, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-20T00:00:00.000Z" };
+    const body = { ...checklistMutationBody(external, schedule), assignmentVersion: 1, dueDate: schedule.due, createdBy: external.assignees[0], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-20T00:00:00.000Z" };
     const fetch = await mount([external], { role: "external_editor", patch: () => json(body) });
     expect(eventCalendarFake.event(ID)?.draggable).toBe(true);
     await proposeUpdate(ID, { start: day("2026-08-13"), allDay: true });
@@ -276,14 +276,13 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("preserves richer external assignee metadata through a no-op PATCH (editor save)", async () => {
     const base = oneDayEvent(dated("2026-08-12"));
     const assignee = { ...ASSIGNEE, isExternal: true, roleLabel: "External Editor" };
-    const event = { ...base, assignee, assignees: [assignee] } as ChecklistCalendarEventDto;
+    const event = { ...base, assignees: [assignee] } as ChecklistCalendarEventDto;
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, event.schedule)) });
     await openReschedule(ID);
     await clickTestId("event-calendar-schedule-submit");
     await flush(5);
     expect(fetch.patches()).toHaveLength(1);
     const rendered = eventCalendarFake.event(ID)?.data as { dto: ChecklistCalendarEventDto } | undefined;
-    expect(rendered?.dto.assignee).toEqual(assignee);
     expect(rendered?.dto.assignees).toEqual([assignee]);
   });
 

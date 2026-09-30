@@ -24,7 +24,7 @@ function applyThrough(db: SqliteDatabase, through: number): void {
 }
 
 /** The post-apply verify, as the operator runs it: comments stripped, `--command`. */
-const VERIFY_SQL = readFileSync(new URL("../../../scripts/subtask-assignees-verify.sql", import.meta.url), "utf8").split("\n").filter((line) => !line.startsWith("--")).join("\n");
+const VERIFY_SQL = readFileSync(new URL("./subtask-assignees-verify.fixture.sql", import.meta.url), "utf8").split("\n").filter((line) => !line.startsWith("--")).join("\n");
 
 const range = normalizeChecklistSchedule({ state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } }, 1);
 if (!range.ok) throw new Error("fixture schedule invalid");

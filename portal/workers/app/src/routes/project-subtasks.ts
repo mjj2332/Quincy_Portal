@@ -15,7 +15,7 @@ import {
 } from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { projectMentionableUsers } from "../lib/project-collaboration";
-import { externalAssigneeProjection, hydrateProjectAssignees, hydrateSubtaskAssignees, multiAssigneeEnabled, type HydratedAssignee } from "../lib/subtask-assignees";
+import { externalAssigneeProjection, hydrateProjectAssignees, hydrateSubtaskAssignees, type HydratedAssignee } from "../lib/subtask-assignees";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
 import { publishOutboxDetached } from "../lib/server-timing";
@@ -40,15 +40,11 @@ const scheduleInput = z.object({ state: z.literal("range"), start: endpointInput
 const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput }).strict();
 const uniqueIds = (ids: string[]) => new Set(ids).size === ids.length;
 const createInput = z.object({
-  title: titleInput, assigneeId: idParam.optional(), assigneeIds: z.array(idParam).max(SUBTASK_ASSIGNEE_DELTA_MAX).refine(uniqueIds, "Assignee ids must be unique").optional(), schedule: scheduleInput.optional(),
-}).strict().superRefine((value, ctx) => {
-  if (value.assigneeId !== undefined && value.assigneeIds !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Send assigneeId or assigneeIds, not both" });
-});
+  title: titleInput, assigneeIds: z.array(idParam).max(SUBTASK_ASSIGNEE_DELTA_MAX).refine(uniqueIds, "Assignee ids must be unique").optional(), schedule: scheduleInput.optional(),
+}).strict();
 const updateInput = z.object({
-  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), assignees: subtaskAssigneeDeltaSchema.optional(), schedule: scheduleRequestInput.optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required").superRefine((value, ctx) => {
-  if (value.assigneeId !== undefined && value.assignees !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Send assigneeId or assignees, not both" });
-});
+  title: titleInput.optional(), done: z.boolean().optional(), assignees: subtaskAssigneeDeltaSchema.optional(), schedule: scheduleRequestInput.optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
 const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.nullable() }).strict().refine((value) => value.beforeId !== value.afterId || value.beforeId === null, "Neighbors must be distinct");
 
 function rowsFromD1<T>(result: unknown): T[] {
@@ -86,7 +82,7 @@ function externalSubtaskQuery(db: ReturnType<typeof createDb>, projectId: string
     .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined, visibleProjectWhere({ id: userId, role: "external_editor", active: true })));
 }
 
-/** The external Checklist DTO: `assignees` are the team members only, `otherAssigneeCount` the rest; `assignee` is the first named one. */
+/** The external Checklist DTO: `assignees` are the team members only, `otherAssigneeCount` the rest. */
 function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number], assignees: HydratedAssignee[]) {
   const { assignees: named, otherAssigneeCount } = externalAssigneeProjection(assignees);
   const storage: ChecklistScheduleStorage = {
@@ -97,7 +93,7 @@ function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>
   };
   return externalChecklistItemSchema.parse({
     id: row.id, title: row.title, done: Boolean(row.done), position: row.position,
-    assignee: named[0] ?? null, assignees: named, otherAssigneeCount,
+    assignees: named, otherAssigneeCount,
     assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeSubtaskSchedule(row.id, storage),
     createdBy: row.creatorId && row.creatorName && row.creatorRole ? { id: row.creatorId, name: row.creatorName, roleLabel: ROLE_LABELS[row.creatorRole], isExternal: row.creatorRole === "external_editor", active: Boolean(row.creatorActive) } : { id: "00000000-0000-4000-8000-000000000000", name: "", roleLabel: "", isExternal: false, active: false },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
@@ -171,11 +167,10 @@ projectSubtasksRoutes.get("/projects/:projectId/subtask-assignee-options", termi
     `).bind(projectId).all<{ id: string; name: string; role: keyof typeof ROLE_LABELS }>();
     return c.json(externalSubtaskAssigneeOptionsResponseSchema.parse({
       candidates: results.map((row) => externalPersonSchema.parse({ id: row.id, name: row.name, roleLabel: ROLE_LABELS[row.role], isExternal: row.role === "external_editor", active: true })),
-      multiAssignee: await multiAssigneeEnabled(c.env.DB),
     }));
   }
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
-  return c.json(subtaskAssigneeOptionsResponseSchema.parse({ candidates: await projectMentionableUsers(c.env, projectId), multiAssignee: await multiAssigneeEnabled(c.env.DB) }));
+  return c.json(subtaskAssigneeOptionsResponseSchema.parse({ candidates: await projectMentionableUsers(c.env, projectId) }));
 }));
 
 projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/projects/:projectId/subtasks", async (c) => {
@@ -186,7 +181,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/proj
     env: c.env,
     projectId,
     principal: c.get("user"),
-    operation: { kind: "create", item: { title: data.title, assigneeIds: data.assigneeIds ?? (data.assigneeId ? [data.assigneeId] : []) }, schedule: data.schedule },
+    operation: { kind: "create", item: { title: data.title, assigneeIds: data.assigneeIds ?? [] }, schedule: data.schedule },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
   return await commandResponse(c, projectId, result, result.outcome === "created" ? 201 : 200);
@@ -201,7 +196,6 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminal
   const itemPatch: ItemPatch = {};
   if (hasField(data, "title")) itemPatch.title = data.title;
   if (hasField(data, "done")) itemPatch.done = data.done;
-  if (hasField(data, "assigneeId")) itemPatch.assigneeId = data.assigneeId;
   if (hasField(data, "assignees")) itemPatch.assignees = data.assignees;
   const result = await saveProjectSubtask({
     env: c.env,

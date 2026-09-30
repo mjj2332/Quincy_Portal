@@ -4,6 +4,10 @@ status: accepted
 
 # Subtask assignees are a relation, not a column
 
+> **Status note.** Gate retired and single field removed in #373 part 1: no code reads or writes
+> `project_subtasks.assignee_id`, and the `subtask_multi_assignee` gate code is gone (its `feature_flags` row
+> stays until part 2). The column and its index are dropped in #373 part 2.
+
 A Subtask had one nullable `assignee_id`. The multi-assignee work (PRD #358) needs any number of
 people per Subtask, so assignees move into `project_subtask_assignees`: one row per Subtask assignee,
 keyed `(subtask_id, user_id)`, deleted with the Subtask and with the user (`ON DELETE cascade`).
@@ -31,7 +35,7 @@ writer (#368-#372), then detach the column in code, then drop it (#373).
 **Invariant this step establishes.** While the column exists and the multi-assignee gate is closed,
 `relation == { (s.id, s.assignee_id, s.assignment_version) : s.assignee_id IS NOT NULL }`. Every path
 that changes `assignee_id` already bumps `assignment_version` (create sets 1, update adds 1, team
-removal adds 1). `scripts/subtask-assignees-verify.sql` checks it and is valid only until the flag flip.
+removal adds 1). `packages/db/test/subtask-assignees-verify.fixture.sql` checks it (the migration 0048/0049 tests run it) and is valid only until the flag flip; it is a test fixture now, no longer an operator script.
 
 **Dual-write is application-level, not triggers.** The worker test harness splits migration SQL on
 `;`, so a trigger body cannot be loaded and the repo has none. The relation statements are appended
@@ -52,5 +56,5 @@ removal counts and the Gantt.
 | #364 | anything | old code ignores the table, and drift is healed by the next migration (0049) |
 | #368-#372, flag off | #364 or later, never below it once 0049 is applied | #364 dual-writes and nothing re-syncs after 0049 |
 | any, flag on | #368 or later (#364 is degraded: it sees the first assignee only and keeps the rest) | #364's writes are replace-one and never delete unknown assignees |
-| #373 detach | the previous PR (never below #368 once multi-assignee data exists) | earlier readers still read the mirror, which is stale once the detach writes without it |
+| #373 detach | #372 (never below #368 once multi-assignee data exists) | #372 reads no column and its mirror writes are harmless; #368-#371 still read the mirror in unmigrated readers, which is stale once the detach writes without it |
 | #373 drop | the detach PR or later only | the column is gone, and restoring it means Time Travel, which loses writes |

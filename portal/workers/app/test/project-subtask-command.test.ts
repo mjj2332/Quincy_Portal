@@ -246,7 +246,7 @@ describe("native assignee delta racing a concurrent edit (#368)", () => {
     const subtaskId = created.item.id;
     const readState = async () => ({
       relation: (await database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ?").bind(subtaskId).all()).results,
-      row: await database.DB.prepare("SELECT title, assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(subtaskId).first<{ title: string; assignee_id: string | null; assignment_version: number }>(),
+      row: await database.DB.prepare("SELECT title, assignment_version FROM project_subtasks WHERE id = ?").bind(subtaskId).first<{ title: string; assignment_version: number }>(),
     });
     const before = await readState();
     expect(before.relation).toEqual([]);
@@ -271,6 +271,6 @@ describe("native assignee delta racing a concurrent edit (#368)", () => {
     expect(titleResult.outcome).toBe("updated");
     expect(assignResult.outcome).toBe("item_conflict");
     if (assignResult.outcome === "item_conflict") expect(assignResult.currentSubtask).toMatchObject({ id: subtaskId, title: "Renamed in the race", assignees: [] });
-    expect(await readState()).toEqual({ relation: [], row: { title: "Renamed in the race", assignee_id: null, assignment_version: before.row!.assignment_version } });
+    expect(await readState()).toEqual({ relation: [], row: { title: "Renamed in the race", assignment_version: before.row!.assignment_version } });
   });
 });

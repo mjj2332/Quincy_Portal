@@ -10,7 +10,7 @@ import { buildProjectActivityStatements } from "@quincy/db";
 import { projectActivityDeepLink, type ProjectActivityIntent } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
-import { assignedSubtaskCountSql, mirrorRepairForRemovedMember, relationDeleteForRemovedMember } from "./subtask-assignees";
+import { assignedSubtaskCountSql, relationDeleteForRemovedMember } from "./subtask-assignees";
 
 export type { ProjectMemberRole } from "@quincy/shared";
 
@@ -257,7 +257,7 @@ export async function removeProjectMemberCycle(
     winnerAuditId: auditId,
     createdAt: now,
   });
-  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements, relationDeleteForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId, remainingAfterDelete }), mirrorRepairForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId })]);
+  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements, relationDeleteForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId, remainingAfterDelete })]);
   const exactRow = first<{ id: string }>(result[0] as D1Rows<{ id: string }>);
   const currentRow = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   const currentMembership = currentRow ? memberDto(currentRow) : null;

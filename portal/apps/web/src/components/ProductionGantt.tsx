@@ -1139,8 +1139,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         adoptFrom(details.currentSubtask);
         await refresh();
         pushToast("Assignees changed elsewhere — showing the latest.", "caution");
-      } else if (details?.code === "subtask_multi_assignee_disabled") {
-        pushToast("Only one assignee is allowed right now.", "error");
       } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
         setChildAccessError({ error, generationKey });
       } else {

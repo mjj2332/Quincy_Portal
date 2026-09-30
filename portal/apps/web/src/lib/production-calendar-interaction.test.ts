@@ -43,7 +43,6 @@ describe("Production Calendar interaction model", () => {
       kind: "checklist",
       title: "Range task",
       project,
-      assignee: { id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true },
       assignees: [{ id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true }],
       otherAssigneeCount: 1,
       timing: { allDay: true, start: "2026-08-12", end: "2026-08-14" },
@@ -60,16 +59,12 @@ describe("Production Calendar interaction model", () => {
 
     range.schedule.start!.localCivil = "2000-01-01";
     range.schedule.end!.localCivil = "2000-01-02";
-    range.assignee!.name = "Someone Else";
-    range.assignee!.isExternal = false;
     range.assignees[0]!.name = "Someone Else";
 
     expect(snapshot.event).toMatchObject({
-      assignee: { name: "Ivy", isExternal: true },
       schedule: { start: { localCivil: "2026-08-12" }, end: { localCivil: "2026-08-13" } },
     });
     expect(snapshot.event.schedule.start).not.toBe(range.schedule.start);
-    expect(snapshot.event.assignee).not.toBe(range.assignee);
     expect((snapshot.event as ChecklistCalendarEventDto).assignees).toEqual([{ id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true }]);
     expect((snapshot.event as ChecklistCalendarEventDto).assignees[0]).not.toBe(range.assignees[0]);
     expect((snapshot.event as ChecklistCalendarEventDto).otherAssigneeCount).toBe(1);
@@ -138,9 +133,9 @@ describe("Production Calendar interaction model", () => {
     expect(calendarAnnouncement("picked-up", { ...context, overlap: true })).toBe("Picked up the checklist schedule for 12 Harbour Street. Current time: 2026-08-10 09:30. This item overlaps another task for the same assignee.");
     expect(calendarAnnouncement("picked-up", context)).not.toContain("overlaps another task");
     // #370: the pick-up names every assignee the viewer can see.
-    expect(calendarAnnouncement("picked-up", { ...context, assignee: "Ada" })).toBe("Picked up the checklist schedule for 12 Harbour Street. Current time: 2026-08-10 09:30. Assigned to Ada.");
-    expect(calendarAnnouncement("picked-up", { ...context, assignee: "Ada and Bo" })).toContain("Assigned to Ada and Bo.");
-    expect(calendarAnnouncement("picked-up", { ...context, assignee: "Ada, Bo, Cy and 2 others" })).toContain("Assigned to Ada, Bo, Cy and 2 others.");
+    expect(calendarAnnouncement("picked-up", { ...context, assigneeNames: "Ada" })).toBe("Picked up the checklist schedule for 12 Harbour Street. Current time: 2026-08-10 09:30. Assigned to Ada.");
+    expect(calendarAnnouncement("picked-up", { ...context, assigneeNames: "Ada and Bo" })).toContain("Assigned to Ada and Bo.");
+    expect(calendarAnnouncement("picked-up", { ...context, assigneeNames: "Ada, Bo, Cy and 2 others" })).toContain("Assigned to Ada, Bo, Cy and 2 others.");
     expect(calendarAnnouncement("confirm-required", context)).toBe("Save the checklist schedule for 12 Harbour Street from 2026-08-10 09:30 to 2026-08-20 09:30. Confirmation required.");
     expect(calendarAnnouncement("saving", context)).toBe("Saving the checklist schedule for 12 Harbour Street.");
     expect(calendarAnnouncement("saved", context)).toBe("Saved the checklist schedule for 12 Harbour Street.");

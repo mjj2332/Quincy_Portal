@@ -185,20 +185,10 @@ export function checklistSourceFromResponse(response: ProductionCalendarRangeRes
   return event?.kind === "checklist" ? event : undefined;
 }
 
-export function checklistAssigneeForResult(source: ChecklistSource, result: ChecklistMutationResult): CalendarPerson | null {
-  // A list-carrying result (an External Editor's is team-filtered) names the viewer-visible first assignee; the legacy scalar is never trusted then.
-  if (result.assignees !== null) return checklistAssigneesForResult(source, result)[0] ?? null;
-  if (source.assignee && result.assignee && source.assignee.id === result.assignee.id) return source.assignee;
-  return result.assignee;
-}
-
-/** Keep the source's person objects when the result names the same people; a list-less result keeps the source's list while its first assignee is unchanged. */
+/** Keep the source's person objects when the result names the same people; a list-less result keeps the source's list. */
 export function checklistAssigneesForResult(source: ChecklistSource, result: ChecklistMutationResult): CalendarPerson[] {
   const kept = source.assignees;
-  if (result.assignees === null) {
-    if (!result.assignee) return [];
-    return kept[0]?.id === result.assignee.id ? kept : [result.assignee];
-  }
+  if (result.assignees === null) return kept;
   const same = result.assignees.length === kept.length && result.assignees.every((person, index) => person.id === kept[index]?.id);
   return same ? kept : result.assignees;
 }
@@ -212,7 +202,6 @@ export function canonicalChecklistEvent(source: ChecklistSource, result: Checkli
     kind: "checklist",
     title: result.title,
     project: { ...source.project, checklist: { ...source.project.checklist } },
-    assignee: checklistAssigneeForResult(source, result),
     assignees: checklistAssigneesForResult(source, result),
     otherAssigneeCount: result.otherAssigneeCount ?? source.otherAssigneeCount,
     timing,
@@ -227,7 +216,6 @@ export function optimisticChecklistEvent(source: ChecklistSource, schedule: Chec
     id: source.id,
     title: source.title,
     done: source.status.completed,
-    assignee: source.assignee,
     assignees: source.assignees,
     position: 0,
     schedule,

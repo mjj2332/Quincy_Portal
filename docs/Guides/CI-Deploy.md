@@ -72,12 +72,16 @@ loses or misreads assignees.
 | #364 (relation and dual-write) | anything | old code ignores the table, and drift is healed by the next migration (0049) |
 | #368-#372, flag off | #364 or later, never below it once 0049 is applied | #364 dual-writes and nothing re-syncs after 0049 |
 | any, flag on | #368 or later (#364 is degraded: it sees the first assignee only and keeps the rest) | #364's writes are replace-one and never delete unknown assignees |
-| #373 detach | the previous PR (never below #368 once multi-assignee data exists) | earlier readers still read the mirror, which is stale once the detach writes without it |
+| #373 detach | #372 (never below #368 once multi-assignee data exists) | #372 reads no column and its mirror writes are harmless; #368-#371 still read the mirror in unmigrated readers, which is stale once the detach writes without it |
 | #373 drop | the detach PR or later only | the column is gone, and restoring it means Time Travel, which loses writes |
 
 `docs/adr/0012-subtask-assignees-are-a-relation.md` has the reasoning.
 
 #### Multi-assignee rollout flag
+
+> **Retired in #373 part 1.** No code reads the flag any more, so the row is inert. It stays in D1 until #373
+> part 2's migration deletes it, and PR 1 code (which still enforces it) must not be rolled back to. The
+> rest of this section is history.
 
 The `feature_flags` row `subtask_multi_assignee` (seeded **off** by migration 0049, missing row = off)
 gates *growth*: while it is off the API refuses to save a Subtask with more than one assignee

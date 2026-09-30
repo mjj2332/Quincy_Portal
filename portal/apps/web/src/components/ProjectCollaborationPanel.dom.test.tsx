@@ -401,8 +401,8 @@ describe("ProjectCollaborationPanel", () => {
   });
 
   it("keeps the panel mounted when checklist title, all popovers, and composer Escape consume the event", async () => {
-    const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
-    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [], multiAssignee: false }) : Promise.resolve(comments()));
+    const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector('[data-testid="project-collaboration-panel"]')!;
     const title = host.querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!; await click(title);
@@ -977,7 +977,7 @@ describe("ProjectCollaborationPanel", () => {
   });
 
   it("renders one static in-flow panel with the head, Discussion/Activity tabs and Subtask checklist, and no overlay controls", async () => {
-    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [], multiAssignee: false }) : Promise.resolve(comments()));
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [] }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
     expect(panel.firstElementChild).toBe(panel.querySelector('[data-testid="project-collaboration-head"]'));
@@ -1219,7 +1219,7 @@ describe("ProjectCollaborationPanel checklist rail (#377)", () => {
   const panelOf = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
   const collapseControl = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"], button[aria-label="Expand checklist"]')!;
   const tab = (host: HTMLElement, name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.startsWith(name))!;
-  const emptyChecklistApi = () => apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [], multiAssignee: false }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(comments()));
+  const emptyChecklistApi = () => apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [] }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(comments()));
 
   it("uses the one breakpoint the stub answers for", () => {
     expect(CHECKLIST_RAIL_QUERY).toBe(RAIL_QUERY);

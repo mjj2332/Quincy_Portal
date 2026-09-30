@@ -18,7 +18,7 @@ vi.mock("../lib/confirm", () => ({ confirm: vi.fn(() => Promise.resolve(true)) }
 
 const lateUserId = "77777777-7777-4777-8777-777777777777";
 const projectId = "11111111-1111-4111-8111-111111111111";
-const task = { id: "task-1", title: "Prepare delivery", done: false, position: 1024, assignee: null, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "u1", createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
+const task = { id: "task-1", title: "Prepare delivery", done: false, position: 1024, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "u1", createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let queryClient: QueryClient | null = null;
@@ -37,7 +37,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     runtime = new ProjectQueryRuntime(queryClient, `checklist-${status}`);
     queryClient.setQueryData(projectDataKeys.detail(projectId), { private: "detail" });
-    type Options = { candidates: Array<{ id: string; name: string; role: string }>; multiAssignee: boolean };
+    type Options = { candidates: Array<{ id: string; name: string; role: string }> };
     let resolveOptions!: (value: Options) => void;
     apiGetMock.mockImplementation((path: string) => path.includes("subtask-assignee-options")
       ? new Promise<Options>((resolve) => { resolveOptions = resolve; })
@@ -51,7 +51,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtask-assignee-options`);
     if (status === 401) await clearPrincipalProjectData(queryClient);
     else await purgeProjectCollaborationData(queryClient, projectId);
-    resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }], multiAssignee: true });
+    resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }] });
     await flush();
     expect(document.body.textContent).not.toContain("Late private user");
     expect(queryClient.getQueryData(projectDataKeys.subtaskAssigneeOptions(projectId))).toBeUndefined();
@@ -62,7 +62,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
   it("control: the same late assignee-options payload is shown when access is NOT lost", async () => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     runtime = new ProjectQueryRuntime(queryClient, "checklist-control");
-    type Options = { candidates: Array<{ id: string; name: string; role: string }>; multiAssignee: boolean };
+    type Options = { candidates: Array<{ id: string; name: string; role: string }> };
     let resolveOptions!: (value: Options) => void;
     apiGetMock.mockImplementation((path: string) => path.includes("subtask-assignee-options")
       ? new Promise<Options>((resolve) => { resolveOptions = resolve; })
@@ -71,7 +71,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); }); await flush();
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Assignees for Prepare delivery"]')!;
     await act(async () => { trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); }); await flush();
-    resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }], multiAssignee: true });
+    resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }] });
     // Wait for the rendered option rather than a fixed number of ticks: under a loaded CI runner the
     // popup's list can commit a few macrotasks after the payload resolves.
     await vi.waitFor(async () => {
@@ -87,7 +87,7 @@ describe("SubtaskChecklist access-generation boundary", () => {
     queryClient.setQueryData(projectDataKeys.detail(projectId), { private: "detail" });
     let resolveChecklist!: (value: { subtasks: typeof task[] }) => void;
     apiGetMock.mockImplementation((path: string) => path.includes("subtask-assignee-options")
-      ? Promise.resolve({ candidates: [], multiAssignee: false })
+      ? Promise.resolve({ candidates: [] })
       : new Promise<{ subtasks: typeof task[] }>((resolve) => { resolveChecklist = resolve; }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); }); await flush();
@@ -105,11 +105,11 @@ describe("SubtaskChecklist access-generation boundary", () => {
     const person = { id: "22222222-2222-4222-8222-222222222222", name: "Ada Smith", roleLabel: "Photographer", isExternal: false, active: true };
     const endpoint = { kind: "date" as const, localCivil: "2026-09-01", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const };
     const external = {
-      id: "33333333-3333-4333-8333-333333333333", title: "Prepare delivery", done: false, position: 1024, assignee: person, assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, dueDate: null,
+      id: "33333333-3333-4333-8333-333333333333", title: "Prepare delivery", done: false, position: 1024, assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, dueDate: null,
       schedule: { state: "range" as const, version: 1, zone: "Australia/Sydney" as const, start: endpoint, end: endpoint, due: "2026-09-01" },
       createdBy: person, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z",
     };
-    apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("subtask-assignee-options") ? { candidates: [person], multiAssignee: false } : { subtasks: [external] }));
+    apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("subtask-assignee-options") ? { candidates: [person] } : { subtasks: [external] }));
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} />); await Promise.resolve(); await Promise.resolve(); }); await flush();
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Assignees for Prepare delivery"]')!;

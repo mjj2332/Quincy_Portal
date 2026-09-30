@@ -57,7 +57,7 @@ type RowInput = { id: string; title: string; assignees: CalendarPerson[]; otherA
 function row(input: RowInput, position: number): GanttChecklistRowDto {
   return {
     id: input.id, projectId: PROJECT_ID, title: input.title, done: false, position,
-    assignee: input.assignees[0] ?? null, assignees: input.assignees, otherAssigneeCount: input.otherAssigneeCount ?? 0, assignmentVersion: input.assignmentVersion,
+    assignees: input.assignees, otherAssigneeCount: input.otherAssigneeCount ?? 0, assignmentVersion: input.assignmentVersion,
     schedule: schedule(),
     permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: input.canEditAssignees },
   };
@@ -81,7 +81,7 @@ function project(): GanttProjectRowDto {
   };
 }
 
-const dto = (input: RowInput) => ({ id: input.id, title: input.title, done: false, assignee: input.assignees[0] ?? null, assignees: input.assignees, assignmentVersion: input.assignmentVersion, position: 0, schedule: schedule() });
+const dto = (input: RowInput) => ({ id: input.id, title: input.title, done: false, assignees: input.assignees, assignmentVersion: input.assignmentVersion, position: 0, schedule: schedule() });
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 let host: HTMLDivElement;
@@ -146,7 +146,7 @@ beforeEach(() => {
   pageTwo = [];
   truncated = false;
   apiGetMock.mockReset().mockImplementation((path: string) => {
-    if (path.includes("/subtask-assignee-options")) return Promise.resolve({ candidates, multiAssignee: true });
+    if (path.includes("/subtask-assignee-options")) return Promise.resolve({ candidates });
     if (path.includes("childrenOf=")) {
       const rows = pageTwo.map((input, index) => row(input, server.length + index));
       return Promise.resolve(productionGanttChildPageSchema.parse({ projectId: PROJECT_ID, children: { rows, total: server.length + rows.length, returned: rows.length, truncated: false, nextCursor: null } }));
@@ -309,16 +309,6 @@ describe("ProductionGantt — Subtask assignees (#372)", () => {
 
     await waitFor(() => expect(triggerTitle("Row one")).toBe("Ben Ortiz"));
     expect(document.body.textContent).toContain("Assignees changed elsewhere — showing the latest.");
-  });
-
-  it("says why when only one assignee is allowed", async () => {
-    apiPatchMock.mockRejectedValue(new ApiError("Only one.", 400, { code: "subtask_multi_assignee_disabled" }));
-    await mount();
-    await open("Row one");
-    await pick("Cy Young");
-    await closeWithEscape();
-    await waitFor(() => expect(document.body.textContent).toContain("Only one assignee is allowed right now."));
-    expect(triggerTitle("Row one")).toBe("Ada Smith, Ben Ortiz");
   });
 
   it("edits a row that lives on a later page, which the settle refetch never returns", async () => {

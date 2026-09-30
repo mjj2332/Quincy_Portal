@@ -28,7 +28,6 @@ function rangeEvent(start: string, end: string): ChecklistCalendarEventDto {
     kind: "checklist",
     title: "Select hero images",
     project,
-    assignee: person,
     assignees: [person],
     otherAssigneeCount: 0,
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },

@@ -23,7 +23,7 @@ function applyThrough(db: SqliteDatabase, through: number): void {
   for (const name of readdirSync(directory).filter((value) => /^\d{4}_.*\.sql$/.test(value) && Number(value.slice(0, 4)) <= through).sort()) db.exec(migrationSql(name));
 }
 
-const VERIFY_SQL = readFileSync(new URL("../../../scripts/subtask-assignees-verify.sql", import.meta.url), "utf8").split("\n").filter((line) => !line.startsWith("--")).join("\n");
+const VERIFY_SQL = readFileSync(new URL("./subtask-assignees-verify.fixture.sql", import.meta.url), "utf8").split("\n").filter((line) => !line.startsWith("--")).join("\n");
 
 const range = normalizeChecklistSchedule({ state: "range", start: { kind: "date", localCivil: "2026-08-27" }, end: { kind: "date", localCivil: "2026-08-28" } }, 1);
 if (!range.ok) throw new Error("fixture schedule invalid");

@@ -20,7 +20,7 @@ function deadline(id: string, start: string, civil: string): CalendarEventDto {
   return { id: `project-deadline:${id}`, kind: "project_deadline", title: "Deadline", project: { ...project, street: `${id} Street` }, timing: { allDay: false, start, end: null }, status, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: civil, deadlineVersion: 1, reminderOffsetsMinutes: [] };
 }
 function range(id: string, start: string, end: string): CalendarEventDto {
-  return { id: `checklist:${id}`, kind: "checklist", title: `Task ${id}`, project, assignee: null, assignees: [], otherAssigneeCount: 0, timing: { allDay: true, start, end }, status: { ...status, completed: false }, schedule: { state: "range", version: 1, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: start, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: end, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: end }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } } as CalendarEventDto;
+  return { id: `checklist:${id}`, kind: "checklist", title: `Task ${id}`, project, assignees: [], otherAssigneeCount: 0, timing: { allDay: true, start, end }, status: { ...status, completed: false }, schedule: { state: "range", version: 1, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: start, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: end, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: end }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } } as CalendarEventDto;
 }
 
 let host: HTMLDivElement;

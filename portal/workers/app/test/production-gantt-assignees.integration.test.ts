@@ -81,7 +81,7 @@ describe("#372 Gantt Subtask rows carry their assignees", () => {
   let pairId = "";
   let soloId = "";
   let noneId = "";
-  type Row = { id: string; assignee: { id: string } | null; assignees: Array<{ id: string; name: string }>; otherAssigneeCount: number; assignmentVersion: number; permissions: Record<string, boolean> };
+  type Row = { id: string; assignees: Array<{ id: string; name: string }>; otherAssigneeCount: number; assignmentVersion: number; permissions: Record<string, boolean> };
   const pageRows = async (token: string) => {
     const body = await (await request("/api/production-gantt?scope=active&rev=1", token)).json() as { projects: Array<{ id: string; children: { rows: Row[]; revision?: number } }> };
     return body.projects.find((project) => project.id === assigneeProjectId)!.children;
@@ -108,11 +108,10 @@ describe("#372 Gantt Subtask rows carry their assignees", () => {
     const rows = (await pageRows(tokens.admin)).rows;
     const pair = rows.find((row) => row.id === pairId)!;
     expect(pair.assignees.map((person) => person.id)).toEqual([externalId, adminId]);
-    expect(pair.assignee?.id).toBe(externalId);
     expect(pair.otherAssigneeCount).toBe(0);
     expect(pair.assignmentVersion).toBe(1);
     const none = rows.find((row) => row.id === noneId)!;
-    expect(none).toMatchObject({ assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0 });
+    expect(none).toMatchObject({ assignees: [], otherAssigneeCount: 0, assignmentVersion: 0 });
   });
 
   it("gives the child-page endpoint the same list", async () => {
@@ -138,12 +137,10 @@ describe("#372 Gantt Subtask rows carry their assignees", () => {
     const parsed = EXTERNAL_API_RESPONSE_SCHEMAS.gantt.parse(JSON.parse(embedded));
     const pair = parsed.projects.find((project) => project.id === assigneeProjectId)!.children.rows.find((row) => row.id === pairId)!;
     expect(pair.assignees.map((person) => person.id)).toEqual([externalId]);
-    expect(pair.assignee?.id).toBe(externalId);
     expect(pair.otherAssigneeCount).toBe(1);
     const solo = (JSON.parse(page) as { children: { rows: Row[] } }).children.rows.find((row) => row.id === soloId)!;
     // The editor assigned to it is not on this Project's team.
     expect(solo.assignees).toEqual([]);
-    expect(solo.assignee).toBeNull();
     expect(solo.otherAssigneeCount).toBe(1);
   });
 

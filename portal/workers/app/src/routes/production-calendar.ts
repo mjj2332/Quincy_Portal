@@ -627,7 +627,6 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
     kind: "checklist",
     title: row.subtask_title,
     project,
-    assignee: assignees[0] ?? null,
     assignees,
     otherAssigneeCount,
     timing,

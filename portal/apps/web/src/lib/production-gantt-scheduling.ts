@@ -111,7 +111,6 @@ export function ganttChecklistSource(project: GanttProjectRowDto, row: GanttChec
     kind: "checklist",
     title: row.title,
     project: projectContext(project),
-    assignee: row.assignee ? { ...row.assignee } : null,
     assignees: row.assignees.map((person) => ({ ...person })),
     otherAssigneeCount: row.otherAssigneeCount,
     timing,
