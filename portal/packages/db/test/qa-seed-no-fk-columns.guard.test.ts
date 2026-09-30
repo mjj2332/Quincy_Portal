@@ -20,6 +20,8 @@ const NOT_ENTITY_REFERENCES: Readonly<Record<string, string>> = {
   "account.account_id": "the OAuth provider's own account id (better-auth), not a row here",
   "account.provider_id": "the OAuth provider name ('google'), not a row here",
   "projects.order_id": "Tonomo's external order id",
+  "tonomo_order_tombstones.order_id": "Tonomo's external order id (the primary key)",
+  "tonomo_order_tombstones.deleted_project_id": "history: the id of a Project that no longer exists, so there is no row to reference or to capture",
   "document_uploads.version_group_id": "a generated grouping key shared by every version of one document, never any row's id",
   "document_uploads.pdf_upload_id": "an R2 multipart-upload id",
   "document_uploads.preview_upload_id": "an R2 multipart-upload id",

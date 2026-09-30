@@ -1169,6 +1169,19 @@ export const webhookEvents = sqliteTable(
   (t) => [uniqueIndex("webhook_events_dedupe").on(t.source, t.eventId)],
 );
 
+/** A deleted Project's Tonomo order. Tonomo re-sends an order on every change, so the Tonomo
+ * processor ignores an event whose order has a tombstone and no live Project holds the order_id.
+ * `deletedProjectId` is history, not a foreign key: the Project is gone. */
+export const tonomoOrderTombstones = sqliteTable("tonomo_order_tombstones", {
+  orderId: text("order_id").primaryKey(),
+  deletedProjectId: text("deleted_project_id").notNull(),
+  street: text("street"),
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  deletedBy: text("deleted_by"),
+  source: text("source", { enum: ["project_delete", "migration_0051", "manual"] }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 /** One row per message the rendition consumer's DLQ actually received (append-only; a replay
  * that fails again produces a fresh row rather than mutating this one). */
 export const renditionDlqEvents = sqliteTable(

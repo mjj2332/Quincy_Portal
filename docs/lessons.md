@@ -4557,3 +4557,23 @@ remove the legacy readers) still applies.
   module, so a "first mount fetches" assertion belongs in its own file), and an `afterEach` that
   disposes state the test never built (make it nullable and clean up only what was set). Give each
   test its own precondition; do not loosen the assertion.
+
+## Tonomo re-created deleted Projects (order tombstones, 0051)
+
+- **Cause.** Tonomo sends a webhook whenever anything changes on an order. `findProject` matched only
+  `projects.order_id`, so deleting a Project (`DELETE /projects/:id`) lost the order id and the next webhook
+  created the Project again. Bulk resends of old orders also created Projects the Portal never had.
+- **Rule: a live `order_id` match beats a tombstone.** `findProject` order is: live Project by `order_id`
+  (an archived one still throws) -> `tonomo_order_tombstones` by order id -> address link -> none. A
+  tombstoned order is ignored: the event is marked `processed` with `error` starting `Ignored:`, and nothing
+  else is written (no collections, audit row or Editor reconcile). Never throw `TonomoApplyError` for an
+  ignore: the processor DO marks those poison. The tombstone also blocks the address link, so a manual
+  Project at the same address is not pulled onto a dead order.
+- **Write path.** The delete route inserts the tombstone in the same `DB.batch` as the `DELETE FROM projects`,
+  before it, selecting `order_id` from the row it is about to delete. 0051 seeds older deletions from
+  `audit_log`. The column is `deleted_project_id`, not `project_id`, because the Project is gone and the QA
+  teardown guard pattern-matches `project_id`.
+- **Create cutoff.** `TONOMO_CREATE_MIN_SHOOT_DATE` (`"2026-09-01"`, owner decision 2026-10-01) in
+  `workers/background/src/tonomo/process.ts`: a NEW order (no Project, no tombstone, no address link) with a
+  canonical shoot date before it is ignored the same way. Null and non-canonical dates still create. Updates
+  and address links are not affected. Move the constant, not the logic.

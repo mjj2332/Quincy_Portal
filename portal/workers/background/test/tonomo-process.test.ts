@@ -457,3 +457,121 @@ describe("processTonomoEvent create — default editors (#135)", () => {
     expect(membership).toBeNull();
   });
 });
+
+describe("processTonomoEvent order tombstones and create cutoff", () => {
+  async function processEvent(orderId: string, order: Record<string, unknown>) {
+    const eventId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({ id: orderId, ...order });
+    await database.DB.prepare(
+      "INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)",
+    ).bind(eventId, `event-${eventId}`, payloadJson, Date.now()).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+    return database.DB.prepare("SELECT status, error FROM webhook_events WHERE id = ?").bind(eventId).first<{ status: string; error: string | null }>();
+  }
+  const tombstone = (orderId: string, street: string | null = "12 Gone Street") =>
+    database.DB.prepare("INSERT INTO tonomo_order_tombstones (order_id, deleted_project_id, street, deleted_at, deleted_by, source, created_at) VALUES (?, ?, ?, ?, NULL, 'project_delete', ?)")
+      .bind(orderId, crypto.randomUUID(), street, Date.now(), Date.now()).run();
+  const projectsFor = (orderId: string) => database.DB.prepare("SELECT id FROM projects WHERE order_id = ?").bind(orderId).all<{ id: string }>();
+  const newOrder = () => { const suffix = crypto.randomUUID(); return { orderId: `order-${suffix}`, street: `${suffix} Test Street` }; };
+
+  it("ignores a tombstoned order with no Project: processed with an Ignored: message and no writes", async () => {
+    const { orderId, street } = newOrder();
+    await tombstone(orderId, street);
+    const auditBefore = await database.DB.prepare("SELECT count(*) AS count FROM audit_log").first<{ count: number }>();
+    const event = await processEvent(orderId, { street, shoot_date: "2026-10-05" });
+    expect(event?.status).toBe("processed");
+    expect(event?.error).toMatch(/^Ignored:/);
+    expect(event?.error).toContain(orderId);
+    expect(event?.error).toContain(street);
+    expect(event?.error).toContain("project_delete");
+    expect((await projectsFor(orderId)).results).toHaveLength(0);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM projects WHERE street = ?").bind(street).first()).toEqual({ count: 0 });
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log").first()).toEqual(auditBefore);
+  });
+
+  it("falls back to the deleted project id when the tombstone has no street", async () => {
+    const { orderId, street } = newOrder();
+    await tombstone(orderId, null);
+    const tombstoned = await database.DB.prepare("SELECT deleted_project_id FROM tonomo_order_tombstones WHERE order_id = ?").bind(orderId).first<{ deleted_project_id: string }>();
+    const event = await processEvent(orderId, { street });
+    expect(event?.error).toContain(tombstoned!.deleted_project_id);
+  });
+
+  it("lets a live Project holding the order_id win over a tombstone", async () => {
+    const { orderId, street } = newOrder();
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await tombstone(orderId);
+    await database.DB.prepare("INSERT INTO projects (id, order_id, street, stage_key, created_at, updated_at) VALUES (?, ?, ?, 'awaiting_raw', ?, ?)").bind(projectId, orderId, street, now, now).run();
+    const event = await processEvent(orderId, { street, agent_name: "Live Agent" });
+    expect(event?.error ?? null).toBeNull();
+    expect(await database.DB.prepare("SELECT agent_name FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ agent_name: "Live Agent" });
+  });
+
+  it("does not address-link a manual NULL-order Project onto a tombstoned order", async () => {
+    const { orderId, street } = newOrder();
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await tombstone(orderId);
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)").bind(projectId, street, now, now).run();
+    const event = await processEvent(orderId, { street });
+    expect(event?.error).toMatch(/^Ignored:/);
+    expect(await database.DB.prepare("SELECT order_id FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ order_id: null });
+  });
+
+  it("still fails with the archived-project error when a tombstone and an archived Project share the order", async () => {
+    const { orderId, street } = newOrder();
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await tombstone(orderId);
+    await database.DB.prepare("INSERT INTO projects (id, order_id, street, stage_key, archived_at, created_at, updated_at) VALUES (?, ?, ?, 'awaiting_raw', ?, ?, ?)").bind(projectId, orderId, street, now, now, now).run();
+    await expect(processEvent(orderId, { street })).rejects.toThrow(/archived project/);
+  });
+
+  it("creates a Project for an unknown order with no tombstone", async () => {
+    const { orderId, street } = newOrder();
+    const event = await processEvent(orderId, { street, shoot_date: "2026-10-05" });
+    expect(event?.error ?? null).toBeNull();
+    expect((await projectsFor(orderId)).results).toHaveLength(1);
+  });
+
+  it("ignores a NEW order whose canonical shoot date is before the cutoff, and creates one on the cutoff date", async () => {
+    const before = newOrder();
+    const beforeEvent = await processEvent(before.orderId, { street: before.street, shoot_date: "2026-08-31" });
+    expect(beforeEvent?.status).toBe("processed");
+    expect(beforeEvent?.error).toMatch(/^Ignored:/);
+    expect(beforeEvent?.error).toContain(before.orderId);
+    expect(beforeEvent?.error).toContain("2026-08-31");
+    expect((await projectsFor(before.orderId)).results).toHaveLength(0);
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE meta_json LIKE ?").bind(`%${before.orderId}%`).first()).toEqual({ count: 0 });
+
+    const onCutoff = newOrder();
+    const onEvent = await processEvent(onCutoff.orderId, { street: onCutoff.street, shoot_date: "2026-09-01" });
+    expect(onEvent?.error ?? null).toBeNull();
+    expect((await projectsFor(onCutoff.orderId)).results).toHaveLength(1);
+  });
+
+  it("still creates a NEW order with a null or non-canonical shoot date", async () => {
+    const none = newOrder();
+    await processEvent(none.orderId, { street: none.street });
+    expect((await projectsFor(none.orderId)).results).toHaveLength(1);
+    const text = newOrder();
+    await processEvent(text.orderId, { street: text.street, date: "Monday, 17 Sep, 2026" });
+    expect((await projectsFor(text.orderId)).results).toHaveLength(1);
+  });
+
+  it("still updates an existing Project whose shoot date is before the cutoff", async () => {
+    const { orderId, street } = newOrder();
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, order_id, street, stage_key, shoot_date, created_at, updated_at) VALUES (?, ?, ?, 'awaiting_raw', '2026-01-10', ?, ?)").bind(projectId, orderId, street, now, now).run();
+    const event = await processEvent(orderId, { street, shoot_date: "2026-01-10", agent_name: "Old Agent" });
+    expect(event?.error ?? null).toBeNull();
+    expect(await database.DB.prepare("SELECT agent_name FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ agent_name: "Old Agent" });
+  });
+
+  it("still address-links a manual Project for an order whose shoot date is before the cutoff", async () => {
+    const { orderId, street } = newOrder();
+    const projectId = crypto.randomUUID(); const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?)").bind(projectId, street, now, now).run();
+    const event = await processEvent(orderId, { street, shoot_date: "2026-08-01" });
+    expect(event?.error ?? null).toBeNull();
+    expect(await database.DB.prepare("SELECT order_id FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ order_id: orderId });
+  });
+});

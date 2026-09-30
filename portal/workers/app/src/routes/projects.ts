@@ -1151,7 +1151,7 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   // Keep this constant pre-lookup: a caller without the destructive capability must not learn
   // whether a project id exists from a 404/403 distinction.
   if (!roleHasCapability(c.get("user").role, "adminBackend")) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
-  const db = createDb(c.env.DB); const project = await db.select({ id: schema.projects.id, street: schema.projects.street, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
+  const db = createDb(c.env.DB); const project = await db.select({ id: schema.projects.id, street: schema.projects.street, orderId: schema.projects.orderId, archivedAt: schema.projects.archivedAt }).from(schema.projects).where(eq(schema.projects.id, id)).get();
   if (!project) return c.json({ error: "Project not found" }, 404);
   if (!project.archivedAt) return c.json({ error: "Archive the project before deleting it." }, 409);
   const activeJobs = (await db.select({ count: sql<number>`count(*)` }).from(schema.jobs).where(and(eq(schema.jobs.projectId, id), inArray(schema.jobs.status, ["queued", "running"]))).get())?.count ?? 0;
@@ -1168,7 +1168,7 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   const assetIds = (await db.select({ id: schema.assets.id }).from(schema.assets).innerJoin(schema.collections, eq(schema.assets.collectionId, schema.collections.id)).where(eq(schema.collections.projectId, id)).all()).map((asset) => asset.id);
   const assetCount = assetIds.length;
   // Audit BEFORE destruction so the trail survives even if a later step dies mid-way.
-  await audit(c.env, c.get("user"), "project.delete", "project", id, { street: project.street, assetCount, r2Prefix });
+  await audit(c.env, c.get("user"), "project.delete", "project", id, { street: project.street, orderId: project.orderId, assetCount, r2Prefix });
   const keys: string[] = [];
   for (const prefix of [r2Prefix, ...assetIds.map((assetId) => `renditions/${assetId}/`)]) {
     let cursor: string | undefined;
@@ -1180,6 +1180,7 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     }
   }
   for (let index = 0; index < keys.length; index += 1000) await c.env.MEDIA.delete(keys.slice(index, index + 1000));
+  const deletedAt = Date.now();
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM autohdr_path_claims WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM autohdr_fetch_claims WHERE project_id = ?").bind(id),
@@ -1193,6 +1194,10 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     c.env.DB.prepare("DELETE FROM notification_delivery_ledger WHERE outbox_id IN (SELECT id FROM notification_outbox WHERE project_id = ?)").bind(id),
     c.env.DB.prepare("DELETE FROM notification_outbox WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM rendition_dlq_events WHERE asset_id IN (SELECT assets.id FROM assets INNER JOIN collections ON collections.id = assets.collection_id WHERE collections.project_id = ?)").bind(id),
+    // Tombstone BEFORE the project row goes: Tonomo re-sends an order on every change and would
+    // otherwise recreate the Project (its order_id is lost with the row). Same batch, so either both
+    // happen or neither. A live Project holding the order_id still wins over a tombstone.
+    c.env.DB.prepare("INSERT INTO tonomo_order_tombstones (order_id, deleted_project_id, street, deleted_at, deleted_by, source, created_at) SELECT order_id, id, street, ?, ?, 'project_delete', ? FROM projects WHERE id = ? AND order_id IS NOT NULL AND TRIM(order_id) != '' ON CONFLICT(order_id) DO UPDATE SET deleted_project_id=excluded.deleted_project_id, street=excluded.street, deleted_at=excluded.deleted_at, deleted_by=excluded.deleted_by, source=excluded.source").bind(deletedAt, c.get("user").id, deletedAt, id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
   return c.json({ ok: true, deletedObjects: keys.length });
