@@ -206,15 +206,31 @@ describe("week view across a DST transition (#241)", () => {
     expect(left(first)).not.toBe(left(second));
   });
 
+  /**
+   * The vendored time grid swallows a slot click that lands within 250ms of a drag ending or 300ms
+   * of a chip press (`wasRecentDrag` / `wasRecentChipPress` in event-calendar-dnd.tsx): deliberate,
+   * since the trailing click after a drag must not open a create. Those timestamps are module state,
+   * so a `moveToNoon` test that ran just before would swallow this click (#389). Step the clock past
+   * both windows for this one dispatch only, then restore it.
+   */
+  function clickClearOfGestureWindow(column: HTMLElement, init: MouseEventInit) {
+    const spy = vi.spyOn(performance, "now").mockReturnValue(performance.now() + 1_000);
+    try {
+      act(() => {
+        column.dispatchEvent(new MouseEvent("click", { bubbles: true, ...init }));
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
   it("reads a click at the noon mark of the 25-hour day as noon", () => {
     const onSlotClick = vi.fn();
     renderLiveWeek(AUTUMN_SUNDAY, onSlotClick);
     const column = timeColumns()[0]!;
     // 1px = 1 wall-clock minute: the column is 24 hour-heights tall whatever the day's length.
     column.getBoundingClientRect = () => new DOMRect(0, 0, 100, 1440);
-    act(() => {
-      column.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 10, clientY: 720 }));
-    });
+    clickClearOfGestureWindow(column, { clientX: 10, clientY: 720 });
     expect(onSlotClick).toHaveBeenCalledTimes(1);
     // Noon +10:00. A column scaled to its 25 elapsed hours would read this pixel as 12:30 elapsed,
     // which is 11:30 on the clock.
@@ -228,9 +244,7 @@ describe("week view across a DST transition (#241)", () => {
     renderLiveWeek(SPRING_SUNDAY, onSlotClick);
     const column = timeColumns()[0]!;
     column.getBoundingClientRect = () => new DOMRect(0, 0, 100, 1440);
-    act(() => {
-      column.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 10, clientY: 150 }));
-    });
+    clickClearOfGestureWindow(column, { clientX: 10, clientY: 150 });
     // 02:30 does not exist on 2026-10-04; 03:00 +11:00 is 16:00Z the day before.
     expect(new Date((onSlotClick.mock.calls[0]![0] as { date: Date }).date.getTime()).toISOString()).toBe(
       "2026-10-03T16:00:00.000Z"

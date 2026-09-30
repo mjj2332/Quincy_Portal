@@ -4538,3 +4538,16 @@ remove the legacy readers) still applies.
   tab, but the same `jobs` state drives the active-job poll, the AutoHDR hand-off and the Collection
   body. `ProjectWorkspace` still owns the fetch, poll and retry; `jobs` / `onRetryJob` are threaded to
   the panel (admins only) and shown under Activity > System.
+
+## DOM tests must not depend on in-file order (#389)
+
+- **Replay an order failure with the seed.** Run the DOM suite shuffled:
+  `npx vitest run --config apps/web/vitest.dom.config.ts --sequence.shuffle --sequence.seed=<n>`
+  (from `portal/`). Vitest prints `Running tests with seed "<n>"`; pass that `<n>` to reproduce a
+  failure exactly. The default reporter lists tests in declaration order, not execution order.
+- **State that outlives a test** is the usual cause: module-level timestamps in vendored code
+  (the event-calendar gesture-suppression windows swallow a slot click within 250-300ms of a
+  drag), a library singleton's one-shot flag (better-auth fetches the initial session once per
+  module, so a "first mount fetches" assertion belongs in its own file), and an `afterEach` that
+  disposes state the test never built (make it nullable and clean up only what was set). Give each
+  test its own precondition; do not loosen the assertion.
