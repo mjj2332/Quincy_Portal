@@ -428,6 +428,7 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}`);
     const dateInput = dialog("Deadline")!.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!;
     expect(dateInput.value).toBe(isoDate(5));
+    await waitFor(() => expect(document.activeElement).toBe(dateInput)); // design review: focus lands on the Date input
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setter.call(dateInput, isoDate(7)); dateInput.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); });
     const save = [...dialog("Deadline")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!;
@@ -471,32 +472,50 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(host.querySelector('[data-testid="gantt-deadline"]')).not.toBeNull();
   });
 
-  it("T7 no Deadline: the Due cell is an em dash with an sr-only label, non-interactive; 'Set deadline' stays on the label", async () => {
+  it("T7 no Deadline: an Admin's Due cell holds the 'Set deadline' action (moved from the name cell)", async () => {
     server.deadline = null;
+    await render();
+    const action = host.querySelector<HTMLElement>('[data-testid="gantt-deadline-action"]')!;
+    expect(action.textContent).toBe("Set deadline");
+    expect(host.querySelector('[data-testid="gantt-deadline"]')).toBeNull();
+    expect(host.querySelector('[data-testid="gantt-tree-name-cell"] [data-testid="gantt-deadline-action"]')).toBeNull();
+  });
+
+  it("T7a no Deadline and no permission: the Due cell is an inert dash with an sr-only label and no action", async () => {
+    server.deadline = null;
+    server.canEditDeadline = false;
     await render();
     const cell = host.querySelector<HTMLElement>('[data-testid="gantt-deadline"]')!;
     expect(cell.textContent).toContain("—");
     expect(cell.querySelector("span")?.textContent).toBe("No deadline"); // the sr-only label
     expect(deadlineTrigger()).toBeNull();
-    expect(host.querySelector('[data-testid="gantt-deadline-action"]')?.textContent).toBe("Set deadline");
+    expect(host.querySelector('[data-testid="gantt-deadline-action"]')).toBeNull();
   });
 
-  it("T7b layout contract: the name cell is a 240px floor and holds the street and the Set deadline button; People and Due are separate cells", async () => {
+  it("T7b layout contract: the name cell is the vendor's 180px and holds the street but no deadline action; the action sits in the Due cell", async () => {
     server.deadline = null;
     await render();
     const nameCell = host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-cell"]')!;
-    expect(nameCell.style.width).toBe("240px");
-    expect(nameCell.querySelector('[data-testid="gantt-deadline-action"]')).not.toBeNull();
+    expect(nameCell.style.width).toBe("180px");
+    expect(nameCell.querySelector('[data-testid="gantt-deadline-action"]')).toBeNull();
     expect(nameCell.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();
     expect(nameCell.querySelector('[data-testid="gantt-team-trigger"]')).toBeNull();
+    expect(host.querySelector('[data-testid="gantt-deadline-action"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="gantt-team-trigger"]')).not.toBeNull();
   });
 
-  it("T7c on a phone the name cell keeps the same 240px floor (the tree scrolls inside its pane)", async () => {
+  it("T7c on a phone the People and Due columns are not rendered, and the row link is still there", async () => {
     const original = window.matchMedia;
     window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
     try {
       await render();
-      expect(host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-cell"]')!.style.width).toBe("240px");
+      expect(host.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="gantt-team-trigger"]')).toBeNull();
+      expect(host.querySelector('[data-testid="gantt-team"]')).toBeNull();
+      expect(host.querySelector('[data-testid="gantt-deadline-trigger"]')).toBeNull();
+      expect(host.querySelector('[data-testid="gantt-deadline-action"]')).toBeNull();
+      expect(host.textContent).not.toContain("People");
+      expect(host.textContent).not.toContain("Due");
     } finally { window.matchMedia = original; }
   });
 
@@ -529,6 +548,15 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
     await waitFor(() => expect(dialog("Team")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(teamTrigger()));
+  });
+
+  it("T3b an empty team's trigger is a visible add-person affordance: still named 'Add team for', with an icon rather than a bare circle", async () => {
+    server.team = [];
+    await render();
+    const trigger = teamTrigger()!;
+    expect(trigger.getAttribute("aria-label")).toBe(`Add team for ${STREET}`);
+    expect(trigger.querySelector("svg")).not.toBeNull();
+    expect(trigger.querySelector("[aria-hidden='true']")).not.toBeNull();
   });
 
   it("T11 a response without team/canEditTeam (an old worker) renders an empty, non-interactive stack and never throws", async () => {

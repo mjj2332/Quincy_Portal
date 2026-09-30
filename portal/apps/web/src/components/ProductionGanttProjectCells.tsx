@@ -13,7 +13,8 @@
  * `producer: "gantt"` is never passed: the pickers' own `invalidateProjectSurfaces(…, gantt: true)`
  * calls are what refresh the Gantt, Dashboard, Calendar and detail.
  */
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
+import { UserPlus } from "lucide-react";
 import type { GanttProjectRowDto, GanttTeamMemberDto, Role } from "@quincy/shared";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
@@ -28,7 +29,8 @@ import { useProjectDetailQuery, type ProjectDetail } from "../lib/project-data";
 import { cn } from "../lib/utils";
 
 /** A real 44px hit area on coarse pointers and phones, compact on desktop. */
-const CELL_TRIGGER = "h-auto min-h-6 max-w-full justify-start px-1 normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px]";
+// `-ml-1` cancels the ghost button's `px-1` so the cell's text starts where its column header's does.
+const CELL_TRIGGER = "h-auto min-h-6 max-w-full justify-start -ml-1 px-1 normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]";
 
 /** One person once, first occurrence wins: a dual-role member is one avatar and one name. */
 function distinctPeople(team: GanttTeamMemberDto[]) {
@@ -103,7 +105,16 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
         disabled={disabled}
         onClick={(event: { stopPropagation: () => void }) => event.stopPropagation()}
       >
-        <AvatarStack decorative people={people} personNoun="team member" emptyLabel="No team assigned" />
+        {people.length === 0 ? (
+          // The only way to add the first person: a dashed circle on the visible `--border` (the
+          // hairline was near-invisible) with an add-person icon, the dashed-trigger idiom of
+          // `project-header-popover.ts`.
+          <span aria-hidden="true" className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-foreground-secondary">
+            <UserPlus className="size-3.5" strokeWidth={1.5} />
+          </span>
+        ) : (
+          <AvatarStack decorative people={people} personNoun="team member" emptyLabel="No team assigned" />
+        )}
       </PopoverTrigger>
       <PopoverContent
         align="start"
@@ -128,17 +139,62 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
   );
 }
 
-export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabled, role }: {
+/** #365: the Due cell's Deadline action ("Set deadline" / "Fix deadline"), moved here from the name cell. */
+export type GanttDeadlineCellAction = {
+  label: "Set deadline" | "Fix deadline";
+  disabled: boolean;
+  onAction: () => void;
+  /** Why the row needs it ("Deadline not set"), shown as `title` and read by `aria-describedby`. */
+  reason?: string;
+  resourceId: string;
+};
+
+export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, action }: {
   projectId: string;
   street: string;
   deadline: GanttProjectRowDto["deadline"];
   canEdit: boolean;
   disabled: boolean;
   role: Role;
+  action?: GanttDeadlineCellAction;
 }) {
   const [open, setOpen] = useState(false);
+  const reasonId = useId();
+  // The Date input mounts once the detail has loaded, after the popover opened: same attach-ref
+  // plus `initialFocus` pairing as the Team cell.
+  const dateRef = useRef<HTMLInputElement | null>(null);
+  const attachDate = useCallback((node: HTMLInputElement | null) => {
+    dateRef.current = node;
+    node?.focus();
+  }, []);
+  if (action) {
+    return (
+      <>
+        {action.reason && <span id={reasonId} className="sr-only" data-testid="gantt-deadline-action-reason">{action.reason}</span>}
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          className={cn(CELL_TRIGGER, "text-foreground-secondary hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline")}
+          data-testid="gantt-deadline-action"
+          data-gantt-deadline-action-for={action.resourceId}
+          aria-label={`${action.label} for ${street}`}
+          title={action.reason}
+          aria-describedby={action.reason ? reasonId : undefined}
+          disabled={action.disabled || disabled}
+          onClick={(event) => {
+            // Never also read as "select this row".
+            event.stopPropagation();
+            action.onAction();
+          }}
+        >
+          <span className="truncate">{action.label}</span>
+        </Button>
+      </>
+    );
+  }
   if (deadline === null) {
-    // No Deadline: the label's "Set deadline" button is the Admin path, so this cell is inert.
+    // No Deadline and no action (the viewer cannot edit it): an inert dash.
     return <span data-testid="gantt-deadline" className="text-foreground-secondary">—<span className="sr-only">No deadline</span></span>;
   }
   const text = deadlineTriggerText(deadline.localCivil);
@@ -158,10 +214,10 @@ export function GanttDeadlineCell({ projectId, street, deadline, canEdit, disabl
         <span className="truncate">{text}</span>
       </PopoverTrigger>
       {/* #325: `scroll-pb-18` reserves the pinned Clear / Save row, as in `ProjectHeaderDeadline`. */}
-      <PopoverContent align="start" aria-label="Deadline" className={cn(POPOVER_CONTENT, "scroll-pb-18")}>
+      <PopoverContent align="start" aria-label="Deadline" className={cn(POPOVER_CONTENT, "scroll-pb-18")} initialFocus={() => dateRef.current ?? true}>
         <PopoverTitle className="!font-medium">Deadline</PopoverTitle>
         <GanttProjectDetailGate projectId={projectId} role={role}>
-          {(detail) => <ProjectDeadlineControl projectId={projectId} schedule={detail.deadlineSchedule} canEdit onSaved={() => setOpen(false)} />}
+          {(detail) => <ProjectDeadlineControl projectId={projectId} schedule={detail.deadlineSchedule} canEdit onSaved={() => setOpen(false)} dateInputRef={attachDate} />}
         </GanttProjectDetailGate>
       </PopoverContent>
     </Popover>

@@ -123,7 +123,7 @@
  * own `formatEventTime` (`ganttFormatEventTime`, merged from the same `GANTT_I18N` `<Gantt>` gets),
  * so a hollow/done bar reads exactly like a stock bar and like its own aria-label.
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
 import { Gantt, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
@@ -190,7 +190,6 @@ import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { StageSwatch } from "./quincy/StageSwatch";
-import { Button } from "./reui/button";
 import { Skeleton } from "./reui/skeleton";
 
 export type ProductionGanttProps = {
@@ -239,23 +238,22 @@ const GANTT_I18N: GanttI18nOverrides = { labels: { resources: "Projects" } };
 const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTime;
 /**
  * #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. #365:
- * the name column is a 240px floor, not the vendor splitter's 180: a Project row's fixed parts (12px
- * padding each side, the 24px toggle gutter, the 96px street floor, a 6px gap and the ~83px "Set
- * deadline" button) sum to ~233px, and at 180 the button spilled 37px into the People column
- * (browser pass, 1440px). The wide panel adds People (88px) and Due (128px): 240 + 88 + 128 = 456.
- * The narrow (<= 720px) panel keeps the vendor's 288px seed, which the vendor clamps to what the
- * container can spare; its tree overflows and scrolls horizontally inside the pane, which is how
- * People and Due are reached on a phone. The vendor seeds the width once, so a breakpoint crossed
- * mid-session does not re-seed it.
+ * the wide panel is the name column at 180px (the vendor splitter's own default — a Project row's
+ * fixed parts are 12px padding each side, the 24px toggle gutter and the 96px street floor, ~144px,
+ * so the street keeps its 96px) plus People (88px) and Due (128px, which holds "Fri 2 Oct · 17:00",
+ * "Set deadline" and "Fix deadline"): 180 + 88 + 128 = 396. The narrow (<= 720px) panel carries the
+ * name column alone — People and Due are not rendered on a phone, where the row link opens the
+ * Project and both are editable there — so it needs no override. The vendor seeds the width once,
+ * so a breakpoint crossed mid-session does not re-seed it.
  */
-const GANTT_NAME_COLUMN_WIDTH = 240;
-const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 456 };
-const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH };
+const GANTT_NAME_COLUMN_WIDTH = 180;
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 396 };
+const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
 /** A real 44px hit area on coarse pointers and phones, compact on desktop. */
-const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[721px]:min-w-[44px]";
+const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[720px]:min-w-[44px]";
 
 /**
  * fix-220-sol1 #3: the pure decision behind the panel's scroll-driven project pagination, exported
@@ -339,38 +337,32 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
  * to `attention` instead of a plotted event, and (project rows whose remaining checklist pages
  * failed to load, fix-220-sol1 #2) a retry affordance. The Editor avatar moved to the People column.
  */
-/** #221 PR C: a project row's label-side Deadline action ("Set deadline" / "Fix deadline"). */
+/** #221 PR C: a project row's Deadline action ("Set deadline" / "Fix deadline"), rendered in the Due cell (#365). */
 type GanttDeadlineAction = { label: "Set deadline" | "Fix deadline"; disabled: boolean; onAction: () => void };
 
 function GanttResourceLabel({
   resource,
   attentionByResourceId,
   childLoadRetryByProjectResourceId,
-  deadlineActionByProjectResourceId,
+  hideAttentionBadgeFor,
   projectHrefFor,
   onOpenProject,
 }: {
   resource: GanttResource;
   attentionByResourceId: Map<string, ProductionGanttAttention>;
   childLoadRetryByProjectResourceId: Map<string, () => void>;
-  deadlineActionByProjectResourceId: Map<string, GanttDeadlineAction>;
+  /** Rows whose Due cell carries the reason on its Deadline action, so the name cell drops the badge. */
+  hideAttentionBadgeFor: Set<string>;
   projectHrefFor?: (projectId: string) => string;
   onOpenProject?: (projectId: string) => void;
 }) {
   const attention = attentionByResourceId.get(resource.id);
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
-  const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
-  const deadlineReasonId = useId();
-  const deadlineReason = attention ? ATTENTION_TEXT[attention.reason] : undefined;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      {/* With a Deadline action beside it, badge + button + avatar outgrew the tree column and
-          the title collapsed to nothing — the #221 browser pass saw rows reading
-          "Deadline not set · Set deadline" with no street. So a row with a Deadline action drops
-          the attention badge entirely (the button carries the reason instead, below), and the
-          street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
-          pixel. */}
-      <span className={cn("truncate", deadlineAction && "min-w-[var(--space-9)] flex-1")}>
+      {/* The street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
+          pixel; the attention badge yields to it (see `hideAttentionBadgeFor`). */}
+      <span className="min-w-[var(--space-9)] flex-1 truncate">
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"
@@ -380,38 +372,7 @@ function GanttResourceLabel({
           >{resource.title}</ProjectCalendarAnchor>
         ) : resource.title}
       </span>
-      {attention && !deadlineAction && <GanttRowAttentionBadge reason={attention.reason} />}
-      {deadlineAction && deadlineReason && (
-        <span id={deadlineReasonId} className="sr-only" data-testid="gantt-deadline-action-reason">{deadlineReason}</span>
-      )}
-      {deadlineAction && (
-        // Compact: reui Button's smallest size (`xs`). Its cva base forces
-        // `uppercase tracking-[var(--tracking-wide)]`; overridden to sentence case at
-        // `--tracking-normal` so the button stays narrow beside the street. Secondary ink at rest,
-        // full ink + underline on hover/focus, so it reads as an action rather than row text
-        // without widening it (#221 design re-review). The accessible name
-        // names the street (every "Set deadline" is distinct), `title` shows the reason on
-        // hover, and `aria-describedby` reads it to a screen reader.
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          className="shrink-0 normal-case tracking-[var(--tracking-normal)] text-foreground-secondary hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
-          data-testid="gantt-deadline-action"
-          data-gantt-deadline-action-for={resource.id}
-          aria-label={`${deadlineAction.label} for ${resource.title}`}
-          title={deadlineReason}
-          aria-describedby={deadlineReason ? deadlineReasonId : undefined}
-          disabled={deadlineAction.disabled}
-          onClick={(event) => {
-            // Same as the retry badge: never also read as "select this row".
-            event.stopPropagation();
-            deadlineAction.onAction();
-          }}
-        >
-          {deadlineAction.label}
-        </Button>
-      )}
+      {attention && !hideAttentionBadgeFor.has(resource.id) && <GanttRowAttentionBadge reason={attention.reason} />}
       {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
     </span>
   );
@@ -1259,27 +1220,32 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return map;
   }, [displayProjects, attentionByResourceId, live, openUnscheduledProjectDialog, openMoveDialog]);
 
+  // At <= 720px the Due column is not rendered, so the row's reason stays on the name cell's badge.
+  const narrowTree = useMediaQuery("(max-width: 720px)");
+  const hideAttentionBadgeFor = useMemo(() => (narrowTree ? new Set<string>() : new Set(deadlineActionByProjectResourceId.keys())), [narrowTree, deadlineActionByProjectResourceId]);
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (
       <GanttResourceLabel
         resource={resource}
         attentionByResourceId={attentionByResourceId}
         childLoadRetryByProjectResourceId={childLoadRetryByProjectResourceId}
-        deadlineActionByProjectResourceId={deadlineActionByProjectResourceId}
+        hideAttentionBadgeFor={hideAttentionBadgeFor}
         projectHrefFor={projectHrefFor}
         onOpenProject={onOpenProject}
       />
     ),
-    [attentionByResourceId, childLoadRetryByProjectResourceId, deadlineActionByProjectResourceId, projectHrefFor, onOpenProject],
+    [attentionByResourceId, childLoadRetryByProjectResourceId, hideAttentionBadgeFor, projectHrefFor, onOpenProject],
   );
 
   // #365: the People and Due columns. `displayProjects` (the accept-gate baseline, the same source
   // as the Deadline actions above) so a cell never reads a row the chart is not drawing. Triggers
   // are `disabled={!live}` like "Set deadline": a picker Deadline save that races a later bar drag
   // is caught by the server's `expectedVersion`, which the controller already handles.
-  const narrowTree = useMediaQuery("(max-width: 720px)");
   const columns = useMemo<GanttColumn[]>(() => {
     const projectFor = (resource: GanttResource) => (resource.id.startsWith("project:") ? projectById.get(resource.id.slice("project:".length)) : undefined);
+    // Phones (<= 720px): no People/Due columns at all; the row link opens the Project, where both
+    // are editable.
+    if (narrowTree) return [];
     return [
       {
         id: "people",
@@ -1296,11 +1262,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         width: 128,
         render: ({ resource }) => {
           const project = projectFor(resource);
-          return project ? <GestureAwareCell live={live}>{(disabled) => <GanttDeadlineCell projectId={project.id} street={project.street} deadline={project.deadline} canEdit={project.permissions.canEditDeadline} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
+          if (!project) return null;
+          const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
+          const attention = attentionByResourceId.get(resource.id);
+          const action = deadlineAction ? { ...deadlineAction, reason: attention ? ATTENTION_TEXT[attention.reason] : undefined, resourceId: resource.id } : undefined;
+          return <GestureAwareCell live={live}>{(disabled) => <GanttDeadlineCell projectId={project.id} street={project.street} deadline={project.deadline} canEdit={project.permissions.canEditDeadline} disabled={disabled} role={identity.role} action={action} />}</GestureAwareCell>;
         },
       },
     ];
-  }, [projectById, live, identity.role]);
+  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
@@ -1572,8 +1542,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             onScaleChange={setScale}
             timeZone={GANTT_TIME_ZONE}
             i18n={GANTT_I18N}
-            // #256: the name column fills the tree panel; #365: its 240px floor keeps "Set deadline"
-            // inside it (see GANTT_NAME_COLUMN_WIDTH).
+            // #256: the name column fills the tree panel (see GANTT_NAME_COLUMN_WIDTH).
             treePanel={narrowTree ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
             columns={columns}
             interactions={interactions}
