@@ -72,8 +72,12 @@ describe("SubtaskChecklist access-generation boundary", () => {
     const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Assignees for Prepare delivery"]')!;
     await act(async () => { trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); }); await flush();
     resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }], multiAssignee: true });
-    await flush();
-    expect(document.body.textContent).toContain("Late private user");
+    // Wait for the rendered option rather than a fixed number of ticks: under a loaded CI runner the
+    // popup's list can commit a few macrotasks after the payload resolves.
+    await vi.waitFor(async () => {
+      await flush();
+      expect(document.body.textContent).toContain("Late private user");
+    }, { timeout: 5000, interval: 20 });
     expect(queryClient.getQueryData(projectDataKeys.subtaskAssigneeOptions(projectId))).toBeDefined();
   });
 
