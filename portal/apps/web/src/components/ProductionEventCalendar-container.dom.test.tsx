@@ -91,6 +91,10 @@ describe("ProductionEventCalendar container", () => {
     await act(async () => { root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={{ principalId: principal, role: "admin", authorizationEpoch: 0 }} calendar={calendar()} onNavigate={() => undefined} /></QueryClientProvider>); });
     expect(host.querySelector('[data-testid="event-calendar-loading"]')?.textContent).toContain("Loading calendar");
     expect(host.querySelector('[data-testid="event-calendar-fake"]')).toBeNull();
+    // #363: the skeleton fills the region instead of a fixed 480px block.
+    const loading = host.querySelector<HTMLElement>('[data-testid="event-calendar-loading"]')!;
+    expect(loading.className.split(/\s+/)).toContain("flex-1");
+    expect(loading.innerHTML).not.toContain("h-[480px]");
     release();
   });
 
@@ -222,18 +226,20 @@ describe("ProductionEventCalendar container", () => {
     expect(eventCalendarFake.lastProps?.interactions).toEqual({ drag: true, resize: true, selectSlot: false });
   });
 
-  it("bounds the rail + grid row to the content height, so the rail scrolls inside its column", async () => {
+  it("fills the remaining height with a bounded rail + grid row, so the rail scrolls inside its column", async () => {
     await renderCalendar(calendar("month"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
     const body = host.querySelector<HTMLElement>('[data-testid="event-calendar-body"]')!;
     expect(body).not.toBeNull();
     expect(body.querySelector('[data-testid="event-calendar-rail"]')).not.toBeNull();
-    // jsdom cannot lay out: pin the class contract. A definite height on the grid plus a
-    // `minmax(0,1fr)` row, so a long rail cannot grow the row (an `auto` row would).
+    // jsdom cannot lay out: pin the class contract. The body is a flexed item of a definite-height
+    // column (#363) with a `minmax(0,1fr)` row, so a long rail cannot grow the row (an `auto` row would).
     const classes = body.className.split(/\s+/);
-    expect(classes).toContain("h-[min(760px,calc(100svh-220px))]");
-    expect(classes).toContain("min-h-[480px]");
-    expect(classes).toContain("grid-rows-[minmax(0,1fr)]");
+    for (const token of ["min-h-0", "flex-1", "grid-rows-[minmax(0,1fr)]"]) expect(classes).toContain(token);
+    expect(classes).not.toContain("h-[min(760px,calc(100svh-220px))]");
+    expect(classes).not.toContain("min-h-[480px]");
     expect(host.querySelector<HTMLElement>('[data-testid="event-calendar-rail"]')!.className.split(/\s+/)).toContain("min-h-0");
+    const screen = host.querySelector<HTMLElement>('[data-testid="event-calendar-screen"]')!;
+    for (const token of ["flex", "flex-col", "flex-1", "min-h-0"]) expect(screen.className.split(/\s+/)).toContain(token);
   });
 
   it("the narrow rail sheet renders the Portal scrim even inside the shell's Sheet", async () => {

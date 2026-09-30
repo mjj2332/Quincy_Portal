@@ -103,5 +103,17 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
 // unauthenticated and must run before the static-asset SPA fallback.
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));
 app.all("/d/*", terminalRoute("/d/*", (c) => c.notFound()));
-app.all("*", terminalRoute("*", (c) => c.env.ASSETS.fetch(c.req.raw)));
+// #359: `/assets/*` is content-hashed and served `immutable` for a year (`apps/web/public/_headers`).
+// `/assets/*` is in `run_worker_first` (wrangler.jsonc) so a MISS reaches this Worker instead of the
+// asset layer's `single-page-application` fallback answering it with index.html, which the immutable
+// rule would let a browser cache under a hashed URL for a year. Existing files still pass through
+// ASSETS.fetch with `_headers` applied; a miss (HTML fallback) becomes a `no-store` 404.
+app.all("*", terminalRoute("*", async (c) => {
+  const response = await c.env.ASSETS.fetch(c.req.raw);
+  if (new URL(c.req.url).pathname.startsWith("/assets/") && (response.headers.get("content-type") ?? "").includes("text/html")) {
+    await response.body?.cancel();
+    return new Response("Not found", { status: 404, headers: { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" } });
+  }
+  return response;
+}));
 export default { fetch: (request: Request, env: Env, ctx: ExecutionContext) => fetchWithServerTiming(app.fetch, request, env, ctx) };
