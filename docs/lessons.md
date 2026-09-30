@@ -4371,3 +4371,17 @@ remove the legacy readers) still applies.
 - **Also found:** a ref callback created fresh on every render, handed to a Base UI `TabsTrigger`,
   loops (Base UI re-registers the trigger with a state update on each ref change). Keep per-item
   ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).
+
+## No triggers in migrations (2026-09-30, #364)
+
+- **The worker test harness loads migration SQL by splitting on `;` (after dropping `--` lines),
+  so a `CREATE TRIGGER ... BEGIN ...; END;` cannot be loaded and would break every worker suite.**
+  53 files do this (`workers/app/test/project-subtasks.test.ts:18` is one) and the repo has no
+  triggers. Keep a mirror column and its relation in step in application code instead: append the
+  relation statements at the **end** of the existing `D1.batch` (so every positional
+  `results[n]` read stays valid) and fence each with `EXISTS (SELECT 1 FROM audit_log WHERE id = ?)`
+  on the winning audit row, so a lost compare-and-swap writes nothing. No `;` in a migration
+  comment either. See `docs/adr/0012-subtask-assignees-are-a-relation.md`.
+- **Also found:** the Workers test runtime cannot read the host filesystem, so a worker test cannot
+  load a `scripts/*.sql` file. Prove the script in a `packages/db` node test and inline the
+  invariant in the worker test.

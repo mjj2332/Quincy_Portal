@@ -21,6 +21,7 @@ import { auditMeta } from "./audit";
 import { newId } from "./ids";
 import { notifySubtaskAssignee } from "./notifications";
 import { serializeSubtaskSchedule } from "./subtask-schedule";
+import { relationDeleteOne, relationInsertFromColumn } from "./subtask-assignees";
 import { projectMentionableUsers } from "./project-collaboration";
 import { hasProjectCollaborationAccessForUser } from "../middleware/capability";
 
@@ -248,6 +249,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
       insert,
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, { scheduleState: canonicalSchedule.state, scheduleVersion: canonicalSchedule.scheduleVersion }), now),
       ...bundle.statements,
+      // Last, so the positional reads above stay valid (#364).
+      ...(assigneeId ? [relationInsertFromColumn(env.DB, id, assigneeId, auditId, now)] : []),
     ]);
     const item = await subtaskQuery(db, projectId, id).get();
     if (!item) throw new Error("Subtask could not be created");
@@ -329,6 +332,11 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   if (scheduleChanged && normalized) {
     const bundle = buildProjectActivityStatements({ db: env.DB, intent: scheduleActivityFor(operation.subtaskId, projectId, principal.id, now, nextTitle, normalized.state, normalized.scheduleVersion), winnerAuditId: auditId, createdAt: now, broadMode: scheduleActivityBroadMode(endChanged) });
     bundles.push({ bundle, offset: statements.length }); statements.push(...bundle.statements);
+  }
+  if (assignmentChanged) {
+    // Replace-one, appended last so every positional read stays valid (#364). Touches only the person the column held.
+    if (existing.subtask.assigneeId !== null) statements.push(relationDeleteOne(env.DB, operation.subtaskId, existing.subtask.assigneeId, auditId));
+    if (patch.assigneeId) statements.push(relationInsertFromColumn(env.DB, operation.subtaskId, patch.assigneeId, auditId, now));
   }
   const results = await env.DB.batch(statements);
   const winner = rowsFromD1<{ id: string; assigneeId: string | null; assignmentVersion: number }>(results[0])[0];
