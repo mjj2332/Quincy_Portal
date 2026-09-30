@@ -31,6 +31,15 @@ describe("AvatarStack", () => {
     expect(labels()).toEqual(["Person 1 (inactive)", "Editor (name unavailable)"]);
   });
 
+  it("singleInitial draws one initial per avatar, a whole code point, and keeps the full name in the label", () => {
+    const fallbacks = () => [...host.querySelectorAll<HTMLElement>('[role="img"]')].map((el) => el.textContent);
+    act(() => root.render(<AvatarStack people={[person(1, { name: "Ada Lovelace" }), person(2, { name: "𠮷 Bob" })]} personNoun="Assignee" emptyLabel="None" />));
+    expect(fallbacks()).toEqual(["AL", "𠮷B"]);
+    act(() => root.render(<AvatarStack singleInitial people={[person(1, { name: "Ada Lovelace" }), person(2, { name: "𠮷 Bob" })]} personNoun="Assignee" emptyLabel="None" />));
+    expect(fallbacks()).toEqual(["A", "𠮷"]);
+    expect(labels()).toEqual(["Ada Lovelace", "𠮷 Bob"]);
+  });
+
   it("decorative hides the whole stack from assistive tech", () => {
     act(() => root.render(<AvatarStack decorative people={[person(1)]} personNoun="Editor" emptyLabel="None" />));
     expect(host.firstElementChild!.getAttribute("aria-hidden")).toBe("true");

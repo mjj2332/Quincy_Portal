@@ -154,6 +154,18 @@ describe("checklist mutation response domains", () => {
     expect(result).toMatchObject({ id: itemId, title: "Select hero images", scheduleVersion: 9, assignee: { id: personId, name: "Maya Editor" } });
   });
 
+  it("keeps every staff assignee from an internal mutation response, and leaves the list unknown when the wire has none (#370)", () => {
+    const staff = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor" }, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, { id: "p2", name: "Bo", roleLabel: "Admin", isExternal: false, active: false }], schedule });
+    expect(staff.assignees?.map((person) => person.id)).toEqual([personId, "p2"]);
+    expect(staff.assignees?.[1]).toMatchObject({ name: "Bo", roleLabel: "Admin", active: false });
+    const old = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor" }, schedule });
+    expect(old.assignees).toBeNull();
+    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 2, assignmentVersion: 1, dueDate: null, schedule, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
+    // The external item carries the team-filtered list and the hidden count (#368); the scalar is never the list.
+    expect(external.assignees?.map((person) => person.id)).toEqual([personId]);
+    expect(external.otherAssigneeCount).toBe(2);
+  });
+
   it("accepts an additive internal Worker field but rejects a cross-fed internal shape", () => {
     const internal = decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: true, assignee: { id: personId, name: "Maya Editor" }, position: 2048, schedule, futureWorkerField: "ignored" });
     expect(internal.scheduleVersion).toBe(9);

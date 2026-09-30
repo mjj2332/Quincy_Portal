@@ -86,10 +86,19 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(productionEventCalendarEventClassName(done.data)).toContain("text-foreground-secondary");
   });
 
-  it("carries assignee initials for checklist items and none for Deadlines", () => {
-    expect(toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!.data.initials).toBe("AL");
-    expect(toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { assigneeNull: true }))!.data.initials).toBeNull();
-    expect(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data.initials).toBeNull();
+  it("carries the assignee list and hidden count for checklist items and none for Deadlines (#370)", () => {
+    const grace = { id: "g", name: "Grace Hopper", roleLabel: "Editor", isExternal: false, active: true };
+    const one = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")))!.data;
+    expect(one.assignees.map((person) => person.name)).toEqual(["Ada Lovelace"]);
+    expect(one.otherAssigneeCount).toBe(0);
+    const many = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { assignees: [grace, grace], otherAssigneeCount: 2 }))!.data;
+    expect(many.assignees).toHaveLength(2);
+    expect(many.otherAssigneeCount).toBe(2);
+    const none = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { assigneeNull: true }))!.data;
+    expect(none.assignees).toEqual([]);
+    const deadline = toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"))!.data;
+    expect(deadline.assignees).toEqual([]);
+    expect(deadline.otherAssigneeCount).toBe(0);
     expect(assigneeInitials("ada")).toBe("A");
     expect(assigneeInitials("  Grace  Brewster Hopper ")).toBe("GH");
     expect(assigneeInitials("")).toBeNull();

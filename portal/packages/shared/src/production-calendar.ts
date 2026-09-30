@@ -370,8 +370,16 @@ export type ChecklistCalendarEventBase<TStage extends StageTransportKey = StageT
   kind: "checklist";
   title: string;
   project: CalendarProjectContext<TStage>;
+  /** `assignees[0] ?? null`, kept for old readers. Removed in #373 (PR8). */
   assignee: CalendarPerson | null;
+  /**
+   * Named assignees in assignment order; for an external viewer only people on the Project team — the rest are
+   * `otherAssigneeCount`.
+   */
+  assignees: CalendarPerson[];
+  otherAssigneeCount: number;
   timing: CalendarEventTiming;
+  /** `sameAssigneeOverlap` is true when any named assignee of this Subtask is double-booked by another timed Subtask. */
   status: { overdue: boolean; delivered: boolean; completed: boolean; sameAssigneeOverlap: boolean };
 };
 
@@ -483,6 +491,7 @@ function checklistEventBaseSchema<TStage extends StageTransportKey>(stageSchema:
   return z.object({
     id: opaqueIdSchema, kind: z.literal("checklist"), title: z.string().max(500),
     project: calendarProjectContextSchema(stageSchema), assignee: calendarPersonZodSchema.nullable(),
+    assignees: z.array(calendarPersonZodSchema), otherAssigneeCount: z.number().int().nonnegative(),
     timing: calendarEventTimingSchema,
     status: z.object({ overdue: z.boolean(), delivered: z.boolean(), completed: z.boolean(), sameAssigneeOverlap: z.boolean() }).strict(),
   }).strict();

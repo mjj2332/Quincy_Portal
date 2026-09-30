@@ -44,6 +44,8 @@ describe("Production Calendar interaction model", () => {
       title: "Range task",
       project,
       assignee: { id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true },
+      assignees: [{ id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true }],
+      otherAssigneeCount: 1,
       timing: { allDay: true, start: "2026-08-12", end: "2026-08-14" },
       status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
       schedule: {
@@ -60,6 +62,7 @@ describe("Production Calendar interaction model", () => {
     range.schedule.end!.localCivil = "2000-01-02";
     range.assignee!.name = "Someone Else";
     range.assignee!.isExternal = false;
+    range.assignees[0]!.name = "Someone Else";
 
     expect(snapshot.event).toMatchObject({
       assignee: { name: "Ivy", isExternal: true },
@@ -67,6 +70,9 @@ describe("Production Calendar interaction model", () => {
     });
     expect(snapshot.event.schedule.start).not.toBe(range.schedule.start);
     expect(snapshot.event.assignee).not.toBe(range.assignee);
+    expect((snapshot.event as ChecklistCalendarEventDto).assignees).toEqual([{ id: "person-1", name: "Ivy", roleLabel: "Editor", isExternal: true, active: true }]);
+    expect((snapshot.event as ChecklistCalendarEventDto).assignees[0]).not.toBe(range.assignees[0]);
+    expect((snapshot.event as ChecklistCalendarEventDto).otherAssigneeCount).toBe(1);
   });
 
   it("matches the settle transition table from both pending states", () => {
@@ -131,6 +137,10 @@ describe("Production Calendar interaction model", () => {
     const context = { entity: "checklist" as const, street: "12 Harbour Street", oldCivil: "2026-08-10T09:30", newCivil: "2026-08-20T09:30" };
     expect(calendarAnnouncement("picked-up", { ...context, overlap: true })).toBe("Picked up the checklist schedule for 12 Harbour Street. Current time: 2026-08-10 09:30. This item overlaps another task for the same assignee.");
     expect(calendarAnnouncement("picked-up", context)).not.toContain("overlaps another task");
+    // #370: the pick-up names every assignee the viewer can see.
+    expect(calendarAnnouncement("picked-up", { ...context, assignee: "Ada" })).toBe("Picked up the checklist schedule for 12 Harbour Street. Current time: 2026-08-10 09:30. Assigned to Ada.");
+    expect(calendarAnnouncement("picked-up", { ...context, assignee: "Ada and Bo" })).toContain("Assigned to Ada and Bo.");
+    expect(calendarAnnouncement("picked-up", { ...context, assignee: "Ada, Bo, Cy and 2 others" })).toContain("Assigned to Ada, Bo, Cy and 2 others.");
     expect(calendarAnnouncement("confirm-required", context)).toBe("Save the checklist schedule for 12 Harbour Street from 2026-08-10 09:30 to 2026-08-20 09:30. Confirmation required.");
     expect(calendarAnnouncement("saving", context)).toBe("Saving the checklist schedule for 12 Harbour Street.");
     expect(calendarAnnouncement("saved", context)).toBe("Saved the checklist schedule for 12 Harbour Street.");

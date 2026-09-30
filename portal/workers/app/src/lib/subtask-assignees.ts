@@ -5,7 +5,7 @@
  * not-yet-migrated readers, and every write that changes the set appends these statements to the same D1 batch. Each is fenced by the winning audit row, so a lost
  * compare-and-swap writes nothing. There are no triggers (the worker test harness splits migration SQL on `;`).
  */
-import type { ExternalPersonDto, Role } from "@quincy/shared";
+import type { CalendarPerson, ExternalPersonDto, Role } from "@quincy/shared";
 import { ROLE_LABELS, SUBTASK_MULTI_ASSIGNEE_FLAG } from "@quincy/shared";
 
 /** Order of a Subtask's assignees: the first is the one the legacy column mirrors. */
@@ -130,6 +130,34 @@ export function relationDeleteForRemovedMember(
       AND NOT EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${input.remainingAfterDelete.sql})
       AND NOT EXISTS (SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1)
   `).bind(input.userId, input.projectId, input.auditId, ...input.remainingAfterDelete.bindings, input.userId);
+}
+
+/** Correlated JSON list of a Subtask's assignees; `alias` is the `project_subtasks` alias. Sort in JS (`parseAssigneesJson`). */
+export function subtaskAssigneesJsonSql(alias: string): string {
+  return `(SELECT json_group_array(json_object('id', sa_u.id, 'name', sa_u.name, 'role', sa_u.role, 'active', sa_u.active, 'version', sa.assignment_version, 'addedAt', sa.added_at, 'onTeam', EXISTS (SELECT 1 FROM project_members sa_pm WHERE sa_pm.project_id = ${alias}.project_id AND sa_pm.user_id = sa.user_id))) FROM project_subtask_assignees sa INNER JOIN user sa_u ON sa_u.id = sa.user_id WHERE sa.subtask_id = ${alias}.id)`;
+}
+
+type AssigneeJsonEntry = { id: string; name: string; role: Role; active: number | boolean; version: number; addedAt: number; onTeam: number | boolean };
+
+/** Parse `subtaskAssigneesJsonSql`'s column. Malformed JSON throws (a 500), like malformed schedule storage. */
+export function parseAssigneesJson(value: string | null): HydratedAssignee[] {
+  if (value === null) return [];
+  const parsed = JSON.parse(value) as AssigneeJsonEntry[];
+  return parsed
+    .map((entry) => ({ id: entry.id, name: entry.name, role: entry.role, active: Boolean(entry.active), assignmentVersion: entry.version, addedAt: entry.addedAt, onTeam: Boolean(entry.onTeam) }))
+    .sort((a, b) => compareAssignees({ assignmentVersion: a.assignmentVersion, addedAt: a.addedAt, userId: a.id }, { assignmentVersion: b.assignmentVersion, addedAt: b.addedAt, userId: b.id }));
+}
+
+/**
+ * What a viewer may see of a Subtask's assignees: staff see everyone; an External Editor sees only people on the
+ * Project team and a count of the rest.
+ */
+export function assigneesForViewer(list: HydratedAssignee[], role: Role): { assignees: CalendarPerson[]; otherAssigneeCount: number } {
+  const visible = role === "external_editor" ? list.filter((assignee) => assignee.onTeam) : list;
+  return {
+    assignees: visible.map((assignee) => ({ id: assignee.id, name: assignee.name, roleLabel: ROLE_LABELS[assignee.role] ?? assignee.role, isExternal: assignee.role === "external_editor", active: assignee.active })),
+    otherAssigneeCount: list.length - visible.length,
+  };
 }
 
 /**

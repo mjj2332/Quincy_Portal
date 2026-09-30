@@ -24,6 +24,7 @@ import {
   resolveSydneyCivilMinute,
   shiftSydneyCalendarDate,
   type CalendarEventDto,
+  type CalendarPerson,
   type ProductionCalendarSubview,
 } from "@quincy/shared";
 
@@ -68,8 +69,10 @@ export type ProductionEventCalendarData = {
   shape: ProductionEventCalendarShape;
   /** True when `end` is a display length, not a stored endpoint (Deadlines). */
   syntheticEnd: boolean;
-  /** Assignee initials for a checklist item; null for a Deadline or an unassigned item. */
-  initials: string | null;
+  /** Named assignees of a checklist item, in assignment order; empty for a Deadline or an unassigned item. */
+  assignees: CalendarPerson[];
+  /** Assignees the viewer may not see (External Editors), shown only as a count. */
+  otherAssigneeCount: number;
   done: boolean;
 };
 
@@ -145,7 +148,8 @@ export function toProductionEventCalendarEvent(dto: CalendarEventDto): Productio
     dto,
     shape,
     syntheticEnd: placed.syntheticEnd,
-    initials: dto.kind === "checklist" && dto.assignee ? assigneeInitials(dto.assignee.name) : null,
+    assignees: dto.kind === "checklist" ? dto.assignees : [],
+    otherAssigneeCount: dto.kind === "checklist" ? dto.otherAssigneeCount : 0,
     done: dto.status.completed,
   };
   const base = {

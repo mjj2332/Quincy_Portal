@@ -276,7 +276,7 @@ describe("ProductionEventCalendar checklist writes", () => {
   it("preserves richer external assignee metadata through a no-op PATCH (editor save)", async () => {
     const base = oneDayEvent(dated("2026-08-12"));
     const assignee = { ...ASSIGNEE, isExternal: true, roleLabel: "External Editor" };
-    const event = { ...base, assignee } as ChecklistCalendarEventDto;
+    const event = { ...base, assignee, assignees: [assignee] } as ChecklistCalendarEventDto;
     const fetch = await mount([event], { patch: () => json(checklistMutationBody(event, event.schedule)) });
     await openReschedule(ID);
     await clickTestId("event-calendar-schedule-submit");
@@ -284,6 +284,7 @@ describe("ProductionEventCalendar checklist writes", () => {
     expect(fetch.patches()).toHaveLength(1);
     const rendered = eventCalendarFake.event(ID)?.data as { dto: ChecklistCalendarEventDto } | undefined;
     expect(rendered?.dto.assignee).toEqual(assignee);
+    expect(rendered?.dto.assignees).toEqual([assignee]);
   });
 
   it("mutually locks the Deadline confirmation and checklist commands", async () => {
