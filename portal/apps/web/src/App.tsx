@@ -6,6 +6,7 @@ import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { PrincipalFreshnessBoundary } from "./components/PrincipalFreshnessBoundary";
 import { StagesProvider } from "./lib/stages";
 import { QuincyQueryProvider } from "./lib/query-client";
+import { ProjectCommentDraftsProvider } from "./lib/project-comment-drafts";
 import { ShellIdentityProvider, StaffRouter, type SessionUser } from "./lib/app-router";
 
 /**
@@ -33,5 +34,5 @@ export default function App() {
   if (impersonatedBy && user.role === "admin") {
     return <>{banner}<main className="impersonation-invalidated" role="alert">This impersonated session is no longer valid — exit to restore your Admin session.</main></>;
   }
-  return <>{banner}<QuincyQueryProvider key={`${user.id}:${user.role}:${user.authorizationEpoch}`} principalId={user.id} role={user.role}><PrincipalFreshnessBoundary principalId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch}><StagesProvider><ShellIdentityProvider user={user} impersonating={Boolean(impersonatedBy)}><StaffRouter /></ShellIdentityProvider></StagesProvider></PrincipalFreshnessBoundary></QuincyQueryProvider></>;
+  return <>{banner}<QuincyQueryProvider key={`${user.id}:${user.role}:${user.authorizationEpoch}`} principalId={user.id} role={user.role}><ProjectCommentDraftsProvider><PrincipalFreshnessBoundary principalId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch}><StagesProvider><ShellIdentityProvider user={user} impersonating={Boolean(impersonatedBy)}><StaffRouter /></ShellIdentityProvider></StagesProvider></PrincipalFreshnessBoundary></ProjectCommentDraftsProvider></QuincyQueryProvider></>;
 }

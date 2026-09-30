@@ -8,8 +8,10 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
   query: string | null;
   loadMentionables: (query: string) => Promise<MentionableUser[]>;
   onSelect: (user: MentionableUser) => void;
+  /** Esc, in any state, asks the owner to close the list (#375). */
+  onDismiss: () => void;
   onAccessibilityChange: (state: { listboxId: string; activeId?: string; expanded: boolean }) => void;
-}>(function MentionAutocomplete({ query, loadMentionables, onSelect, onAccessibilityChange }, ref) {
+}>(function MentionAutocomplete({ query, loadMentionables, onSelect, onDismiss, onAccessibilityChange }, ref) {
   const listboxId = useId();
   const [users, setUsers] = useState<MentionableUser[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -28,14 +30,15 @@ export const MentionAutocomplete = forwardRef<MentionAutocompleteHandle, {
 
   useImperativeHandle(ref, () => ({
     handleKeyDown(event) {
-      if (query === null || state === "loading") return false;
+      if (query === null) return false;
+      if (event.key === "Escape") { event.preventDefault(); onDismiss(); return true; }
+      if (state === "loading") return false;
       if (event.key === "ArrowDown" && users.length) { event.preventDefault(); setActiveIndex((index) => (index + 1) % users.length); return true; }
       if (event.key === "ArrowUp" && users.length) { event.preventDefault(); setActiveIndex((index) => (index - 1 + users.length) % users.length); return true; }
       if ((event.key === "Enter" || event.key === "Tab") && users[activeIndex]) { event.preventDefault(); onSelect(users[activeIndex]!); return true; }
-      if (event.key === "Escape") { event.preventDefault(); setUsers([]); return true; }
       return false;
     },
-  }), [activeIndex, onSelect, query, state, users]);
+  }), [activeIndex, onDismiss, onSelect, query, state, users]);
 
   const activeId = query !== null && users[activeIndex] ? `${listboxId}-${users[activeIndex]!.id}` : undefined;
   useEffect(() => {
