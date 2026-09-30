@@ -238,6 +238,43 @@ describe("SubtaskChecklist", () => {
     const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { done: true });
+    // Done moves the row into the collapsed "Completed" group (#377); open it to reach the row.
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!);
+    expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2");
+    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+  });
+
+  it("keeps the retained schedule draft when Done moves the row to Completed and the editor is reopened (#377)", async () => {
+    const host = mount(); await render();
+    const latest = { ...task, schedule: { state: "range" as const, version: 2, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    await keydown(portal("subtask-popover-task-1-schedule"), "Escape"); await flush();
+    await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!);
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const reopened = portal("subtask-popover-task-1-schedule");
+    expect(reopened.textContent).toContain("Latest schedule · v2");
+    expect(reopened.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    // Save reapplies the draft against the latest version the conflict named, not the stored dates.
+    apiPatchMock.mockResolvedValueOnce({ ...latest, done: true, schedule: { ...latest.schedule, version: 3 } });
+    await click(saveButton(reopened)); await flush();
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, expect.objectContaining({ schedule: expect.objectContaining({ expectedVersion: 2 }) }));
+  });
+
+  it("keeps a retained schedule conflict draft when an unrelated rename succeeds", async () => {
+    const host = mount(); await render();
+    const latest = { ...task, schedule: { state: "range" as const, version: 2, zone: "Australia/Sydney" as const, start: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: `${year}-06-10`, instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: `${year}-06-10` } };
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Schedule changed", 409, { code: "subtask_schedule_conflict", current: latest.schedule }));
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
+    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
     // An unrelated write landing (a rename). A Done tick used to be the unrelated write, but it now moves the row into the
     // "Completed" group, which remounts it and discards the popover draft by design (#377).
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!); const renameInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(renameInput, "Renamed item"); await keydown(renameInput, "Enter"); await flush();
@@ -245,6 +282,7 @@ describe("SubtaskChecklist", () => {
     expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2");
     expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
   });
+
 
   it("preserves an open schedule draft when a late authoritative refresh arrives", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
