@@ -46,12 +46,13 @@ type Fixture = {
   oldAssetId: string;
 };
 
-function localEnv(database: D1Database = bindings.DB): Env {
+function localEnv(database: D1Database = bindings.DB, extra: Record<string, unknown> = {}): Env {
   return {
     DB: database,
     MEDIA: bindings.MEDIA,
     INGEST_QUEUE: { send: vi.fn(async () => undefined) },
     RENDITIONS_ENABLED: false,
+    ...extra,
   } as unknown as Env;
 }
 
@@ -81,7 +82,7 @@ function configureDropbox(files: DropboxFile[] = []) {
   vi.mocked(recordDropboxSuccess).mockResolvedValue(undefined);
 }
 
-async function fixture(options: { archived?: boolean; stage?: string; seedOld?: boolean } = {}): Promise<Fixture> {
+async function fixture(options: { archived?: boolean; stage?: string; seedOld?: boolean; shootDate?: string | null } = {}): Promise<Fixture> {
   const now = Date.now();
   const projectId = crypto.randomUUID();
   const collectionId = crypto.randomUUID();
@@ -90,8 +91,8 @@ async function fixture(options: { archived?: boolean; stage?: string; seedOld?: 
   const sourcePath = `${root}/capture.jpg`;
   const sourcePathKey = sourcePath.toLowerCase();
   await bindings.DB.batch([
-    bindings.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, archived_at, created_at, updated_at) VALUES (?, 'Dropbox reconciliation', ?, ?, ?, ?, ?)")
-      .bind(projectId, options.stage ?? "raw_review", root, options.archived ? now : null, now, now),
+    bindings.DB.prepare("INSERT INTO projects (id, street, stage_key, raw_folder_path, archived_at, shoot_date, created_at, updated_at) VALUES (?, 'Dropbox reconciliation', ?, ?, ?, ?, ?, ?)")
+      .bind(projectId, options.stage ?? "raw_review", root, options.archived ? now : null, options.shootDate ?? null, now, now),
     bindings.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)")
       .bind(collectionId, projectId, now, now),
     ...(options.seedOld === false ? [] : [
@@ -435,4 +436,50 @@ describe("Dropbox RAW delete-then-reupload reconciliation", () => {
   // sync-vs-sync case, and both tests above for sync correctly respecting a claim it doesn't own),
   // so the two sides are proven compatible without duplicating a synthetic version of not-yet-
   // built code here.
+});
+
+describe("Dropbox RAW arrival fills an empty Shoot date", () => {
+  const shootDateOf = async (projectId: string) => (await bindings.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first<{ shoot_date: string | null }>())?.shoot_date ?? null;
+  const fillAudits = async (projectId: string) => (await bindings.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>()).results;
+  const editorReconcileSends = (environment: Env) => vi.mocked(environment.INGEST_QUEUE.send).mock.calls.filter(([message]) => (message as { type?: string }).type === "editor_reconcile");
+
+  it("fills an undated Awaiting RAW Project with today's Sydney date and queues the Editor reconcile", async () => {
+    const context = await fixture({ stage: "awaiting_raw" });
+    configureDropbox([fileFor(context, "hash-b")]);
+    const environment = localEnv(bindings.DB, { DROPBOX_EDITOR_AUTOMATION_ENABLED: "1", EDITOR_AUTOCREATE_AFTER_MS: "1" });
+
+    await expect(syncProjectRawFolder(environment, context.projectId)).resolves.toMatchObject({ newlyImported: 1, claimed: true });
+
+    const stage = await bindings.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(context.projectId).first<{ stage_key: string }>();
+    expect(stage?.stage_key).toBe("raw_review");
+    expect(await shootDateOf(context.projectId)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const audits = await fillAudits(context.projectId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.actor_id).toBeNull();
+    expect(JSON.parse(audits[0]!.meta_json)).toMatchObject({ reason: "stage_move", previousShootDate: null });
+    expect(editorReconcileSends(environment)).toEqual([[expect.objectContaining({ projectId: context.projectId })]]);
+  });
+
+  it("does not queue the Editor reconcile when Editor automation is off", async () => {
+    const context = await fixture({ stage: "awaiting_raw" });
+    configureDropbox([fileFor(context, "hash-b")]);
+    const environment = localEnv();
+    await syncProjectRawFolder(environment, context.projectId);
+    expect(await fillAudits(context.projectId)).toHaveLength(1);
+    expect(editorReconcileSends(environment)).toHaveLength(0);
+  });
+
+  it("preserves a canonical date and unparsed text, writes no fill audit and queues no reconcile", async () => {
+    for (const held of ["2026-09-15", "TBC next week"]) {
+      const context = await fixture({ stage: "awaiting_raw", shootDate: held });
+      configureDropbox([fileFor(context, "hash-b")]);
+      const environment = localEnv(bindings.DB, { DROPBOX_EDITOR_AUTOMATION_ENABLED: "1", EDITOR_AUTOCREATE_AFTER_MS: "1" });
+      await syncProjectRawFolder(environment, context.projectId);
+      const stage = await bindings.DB.prepare("SELECT stage_key FROM projects WHERE id = ?").bind(context.projectId).first<{ stage_key: string }>();
+      expect(stage?.stage_key).toBe("raw_review");
+      expect(await shootDateOf(context.projectId)).toBe(held);
+      expect(await fillAudits(context.projectId)).toHaveLength(0);
+      expect(editorReconcileSends(environment)).toHaveLength(0);
+    }
+  });
 });

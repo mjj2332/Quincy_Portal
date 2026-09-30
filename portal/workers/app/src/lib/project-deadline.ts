@@ -8,7 +8,7 @@ import {
   type ProjectDeadlineScheduleEventIntent,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
-import { buildDeadlineSuppressionBundle, buildProjectActivityStatements } from "@quincy/db";
+import { buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildShootDateFillBundle, shootDateFillLanded } from "@quincy/db";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
 
@@ -53,6 +53,8 @@ export type ProjectDeadlineSaveResult = {
   current: ProjectDeadlineSchedule;
   eventIntent: ProjectDeadlineScheduleEventIntent | null;
   publicationIds: string[];
+  /** Internal: a Shoot date fill landed in this save. Stripped from the HTTP body by the route. */
+  shootDateFilled: boolean;
 };
 
 export type SaveProjectDeadlineScheduleInput = {
@@ -214,7 +216,7 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
     if (before.archivedAt !== null) throw new ProjectDeadlineError("Archived projects cannot change Deadline reminders.", 409, "deadline_project_archived");
     if (before.stageKey === "delivered") throw new ProjectDeadlineError("Delivered projects cannot change Deadline reminders.", 409, "deadline_project_delivered");
     if (before.deadlineVersion !== request.expectedVersion) throw conflictCurrent(beforeSchedule);
-    return { changed: false, current: beforeSchedule, eventIntent: null, publicationIds: [] };
+    return { changed: false, current: beforeSchedule, eventIntent: null, publicationIds: [], shootDateFilled: false };
   }
 
   const newVersion = before.deadlineVersion + 1;
@@ -298,6 +300,17 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
   const activityStatements = buildProjectActivityStatements({ db, intent: eventIntent, winnerAuditId: auditId, createdAt: now });
   const activityStatementStart = statements.length;
   statements.push(...activityStatements.statements);
+  // Last in the batch, so the marker at results[1] and the activity indexes above do not shift.
+  // Only a non-null Deadline write can fill; a clear never does. The fill UPDATE is gated on this
+  // save's own audit row, so a lost version race fills nothing.
+  const shootDateFillStart = statements.length;
+  const shootDateFill = request.operation === "set"
+    ? buildShootDateFillBundle({
+      db, projectId: input.projectId, trigger: { kind: "deadline_set", winnerAuditId: auditId },
+      fillAuditId: crypto.randomUUID(), actorId, impersonatedBy: input.principal?.impersonatedBy ?? null, now,
+    })
+    : undefined;
+  if (shootDateFill) statements.push(...shootDateFill.statements);
   const results = await db.batch(statements);
   const marker = results[1]?.results?.[0] as { id?: string } | undefined;
   if (!marker || marker.id !== auditId) {
@@ -316,5 +329,6 @@ export async function saveProjectDeadlineSchedule(db: D1Database, input: SavePro
     current,
     eventIntent,
     publicationIds: ((results[activityStatementStart + activityStatements.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []),
+    shootDateFilled: shootDateFillLanded(results, shootDateFill ? { update: shootDateFillStart + shootDateFill.indexes.update, audit: shootDateFillStart + shootDateFill.indexes.audit } : undefined),
   };
 }

@@ -5,10 +5,12 @@ import {
   buildDeadlineSuppressionBundle,
   buildNonCompactingStageWinner,
   buildStageActivityBundle,
+  buildStageShootDateFill,
   buildWorkflowTail,
   composeStageBundle,
   createDb,
   deriveStageFinalizerIntent,
+  shootDateFillLanded,
   type CommittedStageFinalizerIntent,
 } from "@quincy/db";
 import {
@@ -48,7 +50,7 @@ export type MoveProjectStageInput = {
 };
 
 export type MoveProjectStageResult =
-  | { kind: "moved"; response: MoveProjectStageResponse; finalizer: CommittedStageFinalizerIntent }
+  | { kind: "moved"; response: MoveProjectStageResponse; finalizer: CommittedStageFinalizerIntent; /** Internal: a Shoot date fill landed in this batch; never part of the HTTP body. */ shootDateFilled: boolean }
   | { kind: "no_change"; response: MoveProjectStageResponse }
   | { kind: "forbidden"; capability: "moveProjectStage" }
   | { kind: "reorder_forbidden"; code: "project_board_reorder_forbidden"; capability: "prioritizeProjects" }
@@ -208,12 +210,17 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
   const deadline = targetStageKey === "delivered"
     ? buildDeadlineSuppressionBundle({ db, projectId: project.id, now, reason: "project_delivered", auditId })
     : undefined;
-  const bundle = composeStageBundle({ stage, activity, deadline, workflow: buildWorkflowTail({ db, auditId, kind: "none" }, "none") });
+  const shootDateFill = buildStageShootDateFill({
+    db, projectId: project.id, from: project.stageKey, to: targetStageKey,
+    winnerAuditId: auditId, winnerAuditAction: "stage.set", fillAuditId: newId(),
+    actorId: principal.id, impersonatedBy: principal.impersonatedBy, now,
+  });
+  const bundle = composeStageBundle({ stage, activity, deadline, workflow: buildWorkflowTail({ db, auditId, kind: "none" }, "none"), shootDateFill });
   const results = await db.batch(bundle.statements);
   const finalizer = finalizerFromResults(results, project.id, bundle.indexes.stage.auditMarker, bundle.indexes.stage.winner, bundle.indexes.activity!.broadOutbox);
   if (!finalizer) return { kind: "conflict", current: stateFor(await readBoardProject(db, project.id), principal.role) };
   const updated = await readBoardProject(db, project.id);
   if (!updated || updated.archivedAt !== null || updated.stageKey !== targetStageKey) return { kind: "conflict", current: stateFor(updated, principal.role) };
   const updatedVisible = await readVisibleBoardRows(db, principal, targetStageKey);
-  return { kind: "moved", response: responseFor(updated, principal.role, project.stageKey, updatedVisible, true), finalizer };
+  return { kind: "moved", response: responseFor(updated, principal.role, project.stageKey, updatedVisible, true), finalizer, shootDateFilled: shootDateFillLanded(results, bundle.indexes.shootDateFill) };
 }

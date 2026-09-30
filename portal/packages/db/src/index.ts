@@ -13,6 +13,16 @@ export {
   boardSchemaVariant,
   type BoardSchemaVariant
 } from "./board-schema-variant";
+export {
+  SHOOT_DATE_FILL_AUDIT_ACTION,
+  buildShootDateFillBundle,
+  buildStageShootDateFill,
+  shootDateFillLanded,
+  stageMoveFillsShootDate,
+  type ShootDateFillIndexes,
+  type ShootDateFillReason,
+  type ShootDateFillTrigger,
+} from "./shoot-date-fill";
 export { projectColumnsForVariant, projectColumnsPre0037 } from "./project-projections";
 export { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitExternalSubtaskNotifications, emitStaffSubtaskAssignedNotification, type ExternalSafeLegacyInput, type ExternalSubtaskNotificationInput, type StaffSubtaskAssignedInput } from "./external-notifications";
 export { appendToStageBottomExpr, computeInsertPosition } from "./board-position";

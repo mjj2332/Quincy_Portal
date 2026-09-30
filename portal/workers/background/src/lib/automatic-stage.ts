@@ -1,4 +1,4 @@
-import { buildHandoffStartTail, buildOwnershipAssertionBundle, buildNonCompactingStageWinner, buildTerminalAssertionBundle, buildWorkflowTail, buildEditingEntryTokenTail, compileClosedAutomaticCoupling, composeStageBundle,
+import { buildHandoffStartTail, buildOwnershipAssertionBundle, buildNonCompactingStageWinner, buildStageShootDateFill, buildTerminalAssertionBundle, shootDateFillLanded, buildWorkflowTail, buildEditingEntryTokenTail, compileClosedAutomaticCoupling, composeStageBundle,
   deriveStageFinalizerIntent,
   type ClosedAutomaticCoupling, type ClosedOwnershipBundle, type CommittedStageFinalizerIntent,
   type ExpectedTargetPlacementRow,
@@ -15,7 +15,7 @@ export { automaticBoardWritesEnabled } from "./board-schema";
 
 export type AutomaticStageBindings = Pick<Env, "DB">;
 
-export type AutomaticStageOutcome = { kind: "winner"; finalizer: CommittedStageFinalizerIntent; }
+export type AutomaticStageOutcome = { kind: "winner"; finalizer: CommittedStageFinalizerIntent; /** Set only when a Shoot date fill landed in this batch (an Awaiting RAW exit of an undated Project). */ shootDateFilled?: true; }
   | { kind: "already_at_destination"; } | { kind: "loser"; }
   | { kind: "deferred"; }
   | { kind: "conflict"; } | { kind: "invariant_failure"; };
@@ -318,7 +318,13 @@ export async function commitAutomaticStage(input: {
     winnerRequired: Boolean(input.preWinnerOwnership || input.preWinnerProvenance),
     assertedAt: now
   });
-  const bundle = composeStageBundle({ preWinner: input.preWinnerOwnership ?? input.preWinnerProvenance, stage, state, workflow, token, terminal });
+  // Only an Awaiting RAW exit builds a fill; it is appended last (see composeStageBundle).
+  const shootDateFill = buildStageShootDateFill({
+    db: input.env.DB, projectId: input.projectId, from: input.from, to: input.to,
+    winnerAuditId: input.auditId, winnerAuditAction: "stage.auto_advance", fillAuditId: crypto.randomUUID(),
+    actorId: input.auditActorId ?? null, now
+  });
+  const bundle = composeStageBundle({ preWinner: input.preWinnerOwnership ?? input.preWinnerProvenance, stage, state, workflow, token, terminal, shootDateFill });
   let results: D1Result<unknown>[];
   try { results = await input.env.DB.batch(bundle.statements); } catch (error) {
     if (!isAutomaticBundleAssertionError(error)) throw error;
@@ -363,7 +369,7 @@ export async function commitAutomaticStage(input: {
     ...winner,
     auditId: markerResult.id as string,
     legacyWorkflowNotification: input.legacyWorkflowNotification }]);
-  return finalizer ? { kind: "winner", finalizer } : { kind: "invariant_failure" };
+  return finalizer ? { kind: "winner", finalizer, ...(shootDateFillLanded(results, bundle.indexes.shootDateFill) ? { shootDateFilled: true as const } : {}) } : { kind: "invariant_failure" };
   }
 export async function jobEntryToken(
   database: D1Database,

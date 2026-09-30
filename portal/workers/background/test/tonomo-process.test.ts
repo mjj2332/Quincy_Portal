@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { processTonomoEvent, type TonomoProcessDependencies } from "../src/tonomo/process";
 import { commitShootDateChange } from "../src/projects/shoot-date";
+import { commitAutomaticStage } from "../src/lib/automatic-stage";
 import type { DropboxFile, DropboxFolder } from "../src/dropbox/client";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -17,7 +18,10 @@ async function executeSql(source: string) {
   }
 }
 
-beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
+beforeAll(async () => {
+  await executeSql(__PORTAL_MIGRATION_SQL__);
+  await executeSql("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'");
+});
 
 describe("processTonomoEvent collection links", () => {
   it("appends a delivered Tonomo link, dedupes redelivery, and reconciles its collection count", async () => {
@@ -161,6 +165,46 @@ describe("processTonomoEvent shootDate upgrade", () => {
     await processTonomoEvent(env, newer);
     expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first())
       .toEqual({ shoot_date: "2026-09-19" });
+  });
+
+  describe("over a Shoot date filled by the Awaiting RAW exit", () => {
+    // A fill is an ordinary canonical date with a `project.shoot_date.changed` audit that carries
+    // no eventReceivedAt, so it neither blocks a verified appointment nor is overridden by text.
+    async function seedFilled() {
+      const { projectId, orderId } = await seedProject({ shootDate: null });
+      const outcome = await commitAutomaticStage({
+        env: { DB: database.DB },
+        projectId,
+        from: "awaiting_raw",
+        to: "raw_review",
+        auditId: crypto.randomUUID(),
+        auditMetaJson: JSON.stringify({ trigger: "test" }),
+        now: Date.parse("2026-09-30T02:00:00Z"),
+        workflow: { kind: "raw_reconciliation", projectId, claimId: null, claimStates: ["running"], shootDate: null },
+        alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
+      });
+      expect(outcome).toMatchObject({ kind: "winner", shootDateFilled: true });
+      expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ shoot_date: "2026-09-30" });
+      return { projectId, orderId };
+    }
+
+    it("replaces the filled date with a verified Tonomo appointment", async () => {
+      const { projectId, orderId } = await seedFilled();
+      await processEvent(orderId, { when: { start_time: 1_789_516_800 }, property_address: { timezone: "UTC" } });
+      expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ shoot_date: "2026-09-16" });
+      const changed = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed' ORDER BY created_at, rowid").bind(projectId).all<{ meta_json: string }>();
+      expect(changed.results.map((row) => JSON.parse(row.meta_json))).toEqual([
+        { shootDate: "2026-09-30", previousShootDate: null, reason: "stage_move" },
+        expect.objectContaining({ actor: "tonomo", previousShootDate: "2026-09-30", shootDate: "2026-09-16", eventReceivedAt: expect.any(Number) }),
+      ]);
+    });
+
+    it("declines unparsed Tonomo text against the filled date", async () => {
+      const { projectId, orderId } = await seedFilled();
+      await processEvent(orderId, { date: "Monday, 17 Sep, 2026" });
+      expect(await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first()).toEqual({ shoot_date: "2026-09-30" });
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.declined'").bind(projectId).first()).toEqual({ count: 1 });
+    });
   });
 
   it("does not let a shoot date event overwrite another already-set snapshot field", async () => {
