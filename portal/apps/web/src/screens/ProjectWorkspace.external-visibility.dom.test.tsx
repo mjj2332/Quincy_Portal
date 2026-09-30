@@ -431,6 +431,10 @@ describe("external-editor visibility inventory", () => {
 // both roles. Every `testids` map gains `"copy-project-link": 1` and every `controls` list gains
 // `"Copy link"`. Nothing else in either literal moved.
 //
+// Re-frozen again, deliberately, for #378: an admin's Collaboration tab gains the Activity source
+// segment (`Project` | `System`), the only place Background jobs now live. Only the admin literal's
+// Collaboration `controls` gained those two names; external_editor and every other tab are unchanged.
+//
 // Re-frozen again, deliberately, for #376: the Discussion composer became an always-open `InputGroup`
 // field. Only the "Collaboration" entry moves, identically for both roles: `controls` swaps
 // `"Post comment"` for `"Post"` (the primary button is now just "Post"), and `roles` gains `"group"`
@@ -957,9 +961,11 @@ const FROZEN_ADMIN = {
       "Move project Stage",
       "Ordered list",
       "Post",
+      "Project",
       "RAW2",
       "Redo",
       "Strikethrough",
+      "System",
       "Underline",
       "Undo",
       "Video0",

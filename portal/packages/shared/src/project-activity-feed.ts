@@ -121,7 +121,9 @@ export function projectActivityFeedItemFromRow(row: ProjectActivityFeedRow, proj
     type: row.type,
     category: row.category,
     occurredAt: row.occurredAt,
-    presentation: renderProjectActivityNotification(row.type, row.safePayload, projectLabel, actor?.name ?? null),
+    // The feed carries `actor` structurally and the row renders it once; passing the name here would
+    // bake an "Ting — " prefix into the body. Notifications keep the prefix (they have no `actor` field).
+    presentation: renderProjectActivityNotification(row.type, row.safePayload, projectLabel, null),
     actor,
   });
 }

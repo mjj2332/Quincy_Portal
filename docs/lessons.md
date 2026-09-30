@@ -4515,3 +4515,20 @@ remove the legacy readers) still applies.
   `tb8-07-regressions`; the assertion moved with it. Likewise the DOM test seam bans class and
   vendor-`data-slot` selectors, so new hooks (`initials-avatar`, `rich-text-field`,
   `collaboration-timestamp-absolute`) are `data-testid`s on Quincy-owned elements.
+
+## Activity feed vs notification copy (#378, 2026-09-30)
+
+- **The actor prefix belongs to notifications only.** `renderProjectActivityNotification(…, actorName)`
+  prefixes `"${actorName} — "`; a notification has no `actor` field, so it needs it. The Activity feed
+  item carries `actor` structurally and the row renders it once (bold), so
+  `projectActivityFeedItemFromRow` passes `null` and the sentence stays actor-free, exactly as the
+  External feed already ships it. Do not re-add the name to the feed body, and do not strip the prefix
+  in the client by parsing prose. A test pins that the notification body is still
+  `"<actor> — <feed body>"`.
+- **`actor === null` does not mean "System".** It is also a user actor whose profile has no name
+  (`workers/app/src/routes/project-activity.ts`). The row shows the sentence alone with an empty
+  avatar slot; "System" is the name of the Background jobs view, not of an event author.
+- **Removing the Background jobs card must not remove the jobs.** It rendered under every Workspace
+  tab, but the same `jobs` state drives the active-job poll, the AutoHDR hand-off and the Collection
+  body. `ProjectWorkspace` still owns the fetch, poll and retry; `jobs` / `onRetryJob` are threaded to
+  the panel (admins only) and shown under Activity > System.

@@ -9,6 +9,7 @@ import {
   type NotificationListItem,
 } from "../../lib/notification-list";
 import { Eyebrow } from "./Eyebrow";
+import { DateGroupHeading } from "./DateGroupHeading";
 import { cn } from "../../lib/utils";
 import { InitialsAvatar } from "./InitialsAvatar";
 import { Button } from "@/components/reui/button";
@@ -242,9 +243,9 @@ const BUCKET_LIST = "m-0 p-0 list-none";
 // while its own rows scrolled past would visually detach from the day it labels. Panel scale only.
 const BUCKET_HEAD = "bg-secondary [border-top-style:solid] [border-bottom-style:solid] border-t-[length:var(--border-width-hair)] border-b-[length:var(--border-width-hair)] border-t-border border-b-border px-[var(--space-4)] py-[var(--space-2)]";
 // Page scale's bucket head — no band, a label beside a hairline rule that fills the remaining
-// width, more page-like than the panel's sunken strip.
-const BUCKET_HEAD_PAGE = "flex items-center gap-[var(--space-4)] pt-[var(--space-7)] pb-[var(--space-2)]";
-const BUCKET_RULE_PAGE = "flex-1 [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border";
+// width, more page-like than the panel's sunken strip. The heading itself is `DateGroupHeading`
+// (shared with the Activity feed, #378); only the page's vertical spacing lives here.
+const BUCKET_HEAD_PAGE_SPACING = "pt-[var(--space-7)] pb-[var(--space-2)]";
 
 export function NotificationList({ buckets, now, showThumbnails, scale, onActivate, onDismiss }: NotificationListProps) {
   const headingIdPrefix = useId();
@@ -255,10 +256,7 @@ export function NotificationList({ buckets, now, showThumbnails, scale, onActiva
         return (
           <section key={bucket.key} data-notification-bucket={bucket.key} aria-labelledby={headingId}>
             {scale === "page" ? (
-              <h3 id={headingId} className={BUCKET_HEAD_PAGE}>
-                <Eyebrow>{bucket.label}</Eyebrow>
-                <span aria-hidden="true" className={BUCKET_RULE_PAGE} />
-              </h3>
+              <DateGroupHeading id={headingId} label={bucket.label} className={BUCKET_HEAD_PAGE_SPACING} />
             ) : (
               <h3 id={headingId} className={BUCKET_HEAD}>
                 <Eyebrow>{bucket.label}</Eyebrow>

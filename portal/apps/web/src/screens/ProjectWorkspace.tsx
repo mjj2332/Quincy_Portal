@@ -33,12 +33,11 @@ import type { ProjectDataResource } from "../lib/project-query-sync";
 import { submitStageMoveWithConfirmation } from "../lib/stage-move";
 import { availableCollectionTabs, isCollectionTab, resolveArrivalTab, type WorkspaceTab } from "../lib/workspace-tab";
 import { EditorFolderAttentionNotice } from "../components/EditorFolderAttentionNotice";
-import { formatAbsoluteTime } from "../lib/date-format";
+import type { Job } from "../lib/project-jobs";
 
 type AssetDeleteResponse = { ok: boolean; deletedAssetIds: string[]; deletedObjects: number; dropboxDeleted: boolean; dropboxOutcome?: "removed" | "alreadyGone" | "claimLost" | "failed"; dropboxReason?: string };
 // Edited uploads remain invisible until their existing publication poll reports them ready.
 type IngestStatus = { expectedCount: number | null; receivedCount: number; mismatch: boolean };
-type Job = { id: string; kind: "autohdr_api_send" | "autohdr" | "fetch_edited" | "autohdr_scaffold" | "editor_reconcile" | "editor_sync" | "manual_edited_publish" | "manual_raw_publish"; status: "queued" | "running" | "done" | "failed" | "stuck"; error: string | null; correlationId: string | null; createdAt: string; updatedAt: string };
 type JobsResponse = { jobs: Job[] };
 type DropboxSyncResponse = { raw: { jobId: string } | { skipped: "no_raw_folder" | "not_permitted" | "error"; message?: string }; edited: { jobId: string } | { skipped: "not_ready" | "not_admin" | "error"; message?: string } | { blocked: { code: string; message: string } } };
 interface AutoHdrStatusResponse { handoff: { id: string; generation: number; state: "starting" | "started" | "blocked" | "retired" | "failed"; mappingState: "pending_discovery" | "active" | "blocked_collision" | "retired"; finalPath: string | null; diagnostic: string | null } | null; }
@@ -549,9 +548,8 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
     <section className="workmain" data-testid="workspace-main">
       {collection !== null && <CollectionTabBody key={collection} {...props} collection={collection} hasRawFolder={hasRawFolder} autohdrBlocked={autohdrBlocked} />}
       <div role="tabpanel" id="project-workspace-panel-collaboration" aria-labelledby="project-workspace-tab-collaboration" hidden={activeTab !== "collaboration"} className="workgrid">
-        {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} presented={activeTab === "collaboration"} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
+        {props.collaborationUnavailable ? <CollaborationUnavailableSection /> : <ProjectCollaborationPanel projectId={project.id} presented={activeTab === "collaboration"} jobs={props.canAdminBackend ? props.jobs : undefined} onRetryJob={props.onRetryAutoHdr} view={props.collaborationView} onViewChange={props.onCollaborationViewChange} showUnreadBadge={false} onUnreadCountChange={setCollaborationUnread} onAccessFailure={props.onAccessFailure} embedded />}
       </div>
-      {props.canAdminBackend && props.jobs.length > 0 && <div className="workgrid"><section className="hdr" style={{ alignItems: "flex-start", flexDirection: "column" }}><div><strong>Background jobs</strong><div className="muted">Recent AutoHDR sends, fetches, Editor folder passes, and manual-upload publishes for this project.</div></div>{props.jobs.map((job) => <div className="kv" style={{ width: "100%" }} key={job.id}><span className="k">{formatAbsoluteTime(job.createdAt)}</span><span className="vv"><span className="k">{job.kind === "autohdr_api_send" ? "API send" : job.kind === "fetch_edited" ? "Fetch" : job.kind === "autohdr_scaffold" ? "Scaffold" : job.kind === "editor_reconcile" ? "Editor folder" : job.kind === "editor_sync" ? "Editor sync" : job.kind === "manual_edited_publish" || job.kind === "manual_raw_publish" ? "Manual upload" : "Send"}</span>{" "}<span className={`statetag st-${job.status}`}>{job.status}</span>{job.error ? ` ${job.error}` : ""}{job.kind !== "autohdr_api_send" && (job.status === "stuck" || job.status === "failed") && <button className="chip" style={{ marginLeft: 8 }} type="button" onClick={() => props.onRetryAutoHdr(job.id)}>Retry</button>}</span></div>)}</section></div>}
     </section>
   </main>;
 }

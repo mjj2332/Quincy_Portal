@@ -321,6 +321,8 @@ describe("project activity feed API", () => {
     const systemItem = internalBody.items.find((item) => item.id === "30000000-0000-4000-8000-000000000004")!;
     expect(userItem.actor).toEqual({ id: editorId, name: "editor activity tester" });
     expect(systemItem.actor).toBeNull();
+    // #378: the actor is structural; the sentence must not repeat it.
+    expect(userItem.presentation.body).not.toContain("editor activity tester");
     const external = await request(`/api/projects/${projectId}/activity`, tokens.external);
     expect(external.status).toBe(200);
     const externalBody = externalProjectActivityFeedResponseSchema.parse(await external.json());

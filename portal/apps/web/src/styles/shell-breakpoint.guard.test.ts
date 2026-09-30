@@ -69,6 +69,10 @@ const SHELL_FILES: readonly { path: string; kind: "script" | "css" }[] = [
   // #115: the bell's fetch/poll/mark-read/dismiss data layer moved out of `NotificationBell.tsx`
   // into this hook — a tightening, the same reasoning as #114's `NotificationList.tsx` above.
   { path: "lib/use-notifications.ts", kind: "script" },
+  // #378: the page-scale day heading was extracted out of `NotificationList.tsx` so the Activity
+  // feed shares it — the same reasoning as #114's `NotificationList.tsx` above. It carries no
+  // responsive variants of its own; this entry keeps it that way.
+  { path: "components/quincy/DateGroupHeading.tsx", kind: "script" },
 ];
 
 // ---------------------------------------------------------------------------

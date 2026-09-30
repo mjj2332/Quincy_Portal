@@ -29,7 +29,7 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProductionEventCalendarDialogs.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/ProductionEventCalendarRail.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProductionGantt.tsx": { count: 4, ledger: "baseline (#262)" },
-  "components/ProjectActivityView.tsx": { count: 3, ledger: "baseline (#262)" },
+  "components/ProjectActivityView.tsx": { count: 2, ledger: "#378: the Project | System segment — quincy/segment SEGMENT_GROUP + SEGMENT_BUTTON on two raw <button>, the Dashboard scope switcher precedent (screens/Dashboard.tsx). base-nova toggle-group is not installed and would add a second segment style; quincy/TabStrip is rejected (a tablist nested in the Discussion/Activity tablist); quincy/Checkbox reads as a setting, not a view." },
   "components/ProjectCollaborationPanel.tsx": { count: 5, ledger: "baseline (#262)" },
   "components/ProjectDeadlineControl.tsx": { count: 13, ledger: "baseline (#262)" },
   "components/ProjectFields.tsx": { count: 5, ledger: "baseline (#262)" },
@@ -43,5 +43,5 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/kanban2/move-to-control.tsx": { count: 9, ledger: "baseline (#262)" },
   "screens/Admin.tsx": { count: 3, ledger: "baseline (#262)" },
   "screens/Dashboard.tsx": { count: 7, ledger: "baseline (#262)" },
-  "screens/ProjectWorkspace.tsx": { count: 4, ledger: "baseline (#262)" },
+  "screens/ProjectWorkspace.tsx": { count: 3, ledger: "baseline (#262)" },
 };
