@@ -18,12 +18,12 @@ describe("AvatarStack", () => {
     expect(labels()).toEqual(["No Editor assigned"]);
   });
 
-  it("shows three avatars and a +N overflow with a pluralised label", () => {
+  it("shows two avatars and a +N chip once there are more than three people, with a pluralised label", () => {
     act(() => root.render(<AvatarStack people={[1, 2, 3, 4, 5].map((n) => person(n))} personNoun="team member" emptyLabel="None" />));
-    expect(labels()).toEqual(["Person 1", "Person 2", "Person 3", "2 more team members"]);
+    expect(labels()).toEqual(["Person 1", "Person 2", "3 more team members"]);
     act(() => root.render(<AvatarStack people={[1, 2, 3, 4].map((n) => person(n))} personNoun="Editor" emptyLabel="None" />));
-    expect(labels().at(-1)).toBe("1 more Editor");
-    expect(host.textContent).toContain("+1");
+    expect(labels()).toEqual(["Person 1", "Person 2", "2 more Editors"]);
+    expect(host.textContent).toContain("+2");
   });
 
   it("suffixes an inactive person and names an unnamed one", () => {
@@ -34,5 +34,50 @@ describe("AvatarStack", () => {
   it("decorative hides the whole stack from assistive tech", () => {
     act(() => root.render(<AvatarStack decorative people={[person(1)]} personNoun="Editor" emptyLabel="None" />));
     expect(host.firstElementChild!.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("shows one and exactly three people with no overflow chip", () => {
+    act(() => root.render(<AvatarStack people={[person(1)]} personNoun="Assignee" emptyLabel="Unassigned" />));
+    expect(labels()).toEqual(["Person 1"]);
+    act(() => root.render(<AvatarStack people={[1, 2, 3].map((n) => person(n))} personNoun="Assignee" emptyLabel="Unassigned" />));
+    expect(labels()).toEqual(["Person 1", "Person 2", "Person 3"]);
+    expect(host.textContent).not.toContain("+");
+  });
+
+  it("caps seven people at two avatars and counts five more", () => {
+    act(() => root.render(<AvatarStack people={[1, 2, 3, 4, 5, 6, 7].map((n) => person(n))} personNoun="Assignee" emptyLabel="Unassigned" />));
+    expect(labels()).toEqual(["Person 1", "Person 2", "5 more Assignees"]);
+    expect(host.textContent).toContain("+5");
+  });
+
+  describe("hiddenCount (people the viewer may not see)", () => {
+    it("with nobody named renders only the count chip, never the empty circle", () => {
+      act(() => root.render(<AvatarStack people={[]} hiddenCount={2} personNoun="Assignee" emptyLabel="Unassigned" />));
+      expect(labels()).toEqual(["2 others not shown"]);
+      expect(host.textContent).toBe("+2 others");
+    });
+
+    it("uses the singular for one hidden person", () => {
+      act(() => root.render(<AvatarStack people={[]} hiddenCount={1} personNoun="Assignee" emptyLabel="Unassigned" />));
+      expect(labels()).toEqual(["1 other not shown"]);
+      expect(host.textContent).toBe("+1 others");
+    });
+
+    it("folds named overflow and hidden people into one chip with both facts in its label", () => {
+      act(() => root.render(<AvatarStack people={[1, 2, 3, 4, 5].map((n) => person(n))} hiddenCount={2} personNoun="Assignee" emptyLabel="Unassigned" />));
+      expect(labels()).toEqual(["Person 1", "Person 2", "3 more Assignees and 2 others not shown"]);
+      expect(host.textContent).toContain("+5 others");
+    });
+
+    it("adds hidden people after the named ones without inventing overflow", () => {
+      act(() => root.render(<AvatarStack people={[person(1)]} hiddenCount={2} personNoun="Assignee" emptyLabel="Unassigned" />));
+      expect(labels()).toEqual(["Person 1", "2 others not shown"]);
+      expect(host.textContent).toContain("+2 others");
+    });
+
+    it("never renders a hidden person's identity: only a count is accepted", () => {
+      act(() => root.render(<AvatarStack people={[person(1)]} hiddenCount={3} personNoun="Assignee" emptyLabel="Unassigned" />));
+      expect(host.textContent).not.toMatch(/Person [2-9]/);
+    });
   });
 });
