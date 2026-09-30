@@ -83,7 +83,21 @@
  * whole; loading/error — `reui/skeleton`, `quincy/Notice`, `reui/button`; read-only Due — plain
  * `<time>` on tokens.
  *
- * ## #372 — Subtask assignees (the assignee half; the row's range end is a later change)
+ * ## #372 — Subtask range end (the Due column)
+ * A Subtask row's Due cell shows the END of its range ("Fri 2 Oct", "Fri 2 Oct · 17:00", Sydney wall time; an all-day stored end
+ * stays inclusive). A viewer with `permissions.canOpenScheduleEditor` (the row's own gate, External Editors included; not the
+ * Project Deadline's) opens the Checklist's own range picker on End (`quincy/SubtaskScheduleControl`, popover anchored on the
+ * cell); everyone else sees a plain `<time>`. Unlike the assignee write below, this IS a scheduling command: the picker is the
+ * presentation of the controller's own schedule editor (`openChecklistScheduleEditor(source, undefined, { inline: true })`,
+ * `ProductionEventCalendarDialogs scheduleEditorPresentation="inline"` so the Calendar's sheet is not also opened), so the
+ * version the PATCH carries is the one captured when the editor opened, the lock / accept gate / optimistic bar / Undo toast /
+ * settle refetch (`producer: "gantt"`) are the controller's, and an End-only edit resends the unchanged Start. A conflict's own
+ * `current` (and a full item's `currentSubtask`) is adopted, so a continuation-page row (never returned by the refetch) retries
+ * at the version that won, never the stale one (`onEditorConflict` -> `adoptGanttChildSchedule`); the draft is kept and never
+ * re-sent on its own. At <= 720px the Due column is not rendered, so the range is edited from the bar or the Checklist.
+ * Reuse ledger: `ProductionGanttSubtaskCells.tsx`.
+ *
+ * ## #372 — Subtask assignees
  * A Subtask row's People cell (the column a Project row uses for its Team) holds its assignees: an editable stack for a viewer with
  * `permissions.canEditAssignees` (the Checklist's own picker, commit on close, one versioned
  * `PATCH /subtasks/:id { assignees: { expectedVersion, add, remove } }`), a plain stack otherwise. The
@@ -139,7 +153,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type Role } from "@quincy/shared";
+import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type Role } from "@quincy/shared";
 import { Gantt, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
@@ -168,7 +182,7 @@ import {
   previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
-import { adoptGanttChecklistRow, adoptGanttChildRows, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { adoptGanttChecklistRow, adoptGanttChildRows, adoptGanttChildSchedule, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
 import { decodeChecklistMutationResponse } from "../lib/production-calendar-query";
 import { scheduleWarningText } from "../lib/schedule-bounds";
 import {
@@ -199,6 +213,7 @@ import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
 import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
+import { GanttSubtaskDueCell, scheduleErrorFromEditor, stopRowGesture } from "./ProductionGanttSubtaskCells";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
@@ -207,6 +222,7 @@ import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { StageSwatch } from "./quincy/StageSwatch";
 import { SubtaskAssigneePicker, type AssigneePickerBaseline } from "./quincy/SubtaskAssigneePicker";
+import { type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
 import { Skeleton } from "./reui/skeleton";
 
 export type ProductionGanttProps = {
@@ -359,9 +375,6 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
  * Only rows the chart draws from `displayProjects` get one, so a pinned created row (display-only) has none.
  */
 type GanttAssigneeCell = { projectId: string; row: GanttChecklistRowDto };
-
-/** Keeps a click, press or key on the assignee cell from also selecting or dragging the row it sits in (same reason as the Deadline action). */
-const stopRowGesture = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
 /**
  * #372: a Subtask row's assignees, rendered in the People column. The wrapper keeps a press or key off the row it sits in;
@@ -1079,14 +1092,36 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (info.kind === "checklist") patchChildRow(info.projectId, info.checklistResult);
   }, [patchChildRow]);
 
-  const commands = useSchedulingControllerWithUndoToast({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone });
+  // #372: a Due-cell save lost a race and the 409's own body carries the winner. A continuation-page row is never in the settle
+  // refetch, so it is adopted here (a full item with its assignees and Done, a bare schedule with the schedule alone).
+  const handleEditorConflict = useCallback((info: { projectId: string; subtaskId: string; schedule: ChecklistScheduleDto; item?: ChecklistMutationResult }) => {
+    if (info.item) patchChildRow(info.projectId, info.item);
+    else setChildState((current) => adoptGanttChildSchedule(current, info.projectId, info.subtaskId, info.schedule));
+  }, [patchChildRow]);
+
+  const commands = useSchedulingControllerWithUndoToast({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone, onEditorConflict: handleEditorConflict });
   const live = !commands.interactionBlocked && !commands.settle.pending && !commands.accessLost;
   const queryClient = useQueryClient();
   const terminateOnUnauthorized = useProjectAccessTermination();
 
   // Accept-gate freeze: while an interaction is open the controller holds its accepted baseline and
   // queues any refetch, exactly as the Calendar does.
-  const displayProjects = commands.acceptedResponse?.projects ?? effectiveProjects;
+  // The controller's accepted baseline is a copy of the last refetch's page one, so a Project's continuation rows (walked into
+  // `childState`, never in the refetch) would drop out of the chart after any scheduling write whose refetch left page one
+  // unchanged (nothing re-seeds the walk then, so nothing re-accepts). Rows the baseline lacks are carried over from
+  // `effectiveProjects` (the walked rows, patched version-wins by every save), so a later-page row survives its own edit (#372).
+  const acceptedProjects = commands.acceptedResponse?.projects;
+  const displayProjects = useMemo(() => {
+    if (!acceptedProjects) return effectiveProjects;
+    const effectiveById = new Map(effectiveProjects.map((project) => [project.id, project]));
+    return acceptedProjects.map((project) => {
+      const walked = effectiveById.get(project.id);
+      if (!walked || !project.children.truncated) return project;
+      const known = new Set(project.children.rows.map((row) => row.id));
+      const extra = walked.children.rows.filter((row) => !known.has(row.id));
+      return extra.length ? { ...project, children: { ...project.children, rows: [...project.children.rows, ...extra] } } : project;
+    });
+  }, [acceptedProjects, effectiveProjects]);
   const projectById = useMemo(() => new Map(displayProjects.map((project) => [project.id, project])), [displayProjects]);
 
   // -------------------------------------------------------------------------------------------
@@ -1151,6 +1186,33 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
   }, [adoptAssignees, generationKey, identity.role, queryClient, terminateOnUnauthorized]);
   projectByIdRef.current = projectById;
+
+  // -------------------------------------------------------------------------------------------
+  // #372 — Subtask range end. The Due cell's picker is the presentation of the controller's own schedule editor.
+  // -------------------------------------------------------------------------------------------
+  // The Subtask whose inline editor session the controller holds, if any.
+  const narrowTree = useMediaQuery("(max-width: 720px)");
+  const dueEditor = commands.scheduleEditor?.inline ? commands.scheduleEditor : null;
+  const dueEditorSubtaskId = dueEditor ? subtaskIdFromCalendarEntityId(dueEditor.source.id) : null;
+  // A failed save keeps its draft here, above the vendor tree's rows (which remount), one entry per Subtask.
+  const retainedSchedules = useRef(new Map<string, RetainedSchedule>());
+  const retainedScheduleFor = useCallback((id: string) => {
+    let retained = retainedSchedules.current.get(id);
+    if (!retained) { retained = { draft: null, baseVersion: null }; retainedSchedules.current.set(id, retained); }
+    return retained;
+  }, []);
+  useEffect(() => { retainedSchedules.current.clear(); }, [generationKey]);
+  // The cell that draws the editor is gone (the Due column hides at <= 720px, or the row left the chart): a session no one can
+  // see would hold the lock and the accept gate, so it is cancelled. Not a save; nothing was sent.
+  const dueEditorRowVisible = dueEditorSubtaskId ? [...assigneeCellByChecklistResourceId.values()].some((cell) => cell.row.id === dueEditorSubtaskId) : true;
+  useEffect(() => {
+    if (dueEditorSubtaskId && (narrowTree || !dueEditorRowVisible)) commands.cancelScheduleEditor();
+  }, [dueEditorSubtaskId, narrowTree, dueEditorRowVisible, commands]);
+  const openDueEditor = useCallback((cell: GanttAssigneeCell) => {
+    const project = projectById.get(cell.projectId);
+    const source = project ? ganttChecklistSource(project, cell.row) : null;
+    if (source) commands.openChecklistScheduleEditor(source, undefined, { inline: true });
+  }, [commands, projectById]);
 
   // The bar never snaps back between release and the controller's overlay: `pending` covers that
   // gap and yields to the overlay the moment it exists.
@@ -1350,7 +1412,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, [displayProjects, attentionByResourceId, live, openUnscheduledProjectDialog, openMoveDialog]);
 
   // At <= 720px the Due column is not rendered, so the row's reason stays on the name cell's badge.
-  const narrowTree = useMediaQuery("(max-width: 720px)");
   const hideAttentionBadgeFor = useMemo(() => (narrowTree ? new Set<string>() : new Set(deadlineActionByProjectResourceId.keys())), [narrowTree, deadlineActionByProjectResourceId]);
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (
@@ -1392,6 +1453,27 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         title: "Due",
         width: 128,
         render: ({ resource }) => {
+          // #372: a Subtask row's Due is the end of its range. The owner of the controller's editor session is not frozen by it.
+          const subtaskCell = assigneeCellByChecklistResourceId.get(resource.id);
+          if (subtaskCell) {
+            const owner = dueEditorSubtaskId === subtaskCell.row.id;
+            return (
+              <GestureAwareCell live={live || owner}>
+                {(disabled) => (
+                  <GanttSubtaskDueCell
+                    row={subtaskCell.row}
+                    editorOpen={owner}
+                    disabled={disabled}
+                    error={owner && dueEditor ? scheduleErrorFromEditor(dueEditor) : undefined}
+                    retained={retainedScheduleFor(subtaskCell.row.id)}
+                    onOpen={() => openDueEditor(subtaskCell)}
+                    onSubmit={commands.submitScheduleEditor}
+                    onCancel={commands.cancelScheduleEditor}
+                  />
+                )}
+              </GestureAwareCell>
+            );
+          }
           const project = projectFor(resource);
           if (!project) return null;
           const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
@@ -1401,7 +1483,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         },
       },
     ];
-  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees]);
+  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
@@ -1716,7 +1798,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       )}
       {body}
       <div className="sr-only" data-testid="production-gantt-live-region" aria-live="polite" aria-atomic="true">{commands.announcement}</div>
-      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} />
+      <ProductionEventCalendarDialogs commands={commands} deadlineConfirm={deadlineConfirm} scheduleEditorPresentation="inline" />
     </div>
   );
 }

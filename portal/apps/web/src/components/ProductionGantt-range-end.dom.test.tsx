@@ -297,7 +297,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await click(pickerButton(TIMED_TITLE, "Save")!);
     await flush(6);
     expect(patches()).toHaveLength(1);
-    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: `${sydneyDay(2)}T09:00` }, end: { kind: "timed", localCivil: `${sydneyDay(2)}T18:30` } });
+    expect(patchBody().schedule.schedule).toEqual({ state: "range", start: { kind: "timed", localCivil: `${sydneyDay(2)}T09:00`, disambiguation: "earlier" }, end: { kind: "timed", localCivil: `${sydneyDay(2)}T18:30`, disambiguation: "earlier" } });
     await waitFor(() => expect(dueText(TIMED_TITLE)).toBe("Sat 12 Sep · 18:30"));
   });
 
@@ -307,13 +307,13 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     expect(document.activeElement).toBe(dateInput(RANGE_TITLE, "End"));
     await click(pickerButton(RANGE_TITLE, "Cancel")!);
     await flush(3);
-    expect(picker(RANGE_TITLE)).toBeNull();
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
     expect(document.activeElement).toBe(dueTrigger(RANGE_TITLE));
 
     await openDue(RANGE_TITLE);
     await keydown(document.activeElement ?? document.body, "Escape");
     await flush(3);
-    expect(picker(RANGE_TITLE)).toBeNull();
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
     expect(document.activeElement).toBe(dueTrigger(RANGE_TITLE));
     expect(patches()).toHaveLength(0);
     expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
@@ -374,19 +374,22 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await openDue(TIMED_TITLE);
     await setInput(dateInput(TIMED_TITLE, "End")!, "2026-04-05");
     await setInput(timeInput(TIMED_TITLE, "End")!, "02:30");
+    // The picker sends the default ("earlier"); the server answers that the hour occurs twice and the picker asks.
+    patchReply = () => ({ status: 400, body: { error: "repeated", code: "subtask_schedule_repeated_local_time", details: { endpoint: "end", choices: [{ disambiguation: "earlier", utcOffsetMinutes: 660 }, { disambiguation: "later", utcOffsetMinutes: 600 }] } } });
     await click(pickerButton(TIMED_TITLE, "Save")!);
-    await flush(4);
-    expect(patches()).toHaveLength(0);
+    await flush(6);
+    expect(patches()).toHaveLength(1);
     expect(picker(TIMED_TITLE)).not.toBeNull();
     const radios = [...picker(TIMED_TITLE)!.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
     expect(radios).toHaveLength(2);
     expect(dateInput(TIMED_TITLE, "End")!.value).toBe("2026-04-05");
+    patchReply = null;
     await click(radios[1]!);
     await click(pickerButton(TIMED_TITLE, "Save")!);
     await flush(6);
-    expect(patches()).toHaveLength(1);
-    expect(patchBody().schedule.schedule.end).toEqual({ kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" });
-    expect(patchBody().schedule.schedule.start).toEqual({ kind: "timed", localCivil: "2026-04-04T09:00" });
+    expect(patches()).toHaveLength(2);
+    expect(patchBody(1).schedule.schedule.end).toEqual({ kind: "timed", localCivil: "2026-04-05T02:30", disambiguation: "later" });
+    expect(patchBody(1).schedule.schedule.start).toEqual({ kind: "timed", localCivil: "2026-04-04T09:00", disambiguation: "earlier" });
   });
 
   it("R10 the open version survives a late refresh: the first PATCH still carries the version the editor opened at", async () => {
@@ -439,7 +442,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await flush(6);
 
     expect(patches()).toHaveLength(1);
-    expect(picker(RANGE_TITLE)).toBeNull();
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
     await waitFor(() => expect(dueText(RANGE_TITLE)).toBe("Fri 18 Sep"));
     expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
     expect(dueTrigger(RANGE_TITLE)!.getAttribute("aria-disabled")).not.toBe("true");
@@ -454,7 +457,8 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     const winner = range(3, dateEndpoint(sydneyDay(2)), dateEndpoint(sydneyDay(9)));
     patchReply = () => { pageTwo[0]!.schedule = winner; return { status: 409, body: { error: "conflict", code: "subtask_schedule_version_conflict", current: winner } }; };
     await click(pickerButton(PAGE_TWO_TITLE, "Save")!);
-    await flush(6);
+    await flush(1);
+    await flush(5);
 
     expect(patches()).toHaveLength(1);
     expect(picker(PAGE_TWO_TITLE)!.textContent).toContain("Latest schedule · v3");
@@ -485,7 +489,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await click(pickerButton(RANGE_TITLE, "Use latest item (discard draft)")!);
     await flush(6);
     expect(patches()).toHaveLength(1);
-    expect(picker(RANGE_TITLE)).toBeNull();
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
   });
 
   it("R15 the owning editor's own fields stay usable while its open session freezes the rest of the chart", async () => {
@@ -539,7 +543,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     await saveEnd(RANGE_TITLE, sydneyDay(4));
     expect(patches()).toHaveLength(1);
     expect(onAccessLoss).toHaveBeenCalledTimes(1);
-    expect(picker(RANGE_TITLE)).toBeNull();
+    await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
     expect(toasts().join(" ")).not.toContain("could not");
   });
 
@@ -560,7 +564,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
       addEventListener: (_: string, listener: () => void) => { listeners.add(listener); },
       removeEventListener: (_: string, listener: () => void) => { listeners.delete(listener); },
       addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false,
-    })) as typeof window.matchMedia;
+    })) as unknown as typeof window.matchMedia;
     try {
       await render();
       expect(dueCells().length).toBeGreaterThan(0);
@@ -570,7 +574,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
       await act(async () => { listeners.forEach((listener) => listener()); await Promise.resolve(); });
       await flush(4);
       expect(dueCells()).toHaveLength(0);
-      expect(picker(RANGE_TITLE)).toBeNull();
+      await waitFor(() => expect(picker(RANGE_TITLE)).toBeNull());
       expect(onAcceptGateChange).toHaveBeenLastCalledWith(false);
     } finally { window.matchMedia = original; }
   });

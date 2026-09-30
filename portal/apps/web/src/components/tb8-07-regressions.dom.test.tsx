@@ -57,7 +57,7 @@ describe("TB8-07 — the schedule conflict paints as a warning (§2.4)", () => {
   );
 
   it("renders the conflict through Notice's caution tone", () => {
-    expect(read("./SubtaskChecklist.tsx")).toContain('<Notice tone="caution"');
+    expect(read("./quincy/SubtaskScheduleControl.tsx")).toContain('<Notice tone="caution"');
   });
 
   it("gives Notice a caution tone that splits text from border and wash", () => {

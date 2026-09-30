@@ -173,3 +173,20 @@ export function formatCivilSchedule(value: ChecklistScheduleDto): string {
   }
   return `${displayCivil(start.localCivil)} → ${displayCivil(end.localCivil)}`;
 }
+
+// Frozen weekday table, for the same reason as `MONTH_NAMES`.
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/**
+ * A Subtask's Due (the end of its range) as the Gantt shows it: "Fri 2 Oct", or "Fri 2 Oct · 17:00" when the
+ * end is timed. A civil (zone-less) Sydney wall-clock string in, so the weekday is the date's own and never a
+ * device-zone reinterpretation of midnight. Same shape as the Project Deadline's trigger text (#365).
+ */
+export function formatDueCivil(localCivil: string): string {
+  const [date = "", time] = localCivil.split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  if (!year || !month || !day) return localCivil;
+  const weekday = WEEKDAY_NAMES[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  const text = `${weekday} ${day} ${MONTH_NAMES[month - 1]}`;
+  return time ? `${text} · ${time.slice(0, 5)}` : text;
+}

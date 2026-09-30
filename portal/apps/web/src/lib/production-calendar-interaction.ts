@@ -181,7 +181,7 @@ export function classifyDeadlineFailure(value: unknown, ctx: { eventId: string }
   }
 }
 
-export function classifyChecklistFailure(value: unknown, ctx: { eventId: string; fromEditor?: boolean }): ChecklistFailureAction | null {
+export function classifyChecklistFailure(value: unknown, ctx: { eventId: string; fromEditor?: boolean; inline?: boolean }): ChecklistFailureAction | null {
   const status = statusOf(value);
   if (status === 401 || status === 403) {
     return {
@@ -198,7 +198,9 @@ export function classifyChecklistFailure(value: unknown, ctx: { eventId: string;
       // "No retry" means no automatic retry; an editor retains its draft for manual resubmission.
       return { code, rollback: true, refetch: true, retry: false, retainDraft, askFold: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist schedule changed elsewhere. Reloaded the latest; no retry was made." };
     case "subtask_item_conflict":
-      return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist item changed elsewhere. Reloaded the latest item; no retry was made." };
+      // #372: an editor that is a surface's own inline picker (the Gantt's Due cell) retains its draft here too,
+      // like a schedule conflict: the Calendar's sheet and every drag keep dropping it.
+      return { code, rollback: true, refetch: true, retry: false, retainDraft: Boolean(ctx.inline), askFold: false, mappingDefect: false, accessLoss: false, focus: "event", announce: "The checklist item changed elsewhere. Reloaded the latest item; no retry was made." };
     case "subtask_schedule_reload_required":
       return { code, rollback: true, refetch: true, retry: false, retainDraft: false, askFold: false, mappingDefect: true, accessLoss: false, focus: "event", announce: "The checklist schedule could not be applied. Reloaded the latest; try again." };
     case "subtask_schedule_nonexistent_local_time":

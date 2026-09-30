@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import {
+  checklistScheduleDtoSchema,
   checklistScheduleToDto,
   normalizeChecklistSchedule,
   previewProjectDeadlineReminderConsequences,
@@ -11,6 +12,7 @@ import {
   type CalendarManipulationTarget,
   type ChecklistCalendarEventDto,
   type ChecklistDisambiguation,
+  type ChecklistScheduleDto,
   type DashboardCalendarState,
   type RangeChecklistScheduleInput,
   type ProjectCalendarUnscheduledEntryDto,
@@ -18,6 +20,7 @@ import {
   type ProjectDeadlineDisambiguation,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
+  type Role,
   type SaveChecklistScheduleRequest,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
@@ -120,6 +123,8 @@ export type ChecklistOperationInfo = {
   drop?: CalendarRevertable;
   resize?: CalendarResizeInfo;
   editor?: boolean;
+  /** #372: the editor is a surface's own inline picker (the Gantt's Due cell), not the Calendar's sheet: a conflict's authoritative body is kept and adopted, and an item conflict retains the draft too. */
+  inline?: boolean;
 };
 export type ChecklistProposal = {
   snapshot: ChecklistSnapshot;
@@ -153,7 +158,30 @@ export type ScheduleEditorState = {
   snapshot: ChecklistSnapshot;
   initialSchedule?: RangeChecklistScheduleInput;
   validationError?: ProductionCalendarScheduleEditorError;
+  /** #372: set for a surface's own inline picker (`openChecklistScheduleEditor`'s `inline` option). */
+  inline?: boolean;
+  /** #372: the decoded `currentSubtask` of a retained inline item conflict, for the picker's latest-item notice. */
+  latestItem?: ChecklistMutationResult;
 };
+
+/**
+ * #372: what an inline editor keeps of a 409's body. `current` is validated with the shared schedule schema and
+ * `currentSubtask` decoded with the CAPTURED role's decoder (an External Editor's is team-filtered); a malformed
+ * part is dropped, never trusted. `schedule` is the newest schedule the body carries.
+ */
+function readEditorConflict(error: unknown, role: Role): { schedule?: ChecklistScheduleDto; item?: ChecklistMutationResult } | null {
+  if (!(error instanceof ApiError) || error.status !== 409 || !error.details || typeof error.details !== "object") return null;
+  const body = error.details as { code?: unknown; current?: unknown; currentSubtask?: unknown };
+  if (body.code !== "subtask_schedule_version_conflict" && body.code !== "subtask_item_conflict") return null;
+  const parsed = body.current === undefined ? undefined : checklistScheduleDtoSchema.safeParse(body.current);
+  let item: ChecklistMutationResult | undefined;
+  if (body.currentSubtask !== undefined) {
+    try { item = decodeChecklistMutationResponse(role, body.currentSubtask); } catch { item = undefined; }
+  }
+  const candidates = [parsed?.success ? parsed.data : undefined, item?.schedule].filter((value): value is ChecklistScheduleDto => value !== undefined);
+  const schedule = candidates.sort((a, b) => b.version - a.version)[0];
+  return { ...(schedule ? { schedule } : {}), ...(item ? { item } : {}) };
+}
 
 /** #216 fix round 2 item 1: `submitProposal`'s own gate result — "busy" when `canStartCommand()`
  * was already false (an open confirmation/settle, or another command mid-flight), "not-accepted"
@@ -264,6 +292,12 @@ export type SchedulingControllerInput<TBaseline> = {
   /** After a successful Undo, before its refetch: lets a surface patch rows the refetch won't
    * return (the Gantt's continuation pages). Checklist Undo carries the decoded restored row. */
   onUndone?: (info: { kind: "checklist" | "deadline"; projectId: string; checklistResult?: ChecklistMutationResult }) => void;
+  /**
+   * #372: an inline editor's save lost a race and the 409's own body carries a newer schedule (`current`, and for an
+   * item conflict the decoded `currentSubtask`). A surface whose rows the refetch cannot return (the Gantt's continuation
+   * pages) adopts it here, so its row and the retained editor agree on the version the retry will use.
+   */
+  onEditorConflict?: (info: { projectId: string; subtaskId: string; schedule: ChecklistScheduleDto; item?: ChecklistMutationResult }) => void;
 };
 
 export type RunUndoOutcome = UndoOutcome | { ok: false; reason: "busy" };
@@ -296,7 +330,8 @@ export type SchedulingController<TBaseline> = {
   runUndo: (ticket: UndoTicket) => Promise<RunUndoOutcome>;
   openMoveDialog: (event: ProjectDeadlineCalendarEventDto) => void;
   openUnscheduledProjectDialog: (entry: ProjectCalendarUnscheduledEntryDto) => void;
-  openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput) => void;
+  /** `inline` (#372): the caller renders the editor itself, so a conflict's own body is adopted (see `ChecklistOperationInfo.inline`). */
+  openChecklistScheduleEditor: (source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean }) => void;
   submitMoveDialog: (localCivil: string, disambiguation?: ProjectDeadlineDisambiguation) => void;
   cancelMoveDialog: () => void;
   submitScheduleEditor: (schedule: RangeChecklistScheduleInput) => void;
@@ -396,7 +431,7 @@ export function useSchedulingCommands(input: SchedulingCommandsInput): Schedulin
  * port identity. `useSchedulingCommands` is the Calendar's thin wrapper over this.
  */
 export function useSchedulingController<TBaseline>(input: SchedulingControllerInput<TBaseline>): SchedulingController<TBaseline> {
-  const { identity, resetKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted, onUndone } = input;
+  const { identity, resetKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted, onUndone, onEditorConflict } = input;
   const queryClient = useOptionalProjectQueryClient();
   // Refs updated every render: callbacks read the LATEST port at call time.
   const portRef = useRef(port);
@@ -428,11 +463,13 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const onSettleStateChangeRef = useRef(onSettleStateChange);
   const onCommittedRef = useRef(onCommitted);
   const onUndoneRef = useRef(onUndone);
+  const onEditorConflictRef = useRef(onEditorConflict);
   useEffect(() => {
     onAcceptGateChangeRef.current = onAcceptGateChange;
     onSettleStateChangeRef.current = onSettleStateChange;
     onCommittedRef.current = onCommitted;
     onUndoneRef.current = onUndone;
+    onEditorConflictRef.current = onEditorConflict;
   });
   // The confirm this hook currently has open, so unmount can withdraw exactly that one
   // request rather than leaving it stranded over whatever view replaced this component.
@@ -1063,7 +1100,8 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       }
     } catch (error) {
       if (accessLostRef.current || token !== operationTokenRef.current) return;
-      const action = classifyChecklistFailure(error, { eventId: proposal.source.id, fromEditor: proposal.operation.editor });
+      const action = classifyChecklistFailure(error, { eventId: proposal.source.id, fromEditor: proposal.operation.editor, inline: proposal.operation.inline });
+      const editorConflict = proposal.operation.inline ? readEditorConflict(error, identity.role) : null;
       if (action?.accessLoss || (error instanceof ApiError && (error.status === 401 || error.status === 403))) {
         handleAccessLoss();
         return;
@@ -1081,7 +1119,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
           if (proposal.operation.editor) {
             setAcceptGate(true);
             commandLockRef.current.active = true;
-            setScheduleEditor({ source: proposal.source, snapshot: proposal.snapshot, initialSchedule: proposal.schedule, validationError: { code: action.code, message: action.announce, endpoint, choices } });
+            setScheduleEditor({ source: proposal.source, snapshot: proposal.snapshot, initialSchedule: proposal.schedule, ...(proposal.operation.inline ? { inline: true } : {}), validationError: { code: action.code, message: action.announce, endpoint, choices } });
           } else {
             setAcceptGate(true);
             commandLockRef.current.active = true;
@@ -1109,11 +1147,19 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       if (action.retainDraft) {
         const port = portRef.current;
         const refreshedResponse = refreshed.data ? port.clone(refreshed.data) : acceptedResponseRef.current;
-        const latest = (refreshedResponse ? port.findChecklist(refreshedResponse, proposal.source.id) : undefined) ?? proposal.source;
+        let latest = (refreshedResponse ? port.findChecklist(refreshedResponse, proposal.source.id) : undefined) ?? proposal.source;
+        // #372: a continuation-page row is not in the refetch, so `latest` above may still be the stale source: the
+        // conflict body's own newer schedule replaces it, so the retained draft is never re-sent at a version that lost.
+        const authoritative = editorConflict?.schedule;
+        if (authoritative && authoritative.version > latest.schedule.version) {
+          latest = { ...latest, schedule: authoritative, timing: timingFromChecklistSchedule(authoritative) ?? latest.timing };
+          const subtaskId = subtaskIdFromCalendarEntityId(latest.id);
+          if (subtaskId) onEditorConflictRef.current?.({ projectId: latest.project.id, subtaskId, schedule: authoritative, ...(editorConflict.item ? { item: editorConflict.item } : {}) });
+        }
         const nextSnapshot: ChecklistSnapshot = { ...proposal.snapshot, event: cloneSource(latest) };
         commandLockRef.current.active = true;
         setAcceptGate(true);
-        setScheduleEditor({ source: latest, snapshot: nextSnapshot, initialSchedule: proposal.schedule, validationError: { code: action.code, message: action.announce, ...(endpointOfError(error) ? { endpoint: endpointOfError(error) } : {}) } });
+        setScheduleEditor({ source: latest, snapshot: nextSnapshot, initialSchedule: proposal.schedule, ...(proposal.operation.inline ? { inline: true } : {}), ...(editorConflict?.item ? { latestItem: editorConflict.item } : {}), validationError: { code: action.code, message: action.announce, ...(endpointOfError(error) ? { endpoint: endpointOfError(error) } : {}) } });
       } else {
         setScheduleEditor(null);
         setChecklistFold(null);
@@ -1214,7 +1260,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     finishChecklistInteraction(state.proposal.operation, state.proposal.source, { kind: "cancelled" });
   }, [checklistFold, finishChecklistInteraction]);
 
-  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput) => {
+  const openChecklistScheduleEditor = useCallback((source: ChecklistSource, initialSchedule?: RangeChecklistScheduleInput, options?: { inline?: boolean }) => {
     if (!source.permissions.canOpenScheduleEditor || calendarInteractionBlocked || settleRef.current.pending || !canStartCalendarCommand(commandLockRef.current)) return;
     const snapshot = acceptForInteraction(source, { eventId: source.id, control: "move-reschedule" });
     if (!snapshot) return;
@@ -1224,7 +1270,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       ...("timing" in source && formatAssigneeNames(source.assignees, source.otherAssigneeCount) ? { assignee: formatAssigneeNames(source.assignees, source.otherAssigneeCount) } : {}),
       ...("timing" in source && source.status.sameAssigneeOverlap === true ? { overlap: true } : {}),
     });
-    setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}) });
+    setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}), ...(options?.inline ? { inline: true } : {}) });
   }, [acceptForInteraction, announceChecklistLifecycle, calendarInteractionBlocked]);
 
   const handleScheduleEditorSubmit = useCallback((schedule: RangeChecklistScheduleInput) => {
@@ -1241,7 +1287,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
       request: { expectedVersion: state.source.schedule.version, schedule },
       schedule,
       timing: timingFromChecklistSchedule(checklistScheduleToDto(normalized.value)),
-      operation: { editor: true },
+      operation: { editor: true, ...(state.inline ? { inline: true } : {}) },
     };
     setScheduleEditor(null);
     void runChecklistMutation(proposal);
@@ -1250,7 +1296,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
   const handleScheduleEditorCancel = useCallback(() => {
     const state = scheduleEditor;
     if (!state) return;
-    finishChecklistInteraction({ editor: true }, state.source, { kind: "cancelled" });
+    finishChecklistInteraction({ editor: true, ...(state.inline ? { inline: true } : {}) }, state.source, { kind: "cancelled" });
   }, [finishChecklistInteraction, scheduleEditor]);
 
   const refreshRecovery = useCallback(async () => {
