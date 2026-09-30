@@ -1081,6 +1081,29 @@ describe("team removal and counts with several assignees (#371)", () => {
     expect(byCycle).toMatchObject({ [cycles.get(`${aId}:editor`)!]: 2, [cycles.get(`${bId}:editor`)!]: 1, [cycles.get(`${cId}:editor`)!]: 0 });
   });
 
+  for (const xFirst of [false, true]) {
+    it(`an admin removed from the team stays assigned but is only counted for an External Editor (${xFirst ? "admin first" : "editor first"})`, async () => {
+      const { project, cycles } = await seed([[eId, "editor"], [xId, "editor"]]);
+      // Different versions fix the order: the first id is the legacy column's mirror, the second is added after.
+      const [first, second] = xFirst ? [xId, eId] : [eId, xId];
+      const s = await subtask(project, [first]);
+      expect((await request(`/api/projects/${project}/subtasks/${s.id}`, "subtasks-admin-token", "PATCH", { assignees: { expectedVersion: 1, add: [second], remove: [] } })).status).toBe(200);
+      expect((await column(s.id))?.assignee_id).toBe(first);
+      const removed = await remove(project, xId, cycles.get(`${xId}:editor`)!, false, 0);
+      expect(removed.status).toBe(200);
+      expect((await relation(s.id)).map((row) => row.user_id).sort()).toEqual([eId, xId].sort());
+      const response = await request(`/api/projects/${project}/subtasks`, "t371-external-token");
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      const found = (JSON.parse(text) as { subtasks: Array<Record<string, unknown> & { id: string }> }).subtasks.find((row) => row.id === s.id)!;
+      expect((found.assignees as Array<{ id: string }>).map((person) => person.id)).toEqual([eId]);
+      expect(found.otherAssigneeCount).toBe(1);
+      expect((found.assignee as { id: string } | null)?.id).toBe(eId);
+      expect(text).not.toContain(xId);
+      expect(text).not.toContain(`t371 admin ${xId.slice(-2)}`);
+    });
+  }
+
   it("another assignee's pending assignment notice still matches the relation after the removal", async () => {
     const { project, cycles } = await seed([[aId, "editor"], [bId, "editor"]]);
     const s = await subtask(project, [aId, bId]);
