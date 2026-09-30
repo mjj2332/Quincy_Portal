@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectDiscussionThread } from "./ProjectDiscussionThread";
+import { chooseCommentAction } from "../testing/comment-menu";
 
 const state = vi.hoisted(() => ({
   sessionUser: { id: "user-me", role: "editor" as string, impersonatedBy: undefined as string | undefined },
@@ -91,6 +92,12 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); client.clear(); document.body.replaceChildren(); });
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
+// #376 D8: an empty composer no longer posts (Post is disabled and `submit()` returns early), so a
+// test that posts types first.
+async function typeComposer(text: string) {
+  const composer = state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
+  await act(async () => { composer.onChange(doc(text)); await Promise.resolve(); });
+}
 async function click(element: HTMLElement) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await Promise.resolve(); }); }
 
 describe("ProjectDiscussionThread", () => {
@@ -117,18 +124,18 @@ describe("ProjectDiscussionThread", () => {
   it("keeps author-only controls, including an impersonated author, and uses unchanged mutation endpoints", async () => {
     state.sessionUser = { id: "user-me", role: "editor", impersonatedBy: "admin-user" };
     render(); await flush();
-    const articles = host.querySelectorAll("article");
-    expect(articles[0]?.textContent).toContain("Edit");
-    expect(articles[1]?.textContent).not.toContain("Edit");
-    const editButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit");
-    await act(async () => { editButton!.click(); await Promise.resolve(); });
-    const editSubmit = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
+    // Author-only: the "⋯" menu exists on the author's own comment only — the impersonated user here.
+    expect(host.querySelectorAll('[aria-label^="Actions for comment by"]')).toHaveLength(1);
+    expect(host.querySelector('[aria-label="Actions for comment by Me"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Actions for comment by Other"]')).toBeNull();
+    await chooseCommentAction(host, "Me", "Edit");
+    const editSubmit = [...host.querySelector("article")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
     await act(async () => { editSubmit!.click(); await Promise.resolve(); });
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`, expect.objectContaining({ content: expect.anything() }));
+    await typeComposer("Posted");
     await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!);
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, expect.objectContaining({ content: expect.anything() }));
-    const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
-    await act(async () => { deleteButton!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await chooseCommentAction(host, "Me", "Delete"); await flush();
     expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`);
     expect(invalidateMock).toHaveBeenCalledWith(client, projectId, ["comments", "activity"]);
     expect(invalidateMock).toHaveBeenCalledWith(client, projectId, ["comments", "comment-read-marker", "activity"]);
@@ -174,6 +181,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiPostMock.mockRejectedValueOnce(new ApiError("Discussion denied", 403));
     render({ onAccessFailure }); await flush();
+    await typeComposer("Denied");
     await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
     expect(host.textContent).toContain("No discussion access");
     expect(onAccessFailure).not.toHaveBeenCalled();
@@ -184,9 +192,8 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiPatchMock.mockRejectedValueOnce(new ApiError("Forbidden: only the author can edit this comment.", 403));
     render({ onAccessFailure }); await flush();
-    const editButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit");
-    await act(async () => { editButton!.click(); await Promise.resolve(); });
-    const editSubmit = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
+    await chooseCommentAction(host, "Me", "Edit");
+    const editSubmit = [...host.querySelector("article")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Submit");
     await act(async () => { editSubmit!.click(); await Promise.resolve(); });
     expect(host.textContent).not.toContain("No discussion access");
     expect(host.querySelector("[data-testid=discussion-comments]")).not.toBeNull();
@@ -198,8 +205,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiDeleteMock.mockRejectedValueOnce(new ApiError("Forbidden: only the author can delete this comment.", 403));
     render({ onAccessFailure }); await flush();
-    const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
-    await act(async () => { deleteButton!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await chooseCommentAction(host, "Me", "Delete"); await flush();
     expect(host.textContent).not.toContain("No discussion access");
     expect(host.querySelector("[data-testid=discussion-comments]")).not.toBeNull();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "nested-comment");
@@ -210,6 +216,7 @@ describe("ProjectDiscussionThread", () => {
     const onAccessFailure = vi.fn();
     apiPostMock.mockRejectedValueOnce(new ApiError("Unauthorized", 401));
     render({ onAccessFailure }); await flush();
+    await typeComposer("Unauthorised");
     await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
     expect(onAccessFailure).toHaveBeenCalledWith(expect.any(ApiError), "comments");
     expect(terminateMock).toHaveBeenCalledTimes(1);

@@ -8,6 +8,7 @@ import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
 import { invalidateProjectSurfaces, projectDataKeys, projectCollaborationDataGeneration, useOptionalProjectQueryClient, useProjectAccessTermination, useProjectSubtasksQuery, type ProjectSubtask } from "../lib/project-data";
 import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "../lib/project-query-sync";
+import { formatCivilSchedule } from "../lib/date-format";
 import { CHECKLIST_SCHEDULE_ZONE, type ChecklistScheduleDto, type RangeChecklistScheduleInput } from "@quincy/shared";
 import { foldToDisambiguation } from "../lib/fold-disambiguation";
 import { initials } from "../lib/initials";
@@ -112,22 +113,8 @@ function storedEndpointDraft(value: ChecklistScheduleDto["start"], fallbackKind:
 function scheduleDraft(value: ChecklistScheduleDto | null): ScheduleDraft {
   return value ? { kind: value.end.kind, start: storedEndpointDraft(value.start, value.end.kind), end: storedEndpointDraft(value.end, value.end.kind) } : BLANK_DRAFT;
 }
-/** A one-day range names its date once: "8 Oct 2026", or "8 Oct 2026 · 13:00 → 14:00" when timed. */
-export function formatSchedule(value: ChecklistScheduleDto): string {
-  const { start, end } = value;
-  const startDay = start.localCivil.slice(0, 10);
-  if (startDay === end.localCivil.slice(0, 10)) {
-    if (start.kind === "date" || end.kind === "date") return displayCivil(startDay);
-    return `${displayCivil(start.localCivil)} → ${end.localCivil.slice(11, 16)}`;
-  }
-  return `${displayCivil(start.localCivil)} → ${displayCivil(end.localCivil)}`;
-}
-function displayCivil(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}:\d{2}))?$/.exec(value);
-  if (!match) return value;
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${Number(match[3])} ${months[Number(match[2]) - 1] ?? match[2]} ${match[1]}${match[4] ? ` · ${match[4]}` : ""}`;
-}
+/** A one-day range names its date once: "8 Oct 2026", or "8 Oct 2026 · 13:00 → 14:00" when timed. Lives in `lib/date-format.ts` (#376). */
+export const formatSchedule = formatCivilSchedule;
 function toEndpointInput(value: EndpointDraft): { kind: "date"; localCivil: string } | { kind: "timed"; localCivil: string; disambiguation?: "earlier" | "later" } {
   return value.kind === "date" ? { kind: "date", localCivil: value.date } : { kind: "timed", localCivil: `${value.date}T${value.time}`, ...(value.disambiguation ? { disambiguation: value.disambiguation } : {}) };
 }
