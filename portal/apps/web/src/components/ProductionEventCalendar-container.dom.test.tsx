@@ -153,6 +153,51 @@ describe("ProductionEventCalendar container", () => {
     expect(zone.className).toContain("whitespace-nowrap");
   });
 
+  describe("phone toolbar (#385)", () => {
+    const PHONE = ["(max-width: 720px)", "(max-width: 1100px)"];
+    const q = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+
+    it("puts the full title and the zone on the period row, before the controls row", async () => {
+      stubMedia(PHONE);
+      await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      const period = q("event-calendar-period");
+      const controls = q("event-calendar-controls");
+      expect(period).not.toBeNull();
+      expect(controls).not.toBeNull();
+      expect(period.contains(q("event-calendar-fake-title"))).toBe(true);
+      expect(q("event-calendar-zone").parentElement).toBe(period);
+      expect(controls.contains(q("event-calendar-fake-title"))).toBe(false);
+      expect(controls.contains(q("event-calendar-zone"))).toBe(false);
+      expect(period.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("keeps Filters, Today, the view switcher and the arrows in the controls row, each 44px tall", async () => {
+      stubMedia(PHONE);
+      await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      const controls = q("event-calendar-controls");
+      const ids = ["event-calendar-rail-toggle", "event-calendar-fake-today", "event-calendar-fake-view-switcher", "event-calendar-fake-prev", "event-calendar-fake-next"];
+      const parts = ids.map(q);
+      parts.forEach((part) => { expect(controls.contains(part)).toBe(true); expect(part.className.split(/\s+/)).toContain("min-h-[44px]"); });
+      const order = Array.from(controls.querySelectorAll<HTMLElement>("[data-testid]")).map((el) => el.dataset.testid).filter((id) => ids.includes(id!));
+      expect(order).toEqual(ids);
+    });
+
+    it("keeps the empty status beside the zone on the period row", async () => {
+      stubMedia(PHONE);
+      await renderCalendar(calendar("week", "2026-07-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr", false)));
+      expect(q("event-calendar-empty").parentElement).toBe(q("event-calendar-zone").parentElement);
+      expect(q("event-calendar-period").contains(q("event-calendar-empty"))).toBe(true);
+    });
+
+    it("leaves the wider layout on the default nav", async () => {
+      stubMedia(["(max-width: 1100px)"]);
+      await renderCalendar(calendar("month", "2026-09-15"), adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr")));
+      expect(host.querySelector('[data-testid="event-calendar-period"]')).toBeNull();
+      expect(host.querySelector('[data-testid="event-calendar-controls"]')).toBeNull();
+      expect(q("event-calendar-zone").parentElement).toBe(q("event-calendar-fake-nav").parentElement);
+    });
+  });
+
   it("requests bounds, maps the subview to the controlled view and Sydney date, and defers writes", async () => {
     const parsed = adminProductionCalendarRangeResponseSchema.parse(rawResponse("editing_autohdr"));
     await renderCalendar(calendar("month"), parsed);
