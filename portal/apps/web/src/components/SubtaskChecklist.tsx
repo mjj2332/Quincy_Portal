@@ -232,8 +232,8 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
       <div data-testid="subtask-checklist-meta" className={cn(
         "min-w-0",
         twoLine
-          ? "col-span-full flex items-center gap-[var(--space-1)] pt-[var(--space-1)]"
-          : cn("max-[721px]:col-span-full max-[721px]:flex max-[721px]:items-center", "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)]", "min-[721px]:contents"),
+          ? "col-span-full flex flex-wrap items-center gap-[var(--space-1)] pt-[var(--space-1)] [&>:last-child]:ms-auto"
+          : cn("max-[721px]:col-span-full max-[721px]:flex max-[721px]:flex-wrap max-[721px]:items-center", "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)] max-[721px]:[&>:last-child]:ms-auto", "min-[721px]:contents"),
       )}>
         <ScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} retained={retainedSchedule} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
         <SubtaskAssigneePicker projectId={projectId} role={role} label={`Assignees for ${item.title}`} selected={item.assignees} version={item.assignmentVersion} hiddenCount={item.otherAssigneeCount ?? 0} busy={busy} onCommit={(ids, _people, baseline) => onCommitAssignees(ids, baseline)} />
@@ -312,7 +312,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail" }
   const rowFor = (item: Subtask, sortable: boolean) => <SortableSubtaskRow key={item.id} twoLine={layout === "rail"} sortable={sortable} item={item} projectId={projectId} role={role} busy={itemIsBusy(item.id)} editing={editingId === item.id} draftTitle={draftTitles[item.id] ?? item.title} popover={activePopover} setPopover={setActivePopover} scheduleError={scheduleErrors[item.id]} retainedSchedule={retainedScheduleFor(item.id)} onUpdate={(body, action) => action === "draft" || action === "title" ? titleAction(item, body) : void update(item, body, action)} onCommitAssignees={(ids, baseline) => commitAssignees(item, ids, baseline)} onUseLatest={(schedule) => useLatestSchedule(item, schedule)} onUseLatestItem={useLatestItem} onRemove={() => void remove(item)} onBeginEditing={() => beginEditing(item)} onEndEditing={() => { if (editingId === item.id) setEditingId(null); }} titleInputRef={titleInputRef(item.id)} itemRef={itemRef(item.id)} gripRef={sortable ? gripRef(item.id) : () => undefined} />;
   return <section ref={sectionRef} className={cn("grid gap-[var(--space-3)]", layout === "rail" ? "ps-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border" : "pb-[var(--space-4)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border")} aria-label="Project checklist">
     <Collapsible open={open} onOpenChange={setOpen} className="grid gap-[var(--space-3)]">
-      <header className="flex items-center gap-[var(--space-3)] min-w-0">
+      <header className={cn("flex items-center gap-[var(--space-3)] min-w-0", layout === "stacked" && "max-[721px]:pe-[calc(var(--space-4)+44px)]")}>
         <h3 className="m-0"><Eyebrow>Checklist</Eyebrow></h3>
         <span data-testid="subtask-checklist-count" className="flex-1 min-w-0 [font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] tabular-nums text-foreground">{doneCount} / {total}<span className="sr-only"> complete</span></span>
         <CollapsibleTrigger data-disclosure="" render={<IconButton aria-label={open ? "Collapse checklist" : "Expand checklist"} />}>{open ? "−" : "+"}</CollapsibleTrigger>
