@@ -108,6 +108,28 @@ describe("mention list dismissal (#375)", () => {
     expect(loader).toHaveBeenLastCalledWith("nor");
   });
 
+  it("moving focus out of the editor closes a list in every state, so the sheet's layer gate no longer blocks Esc", async () => {
+    const cases: [string, (q: string) => Promise<typeof NORA[]>, string][] = [
+      ["results", async () => [NORA], "@no"],
+      ["empty", async () => [], "@zz"],
+      ["loading", () => new Promise(() => undefined), "@fo"],
+      ["error", async () => { throw new Error("nope"); }, "@fo"],
+    ];
+    for (const [label, loader, text] of cases) {
+      const editor = await mount(loader);
+      await act(async () => { editor.focus(); await Promise.resolve(); });
+      await type(editor, text);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(expanded(editor), label).toBe("true");
+      if (label === "empty") expect(document.body.textContent).toContain("No active staff found.");
+      await act(async () => { document.querySelector<HTMLElement>('[data-testid="elsewhere"]')!.focus(); await Promise.resolve(); });
+      expect(expanded(editor), label).toBe("false");
+      expect(listVisible(), label).toBe(false);
+      await act(async () => { root!.unmount(); await Promise.resolve(); });
+      root = null; document.body.replaceChildren();
+    }
+  });
+
   it("a pointerdown outside the editor dismisses the list; one inside the editor does not", async () => {
     const editor = await mount(async () => [NORA]);
     await type(editor, "@no");

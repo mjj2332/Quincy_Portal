@@ -16,6 +16,8 @@ type DraftStore = {
   set(projectId: string, doc: RichTextDoc): void;
   /** Drops the draft only if it still equals `doc` (a newer draft must survive a slow post). */
   clearIf(projectId: string, doc: RichTextDoc): void;
+  /** Called after `clearIf` dropped a draft, so a composer that re-mounted mid-post can clear too. */
+  subscribe(projectId: string, listener: (cleared: RichTextDoc) => void): () => void;
 };
 
 const DraftsContext = createContext<DraftStore | null>(null);
@@ -25,12 +27,21 @@ const isEmptyDoc = (doc: RichTextDoc) => JSON.stringify(doc) === JSON.stringify(
 
 export function ProjectCommentDraftsProvider({ children }: { children: ReactNode }) {
   const drafts = useRef(new Map<string, RichTextDoc>());
+  const listeners = useRef(new Map<string, Set<(cleared: RichTextDoc) => void>>());
   const store = useMemo<DraftStore>(() => ({
     get: (projectId) => drafts.current.get(projectId),
     set: (projectId, doc) => { if (isEmptyDoc(doc)) drafts.current.delete(projectId); else drafts.current.set(projectId, doc); },
     clearIf: (projectId, doc) => {
       const stored = drafts.current.get(projectId);
-      if (stored && JSON.stringify(stored) === JSON.stringify(doc)) drafts.current.delete(projectId);
+      if (stored && JSON.stringify(stored) === JSON.stringify(doc)) {
+        drafts.current.delete(projectId);
+        for (const listener of [...(listeners.current.get(projectId) ?? [])]) listener(doc);
+      }
+    },
+    subscribe: (projectId, listener) => {
+      const set = listeners.current.get(projectId) ?? new Set();
+      set.add(listener); listeners.current.set(projectId, set);
+      return () => { set.delete(listener); if (!set.size) listeners.current.delete(projectId); };
     },
   }), []);
   return <DraftsContext.Provider value={store}>{children}</DraftsContext.Provider>;
@@ -44,6 +55,11 @@ export function useProjectCommentDraft(projectId: string): [RichTextDoc, (doc: R
   useEffect(() => {
     setState((current) => current.projectId === projectId ? current : { projectId, content: store?.get(projectId) ?? emptyDoc() });
   }, [projectId, store]);
+  // A post that resolves after the sheet was closed and reopened clears the store entry the reopened
+  // composer was seeded from; clear its local copy too, but only while it still holds what was posted.
+  useEffect(() => store?.subscribe(projectId, (cleared) => {
+    setState((current) => current.projectId === projectId && JSON.stringify(current.content) === JSON.stringify(cleared) ? { projectId, content: emptyDoc() } : current);
+  }), [projectId, store]);
   const content = state.projectId === projectId ? state.content : (store?.get(projectId) ?? emptyDoc());
   const setContent = useCallback((doc: RichTextDoc) => {
     store?.set(projectId, doc);

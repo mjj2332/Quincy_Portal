@@ -84,6 +84,36 @@ describe("useProjectCommentDraft (#375)", () => {
     expect(document.querySelector('[data-testid="draft"]')!.textContent).toBe("");
   });
 
+  it("a post that resolves after the sheet was closed and reopened clears the reopened composer", async () => {
+    const api = { current: null as Api | null };
+    const ui = (show: boolean) => <ProjectCommentDraftsProvider>{show ? <Probe projectId="a" api={api} /> : <span />}</ProjectCommentDraftsProvider>;
+    await mount(ui(true));
+    await act(async () => { api.current!.set(doc("posted")); });
+    const submitted = api.current!.content;
+    const clearAfterPost = api.current!.clearIfSubmitted; // captured by the in-flight submit
+    await render(ui(false)); // sheet closed while the POST is pending
+    await render(ui(true)); // reopened before it resolves
+    expect(document.querySelector('[data-testid="draft"]')!.textContent).toBe("posted");
+    await act(async () => { clearAfterPost(submitted); }); // POST resolves
+    expect(document.querySelector('[data-testid="draft"]')!.textContent).toBe("");
+    expect(api.current!.content).toEqual(emptyDoc());
+  });
+
+  it("text typed after reopening survives a late post resolution", async () => {
+    const api = { current: null as Api | null };
+    const ui = (show: boolean) => <ProjectCommentDraftsProvider>{show ? <Probe projectId="a" api={api} /> : <span />}</ProjectCommentDraftsProvider>;
+    await mount(ui(true));
+    await act(async () => { api.current!.set(doc("posted")); });
+    const submitted = api.current!.content;
+    const clearAfterPost = api.current!.clearIfSubmitted;
+    await render(ui(false)); await render(ui(true));
+    await act(async () => { api.current!.set(doc("posted, then more")); });
+    await act(async () => { clearAfterPost(submitted); });
+    expect(document.querySelector('[data-testid="draft"]')!.textContent).toBe("posted, then more");
+    await render(ui(false)); await render(ui(true));
+    expect(document.querySelector('[data-testid="draft"]')!.textContent).toBe("posted, then more");
+  });
+
   it("an empty document is stored as no draft", async () => {
     const api = { current: null as Api | null };
     const ui = (show: boolean) => <ProjectCommentDraftsProvider>{show ? <Probe projectId="a" api={api} /> : <span />}</ProjectCommentDraftsProvider>;

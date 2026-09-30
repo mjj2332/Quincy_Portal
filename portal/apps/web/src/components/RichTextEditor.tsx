@@ -310,6 +310,15 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [query]);
+  // Esc is only seen by the editor's key handler, so a list left open behind a Tab would hold the
+  // sheet's layer gate shut for good: close it when focus leaves the editor.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const onBlur = () => setMentionDismissed(true);
+    dom.addEventListener("blur", onBlur);
+    return () => dom.removeEventListener("blur", onBlur);
+  }, [editor]);
   useEffect(() => {
     if (!editor) return;
     const announce = () => setNestingBlocked(true);
