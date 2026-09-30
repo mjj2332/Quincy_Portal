@@ -88,8 +88,32 @@ export function createAuth(env: Env) {
   });
 }
 
+// One auth instance per Worker `env` object (stable per isolate), not per request (#360). Keyed on
+// `env`, never `env.DB`: the instance captures secret/baseURL/trustedOrigins at build time and its
+// databaseHooks close over `env`, so a different env must get its own instance. An unstable env in
+// production degrades safely to a miss per request (the old behaviour) and shows in the miss log.
+// No cookieCache / secondaryStorage: `requireSession`'s principal re-read stays authoritative.
+const authByEnv = new WeakMap<Env, ReturnType<typeof createAuth>>();
+let authBuilds = 0;
+
+export function getAuth(env: Env): ReturnType<typeof createAuth> {
+  let auth = authByEnv.get(env);
+  if (!auth) {
+    auth = createAuth(env);
+    authByEnv.set(env, auth);
+    authBuilds++;
+    console.log(JSON.stringify({ event: "auth_instance_built" }));
+  }
+  return auth;
+}
+
+/** Diagnostic: how many instances `getAuth` has built in this isolate. */
+export function authInstanceBuildCount(): number {
+  return authBuilds;
+}
+
 export async function getSession(c: Context<any>) {
-  const auth = createAuth(c.env);
+  const auth = getAuth(c.env);
   // Better Auth's typed endpoint accepts the request headers and validates its session cookie.
   return (auth.api.getSession as (input: { headers: Headers }) => Promise<{ user: Record<string, unknown>; session: Record<string, unknown> } | null>)({ headers: c.req.raw.headers });
 }

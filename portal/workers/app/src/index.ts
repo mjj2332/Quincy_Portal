@@ -3,7 +3,7 @@ import { terminalRoute } from "./lib/terminal-route";
 import { cors } from "hono/cors";
 import { externalMeResponseSchema, ROLE_CAPABILITIES } from "@quincy/shared";
 import type { AppEnv } from "./env";
-import { createAuth } from "./auth";
+import { getAuth } from "./auth";
 import { requireSession } from "./middleware/session";
 import { requireCapability } from "./middleware/capability";
 import { requireImpersonationEnabled } from "./lib/impersonation";
@@ -47,7 +47,7 @@ app.use("/api", requireAppOrigin);
 app.use("/api/*", requireAppOrigin);
 app.get("/api/health", terminalRoute("/api/health", (c) => c.json({ ok: true, env: c.env.APP_ENV })));
 app.all("/api/auth/sign-in/social", terminalRoute("/api/auth/sign-in/social", async (c) => {
-  if (c.req.method !== "POST") return createAuth(c.env).handler(c.req.raw);
+  if (c.req.method !== "POST") return getAuth(c.env).handler(c.req.raw);
   let body: Record<string, unknown> | null = null;
   try {
     const parsed = await c.req.raw.clone().json<unknown>();
@@ -59,11 +59,11 @@ app.all("/api/auth/sign-in/social", terminalRoute("/api/auth/sign-in/social", as
   if (!body || callbackFields.some((field) => !(field in body) ? field === "callbackURL" : safeStaffDestination(body[field]) === null)) {
     return c.json({ error: "Invalid sign-in callback destination" }, 400);
   }
-  return createAuth(c.env).handler(c.req.raw);
+  return getAuth(c.env).handler(c.req.raw);
 }));
-app.post("/api/auth/admin/impersonate-user", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, terminalRoute("/api/auth/admin/impersonate-user", (c) => createAuth(c.env).handler(c.req.raw)));
-app.post("/api/auth/admin/impersonate-user/", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, terminalRoute("/api/auth/admin/impersonate-user/", (c) => createAuth(c.env).handler(c.req.raw)));
-app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => createAuth(c.env).handler(c.req.raw)));
+app.post("/api/auth/admin/impersonate-user", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, terminalRoute("/api/auth/admin/impersonate-user", (c) => getAuth(c.env).handler(c.req.raw)));
+app.post("/api/auth/admin/impersonate-user/", requireSession, requireCapability("manageUsers"), requireImpersonationEnabled, terminalRoute("/api/auth/admin/impersonate-user/", (c) => getAuth(c.env).handler(c.req.raw)));
+app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handler(c.req.raw)));
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", terminalRoute("/me", (c) => { const user = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
