@@ -78,6 +78,14 @@ describe("buildGanttPageQuery (#274)", () => {
   });
 });
 
+describe("buildGanttPageQuery (#365)", () => {
+  const filters = { q: "", editorIds: [], stageKeys: [], delivered: false, completed: false };
+  it("asks for each row's Project team on page one and on a cursor page", () => {
+    expect(new URLSearchParams(buildGanttPageQuery(filters, undefined)).get("team")).toBe("1");
+    expect(new URLSearchParams(buildGanttPageQuery(filters, "cursor-2")).get("team")).toBe("1");
+  });
+});
+
 describe("production gantt query family", () => {
   it("composes the authorization, scope, and filter key in order, with the principal load-bearing at index 1", () => {
     const identity = { principalId: principal, role: "admin" as const, authorizationEpoch: 4 };

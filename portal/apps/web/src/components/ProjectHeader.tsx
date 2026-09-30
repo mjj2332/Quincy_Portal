@@ -3,6 +3,7 @@ import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
+import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
 import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
@@ -34,6 +35,11 @@ const EDIT_DETAILS_LINK =
   "transition-[text-decoration-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
   "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
   "focus-visible:outline-ring focus-visible:outline-offset-2";
+
+// #367: beside the sentence-case "Edit details" link the ghost Copy link must not read as a field key
+// (the button base is uppercase + wide tracking); -ms-2 offsets the ghost padding so the label sits on
+// the row rhythm while the hover fill still bleeds.
+const COPY_LINK_IN_HEADER = "normal-case tracking-[var(--tracking-normal)] -ms-2";
 
 // #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title,
 // moved here from the work area's `.wsbar` chip. The 44px target is kept by the min-height; the
@@ -225,6 +231,7 @@ export function ProjectHeader({
         <span><span className={HEADER_KV_KEY}>Shoot</span> <span className={HEADER_KV_VALUE}>{date(project.shootDate)}</span></span>
         <span><span className={HEADER_KV_KEY}>Client</span> <span className={HEADER_KV_VALUE}>{project.agencyName || project.agentName ? `${project.agencyName ?? "—"} · ${project.agentName ?? "—"}` : "—"}</span></span>
         {canEdit && <InternalLink className={EDIT_DETAILS_LINK} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
+        <CopyProjectLinkButton projectId={project.id} tab={activeTab} className={COPY_LINK_IN_HEADER} />
       </div>
       {project.productionNotes && <p className={cn("project-header__notes", "m-0 [white-space:pre-wrap]",
                     "[font:var(--weight-regular)_var(--text-sm)/var(--leading-relaxed)_var(--font-body-serif)]",

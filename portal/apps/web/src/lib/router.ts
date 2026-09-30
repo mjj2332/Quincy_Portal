@@ -12,10 +12,15 @@ export type HistorySource = {
 export function createHistoryAdapter(source: HistorySource) {
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
-  const onPopState = () => notify();
+  // #367: counts navigations (push, popstate), never replace. A tab-naming URL is no longer
+  // stripped, so an identical-URL push/popstate is invisible to a location-string diff; the shell
+  // reads this to keep "an identical history arrival is a fresh signal".
+  let epoch = 0;
+  const onPopState = () => { epoch++; notify(); };
 
   return {
     getLocation: () => `${source.location.pathname}${source.location.search}`,
+    getNavigationEpoch: () => epoch,
     subscribe(listener: () => void) {
       listeners.add(listener);
       if (listeners.size === 1) source.addEventListener("popstate", onPopState);
@@ -27,6 +32,7 @@ export function createHistoryAdapter(source: HistorySource) {
     push(location: string) {
       const destination = safeStaffDestination(location) ?? "/";
       source.history.pushState(null, "", destination);
+      epoch++;
       notify();
     },
     replace(location: string) {

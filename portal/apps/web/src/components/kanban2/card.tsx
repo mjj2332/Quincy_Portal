@@ -1,14 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { isDeadlineOverdue } from "@quincy/shared";
 import { Card, CardContent } from "../reui/card";
-import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "../reui/avatar";
+import { AvatarStack } from "../quincy/AvatarStack";
 import { InternalLink } from "../InternalLink";
 import { LazyImage } from "../LazyImage";
 import { buttonClasses } from "../quincy/Button";
 import { KanbanItemHandle } from "../reui/kanban";
 import { PriorityStars } from "../quincy/PriorityStars";
 import { deadlineLabel } from "../../lib/deadline-label";
-import { initials } from "../../lib/initials";
 import type { ProjectSummary } from "../../lib/kanban-interaction";
 
 /**
@@ -52,49 +51,6 @@ function rawCounts(project: ProjectSummary): { visible: string; spoken: string }
     return { visible: `${receivedCount}`, spoken: `${receivedCount} RAW files received, expected count unknown` };
   }
   return { visible: `${receivedCount}/${expectedCount}`, spoken: `${receivedCount} of ${expectedCount} RAW files received` };
-}
-
-const EDITOR_STACK_LIMIT = 3;
-
-/**
- * Editor avatar stack (#82). `editors` is already Editor-only, active-only and server-ordered
- * (#79) — no client-side filter or sort. `role="img"` on each avatar is load-bearing: `aria-label`
- * on a roleless `<span>` is dropped by every major screen reader. The full list beyond the first
- * three is deliberately not reachable from the card — the linked Project detail is the authority.
- */
-function EditorStack({ editors }: { editors?: { id: string; name: string }[] }) {
-  const list = editors ?? [];
-  if (list.length === 0) {
-    return (
-      <span
-        role="img"
-        aria-label="No Editor assigned"
-        className="inline-block size-6 shrink-0 rounded-full border border-dashed border-[var(--border-hairline)] bg-transparent"
-      />
-    );
-  }
-  const shown = list.slice(0, EDITOR_STACK_LIMIT);
-  const overflow = list.length - shown.length;
-  return (
-    // Static, non-interactive avatars — the 44px touch-target contract does not apply here and
-    // should not be "fixed" by a future pass.
-    <AvatarGroup>
-      {shown.map((editor) => {
-        const name = editor.name.trim();
-        const empty = name === "";
-        return (
-          <Avatar key={editor.id} size="sm" role="img" aria-label={empty ? "Editor (name unavailable)" : name}>
-            <AvatarFallback aria-hidden="true">{empty ? "?" : initials(editor.name)}</AvatarFallback>
-          </Avatar>
-        );
-      })}
-      {overflow > 0 && (
-        <AvatarGroupCount role="img" aria-label={`${overflow} more Editor${overflow === 1 ? "" : "s"}`}>
-          <span aria-hidden="true">+{overflow}</span>
-        </AvatarGroupCount>
-      )}
-    </AvatarGroup>
-  );
 }
 
 export type KanbanCard2Props = {
@@ -155,7 +111,8 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             <span aria-hidden="true">{raw.visible}</span>
             <span className="sr-only">{raw.spoken}</span>
           </span>
-          <EditorStack editors={project.editors} />
+          {/* #82: `editors` is already Editor-only, active-only and server-ordered (#79) — no client-side filter or sort. */}
+          <AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" />
         </div>
       </CardContent>
     </>

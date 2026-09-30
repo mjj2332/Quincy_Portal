@@ -448,4 +448,28 @@ describe("Dashboard Gantt routing", () => {
     await render();
     expect(switcherButton("Gantt")?.disabled).toBe(false);
   });
+
+  // #365 (AC3): the Gantt row label opens the Project through the Dashboard's own handler, which
+  // pushes through `locationStore()` and shares the Calendar's scheduling gate.
+  describe("opening a Project from a Gantt row label (#365)", () => {
+    const projectId = "44444444-4444-4444-8444-444444444444";
+    const ganttProps = () => ganttPropsState.value as unknown as ProductionGanttProps;
+
+    it("passes projectHrefFor and onOpenProject, and pushes /projects/<id> through the location store", async () => {
+      await render();
+      await act(async () => { switcherButton("Gantt")!.click(); await Promise.resolve(); });
+      expect(ganttProps().projectHrefFor?.(projectId)).toBe(`/projects/${projectId}`);
+      expect(typeof ganttProps().onOpenProject).toBe("function");
+      await act(async () => { ganttProps().onOpenProject!(projectId); await Promise.resolve(); });
+      expect(window.location.pathname).toBe(`/projects/${projectId}`);
+    });
+
+    it("is a no-op while the Gantt's scheduling gate is blocked", async () => {
+      await render();
+      await act(async () => { switcherButton("Gantt")!.click(); await Promise.resolve(); });
+      await act(async () => { ganttProps().onAcceptGateChange!(true); await Promise.resolve(); });
+      await act(async () => { ganttProps().onOpenProject!(projectId); await Promise.resolve(); });
+      expect(window.location.pathname).toBe("/");
+    });
+  });
 });

@@ -4428,6 +4428,25 @@ remove the legacy readers) still applies.
   load a `scripts/*.sql` file. Prove the script in a `packages/db` node test and inline the
   invariant in the worker test.
 
+## Polling the query cache does not prove a component rendered it (2026-09-30)
+
+- **`PrincipalFreshnessBoundary.dom.test.tsx` flaked on main CI (run 36680115640, line 149,
+  `expected false to be true`).** Its tests waited until the first access snapshot was in the
+  cache, then overwrote it with a smaller one. The boundary diffs the snapshots it *rendered*
+  (`previous.current`), not the cache. React-query hands the observer's update to React on its own
+  `setTimeout(0)` (`notifyManager`'s default scheduler), so the cache write and the render are two
+  separate events. When the fetch settled after more than 5ms of main-thread work, the test's
+  5ms poll timer fired before that notification. The poll saw the data, the test overwrote it, and
+  the boundary only ever rendered the second snapshot. With no prior snapshot there was no purge.
+- **Reproduced deterministically** by busy-waiting 10ms inside the mocked `apiGet`: it failed 3/3,
+  and "redirects a lost Workspace project" failed the same way. It was not #360, because
+  `useSession` is mocked in that file.
+- **Fix:** in that describe, `notifyManager.setScheduler((callback) => callback())` in `beforeEach`
+  and `setScheduler(defaultScheduler)` in `afterEach`. This is the same pattern as
+  `lib/project-data.dom.test.tsx`. Then "in the cache after an `act`" means the component has
+  committed it. Alternatively, wait on something the component rendered. More ticks or a longer
+  poll only move the race.
+
 ## Every reader of a relation-backed assignment moves together (2026-09-30, #368)
 
 - **Every reader of a relation-backed assignment must move in the PR that makes a second assignee

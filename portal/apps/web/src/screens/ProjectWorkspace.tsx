@@ -12,6 +12,7 @@ import { useCapabilities } from "../lib/capabilities";
 import { clearToasts, pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { InternalLink } from "../components/InternalLink";
+import { CopyProjectLinkButton } from "../components/quincy/CopyProjectLinkButton";
 import { ProjectCollaborationPanel, type CollaborationView } from "../components/ProjectCollaborationPanel";
 import { ProjectHeader } from "../components/ProjectHeader";
 import { buttonClasses } from "../components/quincy/Button";
@@ -63,14 +64,16 @@ export function computeBulkDeleteOutcome(assetIds: string[], results: PromiseSet
 const FULL_PAGE = "page page--full";
 function LoadingProject() { return <main className={FULL_PAGE}><div className="empty"><span className="serif">Loading project.</span>Preparing the workspace.</div></main>; }
 
-/** `arrivalSignal`/`arrivalTab` are the route's one-shot Workspace-tab arrival (#337): a new signal
- * selects `arrivalTab` once (Collaboration when absent), then `onArrivalConsumed` acknowledges it. */
-type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; arrivalSignal?: number; arrivalTab?: WorkspaceTab; onArrivalConsumed?: (signal: number) => void };
+/** `arrivalSignal`/`arrivalTab` are the route's Workspace-tab arrival (#337): a new signal selects
+ * `arrivalTab` once (Collaboration when absent), then `onArrivalConsumed` acknowledges it. The tab in
+ * the URL is persistent (#367): `urlTab` is the tab the URL names now, and `onTabShown` reports the
+ * tab actually shown so the shell can make the URL follow it (by `replace`). */
+type ProjectWorkspaceProps = { projectId: string; notice?: string | null; onNoticeShown?: () => void; arrivalSignal?: number; arrivalTab?: WorkspaceTab; onArrivalConsumed?: (signal: number) => void; urlTab?: WorkspaceTab; onTabShown?: (tab: WorkspaceTab) => void };
 type TerminalState = { projectId: string; scope: "principal" | "project"; message: string };
 type AccessFailureResource = "detail" | "activity" | "assets" | "comments" | "comment-read-marker" | "nested-comment" | "collaboration-summary";
 
 function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
-  const { projectId, notice, onNoticeShown, arrivalSignal, arrivalTab, onArrivalConsumed } = props;
+  const { projectId, notice, onNoticeShown, arrivalSignal, arrivalTab, onArrivalConsumed, urlTab, onTabShown } = props;
   const queryClient = useQueryClient();
   const runtime = useProjectQueryRuntime();
   const runtimeVersion = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
@@ -348,12 +351,16 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
   // other view only acknowledges it. Held while the view is still loading, so a signal is never spent before it can act, and
   // consumed once per signal, so later in-Project navigation is never overridden. The resolver reads the strip's own tab list.
   const consumedSignalRef = useRef<number | undefined>(undefined);
+  const awaitingTabRef = useRef<WorkspaceTab | null>(null);
+  const onTabShownRef = useRef(onTabShown);
+  onTabShownRef.current = onTabShown;
   useEffect(() => {
     if (arrivalSignal === undefined || arrivalSignal === consumedSignalRef.current || viewState === "loading") return;
     consumedSignalRef.current = arrivalSignal;
     if (viewState === "full-workspace") {
       const tab = resolveArrivalTab(arrivalTab ?? "collaboration", canViewEdited, collectionDenied);
       selectWorkspaceTab(tab);
+      awaitingTabRef.current = tab;
       if (tab === "collaboration") setCollaborationView("discussion");
       setArrivalFocusTab(tab);
     }
@@ -369,6 +376,14 @@ function ProjectWorkspaceView(props: ProjectWorkspaceProps) {
     trigger.focus();
     setArrivalFocusTab(null);
   }, [activeTab, arrivalFocusTab, viewState]);
+  // #367: the URL names the tab being viewed. Runs after the arrival effects, so an arrival wins until it has been applied.
+  const shownTab: WorkspaceTab | null = viewState === "full-workspace" ? activeTab : viewState === "collaboration-only" ? "collaboration" : null;
+  useEffect(() => {
+    if (shownTab === null) return; // loading / unavailable views never touch the URL
+    if (arrivalSignal !== undefined && arrivalSignal !== consumedSignalRef.current) return; // arrival pending
+    if (awaitingTabRef.current !== null) { if (activeTab !== awaitingTabRef.current) return; awaitingTabRef.current = null; }
+    if (urlTab !== shownTab) onTabShownRef.current?.(shownTab);
+  }, [shownTab, urlTab, arrivalSignal, activeTab]);
   if (!projectId || viewState === "unavailable") return <UnavailableProject message={currentTerminal?.message ?? "Project unavailable."} />;
   if (viewState === "collaboration-only") return <CollaborationOnlyView projectId={projectId} onAccessFailure={accessFailure} />;
   if (viewState === "collaboration-unavailable") return <CollaborationOnlyUnavailable />;
@@ -399,7 +414,7 @@ function CollaborationOnlyView({ projectId, onAccessFailure }: { projectId: stri
   const street = summary.data?.project.street ?? commentsQuery.data?.pages[0]?.project.street ?? "Project collaboration";
   const stage = summary.data && stages.find((item) => item.key === presentationStageKey(summary.data.project.stageKey));
   return <main className="page grid gap-[var(--space-5)]" data-testid="project-collaboration-only">
-    <div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">{street}</h1></div><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div>
+    <div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">{street}</h1></div><div className="flex flex-wrap items-center gap-[var(--space-2)]"><CopyProjectLinkButton projectId={projectId} tab="collaboration" /><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div></div>
     {summary.isPending && !summary.data && <EmptyState role="status" title="Loading collaboration.">Preparing the project summary.</EmptyState>}
     {summary.data && <section className="grid gap-[var(--space-3)] p-[var(--space-5)] bg-card [border-style:solid] border-[length:var(--border-width-hair)] border-border" aria-labelledby="collaboration-summary-heading"><Eyebrow>Read-only summary</Eyebrow><h2 className="serif [font:var(--type-h3)]" id="collaboration-summary-heading">Project overview</h2><div className="grid gap-[var(--space-3)]"><div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? summary.data.project.stageKey}</span></div><div className="kv"><span className="k">Deadline</span><span className="vv">Not scheduled</span></div><div className="kv"><span className="k">Next reminder</span><span className="vv">None</span></div></div><div className="grid gap-[var(--space-3)] grid-cols-2 max-[721px]:grid-cols-1 pt-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border"><div><Eyebrow>Photographers</Eyebrow>{summary.data.members.filter((member) => member.roleOnProject === "photographer").map((member) => <div className="py-[5px] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" key={member.id}>{member.name}{!member.active && <em className="ms-[6px] not-italic text-signal-caution-text">Inactive</em>}</div>)}</div><div><Eyebrow>Editors</Eyebrow>{summary.data.members.filter((member) => member.roleOnProject === "editor").map((member) => <div className="py-[5px] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" key={member.id}>{member.name}{!member.active && <em className="ms-[6px] not-italic text-signal-caution-text">Inactive</em>}</div>)}</div></div></section>}
     <ProjectCollaborationPanel projectId={projectId} onAccessFailure={onAccessFailure} />

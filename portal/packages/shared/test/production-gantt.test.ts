@@ -8,6 +8,9 @@ import {
   encodeGanttProjectCursor,
   ganttChildCursorSchema,
   ganttProjectCursorSchema,
+  ganttTeamMemberSchema,
+  externalParticipantSchema,
+  externalProductionGanttSchema,
   PRODUCTION_GANTT_DRAW_CAP,
   PRODUCTION_GANTT_ZONE,
   type GanttChildCursor,
@@ -186,5 +189,48 @@ describe("response schema", () => {
     const { deadlineVersion: _drop, ...withoutVersion } = response.projects[0];
     response.projects[0] = withoutVersion as never;
     expect(() => adminProductionGanttResponseSchema.parse(response)).toThrow();
+  });
+});
+
+// #365: the row's Project team (display-only) and its edit permission, both opt-in (`team=1`).
+describe("response schema: Project team (#365)", () => {
+  const member = { id: "11111111-1111-4111-8111-111111111111", name: "Alice Editor", roleLabel: "Editor", isExternal: false, active: true, roleOnProject: "editor" as const };
+  function withTeam(team: unknown, canEditTeam: unknown): ProductionGanttResponse {
+    const response = baseResponse();
+    response.projects[0] = { ...response.projects[0], team, permissions: { canEditDeadline: true, canEditChildren: true, canEditTeam } } as never;
+    return response;
+  }
+  const schemas = [
+    ["admin", adminProductionGanttResponseSchema],
+    ["editor", editorProductionGanttResponseSchema],
+    ["external", externalProductionGanttSchema],
+  ] as const;
+
+  for (const [name, schema] of schemas) {
+    it(`S1 parses a row with team + canEditTeam (${name})`, () => {
+      expect(() => schema.parse(withTeam([member], true))).not.toThrow();
+      expect(() => schema.parse(withTeam([], false))).not.toThrow();
+    });
+    it(`S2 still parses a legacy row with neither key (${name})`, () => {
+      expect(() => schema.parse(baseResponse())).not.toThrow();
+    });
+    it(`S3 requires team and canEditTeam together (${name})`, () => {
+      const teamOnly = baseResponse();
+      teamOnly.projects[0] = { ...teamOnly.projects[0], team: [member] } as never;
+      expect(() => schema.parse(teamOnly)).toThrow();
+      const permOnly = baseResponse();
+      permOnly.projects[0] = { ...permOnly.projects[0], permissions: { canEditDeadline: true, canEditChildren: true, canEditTeam: true } } as never;
+      expect(() => schema.parse(permOnly)).toThrow();
+    });
+    it(`S4 rejects picker-only fields on a team entry (${name})`, () => {
+      for (const extra of [{ email: "a@b.co" }, { membershipCycleId: id }, { globalRole: "editor" }, { assignedSubtaskCount: 1 }]) {
+        expect(() => schema.parse(withTeam([{ ...member, ...extra }], true))).toThrow();
+      }
+    });
+  }
+
+  it("S5 contract fence: the team entry is the external participant minus email and membershipCycleId", () => {
+    const expected = Object.keys(externalParticipantSchema.shape).filter((key) => key !== "email" && key !== "membershipCycleId").sort();
+    expect(Object.keys(ganttTeamMemberSchema.shape).sort()).toEqual(expected);
   });
 });

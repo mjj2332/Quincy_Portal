@@ -187,9 +187,17 @@ export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransport
   /** Active project editors, name/id order. */
   editors: ProjectEditorRef[];
   checklist: { completed: number; total: number };
+  /**
+   * #365: every membership, both roles, inactive included, photographer -> editor -> name -> id.
+   * Present ONLY when the page request sent `team=1` — old bundles never send it, so their
+   * `.strict()` decoders never see the key.
+   */
+  team?: GanttTeamMemberDto[];
   permissions: {
     canEditDeadline: boolean;
     canEditChildren: boolean;
+    /** #365: present ONLY with `team` (same `team=1` gate). */
+    canEditTeam?: boolean;
   };
   children: {
     rows: GanttChecklistRowDto[];
@@ -221,6 +229,13 @@ export type GanttProjectRowDto<TStage extends StageTransportKey = StageTransport
     nextCursor: string | null;
   };
 };
+
+/**
+ * #365: one Project membership, display-only. Exactly `externalParticipantSchema` minus `email` and
+ * `membershipCycleId`, so an External Editor is served nothing beyond the external Project contract.
+ * The Team picker's own fields come from the Project detail loaded when the picker opens.
+ */
+export type GanttTeamMemberDto = CalendarPerson & { roleOnProject: "photographer" | "editor" };
 
 export type GanttChecklistRowDto = {
   id: string;
@@ -266,6 +281,15 @@ const ganttProjectDeadlineSchema = z.object({
 }).strict().nullable();
 
 const ganttEditorRefSchema = z.object({ id: uuid, name: z.string().max(200) }).strict();
+
+export const ganttTeamMemberSchema = z.object({
+  id: uuid,
+  name: z.string().max(200),
+  roleLabel: z.string(),
+  isExternal: z.boolean(),
+  active: z.boolean(),
+  roleOnProject: z.enum(["photographer", "editor"]),
+}).strict();
 
 const ganttChecklistPermissionsSchema = z.object({
   canDrag: z.boolean(),
@@ -314,9 +338,14 @@ function ganttProjectRowSchemaFor<TStage extends StageTransportKey>(stageSchema:
     deadlineVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     editors: z.array(ganttEditorRefSchema),
     checklist: z.object({ completed: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).strict(),
-    permissions: z.object({ canEditDeadline: z.boolean(), canEditChildren: z.boolean() }).strict(),
+    team: z.array(ganttTeamMemberSchema).optional(),
+    permissions: z.object({ canEditDeadline: z.boolean(), canEditChildren: z.boolean(), canEditTeam: z.boolean().optional() }).strict(),
     children: ganttChildrenSchema(),
-  }).strict() as z.ZodType<GanttProjectRowDto<TStage>>;
+  }).strict().superRefine((row, ctx) => {
+    if ((row.team === undefined) !== (row.permissions.canEditTeam === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "team and permissions.canEditTeam are present together or not at all" });
+    }
+  }) as z.ZodType<GanttProjectRowDto<TStage>>;
 }
 
 const ganttAppliedFiltersSchema = z.object({

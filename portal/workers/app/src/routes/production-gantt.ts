@@ -31,6 +31,7 @@ import {
   type GanttProjectCursor,
   type GanttProjectDeadlineDto,
   type GanttProjectRowDto,
+  type GanttTeamMemberDto,
   type ProductionGanttChildPageResponse,
   type ProductionGanttResponse,
   type Role,
@@ -42,12 +43,12 @@ import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
 import { authorizedProjectsBaseCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
-import { activeEditorRefsByProject } from "../lib/project-editors";
+import { activeEditorRefsByProject, projectTeamByProject } from "../lib/project-editors";
 import type { AppEnv } from "../env";
 
 type GanttRole = AppEnv["Variables"]["user"]["role"];
 
-const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor", "facets", "rev"]);
+const QUERY_NAMES = new Set(["cursor", "limit", "q", "editors", "stages", "delivered", "completed", "scope", "childrenOf", "childCursor", "facets", "rev", "team"]);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 /** Canonical decimal only: no leading zero, no leading `+`, no whitespace. */
@@ -103,6 +104,8 @@ export type ParsedGanttPageQuery = {
   facets: boolean;
   /** #246: `rev=1` — embed each project's child-collection revision (`children.revision`). */
   revision: boolean;
+  /** #365: `team=1` — embed each project's team and `permissions.canEditTeam`. */
+  team: boolean;
 };
 
 export type ParsedGanttChildQuery = {
@@ -160,12 +163,15 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
   const facetsFlag = valueFor("facets");
   if (facetsFlag !== undefined && (facetsFlag !== "1" || rawCursor !== undefined || childrenOf !== undefined)) return parseFailure("facets=1 is valid only on a first page.", "gantt_query_invalid");
   const rawRevision = valueFor("rev");
+  const rawTeam = valueFor("team");
+  if (rawTeam !== undefined && rawTeam !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
   if (rawRevision !== undefined && rawRevision !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
 
   if (childrenOf !== undefined) {
     if (rawCursor !== undefined || rawLimit !== undefined) return parseFailure("childrenOf cannot be combined with cursor or limit.", "gantt_query_invalid");
     // #246: the revision rides on the embedded first page, which is what the client's cache is keyed to.
     if (rawRevision !== undefined) return parseFailure("rev applies to the project list, not a child page.", "gantt_query_invalid");
+    if (rawTeam !== undefined) return parseFailure("team applies to the project list, not a child page.", "gantt_query_invalid");
     if (!UUID_RE.test(childrenOf)) return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
     const rawChildCompletedFlag = valueFor("completed");
     if (rawChildCompletedFlag !== undefined && rawChildCompletedFlag !== "1") return parseFailure("Gantt query is invalid.", "gantt_query_invalid");
@@ -229,6 +235,7 @@ function parseGanttQuery(c: Context<AppEnv>): ParsedGanttQuery | GanttParseFailu
     completed: completedFlag === "1",
     facets: facetsFlag === "1",
     revision: rawRevision === "1",
+    team: rawTeam === "1",
   };
 }
 
@@ -697,6 +704,7 @@ function serializeGanttProjectRow(
   childrenByProject: Map<string, GanttChildSqlRow[]>,
   completed: boolean,
   withRevision: boolean,
+  teamByProject: Map<string, GanttTeamMemberDto[]> | null,
 ): GanttProjectRowDto {
   if (row.project_id === null || row.street === null || row.stage_key === null || row.bar_start_date === null || row.created_at === null) {
     throw new Error("Gantt project row is incomplete.");
@@ -731,7 +739,13 @@ function serializeGanttProjectRow(
     deadlineVersion: Number(row.deadline_version ?? 0),
     editors: editorsByProject.get(row.project_id) ?? [],
     checklist: { completed: Number(row.checklist_completed ?? 0), total: Number(row.checklist_total ?? 0) },
-    permissions: { canEditDeadline: roleHasCapability(role, "editProject") && !delivered, canEditChildren: canCollaborate },
+    // #365: opt-in (`team=1`), so an old bundle's strict decoder never meets the keys.
+    ...(teamByProject ? { team: teamByProject.get(row.project_id) ?? [] } : {}),
+    permissions: {
+      canEditDeadline: roleHasCapability(role, "editProject") && !delivered,
+      canEditChildren: canCollaborate,
+      ...(teamByProject ? { canEditTeam: roleHasCapability(role, "editProject") } : {}),
+    },
     children: {
       rows: children.map(serializeGanttChecklistRow),
       total,
@@ -826,8 +840,9 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
   const projectIds = pageRows.map((row) => row.project_id!);
 
   const db = createDb(c.env.DB);
-  const [editorsByProject, childrenResult] = await Promise.all([
+  const [editorsByProject, teamByProject, childrenResult] = await Promise.all([
     activeEditorRefsByProject(db, projectIds),
+    parsed.team ? projectTeamByProject(db, projectIds) : Promise.resolve(null),
     projectIds.length > 0
       ? c.env.DB.prepare(productionGanttChildrenForPageSql(role)).bind(...ganttChildrenForPageBindValues(user.id, projectIds, parsed.completed)).all<GanttChildSqlRow>()
       : Promise.resolve({ results: [] as GanttChildSqlRow[] }),
@@ -839,7 +854,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
     childrenByProject.set(row.project_id, list);
   }
 
-  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision));
+  const projects = pageRows.map((row) => serializeGanttProjectRow(row, role, now, editorsByProject, childrenByProject, parsed.completed, parsed.revision, teamByProject));
   const lastRow = pageRows.at(-1);
   const nextCursor = truncatedPage && lastRow
     ? encodeGanttProjectCursor({ startDate: lastRow.bar_start_date!, id: lastRow.project_id! })
