@@ -6,6 +6,9 @@ const authClient = createAuthClient({
   baseURL: typeof window === "undefined" ? "http://localhost" : window.location.origin,
   basePath: "/api/auth",
   plugins: [adminClient()],
+  // PrincipalFreshnessBoundary owns the focus policy (focus + 30s interval); better-auth's own
+  // visibilitychange refetch would make every return to the tab fire a second session request (#360).
+  sessionOptions: { refetchOnWindowFocus: false },
 });
 
 export const useSession = authClient.useSession;
