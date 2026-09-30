@@ -804,7 +804,7 @@ interface BuildInputVerdict {
 }
 
 /**
- * Parses `viteConfigSource` and asserts `build.rollupOptions.input` is absent, or resolves (by
+ * Parses `viteConfigSource` and asserts `build.rollupOptions.input` / `build.rolldownOptions.input` is absent, or resolves (by
  * AST, not substring match) only to the literal string `"index.html"`. Any computed/non-literal
  * input, or an input that resolves to anything other than exactly `"index.html"`, is unsafe. Fails
  * closed (round 2 fix, Sol BLOCKER) if the config object, `build`, or `rollupOptions` object
@@ -825,18 +825,25 @@ function analyzeBuildInputSafety(viteConfigSource: string): BuildInputVerdict {
   if (objectExpressionHasSpread(buildProp)) {
     return { safe: false, reason: "the build option contains a non-literal spread that could carry rollupOptions" };
   }
-  const rollupOptions = getObjectProperty(buildProp, "rollupOptions");
-  if (!rollupOptions) return { safe: true, reason: "no rollupOptions present" };
-  if (rollupOptions.type !== "ObjectExpression") return { safe: false, reason: "rollupOptions is not a plain object literal" };
-  if (objectExpressionHasSpread(rollupOptions)) {
-    return { safe: false, reason: "rollupOptions contains a non-literal spread that could carry input" };
+  // #359: Vite 8 treats `rolldownOptions` as the canonical key and `rollupOptions` as its
+  // deprecated alias, so an `input` under EITHER key would add a build entry. Walk both.
+  const literalsFound: string[] = [];
+  for (const key of ["rollupOptions", "rolldownOptions"] as const) {
+    const options = getObjectProperty(buildProp, key);
+    if (!options) continue;
+    if (options.type !== "ObjectExpression") return { safe: false, reason: `${key} is not a plain object literal` };
+    if (objectExpressionHasSpread(options)) {
+      return { safe: false, reason: `${key} contains a non-literal spread that could carry input` };
+    }
+    const input = getObjectProperty(options, "input");
+    if (!input) continue;
+    const literals = literalInputStrings(input);
+    if (!literals) return { safe: false, reason: `build.${key}.input is not a literal string/array/object of literals` };
+    literalsFound.push(...literals);
   }
-  const input = getObjectProperty(rollupOptions, "input");
-  if (!input) return { safe: true, reason: "no input present" };
-  const literals = literalInputStrings(input);
-  if (!literals) return { safe: false, reason: "build.rollupOptions.input is not a literal string/array/object of literals" };
-  if (literals.length === 1 && literals[0] === "index.html") return { safe: true, reason: "input resolves only to index.html" };
-  return { safe: false, reason: `build.rollupOptions.input resolves to ${JSON.stringify(literals)}` };
+  if (literalsFound.length === 0) return { safe: true, reason: "no input present" };
+  if (literalsFound.every((literal) => literal === "index.html")) return { safe: true, reason: "input resolves only to index.html" };
+  return { safe: false, reason: `build input resolves to ${JSON.stringify(literalsFound)}` };
 }
 
 describe("guard: vite.config.ts's build input is absent or resolves only to index.html", () => {
@@ -860,6 +867,32 @@ describe("guard: vite.config.ts's build input is absent or resolves only to inde
       });
     `;
     expect(analyzeBuildInputSafety(plantedMulti).safe).toBe(false);
+  });
+
+  it("self-test: unsafe on the same plants under build.rolldownOptions (#359)", () => {
+    expect(analyzeBuildInputSafety(`
+      export default defineConfig({
+        build: { rolldownOptions: { input: { harness: "harness/reui-scheduling/index.html" } } },
+      });
+    `).safe).toBe(false);
+    expect(analyzeBuildInputSafety(`
+      const entry = computeEntry();
+      export default defineConfig({ build: { rolldownOptions: { input: entry } } });
+    `).safe).toBe(false);
+    expect(analyzeBuildInputSafety(`
+      export default defineConfig({ build: { rolldownOptions: { ...sharedRolldownOptions } } });
+    `)).toMatchObject({ safe: false });
+    // An input under either key alone is enough: a clean rollupOptions must not mask a planted rolldownOptions.
+    expect(analyzeBuildInputSafety(`
+      export default defineConfig({ build: {
+        rollupOptions: { input: "index.html" },
+        rolldownOptions: { input: ["index.html", "extra.html"] },
+      } });
+    `).safe).toBe(false);
+    // The vendor chunk config (output only, no input) is safe.
+    expect(analyzeBuildInputSafety(`
+      export default defineConfig({ build: { rolldownOptions: { output: { codeSplitting: { groups: [] } } } } });
+    `).safe).toBe(true);
   });
 
   it("self-test: fails closed on a spread at every object level that could carry a build option (round 2, Sol BLOCKER)", () => {

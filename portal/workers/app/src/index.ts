@@ -100,5 +100,18 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
 // unauthenticated and must run before the static-asset SPA fallback.
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));
 app.all("/d/*", terminalRoute("/d/*", (c) => c.notFound()));
-app.all("*", terminalRoute("*", (c) => c.env.ASSETS.fetch(c.req.raw)));
+// #359: `/assets/*` is content-hashed and served `immutable` for a year (`apps/web/public/_headers`).
+// In production existing files are answered by the asset layer before this Worker runs, so a request
+// that reaches here for `/assets/*` is a MISS, and `single-page-application` fallback would answer it
+// with index.html. That must be a `no-store` 404: a miss during a deploy or rollback window would
+// otherwise be cached as HTML under a hashed URL for a year. (The test harness routes every request
+// through the Worker, so a real file is still passed through untouched.)
+app.all("*", terminalRoute("*", async (c) => {
+  const response = await c.env.ASSETS.fetch(c.req.raw);
+  if (new URL(c.req.url).pathname.startsWith("/assets/") && (response.headers.get("content-type") ?? "").includes("text/html")) {
+    await response.body?.cancel();
+    return new Response("Not found", { status: 404, headers: { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" } });
+  }
+  return response;
+}));
 export default { fetch: app.fetch };

@@ -6,6 +6,9 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "cpu_ms": 30000 },
+  // #359: deploy the app Worker minified; source maps upload so Workers Logs stack traces stay readable.
+  "minify": true,
+  "upload_source_maps": true,
   "observability": { "enabled": true },
   "assets": {
     "directory": "../../apps/web/dist",
