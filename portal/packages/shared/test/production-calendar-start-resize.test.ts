@@ -25,7 +25,7 @@ function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCa
   const timing = schedule.start.kind === "date"
     ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
     : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
-  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 describe("TB5C mapChecklistStartResizeToCommand", () => {

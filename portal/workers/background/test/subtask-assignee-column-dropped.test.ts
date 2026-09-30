@@ -7,8 +7,8 @@ import { scanDueSubtasks } from "../src/notifications";
 import { processNotificationMessage } from "../src/notification-delivery";
 
 /**
- * #373 part 1: the background worker reads and writes no `project_subtasks.assignee_id`. The column and its index are
- * dropped ad hoc (exactly 0050's statements; PR9 replaces this with the real migration), Subtasks are seeded through
+ * #373 part 1: the background worker reads and writes no `project_subtasks.assignee_id`. Migration 0050 drops the column
+ * and its index (applied by the migration loader), Subtasks are seeded through
  * the relation only, and the delivery path (resolver + channel admission) and the due scan must still work.
  */
 const database = env as unknown as { DB: D1Database };
@@ -26,8 +26,6 @@ async function executeSql(source: string): Promise<void> {
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
-  await database.DB.exec("DROP INDEX project_subtasks_assignee_idx;");
-  await database.DB.exec("ALTER TABLE project_subtasks DROP COLUMN assignee_id;");
 }, 60_000);
 
 function deliveryEnv(send?: ReturnType<typeof vi.fn>): Env {
@@ -65,6 +63,7 @@ describe("with project_subtasks.assignee_id dropped", () => {
   it("the column is really gone", async () => {
     const columns = (await database.DB.prepare("SELECT name FROM pragma_table_info('project_subtasks')").all<{ name: string }>()).results.map((row) => row.name);
     expect(columns).not.toContain("assignee_id");
+    expect((await database.DB.prepare("SELECT name FROM sqlite_master WHERE name = 'project_subtasks_assignee_idx'").all()).results).toEqual([]);
   });
 
   it("delivers a staff subtask_assigned notice (resolver and staff channel admission)", async () => {

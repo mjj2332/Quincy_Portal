@@ -23,7 +23,7 @@ function sha256(value: string): string {
 // the byte-for-byte match with the pre-refactor project-search extraction (#193) no longer applies,
 // and the `project-search` SQL helpers themselves are covered by the tests above.
 // (Re-pinned again in the #342 review round for a SQL comment reword; no logic change.)
-// (2026-09-30) #370: assignee relation replaces assignee_id — the Calendar reads `project_subtask_assignees`, so every digest changed.
+// (2026-09-30) #370: assignee relation replaces the per-Subtask assignee column — the Calendar reads `project_subtask_assignees`, so every digest changed.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
   admin: "c9edc6c3859b0ee81f60f60e9d1fb7acaf4e996fb3ca743ae1bce2e7ec23b95c",
   editor: "8960d5ac091869669e0184ed4a3c822857d1f2840ac47a9aea5bf615d804349e",

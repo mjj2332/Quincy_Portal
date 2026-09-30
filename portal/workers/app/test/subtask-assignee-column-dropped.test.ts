@@ -6,8 +6,8 @@ import type { Env } from "../src/env";
 import { scanDueSubtasks } from "../../background/src/notifications";
 
 /**
- * #373 part 1: no code reads or writes `project_subtasks.assignee_id`. The proof is this suite: it drops the index
- * and the column ad hoc, then drives every path that ever touched them over HTTP. Any `no such column: assignee_id`
+ * #373 part 1: no code reads or writes `project_subtasks.assignee_id`. The proof is this suite: migration 0050
+ * drops the index and the column (applied by the migration loader), then it drives every path that ever touched them over HTTP. Any `no such column: assignee_id`
  * (including a drizzle full-row select, which is a hidden column read) is a 500 and fails a test here.
  */
 const database = env as unknown as { DB: D1Database };
@@ -32,9 +32,6 @@ type Item = { id: string; title: string; done: boolean; assignees: Person[]; ass
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__); await executeSql(__PORTAL_SEED_SQL__);
-  // Exactly 0050's statements; PR9 replaces this with the real migration.
-  await database.DB.exec("DROP INDEX project_subtasks_assignee_idx;");
-  await database.DB.exec("ALTER TABLE project_subtasks DROP COLUMN assignee_id;");
   const now = Date.now();
   for (const [id, role] of [[adminId, "admin"], [editorId, "editor"], [photographerId, "photographer"], [externalId, "external_editor"]] as const) {
     await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} ${id.slice(0, 2)}`, `${id}@example.test`, role, now, now).run();
