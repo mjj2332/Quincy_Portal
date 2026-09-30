@@ -101,11 +101,10 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));
 app.all("/d/*", terminalRoute("/d/*", (c) => c.notFound()));
 // #359: `/assets/*` is content-hashed and served `immutable` for a year (`apps/web/public/_headers`).
-// In production existing files are answered by the asset layer before this Worker runs, so a request
-// that reaches here for `/assets/*` is a MISS, and `single-page-application` fallback would answer it
-// with index.html. That must be a `no-store` 404: a miss during a deploy or rollback window would
-// otherwise be cached as HTML under a hashed URL for a year. (The test harness routes every request
-// through the Worker, so a real file is still passed through untouched.)
+// `/assets/*` is in `run_worker_first` (wrangler.jsonc) so a MISS reaches this Worker instead of the
+// asset layer's `single-page-application` fallback answering it with index.html, which the immutable
+// rule would let a browser cache under a hashed URL for a year. Existing files still pass through
+// ASSETS.fetch with `_headers` applied; a miss (HTML fallback) becomes a `no-store` 404.
 app.all("*", terminalRoute("*", async (c) => {
   const response = await c.env.ASSETS.fetch(c.req.raw);
   if (new URL(c.req.url).pathname.startsWith("/assets/") && (response.headers.get("content-type") ?? "").includes("text/html")) {
