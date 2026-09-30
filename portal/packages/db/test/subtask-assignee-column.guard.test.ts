@@ -38,7 +38,7 @@ const EXCLUDED = [
 
 /** File plus exact occurrence count. These suites prove the column is gone, so they must name it. */
 const EXCEPTIONS: ReadonlyArray<{ file: string; count: number }> = [
-  { file: "workers/app/test/subtask-assignee-column-dropped.test.ts", count: 5 },
+  { file: "workers/app/test/subtask-assignee-column-dropped.test.ts", count: 6 },
   { file: "workers/background/test/subtask-assignee-column-dropped.test.ts", count: 4 },
 ];
 

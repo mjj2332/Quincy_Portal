@@ -55,6 +55,11 @@ describe("with project_subtasks.assignee_id dropped", () => {
     expect((await database.DB.prepare("SELECT name FROM sqlite_master WHERE name = 'project_subtasks_assignee_idx'").all()).results).toEqual([]);
   });
 
+  // The retired single-assignee field, in every spelling it ever had, is on no Subtask-shaped response.
+  function expectNoSingularAssignee(value: unknown) {
+    for (const key of ["assignee", "assigneeId", "assignee_id"]) expect(value).not.toHaveProperty(key);
+  }
+
   it("lists, creates with three assignees, and reads the assignee options", async () => {
     expect((await request(base, tokens.editor)).status).toBe(200);
     const options = await request(`/api/projects/${projectId}/subtask-assignee-options`, tokens.editor);
@@ -67,13 +72,15 @@ describe("with project_subtasks.assignee_id dropped", () => {
     item.id = body.id;
     expect(body.assignmentVersion).toBe(1);
     expect(body.assignees.map((person) => person.id).sort()).toEqual([adminId, photographerId, externalId].sort());
-    expect(body).not.toHaveProperty("assignee");
+    expectNoSingularAssignee(body);
     const listed = await (await request(base, tokens.editor)).json() as { subtasks: Item[] };
     expect(listed.subtasks.find((row) => row.id === item.id)?.assignees).toHaveLength(3);
+    expectNoSingularAssignee(listed.subtasks.find((row) => row.id === item.id));
     const external = await (await request(base, tokens.external)).json() as { subtasks: Item[] };
     const seen = external.subtasks.find((row) => row.id === item.id)!;
     expect(seen.assignees.map((person) => person.id).sort()).toEqual([photographerId, externalId].sort());
     expect(seen.otherAssigneeCount).toBe(1);
+    expectNoSingularAssignee(seen);
   });
 
   it("adds and removes an assignee, as staff and as an External Editor", async () => {
@@ -112,7 +119,7 @@ describe("with project_subtasks.assignee_id dropped", () => {
     expect(all.status).toBe(200);
     const event = (await all.json() as { events: Array<{ kind: string; title: string; assignees?: Person[]; assignee?: unknown }> }).events.find((row) => row.kind === "checklist" && row.title === "Dropped, renamed");
     expect(event?.assignees?.map((person) => person.id).sort()).toEqual([adminId, externalId].sort());
-    expect(event).not.toHaveProperty("assignee");
+    expectNoSingularAssignee(event);
     const byEditor = await request(`/api/production-calendar?${calendar}&editors=${externalId}`, tokens.admin);
     expect(byEditor.status).toBe(200);
     expect((await request(`/api/production-calendar?${calendar}&unassigned=1`, tokens.admin)).status).toBe(200);
@@ -132,7 +139,7 @@ describe("with project_subtasks.assignee_id dropped", () => {
       const rows = (await child.json() as { children: { rows: Array<{ title: string; assignees: Person[]; assignee?: unknown }> } }).children.rows;
       const row = rows.find((candidate) => candidate.title === "Dropped, renamed");
       expect(row?.assignees.length).toBeGreaterThan(0);
-      expect(row).not.toHaveProperty("assignee");
+      expectNoSingularAssignee(row);
     }
   });
 
