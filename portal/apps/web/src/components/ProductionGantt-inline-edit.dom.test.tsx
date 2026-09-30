@@ -321,14 +321,53 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
 
     const before = ganttRequests().length;
     const input = await openCandidateList();
+    const putGate = deferred();
+    apiPutWithStatusMock.mockImplementationOnce(async (path: string) => {
+      await putGate.promise;
+      const match = /\/editors\/([^/]+)$/.exec(path)!;
+      const added = person(match[1]!, "Nina Newcomer", "editor");
+      server.team = [...server.team, added];
+      return { status: 201, data: { outcome: "created", membership: membershipFor(added, server.team.length) } };
+    });
     await typeInto(input, "nina");
     await waitFor(() => expect(options().some((option) => option.textContent?.includes("Nina Newcomer"))).toBe(true));
     await act(async () => { options().find((option) => option.textContent?.includes("Nina Newcomer"))!.click(); await Promise.resolve(); });
     expect(apiPutWithStatusMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/editors/${NEW_EDITOR}`);
-    // The chip is pending straight away (the membership ledger), before the write returns.
-    await waitFor(() => expect(document.querySelector(`[data-testid="project-member-editor:${NEW_EDITOR}"]`)).not.toBeNull());
+    // The chip is pending straight away (the membership ledger), while the write is still in flight.
+    const chip = () => document.querySelector(`[data-testid="project-member-editor:${NEW_EDITOR}"]`);
+    await waitFor(() => expect(chip()).not.toBeNull());
+    expect(chip()!.getAttribute("data-state")).toBe("pending");
+    expect(chip()!.getAttribute("aria-busy")).toBe("true");
+    expect(teamNames()).not.toContain("Nina Newcomer");
+    putGate.resolve();
+    await flush(3);
+    await waitFor(() => expect(chip()?.getAttribute("data-state")).toBe("idle"));
+    expect(chip()!.getAttribute("aria-busy")).toBeNull();
     await waitFor(() => expect(ganttRequests().length).toBeGreaterThan(before));
     await waitFor(() => expect(teamNames()).toContain("Nina Newcomer"));
+  });
+
+  it("T1b both triggers are disabled while a bar drag is in progress (before release) and re-enable when the gesture ends", async () => {
+    await render();
+    expect(teamTrigger()!.disabled).toBe(false);
+    expect(deadlineTrigger()!.disabled).toBe(false);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ left: 0, right: 1440, width: 1440, top: 0, bottom: 40, height: 40, x: 0, y: 0, toJSON() {} }) as DOMRect,
+    );
+    const grip = host.querySelector<HTMLElement>(`[data-gantt-resource="project:${PROJECT_ID}"] [data-testid="gantt-resize-handle-end"]`)!;
+    expect(grip).not.toBeNull();
+    const fire = async (target: EventTarget, type: string, clientX: number) => {
+      await act(async () => { target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, button: 0, clientX, clientY: 10 })); await Promise.resolve(); });
+    };
+    await fire(grip, "pointerdown", 700);
+    await fire(window, "pointermove", 900);
+    expect(host.querySelector('[data-testid="gantt-drag-ghost"]')).not.toBeNull();
+    expect(teamTrigger()!.disabled).toBe(true);
+    expect(deadlineTrigger()!.disabled).toBe(true);
+    await fire(window, "pointercancel", 900);
+    await flush(3);
+    await waitFor(() => expect(teamTrigger()!.disabled).toBe(false));
+    expect(deadlineTrigger()!.disabled).toBe(false);
   });
 
   it("T2 Admin removes the final role of a member with checklist items: 422 opens the real confirm, confirming keeps the popover and sends the count", async () => {

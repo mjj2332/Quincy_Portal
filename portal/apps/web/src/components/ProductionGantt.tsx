@@ -126,7 +126,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
-import { Gantt, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
+import { Gantt, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
@@ -684,6 +684,18 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
  * `@quincy/shared` exports the create bound — the shared `max(500)`s are read-DTO bounds).
  */
 const GANTT_CREATE_TITLE_MAX = 500;
+
+/**
+ * #365: the People and Due triggers stay disabled for the WHOLE bar gesture, not only once it is
+ * submitted. `live` follows the controller lock, which starts when `onEventUpdate` submits the
+ * proposal on pointer release; a pointer drag/resize (`state.drag`) or a keyboard Adjust session
+ * (`state.adjust`) is in progress before that. Column cells render inside `<Gantt>`, so they can
+ * read the instance state.
+ */
+function GestureAwareCell({ live, children }: { live: boolean; children: (disabled: boolean) => ReactNode }) {
+  const gestureActive = useGanttSelector((state) => state.drag !== null || state.adjust !== null);
+  return <>{children(!live || gestureActive)}</>;
+}
 
 export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject }: ProductionGanttProps) {
   const { stages } = useStages();
@@ -1269,7 +1281,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         width: 88,
         render: ({ resource }) => {
           const project = projectFor(resource);
-          return project ? <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={!live} role={identity.role} /> : null;
+          return project ? <GestureAwareCell live={live}>{(disabled) => <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
         },
       },
       {
@@ -1278,7 +1290,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         width: 128,
         render: ({ resource }) => {
           const project = projectFor(resource);
-          return project ? <GanttDeadlineCell projectId={project.id} street={project.street} deadline={project.deadline} canEdit={project.permissions.canEditDeadline} disabled={!live} role={identity.role} /> : null;
+          return project ? <GestureAwareCell live={live}>{(disabled) => <GanttDeadlineCell projectId={project.id} street={project.street} deadline={project.deadline} canEdit={project.permissions.canEditDeadline} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
         },
       },
     ];
