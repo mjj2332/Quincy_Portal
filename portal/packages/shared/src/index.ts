@@ -29,6 +29,7 @@ export {
   formatSydneyCivilMinute,
   isSydneyCalendarDate,
   sydneyCivilParts,
+  sydneyBusinessDate,
 } from "./sydney-civil-time";
 export type { SydneyCivilDisambiguation, SydneyCivilParts, SydneyCivilResolution } from "./sydney-civil-time";
 export * from "./checklist-schedule";

@@ -1,4 +1,4 @@
-import { isCanonicalCalendarDate } from "@quincy/shared";
+import { isCanonicalCalendarDate, sydneyBusinessDate } from "@quincy/shared";
 import { commitAutomaticStage, automaticBoardWritesEnabled } from "./lib/automatic-stage";
 
 export type AwaitingRawProject = {
@@ -16,23 +16,14 @@ type ReconciliationStore = {
 };
 type ReconciliationNotifier = (projectId: string) => void | Promise<void>;
 
-const SYDNEY_TIME_ZONE = "Australia/Sydney";
 // Each advance sends a raw_ready notification and email to every active admin and the
 // project's editors, and one cron invocation shares a 1000-subrequest budget with the Editor
 // recovery page and the stalled/subtask scans. Lower this before any migration that makes many
 // past-dated awaiting_raw rows due at once.
 export const RECONCILE_AWAITING_RAW_BATCH_SIZE = 100;
 
-export function australiaSydneyBusinessDate(instant: Date | number): string {
-  const values = new Intl.DateTimeFormat("en-CA", {
-    timeZone: SYDNEY_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(instant);
-  const parts = new Map(values.map((part) => [part.type, part.value]));
-  return `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}`;
-}
+// Alias of the shared Sydney business-date rule (one rule, two layers).
+export const australiaSydneyBusinessDate = sydneyBusinessDate;
 
 export function dueAwaitingRawProjects(projects: AwaitingRawProject[], businessDate: string): DueAwaitingRawProject[] {
   return projects.filter((project): project is DueAwaitingRawProject => (

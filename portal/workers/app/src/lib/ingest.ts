@@ -6,8 +6,10 @@ import {
   createDb,
   deriveStageFinalizerIntent,
   buildNonCompactingStageWinner,
+  buildStageShootDateFill,
   buildWorkflowTail,
   schema,
+  shootDateFillLanded,
   type ExpectedTargetPlacementRow,
 } from "@quincy/db";
 import { and, eq, sql } from "drizzle-orm";
@@ -23,6 +25,7 @@ function editedDestinationPredicate(env: Env): string {
 }
 import { notifyProject } from "./notifications";
 import { requireBoardSchemaReady } from "./board-schema";
+import { queueProjectShootDateFollowUps } from "./project-shoot-date";
 
 export type FinalizeIngestDependencies = { beforeMetadataBatch?: () => void | Promise<void> };
 
@@ -266,9 +269,17 @@ export async function finalizeIngest(
           }),
           updatedAt: now.getTime(),
         });
+        // Same Shoot date fill as every other Awaiting RAW exit; the audit actor is NULL to match
+        // this path's own stage.auto_advance audit.
+        const shootDateFill = buildStageShootDateFill({
+          db: env.DB, projectId: input.projectId, from: "awaiting_raw", to: "raw_review",
+          winnerAuditId: auditId, winnerAuditAction: "stage.auto_advance", fillAuditId: crypto.randomUUID(),
+          actorId: null, impersonatedBy: input.auditPrincipal?.impersonatedBy ?? null, now: now.getTime(),
+        });
         const bundle = composeStageBundle({
           stage,
           workflow: buildWorkflowTail({ db: env.DB, auditId, kind: "none" }, "none"),
+          shootDateFill,
         });
         const results = await env.DB.batch(bundle.statements);
         const winnerRows = results[bundle.indexes.stage.winner]?.results ?? [];
@@ -292,6 +303,7 @@ export async function finalizeIngest(
             auditId: marker.id,
             legacyWorkflowNotification: "raw_ready",
           }]);
+          if (shootDateFillLanded(results, bundle.indexes.shootDateFill)) await queueProjectShootDateFollowUps(env, input.projectId);
           if (finalizer?.legacyWorkflowNotification === "raw_ready") {
             try {
               await notifyProject(env, input.projectId, "raw_ready");

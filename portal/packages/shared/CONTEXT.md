@@ -70,6 +70,13 @@ made the glossary's disagreement with the screen user-visible, and it is settled
 word on the screen.
 _Avoid_: Board, dashboard, pipeline view
 
+**Shoot date**:
+The civil day, in the studio's timezone, a Project's property is shot. A date, never a time.
+A Project with none is given today's date when it leaves the Awaiting RAW Stage by any route,
+or when its Deadline is set after it has already left that Stage. Only an empty shoot date is
+filled; one already held, even as unparsed Tonomo text, is never replaced this way.
+_Avoid_: Shoot time, appointment
+
 **Deadline**:
 The civil-time commitment for a Project's delivery, held in the studio's timezone.
 _Avoid_: Due date, ETA

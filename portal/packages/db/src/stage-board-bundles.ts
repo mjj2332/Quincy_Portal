@@ -1,6 +1,7 @@
 import { projectActivityDeepLink, type ProjectActivityType, type StageKey } from "@quincy/shared";
 import { BOARD_CONTRACT_FLAG } from "./board-schema-variant";
 import { buildProjectActivityStatements } from "./project-activity";
+import type { ShootDateFillIndexes } from "./shoot-date-fill";
 export type PreparedStatementBundle<TIndexes> = { statements: D1PreparedStatement[]; indexes: TIndexes; };
 export type StageWinnerIndexes = { winner: number; auditMarker: number; };
 export type ActivityBundleIndexes = { activity: number; broadOutbox: number; broadLedger: number; };
@@ -51,6 +52,7 @@ export type ComposedStageBundleIndexes = {
   workflow: WorkflowTailIndexes;
   token?: EditingEntryTokenTailIndexes;
   terminal?: TerminalAssertionIndexes;
+  shootDateFill?: ShootDateFillIndexes;
 };
 export type CommittedStageFinalizerIntent = { publicationIds: string[]; legacyWorkflowNotification?: "raw_ready" | "sent_to_editing" | "edited_landed"; };
 export type ExpectedTargetPlacementRow = { projectId: string; stageKey: StageKey; boardPosition: number; boardRevision: number; };
@@ -1849,6 +1851,7 @@ export function composeStageBundle(input: {
   workflow: PreparedStatementBundle<WorkflowTailIndexes>;
   token?: PreparedStatementBundle<EditingEntryTokenTailIndexes>;
   terminal?: PreparedStatementBundle<TerminalAssertionIndexes>;
+  shootDateFill?: PreparedStatementBundle<ShootDateFillIndexes>;
 }): PreparedStatementBundle<ComposedStageBundleIndexes> {
   const statements: D1PreparedStatement[] = [];
   const isIndexTuple = (value: unknown): value is readonly [number, number] => Array.isArray(value) && value.length === 2 && value.every((entry) => typeof entry === "number");
@@ -1872,6 +1875,12 @@ export function composeStageBundle(input: {
   const activity = input.activity ? append(input.activity) : undefined;
   const deadline = input.deadline ? append(input.deadline) : undefined;
   const terminal = input.terminal ? append(input.terminal) : undefined;
+  // The Shoot date fill MUST stay last. RAW reconciliation's workflow tail and terminal assertion
+  // check the pre-move shoot date (workflowDurablePostconditionSql asserts `p.shoot_date IS
+  // <premise.shootDate>`), so a fill placed before them would fail that assertion, abort the whole
+  // batch and misclassify a legitimate Dropbox move as a conflict. Its UPDATE is gated on the
+  // winner's audit row rather than changes(), so whatever precedes it does not matter.
+  const shootDateFill = input.shootDateFill ? append(input.shootDateFill) : undefined;
   return {
     statements,
     indexes: {
@@ -1882,7 +1891,8 @@ export function composeStageBundle(input: {
       ...(input.deadline ? { deadline } : {}),
       workflow,
       ...(token ? { token } : {}),
-      ...(terminal ? { terminal } : {})
+      ...(terminal ? { terminal } : {}),
+      ...(shootDateFill ? { shootDateFill } : {})
     }
   };
 }

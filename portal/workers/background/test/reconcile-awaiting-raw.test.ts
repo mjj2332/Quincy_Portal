@@ -160,4 +160,17 @@ describe("awaiting RAW reconciliation mutation", () => {
     await expect(database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(projectId).first())
       .resolves.toEqual({ count: 0 });
   });
+  it("advances a dated Project without writing a Shoot date fill or changing the date", async () => {
+    const projectId = crypto.randomUUID();
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, shoot_date, stage_key, created_at, updated_at) VALUES (?, 'Reconcile dated', '2026-08-20', 'awaiting_raw', ?, ?)")
+      .bind(projectId, now, now).run();
+    const candidate = { id: projectId, shootDate: "2026-08-20", stageKey: "awaiting_raw", archivedAt: null } as const;
+
+    await expect(advanceAwaitingRawProject(database.DB, candidate, "2026-08-29", now + 1)).resolves.toBe(true);
+    await expect(database.DB.prepare("SELECT stage_key, shoot_date FROM projects WHERE id = ?").bind(projectId).first())
+      .resolves.toEqual({ stage_key: "raw_review", shoot_date: "2026-08-20" });
+    await expect(database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).first())
+      .resolves.toEqual({ count: 0 });
+  });
 });

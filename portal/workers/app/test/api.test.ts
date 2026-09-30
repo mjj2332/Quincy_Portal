@@ -2759,10 +2759,41 @@ describe("staff app API", () => {
     expect(stageAudits.results[0]?.actor_id).toBeNull();
     expect(JSON.parse(stageAudits.results[0]!.meta_json)).toMatchObject({ trigger: "direct_upload", durableRawEvidence: { newlyImported: true, currentRawAvailable: true } });
     expect(await authEnv.MEDIA.get(key)).not.toBeNull();
+    // The Awaiting RAW exit also fills the empty Shoot date, with a NULL actor like its stage audit.
+    const filledDate = await database.DB.prepare("SELECT shoot_date FROM projects WHERE id = ?").bind(projectId).first<{ shoot_date: string | null }>();
+    expect(filledDate?.shoot_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const fillAudits = await database.DB.prepare("SELECT actor_id, meta_json FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).all<{ actor_id: string | null; meta_json: string }>();
+    expect(fillAudits.results).toHaveLength(1);
+    expect(fillAudits.results[0]?.actor_id).toBeNull();
+    expect(JSON.parse(fillAudits.results[0]!.meta_json)).toEqual({ shootDate: filledDate!.shoot_date, previousShootDate: null, reason: "stage_move" });
 
     const listed = await SELF.fetch(`https://portal.test/api/projects/${projectId}/assets?collection=raw`, { headers: { cookie } });
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toMatchObject({ assets: [expect.objectContaining({ id: assetId })] });
+  });
+
+  it("leaves a held Shoot date (canonical or text) untouched when a direct RAW upload advances the Project", async () => {
+    const cookie = await sessionCookie(adminToken);
+    for (const held of ["2026-09-15", "TBC next week"]) {
+      const projectId = crypto.randomUUID();
+      const collectionId = crypto.randomUUID();
+      const assetId = crypto.randomUUID();
+      const now = Date.now();
+      await database.DB.batch([
+        database.DB.prepare("INSERT INTO projects (id, street, stage_key, shoot_date, created_at, updated_at) VALUES (?, ?, 'awaiting_raw', ?, ?, ?)").bind(projectId, `Held date ${projectId}`, held, now, now),
+        database.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'raw', 'empty', 0, ?, ?)").bind(collectionId, projectId, now, now),
+      ]);
+      const key = `projects/${projectId}/raw/${assetId}/held.jpg`;
+      await authEnv.MEDIA.put(key, "held-date-jpeg", { httpMetadata: { contentType: "image/jpeg" } });
+      const response = await SELF.fetch("https://portal.test/api/uploads/complete", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ projectId, key, originalFilename: "held.jpg", collection: "raw" }),
+      });
+      expect(response.status).toBe(201);
+      await expect(database.DB.prepare("SELECT stage_key, shoot_date FROM projects WHERE id = ?").bind(projectId).first()).resolves.toEqual({ stage_key: "raw_review", shoot_date: held });
+      await expect(database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE target_id = ? AND action = 'project.shoot_date.changed'").bind(projectId).first()).resolves.toEqual({ count: 0 });
+    }
   });
 
   it("atomically loses a direct-upload identity race to a Dropbox-style asset transaction", async () => {
