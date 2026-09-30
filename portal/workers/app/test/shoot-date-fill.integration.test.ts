@@ -38,7 +38,7 @@ async function cookie(token: string) {
   return `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, baseEnv.BETTER_AUTH_SECRET ?? "dev-only-replace-better-auth-secret-32-bytes")}`;
 }
 
-type CallOptions = { editorAutomation?: string };
+type CallOptions = { editorAutomation?: string; db?: D1Database };
 /** Runs the real app with a recording BACKGROUND and every waitUntil promise awaited. */
 async function call(path: string, method: "POST" | "PUT", body: unknown, options: CallOptions = {}) {
   const editorFolderCalls: string[] = [];
@@ -46,6 +46,7 @@ async function call(path: string, method: "POST" | "PUT", body: unknown, options
   const executionContext = { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); }, passThroughOnException: () => undefined, props: undefined } as unknown as ExecutionContext;
   const environment = {
     ...baseEnv,
+    ...(options.db ? { DB: options.db } : {}),
     DROPBOX_EDITOR_AUTOMATION_ENABLED: options.editorAutomation ?? "1",
     BACKGROUND: { ensureEditorFolder: async (projectId: string) => { editorFolderCalls.push(projectId); return { jobId: "job" }; } } as unknown as Env["BACKGROUND"],
   } as Env;
@@ -168,6 +169,31 @@ describe("Shoot date fill on a manual Stage move (#411)", () => {
     expect(response.status).toBe(200);
     expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
     expect(editorFolderCalls).toEqual([]);
+  });
+
+  it("still queues the Editor follow-up when a later move wins the reread after the fill committed", async () => {
+    const projectId = await seedProject("awaiting_raw");
+    // A D1 whose batch commits, then another request moves the Project on before this one rereads it.
+    const racingDb = new Proxy(database.DB, {
+      get(target, property) {
+        if (property === "batch") {
+          return async (statements: D1PreparedStatement[]) => {
+            const results = await target.batch(statements);
+            await target.prepare("UPDATE projects SET stage_key = 'editing_autohdr', board_revision = board_revision + 1 WHERE id = ?").bind(projectId).run();
+            return results;
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const body = stageBody("awaiting_raw", "raw_review", 0, { reasons: stageMoveConfirmationReasons("awaiting_raw", "raw_review") });
+    const { response, editorFolderCalls } = await call(`/api/projects/${projectId}/stage`, "POST", body, { db: racingDb });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "project_stage_conflict" });
+    expect(await shootDateOf(projectId)).toBe(SYDNEY_DAY);
+    expect(await fillAudits(projectId)).toHaveLength(1);
+    expect(editorFolderCalls).toEqual([projectId]);
   });
 
   it("carries the impersonating Admin in the fill audit, like the stage audit beside it", async () => {

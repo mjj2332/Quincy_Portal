@@ -58,7 +58,8 @@ export type MoveProjectStageResult =
   | { kind: "archived"; current: StageMoveProjectState }
   | { kind: "inactive_destination"; current: StageMoveProjectState }
   | { kind: "confirmation_required"; current: StageMoveProjectState; required: { fromStageKey: StageTransportKey; toStageKey: StageTransportKey; reasons: StageMoveConfirmationReason[] } }
-  | { kind: "conflict"; current: StageMoveProjectState | null }
+  /** `shootDateFilled`: the batch committed (and filled) but a later move won the reread; the fill's follow-up must still run. */
+  | { kind: "conflict"; current: StageMoveProjectState | null; shootDateFilled?: boolean }
   | { kind: "disabled" }
   | { kind: "schema_maintenance" };
 
@@ -219,8 +220,10 @@ export async function moveProjectStage(input: MoveProjectStageInput): Promise<Mo
   const results = await db.batch(bundle.statements);
   const finalizer = finalizerFromResults(results, project.id, bundle.indexes.stage.auditMarker, bundle.indexes.stage.winner, bundle.indexes.activity!.broadOutbox);
   if (!finalizer) return { kind: "conflict", current: stateFor(await readBoardProject(db, project.id), principal.role) };
+  // Read once the batch committed: a later move winning the reread below must not drop the fill's follow-up.
+  const shootDateFilled = shootDateFillLanded(results, bundle.indexes.shootDateFill);
   const updated = await readBoardProject(db, project.id);
-  if (!updated || updated.archivedAt !== null || updated.stageKey !== targetStageKey) return { kind: "conflict", current: stateFor(updated, principal.role) };
+  if (!updated || updated.archivedAt !== null || updated.stageKey !== targetStageKey) return { kind: "conflict", current: stateFor(updated, principal.role), shootDateFilled };
   const updatedVisible = await readVisibleBoardRows(db, principal, targetStageKey);
-  return { kind: "moved", response: responseFor(updated, principal.role, project.stageKey, updatedVisible, true), finalizer, shootDateFilled: shootDateFillLanded(results, bundle.indexes.shootDateFill) };
+  return { kind: "moved", response: responseFor(updated, principal.role, project.stageKey, updatedVisible, true), finalizer, shootDateFilled };
 }

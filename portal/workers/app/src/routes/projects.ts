@@ -1235,7 +1235,10 @@ const stageHandler = async (c: Context<AppEnv>) => {
     },
     current: result.current,
   }, 409);
-  if (result.kind === "conflict") return c.json({ error: "Project stage changed; reload and try again.", code: "project_stage_conflict", current: result.current }, 409);
+  if (result.kind === "conflict") {
+    if (result.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, id));
+    return c.json({ error: "Project stage changed; reload and try again.", code: "project_stage_conflict", current: result.current }, 409);
+  }
   if (result.kind === "disabled") return boardContractDisabled(c);
   if (result.kind === "schema_maintenance") return boardSchemaMaintenance(c);
   return c.json({ error: "Stage move failed" }, 500);
