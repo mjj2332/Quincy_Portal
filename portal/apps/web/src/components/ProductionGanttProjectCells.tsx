@@ -14,9 +14,9 @@
  * calls are what refresh the Gantt, Dashboard, Calendar and detail.
  */
 import { useCallback, useId, useRef, useState, type ReactNode } from "react";
-import { UserPlus } from "lucide-react";
 import type { GanttProjectRowDto, GanttTeamMemberDto, Role } from "@quincy/shared";
 import { AvatarStack } from "./quincy/AvatarStack";
+import { EmptyAssigneeGlyph } from "./quincy/EmptyAssigneeGlyph";
 import { Notice } from "./quincy/Notice";
 import { Button } from "./reui/button";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./reui/popover";
@@ -106,12 +106,8 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
         onClick={(event: { stopPropagation: () => void }) => event.stopPropagation()}
       >
         {people.length === 0 ? (
-          // The only way to add the first person: a dashed circle on the visible `--border` (the
-          // hairline was near-invisible) with an add-person icon, the dashed-trigger idiom of
-          // `project-header-popover.ts`.
-          <span aria-hidden="true" className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-foreground-secondary">
-            <UserPlus className="size-3.5" strokeWidth={1.5} />
-          </span>
+          // The only way to add the first person: the shared empty-assignee glyph (visible dashed `--border`, add-person icon).
+          <EmptyAssigneeGlyph />
         ) : (
           <AvatarStack decorative people={people} personNoun="team member" emptyLabel="No team assigned" />
         )}

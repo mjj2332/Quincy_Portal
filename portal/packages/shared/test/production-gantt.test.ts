@@ -11,6 +11,7 @@ import {
   ganttTeamMemberSchema,
   externalParticipantSchema,
   externalProductionGanttSchema,
+  productionGanttChildPageSchema,
   PRODUCTION_GANTT_DRAW_CAP,
   PRODUCTION_GANTT_ZONE,
   type GanttChildCursor,
@@ -170,6 +171,34 @@ describe("response schema", () => {
 
   it("rejects an unknown top-level field (.strict())", () => {
     expect(() => adminProductionGanttResponseSchema.parse({ ...baseResponse(), extra: true })).toThrow();
+  });
+
+  // #372: a Subtask row carries its assignee list, a hidden count, the version and the edit permission.
+  describe("Subtask assignees (#372)", () => {
+    const person = { id: "11111111-1111-4111-8111-111111111111", name: "Alice Editor", roleLabel: "Editor", isExternal: false, active: true };
+    const schedule = { state: "range" as const, version: 1, zone: PRODUCTION_GANTT_ZONE, start: { kind: "date" as const, localCivil: "2026-08-27", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, end: { kind: "date" as const, localCivil: "2026-08-27", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" as const }, due: "2026-08-27" };
+    const row = () => ({ id, projectId: id, title: "Task", done: false, position: 0, assignee: person, assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } });
+    const withRow = (value: unknown) => ({ ...baseResponse(), projects: [{ ...baseRow(), children: { rows: [value], total: 1, returned: 1, truncated: false, nextCursor: null } }] });
+
+    it("parses a row with several assignees, a hidden count and canEditAssignees", () => {
+      const parsed = adminProductionGanttResponseSchema.parse(withRow(row()));
+      expect(parsed.projects[0]!.children.rows[0]).toMatchObject({ assignees: [person], otherAssigneeCount: 2, assignmentVersion: 3, permissions: { canEditAssignees: true } });
+    });
+
+    it("rejects a row missing any of the new fields, or with a bad count or version", () => {
+      for (const key of ["assignees", "otherAssigneeCount", "assignmentVersion"] as const) {
+        const { [key]: _omitted, ...rest } = row();
+        expect(() => adminProductionGanttResponseSchema.parse(withRow(rest)), key).toThrow();
+      }
+      expect(() => adminProductionGanttResponseSchema.parse(withRow({ ...row(), otherAssigneeCount: -1 }))).toThrow();
+      expect(() => adminProductionGanttResponseSchema.parse(withRow({ ...row(), assignmentVersion: 1.5 }))).toThrow();
+      expect(() => adminProductionGanttResponseSchema.parse(withRow({ ...row(), permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } }))).toThrow();
+    });
+
+    it("parses the child-page and external shapes with the same row", () => {
+      expect(() => productionGanttChildPageSchema.parse({ projectId: id, children: { rows: [row()], total: 1, returned: 1, truncated: false, nextCursor: null } })).not.toThrow();
+      expect(() => externalProductionGanttSchema.parse(withRow(row()))).not.toThrow();
+    });
   });
 
   it("rejects an unknown field on a project row (.strict())", () => {

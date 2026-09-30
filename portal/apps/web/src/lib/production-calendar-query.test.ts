@@ -166,6 +166,12 @@ describe("checklist mutation response domains", () => {
     expect(external.otherAssigneeCount).toBe(2);
   });
 
+  it("carries the assignment version so the Gantt can adopt a result version-wins (#372)", () => {
+    const staff = decodeChecklistMutationResponse("admin", { id: itemId, title: "t", done: false, position: 1, assignee: null, assignees: [], assignmentVersion: 6, schedule });
+    expect(staff.assignmentVersion).toBe(6);
+    expect(decodeChecklistMutationResponse("admin", { id: itemId, title: "t", done: false, position: 1, assignee: null, schedule }).assignmentVersion).toBeUndefined();
+  });
+
   it("accepts an additive internal Worker field but rejects a cross-fed internal shape", () => {
     const internal = decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: true, assignee: { id: personId, name: "Maya Editor" }, position: 2048, schedule, futureWorkerField: "ignored" });
     expect(internal.scheduleVersion).toBe(9);

@@ -147,7 +147,10 @@ describe("SubtaskAssigneePicker", () => {
 
   it("shows the empty glyph when nobody is assigned", async () => {
     await mount();
-    expect([...trigger().querySelectorAll('[role="img"]')].map((el) => el.getAttribute("aria-label"))).toEqual(["Unassigned"]);
+    // The shared add-person glyph (#372), not AvatarStack's hairline circle; decorative, so the trigger's own name and title carry the meaning.
+    expect(trigger().querySelector('[data-testid="empty-assignee-glyph"]')).not.toBeNull();
+    expect(trigger().querySelectorAll('[role="img"]')).toHaveLength(0);
+    expect(trigger().getAttribute("title")).toBe("Unassigned");
   });
 
   it("lists the selected people first, checked, then everyone else, and adds a deactivated selected person", async () => {

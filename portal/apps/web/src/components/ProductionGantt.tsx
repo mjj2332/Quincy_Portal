@@ -70,8 +70,8 @@
  * child page. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
  *
  * ## #365 — People / Due columns
- * Each Project row gets two vendor tree `columns` (`id`s `people`, `due`; #372 later fills the same
- * cells for Subtask rows): the Team avatar stack and the Deadline, both editable in place by an
+ * Each Project row gets two vendor tree `columns` (`id`s `people`, `due`; #372 fills the People cell
+ * for Subtask rows): the Team avatar stack and the Deadline, both editable in place by an
  * Admin (`ProductionGanttProjectCells.tsx`, popovers over the Project page's own pickers, fed from
  * the Project detail loaded on open), plain values for everyone else. The street is a link to the
  * Project (`ProjectCalendarAnchor` -> the Dashboard's `openCalendarProject`).
@@ -82,6 +82,20 @@
  * conflict — `ProjectTeamCombobox` whole, `lib/confirm`; Deadline editor — `ProjectDeadlineControl`
  * whole; loading/error — `reui/skeleton`, `quincy/Notice`, `reui/button`; read-only Due — plain
  * `<time>` on tokens.
+ *
+ * ## #372 — Subtask assignees (the assignee half; the row's range end is a later change)
+ * A Subtask row's People cell (the column a Project row uses for its Team) holds its assignees: an editable stack for a viewer with
+ * `permissions.canEditAssignees` (the Checklist's own picker, commit on close, one versioned
+ * `PATCH /subtasks/:id { assignees: { expectedVersion, add, remove } }`), a plain stack otherwise. The
+ * write is not a scheduling command, so it bypasses the controller and refreshes this tab's Gantt too
+ * (`invalidateProjectSurfaces` without `producer`); the PATCH result (or a 409's `currentSubtask`) is
+ * adopted version-wins into the row (`adoptGanttChecklistRow`) and into page-2+ rows via `patchChildRow`.
+ * An External Editor's row carries team assignees plus a hidden count, exactly as the Checklist does.
+ * Reuse ledger: picker — `quincy/SubtaskAssigneePicker`, borderless like the Project row's People trigger (`reui/combobox` `multiple` + `reui/item` +
+ * `reui/avatar`); read-only stack — `quincy/AvatarStack` (`reui/avatar`), and nothing at all when read-only and empty; empty editable trigger — `quincy/EmptyAssigneeGlyph` (hand-built Quincy glyph composed from lucide `UserPlus`, extracted from `ProductionGanttProjectCells`; no ReUI item is a dashed add-person circle, and `AvatarStack`'s hairline empty circle measured ~1.7:1); conflict / gate notices —
+ * `pushToast`; on a phone (<= 720px) the People column is not rendered, so a Subtask's assignees are edited from the Checklist the row link opens; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
+ * `stopPropagation`, the pattern `GanttChildLoadErrorBadge` and the Deadline action already use (no new
+ * primitive: it has no role and no state of its own).
  *
  * `interactions` stays CONTROLLED and is switched off while an interaction is open, the post-save
  * refetch is pending, or access was lost. `selectSlot` is always off and `dragCreate` is not set
@@ -125,7 +139,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
-import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
+import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto, type Role } from "@quincy/shared";
 import { Gantt, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
@@ -135,7 +149,7 @@ import type { GanttProposedUpdate, GanttResource, GanttScale, GanttUpdateResult 
 import { cn } from "@/lib/utils";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { hashKey, useQueryClient } from "@tanstack/react-query";
-import { ApiError, apiPost } from "../lib/api";
+import { ApiError, apiPatch, apiPost } from "../lib/api";
 import { invalidateProjectSurfaces, useProjectAccessTermination, type ProjectSubtask } from "../lib/project-data";
 import { pushToast } from "../lib/toast-store";
 import { buildPinnedGanttModel, GanttFullFetchLedger, pinFromCreated, reconcilePinnedCreatedRows, subscribeGanttFullFetchLedger, type PinnedCreatedRow } from "../lib/production-gantt-create";
@@ -154,7 +168,8 @@ import {
   previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
-import { adoptGanttChecklistRow, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { adoptGanttChecklistRow, adoptGanttChildRows, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { decodeChecklistMutationResponse } from "../lib/production-calendar-query";
 import { scheduleWarningText } from "../lib/schedule-bounds";
 import {
   fetchGanttChildPage,
@@ -188,8 +203,10 @@ import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
+import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { StageSwatch } from "./quincy/StageSwatch";
+import { SubtaskAssigneePicker, type AssigneePickerBaseline } from "./quincy/SubtaskAssigneePicker";
 import { Skeleton } from "./reui/skeleton";
 
 export type ProductionGanttProps = {
@@ -337,6 +354,64 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
  * to `attention` instead of a plotted event, and (project rows whose remaining checklist pages
  * failed to load, fix-220-sol1 #2) a retry affordance. The Editor avatar moved to the People column.
  */
+/**
+ * #372: a Subtask row's assignee cell: the row itself (overlaid with any newer adopted assignees) and its Project.
+ * Only rows the chart draws from `displayProjects` get one, so a pinned created row (display-only) has none.
+ */
+type GanttAssigneeCell = { projectId: string; row: GanttChecklistRowDto };
+
+/** Keeps a click, press or key on the assignee cell from also selecting or dragging the row it sits in (same reason as the Deadline action). */
+const stopRowGesture = (event: { stopPropagation: () => void }) => event.stopPropagation();
+
+/**
+ * #372: a Subtask row's assignees, rendered in the People column. The wrapper keeps a press or key off the row it sits in;
+ * the editable picker's own border is offset by `-ml-1`, as the Project row's People trigger is, so the two stacks line up.
+ */
+function GanttSubtaskAssigneesCell({
+  cell,
+  role,
+  live,
+  busy,
+  onCommit,
+}: {
+  cell: GanttAssigneeCell;
+  role: Role;
+  /** False while a gesture, a settle refetch or a lost access has the chart frozen: the picker will not open. */
+  live: boolean;
+  busy: boolean;
+  onCommit: (cell: GanttAssigneeCell, ids: string[], baseline: AssigneePickerBaseline) => Promise<void>;
+}) {
+  const { row } = cell;
+  return (
+    <span data-testid="gantt-subtask-assignees" className="inline-flex min-w-0 items-center" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
+      {row.permissions.canEditAssignees ? (
+        <span className="-ml-1 inline-flex">
+          <GestureAwareCell live={live}>
+            {(disabled) => (
+              <SubtaskAssigneePicker
+                projectId={cell.projectId}
+                role={role}
+                label={`Assignees for ${row.title}`}
+                selected={row.assignees}
+                version={row.assignmentVersion}
+                hiddenCount={row.otherAssigneeCount}
+                disabled={disabled}
+                busy={busy}
+                onCommit={(ids, _people, baseline) => onCommit(cell, ids, baseline)}
+              />
+            )}
+          </GestureAwareCell>
+        </span>
+      ) : (
+        // Read-only and empty renders nothing (the cell stays, so layout does not shift): an empty circle would promise an action the viewer cannot take.
+        row.assignees.length > 0 || row.otherAssigneeCount > 0
+          ? <AvatarStack people={row.assignees} hiddenCount={row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" />
+          : null
+      )}
+    </span>
+  );
+}
+
 /** #221 PR C: a project row's Deadline action ("Set deadline" / "Fix deadline"), rendered in the Due cell (#365). */
 type GanttDeadlineAction = { label: "Set deadline" | "Fix deadline"; disabled: boolean; onAction: () => void };
 
@@ -602,7 +677,7 @@ function computeEmbeddedChildSignature(children: GanttProjectRowDto["children"])
     children.total,
     // #246: the server's project-wide revision — closes the page-2+ content-edit gap described above.
     children.revision ?? null,
-    children.rows.map((row) => [row.id, row.done, row.position, row.title, row.assignee?.id ?? null, row.schedule.version]),
+    children.rows.map((row) => [row.id, row.done, row.position, row.title, row.assignmentVersion, row.assignees.map((person) => person.id).join(","), row.otherAssigneeCount, row.schedule.version]),
   ]);
 }
 
@@ -991,17 +1066,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // saved row there, version-wins, keeping `seedSignature` so pagination progress is not misread as
   // a change. Both a forward save and its Undo land here.
   const patchChildRow = useCallback((projectId: string, result: ChecklistMutationResult) => {
-    setChildState((current) => {
-      const state = current[projectId];
-      if (!state) return current;
-      let changed = false;
-      const rows = state.rows.map((row) => {
-        const next = adoptGanttChecklistRow(row, result);
-        if (next !== row) changed = true;
-        return next;
-      });
-      return changed ? { ...current, [projectId]: { ...state, rows } } : current;
-    });
+    setChildState((current) => adoptGanttChildRows(current, projectId, result));
   }, []);
 
   const handleUndone = useCallback((info: { projectId: string; checklistResult?: ChecklistMutationResult }) => {
@@ -1016,11 +1081,75 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   const commands = useSchedulingControllerWithUndoToast({ identity, resetKey: generationKey, port, onAcceptGateChange, onSettleStateChange, onAccessLoss, onCommitted: handleCommitted, onUndone: handleUndone });
   const live = !commands.interactionBlocked && !commands.settle.pending && !commands.accessLost;
+  const queryClient = useQueryClient();
+  const terminateOnUnauthorized = useProjectAccessTermination();
 
   // Accept-gate freeze: while an interaction is open the controller holds its accepted baseline and
   // queues any refetch, exactly as the Calendar does.
   const displayProjects = commands.acceptedResponse?.projects ?? effectiveProjects;
   const projectById = useMemo(() => new Map(displayProjects.map((project) => [project.id, project])), [displayProjects]);
+
+  // -------------------------------------------------------------------------------------------
+  // #372 — Subtask assignees. The row's picker is the Checklist's (`SubtaskAssigneePicker`), so the
+  // write is the Checklist's too: `PATCH /subtasks/:id { assignees: { expectedVersion, add, remove } }`.
+  // It is not a scheduling command, so it does not go through the controller; it refreshes this tab's
+  // Gantt like any other surface instead of suppressing it (no `producer`).
+  // -------------------------------------------------------------------------------------------
+  // Newer assignees adopted from a PATCH result or a conflict, keyed by Subtask. Shown version-wins over
+  // the row (an embedded row would otherwise wait for the refetch, and a page-2+ row never gets one from
+  // the settle), and dropped in effect as soon as the row's own `assignmentVersion` catches up.
+  const [adoptedAssignees, setAdoptedAssignees] = useState<Record<string, ChecklistMutationResult>>({});
+  const [assigneeBusyIds, setAssigneeBusyIds] = useState<ReadonlySet<string>>(() => new Set());
+  const withAdoptedAssignees = useCallback((row: GanttChecklistRowDto) => {
+    const adopted = adoptedAssignees[row.id];
+    return adopted ? adoptGanttChecklistRow(row, adopted) : row;
+  }, [adoptedAssignees]);
+  const assigneeCellByChecklistResourceId = useMemo(() => {
+    const map = new Map<string, GanttAssigneeCell>();
+    for (const project of displayProjects) {
+      for (const row of project.children.rows) map.set(`task:${row.id}`, { projectId: project.id, row: withAdoptedAssignees(row) });
+    }
+    return map;
+  }, [displayProjects, withAdoptedAssignees]);
+  const adoptAssignees = useCallback((projectId: string, result: ChecklistMutationResult) => {
+    setAdoptedAssignees((current) => ({ ...current, [result.id]: result }));
+    patchChildRow(projectId, result);
+  }, [patchChildRow]);
+  const commitAssignees = useCallback(async (cell: GanttAssigneeCell, ids: string[], baseline: AssigneePickerBaseline) => {
+    const add = ids.filter((id) => !baseline.ids.includes(id));
+    const remove = baseline.ids.filter((id) => !ids.includes(id));
+    if (!add.length && !remove.length) return;
+    const { projectId, row } = cell;
+    setAssigneeBusyIds((current) => new Set(current).add(row.id));
+    const adoptFrom = (value: unknown) => {
+      try { adoptAssignees(projectId, decodeChecklistMutationResponse(identity.role, value)); } catch { /* an undecodable body: the refetch below is the source of truth */ }
+    };
+    const refresh = () => invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "subtasks" }, { kind: "activity" }], dashboard: false, calendar: true, gantt: true });
+    try {
+      const updated = await apiPatch<unknown, { assignees: { expectedVersion: number; add: string[]; remove: string[] } }>(
+        `/api/projects/${encodeURIComponent(projectId)}/subtasks/${encodeURIComponent(row.id)}`,
+        { assignees: { expectedVersion: baseline.version ?? row.assignmentVersion, add, remove } },
+      );
+      adoptFrom(updated);
+      await refresh();
+    } catch (error) {
+      terminateOnUnauthorized(error);
+      const details = error instanceof ApiError && error.details && typeof error.details === "object" ? error.details as { code?: string; currentSubtask?: unknown } : undefined;
+      if (details?.code === "subtask_assignment_version_conflict" && details.currentSubtask) {
+        adoptFrom(details.currentSubtask);
+        await refresh();
+        pushToast("Assignees changed elsewhere — showing the latest.", "caution");
+      } else if (details?.code === "subtask_multi_assignee_disabled") {
+        pushToast("Only one assignee is allowed right now.", "error");
+      } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setChildAccessError({ error, generationKey });
+      } else {
+        pushToast(error instanceof ApiError ? error.message : "Assignees could not be updated.", "error");
+      }
+    } finally {
+      setAssigneeBusyIds((current) => { const next = new Set(current); next.delete(row.id); return next; });
+    }
+  }, [adoptAssignees, generationKey, identity.role, queryClient, terminateOnUnauthorized]);
   projectByIdRef.current = projectById;
 
   // The bar never snaps back between release and the controller's overlay: `pending` covers that
@@ -1252,6 +1381,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         title: "People",
         width: 88,
         render: ({ resource }) => {
+          const assigneeCell = assigneeCellByChecklistResourceId.get(resource.id);
+          if (assigneeCell) return <GanttSubtaskAssigneesCell cell={assigneeCell} role={identity.role} live={live} busy={assigneeBusyIds.has(assigneeCell.row.id)} onCommit={commitAssignees} />;
           const project = projectFor(resource);
           return project ? <GestureAwareCell live={live}>{(disabled) => <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
         },
@@ -1270,7 +1401,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         },
       },
     ];
-  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId]);
+  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
@@ -1379,8 +1510,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // this owns the write. Title only: the server applies the Project's default range (#339), and the
   // audit log and activity come from the same endpoint the Project page's composer uses.
   // ---------------------------------------------------------------------------------------------
-  const queryClient = useQueryClient();
-  const terminateOnUnauthorized = useProjectAccessTermination();
   // Which FULL refetch (by start order) produced the rendered pages: only data from a refetch that
   // STARTED after a create may retire its pin or call it hidden (`lib/production-gantt-create.ts`).
   const ganttQueryHash = useMemo(() => hashKey(productionGanttKey(identity, "active", filters)), [identity, filters]);

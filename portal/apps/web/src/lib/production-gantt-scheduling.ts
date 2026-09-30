@@ -112,9 +112,8 @@ export function ganttChecklistSource(project: GanttProjectRowDto, row: GanttChec
     title: row.title,
     project: projectContext(project),
     assignee: row.assignee ? { ...row.assignee } : null,
-    // PR7 (#372) reads row.assignees
-    assignees: row.assignee ? [{ ...row.assignee }] : [],
-    otherAssigneeCount: 0,
+    assignees: row.assignees.map((person) => ({ ...person })),
+    otherAssigneeCount: row.otherAssigneeCount,
     timing,
     status: { overdue: false, delivered: project.delivered, completed: row.done, sameAssigneeOverlap: false },
     schedule: row.schedule,

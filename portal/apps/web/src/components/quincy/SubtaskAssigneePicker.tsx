@@ -4,6 +4,7 @@ import { useSubtaskAssigneeOptions } from "../../lib/project-data";
 import { initials } from "../../lib/initials";
 import { cn } from "../../lib/utils";
 import { AvatarStack } from "./AvatarStack";
+import { EmptyAssigneeGlyph } from "./EmptyAssigneeGlyph";
 import { META_TRIGGER } from "./icon-button";
 import { Avatar, AvatarFallback } from "../reui/avatar";
 import { StatusPill } from "./StatusPill";
@@ -112,6 +113,9 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     ? `${titleNames}${titleNames && others > 0 ? " " : ""}${others > 0 ? `${titleNames ? "and " : ""}${others} other${others === 1 ? "" : "s"}` : ""}`
     : "Unassigned";
 
+  const triggerPeople = open ? draftOptions : shownPeople;
+  const triggerHidden = open ? 0 : hiddenCount;
+
   const emptyMessage = options.isError ? "People could not be loaded." : options.isPending ? "Loading people…" : "No matching people";
 
   return <Combobox
@@ -127,7 +131,9 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     disabled={disabled}
   >
     <ComboboxTrigger ref={triggerRef} aria-label={label} title={triggerTitle} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
-      <AvatarStack people={open ? draftOptions : shownPeople} hiddenCount={open ? 0 : hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" />
+      {triggerPeople.length === 0 && triggerHidden <= 0
+        ? <EmptyAssigneeGlyph />
+        : <AvatarStack people={triggerPeople} hiddenCount={triggerHidden} personNoun="Assignee" emptyLabel="Unassigned" />}
     </ComboboxTrigger>
     <ComboboxContent className="min-w-[max(var(--anchor-width),260px)] max-w-[calc(100vw-2*var(--space-4))]">
       <ComboboxInput showTrigger={false} placeholder="Search people…" aria-label="Search people" />

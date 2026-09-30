@@ -94,7 +94,7 @@ type Row = {
   title: string;
   position: number;
   schedule: ChecklistScheduleDto;
-  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean };
+  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canEditAssignees: boolean };
 };
 
 type ScheduleInput = { state: string; start?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" }; end?: { kind: string; localCivil: string; disambiguation?: "earlier" | "later" } };
@@ -130,7 +130,7 @@ function resetFixture(options: { deadlineOffset?: number; noDeadline?: boolean; 
   firstCanEditChildren = options.firstCanEditChildren ?? true;
   secondCanEditChildren = options.secondCanEditChildren ?? true;
   omittedFromGet = new Set();
-  const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true };
+  const all = { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true };
   rows = [
     { id: RANGE_ID, title: RANGE_TITLE, position: 0, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(1)), end: dateEndpoint(sydneyDay(3)), due: sydneyDay(3) } },
     { id: DUE_ID, title: DUE_TITLE, position: 1, permissions: all, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(2)), end: dateEndpoint(sydneyDay(2)), due: sydneyDay(2) } },
@@ -164,7 +164,7 @@ function ganttResponse() {
         team: [{ id: "33333333-3333-4333-8333-333333333333", name: "Eli Editor", roleLabel: "Editor", isExternal: false, active: true, roleOnProject: "editor" }],
         permissions: { canEditDeadline, canEditChildren: firstCanEditChildren, canEditTeam: true },
         children: {
-          rows: rows.filter((row) => !omittedFromGet.has(row.id)).map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: row.schedule, permissions: row.permissions })),
+          rows: rows.filter((row) => !omittedFromGet.has(row.id)).map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: row.schedule, permissions: row.permissions })),
           total: truncatedTotal ?? rows.length,
           returned: rows.length,
           truncated: truncatedTotal !== null,
@@ -243,7 +243,7 @@ let createReply: ((body: { title: string }, projectId: string) => Promise<Reply>
 function echoCreate(body: { title: string }, projectId: string): Reply {
   const schedule: ChecklistScheduleDto = { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) };
   if (projectId === PROJECT_ID) {
-    rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true }, schedule });
+    rows.push({ id: CREATED_ID, title: body.title, position: 4, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true }, schedule });
   }
   return { status: 201, body: { id: CREATED_ID, title: body.title, done: false, assignee: null, assignmentVersion: 1, position: 4, dueDate: schedule.due, schedule, createdBy: "user-1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } };
 }
@@ -1503,7 +1503,7 @@ describe("ProductionGantt — Add task row (#344)", () => {
         body: {
           projectId: PROJECT_ID,
           children: {
-            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } })),
+            rows: pageTwo.map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: dateEndpoint(sydneyDay(4)), end: dateEndpoint(sydneyDay(6)), due: sydneyDay(6) }, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } })),
             total: truncatedTotal!,
             returned: pageTwo.length,
             truncated: false,
