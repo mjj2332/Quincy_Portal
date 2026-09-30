@@ -96,8 +96,7 @@ export async function emitExternalSafeLegacyNotification(db: D1Database, input: 
   return outboxIds;
 }
 
-/** Durable replacement for the old direct checklist-assignment/due emitters. */
-export async function emitExternalSubtaskNotification(db: D1Database, input: ExternalSubtaskNotificationInput): Promise<string[]> {
+function externalSubtaskOutboxStatement(db: D1Database, input: ExternalSubtaskNotificationInput): { statement: D1PreparedStatement; policyType: NotificationType; now: number } {
   const eventType = input.kind === "assigned"
     ? EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned
     : EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskDueToday;
@@ -108,7 +107,7 @@ export async function emitExternalSubtaskNotification(db: D1Database, input: Ext
   const payloadDue = input.kind === "due_today"
     ? `, 'dueDate', s.due_date, 'claimAt', s.due_reminder_sent_at`
     : "";
-  const rows = await db.prepare(`
+  const statement = db.prepare(`
     INSERT INTO notification_outbox (
       id, schema_version, event_type, source_key, project_id, actor_id, recipient_id,
       recipient_authorization_epoch, payload_json, status, available_at,
@@ -134,10 +133,48 @@ export async function emitExternalSubtaskNotification(db: D1Database, input: Ext
   `).bind(
     eventType, input.sourceKey, input.actorId, eventType, input.sourceKey, now, now, now,
     input.assigneeId, input.assignmentVersion, input.subtaskId, input.projectId, ...dueBindings,
-  ).all<InsertedOutbox>();
-  const outboxIds = rows.results.map((row) => row.id);
-  await insertLedgers(db, outboxIds, externalNotificationChannels(policyType), now);
-  return outboxIds;
+  );
+  return { statement, policyType, now };
+}
+
+/** Durable replacement for the old direct checklist-assignment/due emitters. */
+export async function emitExternalSubtaskNotification(db: D1Database, input: ExternalSubtaskNotificationInput): Promise<string[]> {
+  return (await emitExternalSubtaskNotifications(db, [input]))[0] ?? [];
+}
+
+/**
+ * Emits every input's outbox row and delivery ledgers in ONE D1 batch (a single transaction), so a
+ * fan-out either commits for all recipients or for none. A due-reminder claim is released when the
+ * fan-out fails and a retry claims at a new timestamp; a partially committed fan-out would keep
+ * the earlier recipients' rows (`ON CONFLICT DO NOTHING`) carrying the released claim's `claimAt`,
+ * which delivery then rejects, permanently losing them. Returns the new outbox ids per input.
+ */
+export async function emitExternalSubtaskNotifications(db: D1Database, inputs: readonly ExternalSubtaskNotificationInput[]): Promise<string[][]> {
+  if (!inputs.length) return [];
+  const statements: D1PreparedStatement[] = [];
+  const outboxIndexes: number[] = [];
+  for (const input of inputs) {
+    const { statement, policyType, now } = externalSubtaskOutboxStatement(db, input);
+    outboxIndexes.push(statements.length);
+    statements.push(statement);
+    const eventType = input.kind === "assigned"
+      ? EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskAssigned
+      : EXTERNAL_NOTIFICATION_OUTBOX_EVENT_TYPES.subtaskDueToday;
+    for (const channel of externalNotificationChannels(policyType)) {
+      // Keyed by the natural key rather than a returned id, so it can share the batch. A row that
+      // already existed (conflict) has its ledger already, and ON CONFLICT DO NOTHING keeps it so.
+      statements.push(db.prepare(`
+        INSERT INTO notification_delivery_ledger
+          (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at)
+        SELECT ${uuidSql()}, id, event_type, source_key, recipient_id, ?, 'pending', ?, ?
+        FROM notification_outbox
+        WHERE event_type = ? AND source_key = ? AND recipient_id = ? AND status = 'pending'
+        ON CONFLICT(outbox_id, channel) DO NOTHING
+      `).bind(channel, now, now, eventType, input.sourceKey, input.assigneeId));
+    }
+  }
+  const results = await db.batch<InsertedOutbox>(statements);
+  return outboxIndexes.map((index) => (results[index]?.results ?? []).map((row) => row.id));
 }
 
 export type StaffSubtaskAssignedInput = {
