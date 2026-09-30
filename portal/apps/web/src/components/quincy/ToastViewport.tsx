@@ -28,7 +28,7 @@ export function ToastViewport({ testId = "toast-viewport", toastTestId = "toast"
     <div
       aria-live="polite"
       data-testid={testId}
-      className="fixed z-[var(--z-toast)] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[max(var(--space-5),env(safe-area-inset-right))] bottom-[max(var(--space-5),env(safe-area-inset-bottom))] left-[var(--toast-inset-inline-start)]"
+      className="fixed z-[var(--z-toast)] flex flex-col items-end gap-[var(--space-3)] pointer-events-none right-[var(--toast-inset-inline-end)] bottom-[var(--toast-inset-block-end)] left-[var(--toast-inset-inline-start)]"
     >
       {toasts.map((item) => (
         <div

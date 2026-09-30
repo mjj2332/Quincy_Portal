@@ -119,6 +119,8 @@ describe("App Dashboard route transport", () => {
     expect(host.querySelector("[data-calendar-route]")?.getAttribute("data-calendar-route")).toBe("absent");
   });
 
+  // #366: the Project stub renders inside the Project sheet, which portals to <body>, not into `host`.
+  const sheetBody = () => document.querySelector<HTMLElement>('[data-testid="project-sheet-body"]')!;
   const here = () => `${window.location.pathname}${window.location.search}`;
   const consumeButton = (host: Element) => host.querySelector<HTMLButtonElement>("button:not([data-show-raw])")!;
   const showRawButton = (host: Element) => host.querySelector<HTMLButtonElement>("button[data-show-raw]")!;
@@ -127,25 +129,25 @@ describe("App Dashboard route transport", () => {
   it("#367: keeps the tab in the URL after an arrival is acknowledged, and observes a later identical history arrival as a fresh signal", async () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt(`/projects/${projectId}?collaboration=open`);
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("1");
-    await click(consumeButton(host));
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("1");
+    await click(consumeButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?collaboration=open`);
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-url-tab")).toBe("collaboration");
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-url-tab")).toBe("collaboration");
     await arriveByHistory(`/projects/${projectId}?collaboration=open`);
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("2");
-    await click(consumeButton(host));
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("2");
+    await click(consumeButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?collaboration=open`);
   });
 
   it("#367: hands a Collection tab arrival to the Workspace once and leaves the tab in the URL", async () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt(`/projects/${projectId}?tab=edited`);
-    const marker = () => host.querySelector("[data-signal]")!;
+    const marker = () => sheetBody().querySelector("[data-signal]")!;
     expect(marker().getAttribute("data-signal")).toBe("1");
     expect(marker().getAttribute("data-arrival-tab")).toBe("edited");
     expect(marker().getAttribute("data-url-tab")).toBe("edited");
-    await click(consumeButton(host));
+    await click(consumeButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?tab=edited`);
     expect(marker().getAttribute("data-signal")).toBe("undefined");
 
@@ -157,21 +159,21 @@ describe("App Dashboard route transport", () => {
     await arriveByHistory(`/projects/${projectId}?collaboration=open`);
     expect(marker().getAttribute("data-signal")).toBe("3");
     expect(marker().getAttribute("data-arrival-tab")).toBe("collaboration");
-    await click(consumeButton(host));
+    await click(consumeButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?collaboration=open`);
   });
 
   it("#367: the Workspace's own tab write replaces the URL without a history entry or a new arrival signal", async () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt(`/projects/${projectId}?tab=edited`);
-    await click(consumeButton(host));
+    await click(consumeButton(sheetBody()));
     const before = window.history.length;
     const signalsBefore = seenSignals.filter((signal): signal is number => signal !== undefined);
-    await click(showRawButton(host));
+    await click(showRawButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?tab=raw`);
     expect(window.history.length).toBe(before);
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-url-tab")).toBe("raw");
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-url-tab")).toBe("raw");
     const signalsAfter = seenSignals.filter((signal): signal is number => signal !== undefined);
     expect(signalsAfter.filter((signal) => !signalsBefore.includes(signal))).toEqual([]);
   });
@@ -180,8 +182,8 @@ describe("App Dashboard route transport", () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt("/");
     await arriveByHistory(`/projects/${projectId}?collaboration=open`);
-    await click(consumeButton(host));
-    await click(showRawButton(host));
+    await click(consumeButton(sheetBody()));
+    await click(showRawButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?tab=raw`);
     await act(async () => { window.history.replaceState(null, "", "/"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("Dashboard");
@@ -190,25 +192,25 @@ describe("App Dashboard route transport", () => {
   it("#367: a stale arrival's acknowledgement never changes the URL or a newer arrival's tab", async () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt(`/projects/${projectId}?tab=raw`);
-    expect(host.querySelector("[data-signal]")!.getAttribute("data-arrival-tab")).toBe("raw");
+    expect(sheetBody().querySelector("[data-signal]")!.getAttribute("data-arrival-tab")).toBe("raw");
     // The Raw arrival is still unconsumed when an Edited notification for the same Project is clicked;
     // the Workspace acknowledges during the very commit that renders the new location.
     ackDuringNextRender.armed = true;
     await arriveByHistory(`/projects/${projectId}?tab=edited`);
     expect(ackDuringNextRender.armed).toBe(false);
     expect(here()).toBe(`/projects/${projectId}?tab=edited`);
-    const marker = host.querySelector("[data-signal]")!;
+    const marker = sheetBody().querySelector("[data-signal]")!;
     expect(marker.getAttribute("data-arrival-tab")).toBe("edited");
     expect(marker.getAttribute("data-signal")).toBe("2");
-    await click(consumeButton(host));
+    await click(consumeButton(sheetBody()));
     expect(here()).toBe(`/projects/${projectId}?tab=edited`);
   });
 
   it("drops an acknowledged signal before navigating away so a clean-route remount stays collapsed", async () => {
     const projectId = "123e4567-e89b-42d3-a456-426614174000";
     const host = await renderAt(`/projects/${projectId}?collaboration=open`);
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("1");
-    await click(host.querySelector("button")!);
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("1");
+    await click(consumeButton(sheetBody()));
     // #367: an acknowledged arrival no longer strips the tab from the URL.
     expect(`${window.location.pathname}${window.location.search}`).toBe(`/projects/${projectId}?collaboration=open`);
 
@@ -221,7 +223,7 @@ describe("App Dashboard route transport", () => {
       window.history.pushState(null, "", `/projects/${projectId}`); window.dispatchEvent(new PopStateEvent("popstate"));
       await Promise.resolve(); await Promise.resolve();
     });
-    expect(host.querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
+    expect(sheetBody().querySelector("[data-signal]")?.getAttribute("data-signal")).toBe("undefined");
     expect(seenSignals.at(-1)).toBeUndefined();
   });
 });
@@ -237,7 +239,7 @@ describe("App impersonation boundary", () => {
 
     await act(async () => { window.history.pushState(null, "", "/projects/123e4567-e89b-42d3-a456-426614174000"); window.dispatchEvent(new PopStateEvent("popstate")); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("Acting as Editor Target (Editor) · Exit");
-    expect(host.textContent).toContain("consume 123e4567-e89b-42d3-a456-426614174000");
+    expect(document.querySelector('[data-testid="project-sheet-body"]')?.textContent).toContain("consume 123e4567-e89b-42d3-a456-426614174000");
   });
 
   it("isolates a promoted target before the provider and preserves the Exit banner", async () => {
