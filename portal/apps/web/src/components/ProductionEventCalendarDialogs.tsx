@@ -239,9 +239,15 @@ export type ProductionEventCalendarDeadlineConfirm = {
 export type ProductionEventCalendarDialogsProps = {
   commands: ProductionEventCalendarDialogCommands;
   deadlineConfirm: ProductionEventCalendarDeadlineConfirm | null;
+  /**
+   * How the controller's schedule editor is presented. `"sheet"` (the default, the Calendar's) renders the right-hand
+   * sheet; `"inline"` (#372, the Gantt) renders nothing here because the surface draws the Checklist's own picker from
+   * `commands.scheduleEditor` itself. Move, fold and Deadline dialogs are unaffected.
+   */
+  scheduleEditorPresentation?: "sheet" | "inline";
 };
 
-export function ProductionEventCalendarDialogs({ commands, deadlineConfirm }: ProductionEventCalendarDialogsProps): JSX.Element {
+export function ProductionEventCalendarDialogs({ commands, deadlineConfirm, scheduleEditorPresentation = "sheet" }: ProductionEventCalendarDialogsProps): JSX.Element {
   const { moveDialog, scheduleEditor, checklistFold } = commands;
 
   const moveRetained = useRef<typeof moveDialog>(null);
@@ -285,7 +291,7 @@ export function ProductionEventCalendarDialogs({ commands, deadlineConfirm }: Pr
           onCancel={commands.cancelChecklistFold}
         />
       )}
-      {editor && (
+      {editor && scheduleEditorPresentation === "sheet" && (
         // The old calendar's composite key: a failed save re-seeds the SAME open session with a new
         // `initialSchedule`, which must remount the draft (as the retired `ProductionCalendar.tsx` did).
         <ProductionEventCalendarScheduleEditorSheet
