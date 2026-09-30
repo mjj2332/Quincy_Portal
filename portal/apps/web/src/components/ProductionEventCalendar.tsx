@@ -166,6 +166,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
           emptyLabel="No assignee"
           className={CHIP_STACK}
           avatarClassName={CHIP_AVATAR}
+          singleInitial
         />
       )}
     </span>

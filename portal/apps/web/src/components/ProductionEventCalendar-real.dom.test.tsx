@@ -60,7 +60,9 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     expect(checklist).toBeDefined();
     expect(deadline!.closest("button")?.className).toContain("bg-(--ink-900)");
     expect(checklist!.closest("button")?.className).toContain("bg-(--paper-000)");
-    expect(checklist!.textContent).toContain("ME");
+    // The chip stack draws one initial per avatar (#370); the full name is the avatar's label.
+    const avatar = checklist!.querySelector('[role="img"][aria-label="Maya Editor"]');
+    expect(avatar?.textContent).toBe("M");
     // The consumer's selected state replaces the vendor's (tailwind-merge drops the vendor's
     // same-variant utilities), so a selected checklist chip keeps paper + a light wash + one ring.
     const checklistClass = checklist!.closest("button")!.className.split(/\s+/);
