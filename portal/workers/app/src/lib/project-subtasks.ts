@@ -414,8 +414,8 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const authoritativeStorage = scheduleStorage(current.subtask);
     const authoritativeSchedule = serializeSubtaskSchedule(current.subtask.id, authoritativeStorage);
     if (scheduleBearing && (!rawScheduleEqual(authoritativeStorage, existingStorage) || authoritativeStorage.scheduleVersion !== existingStorage.scheduleVersion)) return { outcome: "schedule_conflict", current: authoritativeSchedule, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) } : {}) };
-    // A native delta that lost to any other concurrent edit must not report success it did not have.
-    if (scheduleBearing) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
+    // A native delta that lost to any other concurrent edit must not report success it did not have. A translated legacy write keeps today's 200 no-op.
+    if (scheduleBearing || (delta && !translated)) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
     return { outcome: "noop", item: serializeProjectSubtask(current, authoritativeAssignees), broadPublicationIds: [], assignmentNotices: [] };
   }
   const item = await subtaskQuery(db, projectId, operation.subtaskId).get();

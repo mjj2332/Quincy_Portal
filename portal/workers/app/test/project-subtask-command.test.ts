@@ -239,3 +239,38 @@ describe("saveProjectSubtask command boundary", () => {
     expect(auditsBefore).toBeLessThanOrEqual(auditsWithTarget);
   });
 });
+
+describe("native assignee delta racing a concurrent edit (#368)", () => {
+  it("a delta that loses the compare-and-swap to a title edit is an item conflict, never a silent 200 no-op, and writes nothing", async () => {
+    const created = await createDueItem(commandProjectId, `Race ${crypto.randomUUID()}`);
+    const subtaskId = created.item.id;
+    const readState = async () => ({
+      relation: (await database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ?").bind(subtaskId).all()).results,
+      row: await database.DB.prepare("SELECT title, assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(subtaskId).first<{ title: string; assignee_id: string | null; assignment_version: number }>(),
+    });
+    const before = await readState();
+    expect(before.relation).toEqual([]);
+    // Both saves read the same initial state; neither may write until both have reached the guarded batch.
+    let arrivals = 0;
+    let release!: () => void;
+    const bothArrived = new Promise<void>((resolve) => { release = resolve; });
+    const gatedDb = {
+      prepare: database.DB.prepare.bind(database.DB),
+      batch: async (statements: D1PreparedStatement[]) => {
+        arrivals += 1;
+        if (arrivals === 2) release();
+        await bothArrived;
+        return database.DB.batch(statements);
+      },
+    } as unknown as D1Database;
+    const gatedEnv = { ...baseEnv, DB: gatedDb } as Env;
+    const titleEdit = saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId, itemPatch: { title: "Renamed in the race" } }, { env: gatedEnv }));
+    const assign = saveProjectSubtask(commandInput(commandProjectId, { kind: "update", subtaskId, itemPatch: { assignees: { expectedVersion: 0, add: [commandAdminId], remove: [] } } }, { env: gatedEnv }));
+    // Batch order is call order: the title edit reaches its batch first and wins; the assignee delta loses.
+    const [titleResult, assignResult] = await Promise.all([titleEdit, assign]);
+    expect(titleResult.outcome).toBe("updated");
+    expect(assignResult.outcome).toBe("item_conflict");
+    if (assignResult.outcome === "item_conflict") expect(assignResult.currentSubtask).toMatchObject({ id: subtaskId, title: "Renamed in the race", assignees: [] });
+    expect(await readState()).toEqual({ relation: [], row: { title: "Renamed in the race", assignee_id: null, assignment_version: before.row!.assignment_version } });
+  });
+});

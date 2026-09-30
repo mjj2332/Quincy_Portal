@@ -631,6 +631,7 @@ describe("multi-assignee writes (#368)", () => {
   const multiProject = crypto.randomUUID();
   const externalId = "75555555-5555-4555-8555-555555555555";
   const retiredId = "76666666-6666-4666-8666-666666666666";
+  let shippedFlag: unknown;
   const base = () => `/api/projects/${multiProject}/subtasks`;
   const setMultiAssignee = (on: boolean) => database.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_at = ? WHERE key = 'subtask_multi_assignee'").bind(on ? 1 : 0, Date.now()).run();
   const create = async (body: Record<string, unknown> = {}, token = "subtasks-editor-token") => request(base(), token, "POST", { title: "Multi", ...body });
@@ -648,16 +649,13 @@ describe("multi-assignee writes (#368)", () => {
     for (const [id, role] of [[externalId, "external_editor"], [retiredId, "photographer"]] as const) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
     await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind("subtasks-external", now + 3_600_000, "subtasks-external-token", externalId, now, now).run();
     for (const [userId, role] of [[editorId, "editor"], [photographerId, "photographer"], [externalId, "editor"], [retiredId, "photographer"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), multiProject, userId, role, now).run();
+    shippedFlag = await database.DB.prepare("SELECT key, enabled FROM feature_flags WHERE key = 'subtask_multi_assignee'").first();
     await setMultiAssignee(true);
   });
 
   it("the gate row ships closed: a fresh database has subtask_multi_assignee disabled", async () => {
-    const fresh = await database.DB.prepare("SELECT key FROM feature_flags WHERE key = 'subtask_multi_assignee'").first();
-    expect(fresh).toEqual({ key: "subtask_multi_assignee" });
-    await setMultiAssignee(false);
-    try {
-      expect(await database.DB.prepare("SELECT enabled FROM feature_flags WHERE key = 'subtask_multi_assignee'").first()).toEqual({ enabled: 0 });
-    } finally { await setMultiAssignee(true); }
+    // Captured in beforeAll, after the migration ran and before this suite ever toggled the flag.
+    expect(shippedFlag).toEqual({ key: "subtask_multi_assignee", enabled: 0 });
   });
 
   it("adds several assignees in one delta: ordered DTO, first assignee mirrored, one version, one row each", async () => {

@@ -950,15 +950,40 @@ describe("#368 per-person subtask assignment delivery (the relation is authorita
     expect(suppressedSend).not.toHaveBeenCalled();
   });
 
-  it("keeps A's pending notice deliverable when B is added afterwards, and an old-shape row (Subtask-wide version, single assignee) still delivers", async () => {
+  /** The pre-#368 shape: one assignee, the Subtask-wide version equal to their relation row, and their assigned notice already pending. */
+  async function seedLegacySingleAssignee() {
     const fixture = await seedTwoAssignees("editor");
-    // A's notice was written at version 1 before B joined at version 2: A's own relation row is still version 1.
-    const [forFirst] = await fixture.emit(fixture.firstId, 1, "editor");
-    expect(forFirst).toBeTruthy();
-    const send = vi.fn().mockResolvedValue({ messageId: "first-staff" });
-    await processNotificationMessage(deliveryEnv(send), message(forFirst!));
-    expect(await outboxState(fixture.sourceKey(1), fixture.firstId)).toEqual({ status: "completed", lastError: null });
-    expect(await noticeCount(fixture.sourceKey(1), fixture.firstId)).toBe(1);
+    // Undo the second person and rewind the Subtask to version 1, exactly as a single-assignee Subtask looked before #368.
+    await database.DB.batch([
+      database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, fixture.secondId),
+      database.DB.prepare("UPDATE project_subtasks SET assignment_version = 1 WHERE id = ?").bind(fixture.subtaskId),
+    ]);
+    expect((await database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ?").bind(fixture.subtaskId).all()).results).toEqual([{ user_id: fixture.firstId, assignment_version: 1 }]);
+    const [pending] = await fixture.emit(fixture.firstId, 1, "editor");
+    expect(pending).toBeTruthy();
+    return { ...fixture, pending: pending! };
+  }
+
+  it("delivers a plain single-assignee notice whose version equals the Subtask's", async () => {
+    const legacy = await seedLegacySingleAssignee();
+    const send = vi.fn().mockResolvedValue({ messageId: "single-staff" });
+    await processNotificationMessage(deliveryEnv(send), message(legacy.pending));
+    expect(await outboxState(legacy.sourceKey(1), legacy.firstId)).toEqual({ status: "completed", lastError: null });
+    expect(await noticeCount(legacy.sourceKey(1), legacy.firstId)).toBe(1);
+  });
+
+  it("still delivers a legacy pending notice for A after B is added at a newer Subtask version", async () => {
+    const legacy = await seedLegacySingleAssignee();
+    // B joins after A's notice was written and before it is consumed: the Subtask moves to version 2, A's own row stays at 1.
+    await database.DB.batch([
+      database.DB.prepare("UPDATE project_subtasks SET assignment_version = 2 WHERE id = ?").bind(legacy.subtaskId),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 2, ?)").bind(legacy.subtaskId, legacy.secondId, Date.now() + 1),
+    ]);
+    expect(await outboxState(legacy.sourceKey(1), legacy.firstId)).toMatchObject({ status: "pending" });
+    const send = vi.fn().mockResolvedValue({ messageId: "legacy-first-staff" });
+    await processNotificationMessage(deliveryEnv(send), message(legacy.pending));
+    expect(await outboxState(legacy.sourceKey(1), legacy.firstId)).toEqual({ status: "completed", lastError: null });
+    expect(await noticeCount(legacy.sourceKey(1), legacy.firstId)).toBe(1);
   });
 
   it("delivers an external editor who is not the first assignee; after removal it is suppressed at the resolver", async () => {

@@ -4441,3 +4441,11 @@ remove the legacy readers) still applies.
   Subtask's current one.** A retained person keeps theirs, so adding or removing someone else never
   suppresses their pending notice, and remove-then-re-add gets a new value. Under the write gate the
   sole assignee's row version equals the Subtask's, which is why pre-#368 pending rows still deliver.
+
+- **A native assignee delta that loses the compare-and-swap to any concurrent edit is a 409
+  `subtask_item_conflict`, not a 200 no-op (#368, deliberate deviation from the PR2 spec).** The UPDATE
+  is guarded by every column the request read, so a concurrent title or completion edit makes the delta
+  match no row. Returning the `noop` there reports success for an assignee change that was never
+  applied and the user silently loses it. The client refetches from the conflict body instead. A
+  translated legacy `assigneeId` write keeps the old 200 no-op (an open old tab cannot act on a
+  conflict); test in `project-subtask-command.test.ts` by gating both `batch` calls on a barrier.
