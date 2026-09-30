@@ -43,6 +43,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import { normalizeProjectSearch, projectSearchSql } from "../lib/project-search";
 import { authorizedProjectsBaseCte, parseReminderOffsets, productionRoleSql } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
+import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import { activeEditorRefsByProject, projectTeamByProject } from "../lib/project-editors";
 import type { AppEnv } from "../env";
 
@@ -454,10 +455,8 @@ type GanttChildBaseRow = {
   title: string;
   done: number;
   position: number;
-  assignee_id: string | null;
-  assignee_name: string | null;
-  assignee_role: string | null;
-  assignee_active: number | null;
+  assignees_json: string | null;
+  assignment_version: number;
   due_date: string | null;
   schedule_start_kind: "date" | "timed" | null;
   schedule_start_civil: string | null;
@@ -504,8 +503,8 @@ scoped_projects AS (
   WHERE p.archived_at IS NULL
 ),
 ranked AS (
-  SELECT s.id AS subtask_id, s.project_id, s.title, s.done, s.position, s.assignee_id,
-    assignee.name AS assignee_name, assignee.role AS assignee_role, assignee.active AS assignee_active,
+  SELECT s.id AS subtask_id, s.project_id, s.title, s.done, s.position,
+    ${subtaskAssigneesJsonSql("s")} AS assignees_json, s.assignment_version,
     s.due_date, s.schedule_start_kind, s.schedule_start_civil, s.schedule_start_at,
     s.schedule_start_utc_offset_minutes, s.schedule_start_fold, s.schedule_end_kind,
     s.schedule_end_at, s.schedule_end_utc_offset_minutes, s.schedule_end_fold, s.schedule_zone, s.schedule_version,
@@ -515,7 +514,6 @@ ranked AS (
     MAX(s.updated_at) OVER (PARTITION BY s.project_id) AS revision
   FROM project_subtasks s
   INNER JOIN scoped_projects sp ON sp.project_id = s.project_id
-  LEFT JOIN user assignee ON assignee.id = s.assignee_id
   WHERE (?3 = 1 OR s.done = 0)
 )
 SELECT * FROM ranked WHERE rnk <= ${PRODUCTION_GANTT_CHILD_PAGE_LIMIT} ORDER BY project_id ASC, position ASC, subtask_id ASC`;
@@ -561,8 +559,8 @@ scoped_project AS (
   WHERE p.archived_at IS NULL AND p.id = ?2
 ),
 visible_subtasks AS (
-  SELECT s.id AS subtask_id, s.project_id, s.title, s.done, s.position, s.assignee_id,
-    assignee.name AS assignee_name, assignee.role AS assignee_role, assignee.active AS assignee_active,
+  SELECT s.id AS subtask_id, s.project_id, s.title, s.done, s.position,
+    ${subtaskAssigneesJsonSql("s")} AS assignees_json, s.assignment_version,
     s.due_date, s.schedule_start_kind, s.schedule_start_civil, s.schedule_start_at,
     s.schedule_start_utc_offset_minutes, s.schedule_start_fold, s.schedule_end_kind,
     s.schedule_end_at, s.schedule_end_utc_offset_minutes, s.schedule_end_fold, s.schedule_zone, s.schedule_version,
@@ -570,7 +568,6 @@ visible_subtasks AS (
     COUNT(*) OVER () AS total
   FROM project_subtasks s
   INNER JOIN scoped_project sp ON sp.project_id = s.project_id
-  LEFT JOIN user assignee ON assignee.id = s.assignee_id
   WHERE (?3 = 1 OR s.done = 0)
 ),
 page AS (
@@ -646,18 +643,20 @@ function parseValidEditorIds(value: string | null): string[] {
   }
 }
 
-function ganttPerson(row: { assignee_id: string | null; assignee_name: string | null; assignee_role: string | null; assignee_active: number | null }): CalendarPerson | null {
-  if (!row.assignee_id || row.assignee_name === null || row.assignee_role === null) return null;
-  const role = row.assignee_role as Role;
-  return { id: row.assignee_id, name: row.assignee_name, roleLabel: ROLE_LABELS[role] ?? row.assignee_role, isExternal: role === "external_editor", active: Boolean(row.assignee_active) };
+/** The editor facet's person: a Project editor, not a Subtask assignee. */
+function ganttPerson(row: { person_id: string | null; person_name: string | null; person_role: string | null; person_active: number | null }): CalendarPerson | null {
+  if (!row.person_id || row.person_name === null || row.person_role === null) return null;
+  const role = row.person_role as Role;
+  return { id: row.person_id, name: row.person_name, roleLabel: ROLE_LABELS[role] ?? row.person_role, isExternal: role === "external_editor", active: Boolean(row.person_active) };
 }
 
 /** Every Subtask is a range (ADR 0011), so every permission is the caller's collaboration access. */
 function ganttChecklistPermissions(canCollaborate: boolean): GanttChecklistRowDto["permissions"] {
-  return { canDrag: canCollaborate, canResize: canCollaborate, canOpenScheduleEditor: canCollaborate };
+  return { canDrag: canCollaborate, canResize: canCollaborate, canOpenScheduleEditor: canCollaborate, canEditAssignees: canCollaborate };
 }
 
-export function serializeGanttChecklistRow(row: GanttChildBaseRow): GanttChecklistRowDto {
+export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRole): GanttChecklistRowDto {
+  const { assignees, otherAssigneeCount } = assigneesForViewer(parseAssigneesJson(row.assignees_json), role);
   const schedule = serializeSubtaskSchedule(row.subtask_id, scheduleStorageFromChildRow(row));
   const canCollaborate = row.can_collaborate === 1;
   return {
@@ -666,7 +665,10 @@ export function serializeGanttChecklistRow(row: GanttChildBaseRow): GanttCheckli
     title: row.title,
     done: Boolean(row.done),
     position: Number(row.position),
-    assignee: ganttPerson(row),
+    assignee: assignees[0] ?? null,
+    assignees,
+    otherAssigneeCount,
+    assignmentVersion: Number(row.assignment_version ?? 0),
     schedule,
     permissions: ganttChecklistPermissions(canCollaborate),
   };
@@ -747,7 +749,7 @@ function serializeGanttProjectRow(
       ...(teamByProject ? { canEditTeam: roleHasCapability(role, "editProject") } : {}),
     },
     children: {
-      rows: children.map(serializeGanttChecklistRow),
+      rows: children.map((child) => serializeGanttChecklistRow(child, role)),
       total,
       returned,
       // #246: the revision is a window over the project's whole partition, so any row carries it.
@@ -802,7 +804,7 @@ async function handleChildren(c: Context<AppEnv>, parsed: ParsedGanttChildQuery)
   const response: ProductionGanttChildPageResponse = {
     projectId: parsed.childrenOf,
     children: {
-      rows: pageRows.map(serializeGanttChecklistRow),
+      rows: pageRows.map((child) => serializeGanttChecklistRow(child, role)),
       total,
       returned: pageRows.length,
       truncated,
@@ -865,7 +867,7 @@ async function handlePage(c: Context<AppEnv>, parsed: ParsedGanttPageQuery): Pro
   const validEditorIds = new Set(parseValidEditorIds(meta?.valid_editor_ids_json ?? null));
   const people = rows
     .filter((row) => row.row_kind === "person")
-    .map((row) => ganttPerson({ assignee_id: row.person_id, assignee_name: row.person_name, assignee_role: row.person_role, assignee_active: row.person_active }))
+    .map((row) => ganttPerson(row))
     .filter((person): person is CalendarPerson => person !== null)
     .sort((left, right) => left.name.localeCompare(right.name) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
 

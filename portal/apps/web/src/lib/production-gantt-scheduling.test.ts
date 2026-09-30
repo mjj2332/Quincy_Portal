@@ -62,6 +62,8 @@ function rangeSchedule(start: ChecklistScheduleEndpointDto, end: ChecklistSchedu
   return { state: "range", version: 4, zone: "Australia/Sydney", start, end, due: end.instant ?? end.localCivil };
 }
 
+const ED = { id: "33333333-3333-4333-8333-000000000001", name: "Ed", roleLabel: "Editor", isExternal: false, active: true };
+
 function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklistRowDto {
   return {
     id: TASK_ID,
@@ -69,9 +71,12 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     title: "Edit photos",
     done: false,
     position: 1,
-    assignee: { id: "33333333-3333-4333-8333-000000000001", name: "Ed", roleLabel: "Editor", isExternal: false, active: true },
+    assignee: ED,
+    assignees: [ED],
+    otherAssigneeCount: 0,
+    assignmentVersion: 1,
     schedule: oneDayRange("2026-06-10"),
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }
@@ -123,7 +128,7 @@ const JUNE_DATE_RANGE = rangeSchedule(dateEndpoint("2026-06-10"), dateEndpoint("
 describe("ganttChecklistSource", () => {
   it("maps a range row to a ChecklistCalendarEventDto with the Calendar entity id and project context", () => {
     const project = makeProject({ delivered: true });
-    const row = makeTask({ schedule: JUNE_TIMED_RANGE, done: true, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } });
+    const row = makeTask({ schedule: JUNE_TIMED_RANGE, done: true, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true, canEditAssignees: true } });
     const source = ganttChecklistSource(project, row);
     expect(source).toEqual({
       id: `checklist:${TASK_ID}`,
@@ -139,6 +144,19 @@ describe("ganttChecklistSource", () => {
       permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true },
     });
     expect(source!.project.checklist).not.toBe(project.checklist);
+  });
+
+  it("carries every assignee and the hidden count from the row, as copies (#372)", () => {
+    const bo = { id: "33333333-3333-4333-8333-000000000002", name: "Bo", roleLabel: "Admin", isExternal: false, active: true };
+    const row = makeTask({ assignee: ED, assignees: [ED, bo], otherAssigneeCount: 2, assignmentVersion: 5 });
+    const source = eventSource(row);
+    expect(source.assignees).toEqual([ED, bo]);
+    expect(source.otherAssigneeCount).toBe(2);
+    expect(source.assignee).toEqual(ED);
+    expect(source.assignees[0]).not.toBe(row.assignees[0]);
+    const nobody = eventSource(makeTask({ assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0 }));
+    expect(nobody.assignees).toEqual([]);
+    expect(nobody.assignee).toBeNull();
   });
 
   it("maps a one-day range to a one-day exclusive-end timing and keeps canResize", () => {

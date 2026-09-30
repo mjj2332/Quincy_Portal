@@ -118,6 +118,7 @@ const internalChecklistMutationSchema = z.object({
   done: z.boolean(),
   assignee: z.object({ id: z.string().min(1), name: z.string() }).passthrough().nullable(),
   assignees: z.array(z.object({ id: z.string().min(1), name: z.string() }).passthrough()).optional(),
+  assignmentVersion: z.number().int().nonnegative().optional(),
   position: z.number().int(),
   schedule: mutationScheduleSchema,
 }).passthrough();
@@ -148,6 +149,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       // The server's team-filtered list and hidden count (#368): never derived from the scalar `assignee`.
       assignees: parsed.assignees,
       otherAssigneeCount: parsed.otherAssigneeCount,
+      assignmentVersion: parsed.assignmentVersion,
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,
@@ -161,6 +163,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       done: parsed.done,
       assignee: internalAssignee(parsed.assignee),
       assignees: parsed.assignees ? parsed.assignees.map((person) => internalAssignee(person)!) : null,
+      ...(parsed.assignmentVersion === undefined ? {} : { assignmentVersion: parsed.assignmentVersion }),
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,

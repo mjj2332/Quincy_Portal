@@ -243,9 +243,16 @@ export type GanttChecklistRowDto = {
   title: string;
   done: boolean;
   position: number;
+  /** The first assignee (an External Editor: the first one they may see). Kept until #373's PR 8; read `assignees`. */
   assignee: CalendarPerson | null;
+  /** Every assignee the viewer may see, in assignment order (an External Editor: team members only). */
+  assignees: CalendarPerson[];
+  /** Assignees the viewer may not see, counted but never named. */
+  otherAssigneeCount: number;
+  /** The Subtask's `assignment_version`: the `expectedVersion` of the next assignee change. */
+  assignmentVersion: number;
   schedule: ChecklistScheduleDto;
-  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean };
+  permissions: { canDrag: boolean; canResize: boolean; canOpenScheduleEditor: boolean; canEditAssignees: boolean };
 };
 
 export type ProductionGanttResponse<TStage extends StageTransportKey = StageTransportKey> = {
@@ -295,6 +302,7 @@ const ganttChecklistPermissionsSchema = z.object({
   canDrag: z.boolean(),
   canResize: z.boolean(),
   canOpenScheduleEditor: z.boolean(),
+  canEditAssignees: z.boolean(),
 }).strict();
 
 function ganttChecklistRowSchema(): z.ZodType<GanttChecklistRowDto> {
@@ -305,6 +313,9 @@ function ganttChecklistRowSchema(): z.ZodType<GanttChecklistRowDto> {
     done: z.boolean(),
     position: z.number().int(),
     assignee: calendarPersonZodSchema.nullable(),
+    assignees: z.array(calendarPersonZodSchema),
+    otherAssigneeCount: z.number().int().nonnegative(),
+    assignmentVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     schedule: checklistScheduleDtoSchema,
     permissions: ganttChecklistPermissionsSchema,
   }).strict();

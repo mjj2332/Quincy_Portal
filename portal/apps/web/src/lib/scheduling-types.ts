@@ -36,6 +36,8 @@ export type ChecklistMutationResult = {
   assignees: CalendarPerson[] | null;
   /** Assignees the caller may not see, counted only; absent when the wire carries no count, so the source's count is kept. */
   otherAssigneeCount?: number;
+  /** The Subtask's `assignment_version` (#372); absent on a response that predates it, so a row's own is kept. */
+  assignmentVersion?: number;
   position: number;
   schedule: ChecklistScheduleDto;
   scheduleVersion: number;

@@ -332,7 +332,7 @@ describe("production-gantt", () => {
       expect(response.status).toBe(200);
       const body = await response.json() as { children: { rows: Array<{ id: string; title: string; schedule: { state: string }; permissions: Record<string, boolean> }> } };
       const rangeRow = body.children.rows.find((row) => row.id === rangeId);
-      expect(rangeRow?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true });
+      expect(rangeRow?.permissions).toEqual({ canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true });
       expect(body.children.rows.every((row) => row.schedule.state === "range")).toBe(true);
     } finally {
       await database.DB.prepare("DELETE FROM project_subtasks WHERE id = ?").bind(rangeId).run();

@@ -94,6 +94,9 @@ function ganttResponse(deadlineDate: string = DEADLINE_DATE) {
               done: false,
               position: 0,
               assignee: null,
+              assignees: [],
+              otherAssigneeCount: 0,
+              assignmentVersion: 0,
               schedule: {
                 state: "range",
                 version: 1,
@@ -102,7 +105,7 @@ function ganttResponse(deadlineDate: string = DEADLINE_DATE) {
               },
               // The task itself is locked so the panel's only possible grip would be the Project's
               // (which `canEditDeadline: false` withholds).
-              permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true },
+              permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canEditAssignees: false },
             },
           ],
           total: 1,

@@ -73,8 +73,11 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     done: false,
     position: taskSeq,
     assignee: null,
+    assignees: [],
+    otherAssigneeCount: 0,
+    assignmentVersion: 0,
     schedule: oneDayRange("2026-03-05"),
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }
@@ -624,15 +627,15 @@ describe("interactive option (#221)", () => {
   it("one-day range task: draggable per canDrag, resizable per canResize (a positive-width bar with both grips)", () => {
     const dragging = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10") }), true);
     expect([dragging.readOnly, dragging.draggable, dragging.resizable]).toEqual([false, true, true]);
-    const resizeOnly = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10"), permissions: { canDrag: false, canResize: true, canOpenScheduleEditor: true } }), true);
+    const resizeOnly = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10"), permissions: { canDrag: false, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true } }), true);
     expect([resizeOnly.readOnly, resizeOnly.draggable, resizeOnly.resizable]).toEqual([false, false, true]);
-    const locked = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10"), permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true } }), true);
+    const locked = taskEvent(makeTask({ schedule: oneDayRange("2026-06-10"), permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: true, canEditAssignees: true } }), true);
     expect([locked.readOnly, locked.draggable, locked.resizable]).toEqual([true, false, false]);
   });
 
   it("range task: draggable per canDrag, resizable per canResize, readOnly only when neither", () => {
     const schedule = rangeSchedule(dateEndpoint("2026-06-10"), dateEndpoint("2026-06-12"));
-    const perms = (canDrag: boolean, canResize: boolean) => ({ canDrag, canResize, canOpenScheduleEditor: true });
+    const perms = (canDrag: boolean, canResize: boolean) => ({ canDrag, canResize, canOpenScheduleEditor: true, canEditAssignees: true });
     const resizeOnly = taskEvent(makeTask({ schedule, permissions: perms(false, true) }), true);
     expect([resizeOnly.readOnly, resizeOnly.draggable, resizeOnly.resizable]).toEqual([false, false, true]);
     const neither = taskEvent(makeTask({ schedule, permissions: perms(false, false) }), true);

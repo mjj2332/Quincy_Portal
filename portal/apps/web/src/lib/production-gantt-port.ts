@@ -72,12 +72,21 @@ function projectForDeadlineId(baseline: GanttBaseline, id: string): GanttProject
 
 /**
  * Version-wins: a mutation result replaces the row's `schedule` (and `done`) only when its
- * `scheduleVersion` is NEWER than the row's own — a late result never rolls a fresher row back.
+ * `scheduleVersion` is NEWER than the row's own, and its assignees only when its `assignmentVersion`
+ * is — a late result never rolls a fresher row back.
  * Returns the row itself when nothing changes.
  */
 export function adoptGanttChecklistRow(row: GanttChecklistRowDto, result: ChecklistMutationResult): GanttChecklistRowDto {
-  if (row.id !== result.id || result.scheduleVersion <= row.schedule.version) return row;
-  return { ...row, schedule: result.schedule, done: result.done };
+  if (row.id !== result.id) return row;
+  let next = row;
+  if (result.scheduleVersion > row.schedule.version) next = { ...next, schedule: result.schedule, done: result.done };
+  // #372: the assignee list has its own version, so it is adopted on its own rule: a result carrying no list
+  // (a response that predates #368) or an equal-or-older version never rolls a fresher row back.
+  if (result.assignees && result.assignmentVersion !== undefined && result.assignmentVersion > row.assignmentVersion) {
+    const assignees = result.assignees.map((person) => ({ ...person }));
+    next = { ...next, assignees, assignee: assignees[0] ?? null, otherAssigneeCount: result.otherAssigneeCount ?? 0, assignmentVersion: result.assignmentVersion };
+  }
+  return next;
 }
 
 export function adoptGanttChecklist(baseline: GanttBaseline, result: ChecklistMutationResult): GanttBaseline {

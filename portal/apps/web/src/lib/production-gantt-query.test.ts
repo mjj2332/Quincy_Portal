@@ -63,8 +63,11 @@ function checklistRow(id: string, overrides: Partial<GanttChecklistRowDto> = {})
     done: false,
     position: 0,
     assignee: null,
+    assignees: [],
+    otherAssigneeCount: 0,
+    assignmentVersion: 0,
     schedule: { state: "range", version: 1, zone: "Australia/Sydney", start: { kind: "date", localCivil: "2026-08-01", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: "2026-08-01", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-01" },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }

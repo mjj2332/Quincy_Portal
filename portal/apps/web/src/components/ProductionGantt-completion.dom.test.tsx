@@ -96,6 +96,9 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> & { id: string; proje
     done: false,
     position: 0,
     assignee: null,
+    assignees: [],
+    otherAssigneeCount: 0,
+    assignmentVersion: 0,
     schedule: {
       state: "range",
       version: 1,
@@ -104,7 +107,7 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> & { id: string; proje
       end: { kind: "date", localCivil: isoDate(2), instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" },
       due: isoDate(2),
     },
-    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true },
+    permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true, canEditAssignees: true },
     ...overrides,
   };
 }
