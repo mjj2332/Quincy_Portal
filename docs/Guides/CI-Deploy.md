@@ -39,6 +39,9 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 
 - `curl -sS https://quincy.flamingfire.my/ | grep -o 'index-[A-Za-z0-9_-]*\.js'` names the bundle
   the build produced.
+- `curl -sI https://quincy.flamingfire.my/assets/index-<hash>.js | grep -i cache-control` (use the
+  hash from the line above) prints `public, max-age=31536000, immutable` (#359). If it prints
+  `max-age=0, must-revalidate`, `apps/web/public/_headers` did not reach `dist/`.
 - `/api/auth/get-session` answers 200, and an authenticated route such as
   `/api/production-gantt?scope=active` answers 401 to a signed-out request: the route mounts and
   doesn't crash. Whether the signed-in pages work is the owner's check in their browser.

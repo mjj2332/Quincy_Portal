@@ -4372,6 +4372,34 @@ remove the legacy readers) still applies.
   loops (Base UI re-registers the trigger with a state update on each ref change). Keep per-item
   ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).
 
+## Thumbnails moved from `no-store` to `private, max-age=300` (#362, 2026-09-30)
+
+- **Change:** an authorised `thumb`/`web` rendition served from `GET /media/asset/:assetId/:variant`
+  (stored-rendition branches for staff and External Editor) now carries
+  `Cache-Control: private, max-age=300` and `Vary: Cookie`. Before, every Dashboard visit refetched every
+  cover, and each cost a session check, about three D1 lookups and an R2 read.
+- **Why it is safe:**
+  - `private` means Cloudflare and any other intermediary never store it; only the viewer's own browser does.
+  - The lifetime is 5 minutes. After it the browser refetches and the Worker re-runs session, principal and
+    project-access checks, so revocation and sign-out take effect within 5 minutes at most.
+  - `Vary: Cookie` makes a different principal in the same browser (sign-out then sign-in, Admin
+    impersonation) miss the cache instead of seeing another principal's thumbnails.
+- **What is still exposed:** the same principal, after a revocation, role change or External Editor
+  transition, can keep seeing already-loaded thumbnails for up to 5 minutes. The zone purge in
+  `Cloudflare-Cache-Purge-Setup.md` does not reach a browser cache. A regenerated rendition (spec change)
+  can likewise show stale for up to 5 minutes, because the URL is stable per asset id. The Worker sends an
+  ETag but never returns 304, so a revalidation still costs the full read.
+- **Stays `no-store`:** `original`, annotation markup, the dev direct fallback, the 302 to the live
+  transform, `__transform-source`, every 409 "processing", and every error. Errors never set a header
+  themselves, so `middleware/media-cache-default.ts` (registered before `requireSession` on `/media`,
+  and listed in `CHECKED_IN_MIDDLEWARE_REGISTRATIONS`) adds `private, no-store` to any `/media` response
+  that has none, including the 401.
+- **Covers now load near the viewport:** the Dashboard List and Kanban covers use visible-only
+  `LazyImage` (`src=`), not `preload="background"`, so off-screen covers are no longer fetched on idle.
+  `lazy-image-observer.ts` sets `scrollMargin` beside `rootMargin`: `rootMargin` only grows the viewport
+  box, so covers inside a scrolling column would otherwise load only on entering the scrollport.
+  `Dashboard-cover-lazy.dom.test.tsx` flushes the idle trigger, so it fails if background preloading returns.
+
 ## No triggers in migrations (2026-09-30, #364)
 
 - **The worker test harness loads migration SQL by splitting on `;` (after dropping `--` lines),

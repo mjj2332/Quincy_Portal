@@ -5,6 +5,7 @@ import { externalMeResponseSchema, ROLE_CAPABILITIES } from "@quincy/shared";
 import type { AppEnv } from "./env";
 import { getAuth } from "./auth";
 import { requireSession } from "./middleware/session";
+import { mediaNoStoreByDefault } from "./middleware/media-cache-default";
 import { requireCapability } from "./middleware/capability";
 import { requireImpersonationEnabled } from "./lib/impersonation";
 import { usersRoutes } from "./routes/users";
@@ -71,7 +72,7 @@ api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlin
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));
-const media = new Hono<AppEnv>(); media.use("/*", requireSession); media.route("/", mediaRoutes); app.route("/media", media);
+const media = new Hono<AppEnv>(); media.use("/*", mediaNoStoreByDefault); media.use("/*", requireSession); media.route("/", mediaRoutes); app.route("/media", media);
 app.all("/media", terminalRoute("/media", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/media/*", terminalRoute("/media/*", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/__transform-source", terminalRoute("/__transform-source", (c) => c.notFound()));
@@ -100,5 +101,17 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
 // unauthenticated and must run before the static-asset SPA fallback.
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));
 app.all("/d/*", terminalRoute("/d/*", (c) => c.notFound()));
-app.all("*", terminalRoute("*", (c) => c.env.ASSETS.fetch(c.req.raw)));
+// #359: `/assets/*` is content-hashed and served `immutable` for a year (`apps/web/public/_headers`).
+// `/assets/*` is in `run_worker_first` (wrangler.jsonc) so a MISS reaches this Worker instead of the
+// asset layer's `single-page-application` fallback answering it with index.html, which the immutable
+// rule would let a browser cache under a hashed URL for a year. Existing files still pass through
+// ASSETS.fetch with `_headers` applied; a miss (HTML fallback) becomes a `no-store` 404.
+app.all("*", terminalRoute("*", async (c) => {
+  const response = await c.env.ASSETS.fetch(c.req.raw);
+  if (new URL(c.req.url).pathname.startsWith("/assets/") && (response.headers.get("content-type") ?? "").includes("text/html")) {
+    await response.body?.cancel();
+    return new Response("Not found", { status: 404, headers: { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" } });
+  }
+  return response;
+}));
 export default { fetch: app.fetch };

@@ -267,7 +267,7 @@ export const PROJECT_SECURITY_ROUTE_CLASSIFICATION = PROJECT_SECURITY_ROUTE_CLAS
 
 export const CHECKED_IN_MIDDLEWARE_REGISTRATIONS = [
   ["ALL", "/api/*"], ["ALL", "/api"], ["ALL", "/api"], ["ALL", "/api/*"], ["ALL", "/api/*"], ["ALL", "/api/*"],
-  ["ALL", "/media/*"], ["ALL", "/api/assets/:id"], ["ALL", "/api/integrations"],
+  ["ALL", "/media/*"], ["ALL", "/media/*"], ["ALL", "/api/assets/:id"], ["ALL", "/api/integrations"],
   ["ALL", "/api/integrations/*"], ["ALL", "/api/notice-board"], ["ALL", "/api/notice-board/*"],
   ["ALL", "/api/users"], ["ALL", "/api/users/*"],
   ["POST", "/api/auth/admin/impersonate-user"], ["POST", "/api/auth/admin/impersonate-user"], ["POST", "/api/auth/admin/impersonate-user"],

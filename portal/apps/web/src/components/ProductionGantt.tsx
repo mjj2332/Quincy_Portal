@@ -1431,9 +1431,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   let body: ReactNode;
   if (query.isPending) {
     body = (
-      <div className="grid gap-[var(--space-3)]" data-testid="production-gantt-loading">
-        <Skeleton className="h-10" />
-        <Skeleton className="h-[28rem]" />
+      <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-loading">
+        <Skeleton className="h-10 shrink-0" />
+        <Skeleton className="min-h-0 flex-1" />
       </div>
     );
   } else if (query.isError) {
@@ -1458,7 +1458,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const facetFiltersDefault = editorIds.length === 0 && ganttFacetFor(facetFilters) === undefined;
     const showDeliveredRecovery = ganttShowDeliveredRecovery(facetFilters);
     body = (
-      <div className="grid gap-[var(--space-3)]" data-testid="production-gantt">
+      <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt">
         {tooManyToDraw && (
           <Notice tone="caution" role="status" data-testid="production-gantt-too-many">
             Too many projects match these filters to draw at once — narrow the filters above to see the rest.
@@ -1514,7 +1514,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             createTaskMaxLength={GANTT_CREATE_TITLE_MAX}
             renderResourceLabel={renderResourceLabel}
             renderEvent={renderEvent}
-            className="h-[36rem]"
+            className="min-h-0 flex-1"
           >
             <GanttNav />
             <GanttToolbar />
@@ -1526,7 +1526,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }
 
   return (
-    <div ref={containerRef} className="grid gap-[var(--space-3)]" data-testid="production-gantt-root">
+    <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root">
       <ProductionGanttFiltersBar filters={facetFilters} stageOptions={stageOptions} people={filterPeople} onFiltersChange={onFiltersChange} triggerRef={filtersTriggerRef} />
       <GanttLegend entries={legendEntries} />
       {commands.settle.recoveryReason && (

@@ -6,7 +6,7 @@ export function attachLazyImageObserver(
 ) {
   const observer = new Observer((entries) => {
     for (const entry of entries) if (entry.target === target()) onIntersection(entry.isIntersecting);
-  }, { rootMargin: "600px" });
+  }, { rootMargin: "600px", scrollMargin: "600px" } as IntersectionObserverInit);
   const initial = target();
   if (initial) observer.observe(initial);
   return observer;

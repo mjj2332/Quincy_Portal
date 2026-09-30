@@ -4,11 +4,12 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { DEV_API_ORIGIN, devApiProxy } from "./src/config/dev-proxy";
 import { forbidDevOnlyModules } from "./src/build/forbid-dev-only-modules";
+import { VENDOR_CHUNK_NAME, VENDOR_MODULE_PATTERN, vendorChunkGuard } from "./src/build/vendor-chunk-guard";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), forbidDevOnlyModules(projectRoot)],
+  plugins: [react(), tailwindcss(), forbidDevOnlyModules(projectRoot), vendorChunkGuard()],
   // #219 PR A round 3 fix (Sol BLOCKER 1a): a worker sub-build (`new Worker(new
   // URL("./restricted-file.ts", import.meta.url))`) gets its OWN Rolldown bundling pass, entirely
   // separate from the top-level `plugins` array above — a restricted module reachable ONLY through
@@ -26,6 +27,20 @@ export default defineConfig({
   // error naming that module, then revert the planted import exactly.
   worker: {
     plugins: () => [forbidDevOnlyModules(projectRoot)],
+  },
+  // #359: React, TanStack and Base UI in one `vendor` chunk whose hash survives ordinary app deploys
+  // (it moves on a dependency upgrade, or when app code starts using a new export of a vendored
+  // package). `vendorChunkGuard` fails the build if they leak back into the entry chunk. Vite 8 /
+  // Rolldown: `output.codeSplitting` replaces `manualChunks`; `harness-reachability.guard.test.ts`
+  // walks both `rollupOptions` and `rolldownOptions` for a stray `input`.
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [{ name: VENDOR_CHUNK_NAME, test: VENDOR_MODULE_PATTERN }],
+        },
+      },
+    },
   },
   resolve: {
     alias: {
