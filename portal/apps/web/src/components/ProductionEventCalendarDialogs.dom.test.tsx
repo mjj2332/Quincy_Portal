@@ -43,7 +43,7 @@ const deadline: ProjectDeadlineCalendarEventDto = {
   permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-11T09:30", deadlineVersion: 7, reminderOffsetsMinutes: [1440, 60],
 };
 
-const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignee: person, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: dateEndpoint("2026-08-20"), end: dateEndpoint("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
+const dueEvent: ChecklistCalendarEventDto = { id: "checklist:33333333-3333-4333-8333-333333333333", kind: "checklist", title: "Select hero images", project, assignee: person, assignees: [person], otherAssigneeCount: 0, timing: { allDay: true, start: "2026-08-20", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: dateEndpoint("2026-08-20"), end: dateEndpoint("2026-08-20"), due: "2026-08-20" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } };
 
 let host: HTMLDivElement;
 let root: Root;

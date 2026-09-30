@@ -81,7 +81,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
 import { Eyebrow } from "./quincy/Eyebrow";
-import { InitialsAvatar } from "./quincy/InitialsAvatar";
+import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { checklistScheduleEditorButtonLabel } from "./ProductionCalendarScheduleEditorFields";
 import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
@@ -114,6 +114,10 @@ const COARSE_QUERY = "(pointer: coarse)";
 const CALENDAR_VIEWS = ["month", "week", "day", "days", "agenda"] as const;
 const TIME_GRID_SUBVIEWS = new Set(["week", "day", "days"]);
 const OVERLAP = "Overlaps another task";
+// A denser AvatarStack for the chip: 16px avatars (the size the single initials avatar had), 2xs initials and `+N`.
+const CHIP_AVATAR = "size-4 data-[size=sm]:size-4 group-has-data-[size=sm]/avatar-group:size-4 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)] text-[length:var(--text-2xs)] ring-1 ring-[var(--bg-surface)]";
+// Chip density: 2px overlap, 1px ring in the chip's surface colour (the group default is a 2px page-cream ring).
+const CHIP_STACK = "shrink-0 -space-x-0.5 *:data-[slot=avatar]:ring-1 *:data-[slot=avatar]:ring-[var(--bg-surface)]";
 
 type PendingRange = { eventId: string; start: Date; end: Date; allDay: boolean };
 
@@ -145,14 +149,26 @@ function calendarResetKey(calendar: DashboardCalendarState): string {
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
   const dto = data?.dto;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
-  const assignee = dto?.kind === "checklist" ? dto.assignee : null;
+  const assignees = dto?.kind === "checklist" ? dto.assignees : [];
+  const otherAssigneeCount = dto?.kind === "checklist" ? dto.otherAssigneeCount : 0;
   const overlap = dto?.kind === "checklist" && dto.status.sameAssigneeOverlap === true;
   return (
     // `data-event-id` is the controller's focus-return hook (it focuses the vendor chip button around it).
-    <span className="flex w-full min-w-0 items-center gap-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
+    <span className="flex w-full min-w-0 items-center gap-[var(--space-1)] pe-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {overlap && <span className="sr-only">{OVERLAP}</span>}
-      {assignee && <InitialsAvatar name={assignee.name} className="size-4 shrink-0 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)]" />}
+      {assignees.length + otherAssigneeCount > 0 && (
+        <AvatarStack
+          people={assignees}
+          hiddenCount={otherAssigneeCount}
+          limit={3}
+          personNoun="Assignee"
+          emptyLabel="No assignee"
+          className={CHIP_STACK}
+          avatarClassName={CHIP_AVATAR}
+          singleInitial
+        />
+      )}
     </span>
   );
 }

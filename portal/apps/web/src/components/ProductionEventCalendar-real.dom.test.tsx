@@ -32,7 +32,7 @@ const response = adminProductionCalendarRangeResponseSchema.parse({
   },
   events: [
     { id: "project-deadline:project", kind: "project_deadline", title: "Project handoff", project, timing: { allDay: false, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
-    { id: "checklist:item", kind: "checklist", title: "Select hero images", project, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, timing: { allDay: true, start: "2026-08-13", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-13" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } },
+    { id: "checklist:item", kind: "checklist", title: "Select hero images", project, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 0, timing: { allDay: true, start: "2026-08-13", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: "2026-08-13", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-13" }, permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true } },
   ],
   filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee },
 });
@@ -60,7 +60,9 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     expect(checklist).toBeDefined();
     expect(deadline!.closest("button")?.className).toContain("bg-(--ink-900)");
     expect(checklist!.closest("button")?.className).toContain("bg-(--paper-000)");
-    expect(checklist!.textContent).toContain("ME");
+    // The chip stack draws one initial per avatar (#370); the full name is the avatar's label.
+    const avatar = checklist!.querySelector('[role="img"][aria-label="Maya Editor"]');
+    expect(avatar?.textContent).toBe("M");
     // The consumer's selected state replaces the vendor's (tailwind-merge drops the vendor's
     // same-variant utilities), so a selected checklist chip keeps paper + a light wash + one ring.
     const checklistClass = checklist!.closest("button")!.className.split(/\s+/);

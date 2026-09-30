@@ -12,6 +12,7 @@ import {
   resolveSydneyCivilMinute,
   subtaskIdFromCalendarEntityId,
   type CalendarEventDto,
+  type CalendarPerson,
   type ChecklistScheduleDto,
   type ProductionCalendarProjectBounds,
   type ProductionCalendarRangeResponse,
@@ -70,12 +71,12 @@ export function oneDaySchedule(at: ChecklistScheduleEndpointDto, version: number
   return rangeSchedule(at, oneDayEnd(at), version);
 }
 
-export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto, over: { canDrag?: boolean; canResize?: boolean; canOpenScheduleEditor?: boolean; completed?: boolean; id?: string; assigneeNull?: boolean; version?: number } = {}): ChecklistCalendarEventDto {
+export function rangeEvent(start: ChecklistScheduleEndpointDto, end: ChecklistScheduleEndpointDto, over: { canDrag?: boolean; canResize?: boolean; canOpenScheduleEditor?: boolean; completed?: boolean; id?: string; assigneeNull?: boolean; assignees?: CalendarPerson[]; otherAssigneeCount?: number; version?: number } = {}): ChecklistCalendarEventDto {
   const timing = start.kind === "date"
     ? { allDay: true as const, start: start.localCivil, end: exclusiveAfter(end.localCivil) }
     : { allDay: false as const, start: start.instant!, end: end.instant };
   return {
-    id: over.id ?? `checklist:${SUBTASK_ID}`, kind: "checklist", title: "Select hero images", project, assignee: over.assigneeNull ? null : assignee, timing,
+    id: over.id ?? `checklist:${SUBTASK_ID}`, kind: "checklist", title: "Select hero images", project, assignee: over.assigneeNull ? null : assignee, assignees: over.assignees ?? (over.assigneeNull ? [] : [assignee]), otherAssigneeCount: over.otherAssigneeCount ?? 0, timing,
     status: { ...status, completed: over.completed ?? false },
     schedule: { state: "range", version: over.version ?? 3, zone: "Australia/Sydney", start, end, due: end.localCivil },
     permissions: { canDrag: over.canDrag ?? true, canResize: over.canResize ?? true, canOpenScheduleEditor: over.canOpenScheduleEditor ?? true },
@@ -134,7 +135,7 @@ export function rangeResponse(input: RangeResponseInput = {}): ProductionCalenda
 
 /** The worker's checklist PATCH response: the BARE subtask uuid, never the `checklist:` entity id (#226). */
 export function checklistMutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistScheduleDto = event.schedule) {
-  return { id: subtaskIdFromCalendarEntityId(event.id) ?? event.id, title: event.title, done: event.status.completed, assignee: event.assignee ? { id: event.assignee.id, name: event.assignee.name } : null, position: 1, schedule };
+  return { id: subtaskIdFromCalendarEntityId(event.id) ?? event.id, title: event.title, done: event.status.completed, assignee: event.assignee ? { id: event.assignee.id, name: event.assignee.name } : null, assignees: event.assignees, position: 1, schedule };
 }
 
 /** A range schedule DTO at `version` (for mutation bodies). */
