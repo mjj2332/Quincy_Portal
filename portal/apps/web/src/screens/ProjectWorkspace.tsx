@@ -12,6 +12,7 @@ import { useCapabilities } from "../lib/capabilities";
 import { clearToasts, pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { InternalLink } from "../components/InternalLink";
+import { useDashboardReturnLink } from "../components/quincy/ProjectSheet";
 import { CopyProjectLinkButton } from "../components/quincy/CopyProjectLinkButton";
 import { ProjectCollaborationPanel, type CollaborationView } from "../components/ProjectCollaborationPanel";
 import { ProjectHeader } from "../components/ProjectHeader";
@@ -406,6 +407,7 @@ export function ProjectWorkspace(props: ProjectWorkspaceProps) {
 }
 
 function CollaborationOnlyView({ projectId, onAccessFailure }: { projectId: string; onAccessFailure: (error: unknown, resource: AccessFailureResource, kind?: CollectionKind, initial?: boolean) => void }) {
+  const dashboardReturn = useDashboardReturnLink();
   const summary = useProjectCollaborationSummaryQuery(projectId, true);
   const commentsQuery = useProjectCommentsCacheQuery(projectId);
   const { stages, presentationStageKey } = useStages();
@@ -414,7 +416,7 @@ function CollaborationOnlyView({ projectId, onAccessFailure }: { projectId: stri
   const street = summary.data?.project.street ?? commentsQuery.data?.pages[0]?.project.street ?? "Project collaboration";
   const stage = summary.data && stages.find((item) => item.key === presentationStageKey(summary.data.project.stageKey));
   return <main className="page grid gap-[var(--space-5)]" data-testid="project-collaboration-only">
-    <div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">{street}</h1></div><div className="flex flex-wrap items-center gap-[var(--space-2)]"><CopyProjectLinkButton projectId={projectId} tab="collaboration" /><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div></div>
+    <div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">{street}</h1></div><div className="flex flex-wrap items-center gap-[var(--space-2)]"><CopyProjectLinkButton projectId={projectId} tab="collaboration" /><InternalLink className={buttonClasses("secondary")} {...dashboardReturn}>Back to dashboard</InternalLink></div></div>
     {summary.isPending && !summary.data && <EmptyState role="status" title="Loading collaboration.">Preparing the project summary.</EmptyState>}
     {summary.data && <section className="grid gap-[var(--space-3)] p-[var(--space-5)] bg-card [border-style:solid] border-[length:var(--border-width-hair)] border-border" aria-labelledby="collaboration-summary-heading"><Eyebrow>Read-only summary</Eyebrow><h2 className="serif [font:var(--type-h3)]" id="collaboration-summary-heading">Project overview</h2><div className="grid gap-[var(--space-3)]"><div className="kv"><span className="k">Stage</span><span className="vv">{stage?.label ?? summary.data.project.stageKey}</span></div><div className="kv"><span className="k">Deadline</span><span className="vv">Not scheduled</span></div><div className="kv"><span className="k">Next reminder</span><span className="vv">None</span></div></div><div className="grid gap-[var(--space-3)] grid-cols-2 max-[721px]:grid-cols-1 pt-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border"><div><Eyebrow>Photographers</Eyebrow>{summary.data.members.filter((member) => member.roleOnProject === "photographer").map((member) => <div className="py-[5px] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" key={member.id}>{member.name}{!member.active && <em className="ms-[6px] not-italic text-signal-caution-text">Inactive</em>}</div>)}</div><div><Eyebrow>Editors</Eyebrow>{summary.data.members.filter((member) => member.roleOnProject === "editor").map((member) => <div className="py-[5px] [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary" key={member.id}>{member.name}{!member.active && <em className="ms-[6px] not-italic text-signal-caution-text">Inactive</em>}</div>)}</div></div></section>}
     <ProjectCollaborationPanel projectId={projectId} onAccessFailure={onAccessFailure} />
@@ -428,10 +430,11 @@ function CollaborationUnavailableSection() {
 }
 
 function CollaborationOnlyUnavailable() {
-  return <main className="page grid gap-[var(--space-5)]" data-testid="project-collaboration-only"><div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">Project collaboration</h1></div><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div><CollaborationUnavailableSection /></main>;
+  const dashboardReturn = useDashboardReturnLink();
+  return <main className="page grid gap-[var(--space-5)]" data-testid="project-collaboration-only"><div className="pagehead"><div><Eyebrow>Collaboration</Eyebrow><h1 className="serif">Project collaboration</h1></div><InternalLink className={buttonClasses("secondary")} {...dashboardReturn}>Back to dashboard</InternalLink></div><CollaborationUnavailableSection /></main>;
 }
 
-function UnavailableProject({ message }: { message: string }) { return <main className={FULL_PAGE}><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className={buttonClasses("secondary")} to="/">Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div></main>; }
+function UnavailableProject({ message }: { message: string }) { const dashboardReturn = useDashboardReturnLink(); return <main className={FULL_PAGE}><div className="pagehead"><h1 className="serif">Project workspace</h1><InternalLink className={buttonClasses("secondary")} {...dashboardReturn}>Back to dashboard</InternalLink></div><div className="empty" role="alert"><span className="serif">Project unavailable.</span>{message}</div></main>; }
 
 type QueryOwnerProps = {
   projectId: string; role: Role; run: number; activeTab: WorkspaceTab; collectionDenied: Set<CollectionKind>; workspaceReady: boolean; collaborationView: CollaborationView; onCollaborationViewChange: (view: CollaborationView) => void; workspaceTabRefs: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>; collaborationUnavailable: boolean; canViewEdited: boolean; canAdminBackend: boolean;

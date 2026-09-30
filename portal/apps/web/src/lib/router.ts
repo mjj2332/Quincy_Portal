@@ -4,10 +4,61 @@ export { dashboardSearchOf, parseStaffLocation, parseStaffPathname, projectNotif
 
 export type HistorySource = {
   location: Pick<Location, "pathname" | "search">;
-  history: Pick<History, "pushState" | "replaceState">;
+  // `state` and `go` are optional so the many fakes that only exercise push/replace still
+  // type-check; the real `window` supplies both.
+  history: Pick<History, "pushState" | "replaceState"> & Partial<Pick<History, "state" | "go">>;
   addEventListener(type: "popstate", listener: () => void): void;
   removeEventListener(type: "popstate", listener: () => void): void;
 };
+
+/**
+ * #366: the Project sheet's bookkeeping, written into `history.state` (never the URL, so
+ * `?collaboration=open` and every other spelling stays byte-exact). `backdrop` is the Dashboard
+ * location the sheet floats over, `depth` how many sheet entries sit above the backdrop entry (so
+ * closing can `history.go(-depth)`), `prev` the location the push came from. Only the adapter
+ * writes it; everything read back is validated, because a reload or a hostile page can put
+ * anything in `history.state`.
+ */
+export type SheetEntryState = { v: 1; backdrop: string; depth: number; prev: string };
+
+export function readSheetEntryState(state: unknown): SheetEntryState | null {
+  if (typeof state !== "object" || state === null) return null;
+  const sheet = (state as { quincySheet?: unknown }).quincySheet;
+  if (typeof sheet !== "object" || sheet === null) return null;
+  const { v, backdrop, depth, prev } = sheet as Record<string, unknown>;
+  if (v !== 1 || typeof depth !== "number" || !Number.isInteger(depth) || depth < 1) return null;
+  if (typeof backdrop !== "string" || safeStaffDestination(backdrop) === null || parseStaffLocation(backdrop).kind !== "dashboard") return null;
+  if (typeof prev !== "string" || safeStaffDestination(prev) === null) return null;
+  return { v: 1, backdrop, depth, prev };
+}
+
+/** A Project location floats over the Dashboard as a sheet. (#374 adds `edit-project`.) */
+export function isSheetLocation(location: string): boolean {
+  return parseStaffLocation(location).kind === "project";
+}
+
+/** A location that renders inside the pathless Dashboard layer: the Dashboard itself or a sheet over it. */
+export function isDashboardLayerLocation(location: string): boolean {
+  const kind = parseStaffLocation(location).kind;
+  return kind === "dashboard" || kind === "project";
+}
+
+/**
+ * The `history.state` a push to `destination` writes. Only a push INTO a sheet carries state:
+ * from a Dashboard view it starts the bookkeeping (`depth: 1`), from a sheet that already has valid
+ * state it deepens it. A cold-linked sheet (no state) stays stateless — nothing below it is
+ * provably ours, and closing it falls back to a `replace`.
+ */
+export function nextPushState(current: string, currentState: unknown, destination: string): { quincySheet: SheetEntryState } | null {
+  if (!isSheetLocation(destination)) return null;
+  const currentKind = parseStaffLocation(current).kind;
+  if (currentKind === "dashboard") return { quincySheet: { v: 1, backdrop: current, depth: 1, prev: current } };
+  if (currentKind === "project") {
+    const existing = readSheetEntryState(currentState);
+    return existing ? { quincySheet: { ...existing, depth: existing.depth + 1, prev: current } } : null;
+  }
+  return null;
+}
 
 export function createHistoryAdapter(source: HistorySource) {
   const listeners = new Set<() => void>();
@@ -31,14 +82,21 @@ export function createHistoryAdapter(source: HistorySource) {
     },
     push(location: string) {
       const destination = safeStaffDestination(location) ?? "/";
-      source.history.pushState(null, "", destination);
+      source.history.pushState(nextPushState(`${source.location.pathname}${source.location.search}`, source.history.state ?? null, destination), "", destination);
       epoch++;
       notify();
     },
     replace(location: string) {
       const destination = safeStaffDestination(location) ?? "/";
-      source.history.replaceState(null, "", destination);
+      // A replace keeps the sheet bookkeeping only sheet-to-sheet (the Workspace's own tab writes);
+      // anything else drops it.
+      const keep = isSheetLocation(`${source.location.pathname}${source.location.search}`) && isSheetLocation(destination);
+      source.history.replaceState(keep ? (source.history.state ?? null) : null, "", destination);
       notify();
+    },
+    /** Traversal. No notify: the resulting popstate reaches the subscription by itself. */
+    go(delta: number) {
+      source.history.go?.(delta);
     },
   };
 }
@@ -99,9 +157,14 @@ export type LinkClick = {
   currentTarget: { href: string; target: string; download: string };
 };
 
-/** Keyboard-generated anchor clicks have detail 0 and must retain native behavior. */
+/**
+ * An unmodified primary activation — pointer or keyboard — becomes an SPA push; modified clicks,
+ * other buttons, `target`, `download` and non-staff destinations keep native behaviour. (#366:
+ * keyboard Enter used to be excluded via `detail === 0`; it is now intercepted, and
+ * Ctrl/Meta/Shift/Alt+Enter still carry modifier flags so they still open natively.)
+ */
 export function shouldInterceptInternalLink(event: LinkClick, origin: string): boolean {
-  if (event.defaultPrevented || event.button !== 0 || event.detail === 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
   const anchor = event.currentTarget;
   if (anchor.target || anchor.download) return false;
   try {

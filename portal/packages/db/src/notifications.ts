@@ -91,6 +91,13 @@ export type EmitNotificationInput = {
       };
   email?: NotificationEmail;
   fromAddress?: string;
+  /**
+   * When set, each recipient's row is inserted only while `project_subtask_assignees` STILL holds
+   * them on this Subtask at their captured assignment version, checked inside the insert itself.
+   * A recipient removed after the caller resolved its recipients (e.g. while an earlier
+   * recipient's email was in flight) gets neither the row nor the email. Requires `sourceKey`.
+   */
+  requireSubtaskAssignee?: { subtaskId: string; versions: Readonly<Record<string, number>> };
 };
 
 function escapeHtml(value: string): string {
@@ -156,7 +163,20 @@ export async function emitNotifications(
       // a syntax error against real D1. Raw SQL sidesteps the builder for just this
       // statement, matching this repo's existing raw-driver pattern when
       // drizzle/D1 can't express something correctly.
-      const result = await db.run(sql`
+      const guard = input.requireSubtaskAssignee;
+      const guardedVersion = guard ? guard.versions[recipient.userId] : undefined;
+      if (guard && guardedVersion === undefined) continue;
+      const result = guard
+        ? await db.run(sql`
+          insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)
+          select ${values.id}, ${values.userId}, ${values.projectId}, ${values.type}, ${values.title}, ${values.body}, ${values.sourceKey}, ${values.createdAt.getTime()}
+          where exists (
+            select 1 from project_subtask_assignees a
+            where a.subtask_id = ${guard.subtaskId} and a.user_id = ${values.userId} and a.assignment_version = ${guardedVersion}
+          )
+          on conflict (type, source_key, user_id) where source_key is not null do nothing
+        `)
+        : await db.run(sql`
         insert into notifications (id, user_id, project_id, type, title, body, source_key, created_at)
         values (${values.id}, ${values.userId}, ${values.projectId}, ${values.type}, ${values.title}, ${values.body}, ${values.sourceKey}, ${values.createdAt.getTime()})
         on conflict (type, source_key, user_id) where source_key is not null do nothing
