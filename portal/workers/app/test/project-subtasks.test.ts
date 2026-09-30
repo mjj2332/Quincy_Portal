@@ -584,8 +584,19 @@ describe("assignee relation dual-write (#364)", () => {
 
   it("two concurrent reassignments leave exactly one row, equal to the column and version", async () => {
     const item = await create({ assigneeId: editorId });
-    await Promise.all([patch(item.id, { assigneeId: photographerId }), patch(item.id, { assigneeId: adminId })]);
+    // Both requests read the same initial state (editor, version 1). The handler's contract has no expected-version token for an assignee: its UPDATE is guarded by the state it read, so the loser matches no row and returns the winner's current Subtask as a 200 no-op, not a conflict.
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+    const responses = await Promise.all([patch(item.id, { assigneeId: photographerId }), patch(item.id, { assigneeId: adminId })]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const bodies = (await Promise.all(responses.map((response) => response.json()))) as Array<{ assignee: { id: string } | null; assignmentVersion: number }>;
     const stored = await column(item.id);
+    // Reassignment happened: the editor is gone and the version advanced past the shared starting point.
+    expect([photographerId, adminId]).toContain(stored!.assignee_id);
+    expect(stored!.assignment_version).toBeGreaterThan(1);
+    // Every response reports an assignee that the requests asked for, never the stale editor.
+    for (const body of bodies) expect([photographerId, adminId]).toContain(body.assignee?.id);
+    // A single winner means the version advanced exactly once; the loser's write did not touch the relation.
+    if (stored!.assignment_version === 2) for (const body of bodies) expect(body).toMatchObject({ assignee: { id: stored!.assignee_id }, assignmentVersion: 2 });
     expect(await relationRows(item.id)).toEqual([{ user_id: stored!.assignee_id, assignment_version: stored!.assignment_version }]);
   });
 
