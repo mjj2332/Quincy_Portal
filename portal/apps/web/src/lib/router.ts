@@ -32,15 +32,16 @@ export function readSheetEntryState(state: unknown): SheetEntryState | null {
   return { v: 1, backdrop, depth, prev };
 }
 
-/** A Project location floats over the Dashboard as a sheet. (#374 adds `edit-project`.) */
+/** A Project location (the workspace, or its edit form — #374) floats over the Dashboard as a sheet. */
 export function isSheetLocation(location: string): boolean {
-  return parseStaffLocation(location).kind === "project";
+  const kind = parseStaffLocation(location).kind;
+  return kind === "project" || kind === "edit-project";
 }
 
 /** A location that renders inside the pathless Dashboard layer: the Dashboard itself or a sheet over it. */
 export function isDashboardLayerLocation(location: string): boolean {
   const kind = parseStaffLocation(location).kind;
-  return kind === "dashboard" || kind === "project";
+  return kind === "dashboard" || kind === "project" || kind === "edit-project";
 }
 
 /**
@@ -53,7 +54,7 @@ export function nextPushState(current: string, currentState: unknown, destinatio
   if (!isSheetLocation(destination)) return null;
   const currentKind = parseStaffLocation(current).kind;
   if (currentKind === "dashboard") return { quincySheet: { v: 1, backdrop: current, depth: 1, prev: current } };
-  if (currentKind === "project") {
+  if (currentKind === "project" || currentKind === "edit-project") {
     const existing = readSheetEntryState(currentState);
     return existing ? { quincySheet: { ...existing, depth: existing.depth + 1, prev: current } } : null;
   }

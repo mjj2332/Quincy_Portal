@@ -38,6 +38,7 @@
 import { createContext, use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role, type WorkspaceTab } from "@quincy/shared";
+import { pushToast } from "./toast-store";
 import { isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
 import { createDashboardBackdropSource, DashboardLocationContext, type DashboardBackdropSource } from "./dashboard-location";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
@@ -96,6 +97,10 @@ type ShellState = {
   backdropLocation: string;
   backdropSource: DashboardBackdropSource;
   closeProjectSheet: () => void;
+  /** #374: Save / Cancel / Archive / Restore from the edit form. Returns by traversal (see the impl). */
+  returnToWorkspace: (projectId: string, message?: string) => void;
+  /** #374: the project was permanently deleted from the edit form. */
+  leaveDeletedProject: (projectId: string, message: string) => void;
 };
 
 const ShellStateContext = createContext<ShellState | null>(null);
@@ -230,7 +235,7 @@ function ShellRoute() {
   // #366: at a Project URL the Dashboard underneath is the remembered one. `backdropLocation` is
   // sanitised the same way the real route is: a Calendar backdrop the role may not see falls back
   // to the default view (a reloaded `history.state` is only validated as "a Dashboard location").
-  const isSheetRoute = route.kind === "project";
+  const isSheetRoute = route.kind === "project" || route.kind === "edit-project";
   const rememberedBackdrop = useSyncExternalStore(backdropSource.subscribe, backdropSource.getLocation, () => "/");
   const rememberedRoute = useMemo(() => parseStaffLocation(rememberedBackdrop), [rememberedBackdrop]);
   const backdropCalendarBlocked = rememberedRoute.kind === "dashboard"
@@ -394,11 +399,37 @@ function ShellRoute() {
     if (pending !== completeLocation) history.replace(pending);
   }, [route, completeLocation, history, backdropSource]);
 
+  // #374 (E2/E3). The edit form is a sheet child pushed on top of the workspace, so returning is a
+  // traversal: when the entry below is this project's workspace, step back onto it (Back afterwards
+  // closes the sheet, and the workspace re-lands the tab its URL named). Otherwise there is no
+  // provable workspace entry below (a cold edit link, a stale state): replace with it.
+  // Both read the CURRENT location at call time: a save that resolves after the sheet was closed
+  // must not reopen it or walk history from the Dashboard (E3) — it only toasts.
+  function stillEditing(projectId: string): boolean {
+    const now = parseStaffLocation(history.getLocation());
+    return now.kind === "edit-project" && now.projectId === projectId;
+  }
+  function returnToWorkspace(projectId: string, message?: string) {
+    if (!stillEditing(projectId)) { if (message) pushToast(message); return; }
+    const workspace = `/projects/${encodeURIComponent(projectId)}`;
+    const prev = readSheetEntryState(window.history.state)?.prev;
+    const below = prev === undefined ? null : parseStaffLocation(prev);
+    setNotice(message ? { path: workspace, message } : null);
+    if (below?.kind === "project" && below.projectId === projectId) history.go(-1);
+    else history.replace(workspace);
+  }
+  function leaveDeletedProject(projectId: string, message: string) {
+    if (!stillEditing(projectId)) { pushToast(message); return; }
+    pushToast(message);
+    closeProjectSheet();
+  }
+
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
     dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab,
     impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet,
+    returnToWorkspace, leaveDeletedProject,
   };
 
   const routedContent = blocked
@@ -431,7 +462,7 @@ function DashboardLayer() {
   // synchronously inside the activated link's click, so `document.activeElement` is still that link.
   const openerRef = useRef<HTMLElement | null>(null);
   const projectIdRef = useRef<string | null>(null);
-  if (route.kind === "project") projectIdRef.current = route.projectId;
+  if (route.kind === "project" || route.kind === "edit-project") projectIdRef.current = route.projectId;
   useEffect(() => {
     const adapter = locationStore();
     let wasSheet = isSheetLocation(adapter.getLocation());
@@ -459,8 +490,8 @@ function DashboardLayer() {
       {showDashboard ? (
         <ProjectSheet
           open={isSheetRoute}
-          kind="project"
-          sheetKey={isSheetRoute && route.kind === "project" ? `${route.kind}:${route.projectId}` : "closed"}
+          kind={route.kind === "edit-project" ? "edit" : "project"}
+          sheetKey={isSheetRoute && (route.kind === "project" || route.kind === "edit-project") ? `${route.kind}:${route.projectId}` : "closed"}
           backdropHref={backdropLocation}
           onRequestClose={closeProjectSheet}
           impersonating={impersonating}
@@ -520,12 +551,12 @@ const projectRoute = createRoute({
 });
 
 const editProjectRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => dashboardLayerRoute,
   path: "/projects/$projectId/edit",
   component: function EditProjectLeaf() {
-    const { route, navigate } = useShell();
+    const { route, returnToWorkspace, leaveDeletedProject } = useShell();
     if (route.kind !== "edit-project") return <NotAvailable />;
-    return <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />;
+    return <EditProject key={route.projectId} projectId={route.projectId} onReturnToWorkspace={(message) => returnToWorkspace(route.projectId, message)} onDeleted={(message) => leaveDeletedProject(route.projectId, message)} />;
   },
 });
 
@@ -578,8 +609,8 @@ const notificationPreferencesRoute = createRoute({
 // removed: deleting it changed no test, because the root already renders the same view inside the
 // same chrome. A route that cannot be observed to do anything is decoration, not defence.
 const routeTree = rootRoute.addChildren([
-  dashboardLayerRoute.addChildren([dashboardRoute, projectRoute]),
-  createProjectRoute, editProjectRoute, adminRoute, noticesRoute, notificationsRoute,
+  dashboardLayerRoute.addChildren([dashboardRoute, projectRoute, editProjectRoute]),
+  createProjectRoute, adminRoute, noticesRoute, notificationsRoute,
   notificationPreferencesRoute,
 ]);
 
