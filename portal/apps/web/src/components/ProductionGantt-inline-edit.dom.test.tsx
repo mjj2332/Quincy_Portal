@@ -557,6 +557,7 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(trigger.getAttribute("aria-label")).toBe(`Add team for ${STREET}`);
     expect(trigger.querySelector("svg")).not.toBeNull();
     expect(trigger.querySelector("[aria-hidden='true']")).not.toBeNull();
+    expect(trigger.querySelector('[data-testid="empty-assignee-glyph"]')).not.toBeNull();
   });
 
   it("T11 a response without team/canEditTeam (an old worker) renders an empty, non-interactive stack and never throws", async () => {

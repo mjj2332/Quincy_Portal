@@ -92,7 +92,7 @@
  * adopted version-wins into the row (`adoptGanttChecklistRow`) and into page-2+ rows via `patchChildRow`.
  * An External Editor's row carries team assignees plus a hidden count, exactly as the Checklist does.
  * Reuse ledger: picker — `quincy/SubtaskAssigneePicker`, borderless like the Project row's People trigger (`reui/combobox` `multiple` + `reui/item` +
- * `reui/avatar`); read-only stack — `quincy/AvatarStack` (`reui/avatar`); conflict / gate notices —
+ * `reui/avatar`); read-only stack — `quincy/AvatarStack` (`reui/avatar`), and nothing at all when read-only and empty; empty editable trigger — `quincy/EmptyAssigneeGlyph` (hand-built Quincy glyph composed from lucide `UserPlus`, extracted from `ProductionGanttProjectCells`; no ReUI item is a dashed add-person circle, and `AvatarStack`'s hairline empty circle measured ~1.7:1); conflict / gate notices —
  * `pushToast`; on a phone (<= 720px) the People column is not rendered, so a Subtask's assignees are edited from the Checklist the row link opens; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
  * `stopPropagation`, the pattern `GanttChildLoadErrorBadge` and the Deadline action already use (no new
  * primitive: it has no role and no state of its own).
@@ -403,7 +403,10 @@ function GanttSubtaskAssigneesCell({
           </GestureAwareCell>
         </span>
       ) : (
-        <AvatarStack people={row.assignees} hiddenCount={row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" />
+        // Read-only and empty renders nothing (the cell stays, so layout does not shift): an empty circle would promise an action the viewer cannot take.
+        row.assignees.length > 0 || row.otherAssigneeCount > 0
+          ? <AvatarStack people={row.assignees} hiddenCount={row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" />
+          : null
       )}
     </span>
   );

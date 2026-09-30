@@ -254,6 +254,21 @@ describe("ProductionGantt — Subtask assignees (#372)", () => {
     expect(invalidateMock).not.toHaveBeenCalled();
   });
 
+  it("empty state: an editable Subtask shows the shared glyph in its trigger; a read-only one shows nothing (no glyph, no avatars) but keeps its cell", async () => {
+    server = [
+      { id: ROW_ONE, title: "Row one", assignees: [], assignmentVersion: 1, canEditAssignees: true },
+      { id: ROW_TWO, title: "Row two", assignees: [], assignmentVersion: 1, canEditAssignees: false },
+    ];
+    await mount();
+    expect(trigger("Row one")!.querySelector('[data-testid="empty-assignee-glyph"]')).not.toBeNull();
+    const rowTwo = [...host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")].find((element) => element.textContent?.includes("Row two"))!;
+    const cellTwo = rowTwo.querySelector<HTMLElement>('[data-testid="gantt-subtask-assignees"]');
+    expect(cellTwo).not.toBeNull();
+    expect(cellTwo!.querySelector('[data-testid="empty-assignee-glyph"]')).toBeNull();
+    expect(cellTwo!.querySelector('[role="img"]')).toBeNull();
+    expect(cellTwo!.querySelector("button")).toBeNull();
+  });
+
   it("without access, a row is a plain stack: no button, no popup, and the hidden count is a count", async () => {
     await mount();
     expect(trigger("Row two")).toBeNull();
