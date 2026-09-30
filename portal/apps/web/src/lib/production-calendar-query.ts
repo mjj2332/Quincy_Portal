@@ -117,12 +117,23 @@ const internalChecklistMutationSchema = z.object({
   title: z.string(),
   done: z.boolean(),
   assignee: z.object({ id: z.string().min(1), name: z.string() }).passthrough().nullable(),
+  assignees: z.array(z.object({ id: z.string().min(1), name: z.string() }).passthrough()).optional(),
   position: z.number().int(),
   schedule: mutationScheduleSchema,
 }).passthrough();
 
-function internalAssignee(person: { id: string; name: string } | null): CalendarPerson | null {
-  return person ? { id: person.id, name: person.name, roleLabel: "Assignee", isExternal: false, active: true } : null;
+type InternalPerson = { id: string; name: string; roleLabel?: unknown; isExternal?: unknown; active?: unknown };
+
+function internalAssignee(person: InternalPerson | null): CalendarPerson | null {
+  if (!person) return null;
+  // The staff DTO (#368) carries the full person; the pre-#368 single field only id and name.
+  return {
+    id: person.id,
+    name: person.name,
+    roleLabel: typeof person.roleLabel === "string" ? person.roleLabel : "Assignee",
+    isExternal: typeof person.isExternal === "boolean" ? person.isExternal : false,
+    active: typeof person.active === "boolean" ? person.active : true,
+  };
 }
 
 /** Select one mutation response domain from the captured principal. */
@@ -134,6 +145,8 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       title: parsed.title,
       done: parsed.done,
       assignee: parsed.assignee,
+      // The external item carries one `assignee` until #368's UI PR adds the visible list: unknown, not empty.
+      assignees: null,
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,
@@ -146,6 +159,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       title: parsed.title,
       done: parsed.done,
       assignee: internalAssignee(parsed.assignee),
+      assignees: parsed.assignees ? parsed.assignees.map((person) => internalAssignee(person)!) : null,
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,

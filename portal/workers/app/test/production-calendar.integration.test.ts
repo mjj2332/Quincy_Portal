@@ -36,6 +36,11 @@ const externalArchivedProjectId = "80fffff7-ffff-4fff-8fff-fffffffffff7";
 const externalUnassignedProjectId = "80fffff8-ffff-4fff-8fff-fffffffffff8";
 const foreignProjectId = "80fffff9-ffff-4fff-8fff-fffffffffff9";
 const idContractProjectId = "80fffffa-ffff-4fff-8fff-fffffffffffa";
+const multiProjectId = "80fffffb-ffff-4fff-8fff-fffffffffffb";
+const multiA = "80a00001-0000-4000-8000-000000000001";
+const multiB = "80a00002-0000-4000-8000-000000000002";
+const multiC = "80a00003-0000-4000-8000-000000000003";
+const multiD = "80a00004-0000-4000-8000-000000000004";
 declare const __PORTAL_MIGRATION_SQL__: string;
 
 async function executeSql(source: string): Promise<void> {
@@ -111,8 +116,19 @@ async function insertSubtask(projectId: string, title: string, assigneeId: strin
   await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     // The end's civil string is stored in `due_date` (there is no `schedule_end_civil` column).
     .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId, assigneeId ? 1 : 0, endCivil, startKind, schedule.start ?? (startKind === "timed" ? oneHourBefore(endCivil) : endCivil), start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, endKind, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, "Australia/Sydney", 1, adminId, now, now).run();
-  // The relation is the source of truth (#368); Calendar still reads the column until #370, so both are seeded.
+  // The relation is the source of truth (#368, read by the Calendar since #370); the column is a mirror kept for not-yet-migrated readers.
   if (assigneeId) await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(id, assigneeId, now).run();
+  return id;
+}
+
+/** #370: a Subtask shared by several people. The relation is authoritative; `assignee_id` mirrors the first for old readers. */
+async function insertSharedSubtask(projectId: string, title: string, assigneeIds: string[], schedule: Parameters<typeof insertSubtask>[3] = {}): Promise<string> {
+  const id = await insertSubtask(projectId, title, null, schedule);
+  const now = Date.now();
+  for (const [index, userId] of assigneeIds.entries()) {
+    await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(id, userId, now + index).run();
+  }
+  if (assigneeIds[0]) await database.DB.prepare("UPDATE project_subtasks SET assignee_id = ?, assignment_version = 1 WHERE id = ?").bind(assigneeIds[0], id).run();
   return id;
 }
 
@@ -124,7 +140,7 @@ function oneHourBefore(civilMinute: string): string {
 
 const rangeNoLayers = "start=2026-08-24&end=2026-09-05&date=2026-08-27&sub=month&scope=active";
 const range = `${rangeNoLayers}&layers=project,checklist`;
-const tokens = { admin: "tb5c-calendar-admin", editor: "tb5c-calendar-editor", external: "tb5c-calendar-external", photographer: "tb5c-calendar-photographer", assigneeOnly: "tb5c-calendar-assignee-only" };
+const tokens = { multiA: "tb5c-calendar-multi-a", multiB: "tb5c-calendar-multi-b", multiC: "tb5c-calendar-multi-c", multiD: "tb5c-calendar-multi-d", admin: "tb5c-calendar-admin", editor: "tb5c-calendar-editor", external: "tb5c-calendar-external", photographer: "tb5c-calendar-photographer", assigneeOnly: "tb5c-calendar-assignee-only" };
 
 beforeAll(async () => {
   await executeSql(__PORTAL_MIGRATION_SQL__);
@@ -204,6 +220,23 @@ beforeAll(async () => {
 
   await insertProject(idContractProjectId, "16 Id Contract Street", "editing_autohdr");
   await insertSubtask(idContractProjectId, "Id contract scheduled checklist", null, { end: "2026-08-27", endKind: "date" });
+
+
+  await insertUser(multiA, "editor", tokens.multiA);
+  await insertUser(multiB, "editor", tokens.multiB);
+  await insertUser(multiC, "editor", tokens.multiC);
+  await insertUser(multiD, "editor", tokens.multiD);
+  await insertProject(multiProjectId, "17 Multi Street", "editing_autohdr");
+  for (const userId of [multiA, multiB, multiC, multiD]) await insertMember(multiProjectId, userId, "editor");
+  await insertMember(multiProjectId, externalId, "editor");
+  await insertSharedSubtask(multiProjectId, "Multi shared", [multiA, multiB, multiC], { end: "2026-08-27", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi nobody", [], { end: "2026-08-27", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi hidden pair", [externalId, adminId], { end: "2026-08-27", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi overlap one", [multiB], { start: "2026-08-27T10:00", end: "2026-08-27T12:00", startKind: "timed", endKind: "timed" });
+  await insertSharedSubtask(multiProjectId, "Multi overlap two", [multiA, multiB], { start: "2026-08-27T11:00", end: "2026-08-27T13:00", startKind: "timed", endKind: "timed" });
+  await insertSharedSubtask(multiProjectId, "Multi overlap three", [multiA], { start: "2026-08-27T15:00", end: "2026-08-27T16:00", startKind: "timed", endKind: "timed" });
+  await insertSharedSubtask(multiProjectId, "Multi allday one", [multiC, multiD], { end: "2026-08-27", endKind: "date" });
+  await insertSharedSubtask(multiProjectId, "Multi allday two", [multiC, multiD], { end: "2026-08-27", endKind: "date" });
 
   await insertProject(denseProjectId, "15 Density Street", "editing_autohdr");
   // Every dense row is done=1 so it is excluded from the default (completed=0) candidate set —
@@ -605,3 +638,77 @@ describe("TB5C production Calendar range endpoint", () => {
  * 6,176,466 bytes; 10,001 -> 422 / ~16 ms / 213 bytes (statement 2 skipped). The 10,000
  * ceiling is retained; see docs/plans/tb5c/slice-4-query-review.md.
  */
+
+describe("#370 Calendar reads the assignee relation", () => {
+  const base = `${rangeNoLayers}&layers=checklist&q=Multi`;
+  async function multi(query: string, token = tokens.admin) {
+    const response = await request(`/api/production-calendar?${base}${query}`, token);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    return token === tokens.admin ? adminProductionCalendarRangeResponseSchema.parse(json) : (editorProductionCalendarRangeResponseSchema.parse(json) as unknown as ReturnType<typeof adminProductionCalendarRangeResponseSchema.parse>);
+  }
+  const shared = (body: Awaited<ReturnType<typeof multi>>) => body.events.filter((event) => event.kind === "checklist" && event.title === "Multi shared");
+
+  it("returns one event per Subtask whose assignees are listed in assignment order", async () => {
+    const [event] = shared(await multi(""));
+    expect(event?.kind === "checklist" && event.assignees.map((person) => person.id)).toEqual([multiA, multiB, multiC]);
+    expect(event?.kind === "checklist" && event.assignee?.id).toBe(multiA);
+    expect(event?.kind === "checklist" && event.otherAssigneeCount).toBe(0);
+  });
+
+  it("matches a Subtask by any one of its assignees, once", async () => {
+    for (const editors of [multiA, multiB, multiC, `${multiA},${multiB}`]) {
+      expect(shared(await multi(`&editors=${editors}`)), editors).toHaveLength(1);
+    }
+    expect(shared(await multi(`&editors=${multiD}`))).toHaveLength(0);
+  });
+
+  it("'Unassigned' means no assignee at all", async () => {
+    const body = await multi(`&editors=${multiD}&unassigned=1`);
+    expect(shared(body)).toHaveLength(0);
+    expect(body.events.some((event) => event.kind === "checklist" && event.title === "Multi nobody")).toBe(true);
+  });
+
+  it("'my tasks' matches for each assignee and not for a teammate who is not assigned", async () => {
+    for (const token of [tokens.multiA, tokens.multiB, tokens.multiC]) expect(shared(await multi("&mine=1", token)), token).toHaveLength(1);
+    expect(shared(await multi("&mine=1", tokens.multiD))).toHaveLength(0);
+  });
+
+  it("flags overlap per person, never across people and never for all-day items", async () => {
+    const body = await multi("&completed=1");
+    const flag = (title: string) => body.events.find((event) => event.kind === "checklist" && event.title === title)?.status.sameAssigneeOverlap;
+    expect(flag("Multi overlap one")).toBe(true);
+    expect(flag("Multi overlap two")).toBe(true);
+    expect(flag("Multi overlap three")).toBe(false);
+    expect(flag("Multi allday one")).toBe(false);
+    expect(flag("Multi allday two")).toBe(false);
+  });
+
+  it("lists every assignee once in the people facet", async () => {
+    const people = (await multi("")).filterFacets.people.map((person) => person.id);
+    for (const id of [multiA, multiB, multiC, adminId]) expect(people.filter((candidate) => candidate === id), id).toHaveLength(1);
+  });
+
+  it("shows an External Editor only assignees on the Project team, and counts the rest", async () => {
+    const response = await request(`/api/production-calendar?${base}&editors=${adminId}`, tokens.external);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(adminId);
+    const body = externalCalendarRangeSchema.parse(JSON.parse(text));
+    const hidden = body.events.find((event) => event.kind === "checklist" && event.title === "Multi hidden pair");
+    expect(hidden?.kind === "checklist" && hidden.assignees.map((person) => person.id)).toEqual([externalId]);
+    expect(hidden?.kind === "checklist" && hidden.otherAssigneeCount).toBe(1);
+    expect(body.filterFacets.people.some((person) => person.id === adminId)).toBe(false);
+    expect(body.range.appliedFilters.editorIds).not.toContain(adminId);
+    // A staff viewer still sees both.
+    const staff = (await multi("")).events.find((event) => event.kind === "checklist" && event.title === "Multi hidden pair");
+    expect(staff?.kind === "checklist" && staff.assignees.map((person) => person.id)).toEqual([externalId, adminId]);
+  });
+
+  it("keeps the Calendar SQL off the legacy assignee column, with matching UNION arms, for every role", () => {
+    for (const role of ["admin", "editor", "external_editor"] as const) {
+      expect(productionCalendarRangeSql(role), role).not.toMatch(/assignee_id|assignee_name|assignee_role|assignee_active/u);
+      expect(productionCalendarFacetsSql(role), role).not.toMatch(/assignee_id/u);
+    }
+  });
+});

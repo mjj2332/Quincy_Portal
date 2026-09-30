@@ -190,6 +190,17 @@ export function checklistAssigneeForResult(source: ChecklistSource, result: Chec
   return result.assignee;
 }
 
+/** Keep the source's person objects when the result names the same people; a list-less result keeps the source's list while its first assignee is unchanged. */
+export function checklistAssigneesForResult(source: ChecklistSource, result: ChecklistMutationResult): CalendarPerson[] {
+  const kept = source.assignees;
+  if (result.assignees === null) {
+    if (!result.assignee) return [];
+    return kept[0]?.id === result.assignee.id ? kept : [result.assignee];
+  }
+  const same = result.assignees.length === kept.length && result.assignees.every((person, index) => person.id === kept[index]?.id);
+  return same ? kept : result.assignees;
+}
+
 export function canonicalChecklistEvent(source: ChecklistSource, result: ChecklistMutationResult): ChecklistCalendarEventDto | null {
   const schedule = result.schedule;
   const timing = timingFromChecklistSchedule(schedule);
@@ -200,6 +211,8 @@ export function canonicalChecklistEvent(source: ChecklistSource, result: Checkli
     title: result.title,
     project: { ...source.project, checklist: { ...source.project.checklist } },
     assignee: checklistAssigneeForResult(source, result),
+    assignees: checklistAssigneesForResult(source, result),
+    otherAssigneeCount: source.otherAssigneeCount,
     timing,
     status: { ...source.status, completed: result.done },
     schedule,
@@ -213,6 +226,7 @@ export function optimisticChecklistEvent(source: ChecklistSource, schedule: Chec
     title: source.title,
     done: source.status.completed,
     assignee: source.assignee,
+    assignees: source.assignees,
     position: 0,
     schedule,
     scheduleVersion: schedule.version,

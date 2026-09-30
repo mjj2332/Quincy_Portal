@@ -32,6 +32,8 @@ export type ChecklistMutationResult = {
   title: string;
   done: boolean;
   assignee: CalendarPerson | null;
+  /** Every assignee; `null` when the wire carries no list (an External Editor's item until #368's UI PR), so the source's list is kept. */
+  assignees: CalendarPerson[] | null;
   position: number;
   schedule: ChecklistScheduleDto;
   scheduleVersion: number;

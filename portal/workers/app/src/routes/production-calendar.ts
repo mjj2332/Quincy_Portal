@@ -33,6 +33,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import { projectSearchSql } from "../lib/project-search";
 import { authorizedProjectsBaseCte, parseReminderOffsets } from "../lib/production-scope-sql";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
+import { assigneesForViewer, parseAssigneesJson, subtaskAssigneesJsonSql } from "../lib/subtask-assignees";
 import type { AppEnv } from "../env";
 
 type CalendarRole = AppEnv["Variables"]["user"]["role"];
@@ -58,10 +59,7 @@ type CalendarSqlRow = {
   subtask_id: string | null;
   subtask_title: string | null;
   done: number | null;
-  assignee_id: string | null;
-  assignee_name: string | null;
-  assignee_role: string | null;
-  assignee_active: number | null;
+  assignees_json: string | null;
   due_date: string | null;
   schedule_start_kind: "date" | "timed" | null;
   schedule_start_civil: string | null;
@@ -285,8 +283,8 @@ checklist_counts AS (
   GROUP BY subtasks.project_id
 ),
 candidate_subtasks_raw AS (
-  SELECT s.id AS subtask_id, s.title AS subtask_title, s.done, s.assignee_id,
-    assignee.name AS assignee_name, assignee.role AS assignee_role, assignee.active AS assignee_active,
+  SELECT s.id AS subtask_id, s.title AS subtask_title, s.done,
+    ${subtaskAssigneesJsonSql("s")} AS assignees_json,
     s.due_date, s.schedule_start_kind, s.schedule_start_civil, s.schedule_start_at,
     s.schedule_start_utc_offset_minutes, s.schedule_start_fold, s.schedule_end_kind,
     s.schedule_end_at, s.schedule_end_utc_offset_minutes, s.schedule_end_fold,
@@ -312,7 +310,6 @@ candidate_subtasks_raw AS (
       ) THEN 1 ELSE 0 END AS coarse_shape
   FROM authorized_projects_base vp
   INNER JOIN project_subtasks s ON s.project_id = vp.project_id
-  LEFT JOIN user assignee ON assignee.id = s.assignee_id
   LEFT JOIN checklist_counts cc ON cc.project_id = vp.project_id
   CROSS JOIN request r
   WHERE r.checklist_layer = 1
@@ -356,7 +353,9 @@ authorized_people_base AS (
   UNION
   SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
   FROM range_candidate_subtasks c
-  INNER JOIN user u ON u.id = c.assignee_id
+  INNER JOIN project_subtask_assignees sa ON sa.subtask_id = c.subtask_id
+  INNER JOIN user u ON u.id = sa.user_id
+  ${role === "external_editor" ? "WHERE EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = c.project_id AND tm.user_id = sa.user_id)" : ""}
 ),
 valid_selected_editors AS (
   SELECT re.person_id
@@ -385,9 +384,9 @@ checklist_filtered_candidates AS (
   CROSS JOIN request r
   CROSS JOIN selected_editor_state selected
   WHERE (selected.requested = 0 OR selected.valid = 0
-    OR EXISTS (SELECT 1 FROM valid_selected_editors v WHERE v.person_id = c.assignee_id)
-    OR (r.include_unassigned = 1 AND c.assignee_id IS NULL))
-    AND (r.my_tasks = 0 OR c.assignee_id = r.me)
+    OR EXISTS (SELECT 1 FROM project_subtask_assignees sa INNER JOIN valid_selected_editors v ON v.person_id = sa.user_id WHERE sa.subtask_id = c.subtask_id)
+    OR (r.include_unassigned = 1 AND NOT EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = c.subtask_id)))
+    AND (r.my_tasks = 0 OR EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = c.subtask_id AND sa.user_id = r.me))
 ),
 project_event_candidates AS (
   SELECT * FROM project_filtered_candidates WHERE deadline_at IS NOT NULL
@@ -419,8 +418,7 @@ candidate_rows AS (
     p.project_id, p.street, p.stage_key, p.delivered, COALESCE(cc.completed, 0) AS checklist_completed,
     COALESCE(cc.total, 0) AS checklist_total, p.can_collaborate, p.agency_display_name, p.agent_display_name,
     p.deadline_at, p.deadline_local_civil, p.deadline_version, p.deadline_reminder_offsets_json,
-    NULL AS subtask_id, NULL AS subtask_title, NULL AS done, NULL AS assignee_id, NULL AS assignee_name,
-    NULL AS assignee_role, NULL AS assignee_active, NULL AS due_date, NULL AS schedule_start_kind,
+    NULL AS subtask_id, NULL AS subtask_title, NULL AS done, NULL AS assignees_json, NULL AS due_date, NULL AS schedule_start_kind,
     NULL AS schedule_start_civil, NULL AS schedule_start_at, NULL AS schedule_start_utc_offset_minutes,
     NULL AS schedule_start_fold, NULL AS schedule_end_kind, NULL AS schedule_end_at,
     NULL AS schedule_end_utc_offset_minutes, NULL AS schedule_end_fold, NULL AS schedule_zone, NULL AS schedule_version
@@ -432,7 +430,7 @@ candidate_rows AS (
     c.project_id, c.street, c.stage_key, c.delivered, c.checklist_completed, c.checklist_total,
     c.can_collaborate, c.agency_display_name, c.agent_display_name, c.deadline_at, c.deadline_local_civil,
     c.deadline_version, c.deadline_reminder_offsets_json, c.subtask_id, c.subtask_title, c.done,
-    c.assignee_id, c.assignee_name, c.assignee_role, c.assignee_active, c.due_date, c.schedule_start_kind,
+    c.assignees_json, c.due_date, c.schedule_start_kind,
     c.schedule_start_civil, c.schedule_start_at, c.schedule_start_utc_offset_minutes, c.schedule_start_fold,
     c.schedule_end_kind, c.schedule_end_at, c.schedule_end_utc_offset_minutes, c.schedule_end_fold,
     c.schedule_zone, c.schedule_version
@@ -444,7 +442,7 @@ WHERE scheduled_total <= ${PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS}
 UNION ALL
 SELECT 'density', d.scheduled_total, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-  NULL, NULL, NULL, NULL, NULL, NULL, NULL
+  NULL, NULL, NULL, NULL
 FROM density d
 WHERE d.scheduled_total > ${PRODUCTION_CALENDAR_MAX_SCHEDULED_EVENTS}`;
 }
@@ -501,7 +499,9 @@ facet_people AS (
   UNION
   SELECT DISTINCT u.id, u.name, u.role, u.active
   FROM range_candidate_subtasks c
-  INNER JOIN user u ON u.id = c.assignee_id
+  INNER JOIN project_subtask_assignees sa ON sa.subtask_id = c.subtask_id
+  INNER JOIN user u ON u.id = sa.user_id
+  ${role === "external_editor" ? "WHERE EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = c.project_id AND tm.user_id = sa.user_id)" : ""}
 ),
 facet_rows AS (
   SELECT 'project' AS facet_kind, project_id, street, NULL AS person_id, NULL AS person_name,
@@ -549,18 +549,6 @@ function projectContext(row: CalendarSqlRow, role: CalendarRole) {
     stageKey: stageTransportKeyForRole(row.stage_key as StageKey, role),
     checklist: { completed: Number(row.checklist_completed ?? 0), total: Number(row.checklist_total ?? 0) },
     delivered: Boolean(row.delivered),
-  };
-}
-
-function person(row: CalendarSqlRow): CalendarPerson | null {
-  if (!row.assignee_id || row.assignee_name === null || row.assignee_role === null) return null;
-  const role = row.assignee_role as Role;
-  return {
-    id: row.assignee_id,
-    name: row.assignee_name,
-    roleLabel: ROLE_LABELS[role] ?? row.assignee_role,
-    isExternal: role === "external_editor",
-    active: Boolean(row.assignee_active),
   };
 }
 
@@ -633,12 +621,15 @@ function checklistEvent(row: CalendarSqlRow, role: CalendarRole, parsed: ParsedC
   if (!timing || !scheduleIntersects(schedule, parsed)) return null;
   const collaboration = row.can_collaborate === 1;
   const done = Boolean(row.done);
+  const { assignees, otherAssigneeCount } = assigneesForViewer(parseAssigneesJson(row.assignees_json), role);
   return {
     id: calendarChecklistEntityId(row.subtask_id),
     kind: "checklist",
     title: row.subtask_title,
     project,
-    assignee: person(row),
+    assignee: assignees[0] ?? null,
+    assignees,
+    otherAssigneeCount,
     timing,
     status: { overdue: checklistOverdue(schedule, done, parsed.now, parsed.todayDate), delivered: project.delivered, completed: done, sameAssigneeOverlap: false },
     schedule,
@@ -653,13 +644,17 @@ function eventStart(event: CalendarEventDto): string {
 function markOverlaps(events: CalendarEventDto[]): void {
   const byAssignee = new Map<string, Array<{ event: Extract<CalendarEventDto, { kind: "checklist" }>; start: number; end: number }>>();
   for (const event of events) {
-    if (event.kind !== "checklist" || event.status.completed || event.assignee === null || event.timing.allDay || event.timing.end === null) continue;
+    if (event.kind !== "checklist" || event.status.completed || event.assignees.length === 0 || event.timing.allDay || event.timing.end === null) continue;
     const start = Date.parse(event.timing.start);
     const end = Date.parse(event.timing.end);
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
-    const list = byAssignee.get(event.assignee.id) ?? [];
-    list.push({ event: event as Extract<CalendarEventDto, { kind: "checklist" }>, start, end });
-    byAssignee.set(event.assignee.id, list);
+    // Named people only: for an External Editor a hidden person's schedule never influences a flag. An event
+    // enters every named assignee's list; the flag is a boolean, so a repeat is harmless.
+    for (const assignee of event.assignees) {
+      const list = byAssignee.get(assignee.id) ?? [];
+      list.push({ event: event as Extract<CalendarEventDto, { kind: "checklist" }>, start, end });
+      byAssignee.set(assignee.id, list);
+    }
   }
   for (const intervals of byAssignee.values()) {
     intervals.sort((a, b) => a.start - b.start || a.event.id.localeCompare(b.event.id));

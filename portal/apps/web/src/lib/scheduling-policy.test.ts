@@ -16,7 +16,7 @@ import {
   type SaveChecklistScheduleRequest,
   type SaveProjectDeadlineRequest,
 } from "@quincy/shared";
-import { planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
+import { canonicalChecklistEvent, optimisticChecklistEvent, planSchedulingProposal, timingFromChecklistSchedule, type SchedulingProposal } from "./scheduling-policy";
 
 /** Independently recomputes the timing a checklist plan should carry, from the SAME public
  * helpers `planSchedulingProposal` itself uses — so the assertion below is not tautological. */
@@ -53,7 +53,7 @@ function checklistEvent(schedule: ReturnType<typeof rangeSchedule>): ChecklistCa
   const timing = schedule.start.kind === "date"
     ? { allDay: true as const, start: schedule.start.localCivil, end: "2026-08-29" }
     : { allDay: false as const, start: schedule.start.instant!, end: schedule.end.instant };
-  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
+  return { id: `checklist:${PERSON_ID}`, kind: "checklist", title: "Select hero images", project: project(), assignee: person, assignees: [person], otherAssigneeCount: 0, timing, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: true } };
 }
 
 function projectEvent(deadlineLocalCivil = "2026-08-27T09:00"): ProjectDeadlineCalendarEventDto<typeof EDITOR_STAGE> {
@@ -194,3 +194,36 @@ describe("planSchedulingProposal", () => {
 
 // The old planner-local bounds rule's cases now live in
 // `schedule-bounds.test.ts` (#288), run through both the Gantt and the Calendar bounds paths.
+
+describe("checklist assignees across a schedule edit (#370)", () => {
+  const second = { id: "33333333-3333-4333-8333-333333333333", name: "Bo", roleLabel: "Editor", isExternal: false, active: true };
+  const schedule = rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-28"), 5);
+  const source = { ...checklistEvent(rangeSchedule(dateEndpoint("2026-08-27"), dateEndpoint("2026-08-28"), 4)), assignees: [person, second], otherAssigneeCount: 2 };
+  const result = (assignees: typeof source.assignees | null) => ({ id: source.id, title: source.title, done: false, assignee: person, assignees, position: 1, schedule, scheduleVersion: 5 });
+
+  it("keeps the source objects and the hidden count when the result names the same people", () => {
+    const event = canonicalChecklistEvent(source, result([{ ...person }, { ...second }]))!;
+    expect(event.assignees[0]).toBe(person);
+    expect(event.assignees[1]).toBe(second);
+    expect(event.otherAssigneeCount).toBe(2);
+    expect(event.assignee).toBe(person);
+  });
+
+  it("takes the result's list when the people changed", () => {
+    const changed = { ...second, id: "44444444-4444-4444-8444-444444444444", name: "Cy" };
+    const event = canonicalChecklistEvent(source, result([person, changed]))!;
+    expect(event.assignees.map((p) => p.name)).toEqual(["Editor", "Cy"]);
+  });
+
+  it("keeps the source list when the wire carries none and the first assignee is unchanged", () => {
+    expect(canonicalChecklistEvent(source, result(null))!.assignees).toEqual([person, second]);
+    const gone = canonicalChecklistEvent(source, { ...result(null), assignee: null })!;
+    expect(gone.assignees).toEqual([]);
+  });
+
+  it("carries the list through an optimistic move", () => {
+    const event = optimisticChecklistEvent(source, schedule)!;
+    expect(event.assignees).toEqual([person, second]);
+    expect(event.otherAssigneeCount).toBe(2);
+  });
+});

@@ -14,6 +14,10 @@ export type AvatarStackProps = {
   /** Hide the stack from assistive tech, for use inside a control that already names its people. */
   decorative?: boolean;
   className?: string;
+  /** Extra classes for every avatar and the `+N` count (a denser stack, e.g. inside a Calendar chip). */
+  avatarClassName?: string;
+  /** People the viewer may not see (an External Editor's `otherAssigneeCount`, #370): counted into the `+N`, never named. */
+  hiddenCount?: number;
 };
 
 /**
@@ -22,9 +26,9 @@ export type AvatarStackProps = {
  * avatar is load-bearing: `aria-label` on a roleless `<span>` is dropped by every major screen
  * reader. The avatars are static; the 44px touch-target contract belongs to whatever wraps them.
  */
-export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, decorative = false, className }: AvatarStackProps) {
+export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, decorative = false, className, avatarClassName, hiddenCount = 0 }: AvatarStackProps) {
   const hidden = decorative ? { "aria-hidden": true as const } : {};
-  if (people.length === 0) {
+  if (people.length === 0 && hiddenCount === 0) {
     return (
       <span
         {...(decorative ? hidden : { role: "img", "aria-label": emptyLabel })}
@@ -33,7 +37,7 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, decorat
     );
   }
   const shown = people.slice(0, limit);
-  const overflow = people.length - shown.length;
+  const overflow = people.length - shown.length + hiddenCount;
   return (
     <AvatarGroup {...hidden} className={className}>
       {shown.map((person) => {
@@ -41,13 +45,13 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, decorat
         const empty = name === "";
         const label = (empty ? `${personNoun} (name unavailable)` : name) + (person.inactive ? " (inactive)" : "");
         return (
-          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={person.inactive ? "opacity-60" : undefined}>
+          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={cn(person.inactive && "opacity-60", avatarClassName)}>
             <AvatarFallback aria-hidden="true">{empty ? "?" : initials(person.name)}</AvatarFallback>
           </Avatar>
         );
       })}
       {overflow > 0 && (
-        <AvatarGroupCount role="img" aria-label={`${overflow} more ${personNoun}${overflow === 1 ? "" : "s"}`}>
+        <AvatarGroupCount role="img" className={avatarClassName} aria-label={`${overflow} more ${personNoun}${overflow === 1 ? "" : "s"}`}>
           <span aria-hidden="true">+{overflow}</span>
         </AvatarGroupCount>
       )}
