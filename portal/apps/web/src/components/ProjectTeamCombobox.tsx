@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type Ref } from "react";
 import type { Combobox as ComboboxPrimitive } from "@base-ui/react";
 import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import type { ProjectMemberRole } from "@quincy/shared";
@@ -260,7 +260,7 @@ function TeamMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: numb
   </button>;
 }
 
-export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId: string; members: ProjectMember[]; canEdit: boolean }) {
+export function ProjectTeamCombobox({ projectId, members, canEdit, inputRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement> }) {
   const anchor = useComboboxAnchor();
   const candidatesQuery = useProjectAssignmentCandidatesQuery(canEdit);
   const { mutationStates, pending, add, remove } = useTeamMutations(projectId);
@@ -418,7 +418,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit }: { projectId
         {/* `flex-none w-[6ch]`, not the vendor's `min-w-16 flex-1`: the input is the "Add…" affordance,
          *  and a flexing input is what claimed the rest of the line as white space. No focus growth:
          *  this box is the popup's anchor, so a width change on focus would jump the open list. */}
-        <ComboboxChipsInput aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[6ch]" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
+        <ComboboxChipsInput ref={inputRef} aria-label="Add team member" placeholder="Add…" className="flex-none min-w-0 w-[6ch]" disabled={candidatesQuery.isError} aria-invalid={candidatesQuery.isError ? true : undefined} />
       </ComboboxChips>
       {/* #213 follow-up: the chips box is now content-sized, so the list no longer copies its width —
        *  a one-member box would give an unusably narrow list. Prototype 2a's list is 300px; it

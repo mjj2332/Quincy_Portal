@@ -83,6 +83,8 @@ type ProjectDeadlineControlProps = {
   canEdit: boolean;
   /** A successful Save, Clear or Resume — the popover closes on it. */
   onSaved?: () => void;
+  /** Ref callback for the Date input, so a host popover can focus it once it has mounted. */
+  dateInputRef?: (node: HTMLInputElement | null) => void;
 };
 
 type SaveResponse = { changed: boolean; current: ProjectDeadlineSchedule; eventIntent: unknown; publicationIds: string[] };
@@ -122,7 +124,7 @@ function NextReminder({ schedule }: { schedule: ProjectDeadlineSchedule }) {
   </div>;
 }
 
-export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }: ProjectDeadlineControlProps) {
+export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved, dateInputRef }: ProjectDeadlineControlProps) {
   const queryClient = useOptionalProjectQueryClient();
   const runtime = useProjectQueryRuntime();
   const [visibleSchedule, setVisibleSchedule] = useState(schedule);
@@ -307,7 +309,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onSaved }
     {overdue && <div><StatusPill tone="critical">Overdue</StatusPill></div>}
     <div className="grid gap-[var(--space-2)]">
       <div className="grid grid-cols-2 gap-[var(--space-3)]">
-        <label className={DEADLINE_LABEL}>Date<input className={DEADLINE_FIELD} aria-label="Deadline date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label>
+        <label className={DEADLINE_LABEL}>Date<input ref={dateInputRef} className={DEADLINE_FIELD} aria-label="Deadline date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label>
         <label className={DEADLINE_LABEL}>Time<input className={DEADLINE_FIELD} aria-label="Deadline time" type="time" value={time} onChange={(event) => setTime(event.target.value)} required /></label>
       </div>
       <small className="[font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary">

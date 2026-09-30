@@ -111,4 +111,14 @@ describe("ProjectCalendarAnchor", () => {
     click();
     expect(onOpenProject).not.toHaveBeenCalled();
   });
+
+  it("takes a testId and className override without changing behaviour (#365)", () => {
+    act(() => root.render(<ProjectCalendarAnchor testId="gantt-project-link" className="truncate" href="/projects/x" onOpenProject={onOpenProject}>Row</ProjectCalendarAnchor>));
+    const custom = host.querySelector<HTMLAnchorElement>('[data-testid="gantt-project-link"]')!;
+    expect(custom).not.toBeNull();
+    expect(host.querySelector('[data-testid="calendar-project-link"]')).toBeNull();
+    expect(custom.classList.contains("truncate")).toBe(true);
+    custom.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+    expect(onOpenProject).toHaveBeenCalledTimes(1);
+  });
 });

@@ -33,6 +33,8 @@ export function buildGanttPageQuery(filters: ProductionGanttFilters, cursor: str
   // #246: ask for each project's child-collection revision, so a content edit to a checklist row
   // beyond the embedded first page invalidates the cached continuation pages.
   params.set("rev", "1");
+  // #365: each row's Project team and `permissions.canEditTeam`, for the People column.
+  params.set("team", "1");
   if (filters.q) params.set("q", filters.q);
   if (filters.editorIds.length > 0) params.set("editors", filters.editorIds.join(","));
   if (filters.stageKeys.length > 0) params.set("stages", filters.stageKeys.join(","));
