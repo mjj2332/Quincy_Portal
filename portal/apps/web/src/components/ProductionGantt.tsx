@@ -168,7 +168,7 @@ import {
   previewDeadlineEffects,
   type GanttEdit,
 } from "../lib/production-gantt-scheduling";
-import { adoptGanttChecklistRow, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
+import { adoptGanttChecklistRow, adoptGanttChildRows, ganttEditWarnings, useGanttSchedulingPort } from "../lib/production-gantt-port";
 import { decodeChecklistMutationResponse } from "../lib/production-calendar-query";
 import { scheduleWarningText } from "../lib/schedule-bounds";
 import {
@@ -1064,17 +1064,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // saved row there, version-wins, keeping `seedSignature` so pagination progress is not misread as
   // a change. Both a forward save and its Undo land here.
   const patchChildRow = useCallback((projectId: string, result: ChecklistMutationResult) => {
-    setChildState((current) => {
-      const state = current[projectId];
-      if (!state) return current;
-      let changed = false;
-      const rows = state.rows.map((row) => {
-        const next = adoptGanttChecklistRow(row, result);
-        if (next !== row) changed = true;
-        return next;
-      });
-      return changed ? { ...current, [projectId]: { ...state, rows } } : current;
-    });
+    setChildState((current) => adoptGanttChildRows(current, projectId, result));
   }, []);
 
   const handleUndone = useCallback((info: { projectId: string; checklistResult?: ChecklistMutationResult }) => {

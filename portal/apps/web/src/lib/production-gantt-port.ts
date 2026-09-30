@@ -89,6 +89,22 @@ export function adoptGanttChecklistRow(row: GanttChecklistRowDto, result: Checkl
   return next;
 }
 
+/**
+ * Page-2+ rows live only in the Gantt's `childState` (never in the settle refetch), so a saved result is adopted there
+ * too, row by row and version-wins. Returns `current` itself when nothing changed, so React skips the re-render.
+ */
+export function adoptGanttChildRows<State extends { rows: GanttChecklistRowDto[] }>(current: Record<string, State>, projectId: string, result: ChecklistMutationResult): Record<string, State> {
+  const state = current[projectId];
+  if (!state) return current;
+  let changed = false;
+  const rows = state.rows.map((row) => {
+    const next = adoptGanttChecklistRow(row, result);
+    if (next !== row) changed = true;
+    return next;
+  });
+  return changed ? { ...current, [projectId]: { ...state, rows } } : current;
+}
+
 export function adoptGanttChecklist(baseline: GanttBaseline, result: ChecklistMutationResult): GanttBaseline {
   let changed = false;
   const projects = baseline.projects.map((project) => {

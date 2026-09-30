@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarPerson, GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
-import { adoptGanttChecklist, adoptGanttChecklistRow } from "./production-gantt-port";
+import { adoptGanttChecklist, adoptGanttChecklistRow, adoptGanttChildRows } from "./production-gantt-port";
 import type { ChecklistMutationResult } from "./scheduling-types";
 
 const person = (n: number): CalendarPerson => ({ id: `33333333-3333-4333-8333-00000000000${n}`, name: `Person ${n}`, roleLabel: "Editor", isExternal: false, active: true });
@@ -88,5 +88,33 @@ describe("adoptGanttChecklist — assignees (#372)", () => {
     expect(changed.projects[0]!.children.rows[0]!.assignees.map((p) => p.id)).toEqual([person(2).id]);
     expect(changed.projects[0]!.children.rows[1]).toBe(other);
     expect(adoptGanttChecklist(baseline, result({ assignees: [person(2)], assignmentVersion: 2 }))).toBe(baseline);
+  });
+});
+
+describe("adoptGanttChildRows — later-page rows (#372)", () => {
+  const PROJECT = "11111111-1111-4111-8111-111111111111";
+  const state = (rows: GanttChecklistRowDto[]) => ({ rows, seedSignature: "sig", complete: false });
+
+  it("carries a saved assignee list into the page-2+ row's own baseline, leaving other rows and projects alone", () => {
+    const other = row({ id: "44444444-4444-4444-8444-444444444444" });
+    const otherProject = state([row()]);
+    const current = { [PROJECT]: state([row(), other]), "other-project": otherProject };
+    const next = adoptGanttChildRows(current, PROJECT, result({ assignees: [person(2), person(3)], assignee: person(2), otherAssigneeCount: 1, assignmentVersion: 3 }));
+    const adopted = next[PROJECT]!.rows[0]!;
+    expect(adopted.assignees.map((p) => p.id)).toEqual([person(2).id, person(3).id]);
+    expect(adopted.assignee?.id).toBe(person(2).id);
+    expect(adopted.otherAssigneeCount).toBe(1);
+    expect(adopted.assignmentVersion).toBe(3);
+    expect(next[PROJECT]!.rows[1]).toBe(other);
+    expect(next[PROJECT]!.seedSignature).toBe("sig");
+    expect(next["other-project"]).toBe(otherProject);
+  });
+
+  it("is version-wins: an equal or older result, an unknown project and a result for no row return the same state object", () => {
+    const current = { [PROJECT]: state([row({ assignmentVersion: 5 })]) };
+    expect(adoptGanttChildRows(current, PROJECT, result({ assignees: [person(2)], assignmentVersion: 5 }))).toBe(current);
+    expect(adoptGanttChildRows(current, PROJECT, result({ assignees: [person(2)], assignmentVersion: 4 }))).toBe(current);
+    expect(adoptGanttChildRows(current, "unknown", result({ assignees: [person(2)], assignmentVersion: 9 }))).toBe(current);
+    expect(adoptGanttChildRows(current, PROJECT, result({ id: "55555555-5555-4555-8555-555555555555", assignees: [person(2)], assignmentVersion: 9 }))).toBe(current);
   });
 });

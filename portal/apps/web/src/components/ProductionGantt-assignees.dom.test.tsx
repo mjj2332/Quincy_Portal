@@ -320,4 +320,84 @@ describe("ProductionGantt — Subtask assignees (#372)", () => {
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/subtasks/${ROW_PAGE_TWO}`, { assignees: { expectedVersion: 2, add: [cy.id], remove: [] } });
     await waitFor(() => expect(triggerTitle("Row three")).toBe("Ada Smith, Cy Young"));
   });
+
+  describe("convergence with the server after an edit", () => {
+    /** The real refetch: the Gantt query refetches from `apiGet`, which reads `server`/`pageTwo`. */
+    const refetchForReal = () => invalidateMock.mockImplementation(async (queryClient) => { await (queryClient as QueryClient).invalidateQueries(); });
+
+    it("a newer server state (higher assignmentVersion, other selection) beats the adopted PATCH result, and the next commit is based on it", async () => {
+      refetchForReal();
+      apiPatchMock.mockImplementationOnce(() => { server[0] = { ...server[0]!, assignees: [ada, ben, cy], assignmentVersion: 4 }; return Promise.resolve(dto(server[0]!)); });
+      await mount();
+      await open("Row one");
+      await pick("Cy Young");
+      await closeWithEscape();
+      await waitFor(() => expect(triggerTitle("Row one")).toBe("Ada Smith, Ben Ortiz, Cy Young"));
+
+      // Someone else changes the row after our write; the next refetch must win over what this tab adopted at v4.
+      server[0] = { ...server[0]!, assignees: [cy], assignmentVersion: 6 };
+      await act(async () => { await client.invalidateQueries(); });
+      await settle();
+      await waitFor(() => expect(triggerTitle("Row one")).toBe("Cy Young"));
+
+      apiPatchMock.mockImplementationOnce(() => { server[0] = { ...server[0]!, assignees: [cy, ben], assignmentVersion: 7 }; return Promise.resolve(dto(server[0]!)); });
+      await open("Row one");
+      await pick("Ben Ortiz");
+      await closeWithEscape();
+      expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${PROJECT_ID}/subtasks/${ROW_ONE}`, { assignees: { expectedVersion: 6, add: [ben.id], remove: [] } });
+    });
+
+    it("an undecodable PATCH body is not an error: no failure toast, and the refetched server state is what the row shows", async () => {
+      refetchForReal();
+      apiPatchMock.mockImplementation(() => { server[0] = { ...server[0]!, assignees: [ben, cy], assignmentVersion: 4 }; return Promise.resolve({ unexpected: "shape" }); });
+      await mount();
+      await open("Row one");
+      await pick("Cy Young");
+      await closeWithEscape();
+
+      await waitFor(() => expect(triggerTitle("Row one")).toBe("Ben Ortiz, Cy Young"));
+      expect(document.body.textContent).not.toContain("could not be updated");
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+      expect(invalidateMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("an undecodable 409 body still converges on the refetched server state, with the conflict notice and no failure toast", async () => {
+      refetchForReal();
+      apiPatchMock.mockImplementation(() => {
+        server[0] = { ...server[0]!, assignees: [cy], assignmentVersion: 9 };
+        return Promise.reject(new ApiError("Assignees changed.", 409, { code: "subtask_assignment_version_conflict", currentSubtask: { garbage: true } }));
+      });
+      await mount();
+      await open("Row one");
+      await pick("Ada Smith");
+      await closeWithEscape();
+
+      await waitFor(() => expect(triggerTitle("Row one")).toBe("Cy Young"));
+      expect(document.body.textContent).toContain("Assignees changed elsewhere — showing the latest.");
+      expect(document.body.textContent).not.toContain("could not be updated");
+    });
+
+    it("a later-page row keeps its committed assignees and versions the next commit from them, across a refetch that never returns it", async () => {
+      refetchForReal();
+      truncated = true;
+      pageTwo = [{ id: ROW_PAGE_TWO, title: "Row three", assignees: [ada], assignmentVersion: 2, canEditAssignees: true }];
+      apiPatchMock.mockImplementationOnce(() => { pageTwo[0] = { ...pageTwo[0]!, assignees: [ada, cy], assignmentVersion: 3 }; return Promise.resolve(dto(pageTwo[0]!)); });
+      await mount();
+      await open("Row three");
+      await pick("Cy Young");
+      await closeWithEscape();
+      await waitFor(() => expect(triggerTitle("Row three")).toBe("Ada Smith, Cy Young"));
+
+      await act(async () => { await client.invalidateQueries(); });
+      await settle();
+      expect(triggerTitle("Row three")).toBe("Ada Smith, Cy Young");
+
+      apiPatchMock.mockImplementationOnce(() => { pageTwo[0] = { ...pageTwo[0]!, assignees: [cy], assignmentVersion: 4 }; return Promise.resolve(dto(pageTwo[0]!)); });
+      await open("Row three");
+      await pick("Ada Smith");
+      await closeWithEscape();
+      expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${PROJECT_ID}/subtasks/${ROW_PAGE_TWO}`, { assignees: { expectedVersion: 3, add: [], remove: [ada.id] } });
+      await waitFor(() => expect(triggerTitle("Row three")).toBe("Cy Young"));
+    });
+  });
 });
