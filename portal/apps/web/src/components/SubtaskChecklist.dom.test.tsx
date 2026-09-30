@@ -413,6 +413,40 @@ describe("SubtaskChecklist assignees (#368)", () => {
     expect(stackLabels(assigneeTrigger(host))).toEqual(["Ben Ortiz"]);
   });
 
+  async function mountWithClient() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const host = mount();
+    await act(async () => { root!.render(<QueryClientProvider client={client}><SubtaskChecklist projectId={projectId} /></QueryClientProvider>); await Promise.resolve(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    return { host, client };
+  }
+
+  it("closing an untouched picker sends nothing when another user's assignment landed while it was open (#368 review)", async () => {
+    const { host, client } = await mountWithClient();
+    await openAssignees(assigneeTrigger(host));
+    await act(async () => { client.setQueryData(projectDataKeys.subtasks(projectId), [withAssignees([nora, ben], 2), second]); await Promise.resolve(); }); await flush();
+    // The refetch reached the open picker (selected people list first): the stale-diff the old code sent from is in place.
+    await waitFor(() => expect(pickerOptions().map(optionName).slice(0, 2)).toEqual(["Nora Jones", "Ben Ortiz"]));
+    await closeAssignees();
+    await flush();
+    expect(apiPatchMock).not.toHaveBeenCalled();
+    // The refetch really landed (so the old code had a stale-diff to send).
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ben Ortiz"]);
+  });
+
+  it("a user edit after another user's assignment landed is sent at the version it opened on, so the conflict path shows the latest", async () => {
+    const { host, client } = await mountWithClient();
+    apiPatchMock.mockRejectedValueOnce(new ApiError("Assignees changed", 409, { code: "subtask_assignment_version_conflict", currentSubtask: withAssignees([nora, ben, ada], 3) }));
+    await openAssignees(assigneeTrigger(host));
+    await act(async () => { client.setQueryData(projectDataKeys.subtasks(projectId), [withAssignees([nora, ben], 2), second]); await Promise.resolve(); }); await flush();
+    await pickAssignee("Ada Smith");
+    await closeAssignees();
+    await flush();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003"], remove: [] } });
+    expect(host.textContent).toContain("Assignees changed elsewhere — showing the latest.");
+  });
+
   it("an assignment-version conflict shows the latest assignees and says so", async () => {
     const host = mount(); await render();
     apiPatchMock.mockRejectedValueOnce(new ApiError("Assignees changed", 409, { code: "subtask_assignment_version_conflict", currentSubtask: withAssignees([ada, cy], 4) }));

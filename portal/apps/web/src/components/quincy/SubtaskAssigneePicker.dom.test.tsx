@@ -23,7 +23,7 @@ const person = (key: keyof typeof ids, name: string) => ({ id: ids[key], name })
 let root: Root | null = null;
 let host: HTMLDivElement;
 let queryClient: QueryClient;
-const onCommit = vi.fn<(ids: string[], people: Array<{ id: string; name: string }>) => void | Promise<void>>();
+const onCommit = vi.fn<(ids: string[], people: Array<{ id: string; name: string }>, baseline: { ids: string[]; version: number | undefined }) => void | Promise<void>>();
 
 type Props = Partial<Parameters<typeof SubtaskAssigneePicker>[0]>;
 async function mount(props: Props = {}) {
@@ -34,6 +34,12 @@ async function mount(props: Props = {}) {
     await Promise.resolve();
   });
   return host;
+}
+async function rerender(props: Props) {
+  await act(async () => {
+    root!.render(<QueryClientProvider client={queryClient}><SubtaskAssigneePicker projectId={projectId} role="admin" label="Assignees for Call client" selected={[]} onCommit={onCommit} {...props} /></QueryClientProvider>);
+    await Promise.resolve();
+  });
 }
 const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label="Assignees for Call client"]')!;
 const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
@@ -82,6 +88,25 @@ afterEach(async () => {
 });
 
 describe("SubtaskAssigneePicker", () => {
+  it("an untouched picker sends nothing even when a refetch changes the selection while it is open (#368 review)", async () => {
+    await mount({ selected: [person("nora", "Nora Jones")], version: 1 });
+    await open();
+    await rerender({ selected: [person("nora", "Nora Jones"), person("ada", "Ada Smith")], version: 2 });
+    await closeWithEscape();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("commits against the selection and version captured at open, not a refetch that landed since", async () => {
+    await mount({ selected: [person("nora", "Nora Jones")], version: 1 });
+    await open();
+    await rerender({ selected: [person("nora", "Nora Jones"), person("ada", "Ada Smith")], version: 2 });
+    await pick("Ben Ortiz");
+    await closeWithEscape();
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit.mock.calls[0]![0]).toEqual([ids.nora, ids.ben]);
+    expect(onCommit.mock.calls[0]![2]).toEqual({ ids: [ids.nora], version: 1 });
+  });
+
   it("fetches the options only after the first open, and only once", async () => {
     await mount({ selected: [person("nora", "Nora Jones")] });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });

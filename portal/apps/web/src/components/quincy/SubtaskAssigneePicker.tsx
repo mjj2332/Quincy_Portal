@@ -11,19 +11,24 @@ import { Item, ItemContent, ItemTitle } from "../reui/item";
 
 export type AssigneePickerPerson = { id: string; name: string };
 
+/** What the picker showed when it opened: the diff and `expectedVersion` are computed against this, never against a refetch that landed while it was open. */
+export type AssigneePickerBaseline = { ids: string[]; version: number | undefined };
+
 export type SubtaskAssigneePickerProps = {
   projectId: string;
   role: Role;
   /** The trigger's accessible name. */
   label: string;
   selected: AssigneePickerPerson[];
+  /** The selection's version (a Checklist row's `assignmentVersion`); captured on open and handed back with the baseline. */
+  version?: number;
   /** People the viewer may not see (External Editors): counted on the trigger, never listed. */
   hiddenCount?: number;
   disabled?: boolean;
   /** The composer's bordered arm of the trigger. */
   compact?: boolean;
   /** Called once when the list closes with a different set: the final ids, and those people (id and name) for a caller that keeps the selection itself. */
-  onCommit: (nextIds: string[], people: AssigneePickerPerson[]) => void | Promise<void>;
+  onCommit: (nextIds: string[], people: AssigneePickerPerson[], baseline: AssigneePickerBaseline) => void | Promise<void>;
 };
 
 type Option = AssigneePickerPerson & { inactive: boolean };
@@ -41,12 +46,13 @@ function sameSet(a: string[], b: string[]) {
  * Picking only edits a local draft; the one write happens on close, so a burst of picks is a single versioned request
  * rather than several that would race their own `expectedVersion`.
  */
-export function SubtaskAssigneePicker({ projectId, role, label, selected, hiddenCount = 0, disabled = false, compact = false, onCommit }: SubtaskAssigneePickerProps) {
+export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, compact = false, onCommit }: SubtaskAssigneePickerProps) {
   const [open, setOpen] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
   const [committing, setCommitting] = useState<string[] | null>(null);
   const draftRef = useRef<string[]>([]);
+  const baselineRef = useRef<AssigneePickerBaseline>({ ids: [], version: undefined });
   const options = useSubtaskAssigneeOptions(projectId, role, open || hasOpened);
   const multiAssignee = options.data?.multiAssignee ?? false;
 
@@ -68,15 +74,17 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, hidden
     if (disabled && next) return;
     if (next) {
       const current = selected.map((person) => person.id);
+      baselineRef.current = { ids: current, version };
       draftRef.current = current; setDraft(current); setHasOpened(true); setOpen(true);
       return;
     }
     setOpen(false);
     const final = draftRef.current;
-    if (sameSet(final, selected.map((person) => person.id))) return;
+    const baseline = baselineRef.current;
+    if (sameSet(final, baseline.ids)) return;
     setCommitting(final);
     const people = final.map((id) => known.get(id)).filter((option): option is Option => Boolean(option)).map(({ id, name }) => ({ id, name }));
-    void Promise.resolve(onCommit(final, people)).finally(() => setCommitting(null));
+    void Promise.resolve(onCommit(final, people, baseline)).finally(() => setCommitting(null));
   }
 
   function handleValueChange(next: Option[]) {

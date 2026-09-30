@@ -16,6 +16,7 @@ vi.mock("../lib/auth", () => ({ useSession: () => ({ data: session.role ? { user
 vi.mock("../lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/api")>()), apiGet: (path: string) => apiGetMock(path) }));
 vi.mock("../lib/confirm", () => ({ confirm: vi.fn(() => Promise.resolve(true)) }));
 
+const lateUserId = "77777777-7777-4777-8777-777777777777";
 const projectId = "11111111-1111-4111-8111-111111111111";
 const task = { id: "task-1", title: "Prepare delivery", done: false, position: 1024, assignee: null, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "u1", createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
 let root: Root | null = null;
@@ -50,12 +51,30 @@ describe("SubtaskChecklist access-generation boundary", () => {
     expect(apiGetMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtask-assignee-options`);
     if (status === 401) await clearPrincipalProjectData(queryClient);
     else await purgeProjectCollaborationData(queryClient, projectId);
-    resolveOptions({ candidates: [{ id: "late-user", name: "Late private user", role: "editor" }], multiAssignee: true });
+    resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }], multiAssignee: true });
     await flush();
     expect(document.body.textContent).not.toContain("Late private user");
     expect(queryClient.getQueryData(projectDataKeys.subtaskAssigneeOptions(projectId))).toBeUndefined();
     if (status === 401) expect(queryClient.getQueryData(projectDataKeys.detail(projectId))).toBeUndefined();
     else expect(queryClient.getQueryData(projectDataKeys.detail(projectId))).toEqual({ private: "detail" });
+  });
+
+  it("control: the same late assignee-options payload is shown when access is NOT lost", async () => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    runtime = new ProjectQueryRuntime(queryClient, "checklist-control");
+    type Options = { candidates: Array<{ id: string; name: string; role: string }>; multiAssignee: boolean };
+    let resolveOptions!: (value: Options) => void;
+    apiGetMock.mockImplementation((path: string) => path.includes("subtask-assignee-options")
+      ? new Promise<Options>((resolve) => { resolveOptions = resolve; })
+      : Promise.resolve({ subtasks: [task] }));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><SubtaskChecklist projectId={projectId} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); await Promise.resolve(); }); await flush();
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Assignees for Prepare delivery"]')!;
+    await act(async () => { trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); trigger.click(); await Promise.resolve(); }); await flush();
+    resolveOptions({ candidates: [{ id: lateUserId, name: "Late private user", role: "editor" }], multiAssignee: true });
+    await flush();
+    expect(document.body.textContent).toContain("Late private user");
+    expect(queryClient.getQueryData(projectDataKeys.subtaskAssigneeOptions(projectId))).toBeDefined();
   });
 
   it.each([401, 403, 404] as const)("ignores a late checklist response after a %s access loss", async (status) => {

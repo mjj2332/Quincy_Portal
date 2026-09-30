@@ -358,14 +358,16 @@ describe("ProjectCollaborationPanel", () => {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`); expect(trigger, host.innerHTML).not.toBeNull(); await click(trigger!);
       const focused = label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[placeholder="Search people…"]')! : trigger;
       await dispatchEscape(focused!);
-      expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Schedule") ? "schedule" : label.startsWith("Assignee") ? "assignee" : "actions"}`)).toBeNull();
+      if (label.startsWith("Assignee")) { expect(document.querySelector('[role="listbox"]')).toBeNull(); expect(trigger!.getAttribute("aria-expanded")).toBe("false"); }
+      else expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Schedule") ? "schedule" : "actions"}`)).toBeNull();
     }
     await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
     const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
     for (const label of ["Schedule for new subtask", "Assignees for new subtask"] as const) {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label^="${label}"]`)!; await click(trigger);
       await dispatchEscape(label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[placeholder="Search people…"]')! : trigger);
-      expect(document.getElementById(`subtask-popover-composer-${label.startsWith("Schedule") ? "schedule" : "assignee"}`)).toBeNull();
+      if (label.startsWith("Assignee")) { expect(document.querySelector('[role="listbox"]')).toBeNull(); expect(trigger.getAttribute("aria-expanded")).toBe("false"); }
+      else expect(document.getElementById("subtask-popover-composer-schedule")).toBeNull();
       expect(host.querySelector(`#subtask-composer-${projectId}`)).toBe(composer);
     }
     await dispatchEscape(composer); expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
