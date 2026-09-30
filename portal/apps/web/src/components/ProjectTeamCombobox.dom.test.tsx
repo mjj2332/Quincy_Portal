@@ -6,6 +6,8 @@ import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { ProjectHeader } from "./ProjectHeader";
+import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
+import { createRef } from "react";
 import { projectDataKeys, type ProjectDetail, type ProjectMember } from "../lib/project-data";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 import "../styles/index.css";
@@ -574,5 +576,24 @@ describe("ProjectTeamCombobox", () => {
     resolveDelete({ outcome: "removed", removed: { membershipCycle: members[0]!.id, userId: members[0]!.userId, roleOnProject: "editor" }, subtaskAssignmentsCleared: 0 });
     await flush(2);
     expect(host.querySelector(`[data-testid="project-member-editor:${members[0]!.userId}"]`)).toBeNull();
+  });
+});
+
+describe("ProjectTeamCombobox inputRef (#365)", () => {
+  it("points inputRef at the 'Add team member' input, so a hosting popover can focus it", async () => {
+    host = document.createElement("div"); document.body.appendChild(host);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    runtime = new ProjectQueryRuntime(queryClient);
+    root = createRoot(host);
+    const inputRef = createRef<HTMLInputElement>();
+    await act(async () => {
+      root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
+        <ProjectTeamCombobox projectId={projectId} members={members} canEdit inputRef={inputRef} />
+      </QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    expect(inputRef.current).not.toBeNull();
+    expect(inputRef.current).toBe(chipsInput(host));
   });
 });

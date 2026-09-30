@@ -418,12 +418,26 @@ describe("production-gantt adversarial probes", () => {
       `scope=active&childrenOf=${assignedProjectId}&childCursor=not-a-cursor`,
       `scope=active&childrenOf=${assignedProjectId}&childCursor=${encodeURIComponent(encodeGanttChildCursor({ projectId: assignedProjectId, position: 0, id: "82888888-8888-4888-8888-000000000001", completed: false }))}&completed=1`,
       "scope=active%ZZ",
+      "scope=active&team=2",
+      "scope=active&team=",
+      "scope=active&team=1&team=1",
+      `scope=active&team=1&childrenOf=${assignedProjectId}`,
     ];
     for (const query of cases) {
       const response = await request(`/api/production-gantt?${query}`, tokens.admin);
       expect(response.status, query).toBe(400);
       await expect(response.json(), query).resolves.toMatchObject({ code: "gantt_query_invalid" });
     }
+  });
+
+  it("accepts team=1 on a cursor page (#365)", async () => {
+    const first = adminProductionGanttResponseSchema.parse(await (await request("/api/production-gantt?scope=active&team=1&limit=1", tokens.admin)).json());
+    expect(first.page.nextCursor).not.toBeNull();
+    const second = await request(`/api/production-gantt?scope=active&team=1&limit=1&cursor=${encodeURIComponent(first.page.nextCursor!)}`, tokens.admin);
+    expect(second.status).toBe(200);
+    const body = adminProductionGanttResponseSchema.parse(await second.json());
+    expect(body.projects.length).toBeGreaterThan(0);
+    for (const project of body.projects) expect(project.team).toBeDefined();
   });
 
   it("keeps the Calendar response contract and visibility after the Gantt route is mounted", async () => {

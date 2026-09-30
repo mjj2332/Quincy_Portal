@@ -160,7 +160,9 @@ function ganttResponse() {
         deadlineVersion,
         editors: [],
         checklist: { completed: 0, total: truncatedTotal ?? rows.length },
-        permissions: { canEditDeadline, canEditChildren: firstCanEditChildren },
+        // #365: the People column's data, so the writes below run with the Team / Due triggers mounted.
+        team: [{ id: "33333333-3333-4333-8333-333333333333", name: "Eli Editor", roleLabel: "Editor", isExternal: false, active: true, roleOnProject: "editor" }],
+        permissions: { canEditDeadline, canEditChildren: firstCanEditChildren, canEditTeam: true },
         children: {
           rows: rows.filter((row) => !omittedFromGet.has(row.id)).map((row) => ({ id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, schedule: row.schedule, permissions: row.permissions })),
           total: truncatedTotal ?? rows.length,
@@ -823,6 +825,26 @@ describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
     gate.resolve();
     await flush(6);
     expect(onSettleStateChange).toHaveBeenLastCalledWith({ pending: false, recoveryReason: null });
+  });
+
+  it("13b. the Team and Deadline triggers are disabled while the post-save refetch is pending (#365 T10)", async () => {
+    await render();
+    const team = () => host.querySelector<HTMLButtonElement>('[data-testid="gantt-team-trigger"]')!;
+    const due = () => host.querySelector<HTMLButtonElement>('[data-testid="gantt-deadline-trigger"]')!;
+    expect(team().disabled).toBe(false);
+    expect(due().disabled).toBe(false);
+    const gate = deferred<void>();
+    getGate = gate.promise;
+    await keyboardResizeRangeEnd();
+    await flush(4);
+    expect(onSettleStateChange).toHaveBeenLastCalledWith({ pending: true, recoveryReason: null });
+    expect(team().disabled).toBe(true);
+    expect(due().disabled).toBe(true);
+    getGate = null;
+    gate.resolve();
+    await flush(6);
+    expect(team().disabled).toBe(false);
+    expect(due().disabled).toBe(false);
   });
 
   it("8b. a keyboard Adjust MOVE commit (the bar remounts under a new start) keeps focus on the moved bar", async () => {

@@ -1,10 +1,14 @@
 import { useRef, type ReactNode } from "react";
+import { cn } from "../lib/utils";
 
 const PROJECT_ANCHOR_LINK = "text-inherit no-underline hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2";
 
 export type ProjectCalendarAnchorProps = {
   href: string;
   onOpenProject?: () => void;
+  /** #365: the Gantt row label reuses this anchor under its own test id. Defaults to the Calendar's. */
+  testId?: string;
+  className?: string;
   children: ReactNode;
 };
 
@@ -17,7 +21,7 @@ export type ProjectCalendarAnchorProps = {
  * #224: moved out of the retired FullCalendar card (`ProductionCalendarEvent.tsx`); behaviour is
  * unchanged, pinned by `ProjectCalendarAnchor.dom.test.tsx`.
  */
-export function ProjectCalendarAnchor({ href, onOpenProject, children }: ProjectCalendarAnchorProps) {
+export function ProjectCalendarAnchor({ href, onOpenProject, testId = "calendar-project-link", className, children }: ProjectCalendarAnchorProps) {
   const originRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClickRef = useRef(false);
   const resetSuppression = () => {
@@ -40,8 +44,8 @@ export function ProjectCalendarAnchor({ href, onOpenProject, children }: Project
     resetSuppression();
   };
   return <a
-    className={PROJECT_ANCHOR_LINK}
-    data-testid="calendar-project-link"
+    className={cn(PROJECT_ANCHOR_LINK, className)}
+    data-testid={testId}
     href={href}
     onMouseDown={(event) => startPointer(event.clientX, event.clientY)}
     onMouseMove={(event) => movePointer(event.clientX, event.clientY)}

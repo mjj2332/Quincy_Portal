@@ -69,6 +69,20 @@
  * (the row's own status node announces it); 401/403 goes through the port's access-loss path, like a
  * child page. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
  *
+ * ## #365 — People / Due columns
+ * Each Project row gets two vendor tree `columns` (`id`s `people`, `due`; #372 later fills the same
+ * cells for Subtask rows): the Team avatar stack and the Deadline, both editable in place by an
+ * Admin (`ProductionGanttProjectCells.tsx`, popovers over the Project page's own pickers, fed from
+ * the Project detail loaded on open), plain values for everyone else. The street is a link to the
+ * Project (`ProjectCalendarAnchor` -> the Dashboard's `openCalendarProject`).
+ * Reuse ledger: tree columns — vendored `reui/gantt` `columns`/`GanttColumn`; row link —
+ * `ProjectCalendarAnchor` (+`testId`/`className`); avatar stack — `quincy/AvatarStack` (moved from
+ * `kanban2/card.tsx`) on `reui/avatar`; trigger + popover — `reui/popover` + `reui/button` ghost
+ * `xs` skinned with `project-header-popover`'s `POPOVER_CONTENT`; Team picker + remove confirm +
+ * conflict — `ProjectTeamCombobox` whole, `lib/confirm`; Deadline editor — `ProjectDeadlineControl`
+ * whole; loading/error — `reui/skeleton`, `quincy/Notice`, `reui/button`; read-only Due — plain
+ * `<time>` on tokens.
+ *
  * `interactions` stays CONTROLLED and is switched off while an interaction is open, the post-save
  * refetch is pending, or access was lost. `selectSlot` is always off and `dragCreate` is not set
  * (#342): no row takes a click-to-place, so every empty slot pans.
@@ -112,7 +126,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, type GanttChecklistRowDto, type GanttProjectRowDto } from "@quincy/shared";
-import { Gantt, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
+import { Gantt, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
 import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
@@ -166,11 +180,13 @@ import {
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
 import { useStages } from "../lib/stages";
+import { useMediaQuery } from "../lib/use-media-query";
 import { ProductionGanttFiltersBar } from "./ProductionGanttFiltersBar";
 import { ProductionEventCalendarDialogs } from "./ProductionEventCalendarDialogs";
+import { GanttDeadlineCell, GanttTeamCell } from "./ProductionGanttProjectCells";
+import { ProjectCalendarAnchor } from "./ProjectCalendarAnchor";
 import { type ProductionGanttDeadlineConfirmState } from "./ProductionGanttDeadlineDialog";
 import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
-import { InitialsAvatar } from "./quincy/InitialsAvatar";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
 import { StageSwatch } from "./quincy/StageSwatch";
@@ -198,6 +214,14 @@ export type ProductionGanttProps = {
    * `null` until the current filters' first page lands, and on unmount.
    */
   onShownProjectsChange?: (count: number | null) => void;
+  /**
+   * #365: the row label opens the Project. `projectHrefFor` gives the real anchor its `href` (so a
+   * modified click keeps the browser's behaviour); `onOpenProject` is the Dashboard's handler,
+   * which navigates through `locationStore()` and honours the scheduling gate. Both absent, the
+   * street stays plain text.
+   */
+  projectHrefFor?: (projectId: string) => string;
+  onOpenProject?: (projectId: string) => void;
 };
 
 const GANTT_TIME_ZONE = "Australia/Sydney";
@@ -213,8 +237,14 @@ const GANTT_I18N: GanttI18nOverrides = { labels: { resources: "Projects" } };
  * `GANTT_I18N`, `timeZone={GANTT_TIME_ZONE}` and no `locale`.
  */
 const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTime;
-/** #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. */
-const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180 };
+/**
+ * #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. #365:
+ * the wide panel makes room for the People (88px) and Due (128px) columns beside a 180px name
+ * column; the narrow one keeps the vendor's 288px seed on phones. The vendor seeds the width once,
+ * so a breakpoint crossed mid-session does not re-seed it.
+ */
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180, width: 400 };
+const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180 };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
@@ -298,10 +328,10 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
 }
 
 /**
- * Tree-panel row label: project/task title, an attention badge when the adapter routed this row
- * to `attention` instead of a plotted event, (project rows only) the first active editor's avatar
- * — reusing `InitialsAvatar` per the build spec rather than adding a dependency — and (project rows
- * whose remaining checklist pages failed to load, fix-220-sol1 #2) a retry affordance.
+ * Tree-panel row label: project/task title (a project's street is a link to the Project when the
+ * Dashboard passes `projectHrefFor`, #365), an attention badge when the adapter routed this row
+ * to `attention` instead of a plotted event, and (project rows whose remaining checklist pages
+ * failed to load, fix-220-sol1 #2) a retry affordance. The Editor avatar moved to the People column.
  */
 /** #221 PR C: a project row's label-side Deadline action ("Set deadline" / "Fix deadline"). */
 type GanttDeadlineAction = { label: "Set deadline" | "Fix deadline"; disabled: boolean; onAction: () => void };
@@ -309,18 +339,19 @@ type GanttDeadlineAction = { label: "Set deadline" | "Fix deadline"; disabled: b
 function GanttResourceLabel({
   resource,
   attentionByResourceId,
-  editorNameByProjectResourceId,
   childLoadRetryByProjectResourceId,
   deadlineActionByProjectResourceId,
+  projectHrefFor,
+  onOpenProject,
 }: {
   resource: GanttResource;
   attentionByResourceId: Map<string, ProductionGanttAttention>;
-  editorNameByProjectResourceId: Map<string, string>;
   childLoadRetryByProjectResourceId: Map<string, () => void>;
   deadlineActionByProjectResourceId: Map<string, GanttDeadlineAction>;
+  projectHrefFor?: (projectId: string) => string;
+  onOpenProject?: (projectId: string) => void;
 }) {
   const attention = attentionByResourceId.get(resource.id);
-  const editorName = editorNameByProjectResourceId.get(resource.id);
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
   const deadlineAction = deadlineActionByProjectResourceId.get(resource.id);
   const deadlineReasonId = useId();
@@ -333,7 +364,16 @@ function GanttResourceLabel({
           the attention badge entirely (the button carries the reason instead, below), and the
           street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
           pixel. */}
-      <span className={cn("truncate", deadlineAction && "min-w-[var(--space-9)] flex-1")}>{resource.title}</span>
+      <span className={cn("truncate", deadlineAction && "min-w-[var(--space-9)] flex-1")}>
+        {projectHrefFor && resource.id.startsWith("project:") ? (
+          <ProjectCalendarAnchor
+            testId="gantt-project-link"
+            className="truncate"
+            href={projectHrefFor(resource.id.slice("project:".length))}
+            onOpenProject={() => onOpenProject?.(resource.id.slice("project:".length))}
+          >{resource.title}</ProjectCalendarAnchor>
+        ) : resource.title}
+      </span>
       {attention && !deadlineAction && <GanttRowAttentionBadge reason={attention.reason} />}
       {deadlineAction && deadlineReason && (
         <span id={deadlineReasonId} className="sr-only" data-testid="gantt-deadline-action-reason">{deadlineReason}</span>
@@ -367,7 +407,6 @@ function GanttResourceLabel({
         </Button>
       )}
       {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
-      {editorName && <InitialsAvatar name={editorName} className="size-5 shrink-0" />}
     </span>
   );
 }
@@ -646,7 +685,7 @@ function withPendingRange(model: ProductionGanttModel, pending: GanttPendingRang
  */
 const GANTT_CREATE_TITLE_MAX = 500;
 
-export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
   const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
@@ -1173,15 +1212,6 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return map;
   }, [model.attention]);
 
-  const editorNameByProjectResourceId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const project of effectiveProjects) {
-      const firstEditor = project.editors[0];
-      if (firstEditor) map.set(`project:${project.id}`, firstEditor.name);
-    }
-    return map;
-  }, [effectiveProjects]);
-
   const childLoadRetryByProjectResourceId = useMemo(() => {
     const map = new Map<string, () => void>();
     for (const project of projects) {
@@ -1216,13 +1246,43 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
       <GanttResourceLabel
         resource={resource}
         attentionByResourceId={attentionByResourceId}
-        editorNameByProjectResourceId={editorNameByProjectResourceId}
         childLoadRetryByProjectResourceId={childLoadRetryByProjectResourceId}
         deadlineActionByProjectResourceId={deadlineActionByProjectResourceId}
+        projectHrefFor={projectHrefFor}
+        onOpenProject={onOpenProject}
       />
     ),
-    [attentionByResourceId, editorNameByProjectResourceId, childLoadRetryByProjectResourceId, deadlineActionByProjectResourceId],
+    [attentionByResourceId, childLoadRetryByProjectResourceId, deadlineActionByProjectResourceId, projectHrefFor, onOpenProject],
   );
+
+  // #365: the People and Due columns. `displayProjects` (the accept-gate baseline, the same source
+  // as the Deadline actions above) so a cell never reads a row the chart is not drawing. Triggers
+  // are `disabled={!live}` like "Set deadline": a picker Deadline save that races a later bar drag
+  // is caught by the server's `expectedVersion`, which the controller already handles.
+  const narrowTree = useMediaQuery("(max-width: 720px)");
+  const columns = useMemo<GanttColumn[]>(() => {
+    const projectFor = (resource: GanttResource) => (resource.id.startsWith("project:") ? projectById.get(resource.id.slice("project:".length)) : undefined);
+    return [
+      {
+        id: "people",
+        title: "People",
+        width: 88,
+        render: ({ resource }) => {
+          const project = projectFor(resource);
+          return project ? <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={!live} role={identity.role} /> : null;
+        },
+      },
+      {
+        id: "due",
+        title: "Due",
+        width: 128,
+        render: ({ resource }) => {
+          const project = projectFor(resource);
+          return project ? <GanttDeadlineCell projectId={project.id} street={project.street} deadline={project.deadline} canEdit={project.permissions.canEditDeadline} disabled={!live} role={identity.role} /> : null;
+        },
+      },
+    ];
+  }, [projectById, live, identity.role]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.
@@ -1496,7 +1556,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             i18n={GANTT_I18N}
             // #256: the name column fills the tree panel; 180 = the vendor splitter's minWidth, so
             // the column never floors wider than the narrowest the panel can be dragged to.
-            treePanel={GANTT_TREE_PANEL}
+            treePanel={narrowTree ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
+            columns={columns}
             interactions={interactions}
             onEventUpdate={handleEventUpdate}
             dropWarning={dropWarning}

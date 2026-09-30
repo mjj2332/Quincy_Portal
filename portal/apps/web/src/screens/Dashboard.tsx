@@ -1015,6 +1015,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   const projectHrefFor = useCallback((projectId: string) => `/projects/${encodeURIComponent(projectId)}`, []);
 
+  // Shared by the Calendar and (#365) the Gantt row label: one place for the gate and the navigation.
   const openCalendarProject = useCallback((projectId: string) => {
     if (calendarInteractionBlocked || calendarSettle.pending || !canViewProductionCalendar || viewingArchived) return;
     history.push(projectHrefFor(projectId));
@@ -1565,6 +1566,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 onSettleStateChange={setCalendarSettle}
                 onAccessLoss={handleCalendarAccessLoss}
                 onShownProjectsChange={setViewShownProjects}
+                projectHrefFor={projectHrefFor}
+                onOpenProject={openCalendarProject}
               />
             </Suspense>
           </ViewLoadBoundary>
