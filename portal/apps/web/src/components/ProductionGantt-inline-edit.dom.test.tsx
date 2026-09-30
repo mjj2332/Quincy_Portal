@@ -519,7 +519,7 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     } finally { window.matchMedia = original; }
   });
 
-  it("T8 more than three members: three avatars and +N, a dual-role person counting once", async () => {
+  it("T8 more than three members: two avatars and +N, a dual-role person counting once", async () => {
     server.team = [
       person(PIA, "Pia Photographer", "photographer"),
       person(ELI, "Eli Editor", "editor"),
@@ -531,9 +531,9 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     await render();
     const trigger = teamTrigger()!;
     const avatars = [...trigger.querySelectorAll('[role="img"]')];
-    expect(avatars).toHaveLength(4); // three avatars and the overflow chip
+    expect(avatars).toHaveLength(3); // two avatars and the overflow chip (three plus a chip would overflow the 88px column)
     expect(avatars.every((avatar) => avatar.closest('[aria-hidden="true"]') !== null)).toBe(true); // decorative: named once, by the trigger
-    expect(trigger.textContent).toContain("+2");
+    expect(trigger.textContent).toContain("+3");
     expect(trigger.getAttribute("aria-label")).toContain("Pia Photographer, Eli Editor, Zed Inactive (inactive), Nina Newcomer, Otto Other");
     expect(trigger.getAttribute("aria-label")!.match(/Eli Editor/g)).toHaveLength(1);
   });

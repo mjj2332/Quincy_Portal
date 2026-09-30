@@ -378,7 +378,7 @@ describe("SubtaskChecklist assignees (#368)", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("picks four people and commits one PATCH on close; the trigger then shows three avatars and +1", async () => {
+  it("picks four people and commits one PATCH on close; the trigger then shows two avatars and +3", async () => {
     const host = mount(); await render();
     apiPatchMock.mockResolvedValueOnce(withAssignees([nora, ada, ben, cy, dee], 2));
     await openAssignees(assigneeTrigger(host));
@@ -388,14 +388,14 @@ describe("SubtaskChecklist assignees (#368)", () => {
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
     expect(apiPatchMock).toHaveBeenCalledWith(patchUrl, { assignees: { expectedVersion: 1, add: ["30000000-0000-4000-8000-000000000003", "40000000-0000-4000-8000-000000000004", "50000000-0000-4000-8000-000000000005", "60000000-0000-4000-8000-000000000006"], remove: [] } });
     await flush();
-    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ada Smith", "Ben Ortiz", "2 more Assignees"]);
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ada Smith", "3 more Assignees"]);
   });
 
-  it("shows three avatars and a single +1 for four assignees", async () => {
+  it("shows two avatars and +2 for four assignees", async () => {
     apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("subtask-assignee-options") ? optionsResponse : { subtasks: [withAssignees([nora, ada, ben, cy]), second] }));
     const host = mount(); await render();
-    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ada Smith", "Ben Ortiz", "1 more Assignee"]);
-    expect(assigneeTrigger(host).textContent).toContain("+1");
+    expect(stackLabels(assigneeTrigger(host))).toEqual(["Nora Jones", "Ada Smith", "2 more Assignees"]);
+    expect(assigneeTrigger(host).textContent).toContain("+2");
   });
 
   it("unchecking one person commits one PATCH that only removes them", async () => {

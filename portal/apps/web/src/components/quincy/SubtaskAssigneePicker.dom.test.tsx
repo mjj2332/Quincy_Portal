@@ -123,6 +123,28 @@ describe("SubtaskAssigneePicker", () => {
     expect([...trigger().querySelectorAll('[role="img"]')].map((el) => el.getAttribute("aria-label"))).toEqual(["Nora Jones", "Ada Smith", "2 others not shown"]);
   });
 
+  it("titles the trigger with the assignees' names and 'and N others' for hidden people, so shared initials stay distinguishable", async () => {
+    await mount({ selected: [person("nora", "TB4E Ed QA"), person("ada", "TB4E Ext QA")], hiddenCount: 2 });
+    expect(trigger().getAttribute("title")).toBe("TB4E Ed QA, TB4E Ext QA and 2 others");
+    await rerender({ selected: [person("nora", "Nora Jones")], hiddenCount: 0 });
+    expect(trigger().getAttribute("title")).toBe("Nora Jones");
+    await rerender({ selected: [], hiddenCount: 1 });
+    expect(trigger().getAttribute("title")).toBe("1 other");
+  });
+
+  it("titles an unassigned trigger as Unassigned", async () => {
+    await mount();
+    expect(trigger().getAttribute("title")).toBe("Unassigned");
+  });
+
+  it("marks a deactivated selected person with the Inactive status pill", async () => {
+    apiGetMock.mockResolvedValue({ multiAssignee: true, candidates });
+    await mount({ selected: [person("nora", "Nora Jones"), { id: "99999999-9999-4999-8999-999999999999", name: "Gone Person" }] });
+    await open();
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="status-pill"]').length).toBe(1));
+    expect(document.querySelector('[data-slot="status-pill"]')!.textContent).toBe("Inactive");
+  });
+
   it("shows the empty glyph when nobody is assigned", async () => {
     await mount();
     expect([...trigger().querySelectorAll('[role="img"]')].map((el) => el.getAttribute("aria-label"))).toEqual(["Unassigned"]);

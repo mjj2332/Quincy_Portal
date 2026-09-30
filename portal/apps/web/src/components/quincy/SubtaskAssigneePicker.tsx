@@ -6,6 +6,7 @@ import { cn } from "../../lib/utils";
 import { AvatarStack } from "./AvatarStack";
 import { META_TRIGGER } from "./icon-button";
 import { Avatar, AvatarFallback } from "../reui/avatar";
+import { StatusPill } from "./StatusPill";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList, ComboboxTrigger } from "../reui/combobox";
 import { Item, ItemContent, ItemTitle } from "../reui/item";
 
@@ -35,7 +36,8 @@ export type SubtaskAssigneePickerProps = {
 
 type Option = AssigneePickerPerson & { inactive: boolean };
 
-const TRIGGER_CLASSES = "[&>svg]:hidden";
+// shrink-0: the stack is bounded (at most 3 avatars and a chip) and must not clip at 375px; the row's schedule chip truncates instead.
+const TRIGGER_CLASSES = "[&>svg]:hidden shrink-0";
 const COMPACT_CLASSES = "border-solid border-[length:var(--border-width-hair)] border-border";
 
 function sameSet(a: string[], b: string[]) {
@@ -103,6 +105,13 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     draftRef.current = resolved; setDraft(resolved);
   }
 
+  const shownNames = (open ? draftOptions : shownPeople).map((person) => person.name.trim()).filter(Boolean);
+  const titleNames = shownNames.join(", ");
+  const others = open ? 0 : hiddenCount; // people the viewer may not see: a count, never names
+  const triggerTitle = titleNames || others > 0
+    ? `${titleNames}${titleNames && others > 0 ? " " : ""}${others > 0 ? `${titleNames ? "and " : ""}${others} other${others === 1 ? "" : "s"}` : ""}`
+    : "Unassigned";
+
   const emptyMessage = options.isError ? "People could not be loaded." : options.isPending ? "Loading people…" : "No matching people";
 
   return <Combobox
@@ -117,7 +126,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     itemToStringValue={(item: Option) => item.id}
     disabled={disabled}
   >
-    <ComboboxTrigger ref={triggerRef} aria-label={label} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
+    <ComboboxTrigger ref={triggerRef} aria-label={label} title={triggerTitle} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
       <AvatarStack people={open ? draftOptions : shownPeople} hiddenCount={open ? 0 : hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" />
     </ComboboxTrigger>
     <ComboboxContent className="min-w-[max(var(--anchor-width),260px)] max-w-[calc(100vw-2*var(--space-4))]">
@@ -128,7 +137,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
           <Item size="xs" className="p-0">
             <Avatar size="sm" className="size-6"><AvatarFallback>{initials(option.name)}</AvatarFallback></Avatar>
             <ItemContent>
-              <ItemTitle className="whitespace-nowrap" data-testid="assignee-option-name">{option.name}{option.inactive && <em className="ml-[var(--space-1)] not-italic uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]"> Inactive</em>}</ItemTitle>
+              <ItemTitle className="whitespace-nowrap" data-testid="assignee-option-name">{option.name}{option.inactive && <StatusPill tone="neutral" className="ml-[var(--space-1)]">Inactive</StatusPill>}</ItemTitle>
             </ItemContent>
           </Item>
         </ComboboxItem>}

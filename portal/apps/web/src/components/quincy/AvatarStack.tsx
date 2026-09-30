@@ -6,7 +6,7 @@ export type AvatarStackPerson = { id: string; name: string; inactive?: boolean }
 
 export type AvatarStackProps = {
   people: AvatarStackPerson[];
-  /** Visible avatars before the `+N` overflow. */
+  /** Most avatars shown; when there are more people, `limit - 1` avatars and the `+N` chip share that width. */
   limit?: number;
   /** Singular noun for the overflow label ("2 more Editors") and an unnamed person. */
   personNoun: string;
@@ -37,14 +37,15 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenC
       />
     );
   }
-  const shown = people.slice(0, limit);
+  // With a `+N` chip, one fewer avatar: 3 avatars and a chip need ~84px, more than the Gantt People column's ~80px of content.
+  const shown = people.slice(0, people.length > limit ? Math.max(limit - 1, 1) : limit);
   const overflow = people.length - shown.length;
   const countLabel = [
     overflow > 0 ? `${overflow} more ${personNoun}${overflow === 1 ? "" : "s"}` : null,
     hiddenCount > 0 ? `${hiddenCount} other${hiddenCount === 1 ? "" : "s"} not shown` : null,
   ].filter(Boolean).join(" and ");
   return (
-    <AvatarGroup {...hidden} className={className}>
+    <AvatarGroup {...hidden} className={cn("-space-x-[var(--space-1)]", className)}>
       {shown.map((person) => {
         const name = person.name.trim();
         const empty = name === "";
