@@ -795,3 +795,81 @@ describe("RichTextEditor hard breaks", () => {
     expect(host.textContent).toBe("Fallback headingNot completedFallback task");
   });
 });
+
+describe("RichTextEditor counter and field variant (#376)", () => {
+  const LIMIT = 10_000;
+  async function renderWith(value: RichTextDoc, extra: Partial<React.ComponentProps<typeof RichTextEditor>> = {}) {
+    const host = mount();
+    await act(async () => {
+      root!.render(<RichTextEditor value={value} onChange={vi.fn()} limit={LIMIT} loadMentionables={mentionables} {...extra} />);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    return host;
+  }
+  const counter = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="rich-text-counter"]');
+
+  it("renders no counter at 0 and at 8,999 characters", async () => {
+    let host = await renderWith(empty());
+    expect(counter(host)).toBeNull();
+    await act(async () => { root!.unmount(); await Promise.resolve(); }); root = null; host.remove();
+    host = await renderWith(text("x".repeat(8_999)));
+    expect(counter(host)).toBeNull();
+  });
+
+  it("shows the counter from 9,000 characters, muted until the limit is passed", async () => {
+    const host = await renderWith(text("x".repeat(9_000)));
+    expect(counter(host)?.textContent).toBe("9000/10000");
+    expect(counter(host)?.className).not.toContain("destructive");
+  });
+
+  it("turns the counter destructive over the limit", async () => {
+    const host = await renderWith(text("x".repeat(10_001)));
+    expect(counter(host)?.textContent).toBe("10001/10000");
+    expect(counter(host)?.className).toContain("!text-destructive");
+  });
+
+  it("keeps the byte/nesting live region mounted while the counter is absent", async () => {
+    const host = await renderWith(empty());
+    expect(host.querySelector('[aria-live="polite"]')).not.toBeNull();
+  });
+
+  it("stacked (the default) keeps today's two stacked boxes: bordered toolbar, no InputGroup", async () => {
+    const host = await renderWith(empty());
+    expect(host.querySelector('[data-testid="rich-text-field"]')).toBeNull();
+    expect(host.querySelector('[role="toolbar"]')!.className).toContain("border-border");
+    expect(host.querySelector<HTMLElement>('[role="toolbar"] button:disabled')!.className.split(/\s+/)).toContain("disabled:bg-surface-sunken");
+  });
+
+  it("field wraps toolbar and editor in one InputGroup whose fill is not sunken while only Undo/Redo are disabled", async () => {
+    const host = await renderWith(empty(), { variant: "field" });
+    const group = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+    expect(group).not.toBeNull();
+    expect(group.contains(host.querySelector('[role="toolbar"]'))).toBe(true);
+    expect(group.contains(host.querySelector('[contenteditable="true"]'))).toBe(true);
+    expect(group.className).toContain("has-disabled:bg-card");
+    expect(group.className).not.toContain("has-disabled:bg-surface-sunken");
+    expect(group.hasAttribute("data-disabled")).toBe(false);
+    const disabled = [...host.querySelectorAll<HTMLElement>('[role="toolbar"] button:disabled')];
+    expect(disabled.map((button) => button.getAttribute("aria-label"))).toEqual(expect.arrayContaining(["Undo", "Redo"]));
+    for (const button of disabled) {
+      // Whole-token checks: `aria-disabled:bg-surface-sunken` (the drag-grip case in the shared base) is a different class and stays.
+      const tokens = button.className.split(/\s+/);
+      expect(tokens).toContain("disabled:bg-transparent");
+      expect(tokens).not.toContain("disabled:bg-surface-sunken");
+      expect(button.className).not.toMatch(/opacity-/);
+    }
+  });
+
+  it("field draws one border: the toolbar and editor content carry none of their own", async () => {
+    const host = await renderWith(empty(), { variant: "field" });
+    expect(host.querySelector('[role="toolbar"]')!.className).not.toMatch(/\bborder(-\[|-border|\s|$)/);
+    expect(host.querySelector('[contenteditable="true"]')!.className).not.toContain("border-border");
+  });
+
+  it("field marks the wrapper disabled and paints the sunken ground only then", async () => {
+    const host = await renderWith(text("hello"), { variant: "field", disabled: true });
+    const group = host.querySelector<HTMLElement>('[data-testid="rich-text-field"]')!;
+    expect(group.hasAttribute("data-disabled")).toBe(true);
+    expect(group.className).toContain("data-[disabled]:bg-surface-sunken");
+  });
+});

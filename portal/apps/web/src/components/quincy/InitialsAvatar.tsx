@@ -20,7 +20,7 @@ const HIGHLIGHTED_RING = "[[data-highlighted]_&]:ring-1 [[data-highlighted]_&]:r
  */
 export function InitialsAvatar({ name, className }: { name: string; className?: string }) {
   return (
-    <Avatar aria-hidden="true" className={cn(HIGHLIGHTED_RING, className)}>
+    <Avatar aria-hidden="true" data-testid="initials-avatar" className={cn(HIGHLIGHTED_RING, className)}>
       <AvatarFallback className={cn(FALLBACK)}>{initials(name)}</AvatarFallback>
     </Avatar>
   );

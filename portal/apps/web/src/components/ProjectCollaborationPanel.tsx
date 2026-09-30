@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
 import { useSession } from "../lib/auth";
 import { cn, formatUnreadCount } from "../lib/utils";
+import { nearestScrollContainer } from "../lib/scroll-container";
 import { ProjectDiscussionThread, type ProjectDiscussionAccessFailureResource } from "./ProjectDiscussionThread";
 import { ProjectActivityView } from "./ProjectActivityView";
 import { SubtaskChecklist } from "./SubtaskChecklist";
@@ -36,12 +37,20 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
   const [unreadCount, setUnreadCount] = useState(0);
   const activeView = view ?? localView;
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  // The read anchor is judged against the nearest scrolling ancestor (the Project sheet's body),
+  // which fires no window scroll. This callback MUST be stable: an inline one is called with `null`
+  // then the node on every render, and each call sets state in the presentation — a render loop.
+  const scrollRootRefLatest = useRef<RefCallback<HTMLElement> | null>(null);
+  const attachScrollRoot = useCallback((node: HTMLElement | null) => {
+    scrollRootRefLatest.current?.(node ? nearestScrollContainer(node) : null);
+  }, []);
 
   useEffect(() => { setLocalView("discussion"); }, [projectId]);
   const handleUnreadCount = useCallback((count: number) => { setUnreadCount(count); onUnreadCountChange?.(count); }, [onUnreadCountChange]);
 
-  const renderDiscussion = ({ content, project }: Parameters<NonNullable<React.ComponentProps<typeof ProjectDiscussionThread>["children"]>>[0]) => {
+  const renderDiscussion = ({ content, project, scrollRootRef }: Parameters<NonNullable<React.ComponentProps<typeof ProjectDiscussionThread>["children"]>>[0]) => {
     if (!presented) return null;
+    scrollRootRefLatest.current = scrollRootRef;
     const unreadLabel = formatUnreadCount(unreadCount);
     const headerMarkup = <div data-testid="project-collaboration-head" className="flex items-start justify-between gap-[var(--space-3)]"><div><Eyebrow>Collaboration</Eyebrow><h2 className="serif [font:var(--type-h3)]">{project?.street ?? "Project comments"}</h2></div></div>;
     const tabId = (tab: CollaborationView) => `project-collaboration-${projectId}-${tab}-tab`;
@@ -74,12 +83,12 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
       <button ref={(element) => { tabRefs.current[1] = element; }} className={cn(TAB_BASE, activeView === "activity" ? TAB_SELECTED : TAB_IDLE)} type="button" role="tab" aria-selected={activeView === "activity"} aria-controls={panelId("activity")} id={tabId("activity")} tabIndex={tabIndex("activity")} onClick={() => selectTab("activity")} onKeyDown={(event) => onTabKeyDown(event, "activity")}>Activity</button>
     </div>;
     const panels = <>
-      <div className="min-w-0" role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
+      <div className="min-w-0 max-w-[var(--container-md)]" role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
       <div className="min-w-0" role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={presented && activeView === "activity"} onAccessFailure={onAccessFailure} /></div>
     </>;
-    return <section className={cn("grid content-start gap-[var(--space-4)] p-[var(--space-5)] min-h-0 overflow-auto bg-[var(--paper-050)]",
+    return <section className={cn("grid content-start gap-[var(--space-4)] p-[var(--space-5)] bg-[var(--paper-050)]",
       embedded ? "max-[721px]:p-[var(--space-3)]" : "[border-style:solid] border-[length:var(--border-width-hair)] border-border shadow-[var(--shadow-sm)]")}
-      data-testid="project-collaboration-panel" aria-label="Project collaboration">{!embedded && headerMarkup}{tabs}{panels}</section>;
+      data-testid="project-collaboration-panel" aria-label="Project collaboration" ref={attachScrollRoot}>{!embedded && headerMarkup}{tabs}{panels}</section>;
   };
 
   return <ProjectDiscussionThread

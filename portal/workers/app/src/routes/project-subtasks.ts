@@ -15,7 +15,7 @@ import {
 } from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
 import { projectMentionableUsers } from "../lib/project-collaboration";
-import { hydrateProjectAssignees, hydrateSubtaskAssignees, multiAssigneeEnabled, type HydratedAssignee } from "../lib/subtask-assignees";
+import { externalAssigneeProjection, hydrateProjectAssignees, hydrateSubtaskAssignees, multiAssigneeEnabled, type HydratedAssignee } from "../lib/subtask-assignees";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
 import { publishOutboxDetached } from "../lib/server-timing";
@@ -86,12 +86,9 @@ function externalSubtaskQuery(db: ReturnType<typeof createDb>, projectId: string
     .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined, visibleProjectWhere({ id: userId, role: "external_editor", active: true })));
 }
 
-/**
- * The external Checklist DTO still carries one `assignee` in this PR: the first assignee, exactly what the mirrored column
- * held. The visibility rule (named only if on the team) and the assignee list arrive with the DTO change in #368's next PR.
- */
+/** The external Checklist DTO: `assignees` are the team members only, `otherAssigneeCount` the rest; `assignee` is the first named one. */
 function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number], assignees: HydratedAssignee[]) {
-  const assignee = assignees[0];
+  const { assignees: named, otherAssigneeCount } = externalAssigneeProjection(assignees);
   const storage: ChecklistScheduleStorage = {
     dueDate: row.dueDate, scheduleStartKind: row.scheduleStartKind, scheduleStartCivil: row.scheduleStartCivil, scheduleStartAt: row.scheduleStartAt,
     scheduleStartUtcOffsetMinutes: row.scheduleStartUtcOffsetMinutes, scheduleStartFold: row.scheduleStartFold, scheduleEndKind: row.scheduleEndKind,
@@ -100,7 +97,7 @@ function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>
   };
   return externalChecklistItemSchema.parse({
     id: row.id, title: row.title, done: Boolean(row.done), position: row.position,
-    assignee: assignee ? { id: assignee.id, name: assignee.name, roleLabel: ROLE_LABELS[assignee.role], isExternal: assignee.role === "external_editor", active: assignee.active } : null,
+    assignee: named[0] ?? null, assignees: named, otherAssigneeCount,
     assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeSubtaskSchedule(row.id, storage),
     createdBy: row.creatorId && row.creatorName && row.creatorRole ? { id: row.creatorId, name: row.creatorName, roleLabel: ROLE_LABELS[row.creatorRole], isExternal: row.creatorRole === "external_editor", active: Boolean(row.creatorActive) } : { id: "00000000-0000-4000-8000-000000000000", name: "", roleLabel: "", isExternal: false, active: false },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),

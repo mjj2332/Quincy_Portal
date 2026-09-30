@@ -1,4 +1,4 @@
-import { isStageKey, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
+import { isStageKey, subtaskAssigneeOptionsResponseSchema, type CalendarPerson, type ChecklistScheduleDto, type CollectionKind, type EditorFolderAttentionDto, type MonitoredRawFolder, type ProjectDeadlineSchedule, type ProjectMembershipDto, type ProjectMemberRole, type Role } from "@quincy/shared";
 import { QueryClient, QueryClientContext, useQuery, useQueryClient, type QueryFunctionContext, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, apiGet } from "./api";
@@ -17,7 +17,13 @@ export type ProjectDetail = {
 };
 export type ProjectSubtask = {
   id: string; title: string; done: boolean; position: number;
-  assignee: { id: string; name: string } | null; assignmentVersion: number;
+  /** The first assignee (an External Editor: the first named one). Kept until #368's PR8; read `assignees`. */
+  assignee: { id: string; name: string } | null;
+  /** Every assignee, in order. An External Editor gets team members only. */
+  assignees: CalendarPerson[];
+  /** External responses only: assignees the viewer is not allowed to see, counted but never named. */
+  otherAssigneeCount?: number;
+  assignmentVersion: number;
   dueDate: string | null; schedule: ChecklistScheduleDto; createdBy: string; createdAt: string; updatedAt: string;
 };
 type AssetsResponse = { assets: WorkspaceAsset[] };
@@ -33,6 +39,7 @@ export const projectDataKeys = {
   comments: (projectId: string) => ["project-data", projectId, "comments", "pages", { limit: 50 }] as const,
   activity: (projectId: string) => ["project-data", projectId, "activity", "pages", { limit: 30 }] as const,
   commentReadMarker: (projectId: string) => ["project-data", projectId, "comments", "read-marker"] as const,
+  subtaskAssigneeOptions: (projectId: string) => ["project-data", projectId, "subtask-assignee-options"] as const,
   collaborationSummary: (projectId: string) => ["project-data", projectId, "collaboration-summary"] as const,
 };
 
@@ -213,10 +220,8 @@ export function useProjectSubtasksQuery(projectId: string, enabled: boolean, spe
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const key = projectDataKeys.subtasks(projectId);
   const owned = specialOwnerOwnsKey || Boolean(runtime?.isOwned(key)) || isProjectQueryLedgerPending(queryClient, key);
-  useEffect(() => {
-    if (runtime?.principalTerminal) queryClient.removeQueries({ queryKey: key, exact: true });
-  }, [key, queryClient, runtime?.principalTerminal]);
-  return useQuery({
+  const terminal = Boolean(runtime?.principalTerminal);
+  const query = useQuery({
     ...projectSubtasksQueryOptions(projectId), enabled: enabled && !runtime?.isProjectRemoved(projectId) && !runtime?.principalTerminal, staleTime: 15_000,
     queryFn: async ({ signal, client }: QueryFunctionContext) => {
       const response = role === "external_editor"
@@ -228,6 +233,35 @@ export function useProjectSubtasksQuery(projectId: string, enabled: boolean, spe
     },
     refetchInterval: owned ? false : 30_000, refetchIntervalInBackground: false, refetchOnWindowFocus: owned ? false : true, refetchOnReconnect: owned ? false : true, retry: projectQueryRetry,
   }, queryClient) as UseQueryResult<ProjectSubtask[], Error>;
+  // A still-mounted observer rebuilds the removed entry on its next render, so removal repeats while the query's state keeps changing
+  // (it converges: a rebuilt, disabled query is `pending`/`idle` and stays so). Without the state deps a single removal could be undone.
+  useEffect(() => {
+    if (terminal) queryClient.removeQueries({ queryKey: key, exact: true });
+  }, [key, queryClient, terminal, query.status, query.fetchStatus, query.dataUpdatedAt]);
+  return query;
+}
+
+export type SubtaskAssigneeOptions = { candidates: Array<{ id: string; name: string }>; multiAssignee: boolean };
+
+/** Who can be assigned to a Subtask of this Project, and whether more than one may be (#368). Fetched only once `enabled`. */
+export function useSubtaskAssigneeOptions(projectId: string, role: Role, enabled: boolean): UseQueryResult<SubtaskAssigneeOptions, Error> {
+  const contextClient = useContext(QueryClientContext);
+  const [fallbackClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const queryClient = contextClient ?? fallbackClient;
+  const runtime = contextClient ? getProjectQueryRuntime(contextClient) : undefined;
+  const path = `/api/projects/${encodeURIComponent(projectId)}/subtask-assignee-options`;
+  return useQuery({
+    queryKey: projectDataKeys.subtaskAssigneeOptions(projectId), enabled: enabled && !runtime?.isProjectRemoved(projectId) && !runtime?.principalTerminal, staleTime: 60_000,
+    queryFn: async ({ signal, client }: QueryFunctionContext): Promise<SubtaskAssigneeOptions> => {
+      const generation = projectCollaborationDataGeneration(client, projectId);
+      const response: { candidates: Array<{ id: string; name: string }>; multiAssignee: boolean } = role === "external_editor"
+        ? await externalApiGet("subtask-assignee-options", path, signal) as { candidates: Array<{ id: string; name: string }>; multiAssignee: boolean }
+        : subtaskAssigneeOptionsResponseSchema.parse(await apiGet<unknown>(path, { signal }));
+      if (signal.aborted || projectCollaborationDataGeneration(client, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
+      return { candidates: response.candidates.map(({ id, name }) => ({ id, name })), multiAssignee: response.multiAssignee };
+    },
+    retry: projectQueryRetry,
+  }, queryClient) as UseQueryResult<SubtaskAssigneeOptions, Error>;
 }
 
 export function usePassiveRawAssetsQuery(projectId: string, enabled: boolean, role: Role = "admin"): UseQueryResult<WorkspaceAsset[], Error> {
@@ -426,6 +460,8 @@ export async function purgeProjectCollaborationData(queryClient: QueryClient, pr
   queryClient.removeQueries({ queryKey: projectDataKeys.subtasks(projectId), exact: true });
   await queryClient.cancelQueries({ queryKey: projectDataKeys.collaborationSummary(projectId), exact: true });
   queryClient.removeQueries({ queryKey: projectDataKeys.collaborationSummary(projectId), exact: true });
+  await queryClient.cancelQueries({ queryKey: projectDataKeys.subtaskAssigneeOptions(projectId), exact: true });
+  queryClient.removeQueries({ queryKey: projectDataKeys.subtaskAssigneeOptions(projectId), exact: true });
   await queryClient.cancelQueries({ queryKey: projectDataKeys.commentsRoot(projectId) });
   queryClient.removeQueries({ queryKey: projectDataKeys.commentsRoot(projectId) });
 }

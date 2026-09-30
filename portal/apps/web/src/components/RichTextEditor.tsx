@@ -15,6 +15,7 @@ import { Modal } from "./Modal";
 import { Button } from "./quincy/Button";
 import { ICON_BUTTON_BASE } from "./quincy/icon-button";
 import { FIELD_BOX } from "./reui/input";
+import { InputGroup, InputGroupAddon } from "./reui/input-group";
 import { NativeSelect } from "./quincy/NativeSelect";
 
 // TB8-07 §6.4 — the editor content box's utilities, appended (as a plain string —
@@ -32,6 +33,36 @@ const EDITOR_CONTENT_UTILITIES =
   "[&.is-editor-empty:first-child]:before:float-left " +
   "[&.is-editor-empty:first-child]:before:h-0 " +
   "[&.is-editor-empty:first-child]:before:pointer-events-none";
+
+// #376 `variant="field"` — the content surface inside an `InputGroup` that already draws the one
+// border, ground and focus ring, so the box utilities (`FIELD_BOX`'s border, radius, ground and
+// `focus-visible:border-ring`) are dropped and the tokens' unlayered `:focus-visible` outline is
+// suppressed (`!`, for the reason `reui/input-group.tsx` gives at `InputGroupInput`): the group
+// draws the field's single indicator via `X`.
+const EDITOR_CONTENT_FIELD_UTILITIES =
+  "min-h-[var(--space-8)] w-full min-w-0 px-[var(--space-3)] py-[var(--space-2)] text-base md:text-sm " +
+  "bg-transparent focus-visible:!outline-none " +
+  "[&.is-editor-empty:first-child]:before:content-[attr(data-placeholder)] " +
+  "[&.is-editor-empty:first-child]:before:text-foreground-secondary " +
+  "[&.is-editor-empty:first-child]:before:float-left " +
+  "[&.is-editor-empty:first-child]:before:h-0 " +
+  "[&.is-editor-empty:first-child]:before:pointer-events-none";
+
+// The group wrapper's call-site divergences from `InputGroup` (D5): `has-disabled:bg-card` because
+// the base's deep `:has(:disabled)` would paint the whole field sunken as soon as Undo/Redo are
+// disabled (always, on an empty editor); the sunken ground is re-keyed to the wrapper's own
+// `data-disabled` (important, so the higher-specificity `has-disabled` rule cannot beat it); and
+// the focus ring is extended to the contenteditable (`[contenteditable=true]` rather than the `.rich-text__editor-content` class, whose double underscore would need an escaped arbitrary variant the Tailwind scanner reads unreliably), which the base's `input:focus-visible` misses.
+const FIELD_GROUP =
+  "group h-auto flex-col items-stretch has-disabled:bg-card data-[disabled]:bg-surface-sunken! " +
+  "has-[[contenteditable=true]:focus-visible]:border-primary " +
+  "has-[[contenteditable=true]:focus-visible]:outline-[length:var(--border-width-bold)] " +
+  "has-[[contenteditable=true]:focus-visible]:outline-solid " +
+  "has-[[contenteditable=true]:focus-visible]:outline-ring " +
+  "has-[[contenteditable=true]:focus-visible]:outline-offset-2";
+
+/** #376 D7 — the character counter appears only from 90% of the limit (or when over it). */
+const COUNTER_THRESHOLD = 0.9;
 
 // §6.8 body-input state set, shared by the link dialog's URL field.
 const FIELD_LABEL = "grid gap-[var(--space-1)] [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground-secondary";
@@ -168,8 +199,9 @@ export function createRichTextEditorExtensions() {
   ];
 }
 
-function ToolbarGroup({ children }: { children: ReactNode }) {
-  return <div className="inline-flex flex-wrap gap-[var(--space-1)]">{children}</div>;
+function ToolbarGroup({ children, field }: { children: ReactNode; field?: boolean }) {
+  // #376 field variant on a phone: the toolbar is one horizontally scrolling row, so each group keeps its buttons on one line.
+  return <div className={cn("inline-flex flex-wrap gap-[var(--space-1)]", field && "max-[721px]:flex-nowrap max-[721px]:shrink-0")}>{children}</div>;
 }
 
 // `ICON_BUTTON_BASE` + `w-auto`, NOT `ICON_BUTTON`. TB8-07 §6.4's table said `ICON_BUTTON`,
@@ -186,8 +218,13 @@ const TOOLBAR_BUTTON =
   " w-auto px-[var(--space-2)] [font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)]" +
   " aria-pressed:bg-primary aria-pressed:!text-[var(--accent-on)]";
 
-function ToolbarButton({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled: boolean; onClick: () => void; children: ReactNode }) {
-  return <button type="button" className={TOOLBAR_BUTTON} aria-label={label} {...(active === undefined ? {} : { "aria-pressed": active })} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>{children}</button>;
+// #376 D6 — in the field variant a disabled toolbar button is transparent with muted text rather
+// than a filled chip. Through `cn()` so tailwind-merge drops the base's `disabled:bg-surface-sunken`
+// instead of leaving two conflicting utilities for source order to settle. Colour, never opacity.
+const FIELD_TOOLBAR_BUTTON = cn(TOOLBAR_BUTTON, "disabled:bg-transparent disabled:text-muted-foreground");
+
+function ToolbarButton({ label, active, disabled, onClick, children, field = false }: { label: string; active?: boolean; disabled: boolean; onClick: () => void; children: ReactNode; field?: boolean }) {
+  return <button type="button" className={field ? FIELD_TOOLBAR_BUTTON : TOOLBAR_BUTTON} aria-label={label} {...(active === undefined ? {} : { "aria-pressed": active })} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>{children}</button>;
 }
 
 function ToolbarDivider() { return <span className="w-px h-[var(--space-5)] bg-border shrink-0" aria-hidden="true" />; }
@@ -225,7 +262,7 @@ function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string
   return match ? match[1]! : null;
 }
 
-export function RichTextEditor({ value, onChange, limit, disabled = false, loadMentionables, placeholder = "Write a message…", id, onSubmit }: {
+export function RichTextEditor({ value, onChange, limit, disabled = false, loadMentionables, placeholder = "Write a message…", id, onSubmit, variant = "stacked" }: {
   value: RichTextDoc;
   onChange: (value: RichTextDoc) => void;
   limit: number;
@@ -234,7 +271,10 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   placeholder?: string;
   id?: string;
   onSubmit?: () => void;
+  /** `"stacked"` (default): a bordered toolbar above a bordered content box. `"field"`: one `InputGroup` field with the toolbar inside it. */
+  variant?: "stacked" | "field";
 }) {
+  const field = variant === "field";
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
   const onSubmitRef = useRef(onSubmit); onSubmitRef.current = onSubmit;
@@ -265,7 +305,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     content: toTiptap(value),
     editable: !disabled,
     editorProps: {
-      attributes: { class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES, "data-placeholder": placeholder, ...(id ? { id } : {}) },
+      attributes: { class: "rich-text__editor-content " + (field ? EDITOR_CONTENT_FIELD_UTILITIES : EDITOR_CONTENT_UTILITIES), "data-placeholder": placeholder, ...(id ? { id } : {}) },
       handleKeyDown: (view, event) => {
         if (menu.current?.handleKeyDown(event)) return true;
         if (shouldBlockListIndent(event, itemContainerDepth(view.state.selection.$from))) {
@@ -394,37 +434,37 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
     closeLinkDialog({ returnFocus: false });
   };
   const canUseHeading = !disabled && (editor.can().toggleHeading({ level: 2 }) || editor.can().toggleHeading({ level: 3 }));
-  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
-    <div className="flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card" role="toolbar" aria-label="Formatting">
-      <ToolbarGroup>
-        <ToolbarButton label="Bold" active={editor.isActive("bold")} disabled={disabled || !editor.can().toggleBold()} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></ToolbarButton>
-        <ToolbarButton label="Italic" active={editor.isActive("italic")} disabled={disabled || !editor.can().toggleItalic()} onClick={() => editor.chain().focus().toggleItalic().run()}><em>I</em></ToolbarButton>
-        <ToolbarButton label="Underline" active={editor.isActive("underline")} disabled={disabled || !editor.can().toggleUnderline()} onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></ToolbarButton>
-        <ToolbarButton label="Strikethrough" active={editor.isActive("strike")} disabled={disabled || !editor.can().toggleStrike()} onClick={() => editor.chain().focus().toggleStrike().run()}><s>S</s></ToolbarButton>
-      </ToolbarGroup>
-      <ToolbarDivider />
-      <ToolbarGroup>
-        <NativeSelect className="min-w-[112px] w-auto" aria-label="Heading" value={editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : ""} disabled={!canUseHeading} onChange={(event) => {
-          if (!canUseHeading) return;
-          const level = event.currentTarget.value;
-          if (level === "2" || level === "3") editor.chain().focus().toggleHeading({ level: Number(level) as 2 | 3 }).run();
-          else editor.chain().focus().setParagraph().run();
-        }}>
-          <option value="">Paragraph</option>
-          <option value="2">Section</option>
-          <option value="3">Subsection</option>
-        </NativeSelect>
-        <button ref={linkTrigger} type="button" className={TOOLBAR_BUTTON} aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
-        <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || atListNestingLimit || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
-        <ToolbarButton label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || atListNestingLimit || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
-        <ToolbarButton label="Checklist" active={editor.isActive("taskList")} disabled={disabled || atListNestingLimit || !editor.can().toggleTaskList()} onClick={() => editor.chain().focus().toggleTaskList().run()}>☑ List</ToolbarButton>
-      </ToolbarGroup>
-      <ToolbarDivider />
-      <ToolbarGroup>
-        <ToolbarButton label="Undo" disabled={disabled || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>Undo</ToolbarButton>
-        <ToolbarButton label="Redo" disabled={disabled || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}>Redo</ToolbarButton>
-      </ToolbarGroup>
-    </div>
+  const toolbarGroups = <>
+    <ToolbarGroup field={field}>
+      <ToolbarButton field={field} label="Bold" active={editor.isActive("bold")} disabled={disabled || !editor.can().toggleBold()} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></ToolbarButton>
+      <ToolbarButton field={field} label="Italic" active={editor.isActive("italic")} disabled={disabled || !editor.can().toggleItalic()} onClick={() => editor.chain().focus().toggleItalic().run()}><em>I</em></ToolbarButton>
+      <ToolbarButton field={field} label="Underline" active={editor.isActive("underline")} disabled={disabled || !editor.can().toggleUnderline()} onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></ToolbarButton>
+      <ToolbarButton field={field} label="Strikethrough" active={editor.isActive("strike")} disabled={disabled || !editor.can().toggleStrike()} onClick={() => editor.chain().focus().toggleStrike().run()}><s>S</s></ToolbarButton>
+    </ToolbarGroup>
+    <ToolbarDivider />
+    <ToolbarGroup field={field}>
+      <NativeSelect className="min-w-[112px] w-auto" aria-label="Heading" value={editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : ""} disabled={!canUseHeading} onChange={(event) => {
+        if (!canUseHeading) return;
+        const level = event.currentTarget.value;
+        if (level === "2" || level === "3") editor.chain().focus().toggleHeading({ level: Number(level) as 2 | 3 }).run();
+        else editor.chain().focus().setParagraph().run();
+      }}>
+        <option value="">Paragraph</option>
+        <option value="2">Section</option>
+        <option value="3">Subsection</option>
+      </NativeSelect>
+      <button ref={linkTrigger} type="button" className={field ? FIELD_TOOLBAR_BUTTON : TOOLBAR_BUTTON} aria-label="Link" aria-pressed={editor.isActive("link")} disabled={disabled || !editor.can().setLink({ href: "https://example.com" })} onMouseDown={(event) => event.preventDefault()} onClick={openLinkDialog}>Link</button>
+      <ToolbarButton field={field} label="Bullet list" active={editor.isActive("bulletList")} disabled={disabled || atListNestingLimit || !editor.can().toggleBulletList()} onClick={() => editor.chain().focus().toggleBulletList().run()}>• List</ToolbarButton>
+      <ToolbarButton field={field} label="Ordered list" active={editor.isActive("orderedList")} disabled={disabled || atListNestingLimit || !editor.can().toggleOrderedList()} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1. List</ToolbarButton>
+      <ToolbarButton field={field} label="Checklist" active={editor.isActive("taskList")} disabled={disabled || atListNestingLimit || !editor.can().toggleTaskList()} onClick={() => editor.chain().focus().toggleTaskList().run()}>☑ List</ToolbarButton>
+    </ToolbarGroup>
+    <ToolbarDivider />
+    <ToolbarGroup field={field}>
+      <ToolbarButton field={field} label="Undo" disabled={disabled || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>Undo</ToolbarButton>
+      <ToolbarButton field={field} label="Redo" disabled={disabled || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}>Redo</ToolbarButton>
+    </ToolbarGroup>
+  </>;
+  const modal = (
     <Modal
       open={linkOpen}
       onClose={() => closeLinkDialog()}
@@ -455,9 +495,19 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       </label>
       {linkError && <p id={linkErrorId} className={FIELD_ERROR} role="alert">{linkError}</p>}
     </Modal>
-    <EditorContent editor={editor} />
+  );
+  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
+    {field ? <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
+      <InputGroupAddon align="block-start" role="toolbar" aria-label="Formatting" className="flex-wrap max-[721px]:flex-nowrap max-[721px]:overflow-x-auto max-[721px]:[scrollbar-width:none] max-[721px]:[mask-image:linear-gradient(to_right,black_85%,transparent)] max-[721px]:items-center gap-[var(--space-2)] p-[var(--space-1)] cursor-default">{toolbarGroups}</InputGroupAddon>
+      {modal}
+      <EditorContent editor={editor} className="w-full min-w-0" />
+    </InputGroup> : <>
+      <div className="flex flex-wrap items-center gap-[var(--space-2)] p-[var(--space-1)] [border-style:solid] border-[length:var(--border-width-hair)] border-border bg-card" role="toolbar" aria-label="Formatting">{toolbarGroups}</div>
+      {modal}
+      <EditorContent editor={editor} />
+    </>}
     <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
-    <div className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>
+    {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
   </div>;
 }

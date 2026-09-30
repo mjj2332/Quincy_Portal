@@ -294,11 +294,17 @@ async function typeDraft(text: string) {
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
     await Promise.resolve(); await Promise.resolve();
   });
-  // ProseMirror reads the DOM edit on a MutationObserver tick: wait until the composer's own
-  // character counter has seen the text, i.e. until `onChange` (and so the draft store) has run.
-  const counter = `${text.length}/10000`;
-  for (let i = 0; i < 50 && !document.querySelector('[data-testid="discussion-composer"]')!.textContent!.includes(counter); i += 1) await settle();
-  expect(document.querySelector('[data-testid="discussion-composer"]')!.textContent).toContain(counter);
+  // ProseMirror reads the DOM edit on a MutationObserver tick: wait until the composer's Post
+  // button has seen the text (it is disabled while the comment is empty, #376), i.e. until
+  // `onChange` (and so the draft store) has run. The character counter used to be this signal,
+  // but #376 shows it only near the limit.
+  const postEnabled = () => {
+    const post = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="discussion-composer"] button'))
+      .find((button) => button.textContent?.trim() === "Post");
+    return post !== undefined && !post.disabled;
+  };
+  for (let i = 0; i < 50 && !postEnabled(); i += 1) await settle();
+  expect(postEnabled()).toBe(true);
 }
 async function openProject(host: HTMLElement, index: number) {
   await click(host.querySelectorAll('[data-testid="project-list-row"]')[index]!);

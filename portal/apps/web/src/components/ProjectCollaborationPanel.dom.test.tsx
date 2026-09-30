@@ -4,6 +4,8 @@ import { StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
+import { chooseCommentAction } from "../testing/comment-menu";
+import { formatAbsoluteTime, formatRelativeTime } from "../lib/date-format";
 import { EditProject } from "../screens/EditProject";
 import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
@@ -13,6 +15,24 @@ import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjec
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+
+// #376 — records every call the presentation's `scrollRootRef` receives, delegating to the real one,
+// so the "stable ref callback" test can see attach/detach churn. Pass-through everywhere else.
+const scrollRootCalls = vi.hoisted(() => ({ nodes: [] as Array<HTMLElement | null> }));
+vi.mock("../lib/project-comments", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/project-comments")>();
+  const React = await import("react");
+  return {
+    ...actual,
+    useProjectCommentPresentation: (options: Parameters<typeof actual.useProjectCommentPresentation>[0]) => {
+      const presentation = actual.useProjectCommentPresentation(options);
+      const latest = React.useRef(presentation.scrollRootRef);
+      latest.current = presentation.scrollRootRef;
+      const recorded = React.useCallback((node: HTMLElement | null) => { scrollRootCalls.nodes.push(node); latest.current(node); }, []);
+      return React.useMemo(() => ({ ...presentation, scrollRootRef: recorded }), [presentation, recorded]);
+    },
+  };
+});
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -210,7 +230,7 @@ describe("ProjectCollaborationPanel", () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Comment task");
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
     expect(host.querySelector("[data-testid=discussion-comments] input")).toBeNull();
     apiPostMock.mockClear(); apiPatchMock.mockClear();
@@ -228,7 +248,7 @@ describe("ProjectCollaborationPanel", () => {
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Comment subsection");
     await selectOption(host.querySelector<HTMLSelectElement>('[aria-label="Heading"]')!, "3");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
     expect(host.querySelector("[data-testid=discussion-comments] h3")?.textContent).toBe("Comment subsection");
@@ -244,10 +264,10 @@ describe("ProjectCollaborationPanel", () => {
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Marked comment".length);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Underline"]')!);
     await click(host.querySelector<HTMLButtonElement>('[aria-label="Strikethrough"]')!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!);
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
-    expect(host.querySelector("u")?.textContent).toBe("Marked comment"); expect(host.querySelector("s")?.textContent).toBe("Marked comment");
+    expect(host.querySelector("[data-testid=discussion-comments] u")?.textContent).toBe("Marked comment"); expect(host.querySelector("[data-testid=discussion-comments] s")?.textContent).toBe("Marked comment");
   });
 
   it("renders and preserves underline and strike through an author edit", async () => {
@@ -257,9 +277,9 @@ describe("ProjectCollaborationPanel", () => {
     ] }] } };
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([marked])));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    expect(host.querySelector("u")?.textContent).toBe("Under"); expect(host.querySelector("s")?.textContent).toBe(" strike");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
-    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    expect(host.querySelector("[data-testid=discussion-comments] u")?.textContent).toBe("Under"); expect(host.querySelector("[data-testid=discussion-comments] s")?.textContent).toBe(" strike");
+    await chooseCommentAction(host, "Myself", "Edit");
+    await appendToEditor(host.querySelector<HTMLElement>('article [contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${marked.id}`, { content: { type: "doc", content: [{ type: "paragraph", content: [
       { type: "text", text: "Under", marks: [{ type: "underline" }] },
@@ -346,26 +366,28 @@ describe("ProjectCollaborationPanel", () => {
   });
 
   it("keeps the panel mounted when checklist title, all popovers, and composer Escape consume the event", async () => {
-    const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
-    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
+    const subtask = { id: "task-1", title: "Call client", done: false, position: 1024, assignee: null, assignees: [], assignmentVersion: 0, dueDate: null, createdBy: "user", createdAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [subtask] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [], multiAssignee: false }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector('[data-testid="project-collaboration-panel"]')!;
     const title = host.querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!; await click(title);
     const input = host.querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; input.focus(); await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBe(panel); expect(host.querySelector('[data-testid="subtask-checklist-title"]')).not.toBeNull();
     const dispatchEscape = async (element: Element) => { const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => { element.dispatchEvent(event); await Promise.resolve(); }); await waitForClose(); expect(event.defaultPrevented).toBe(true); expect(host.querySelector('[data-testid="project-collaboration-panel"]')).toBe(panel); };
-    for (const label of ["Schedule for Call client", "Assignee for Call client", "Actions for Call client"] as const) {
+    for (const label of ["Schedule for Call client", "Assignees for Call client", "Actions for Call client"] as const) {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`); expect(trigger, host.innerHTML).not.toBeNull(); await click(trigger!);
-      const focused = label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger;
+      const focused = label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[placeholder="Search people…"]')! : trigger;
       await dispatchEscape(focused!);
-      expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Schedule") ? "schedule" : label.startsWith("Assignee") ? "assignee" : "actions"}`)).toBeNull();
+      if (label.startsWith("Assignee")) { expect(document.querySelector('[role="listbox"]')).toBeNull(); expect(trigger!.getAttribute("aria-expanded")).toBe("false"); }
+      else expect(document.getElementById(`subtask-popover-task-1-${label.startsWith("Schedule") ? "schedule" : "actions"}`)).toBeNull();
     }
     await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
     const composer = host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!;
-    for (const label of ["Schedule for new subtask", "Assignee for new subtask"] as const) {
+    for (const label of ["Schedule for new subtask", "Assignees for new subtask"] as const) {
       const trigger = host.querySelector<HTMLButtonElement>(`[aria-label^="${label}"]`)!; await click(trigger);
-      await dispatchEscape(label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[type="search"]')! : trigger);
-      expect(document.getElementById(`subtask-popover-composer-${label.startsWith("Schedule") ? "schedule" : "assignee"}`)).toBeNull();
+      await dispatchEscape(label.startsWith("Assignee") ? document.querySelector<HTMLInputElement>('input[placeholder="Search people…"]')! : trigger);
+      if (label.startsWith("Assignee")) { expect(document.querySelector('[role="listbox"]')).toBeNull(); expect(trigger.getAttribute("aria-expanded")).toBe("false"); }
+      else expect(document.getElementById("subtask-popover-composer-schedule")).toBeNull();
       expect(host.querySelector(`#subtask-composer-${projectId}`)).toBe(composer);
     }
     await dispatchEscape(composer); expect(host.querySelector(`#subtask-composer-${projectId}`)).toBeNull();
@@ -383,6 +405,8 @@ describe("ProjectCollaborationPanel", () => {
     apiGetMock.mockImplementation((path: string) => path.includes("/comments?") ? Promise.reject(new ApiError("Comments are unavailable.", 400)) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve({ subtasks: [] }));
     const failing = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} />);
+    // The rejection now surfaces a timer tick later: the retired mentionable-users request no longer keeps the render's act open.
+    for (let attempt = 0; attempt < 60 && !failing.querySelector('[role="alert"]'); attempt += 1) await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 5)); });
     expect(failing.querySelector('[role="alert"]')?.textContent).toContain("Comments are unavailable.");
   });
 
@@ -395,13 +419,13 @@ describe("ProjectCollaborationPanel", () => {
       : Promise.resolve(comments(serverHasPosted ? [posted, ownComment, otherComment] : undefined)));
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} />);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Edit")).toHaveLength(1);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Delete")).toHaveLength(1);
+    expect(host.querySelectorAll('[aria-label="Actions for comment by Myself"]')).toHaveLength(1);
+    expect(host.querySelector('[aria-label="Actions for comment by Other person"]')).toBeNull();
     const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(composer, "Posted comment");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: doc("Posted comment") }); expect(host.textContent).toContain("Posted comment");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
+    await chooseCommentAction(host, "Myself", "Edit");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
     expect(apiPatchMock).not.toHaveBeenCalled();
     await typeIntoEditor(composer, "@Nor"); await keydown(composer, "Enter");
@@ -415,19 +439,18 @@ describe("ProjectCollaborationPanel", () => {
     const runtime = getProjectQueryRuntime(client)!;
     const publish = vi.spyOn(runtime, "publish");
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "New Activity comment");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post comment")!); await flush();
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!); await flush();
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
 
     publish.mockClear();
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
-    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, " edited");
+    await chooseCommentAction(host, "Myself", "Edit");
+    await appendToEditor(host.querySelector<HTMLElement>('article [contenteditable="true"]')!, " edited");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush();
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "activity" }]))).toBe(true);
 
     publish.mockClear();
-    const deleteButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Delete");
-    expect(deleteButton).toBeDefined();
-    await click(deleteButton!); await flush();
+    expect(host.querySelector('[aria-label="Actions for comment by Myself"]')).not.toBeNull();
+    await chooseCommentAction(host, "Myself", "Delete"); await flush();
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
   });
 
@@ -456,8 +479,8 @@ describe("ProjectCollaborationPanel", () => {
     apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([{ ...ownComment, content }])));
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!);
-    await appendToEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await chooseCommentAction(host, "Myself", "Edit");
+    await appendToEditor(host.querySelector<HTMLElement>('article [contenteditable="true"]')!, "!");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: {
       type: "doc", content: [{ type: "paragraph", content: [
@@ -486,12 +509,20 @@ describe("ProjectCollaborationPanel", () => {
     const loadOlder = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments")!;
     const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
     expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Other comment", "My comment"]);
-    expect(list.nextElementSibling).toBe(loadOlder); expect(loadOlder.nextElementSibling).toBe(composer);
+    const sentinel = host.querySelector<HTMLElement>("[data-testid=discussion-read-anchor]")!;
+    // #376 D1/D2: composer, then the 1px read anchor, then the newest comment; "Load older comments" is last.
+    expect(composer.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(composer.nextElementSibling).toBe(sentinel);
+    expect(sentinel.nextElementSibling).toBe(list);
+    expect(sentinel.compareDocumentPosition(list.querySelector("article")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(list.nextElementSibling).toBe(loadOlder);
+    expect(loadOlder.nextElementSibling).toBeNull();
 
     const editor = composer.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Posted comment");
     await click(composer.querySelector<HTMLButtonElement>('button[type="submit"]')!); await flush();
     expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Posted comment", "Other comment", "My comment"]);
+    expect(sentinel.nextElementSibling).toBe(list); expect(list.firstElementChild?.querySelector("p")?.textContent).toBe("Posted comment");
 
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load older comments")!); await flush(); await waitForTimer();
     expect([...list.querySelectorAll("article")].map((article) => article.querySelector("p")?.textContent)).toEqual(["Posted comment", "Other comment", "My comment", "Oldest comment"]);
@@ -911,7 +942,7 @@ describe("ProjectCollaborationPanel", () => {
   });
 
   it("renders one static in-flow panel with the head, Discussion/Activity tabs and Subtask checklist, and no overlay controls", async () => {
-    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("mentionable-users") ? Promise.resolve({ users: [] }) : Promise.resolve(comments()));
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [], multiAssignee: false }) : Promise.resolve(comments()));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
     expect(panel.firstElementChild).toBe(panel.querySelector('[data-testid="project-collaboration-head"]'));
@@ -975,3 +1006,176 @@ describe("ProjectCollaborationPanel", () => {
     expect(editor.querySelector('[data-testid="project-collaboration-panel"]')).toBeNull(); expect(editor.querySelector('[data-testid="project-team-control"]')).toBeNull(); expect(editor.querySelector('header + [data-testid="edit-project-form"]')).not.toBeNull();
   });
 });
+
+describe("Discussion restyle (#376)", () => {
+  async function withFallbackReadMarker(run: () => Promise<void>) {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    Reflect.deleteProperty(globals, "IntersectionObserver");
+    const previousFocused = focusManager.isFocused(); focusManager.setFocused(true);
+    const previousVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    try { await run(); } finally {
+      if (previousVisibility) Object.defineProperty(document, "visibilityState", previousVisibility); else Reflect.deleteProperty(document, "visibilityState");
+      focusManager.setFocused(previousFocused);
+      if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver"); else globals.IntersectionObserver = previousObserver;
+    }
+  }
+  const rect = (top: number, bottom: number) => ({ left: 0, right: 800, top, bottom, width: 800, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+
+  it("advances the read marker against the nearest scrolling ancestor, not just the window", async () => {
+    await withFallbackReadMarker(async () => {
+      apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(page(["head"])));
+      apiPatchMock.mockResolvedValue({ ...readState(), marker: { throughCommentId: "head", throughCreatedAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:01.000Z" }, latest: { commentId: "head", createdAt: "2026-08-25T00:00:00.000Z" } });
+      // Inside the window (768px tall) but above the scroller's own top edge: hidden to the reader.
+      let anchorRect = rect(40, 41);
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        if (this.dataset.testid === "test-scroller") return rect(100, 500);
+        if (this.dataset.testid === "discussion-read-anchor") return anchorRect;
+        return rect(0, 0);
+      });
+      const host = mount();
+      await render(<div data-testid="test-scroller" style={{ overflowY: "auto" }}><ProjectCollaborationPanel projectId={projectId} /></div>);
+      await flush(20); await waitForTimer();
+      const scroller = host.querySelector<HTMLElement>('[data-testid="test-scroller"]')!;
+      scroller.dispatchEvent(new Event("scroll")); await flush(20); await waitForTimer();
+      expect(apiPatchMock).not.toHaveBeenCalled();
+
+      anchorRect = rect(200, 201);
+      scroller.dispatchEvent(new Event("scroll")); await flush(20); await waitForTimer(); await flush(20);
+      expect(apiPatchMock).toHaveBeenCalledTimes(1);
+      expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comment-read-marker`, { throughCommentId: "head" });
+    });
+  });
+
+  it("hands the presentation one stable scroll root and never detaches it between renders", async () => {
+    scrollRootCalls.nodes.length = 0;
+    const host = mount();
+    for (const showUnreadBadge of [true, false, true, false, true]) {
+      await render(<div data-testid="test-scroller" style={{ overflowY: "auto" }}><ProjectCollaborationPanel projectId={projectId} showUnreadBadge={showUnreadBadge} /></div>);
+    }
+    await flush(10);
+    const scroller = host.querySelector<HTMLElement>('[data-testid="test-scroller"]')!;
+    expect(scrollRootCalls.nodes.length).toBeGreaterThanOrEqual(1);
+    // Every call is the same scroller: no `null` detach / re-attach churn (which would loop renders).
+    expect(scrollRootCalls.nodes.every((node) => node === scroller)).toBe(true);
+  });
+
+  it("does not make the panel section itself a scroll container", async () => {
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} embedded />);
+    const panel = host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+    expect(panel.className).not.toContain("overflow-auto");
+    expect(panel.className).not.toContain("min-h-0");
+  });
+
+  it("exposes the author's own comments a \"⋯\" menu with Edit and Delete, and edits in place with focus returned", async () => {
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const trigger = host.querySelector<HTMLElement>('[aria-label="Actions for comment by Myself"]')!;
+    expect(trigger).not.toBeNull();
+    expect(host.querySelector('[aria-label="Actions for comment by Other person"]')).toBeNull();
+    await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent)).toEqual(["Edit", "Delete"]);
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
+    await waitForClose();
+
+    await chooseCommentAction(host, "Myself", "Edit");
+    const article = host.querySelector<HTMLElement>("article")!;
+    expect(article.querySelector('[data-testid="rich-text-field"]')).not.toBeNull();
+    await appendToEditor(article.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...article.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: doc("My comment!") });
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Actions for comment by Myself"]'));
+  });
+
+  it("returns focus to the \"⋯\" trigger after Cancel and after a cancelled delete", async () => {
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    await chooseCommentAction(host, "Myself", "Edit");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!); await flush();
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Actions for comment by Myself"]'));
+
+    (host.ownerDocument.activeElement as HTMLElement).blur();
+    confirmMock.mockResolvedValueOnce(false);
+    await chooseCommentAction(host, "Myself", "Delete"); await flush();
+    expect(apiDeleteMock).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Actions for comment by Myself"]'));
+  });
+
+  it("deletes through the menu after a confirm", async () => {
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    await chooseCommentAction(host, "Myself", "Delete"); await flush();
+    expect(confirmMock).toHaveBeenCalled();
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`);
+  });
+
+  it("lays out a comment as avatar, name, You / External pills, relative time with the absolute date, and an inline Edited", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-08-17T01:00:00.000Z") });
+    try {
+      const external = { id: "comment-ext", author: { id: "user-ext", name: "Ext Person", isExternal: true }, body: "Ext", content: doc("Ext"), createdAt: "2026-08-16T05:00:00.000Z", editedAt: "2026-08-16T06:00:00.000Z" };
+      apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([ownComment, otherComment, external as unknown as typeof ownComment])));
+      const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+      const articles = [...host.querySelectorAll<HTMLElement>("[data-testid=discussion-comments] article")];
+      expect(articles).toHaveLength(3);
+      const [own, other, ext] = articles as [HTMLElement, HTMLElement, HTMLElement];
+      const now = Date.now();
+      for (const article of articles) {
+        expect(article.querySelector('[data-testid="initials-avatar"]')?.getAttribute("aria-hidden")).toBe("true");
+        expect(article.className).not.toMatch(/border-l-/);
+        expect(article.className).not.toContain("border-left");
+      }
+      expect(own.textContent).toContain("You");
+      expect(other.textContent).not.toContain("You");
+      expect(ext.textContent).not.toContain("You");
+      expect(ext.textContent).toContain("External editor");
+      expect(own.textContent).not.toContain("External editor");
+      const visibleTime = (article: HTMLElement) => article.querySelector("time")!.textContent;
+      expect(visibleTime(own)).toBe(formatRelativeTime(ownComment.createdAt, now));
+      expect(visibleTime(own)).toBe("1h ago");
+      expect(visibleTime(ext)).toBe(formatRelativeTime(external.createdAt, now));
+      expect(own.querySelector("time")!.getAttribute("datetime")).toBe(ownComment.createdAt);
+      expect(own.querySelector('[data-testid="collaboration-timestamp-absolute"]')!.textContent).toContain(formatAbsoluteTime(ownComment.createdAt));
+      expect(article_text(own)).not.toMatch(/:\d\d:\d\d/);
+      // "Edited" sits on the header line, not on a line of its own.
+      expect(ext.querySelector("header")!.textContent).toContain("Edited");
+      expect(own.querySelector("header")!.textContent).not.toContain("Edited");
+      expect(ext.querySelector("small")).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("renders an empty thread as the composer plus one compact quiet line, with the read anchor present", async () => {
+    apiGetMock.mockImplementation((path) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments([])));
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const composer = host.querySelector("[data-testid=discussion-composer]")!;
+    const sentinel = host.querySelector("[data-testid=discussion-read-anchor]")!;
+    expect(composer.nextElementSibling).toBe(sentinel);
+    const line = sentinel.nextElementSibling?.querySelector("strong") ?? sentinel.nextElementSibling;
+    expect(sentinel.nextElementSibling?.textContent).toBe("No comments yet.");
+    expect((line as HTMLElement).className).not.toContain("--type-h3");
+    expect(host.querySelector("[data-testid=discussion-comments]")!.children).toHaveLength(1);
+  });
+
+  it("keeps Post disabled for an empty or over-limit comment and sends nothing when a disabled Post is clicked", async () => {
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
+    const post = () => composer.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    expect(post().textContent).toBe("Post");
+    expect(post().disabled).toBe(true);
+    await click(post());
+    expect(apiPostMock).not.toHaveBeenCalled();
+    const editor = composer.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "A real comment");
+    expect(post().disabled).toBe(false);
+    await typeIntoEditor(editor, "x".repeat(10_001));
+    expect(post().disabled).toBe(true);
+    await click(post());
+    expect(apiPostMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the composer as an always-open field with a hint and no counter until near the limit", async () => {
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
+    expect(composer.querySelector('[data-testid="rich-text-field"]')).not.toBeNull();
+    expect(composer.textContent).toContain("Use @ to mention project participants");
+    expect(composer.querySelector('[data-testid="rich-text-counter"]')).toBeNull();
+  });
+});
+function article_text(article: HTMLElement) { return article.textContent ?? ""; }

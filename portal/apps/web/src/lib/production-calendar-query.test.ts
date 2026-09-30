@@ -142,6 +142,8 @@ describe("checklist mutation response domains", () => {
       done: false,
       position: 1024,
       assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
+      assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }],
+      otherAssigneeCount: 0,
       assignmentVersion: 2,
       dueDate: "2026-08-20",
       schedule,

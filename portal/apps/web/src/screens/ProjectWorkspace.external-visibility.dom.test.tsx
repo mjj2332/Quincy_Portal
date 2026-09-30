@@ -430,6 +430,12 @@ describe("external-editor visibility inventory", () => {
 // Re-frozen again, deliberately, for #367: `ProjectHeader` gained a "Copy link" button on every tab, for
 // both roles. Every `testids` map gains `"copy-project-link": 1` and every `controls` list gains
 // `"Copy link"`. Nothing else in either literal moved.
+//
+// Re-frozen again, deliberately, for #376: the Discussion composer became an always-open `InputGroup`
+// field. Only the "Collaboration" entry moves, identically for both roles: `controls` swaps
+// `"Post comment"` for `"Post"` (the primary button is now just "Post"), and `roles` gains `"group"`
+// (`InputGroup` is `role="group"`, holding the composer's toolbar and editor), and `testids` gains
+// `"rich-text-field": 1` (that group's test hook). Nothing else moved.
 // ---------------------------------------------------------------------------
 
 const FROZEN_EXTERNAL_EDITOR = {
@@ -633,11 +639,13 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
+      "rich-text-field": 1,
       "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
       "combobox",
+      "group",
       "status",
       "tab",
       "tablist",
@@ -663,7 +671,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Link",
       "Move project Stage",
       "Ordered list",
-      "Post comment",
+      "Post",
       "RAW2",
       "Redo",
       "Strikethrough",
@@ -913,11 +921,13 @@ const FROZEN_ADMIN = {
       "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
+      "rich-text-field": 1,
       "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
       "combobox",
+      "group",
       "status",
       "tab",
       "tablist",
@@ -946,7 +956,7 @@ const FROZEN_ADMIN = {
       "Link",
       "Move project Stage",
       "Ordered list",
-      "Post comment",
+      "Post",
       "RAW2",
       "Redo",
       "Strikethrough",
