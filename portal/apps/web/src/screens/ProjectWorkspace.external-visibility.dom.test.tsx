@@ -426,11 +426,16 @@ describe("external-editor visibility inventory", () => {
 // roles: external_editor shows a strict subset of admin's (no `Edit details`, `Add team member`, Dropbox
 // trigger), which is what the strictly-less-than test above asserts across all six tabs. Nothing else in
 // either literal moved. Re-captured with DUMP_VISIBILITY_INVENTORY, not hand-merged.
+//
+// Re-frozen again, deliberately, for #367: `ProjectHeader` gained a "Copy link" button on every tab, for
+// both roles. Every `testids` map gains `"copy-project-link": 1` and every `controls` list gains
+// `"Copy link"`. Nothing else in either literal moved.
 // ---------------------------------------------------------------------------
 
 const FROZEN_EXTERNAL_EDITOR = {
   "RAW": {
     "testids": {
+      "copy-project-link": 1,
       "photo-grid-filter": 5,
       "photo-grid-tile": 2,
       "project-deadline-trigger": 1,
@@ -452,6 +457,7 @@ const FROZEN_EXTERNAL_EDITOR = {
     "controls": [
       "All2",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Edited1",
@@ -472,6 +478,7 @@ const FROZEN_EXTERNAL_EDITOR = {
   },
   "Edited": {
     "testids": {
+      "copy-project-link": 1,
       "photo-grid-filter": 4,
       "photo-grid-tile": 1,
       "project-deadline-trigger": 1,
@@ -495,6 +502,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Approve",
       "Choose files",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Edited1",
@@ -515,6 +523,7 @@ const FROZEN_EXTERNAL_EDITOR = {
   "Video": {
     "testids": {
       "collection-link-add": 1,
+      "copy-project-link": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
@@ -532,6 +541,7 @@ const FROZEN_EXTERNAL_EDITOR = {
     "controls": [
       "Add link",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Edited1",
@@ -547,6 +557,7 @@ const FROZEN_EXTERNAL_EDITOR = {
   },
   "Floorplan": {
     "testids": {
+      "copy-project-link": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
@@ -563,6 +574,7 @@ const FROZEN_EXTERNAL_EDITOR = {
     ],
     "controls": [
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Edited1",
@@ -578,6 +590,7 @@ const FROZEN_EXTERNAL_EDITOR = {
   },
   "Copy": {
     "testids": {
+      "copy-project-link": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
@@ -594,6 +607,7 @@ const FROZEN_EXTERNAL_EDITOR = {
     ],
     "controls": [
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Edited1",
@@ -609,6 +623,7 @@ const FROZEN_EXTERNAL_EDITOR = {
   },
   "Collaboration": {
     "testids": {
+      "copy-project-link": 1,
       "discussion-comments": 1,
       "discussion-composer": 1,
       "discussion-read-anchor": 1,
@@ -637,6 +652,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Checklist",
       "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Discussion",
@@ -665,6 +681,7 @@ const FROZEN_ADMIN = {
   "RAW": {
     "testids": {
       "autohdr-handoff": 1,
+      "copy-project-link": 1,
       "photo-grid-filter": 6,
       "photo-grid-tile": 2,
       "project-deadline-trigger": 1,
@@ -690,6 +707,7 @@ const FROZEN_ADMIN = {
       "Approve",
       "Choose files",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Delete raw-1.jpg",
@@ -721,6 +739,7 @@ const FROZEN_ADMIN = {
   },
   "Edited": {
     "testids": {
+      "copy-project-link": 1,
       "photo-grid-filter": 4,
       "photo-grid-tile": 1,
       "project-deadline-trigger": 1,
@@ -746,6 +765,7 @@ const FROZEN_ADMIN = {
       "Approve",
       "Choose files",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Delete edited-1.jpg",
@@ -770,6 +790,7 @@ const FROZEN_ADMIN = {
   "Video": {
     "testids": {
       "collection-link-add": 1,
+      "copy-project-link": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
@@ -789,6 +810,7 @@ const FROZEN_ADMIN = {
       "Add link",
       "Add team member",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Dropbox: Not monitored",
@@ -806,6 +828,7 @@ const FROZEN_ADMIN = {
   },
   "Floorplan": {
     "testids": {
+      "copy-project-link": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
@@ -824,6 +847,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "Add team member",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Dropbox: Not monitored",
@@ -841,6 +865,7 @@ const FROZEN_ADMIN = {
   },
   "Copy": {
     "testids": {
+      "copy-project-link": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
@@ -859,6 +884,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "Add team member",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Dropbox: Not monitored",
@@ -876,6 +902,7 @@ const FROZEN_ADMIN = {
   },
   "Collaboration": {
     "testids": {
+      "copy-project-link": 1,
       "discussion-comments": 1,
       "discussion-composer": 1,
       "discussion-read-anchor": 1,
@@ -906,6 +933,7 @@ const FROZEN_ADMIN = {
       "Checklist",
       "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Collaboration",
+      "Copy link",
       "Copy0",
       "Deadline: Set deadline",
       "Discussion",

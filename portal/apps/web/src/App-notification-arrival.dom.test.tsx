@@ -135,6 +135,8 @@ const workspaceTabs = () => [...document.querySelectorAll<HTMLButtonElement>('[d
 const workspaceTab = (name: string) => workspaceTabs().find((item) => item.textContent?.trim().startsWith(name));
 const selectedTabNames = () => workspaceTabs().filter((item) => item.getAttribute("aria-selected") === "true").map((item) => item.textContent?.trim().replace(/[0-9—]+$/, ""));
 const currentLocation = () => `${window.location.pathname}${window.location.search}`;
+// #367: the URL keeps naming the shown tab after an arrival (the bare-URL strip is retired).
+const tabLocation = (tab: string) => `/projects/${PROJECT_ID}${tab === "Collaboration" ? "?collaboration=open" : `?tab=${tab.toLowerCase()}`}`;
 
 async function openProject() {
   window.history.replaceState(null, "", `/projects/${PROJECT_ID}`);
@@ -169,15 +171,15 @@ describe("#337: a Notification click opens the Workspace tab it is about", () =>
     await flushUntil(() => selectedTabNames()[0] === start, `the ${start} tab selected before the click`);
 
     await clickNotification();
-    await flushUntil(() => selectedTabNames()[0] === expected && currentLocation() === `/projects/${PROJECT_ID}`, `${type} → ${expected}, acknowledged`);
+    await flushUntil(() => selectedTabNames()[0] === expected && currentLocation() === tabLocation(expected), `${type} → ${expected}, acknowledged`);
 
     expect(selectedTabNames()).toEqual([expected]);
     // Focus-on-arrival is proven at the seam that owns it (ProjectWorkspace.dom.test.tsx, "#337
     // Workspace-tab arrival"). Through the bell it is currently taken back by the popover's default
     // `finalFocus` (return to the trigger) as the panel closes -- pre-existing, and parked for a
     // decision: see the #337 build notes.
-    // Consumed once: the one-shot intent is gone from the URL...
-    expect(currentLocation()).toBe(`/projects/${PROJECT_ID}`);
+    // Consumed once: the URL keeps naming the tab it landed on (#367)...
+    expect(currentLocation()).toBe(tabLocation(expected));
     // ...and later in-Project navigation is not overridden by it.
     const next = expected === "RAW" ? "Collaboration" : "RAW";
     await click(workspaceTab(next)!);
@@ -194,7 +196,7 @@ describe("#337: a Notification click opens the Workspace tab it is about", () =>
     await flushUntil(() => selectedTabNames()[0] === "RAW", "the RAW tab selected before the click");
 
     await clickNotification();
-    await flushUntil(() => selectedTabNames()[0] === "Collaboration" && currentLocation() === `/projects/${PROJECT_ID}`, "edited_landed → Collaboration fallback");
+    await flushUntil(() => selectedTabNames()[0] === "Collaboration" && currentLocation() === tabLocation("Collaboration"), "edited_landed → Collaboration fallback");
 
     expect(selectedTabNames()).toEqual(["Collaboration"]);
   });

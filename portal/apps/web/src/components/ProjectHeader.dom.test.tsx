@@ -563,3 +563,26 @@ describe("Project header tab strip", () => {
     expect(() => render(<ProjectHeader {...props("collaboration")} />)).not.toThrow();
   });
 });
+
+describe("ProjectHeader Copy link (#367)", () => {
+  beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); roleState.role = "editor"; roleState.inactive = false; });
+  afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true }); });
+
+  const headerProps = (activeTab: WorkspaceTab) => ({
+    project: project(), activeTab, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
+    canEdit: false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
+  });
+
+  it.each([
+    ["raw", "?tab=raw"],
+    ["collaboration", "?collaboration=open"],
+  ] as const)("copies the link for the shown %s tab", async (tab, query) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<ProjectHeader {...headerProps(tab)} />);
+    const copy = host.querySelector<HTMLButtonElement>('[data-testid="copy-project-link"]')!;
+    expect(copy).not.toBeNull();
+    await act(async () => { copy.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })); await Promise.resolve(); });
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/projects/project-1${query}`);
+  });
+});

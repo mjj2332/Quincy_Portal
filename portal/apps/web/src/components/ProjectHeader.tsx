@@ -3,6 +3,7 @@ import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { StageDot, StatusBadge } from "./atoms";
 import { InternalLink } from "./InternalLink";
+import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
 import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
 import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
@@ -225,6 +226,7 @@ export function ProjectHeader({
         <span><span className={HEADER_KV_KEY}>Shoot</span> <span className={HEADER_KV_VALUE}>{date(project.shootDate)}</span></span>
         <span><span className={HEADER_KV_KEY}>Client</span> <span className={HEADER_KV_VALUE}>{project.agencyName || project.agentName ? `${project.agencyName ?? "—"} · ${project.agentName ?? "—"}` : "—"}</span></span>
         {canEdit && <InternalLink className={EDIT_DETAILS_LINK} to={`/projects/${encodeURIComponent(project.id)}/edit`}>Edit details</InternalLink>}
+        <CopyProjectLinkButton projectId={project.id} tab={activeTab} />
       </div>
       {project.productionNotes && <p className={cn("project-header__notes", "m-0 [white-space:pre-wrap]",
                     "[font:var(--weight-regular)_var(--text-sm)/var(--leading-relaxed)_var(--font-body-serif)]",

@@ -70,8 +70,9 @@ export function ShellIdentityProvider({ user, impersonating, children }: { user:
   return <ShellIdentityContext value={value}>{children}</ShellIdentityContext>;
 }
 
-/** #337: a Project route's one-shot Workspace-tab arrival (`?tab=<kind>` / `?collaboration=open`),
- * numbered so a repeat arrival at an identical URL is still a fresh signal. */
+/** #337/#367: a Project route's Workspace-tab arrival: a push, popstate or external replace that
+ * names a tab (`?tab=<kind>` / `?collaboration=open`), numbered so a repeat arrival at an identical
+ * URL is still a fresh signal. The Workspace's own tab `replace` is not an arrival. */
 type ArrivalIntent = { projectId: string; tab: WorkspaceTab; signal: number; location: string };
 
 /** Everything the root route computes once and the leaves below it consume. */
@@ -85,6 +86,7 @@ type ShellState = {
   dashboardCalendar: DashboardCalendarState | null;
   arrivalIntent: ArrivalIntent | null;
   acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
+  syncProjectTab: (projectId: string, tab: WorkspaceTab) => void;
 };
 
 const ShellStateContext = createContext<ShellState | null>(null);
@@ -194,7 +196,9 @@ function ShellRoute() {
   const route = useMemo(() => parseStaffLocation(completeLocation), [completeLocation]);
   const [notice, setNotice] = useState<Notice>(null);
   const restored = useRef(false);
-  const lastObservedIntentLocationRef = useRef<string | null>(null);
+  const navigationEpoch = useSyncExternalStore(history.subscribe, history.getNavigationEpoch, () => 0);
+  const lastObservedRef = useRef<{ location: string; epoch: number } | null>(null);
+  const selfWriteRef = useRef<string | null>(null);
   const arrivalSignalRef = useRef(0);
   const [arrivalIntent, setArrivalIntent] = useState<ArrivalIntent | null>(null);
   const { can } = useCapabilities();
@@ -222,16 +226,21 @@ function ShellRoute() {
 
   useEffect(() => {
     if (route.kind === "project" && route.arrivalTab !== undefined) {
-      if (lastObservedIntentLocationRef.current !== completeLocation) {
-        lastObservedIntentLocationRef.current = completeLocation;
-        const signal = ++arrivalSignalRef.current;
-        setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal, location: completeLocation });
-      }
+      const last = lastObservedRef.current;
+      const changed = !last || last.location !== completeLocation || last.epoch !== navigationEpoch;
+      if (!changed) return;
+      const selfWrite = selfWriteRef.current === completeLocation && last?.epoch === navigationEpoch;
+      selfWriteRef.current = null;
+      lastObservedRef.current = { location: completeLocation, epoch: navigationEpoch };
+      if (selfWrite) { setArrivalIntent(null); return; } // the Workspace's own tab write is not an arrival
+      const signal = ++arrivalSignalRef.current;
+      setArrivalIntent({ projectId: route.projectId, tab: route.arrivalTab, signal, location: completeLocation });
       return;
     }
-    lastObservedIntentLocationRef.current = null;
+    lastObservedRef.current = null;
+    selfWriteRef.current = null;
     setArrivalIntent(null);
-  }, [completeLocation, route]);
+  }, [completeLocation, navigationEpoch, route]);
 
   // The intent observed for the CURRENT location only. Between a location change and the effect above
   // observing it, the stored intent still describes the previous URL; it is neither handed to the
@@ -239,8 +248,22 @@ function ShellRoute() {
   const currentArrivalIntent = route.kind === "project" && route.arrivalTab !== undefined && arrivalIntent?.location === completeLocation && arrivalIntent.projectId === route.projectId && arrivalIntent.tab === route.arrivalTab ? arrivalIntent : null;
   const acknowledgeArrivalSignal = (projectId: string, signal: number) => {
     if (currentArrivalIntent?.projectId !== projectId || currentArrivalIntent.signal !== signal) return;
-    lastObservedIntentLocationRef.current = null;
-    history.replace(staffPathFor({ kind: "project", projectId }));
+    // #367: the tab stays in the URL; acknowledging only spends the signal.
+    setArrivalIntent(null);
+  };
+  // #367: the Workspace tells the shell which tab it is showing; the URL follows by `replace`.
+  const syncProjectTab = (projectId: string, tab: WorkspaceTab) => {
+    if (route.kind !== "project" || route.projectId !== projectId) return;
+    // A tab-naming location this shell has not observed yet is an arrival still to be handed over (the
+    // Workspace's effects run before the shell's): it must land first, never be overwritten by the tab shown before it.
+    if (route.arrivalTab !== undefined) {
+      const observed = lastObservedRef.current;
+      if (!observed || observed.location !== completeLocation || observed.epoch !== navigationEpoch) return;
+    }
+    const target = staffPathFor({ kind: "project", projectId, arrivalTab: tab });
+    if (target === completeLocation) return;
+    selfWriteRef.current = target;
+    history.replace(target);
   };
 
   useEffect(() => {
@@ -313,7 +336,7 @@ function ShellRoute() {
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
-    dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal,
+    dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab,
   };
 
   const routedContent = blocked
@@ -354,7 +377,7 @@ const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId",
   component: function ProjectLeaf() {
-    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal } = useShell();
+    const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal, syncProjectTab } = useShell();
     if (route.kind !== "project") return <NotAvailable />;
     return <ProjectWorkspace
       key={route.projectId}
@@ -364,6 +387,8 @@ const projectRoute = createRoute({
       arrivalSignal={arrivalIntent?.projectId === route.projectId ? arrivalIntent.signal : undefined}
       arrivalTab={arrivalIntent?.projectId === route.projectId ? arrivalIntent.tab : undefined}
       onArrivalConsumed={(signal) => acknowledgeArrivalSignal(route.projectId, signal)}
+      urlTab={route.arrivalTab}
+      onTabShown={(tab) => syncProjectTab(route.projectId, tab)}
     />;
   },
 });

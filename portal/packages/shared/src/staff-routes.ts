@@ -130,8 +130,8 @@ export type DashboardRoute =
 export type StaffRoute =
   | DashboardRoute
   | { kind: "create-project" }
-  /** `arrivalTab` is the one-shot Workspace-tab arrival intent (#337): consumed once on arrival,
-   * then stripped from the URL. */
+  /** `arrivalTab` is the Workspace tab the URL names (#337 arrival; persistent since #367: the
+   * Workspace keeps the URL naming the tab it shows). */
   | { kind: "project"; projectId: string; arrivalTab?: WorkspaceTab }
   | { kind: "edit-project"; projectId: string }
   | { kind: "admin" }
@@ -461,7 +461,7 @@ function parseDashboardGanttLocation(params: URLSearchParams): DashboardGanttRou
 }
 
 /** Parse the complete, canonical relative staff location. Queries stay closed except for
- * the one-shot Workspace-tab arrival intent on an otherwise canonical project route:
+ * the Workspace tab the URL names (persistent since #367) on an otherwise canonical project route:
  * `?collaboration=open` (Collaboration's only spelling -- frozen by persisted activity deep links,
  * see `projectArrivalQuery`) or `?tab=<collection kind>`. */
 export function parseStaffLocation(location: string): StaffRoute {

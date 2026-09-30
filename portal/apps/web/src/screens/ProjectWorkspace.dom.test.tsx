@@ -1161,6 +1161,95 @@ describe("ProjectWorkspace collaboration relocation", () => {
     });
   });
 
+  describe("#367 the URL names the shown Workspace tab", () => {
+    function mockUrlTabProject(options: { editedForbidden?: boolean } = {}) {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
+        if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1")] });
+        if (path.includes("/assets?collection=edited")) return options.editedForbidden ? Promise.reject(new ApiError("Edited collection forbidden", 403, { capability: "viewEdited" })) : Promise.resolve({ assets: [workspaceAsset("edited-1")] });
+        if (path.includes("/assets?collection=")) return Promise.resolve({ assets: [] });
+        if (path.includes("ingest-status")) return Promise.resolve({ expectedCount: null, receivedCount: 1, mismatch: false });
+        if (path.includes("comments")) return Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [] });
+        if (path.includes("annotations")) return Promise.resolve({ annotations: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        if (path.includes("/links")) return Promise.resolve({ links: [] });
+        return Promise.resolve({});
+      });
+    }
+    const selectedTabs = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].filter((item) => item.getAttribute("aria-selected") === "true");
+
+    it.each(["raw", "edited", "video", "floorplan", "copy"] as const)("lands an arrival at ?tab=%s on that tab without writing the URL", async (kind) => {
+      mockUrlTabProject();
+      const shown = vi.fn();
+      const label = kind === "raw" ? "RAW" : kind === "floorplan" ? "Floorplan" : kind.charAt(0).toUpperCase() + kind.slice(1);
+      await render(<ProjectWorkspace projectId="p1" arrivalSignal={1} arrivalTab={kind} urlTab={kind} onArrivalConsumed={() => undefined} onTabShown={shown} />); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, label)]);
+      expect(shown).not.toHaveBeenCalled();
+    });
+
+    it("falls back to Collaboration for a role without Edited and tells the URL exactly once", async () => {
+      authState.role = "photographer";
+      mockUrlTabProject();
+      const shown = vi.fn();
+      await render(<ProjectWorkspace projectId="p1" arrivalSignal={1} arrivalTab="edited" urlTab="edited" onArrivalConsumed={() => undefined} onTabShown={shown} />); await flush(20);
+      expect(selectedTabs()).toEqual([workspaceTab(host, "Collaboration")]);
+      expect(shown).toHaveBeenCalledTimes(1);
+      expect(shown).toHaveBeenCalledWith("collaboration");
+    });
+
+    it("never names a tab while the view is still loading", async () => {
+      apiGetMock.mockImplementation(() => new Promise(() => undefined));
+      const shown = vi.fn();
+      await render(<ProjectWorkspace projectId="p1" onTabShown={shown} />); await flush(10);
+      expect(shown).not.toHaveBeenCalled();
+    });
+
+    it("names Collaboration exactly once after ready when the URL names no tab", async () => {
+      mockUrlTabProject();
+      const shown = vi.fn();
+      await render(<ProjectWorkspace projectId="p1" onTabShown={shown} />); await flush(20);
+      expect(shown).toHaveBeenCalledTimes(1);
+      expect(shown).toHaveBeenCalledWith("collaboration");
+    });
+
+    it("writes the tab the user clicks", async () => {
+      mockUrlTabProject();
+      const shown = vi.fn();
+      const ui = (urlTab?: "collaboration" | "raw") => <ProjectWorkspace projectId="p1" urlTab={urlTab} onTabShown={shown} />;
+      await render(ui("collaboration")); await flush(20);
+      expect(shown).not.toHaveBeenCalled();
+      await openTab(host, "RAW");
+      expect(shown).toHaveBeenLastCalledWith("raw");
+    });
+
+    it("names Collaboration in the collaboration-only view when the URL names a Collection", async () => {
+      apiGetMock.mockImplementation((path: string) => {
+        if (path === "/api/projects/p1") return Promise.reject(new ApiError("Forbidden", 403));
+        if (path.includes("/collaboration-summary")) return Promise.resolve(collaborationSummaryFixture());
+        if (path.includes("/comments?limit=50")) return Promise.resolve({ project: { id: "p1", street: "Hidden Street" }, comments: [] });
+        if (path.includes("subtasks")) return Promise.resolve({ subtasks: [] });
+        if (path.includes("mentionable-users")) return Promise.resolve({ users: [] });
+        return Promise.resolve({});
+      });
+      const shown = vi.fn();
+      await render(<ProjectWorkspace projectId="p1" urlTab="raw" onTabShown={shown} />);
+      await flushUntil(() => host.querySelector('[data-testid="project-collaboration-only"]') !== null && host.textContent!.includes("Hidden Street"), "the collaboration-only view");
+      await flush(10);
+      expect(shown).toHaveBeenCalledWith("collaboration");
+      expect(shown).not.toHaveBeenCalledWith("raw");
+    });
+
+    it("follows a late Collection denial back to Collaboration", async () => {
+      mockUrlTabProject({ editedForbidden: true });
+      const shown = vi.fn();
+      await render(<ProjectWorkspace projectId="p1" arrivalSignal={1} arrivalTab="edited" urlTab="edited" onArrivalConsumed={() => undefined} onTabShown={shown} />);
+      await flushUntil(() => workspaceTab(host, "Edited") === undefined && workspaceTab(host, "Collaboration")?.getAttribute("aria-selected") === "true", "Edited denied, Collaboration selected");
+      await flush(10);
+      expect(shown).toHaveBeenCalledWith("collaboration");
+    });
+  });
+
   it("acknowledges an arrival exactly once while collaboration is unavailable inside the full workspace", async () => {
     let commentsForbidden = false;
     apiGetMock.mockImplementation((path: string) => {
