@@ -72,7 +72,7 @@ describe("migration 0050 drops project_subtasks.assignee_id (#373 part 2, ADR 00
     const entry = journal.entries.find((value) => value.idx === 50);
     expect(entry?.tag).toBe("0050_drop_subtask_assignee_column");
     expect(entry!.when).toBeGreaterThan(journal.entries.find((value) => value.idx === 49)!.when);
-    expect(journal.entries.at(-1)?.idx).toBe(50);
+    expect(journal.entries.at(-1)?.idx).toBeGreaterThanOrEqual(50);
   });
 
   it("removes the column and its index, and keeps every other Subtask column, row and index", () => {

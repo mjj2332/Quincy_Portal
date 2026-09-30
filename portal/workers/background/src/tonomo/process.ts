@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
 import { COLLECTION_RECEIVED_COUNT_SQL, appendToStageBottomExpr, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
 import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
-import { auditLog, collectionLinks, collections, projectMembers, projects, user, webhookEvents } from "@quincy/db/schema";
+import { auditLog, collectionLinks, collections, projectMembers, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
 import { dbFor, errorMessage } from "../lib/db";
@@ -96,15 +96,32 @@ async function writeAudit(
   });
 }
 
-async function findProject(env: Env, order: TonomoOrder, variant: BoardSchemaVariant): Promise<{ project: Project; linkedByAddress: boolean } | null> {
+/**
+ * Owner decision 2026-10-01: Tonomo bulk resends of old orders must not create Projects the Portal
+ * never had. A NEW order (no live Project, no tombstone, no address link) whose canonical shoot date
+ * is before this date is ignored. Updates to existing Projects and address links are not affected.
+ */
+export const TONOMO_CREATE_MIN_SHOOT_DATE = "2026-09-01";
+
+type Tombstone = typeof tonomoOrderTombstones.$inferSelect;
+type FoundProject = { kind: "project"; project: Project; linkedByAddress: boolean };
+type FindResult = FoundProject | { kind: "tombstoned"; tombstone: Tombstone } | null;
+
+async function findProject(env: Env, order: TonomoOrder, variant: BoardSchemaVariant): Promise<FindResult> {
   const db = dbFor(env);
   const byOrderId = await db.select(projectColumnsForVariant(variant)).from(projects).where(eq(projects.orderId, order.orderId)).get() as Project | undefined;
   if (byOrderId) {
     if (byOrderId.archivedAt) {
       throw new TonomoApplyError(`order ${order.orderId} matches archived project ${byOrderId.street} — restore the project or discard this event`);
     }
-    return { project: byOrderId, linkedByAddress: false };
+    return { kind: "project", project: byOrderId, linkedByAddress: false };
   }
+
+  // A live Project holding the order_id (above) always wins. Past that point a tombstone means the
+  // Project for this order was deleted on purpose, so the event must neither recreate it nor
+  // address-link a manual Project onto the dead order.
+  const tombstone = await db.select().from(tonomoOrderTombstones).where(eq(tonomoOrderTombstones.orderId, order.orderId)).get();
+  if (tombstone) return { kind: "tombstoned", tombstone };
 
   const candidates = await db.select(projectColumnsForVariant(variant)).from(projects).where(order.postcode
     ? and(isNull(projects.orderId), isNull(projects.archivedAt), eq(projects.postcode, order.postcode))
@@ -114,7 +131,7 @@ async function findProject(env: Env, order: TonomoOrder, variant: BoardSchemaVar
   if (matches.length > 1) {
     throw new TonomoApplyError(`${matches.length} projects match address ${order.street} — link the order manually`);
   }
-  return matches[0] ? { project: matches[0], linkedByAddress: true } : null;
+  return matches[0] ? { kind: "project", project: matches[0], linkedByAddress: true } : null;
 }
 
 async function createProject(env: Env, order: TonomoOrder): Promise<string> {
@@ -303,10 +320,26 @@ async function assignPhotographers(env: Env, projectId: string, emails: string[]
 /** Facts about the stored webhook event itself, as opposed to the order it carries. */
 export type TonomoEventContext = { receivedAt: Date };
 
-async function applyOrder(env: Env, order: TonomoOrder, dependencies: TonomoProcessDependencies, context: TonomoEventContext): Promise<string | null> {
+/** What applyOrder returns: warning text for a normal apply, or `ignored` for an event that changed nothing. */
+type ApplyResult = { warning: string | null; ignored?: undefined } | { ignored: string };
+
+async function applyOrder(env: Env, order: TonomoOrder, dependencies: TonomoProcessDependencies, context: TonomoEventContext): Promise<ApplyResult> {
   const variant = await boardSchemaVariant(env.DB);
   if (variant === "pre_0037") throw TonomoApplyError.boardSchemaMaintenance();
   const match = await findProject(env, order, variant);
+  // Ignored events return before any write (no collections, audit row or reconcile). They are never
+  // a TonomoApplyError: the processor DO marks those poison, and an ignore is a normal outcome.
+  if (match?.kind === "tombstoned") {
+    const { tombstone } = match;
+    const reason = `Ignored: order ${order.orderId} was deleted from the Portal (${tombstone.street ?? tombstone.deletedProjectId}, source ${tombstone.source})`;
+    console.log("Tonomo event ignored: order tombstoned", { orderId: order.orderId, deletedProjectId: tombstone.deletedProjectId, source: tombstone.source });
+    return { ignored: reason };
+  }
+  if (!match && order.shootDate !== null && isCanonicalCalendarDate(order.shootDate) && order.shootDate < TONOMO_CREATE_MIN_SHOOT_DATE) {
+    const reason = `Ignored: order ${order.orderId} has shoot date ${order.shootDate}, before ${TONOMO_CREATE_MIN_SHOOT_DATE}, and no Project exists for it`;
+    console.log("Tonomo event ignored: new order before create cutoff", { orderId: order.orderId, shootDate: order.shootDate });
+    return { ignored: reason };
+  }
   const action = match ? "project.update" : "project.create";
   const projectId = match
     ? await updateProject(env, match.project, match.linkedByAddress, order, dependencies, context)
@@ -318,7 +351,7 @@ async function applyOrder(env: Env, order: TonomoOrder, dependencies: TonomoProc
   // Assignment must be durable before the scaffold worker evaluates its prerequisites.
   await enqueueEditorReconcile(env, projectId).catch((error) =>
     console.error("Editor folder reconciliation trigger failed", { projectId, error }));
-  return photographers.warning;
+  return { warning: photographers.warning };
 }
 
 export function isDeterministicTonomoError(error: unknown): error is TonomoParseError | TonomoApplyError {
@@ -332,7 +365,12 @@ export async function processTonomoEvent(env: Env, event: Pick<typeof webhookEve
   const receivedAt = event.receivedAt
     ?? (await db.select({ receivedAt: webhookEvents.receivedAt }).from(webhookEvents).where(eq(webhookEvents.id, event.id)).get())?.receivedAt
     ?? new Date();
-  const photographerWarning = await applyOrder(env, order, dependencies, { receivedAt });
+  const applied = await applyOrder(env, order, dependencies, { receivedAt });
+  if (applied.ignored !== undefined) {
+    await db.update(webhookEvents).set({ status: "processed", error: applied.ignored, processedAt: new Date() }).where(eq(webhookEvents.id, event.id));
+    return;
+  }
+  const photographerWarning = applied.warning;
   const warnings = [
     order.unrecognisedServices.length ? `Unrecognised services: ${order.unrecognisedServices.join(", ")}` : null,
     photographerWarning,

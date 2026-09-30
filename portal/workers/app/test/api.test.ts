@@ -2363,6 +2363,63 @@ describe("staff app API", () => {
     expect(await media.MEDIA.get(key)).not.toBeNull();
   });
 
+  describe("Tonomo order tombstones on project delete", () => {
+    async function archivedProject(street: string, orderId: string | null) {
+      const cookie = await sessionCookie(adminToken);
+      const created = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street, orderedServices: [] }),
+      });
+      const project = await created.json() as { id: string };
+      if (orderId !== null) await database.DB.prepare("UPDATE projects SET order_id = ? WHERE id = ?").bind(orderId, project.id).run();
+      expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}/archive`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+      return { cookie, id: project.id };
+    }
+    const tombstoneFor = (orderId: string) => database.DB.prepare("SELECT * FROM tonomo_order_tombstones WHERE order_id = ?").bind(orderId).first<Record<string, unknown>>();
+
+    it("writes a tombstone for the deleted project's order, and puts the order id in the audit meta", async () => {
+      const orderId = `order-${crypto.randomUUID()}`; const street = `Tombstone ${orderId}`;
+      const { cookie, id } = await archivedProject(street, orderId);
+      const before = Date.now();
+      expect((await SELF.fetch(`https://portal.test/api/projects/${id}`, { method: "DELETE", headers: { cookie } })).status).toBe(200);
+      const row = await tombstoneFor(orderId);
+      expect(row).toMatchObject({ order_id: orderId, deleted_project_id: id, street, deleted_by: seedAdminId, source: "project_delete" });
+      expect(row!.deleted_at as number).toBeGreaterThanOrEqual(before);
+      expect(row!.created_at).toBe(row!.deleted_at);
+      const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project.delete' AND target_id = ?").bind(id).first<{ meta_json: string }>();
+      expect(JSON.parse(audit!.meta_json)).toMatchObject({ street, orderId });
+    });
+
+    it("writes no tombstone when the project has no order id", async () => {
+      const street = `No order ${crypto.randomUUID()}`;
+      const { cookie, id } = await archivedProject(street, null);
+      const before = await database.DB.prepare("SELECT count(*) AS count FROM tonomo_order_tombstones").first();
+      expect((await SELF.fetch(`https://portal.test/api/projects/${id}`, { method: "DELETE", headers: { cookie } })).status).toBe(200);
+      expect(await database.DB.prepare("SELECT count(*) AS count FROM tonomo_order_tombstones").first()).toEqual(before);
+    });
+
+    it("writes no tombstone when the delete is refused because the project is not archived", async () => {
+      const orderId = `order-${crypto.randomUUID()}`;
+      const cookie = await sessionCookie(adminToken);
+      const created = await SELF.fetch("https://portal.test/api/projects", {
+        method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: "Not archived tombstone", orderedServices: [] }),
+      });
+      const project = await created.json() as { id: string };
+      await database.DB.prepare("UPDATE projects SET order_id = ? WHERE id = ?").bind(orderId, project.id).run();
+      expect((await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "DELETE", headers: { cookie } })).status).toBe(409);
+      expect(await tombstoneFor(orderId)).toBeNull();
+    });
+
+    it("upserts when a second project that held the same order id is deleted", async () => {
+      const orderId = `order-${crypto.randomUUID()}`;
+      const first = await archivedProject(`First ${orderId}`, orderId);
+      expect((await SELF.fetch(`https://portal.test/api/projects/${first.id}`, { method: "DELETE", headers: { cookie: first.cookie } })).status).toBe(200);
+      const second = await archivedProject(`Second ${orderId}`, orderId);
+      expect((await SELF.fetch(`https://portal.test/api/projects/${second.id}`, { method: "DELETE", headers: { cookie: second.cookie } })).status).toBe(200);
+      const rows = await database.DB.prepare("SELECT deleted_project_id, street FROM tonomo_order_tombstones WHERE order_id = ?").bind(orderId).all();
+      expect(rows.results).toEqual([{ deleted_project_id: second.id, street: `Second ${orderId}` }]);
+    });
+  });
+
   it("prevents an editor from permanently deleting a project", async () => {
     const created = await SELF.fetch("https://portal.test/api/projects", {
       method: "POST", headers: { cookie: await sessionCookie(adminToken), "content-type": "application/json" }, body: JSON.stringify({ street: "Editor cannot delete", orderedServices: [] }),

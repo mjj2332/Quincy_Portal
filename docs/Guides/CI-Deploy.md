@@ -62,6 +62,15 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 Pages → the Worker → **Deployments**. A rollback holds only until the next deploy (a merge to
 `main` that touches `portal/`, or a manual **Run workflow**), so follow it with a revert PR or a fix.
 
+### Tonomo order tombstones (0051)
+
+0051 adds the table `tonomo_order_tombstones` and seeds it from `audit_log` (orders of Projects that no
+longer exist). It is additive, so a Worker older than this change ignores the table and a rollback is
+safe. Apply it **before** running any Project delete script (for example
+`portal/scripts/bulk-archive-delete-oct-2026.mjs`): the delete route writes a tombstone, and without the
+table that insert fails the delete batch. To restore an order, create or edit a Project with that order id
+(a live Project beats a tombstone), or `DELETE FROM tonomo_order_tombstones WHERE order_id = '<id>'`.
+
 ### Multi-assignee Subtasks (#358)
 
 The Worker rollback target depends on how far the series has shipped. Rolling back below the floor
