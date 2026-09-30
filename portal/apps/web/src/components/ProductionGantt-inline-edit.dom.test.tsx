@@ -481,6 +481,25 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(host.querySelector('[data-testid="gantt-deadline-action"]')?.textContent).toBe("Set deadline");
   });
 
+  it("T7b layout contract: the name cell is a 240px floor and holds the street and the Set deadline button; People and Due are separate cells", async () => {
+    server.deadline = null;
+    await render();
+    const nameCell = host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-cell"]')!;
+    expect(nameCell.style.width).toBe("240px");
+    expect(nameCell.querySelector('[data-testid="gantt-deadline-action"]')).not.toBeNull();
+    expect(nameCell.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();
+    expect(nameCell.querySelector('[data-testid="gantt-team-trigger"]')).toBeNull();
+  });
+
+  it("T7c on a phone the name cell keeps the same 240px floor (the tree scrolls inside its pane)", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+    try {
+      await render();
+      expect(host.querySelector<HTMLElement>('[data-testid="gantt-tree-name-cell"]')!.style.width).toBe("240px");
+    } finally { window.matchMedia = original; }
+  });
+
   it("T8 more than three members: three avatars and +N, a dual-role person counting once", async () => {
     server.team = [
       person(PIA, "Pia Photographer", "photographer"),

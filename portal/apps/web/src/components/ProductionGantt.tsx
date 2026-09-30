@@ -239,12 +239,18 @@ const GANTT_I18N: GanttI18nOverrides = { labels: { resources: "Projects" } };
 const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTime;
 /**
  * #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. #365:
- * the wide panel makes room for the People (88px) and Due (128px) columns beside a 180px name
- * column; the narrow one keeps the vendor's 288px seed on phones. The vendor seeds the width once,
- * so a breakpoint crossed mid-session does not re-seed it.
+ * the name column is a 240px floor, not the vendor splitter's 180: a Project row's fixed parts (12px
+ * padding each side, the 24px toggle gutter, the 96px street floor, a 6px gap and the ~83px "Set
+ * deadline" button) sum to ~233px, and at 180 the button spilled 37px into the People column
+ * (browser pass, 1440px). The wide panel adds People (88px) and Due (128px): 240 + 88 + 128 = 456.
+ * The narrow (<= 720px) panel keeps the vendor's 288px seed, which the vendor clamps to what the
+ * container can spare; its tree overflows and scrolls horizontally inside the pane, which is how
+ * People and Due are reached on a phone. The vendor seeds the width once, so a breakpoint crossed
+ * mid-session does not re-seed it.
  */
-const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180, width: 400 };
-const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: 180 };
+const GANTT_NAME_COLUMN_WIDTH = 240;
+const GANTT_TREE_PANEL: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH, width: 456 };
+const GANTT_TREE_PANEL_NARROW: GanttTreePanelConfig = { nameColumnFill: true, nameColumnWidth: GANTT_NAME_COLUMN_WIDTH };
 /** Scroll distance (px) from the bottom of the panel at which the next project page is requested. */
 const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
@@ -1566,8 +1572,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             onScaleChange={setScale}
             timeZone={GANTT_TIME_ZONE}
             i18n={GANTT_I18N}
-            // #256: the name column fills the tree panel; 180 = the vendor splitter's minWidth, so
-            // the column never floors wider than the narrowest the panel can be dragged to.
+            // #256: the name column fills the tree panel; #365: its 240px floor keeps "Set deadline"
+            // inside it (see GANTT_NAME_COLUMN_WIDTH).
             treePanel={narrowTree ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
             columns={columns}
             interactions={interactions}
