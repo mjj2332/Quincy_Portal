@@ -83,6 +83,19 @@ type CommentItemProps = {
 function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDelete }: CommentItemProps) {
   const articleRef = useRef<HTMLElement>(null);
   const focusActions = useCallback(() => { articleRef.current?.querySelector<HTMLElement>('[data-testid="comment-actions"]')?.focus(); }, []);
+  // Set when Edit is chosen from the "⋯" menu: the menu's close would otherwise return focus to the
+  // trigger, so `finalFocus` hands it to the edit editor (caret at the end) instead.
+  const focusEditorOnClose = useRef(false);
+  const focusEditor = useCallback((): HTMLElement | undefined => {
+    if (!focusEditorOnClose.current) return undefined;
+    const surface = articleRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!surface) return undefined;
+    focusEditorOnClose.current = false;
+    surface.focus();
+    const selection = window.getSelection();
+    if (selection) { const range = document.createRange(); range.selectNodeContents(surface); range.collapse(false); selection.removeAllRanges(); selection.addRange(range); }
+    return surface;
+  }, []);
   const isEditing = editing !== undefined;
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -99,11 +112,11 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, l
       <CollaborationTimestamp instant={comment.createdAt} now={now} mode="relative" />
       {comment.editedAt && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
     </header>
-    {isOwn ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" trigger={<span aria-hidden="true">⋯</span>}>
-      <MenuPrimitive.Item className={MENU_ITEM} disabled={isEditing || saving} onClick={() => onEditStart(comment)}>Edit</MenuPrimitive.Item>
+    {isOwn ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" finalFocus={focusEditor} trigger={<span aria-hidden="true">⋯</span>}>
+      <MenuPrimitive.Item className={MENU_ITEM} disabled={isEditing || saving} onClick={() => { focusEditorOnClose.current = true; onEditStart(comment); }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={saving} onClick={() => { void onDelete(comment).finally(focusActions); }}>Delete</MenuPrimitive.Item>
     </Menu> : <span aria-hidden="true" />}
-    <div className="col-start-2 col-span-2 grid gap-[var(--space-2)] min-w-0">
+    <div className="col-start-2 col-span-2 max-[721px]:col-start-1 max-[721px]:col-span-3 grid gap-[var(--space-2)] min-w-0">
       {editing ? <>
         <RichTextEditor variant="field" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={onEditSave} />
         <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes} onClick={onEditSave}>Save</Button></div>
@@ -281,11 +294,11 @@ export function ProjectDiscussionThread({
   }
 
   const composer = <form data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-    {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)]" />}
+    {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
     <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
       <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
       <RichTextEditor variant="field" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} />
-      <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]"><span className={cn(META_TEXT, "!normal-case")}>Use @ to mention project participants</span><Button type="submit" disabled={!canPost}>{saving ? "Posting…" : "Post"}</Button></div>
+      <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]"><span className={cn(META_TEXT, "!normal-case")}>Use @ to mention project participants</span><Button type="submit" className="ml-auto" disabled={!canPost}>{saving ? "Posting…" : "Post"}</Button></div>
     </div>
   </form>;
 

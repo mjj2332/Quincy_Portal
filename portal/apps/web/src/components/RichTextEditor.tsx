@@ -199,8 +199,9 @@ export function createRichTextEditorExtensions() {
   ];
 }
 
-function ToolbarGroup({ children }: { children: ReactNode }) {
-  return <div className="inline-flex flex-wrap gap-[var(--space-1)]">{children}</div>;
+function ToolbarGroup({ children, field }: { children: ReactNode; field?: boolean }) {
+  // #376 field variant on a phone: the toolbar is one horizontally scrolling row, so each group keeps its buttons on one line.
+  return <div className={cn("inline-flex flex-wrap gap-[var(--space-1)]", field && "max-[721px]:flex-nowrap max-[721px]:shrink-0")}>{children}</div>;
 }
 
 // `ICON_BUTTON_BASE` + `w-auto`, NOT `ICON_BUTTON`. TB8-07 §6.4's table said `ICON_BUTTON`,
@@ -409,14 +410,14 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   };
   const canUseHeading = !disabled && (editor.can().toggleHeading({ level: 2 }) || editor.can().toggleHeading({ level: 3 }));
   const toolbarGroups = <>
-    <ToolbarGroup>
+    <ToolbarGroup field={field}>
       <ToolbarButton field={field} label="Bold" active={editor.isActive("bold")} disabled={disabled || !editor.can().toggleBold()} onClick={() => editor.chain().focus().toggleBold().run()}><strong>B</strong></ToolbarButton>
       <ToolbarButton field={field} label="Italic" active={editor.isActive("italic")} disabled={disabled || !editor.can().toggleItalic()} onClick={() => editor.chain().focus().toggleItalic().run()}><em>I</em></ToolbarButton>
       <ToolbarButton field={field} label="Underline" active={editor.isActive("underline")} disabled={disabled || !editor.can().toggleUnderline()} onClick={() => editor.chain().focus().toggleUnderline().run()}><u>U</u></ToolbarButton>
       <ToolbarButton field={field} label="Strikethrough" active={editor.isActive("strike")} disabled={disabled || !editor.can().toggleStrike()} onClick={() => editor.chain().focus().toggleStrike().run()}><s>S</s></ToolbarButton>
     </ToolbarGroup>
     <ToolbarDivider />
-    <ToolbarGroup>
+    <ToolbarGroup field={field}>
       <NativeSelect className="min-w-[112px] w-auto" aria-label="Heading" value={editor.isActive("heading", { level: 2 }) ? "2" : editor.isActive("heading", { level: 3 }) ? "3" : ""} disabled={!canUseHeading} onChange={(event) => {
         if (!canUseHeading) return;
         const level = event.currentTarget.value;
@@ -433,7 +434,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       <ToolbarButton field={field} label="Checklist" active={editor.isActive("taskList")} disabled={disabled || atListNestingLimit || !editor.can().toggleTaskList()} onClick={() => editor.chain().focus().toggleTaskList().run()}>☑ List</ToolbarButton>
     </ToolbarGroup>
     <ToolbarDivider />
-    <ToolbarGroup>
+    <ToolbarGroup field={field}>
       <ToolbarButton field={field} label="Undo" disabled={disabled || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}>Undo</ToolbarButton>
       <ToolbarButton field={field} label="Redo" disabled={disabled || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}>Redo</ToolbarButton>
     </ToolbarGroup>
@@ -472,7 +473,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   );
   return <div className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     {field ? <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
-      <InputGroupAddon align="block-start" role="toolbar" aria-label="Formatting" className="flex-wrap gap-[var(--space-2)] p-[var(--space-1)] cursor-default">{toolbarGroups}</InputGroupAddon>
+      <InputGroupAddon align="block-start" role="toolbar" aria-label="Formatting" className="flex-wrap max-[721px]:flex-nowrap max-[721px]:overflow-x-auto max-[721px]:items-center gap-[var(--space-2)] p-[var(--space-1)] cursor-default">{toolbarGroups}</InputGroupAddon>
       {modal}
       <EditorContent editor={editor} className="w-full min-w-0" />
     </InputGroup> : <>

@@ -50,7 +50,7 @@ vi.mock("./RichTextEditor", () => ({
   RichTextEditor: (props: Record<string, any>) => {
     state.editors = state.editors.filter((editor) => editor.id !== props.id);
     state.editors.push(props);
-    return <div data-testid={`editor-${props.id ?? "composer"}`}><button type="button" data-testid={`mention-${props.id ?? "composer"}`} onClick={() => { props.loadMentionables("Nor").catch(() => undefined); }}>Mention</button><button type="button" data-testid={`submit-${props.id ?? "composer"}`} disabled={props.disabled || props.limit < 0} onClick={props.onSubmit}>Submit</button><span data-testid={`editor-value-${props.id ?? "composer"}`}>{JSON.stringify(props.value)}</span></div>;
+    return <div data-testid={`editor-${props.id ?? "composer"}`}><button type="button" data-testid={`mention-${props.id ?? "composer"}`} onClick={() => { props.loadMentionables("Nor").catch(() => undefined); }}>Mention</button><button type="button" data-testid={`submit-${props.id ?? "composer"}`} disabled={props.disabled || props.limit < 0} onClick={props.onSubmit}>Submit</button><span data-testid={`editor-value-${props.id ?? "composer"}`}>{JSON.stringify(props.value)}</span><div role="textbox" aria-label="Editor surface" contentEditable="true" suppressContentEditableWarning tabIndex={0} /></div>;
   },
 }));
 
@@ -155,6 +155,19 @@ describe("ProjectDiscussionThread", () => {
     await act(async () => { edit!.click(); await Promise.resolve(); await Promise.resolve(); });
     expect(editor().value).toEqual(doc("Unsaved change"));
     expect(host.querySelector('[data-testid="editor-value-composer"]')?.textContent).toContain("Unsaved change");
+  });
+
+  it("moves focus into the edit editor after Edit is chosen from the menu, and back to the trigger on Cancel", async () => {
+    render(); await flush();
+    const trigger = host.querySelector<HTMLElement>('[aria-label="Actions for comment by Me"]')!;
+    trigger.focus();
+    await chooseCommentAction(host, "Me", "Edit");
+    const surface = host.querySelector("article")!.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    expect(surface).not.toBeNull();
+    expect(document.activeElement).toBe(surface);
+    const cancel = [...host.querySelector("article")!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!;
+    await click(cancel);
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Actions for comment by Me"]'));
   });
 
   it("keeps a draft through a background comments refresh and blocks over-byte content", async () => {

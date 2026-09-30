@@ -79,6 +79,12 @@ export type MenuProps = {
    * or the page shows through beside the panel and reads as a rendering fault (D-01).
    */
   backdrop?: boolean;
+  /**
+   * Where focus goes when the menu closes (Base UI `Popup.finalFocus`): return an element to focus
+   * it, or `undefined`/`null` for the default (back to the trigger). For a menu item that swaps the
+   * surface for an editor, so focus lands in the editor instead of being stolen back by the trigger.
+   */
+  finalFocus?: () => HTMLElement | null | undefined;
 };
 
 /**
@@ -104,6 +110,7 @@ export function Menu({
   sideOffset = 10,
   popupRef,
   backdrop = false,
+  finalFocus,
 }: MenuProps) {
   // §4.2a nested-overlay container: null at page level — the rail's account menu renders there
   // today, so this is wiring for a future candidate (preferences/Admin delivery UI) that puts a
@@ -170,7 +177,7 @@ export function Menu({
           positionMethod={container ? "fixed" : "absolute"}
           className="z-[var(--z-popover)] outline-none"
         >
-          <MenuPrimitive.Popup ref={setPopupRef} className={cn(PANEL, panelClassName)} aria-label={label}>
+          <MenuPrimitive.Popup ref={setPopupRef} className={cn(PANEL, panelClassName)} aria-label={label} finalFocus={finalFocus ? () => finalFocus() ?? true : undefined}>
             {children}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
