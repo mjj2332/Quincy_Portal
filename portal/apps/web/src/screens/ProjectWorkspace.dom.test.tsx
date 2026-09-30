@@ -2150,6 +2150,45 @@ describe("Collaboration is the default Workspace tab (#336)", () => {
     expect(workspaceTab(host, "Collaboration")!.textContent).toBe("Collaboration");
   });
 
+  describe("Background jobs live behind Activity > System (#378)", () => {
+    const failedJob = { id: "job-failed", kind: "fetch_edited" as const, status: "failed" as const, error: "Dropbox refused the folder", correlationId: null, createdAt: "2026-08-25T00:00:00.000Z", updatedAt: "2026-08-25T00:00:00.000Z" };
+    const openActivity = async () => { const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent === "Activity")!; await click(tab); await flush(10); };
+    const sourceButton = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Activity source"] button')].find((button) => button.textContent === name);
+
+    it("renders no Background jobs card on any Workspace tab", async () => {
+      authState.role = "admin";
+      mockProject({ jobs: [failedJob] });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      for (const name of ["Collaboration", "RAW", "Edited", "Video", "Floorplan", "Copy"]) {
+        await openTab(host, name); await flush(6);
+        expect(host.textContent, name).not.toContain("Background jobs");
+        expect(host.textContent, name).not.toContain("Dropbox refused the folder");
+      }
+    });
+
+    it("shows the job under Collaboration > Activity > System and retries it through /api/jobs/:id/retry", async () => {
+      authState.role = "admin";
+      mockProject({ jobs: [failedJob] });
+      apiPostMock.mockResolvedValue({ jobId: "job-failed" });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "Collaboration"); await openActivity();
+      await click(sourceButton("System")!); await flush(4);
+      expect(host.textContent).toContain("Dropbox refused the folder");
+      const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Retry")!;
+      await click(retry); await flush(10);
+      expect(apiPostMock.mock.calls.map(([path]) => path)).toContain("/api/jobs/job-failed/retry");
+    });
+
+    it("offers no System view to a non-admin", async () => {
+      authState.role = "editor";
+      mockProject({ jobs: [failedJob] });
+      await render(<ProjectWorkspace projectId="p1" />); await flush(20);
+      await openTab(host, "Collaboration"); await openActivity();
+      expect(sourceButton("System")).toBeUndefined();
+      expect(host.textContent).not.toContain("Dropbox refused the folder");
+    });
+  });
+
   it("issues no asset request from an active AutoHDR job poll while on Collaboration", async () => {
     authState.role = "admin";
     mockProject({ jobs: [activeJob] });

@@ -14,6 +14,7 @@ import {
   projectActivityFeedItemFromRow,
   projectActivityFeedItemSchema,
   projectActivityFeedResponseSchema,
+  renderProjectActivityNotification,
   type ProjectActivityFeedRow,
 } from "../src";
 
@@ -148,11 +149,20 @@ describe("Project Activity feed contracts", () => {
     }
   });
 
-  it("uses actor identity only for internal copy and keeps External copy generic", () => {
+  it("carries the actor structurally and keeps the feed body actor-free, like External copy (#378)", () => {
     const internal = projectActivityFeedItemFromRow(row, "Maple House", { id: actorId, name: "Ting" });
     const external = externalProjectActivityFeedItemFromRow(row, "Maple House");
-    expect(internal.presentation.body).toContain("Ting");
+    // The row renders the actor once from `actor`; a "Ting — " prefix in the body would repeat it.
+    expect(internal.actor).toEqual({ id: actorId, name: "Ting" });
+    expect(internal.presentation.body).not.toContain("Ting");
     expect(external?.presentation.body).not.toContain("Ting");
+  });
+
+  it("leaves notification copy untouched: the notification renderer still prefixes the actor (#378)", () => {
+    const notification = renderProjectActivityNotification(row.type, row.safePayload, "Maple House", "Ting");
+    expect(notification.body).toContain("Ting");
+    const feed = projectActivityFeedItemFromRow(row, "Maple House", { id: actorId, name: "Ting" });
+    expect(notification.body).toBe(`Ting — ${feed.presentation.body}`);
   });
 
   it("rejects malformed or inconsistent feed rows", () => {

@@ -291,6 +291,37 @@ describe("ProjectCollaborationPanel", () => {
     ] }] } });
   });
 
+  describe("Activity source filter (#378)", () => {
+    const jobs = [{ id: "job-x", kind: "fetch_edited" as const, status: "failed" as const, error: "Boom from the fetch", correlationId: null, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z" }];
+    const tabByName = (host: HTMLElement, name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent?.trim() === name)!;
+    const sourceButton = (host: HTMLElement, name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Activity source"] button')].find((button) => button.textContent === name)!;
+
+    it("offers the Project | System group only when jobs are provided", async () => {
+      const host = mount();
+      await render(<ProjectCollaborationPanel projectId={projectId} />);
+      expect(host.querySelector('[role="group"][aria-label="Activity source"]')).toBeNull();
+      await unmount();
+      const second = mount();
+      await render(<ProjectCollaborationPanel projectId={projectId} jobs={jobs} onRetryJob={vi.fn()} />);
+      expect(second.querySelector('[role="group"][aria-label="Activity source"]')).not.toBeNull();
+    });
+
+    it("keeps System selected across Discussion / Activity switches and resets on a project change", async () => {
+      const host = mount();
+      await render(<ProjectCollaborationPanel projectId={projectId} jobs={jobs} onRetryJob={vi.fn()} />);
+      await click(tabByName(host, "Activity"));
+      await click(sourceButton(host, "System"));
+      expect(sourceButton(host, "System").getAttribute("aria-pressed")).toBe("true");
+      expect(host.textContent).toContain("Boom from the fetch");
+      await click(tabByName(host, "Discussion"));
+      await click(tabByName(host, "Activity"));
+      expect(sourceButton(host, "System").getAttribute("aria-pressed")).toBe("true");
+      await render(<ProjectCollaborationPanel projectId="22222222-2222-4222-8222-222222222222" jobs={jobs} onRetryJob={vi.fn()} />);
+      expect(sourceButton(host, "Project").getAttribute("aria-pressed")).toBe("true");
+      expect(host.textContent).not.toContain("Boom from the fetch");
+    });
+  });
+
   it("renders Discussion and Activity as persistent semantic tabs with roving keyboard focus", async () => {
     const host = mount();
     await render(<ProjectCollaborationPanel projectId={projectId} />);

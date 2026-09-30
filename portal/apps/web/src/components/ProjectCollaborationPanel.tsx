@@ -4,7 +4,8 @@ import { cn, formatUnreadCount } from "../lib/utils";
 import { nearestScrollContainer } from "../lib/scroll-container";
 import { useMediaQuery } from "../lib/use-media-query";
 import { ProjectDiscussionThread, type ProjectDiscussionAccessFailureResource } from "./ProjectDiscussionThread";
-import { ProjectActivityView } from "./ProjectActivityView";
+import { ProjectActivityView, type ActivitySource } from "./ProjectActivityView";
+import type { Job } from "../lib/project-jobs";
 import { SubtaskChecklist } from "./SubtaskChecklist";
 import { Eyebrow } from "./quincy/Eyebrow";
 import { TAB_BASE, TAB_IDLE, TAB_SELECTED } from "./quincy/TabStrip";
@@ -38,13 +39,18 @@ type ProjectCollaborationPanelProps = {
   onAccessFailure?: (error: unknown, resource: AccessFailureResource) => void;
   /** Rendered inside the Workspace's Collaboration tab: the page h1 and the tab label already name it, so the panel head is dropped and the card chrome (border, shadow) gives way to the full-bleed band the Collection tabs use. */
   embedded?: boolean;
+  /** Background jobs for the Activity "System" source. The Workspace passes them only to an admin; without them the Project | System control is not rendered. */
+  jobs?: readonly Job[];
+  onRetryJob?: (jobId: string) => void;
 };
 
-export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure, embedded = false }: ProjectCollaborationPanelProps) {
+export function ProjectCollaborationPanel({ projectId, presented = true, view, onViewChange, showUnreadBadge = true, onUnreadCountChange, onAccessFailure, embedded = false, jobs, onRetryJob }: ProjectCollaborationPanelProps) {
   const session = useSession();
   const currentUserId = session.data?.user.id;
   const [localView, setLocalView] = useState<CollaborationView>("discussion");
   const [unreadCount, setUnreadCount] = useState(0);
+  // Local state, never the URL (`?collaboration=open` is frozen). It lives here, not in the view, so it survives Discussion <-> Activity switches.
+  const [activitySource, setActivitySource] = useState<ActivitySource>("project");
   const layout = useMediaQuery(CHECKLIST_RAIL_QUERY) ? "rail" : "stacked";
   const activeView = view ?? localView;
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -56,7 +62,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     scrollRootRefLatest.current?.(node ? nearestScrollContainer(node) : null);
   }, []);
 
-  useEffect(() => { setLocalView("discussion"); }, [projectId]);
+  useEffect(() => { setLocalView("discussion"); setActivitySource("project"); }, [projectId]);
   const handleUnreadCount = useCallback((count: number) => { setUnreadCount(count); onUnreadCountChange?.(count); }, [onUnreadCountChange]);
 
   const renderDiscussion = ({ content, project, scrollRootRef }: Parameters<NonNullable<React.ComponentProps<typeof ProjectDiscussionThread>["children"]>>[0]) => {
@@ -97,7 +103,7 @@ export function ProjectCollaborationPanel({ projectId, presented = true, view, o
     </div>;
     const panels = <>
       <div className={cn("min-w-0", "group-data-[checklist-layout=rail]/collab:[grid-area:panels]")} role="tabpanel" id={panelId("discussion")} aria-labelledby={tabId("discussion")} hidden={activeView !== "discussion"}>{content}</div>
-      <div className={cn("min-w-0", "group-data-[checklist-layout=rail]/collab:[grid-area:panels]")} role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={presented && activeView === "activity"} onAccessFailure={onAccessFailure} /></div>
+      <div className={cn("min-w-0", "group-data-[checklist-layout=rail]/collab:[grid-area:panels]")} role="tabpanel" id={panelId("activity")} aria-labelledby={tabId("activity")} hidden={activeView !== "activity"}><ProjectActivityView projectId={projectId} enabled={presented && activeView === "activity"} onAccessFailure={onAccessFailure} jobs={jobs} onRetryJob={onRetryJob} source={activitySource} onSourceChange={setActivitySource} /></div>
     </>;
     // One checklist node, a sibling of the strip and both tabpanels, so it survives a sub-tab switch and a
     // breakpoint change with its drafts and popovers. DOM order is the stacked reading order (checklist,
