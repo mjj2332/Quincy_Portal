@@ -495,7 +495,13 @@ async function setInput(el: HTMLInputElement, value: string) {
   });
 }
 
+// The fixture days and the resize aims are anchored to the visible month, which the Gantt takes from
+// `new Date()` in the runner's zone and the fixture from Sydney's clock. Pin `Date` (timers stay real)
+// for every describe so none depends on the real date — near a month boundary the two disagree. The
+// clock still advances from the pinned instant, because the code under test measures elapsed time.
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+  vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
   resetFixture();
   requests = [];
   patchReply = null;
@@ -558,22 +564,10 @@ afterEach(async () => {
   clearToasts();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("ProductionGantt — checklist writes (#221 PR B2)", () => {
-  // The fixture days and the resize aim are anchored to the visible month, which the Gantt takes from
-  // `new Date()` and the fixture from Sydney's clock. Pin `Date` (timers stay real) so neither depends
-  // on the real date, in particular on the last or first day of a month when the two disagree.
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-09-15T02:00:00.000Z"));
-    resetFixture();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("1. a pointer resize-end of a range task sends one PATCH, shows the new end before the response, then the server value", async () => {
     await render();
     const before = barLabel(RANGE_TITLE);
