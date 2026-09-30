@@ -107,7 +107,7 @@ touches existing assignees. A migration must never re-assert the row (`docs/less
 Migration 0050 drops the index and the column and deletes the `subtask_multi_assignee` row. Apply checklist
 (from `portal/workers/app`, `--remote`):
 
-1. Read-only pre-flight: `SELECT sqlite_version()`; `SELECT type,name,tbl_name FROM sqlite_master WHERE sql LIKE '%assignee_id%' OR type IN ('view','trigger')` must return exactly the table and the index; record the row counts of `project_subtasks` and `project_subtask_assignees`.
+1. Read-only pre-flight (D1 refuses `sqlite_version()`, code 7500, so skip it): `SELECT type,name,tbl_name FROM sqlite_master WHERE sql LIKE '%assignee_id%' OR type IN ('view','trigger')` must return exactly the table and the index; record the row counts of `project_subtasks` and `project_subtask_assignees`.
 2. Record the #403 Worker version ids: the rollback floor. Older Workers cannot run against this schema.
 3. Take a D1 bookmark (Time Travel) so the apply can be restored.
 4. Apply migrations; the pending list must show only 0050.
