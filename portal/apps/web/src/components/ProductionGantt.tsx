@@ -1581,7 +1581,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // or a sheet close only changes the deps and exits at the null check. It stays armed while the
   // chart has no rows, while the landing is `undecided` (a later page could change it — the next
   // page is fetched through the same latch as scroll-paging, bounded by the draw cap), and while the
-  // viewport is unmeasured.
+  // viewport is unmeasured. A COMPLETE empty result consumes it (rows that a later refetch brings do
+  // not scroll), and so does a filter change (a new result never lands); while the viewport is
+  // unmeasured the ResizeObserver only retries once the pane reports a height, because it notifies
+  // once on `observe` and a zero-height pane would otherwise loop.
   const landingRequestRef = useRef<"open" | "today" | null>("open");
   const [landingTick, setLandingTick] = useState(0);
   const armLanding = useCallback(() => {
@@ -1591,6 +1594,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const loadedProjects = query.data?.projects ?? NO_LOADED_PROJECTS;
   const queryPending = query.isPending;
   const queryErrored = query.isError;
+  const landingGenerationRef = useRef(generationKey);
+  useLayoutEffect(() => {
+    if (landingGenerationRef.current === generationKey) return;
+    landingGenerationRef.current = generationKey;
+    landingRequestRef.current = null;
+  }, [generationKey]);
   useLayoutEffect(() => {
     const request = landingRequestRef.current;
     const container = containerRef.current;
@@ -1601,7 +1610,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     if (loadedProjects.some((project) => !displayedIds.has(project.id))) return;
     const drawn = displayProjects.filter((project) => baseModel.includedProjectIds.has(project.id));
     const landing = ganttLandingProject(drawn, new Date(), { complete: !hasNextPage || tooManyToDraw });
-    if (landing.status === "empty") return;
+    if (landing.status === "empty") {
+      landingRequestRef.current = null;
+      return;
+    }
     if (landing.status === "undecided") {
       if (!fetchingNextPageRef.current) {
         fetchingNextPageRef.current = true;
@@ -1624,6 +1636,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     }
     if (result === "unmeasured" && timeline && typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => {
+        if (timeline.clientHeight <= 0) return;
         observer.disconnect();
         setLandingTick((tick) => tick + 1);
       });

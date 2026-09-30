@@ -129,10 +129,10 @@ async function flush(times = 4) {
   }
 }
 
-function tree(client: QueryClient) {
+function tree(client: QueryClient, q = "") {
   return (
     <QueryClientProvider client={client}>
-      <ProductionGantt identity={identity} q="" filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} />
+      <ProductionGantt identity={identity} q={q} filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} />
     </QueryClientProvider>
   );
 }
@@ -310,7 +310,7 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
     expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
   });
 
-  it("9. zero Projects scroll nothing and do not throw; rows that arrive later land", async () => {
+  it("9. zero Projects scroll nothing and do not throw; rows that arrive later do NOT land (a complete empty result consumes the request)", async () => {
     apiGetMock.mockImplementation(() => Promise.resolve(response([])));
     await mount();
     expect(viewports(host)).toHaveLength(0);
@@ -319,6 +319,102 @@ describe("ProductionGantt — landing on the current Project (#415)", () => {
       await client.invalidateQueries();
     });
     await flush();
-    expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+    expect(viewports(host)).toHaveLength(2);
+    expect(scrollTops(host)).toEqual([0, 0]);
+  });
+
+  it("10. a filter change cancels a request still armed while undecided: rows landing after it do not scroll", async () => {
+    const pastPage = SIX.slice(0, 2);
+    apiGetMock.mockImplementation((path: string) => {
+      if (!path.startsWith("/api/production-gantt")) return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      // Page 2 never resolves, so the landing stays undecided with the request armed.
+      if (path.includes("cursor=")) return new Promise(() => {});
+      return Promise.resolve(path.includes("q=zzz") ? response(SIX) : response(pastPage, "cursor-2"));
+    });
+    await mount();
+    expect(scrollTops(host)).toEqual([0, 0]);
+    await act(async () => {
+      todayButton(host).click();
+      await Promise.resolve();
+    });
+    await flush(2);
+    await act(async () => {
+      root.render(tree(client, "zzz"));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(viewports(host)).toHaveLength(2);
+    expect(scrollTops(host)).toEqual([0, 0]);
+  });
+
+  describe("ResizeObserver while the viewport is unmeasured", () => {
+    let observers: Array<{ cb: () => void; disconnect: ReturnType<typeof vi.fn>; target: Element | null }>;
+    // The vendored chart keeps its own observers; the landing's is the one on the timeline pane's viewport.
+    const inTimelinePane = (el: Element | null) => {
+      for (let node = el?.parentElement ?? null; node; node = node.parentElement) if (slotOf(node) === "gantt-timeline-pane") return true;
+      return false;
+    };
+    const landingObservers = () => observers.filter((o) => o.target && slotOf(o.target) === "scroll-area-viewport" && inTimelinePane(o.target));
+    let height: number;
+
+    beforeEach(() => {
+      observers = [];
+      height = 0;
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+        configurable: true,
+        get(this: Element) {
+          return slotOf(this) === "scroll-area-viewport" ? height : 0;
+        },
+      });
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          disconnect = vi.fn();
+          entry: (typeof observers)[number];
+          constructor(cb: () => void) {
+            this.entry = { cb, disconnect: this.disconnect, target: null };
+            observers.push(this.entry);
+          }
+          observe(target: Element) {
+            this.entry.target = target;
+          }
+          unobserve() {}
+        },
+      );
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("11. a zero-height notification keeps observing; a later non-zero one lands once; unmount disconnects", async () => {
+      await mount();
+      const onViewports = landingObservers();
+      expect(onViewports.length).toBeGreaterThan(0);
+      const created = observers.length;
+      // Every observer on the timeline viewport is notified (the vendor's own ones no-op at zero size).
+      const notify = async () => {
+        await act(async () => {
+          for (const o of onViewports) o.cb();
+          await Promise.resolve();
+        });
+        await flush(2);
+      };
+      await notify();
+      // No retry, no fresh observer, nothing disconnected, nothing scrolled.
+      expect(observers.length).toBe(created);
+      expect(scrollTops(host)).toEqual([0, 0]);
+
+      height = VIEWPORT_PX;
+      await notify();
+      expect(scrollTops(host)).toEqual([offsetOfIndex(2), offsetOfIndex(2)]);
+
+      const all = [...observers];
+      await act(async () => {
+        root.unmount();
+        await Promise.resolve();
+      });
+      expect(all.every((o) => o.disconnect.mock.calls.length > 0)).toBe(true);
+      root = createRoot(host);
+    });
   });
 });
