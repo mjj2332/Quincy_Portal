@@ -153,8 +153,10 @@ export async function scanDueSubtasks(env: Env, now = Date.now()): Promise<numbe
   const { date: todaySydney, hour } = sydneyDateTime(now);
   if (hour !== 8) return 0;
   const rows = await env.DB.prepare(
-    "SELECT s.id AS subtaskId, s.project_id AS projectId, s.assignee_id AS assigneeId, s.assignment_version AS assignmentVersion, s.due_date AS dueDate " +
+    // Bridge until the due reminder fans out per assignee (#369): the first assignee, at their own per-person version.
+    "SELECT s.id AS subtaskId, s.project_id AS projectId, s.assignee_id AS assigneeId, a.assignment_version AS assignmentVersion, s.due_date AS dueDate " +
     "FROM project_subtasks s INNER JOIN projects p ON p.id = s.project_id " +
+    "INNER JOIN project_subtask_assignees a ON a.subtask_id = s.id AND a.user_id = s.assignee_id " +
     "WHERE s.done = 0 AND s.due_date IS NOT NULL AND substr(s.due_date, 1, 10) <= ? " +
     "AND s.due_reminder_sent_at IS NULL AND s.assignee_id IS NOT NULL AND p.archived_at IS NULL",
   ).bind(todaySydney).all<DueSubtaskCandidate>();

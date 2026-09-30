@@ -111,6 +111,8 @@ async function insertSubtask(projectId: string, title: string, assigneeId: strin
   await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     // The end's civil string is stored in `due_date` (there is no `schedule_end_civil` column).
     .bind(id, projectId, title, Math.floor(Math.random() * 1_000_000), assigneeId, assigneeId ? 1 : 0, endCivil, startKind, schedule.start ?? (startKind === "timed" ? oneHourBefore(endCivil) : endCivil), start?.epochMs ?? null, start?.utcOffsetMinutes ?? null, start?.fold ?? null, endKind, end?.epochMs ?? null, end?.utcOffsetMinutes ?? null, end?.fold ?? null, "Australia/Sydney", 1, adminId, now, now).run();
+  // The relation is the source of truth (#368); Calendar still reads the column until #370, so both are seeded.
+  if (assigneeId) await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(id, assigneeId, now).run();
   return id;
 }
 

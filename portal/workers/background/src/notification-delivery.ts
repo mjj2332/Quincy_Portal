@@ -195,8 +195,8 @@ type ExternalSubtaskResolverRow = {
   membershipCreatedAt: number | null;
   subtaskId: string | null;
   subtaskProjectId: string | null;
-  subtaskAssigneeId: string | null;
-  subtaskAssignmentVersion: number | null;
+  relationUserId: string | null;
+  relationAssignmentVersion: number | null;
   subtaskDueDate: string | null;
   subtaskDueReminderSentAt: number | null;
 };
@@ -439,8 +439,8 @@ const STAFF_SUBTASK_ASSIGNED_ELIGIBILITY = `
   AND (recipient.role = 'admin' OR EXISTS (
     SELECT 1 FROM project_members member WHERE member.project_id = o.project_id AND member.user_id = o.recipient_id
   ))
-  AND subtask.project_id = o.project_id AND subtask.assignee_id = o.recipient_id
-  AND subtask.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')`;
+  AND subtask.project_id = o.project_id
+  AND EXISTS (SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = subtask.id AND a.user_id = o.recipient_id AND a.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion'))`;
 
 async function resolveStaffSubtaskAssignedRecipient(env: Env, outbox: OutboxRow): Promise<LegacyResolvedRecipient | Extract<ResolvedRecipient, { ok: false }>> {
   const payload = staffSubtaskAssignedPayload(outbox.payload_json, outbox);
@@ -456,7 +456,7 @@ async function resolveStaffSubtaskAssignedRecipient(env: Env, outbox: OutboxRow)
       recipient.name AS recipientName, recipient.email AS recipientEmail,
       p.street AS projectStreet, p.archived_at AS projectArchivedAt,
       EXISTS (SELECT 1 FROM project_subtasks subtask WHERE subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId') AND ${STAFF_SUBTASK_ASSIGNED_ELIGIBILITY}) AS eligible,
-      EXISTS (SELECT 1 FROM project_subtasks subtask WHERE subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId') AND subtask.project_id = o.project_id AND subtask.assignee_id = o.recipient_id AND subtask.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')) AS assignmentCurrent
+      EXISTS (SELECT 1 FROM project_subtasks subtask WHERE subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId') AND subtask.project_id = o.project_id AND EXISTS (SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = subtask.id AND a.user_id = o.recipient_id AND a.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion'))) AS assignmentCurrent
     FROM notification_outbox o
     INNER JOIN user recipient ON recipient.id = o.recipient_id
     INNER JOIN projects p ON p.id = o.project_id
@@ -502,7 +502,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
       p.street AS projectStreet, p.archived_at AS projectArchivedAt,
       member.id AS membershipId, member.created_at AS membershipCreatedAt,
       subtask.id AS subtaskId, subtask.project_id AS subtaskProjectId,
-      subtask.assignee_id AS subtaskAssigneeId, subtask.assignment_version AS subtaskAssignmentVersion,
+      a.user_id AS relationUserId, a.assignment_version AS relationAssignmentVersion,
       subtask.due_date AS subtaskDueDate, subtask.due_reminder_sent_at AS subtaskDueReminderSentAt
     FROM notification_outbox o
     LEFT JOIN user recipient ON recipient.id = o.recipient_id
@@ -511,6 +511,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
       AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
     LEFT JOIN project_subtasks subtask ON subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId')
       AND subtask.project_id = o.project_id
+    LEFT JOIN project_subtask_assignees a ON a.subtask_id = subtask.id AND a.user_id = o.recipient_id
     WHERE o.id = ?
   `).bind(outbox.id).first<ExternalSubtaskResolverRow>();
   if (!row) return suppressed("payload_invalid");
@@ -519,7 +520,7 @@ async function resolveExternalSubtaskRecipient(env: Env, outbox: OutboxRow): Pro
   if (row.membershipId !== payload.authorizationAtOccurrence.membershipCycle || row.membershipCreatedAt !== payload.authorizationAtOccurrence.startedAt) return suppressed("membership_cycle_changed");
   if (row.recipientAuthorizationEpoch === null) return suppressed("authorization_epoch_missing");
   if (authorizationEpochMismatch(row)) return suppressed("authorization_epoch_changed");
-  if (row.schemaVersion !== 1 || row.eventType !== outbox.event_type || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.assignment.projectId || row.subtaskId !== payload.assignment.subtaskId || row.subtaskProjectId !== row.projectId || row.subtaskAssigneeId !== payload.assignment.assigneeId || row.subtaskAssigneeId !== row.recipientId || row.subtaskAssignmentVersion !== payload.assignment.assignmentVersion) return suppressed("payload_invalid");
+  if (row.schemaVersion !== 1 || row.eventType !== outbox.event_type || row.sourceKey !== payload.event.sourceKey || row.recipientId !== payload.event.recipientId || row.projectId !== payload.assignment.projectId || row.subtaskId !== payload.assignment.subtaskId || row.subtaskProjectId !== row.projectId || row.relationUserId !== payload.assignment.assigneeId || row.relationUserId !== row.recipientId || row.relationAssignmentVersion !== payload.assignment.assignmentVersion) return suppressed("payload_invalid");
   if (payload.event.type !== (expectedType === "subtask_assigned" ? "project.subtask.assigned" : "project.subtask.due_today")) return suppressed("payload_invalid");
   if (expectedType === "subtask_due_today" && (!("dueDate" in payload.assignment) || payload.assignment.dueDate !== row.subtaskDueDate || payload.assignment.claimAt !== row.subtaskDueReminderSentAt)) return suppressed("subtask_changed");
   const copy = externalNotificationCopy({ type: expectedType });
@@ -1255,10 +1256,11 @@ function legacyAdmission(outbox: OutboxRow, resolved: LegacyResolvedRecipient, t
         JOIN project_members member ON member.id = o.recipient_membership_cycle_id
           AND member.project_id = o.project_id AND member.user_id = o.recipient_id AND member.role_on_project = 'editor'
         JOIN project_subtasks subtask ON subtask.id = json_extract(o.payload_json, '$.assignment.subtaskId')
-          AND subtask.project_id = o.project_id AND subtask.assignee_id = o.recipient_id AND subtask.done = 0
+          AND subtask.project_id = o.project_id AND subtask.done = 0
+        JOIN project_subtask_assignees a ON a.subtask_id = subtask.id AND a.user_id = o.recipient_id
+          AND a.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')
         WHERE ${lease} AND recipient.active = 1 AND recipient.role = 'external_editor'
           AND ${epoch}
-          AND subtask.assignment_version = json_extract(o.payload_json, '$.assignment.assignmentVersion')
           AND json_extract(o.payload_json, '$.authorizationAtOccurrence.membershipCycle') = member.id
           AND json_extract(o.payload_json, '$.authorizationAtOccurrence.startedAt') = member.created_at
           ${due}

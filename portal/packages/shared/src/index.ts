@@ -35,6 +35,7 @@ export * from "./checklist-schedule";
 export * from "./default-subtask-range";
 export * from "./checklist-schedule-config";
 export * from "./project-activity";
+export * from "./subtask-assignees";
 export * from "./project-activity-feed";
 export * from "./external-project-dto";
 export * from "./external-upload";

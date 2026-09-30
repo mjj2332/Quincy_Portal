@@ -93,3 +93,16 @@ describe("TB4E external policy and DTO boundaries", () => {
     expect(externalEditedUploadCreateRequestSchema.safeParse({ projectId: summary.id, collection: "edited", filename: "image.jpg", bytes: 10 }).success).toBe(true);
   });
 });
+
+describe("external activity projection of checklist assignee changes (#368)", () => {
+  it("drops the assignee ids and counts, keeping the historic fields", () => {
+    const payload = {
+      itemId: "item-1", checklistTitle: "Review images", changes: ["assignee" as const],
+      assigneesAdded: ["11111111-1111-4111-8111-111111111111"], assigneesRemoved: ["22222222-2222-4222-8222-222222222222"],
+      assigneesAddedCount: 1, assigneesRemovedCount: 1,
+    };
+    const projected = projectExternalActivityPayload("project.checklist.item_updated", payload);
+    expect(projected).toEqual({ type: "project.checklist.item_updated", payload: { itemId: "item-1", checklistTitle: "Review images", changes: ["assignee"] } });
+    for (const key of ["assigneesAdded", "assigneesRemoved", "assigneesAddedCount", "assigneesRemovedCount"]) expect(projected?.payload).not.toHaveProperty(key);
+  });
+});

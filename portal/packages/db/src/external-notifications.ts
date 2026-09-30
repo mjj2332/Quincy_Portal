@@ -119,20 +119,21 @@ export async function emitExternalSubtaskNotification(db: D1Database, input: Ext
         'schemaVersion', 1,
         'event', json_object('type', ?, 'sourceKey', ?, 'recipientId', recipient.id),
         'authorizationAtOccurrence', json_object('kind', 'project_editor_membership', 'membershipCycle', member.id, 'startedAt', member.created_at),
-        'assignment', json_object('projectId', p.id, 'subtaskId', s.id, 'assigneeId', s.assignee_id, 'assignmentVersion', s.assignment_version${payloadDue})
+        'assignment', json_object('projectId', p.id, 'subtaskId', s.id, 'assigneeId', a.user_id, 'assignmentVersion', a.assignment_version${payloadDue})
       ), 'pending', ?, member.id, ?, ?
     FROM project_subtasks s
     INNER JOIN projects p ON p.id = s.project_id AND p.archived_at IS NULL
-    INNER JOIN project_members member ON member.project_id = p.id AND member.user_id = s.assignee_id AND member.role_on_project = 'editor'
-    INNER JOIN user recipient ON recipient.id = s.assignee_id
-    WHERE s.id = ? AND s.project_id = ? AND s.assignee_id = ? AND s.assignment_version = ? AND s.done = 0
+    INNER JOIN project_subtask_assignees a ON a.subtask_id = s.id AND a.user_id = ? AND a.assignment_version = ?
+    INNER JOIN project_members member ON member.project_id = p.id AND member.user_id = a.user_id AND member.role_on_project = 'editor'
+    INNER JOIN user recipient ON recipient.id = a.user_id
+    WHERE s.id = ? AND s.project_id = ? AND s.done = 0
       AND recipient.active = 1 AND recipient.role = 'external_editor'
       ${dueCondition}
     ON CONFLICT(event_type, source_key, recipient_id) DO NOTHING
     RETURNING id
   `).bind(
     eventType, input.sourceKey, input.actorId, eventType, input.sourceKey, now, now, now,
-    input.subtaskId, input.projectId, input.assigneeId, input.assignmentVersion, ...dueBindings,
+    input.assigneeId, input.assignmentVersion, input.subtaskId, input.projectId, ...dueBindings,
   ).all<InsertedOutbox>();
   const outboxIds = rows.results.map((row) => row.id);
   await insertLedgers(db, outboxIds, externalNotificationChannels(policyType), now);
@@ -174,11 +175,12 @@ export async function emitStaffSubtaskAssignedNotification(db: D1Database, input
       json_object(
         'schemaVersion', 1,
         'event', json_object('type', ?, 'sourceKey', ?, 'recipientId', recipient.id),
-        'assignment', json_object('projectId', s.project_id, 'subtaskId', s.id, 'assigneeId', s.assignee_id, 'assignmentVersion', s.assignment_version)
+        'assignment', json_object('projectId', s.project_id, 'subtaskId', s.id, 'assigneeId', a.user_id, 'assignmentVersion', a.assignment_version)
       ), 'pending', ?, NULL, ?, ?
     FROM project_subtasks s
-    INNER JOIN user recipient ON recipient.id = s.assignee_id
-    WHERE s.id = ? AND s.project_id = ? AND s.assignee_id = ? AND s.assignment_version = ?
+    INNER JOIN project_subtask_assignees a ON a.subtask_id = s.id AND a.user_id = ? AND a.assignment_version = ?
+    INNER JOIN user recipient ON recipient.id = a.user_id
+    WHERE s.id = ? AND s.project_id = ?
       AND recipient.active = 1 AND recipient.role <> 'external_editor' AND recipient.id <> ?
       AND (recipient.role = 'admin' OR EXISTS (
         SELECT 1 FROM project_members member WHERE member.project_id = s.project_id AND member.user_id = recipient.id
@@ -187,7 +189,7 @@ export async function emitStaffSubtaskAssignedNotification(db: D1Database, input
     RETURNING id
   `).bind(
     eventType, input.sourceKey, input.actorId, eventType, input.sourceKey, now, now, now,
-    input.subtaskId, input.projectId, input.assigneeId, input.assignmentVersion, input.actorId,
+    input.assigneeId, input.assignmentVersion, input.subtaskId, input.projectId, input.actorId,
   ).all<InsertedOutbox>();
   const outboxIds = rows.results.map((row) => row.id);
   await insertLedgers(db, outboxIds, ["in_app", "email"], now);

@@ -200,6 +200,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "DELETE", path: "/api/projects/:projectId/subtasks/:subtaskId", class: "scoped" },
   { method: "PATCH", path: "/api/projects/:projectId/subtasks/:subtaskId", class: "scoped" },
   { method: "GET", path: "/api/projects/:projectId/subtasks", class: "scoped" },
+  { method: "GET", path: "/api/projects/:projectId/subtask-assignee-options", class: "scoped" },
   { method: "POST", path: "/api/projects/:projectId/subtasks", class: "scoped" },
   { method: "GET", path: "/api/projects", class: "scoped" },
   { method: "GET", path: "/api/production-calendar", class: "scoped", externalSurface: "calendar" },
