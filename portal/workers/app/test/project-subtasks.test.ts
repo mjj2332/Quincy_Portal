@@ -953,3 +953,111 @@ describe("multi-assignee writes (#368)", () => {
     });
   });
 });
+
+describe("team removal and counts with several assignees (#371)", () => {
+  const idFor = (n: number) => `79000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const [aId, bId, cId, xId, eId] = [idFor(1), idFor(2), idFor(3), idFor(4), idFor(5)];
+  const setFlag = (on: boolean) => database.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_at = ? WHERE key = 'subtask_multi_assignee'").bind(on ? 1 : 0, Date.now()).run();
+  let flagBefore = 0;
+  beforeAll(async () => {
+    const now = Date.now();
+    flagBefore = (await database.DB.prepare("SELECT enabled FROM feature_flags WHERE key = 'subtask_multi_assignee'").first<{ enabled: number }>())?.enabled ?? 0;
+    for (const [id, role] of [[aId, "editor"], [bId, "editor"], [cId, "editor"], [xId, "admin"], [eId, "external_editor"]] as const) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `t371 ${role} ${id.slice(-2)}`, `${id}@example.test`, role, now, now).run();
+    await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES ('t371-external', ?, 't371-external-token', ?, ?, ?)").bind(now + 3_600_000, eId, now, now).run();
+    await setFlag(true);
+  });
+
+  async function seed(members: Array<[string, "editor" | "photographer"]>) {
+    const project = crypto.randomUUID(); const now = Date.now(); const cycles = new Map<string, string>();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'T371 Street', 'editing_autohdr', 0, ?, ?)").bind(project, now, now).run();
+    for (const [userId, role] of members) { const id = crypto.randomUUID(); cycles.set(`${userId}:${role}`, id); await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(id, project, userId, role, now).run(); }
+    return { project, cycles };
+  }
+  const subtask = async (project: string, assigneeIds: string[]) => (await (await request(`/api/projects/${project}/subtasks`, "subtasks-admin-token", "POST", { title: "T371", assigneeIds })).json()) as { id: string };
+  const relation = async (id: string) => (await database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ? ORDER BY user_id").bind(id).all<{ user_id: string; assignment_version: number }>()).results;
+  const column = (id: string) => database.DB.prepare("SELECT assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(id).first<{ assignee_id: string | null; assignment_version: number }>();
+  const remove = (project: string, userId: string, cycle: string, clear: boolean, confirmed: number, role = "editors") => request(`/api/projects/${project}/${role}/${userId}`, "subtasks-admin-token", "DELETE", { membershipCycle: cycle, clearSubtaskAssignments: clear, confirmedAssignmentCount: confirmed });
+
+  it("removing one of three assignees from the team removes only them", async () => {
+    const { project, cycles } = await seed([[aId, "editor"], [bId, "editor"], [cId, "editor"]]);
+    const s = await subtask(project, [aId, bId, cId]);
+    const before = await relation(s.id);
+    const response = await remove(project, aId, cycles.get(`${aId}:editor`)!, true, 1);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 1 });
+    expect(await relation(s.id)).toEqual(before.filter((row) => row.user_id !== aId));
+    expect(await column(s.id)).toEqual({ assignee_id: bId, assignment_version: 2 });
+  });
+
+  it("the confirmation count is per person, and a stale count asks again", async () => {
+    const { project, cycles } = await seed([[aId, "editor"], [bId, "editor"]]);
+    // B is first on the shared Subtask, so the legacy column mirrors B, not A: a column count would miss it.
+    const shared = await subtask(project, [bId]); const solo = await subtask(project, [aId]);
+    expect((await request(`/api/projects/${project}/subtasks/${shared.id}`, "subtasks-admin-token", "PATCH", { assignees: { expectedVersion: 1, add: [aId], remove: [] } })).status).toBe(200);
+    const cycle = cycles.get(`${aId}:editor`)!;
+    const first = await remove(project, aId, cycle, false, 0);
+    expect(first.status).toBe(422); expect(await first.json()).toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 2 });
+    const stale = await remove(project, aId, cycle, true, 1);
+    expect(stale.status).toBe(422); expect(await stale.json()).toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 2 });
+    expect(await relation(shared.id)).toHaveLength(2);
+    const ok = await remove(project, aId, cycle, true, 2);
+    expect(ok.status).toBe(200); expect(await ok.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 2 });
+    expect(await relation(shared.id)).toEqual([{ user_id: bId, assignment_version: 1 }]);
+    expect(await column(shared.id)).toEqual({ assignee_id: bId, assignment_version: 3 });
+    expect(await relation(solo.id)).toEqual([]);
+    expect(await column(solo.id)).toEqual({ assignee_id: null, assignment_version: 2 });
+  });
+
+  it("a person who keeps another role on the Project stays on every Subtask", async () => {
+    const { project, cycles } = await seed([[aId, "editor"], [aId, "photographer"], [bId, "editor"]]);
+    const s = await subtask(project, [aId, bId]);
+    const response = await remove(project, aId, cycles.get(`${aId}:editor`)!, false, 0);
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
+    expect(await relation(s.id)).toEqual([{ user_id: aId, assignment_version: 1 }, { user_id: bId, assignment_version: 1 }]);
+    expect(await column(s.id)).toEqual({ assignee_id: aId, assignment_version: 1 });
+  });
+
+  it("an active admin removed from the team stays assigned", async () => {
+    const { project, cycles } = await seed([[xId, "editor"], [aId, "editor"]]);
+    const s = await subtask(project, [xId, aId]);
+    const response = await remove(project, xId, cycles.get(`${xId}:editor`)!, false, 0);
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
+    expect(await relation(s.id)).toEqual([{ user_id: aId, assignment_version: 1 }, { user_id: xId, assignment_version: 1 }]);
+  });
+
+  it("the mirror follows the remaining first assignee when the mirrored person leaves", async () => {
+    const { project, cycles } = await seed([[aId, "editor"], [bId, "editor"]]);
+    const s = await subtask(project, [aId, bId]);
+    expect((await column(s.id))?.assignee_id).toBe(aId);
+    expect((await remove(project, aId, cycles.get(`${aId}:editor`)!, true, 1)).status).toBe(200);
+    expect((await column(s.id))?.assignee_id).toBe(bId);
+  });
+
+  it("team counts are per person on the staff and the external project views", async () => {
+    const { project, cycles } = await seed([[aId, "editor"], [bId, "editor"], [cId, "editor"], [eId, "editor"]]);
+    // C-free shared Subtask where B is first, so a column count would give A 1 and B 1.
+    const shared = await subtask(project, [bId]);
+    expect((await request(`/api/projects/${project}/subtasks/${shared.id}`, "subtasks-admin-token", "PATCH", { assignees: { expectedVersion: 1, add: [aId], remove: [] } })).status).toBe(200);
+    await subtask(project, [aId]);
+    const detail = await (await request(`/api/projects/${project}`, "subtasks-admin-token")).json() as { members: Array<{ userId: string; assignedSubtaskCount: number }> };
+    const counts = Object.fromEntries(detail.members.map((member) => [member.userId, member.assignedSubtaskCount]));
+    expect(counts).toMatchObject({ [aId]: 2, [bId]: 1, [cId]: 0 });
+    const external = await request(`/api/projects/${project}/collaboration-summary`, "t371-external-token");
+    expect(external.status).toBe(200);
+    const summary = await external.json() as { members: Array<{ membershipCycleId: string; assignedSubtaskCount: number }> };
+    const byCycle = Object.fromEntries(summary.members.map((member) => [member.membershipCycleId, member.assignedSubtaskCount]));
+    expect(byCycle).toMatchObject({ [cycles.get(`${aId}:editor`)!]: 2, [cycles.get(`${bId}:editor`)!]: 1, [cycles.get(`${cId}:editor`)!]: 0 });
+  });
+
+  it("another assignee's pending assignment notice still matches the relation after the removal", async () => {
+    const { project, cycles } = await seed([[aId, "editor"], [bId, "editor"]]);
+    const s = await subtask(project, [aId, bId]);
+    const pending = (id: string) => database.DB.prepare("SELECT status, json_extract(payload_json, '$.assignment.assignmentVersion') AS version FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND recipient_id = ? AND json_extract(payload_json, '$.assignment.subtaskId') = ?").bind(id, s.id).first<{ status: string; version: number }>();
+    const notice = await pending(bId);
+    expect(notice).toMatchObject({ version: 1 });
+    expect((await remove(project, aId, cycles.get(`${aId}:editor`)!, true, 1)).status).toBe(200);
+    expect(await pending(bId)).toEqual(notice);
+    // The delivery guard's predicate: the recipient's relation row still carries the noticed version.
+    expect(await relation(s.id)).toEqual([{ user_id: bId, assignment_version: notice!.version }]);
+  });
+});
