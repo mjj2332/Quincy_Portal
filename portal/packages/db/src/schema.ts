@@ -353,7 +353,6 @@ export const projectSubtasks = sqliteTable(
     title: text("title").notNull(),
     done: integer("done", { mode: "boolean" }).notNull().default(false),
     position: integer("position").notNull(),
-    assigneeId: text("assignee_id").references(() => user.id, { onDelete: "set null" }),
     assignmentVersion: integer("assignment_version").notNull().default(0),
     dueDate: text("due_date"),
     dueReminderSentAt: integer("due_reminder_sent_at", { mode: "timestamp_ms" }),
@@ -377,7 +376,6 @@ export const projectSubtasks = sqliteTable(
   },
   (t) => [
     index("project_subtasks_project_position_idx").on(t.projectId, t.position, t.id),
-    index("project_subtasks_assignee_idx").on(t.assigneeId),
     check("project_subtasks_schedule_start_kind_check", sql`${t.scheduleStartKind} IS NULL OR ${t.scheduleStartKind} IN ('date', 'timed')`),
     check("project_subtasks_schedule_start_at_check", sql`${t.scheduleStartAt} IS NULL OR typeof(${t.scheduleStartAt}) = 'integer'`),
     check("project_subtasks_schedule_start_utc_offset_check", sql`${t.scheduleStartUtcOffsetMinutes} IS NULL OR (typeof(${t.scheduleStartUtcOffsetMinutes}) = 'integer' AND ${t.scheduleStartUtcOffsetMinutes} BETWEEN -840 AND 840)`),

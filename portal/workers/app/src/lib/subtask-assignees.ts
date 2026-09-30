@@ -1,14 +1,13 @@
 /**
  * Subtask assignee relation (`project_subtask_assignees`, #364, ADR 0012).
  *
- * The relation is the source of truth (#368). `project_subtasks.assignee_id` mirrors the first assignee for
- * not-yet-migrated readers, and every write that changes the set appends these statements to the same D1 batch. Each is fenced by the winning audit row, so a lost
- * compare-and-swap writes nothing. There are no triggers (the worker test harness splits migration SQL on `;`).
+ * The relation is the only place a Subtask's assignees live (#368, #373). Every write that changes the set appends
+ * these statements to the same D1 batch. Each is fenced by the winning audit row, so a lost compare-and-swap writes nothing. There are no triggers (the worker test harness splits migration SQL on `;`).
  */
 import type { CalendarPerson, ExternalPersonDto, Role } from "@quincy/shared";
-import { ROLE_LABELS, SUBTASK_MULTI_ASSIGNEE_FLAG } from "@quincy/shared";
+import { ROLE_LABELS } from "@quincy/shared";
 
-/** Order of a Subtask's assignees: the first is the one the legacy column mirrors. */
+/** Order of a Subtask's assignees. */
 export const ASSIGNEE_ORDER_SQL = "assignment_version ASC, added_at ASC, user_id ASC";
 
 export type OrderedAssignee = { assignmentVersion: number; addedAt: number; userId: string };
@@ -41,12 +40,6 @@ export function externalAssigneeProjection(list: HydratedAssignee[]): { assignee
     assignees: named.map((person) => ({ id: person.id, name: person.name, roleLabel: ROLE_LABELS[person.role], isExternal: person.role === "external_editor", active: person.active })),
     otherAssigneeCount: list.length - named.length,
   };
-}
-
-/** Whether more than one assignee may be saved (#358). A missing row means off. */
-export async function multiAssigneeEnabled(db: D1Database): Promise<boolean> {
-  const row = await db.prepare("SELECT enabled FROM feature_flags WHERE key = ?").bind(SUBTASK_MULTI_ASSIGNEE_FLAG).first<{ enabled: number }>();
-  return row?.enabled === 1;
 }
 
 type HydrationRow = { subtaskId: string; id: string; name: string; role: Role; active: number; assignmentVersion: number; addedAt: number; onTeam: number };
@@ -104,19 +97,9 @@ export function relationInsertMany(db: D1Database, subtaskId: string, userIdsJso
   `).bind(subtaskId, version, now, userIdsJson, auditId);
 }
 
-// Mirror of the first assignee for not-yet-migrated readers. Deleted in #373 (PR8).
-export function mirrorRecompute(db: D1Database, subtaskId: string, auditId: string): D1PreparedStatement {
-  return db.prepare(`
-    UPDATE project_subtasks SET assignee_id = (
-      SELECT user_id FROM project_subtask_assignees WHERE subtask_id = ?1 ORDER BY ${ASSIGNEE_ORDER_SQL} LIMIT 1
-    ) WHERE id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)
-  `).bind(subtaskId, auditId);
-}
-
 /**
- * Team removal: drop the person from every Subtask on the Project. The guard is the one the column-clearing
- * UPDATE uses (no other eligible role remains, and the person is not an active admin), so it removes exactly what
- * that UPDATE emptied.
+ * Team removal: drop the person from every Subtask on the Project. The guard: no other eligible role remains, and the
+ * person is not an active admin.
  */
 export function relationDeleteForRemovedMember(
   db: D1Database,
@@ -162,19 +145,8 @@ export function assigneesForViewer(list: HydratedAssignee[], role: Role): { assi
 
 /**
  * The one shape of a per-person Subtask count (#371): how many Subtasks on a Project a person is an assignee of, read
- * from the relation and never the mirrored column. Both arguments are SQL expressions (a column or a `?` placeholder).
+ * from the relation. Both arguments are SQL expressions (a column or a `?` placeholder).
  */
 export function assignedSubtaskCountSql(projectIdSql: string, userIdSql: string): string {
   return `(SELECT COUNT(*) FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ${projectIdSql} AND sa.user_id = ${userIdSql})`;
-}
-
-/**
- * Team removal, mirror repair (removed with the column in PR 8 of the multi-assignee series): after the relation rows go, point the
- * legacy column at the first remaining assignee (or NULL) on Subtasks that mirrored the removed person.
- */
-export function mirrorRepairForRemovedMember(db: D1Database, input: { projectId: string; userId: string; auditId: string }): D1PreparedStatement {
-  return db.prepare(`
-    UPDATE project_subtasks SET assignee_id = (SELECT sa.user_id FROM project_subtask_assignees sa WHERE sa.subtask_id = project_subtasks.id ORDER BY sa.assignment_version ASC, sa.added_at ASC, sa.user_id ASC LIMIT 1)
-    WHERE project_id = ? AND assignee_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
-  `).bind(input.projectId, input.userId, input.auditId);
 }

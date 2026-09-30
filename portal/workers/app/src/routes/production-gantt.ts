@@ -665,7 +665,6 @@ export function serializeGanttChecklistRow(row: GanttChildBaseRow, role: GanttRo
     title: row.title,
     done: Boolean(row.done),
     position: Number(row.position),
-    assignee: assignees[0] ?? null,
     assignees,
     otherAssigneeCount,
     assignmentVersion: Number(row.assignment_version ?? 0),

@@ -85,7 +85,7 @@ export function adoptGanttChecklistRow(row: GanttChecklistRowDto, result: Checkl
   // (a response that predates #368) or an equal-or-older version never rolls a fresher row back.
   if (result.assignees && result.assignmentVersion !== undefined && result.assignmentVersion > row.assignmentVersion) {
     const assignees = result.assignees.map((person) => ({ ...person }));
-    next = { ...next, assignees, assignee: assignees[0] ?? null, otherAssigneeCount: result.otherAssigneeCount ?? 0, assignmentVersion: result.assignmentVersion };
+    next = { ...next, assignees, otherAssigneeCount: result.otherAssigneeCount ?? 0, assignmentVersion: result.assignmentVersion };
   }
   return next;
 }

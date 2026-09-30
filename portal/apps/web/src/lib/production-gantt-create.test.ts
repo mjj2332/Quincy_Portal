@@ -19,7 +19,7 @@ function project(id: string, ids: string[], truncated = false): GanttProjectRowD
 describe("production-gantt-create (#344)", () => {
   it("builds an unassigned, read-only child row", () => {
     const pin = pinFromCreated("p1", created, 100, "g");
-    expect(pin.row).toMatchObject({ id: "t1", projectId: "p1", title: "New", assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false } });
+    expect(pin.row).toMatchObject({ id: "t1", projectId: "p1", title: "New", assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false } });
     expect(pin.hiddenAtStamp).toBeNull();
   });
 
@@ -230,7 +230,7 @@ function ganttProject(id: string, ids: string[]): GanttProjectRowDto {
     delivered: false,
     permissions: { canEditDeadline: false, canEditChildren: true },
     children: {
-      rows: ids.map((rowId, index) => ({ id: rowId, projectId: id, title: rowId, done: false, position: index, assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false } })),
+      rows: ids.map((rowId, index) => ({ id: rowId, projectId: id, title: rowId, done: false, position: index, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0, schedule, permissions: { canDrag: false, canResize: false, canOpenScheduleEditor: false, canEditAssignees: false } })),
       total: ids.length, returned: ids.length, truncated: false, nextCursor: null,
     },
   } as unknown as GanttProjectRowDto;

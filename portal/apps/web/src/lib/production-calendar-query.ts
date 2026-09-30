@@ -116,7 +116,6 @@ const internalChecklistMutationSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
   done: z.boolean(),
-  assignee: z.object({ id: z.string().min(1), name: z.string() }).passthrough().nullable(),
   assignees: z.array(z.object({ id: z.string().min(1), name: z.string() }).passthrough()).optional(),
   assignmentVersion: z.number().int().nonnegative().optional(),
   position: z.number().int(),
@@ -125,9 +124,8 @@ const internalChecklistMutationSchema = z.object({
 
 type InternalPerson = { id: string; name: string; roleLabel?: unknown; isExternal?: unknown; active?: unknown };
 
-function internalAssignee(person: InternalPerson | null): CalendarPerson | null {
-  if (!person) return null;
-  // The staff DTO (#368) carries the full person; the pre-#368 single field only id and name.
+function internalPerson(person: InternalPerson): CalendarPerson {
+  // The decoder accepts additive Worker fields, so a person's optional keys get the same defaults as before.
   return {
     id: person.id,
     name: person.name,
@@ -145,8 +143,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       id: parsed.id,
       title: parsed.title,
       done: parsed.done,
-      assignee: parsed.assignee,
-      // The server's team-filtered list and hidden count (#368): never derived from the scalar `assignee`.
+      // The server's team-filtered list and hidden count (#368).
       assignees: parsed.assignees,
       otherAssigneeCount: parsed.otherAssigneeCount,
       assignmentVersion: parsed.assignmentVersion,
@@ -161,8 +158,7 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       id: parsed.id,
       title: parsed.title,
       done: parsed.done,
-      assignee: internalAssignee(parsed.assignee),
-      assignees: parsed.assignees ? parsed.assignees.map((person) => internalAssignee(person)!) : null,
+      assignees: parsed.assignees ? parsed.assignees.map((person) => internalPerson(person)) : null,
       ...(parsed.assignmentVersion === undefined ? {} : { assignmentVersion: parsed.assignmentVersion }),
       position: parsed.position,
       schedule: parsed.schedule,

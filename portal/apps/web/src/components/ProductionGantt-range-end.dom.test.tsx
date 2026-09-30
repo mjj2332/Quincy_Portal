@@ -80,7 +80,7 @@ function resetFixture(options: { canOpenScheduleEditor?: boolean; timedStart?: s
 
 function childRow(row: Row) {
   return {
-    id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 1,
+    id: row.id, projectId: PROJECT_ID, title: row.title, done: false, position: row.position, assignees: [], otherAssigneeCount: 0, assignmentVersion: 1,
     schedule: row.schedule, permissions: { canDrag: true, canResize: true, canOpenScheduleEditor: row.canOpenScheduleEditor, canEditAssignees: true },
   };
 }
@@ -123,7 +123,7 @@ function echoPatch(body: PatchBody, subtaskId: string): Reply {
   const row = [...rows, ...pageTwo].find((candidate) => candidate.id === subtaskId)!;
   const schedule = scheduleFromInput(body.schedule.schedule, body.schedule.expectedVersion + 1);
   row.schedule = schedule;
-  return { status: 200, body: { id: row.id, title: row.title, done: false, assignee: null, position: row.position, schedule } };
+  return { status: 200, body: { id: row.id, title: row.title, done: false, position: row.position, schedule } };
 }
 
 const patches = () => requests.filter((request) => request.method === "PATCH");
@@ -481,7 +481,7 @@ describe("ProductionGantt — Subtask Due cell (#372, range end)", () => {
     const winner = range(3, dateEndpoint(sydneyDay(1)), dateEndpoint(sydneyDay(8)));
     patchReply = () => {
       rows[0]!.schedule = winner;
-      return { status: 409, body: { error: "conflict", code: "subtask_item_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: true, assignee: null, position: 0, schedule: winner } } };
+      return { status: 409, body: { error: "conflict", code: "subtask_item_conflict", current: winner, currentSubtask: { id: RANGE_ID, title: RANGE_TITLE, done: true, position: 0, schedule: winner } } };
     };
     await click(pickerButton(RANGE_TITLE, "Save")!);
     await flush(6);

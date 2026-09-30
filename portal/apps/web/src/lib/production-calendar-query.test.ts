@@ -141,7 +141,6 @@ describe("checklist mutation response domains", () => {
       title: "Select hero images",
       done: false,
       position: 1024,
-      assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
       assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }],
       otherAssigneeCount: 0,
       assignmentVersion: 2,
@@ -151,37 +150,37 @@ describe("checklist mutation response domains", () => {
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-20T00:00:00.000Z",
     });
-    expect(result).toMatchObject({ id: itemId, title: "Select hero images", scheduleVersion: 9, assignee: { id: personId, name: "Maya Editor" } });
+    expect(result).toMatchObject({ id: itemId, title: "Select hero images", scheduleVersion: 9, assignees: [{ id: personId, name: "Maya Editor" }] });
   });
 
   it("keeps every staff assignee from an internal mutation response, and leaves the list unknown when the wire has none (#370)", () => {
-    const staff = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor" }, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, { id: "p2", name: "Bo", roleLabel: "Admin", isExternal: false, active: false }], schedule });
+    const staff = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, { id: "p2", name: "Bo", roleLabel: "Admin", isExternal: false, active: false }], schedule });
     expect(staff.assignees?.map((person) => person.id)).toEqual([personId, "p2"]);
     expect(staff.assignees?.[1]).toMatchObject({ name: "Bo", roleLabel: "Admin", active: false });
-    const old = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor" }, schedule });
+    const old = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, schedule });
     expect(old.assignees).toBeNull();
-    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 2, assignmentVersion: 1, dueDate: null, schedule, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
-    // The external item carries the team-filtered list and the hidden count (#368); the scalar is never the list.
+    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 2, assignmentVersion: 1, dueDate: null, schedule, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
+    // The external item carries the team-filtered list and the hidden count (#368).
     expect(external.assignees?.map((person) => person.id)).toEqual([personId]);
     expect(external.otherAssigneeCount).toBe(2);
   });
 
   it("carries the assignment version so the Gantt can adopt a result version-wins (#372)", () => {
-    const staff = decodeChecklistMutationResponse("admin", { id: itemId, title: "t", done: false, position: 1, assignee: null, assignees: [], assignmentVersion: 6, schedule });
+    const staff = decodeChecklistMutationResponse("admin", { id: itemId, title: "t", done: false, position: 1, assignees: [], assignmentVersion: 6, schedule });
     expect(staff.assignmentVersion).toBe(6);
-    expect(decodeChecklistMutationResponse("admin", { id: itemId, title: "t", done: false, position: 1, assignee: null, schedule }).assignmentVersion).toBeUndefined();
+    expect(decodeChecklistMutationResponse("admin", { id: itemId, title: "t", done: false, position: 1, schedule }).assignmentVersion).toBeUndefined();
   });
 
   it("accepts an additive internal Worker field but rejects a cross-fed internal shape", () => {
-    const internal = decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: true, assignee: { id: personId, name: "Maya Editor" }, position: 2048, schedule, futureWorkerField: "ignored" });
+    const internal = decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: true, assignees: [{ id: personId, name: "Maya Editor" }], position: 2048, schedule, futureWorkerField: "ignored" });
     expect(internal.scheduleVersion).toBe(9);
-    expect(internal.assignee).toMatchObject({ id: personId, name: "Maya Editor" });
-    expect(() => decodeChecklistMutationResponse("external_editor", { id: itemId, title: "Select hero images", done: true, assignee: { id: personId, name: "Maya Editor" }, position: 2048, schedule })).toThrow();
+    expect(internal.assignees).toMatchObject([{ id: personId, name: "Maya Editor" }]);
+    expect(() => decodeChecklistMutationResponse("external_editor", { id: itemId, title: "Select hero images", done: true, position: 2048, schedule })).toThrow();
     // The internal decoder is not a privacy boundary; a full External-shaped body
     // (extra top-level Worker keys) still decodes, projecting only the fields the
     // Calendar reconciles. A stray field *inside* an endpoint is still rejected.
-    expect(decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: false, position: 1024, assignee: { id: personId, name: "Maya Editor" }, assignmentVersion: 2, dueDate: "2026-08-20", schedule, createdBy: { id: personId, name: "Maya Editor" }, createdAt: "x", updatedAt: "y" }).scheduleVersion).toBe(9);
-    expect(() => decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "M" }, schedule: { ...schedule, end: { ...schedule.end, strayEndpointField: 1 } } })).toThrow();
+    expect(decodeChecklistMutationResponse("editor", { id: itemId, title: "Select hero images", done: false, position: 1024, assignmentVersion: 2, dueDate: "2026-08-20", schedule, createdBy: { id: personId, name: "Maya Editor" }, createdAt: "x", updatedAt: "y" }).scheduleVersion).toBe(9);
+    expect(() => decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, schedule: { ...schedule, end: { ...schedule.end, strayEndpointField: 1 } } })).toThrow();
   });
 
   it("rejects a range response with null endpoints while tolerating additive top-level fields", () => {
@@ -189,7 +188,6 @@ describe("checklist mutation response domains", () => {
       id: itemId,
       title: "Select hero images",
       done: true,
-      assignee: { id: personId, name: "Maya Editor" },
       position: 2048,
       schedule: { ...schedule, state: "range", start: null, end: null, due: null },
       futureWorkerField: "ignored",
@@ -197,7 +195,7 @@ describe("checklist mutation response domains", () => {
   });
 
   it("does not fall back between selected domains and rejects photographers", () => {
-    expect(() => decodeChecklistMutationResponse("external_editor", { id: itemId, title: "Wrong", done: false, assignee: null, position: 1, schedule })).toThrow();
+    expect(() => decodeChecklistMutationResponse("external_editor", { id: itemId, title: "Wrong", done: false, position: 1, schedule })).toThrow();
     expect(() => decodeChecklistMutationResponse("photographer", {})).toThrow(/domain/);
   });
 });

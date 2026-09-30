@@ -56,7 +56,6 @@ function task(id: string, title: string, position: number): GanttChecklistRowDto
     title,
     done: false,
     position,
-    assignee: null,
     assignees: [],
     otherAssigneeCount: 0,
     assignmentVersion: 0,

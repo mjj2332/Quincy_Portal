@@ -71,7 +71,6 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     title: "Edit photos",
     done: false,
     position: 1,
-    assignee: ED,
     assignees: [ED],
     otherAssigneeCount: 0,
     assignmentVersion: 1,
@@ -135,8 +134,7 @@ describe("ganttChecklistSource", () => {
       kind: "checklist",
       title: "Edit photos",
       project: { id: PROJECT_ID, street: "1 Test St", stageKey: "awaiting_raw", checklist: { completed: 1, total: 4 }, delivered: true },
-      assignee: row.assignee,
-      assignees: [row.assignee],
+      assignees: row.assignees,
       otherAssigneeCount: 0,
       timing: { allDay: false, start: "2026-06-09T23:00:00.000Z", end: "2026-06-10T01:00:00.000Z" },
       status: { overdue: false, delivered: true, completed: true, sameAssigneeOverlap: false },
@@ -148,15 +146,13 @@ describe("ganttChecklistSource", () => {
 
   it("carries every assignee and the hidden count from the row, as copies (#372)", () => {
     const bo = { id: "33333333-3333-4333-8333-000000000002", name: "Bo", roleLabel: "Admin", isExternal: false, active: true };
-    const row = makeTask({ assignee: ED, assignees: [ED, bo], otherAssigneeCount: 2, assignmentVersion: 5 });
+    const row = makeTask({ assignees: [ED, bo], otherAssigneeCount: 2, assignmentVersion: 5 });
     const source = eventSource(row);
     expect(source.assignees).toEqual([ED, bo]);
     expect(source.otherAssigneeCount).toBe(2);
-    expect(source.assignee).toEqual(ED);
     expect(source.assignees[0]).not.toBe(row.assignees[0]);
-    const nobody = eventSource(makeTask({ assignee: null, assignees: [], otherAssigneeCount: 0, assignmentVersion: 0 }));
+    const nobody = eventSource(makeTask({ assignees: [], otherAssigneeCount: 0, assignmentVersion: 0 }));
     expect(nobody.assignees).toEqual([]);
-    expect(nobody.assignee).toBeNull();
   });
 
   it("maps a one-day range to a one-day exclusive-end timing and keeps canResize", () => {

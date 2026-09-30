@@ -343,8 +343,7 @@ const calendarFor = (subview: DashboardCalendarState["subview"]): DashboardCalen
   showCompletedChecklist: true, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 });
 const checklistItem = (id: string, title: string, completed: boolean) => ({
-  id, kind: "checklist", title, project, assignee: { id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
-  assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 0,
+  id, kind: "checklist", title, project,   assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 0,
   timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed, sameAssigneeOverlap: false },
   schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: { kind: "date", localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, end: { kind: "date", localCivil: "2026-08-12", instant: null, utcOffsetMinutes: null, fold: null, resolution: "stored" }, due: "2026-08-12" },
   permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true },

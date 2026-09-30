@@ -4539,6 +4539,12 @@ remove the legacy readers) still applies.
   body. `ProjectWorkspace` still owns the fetch, poll and retry; `jobs` / `onRetryJob` are threaded to
   the panel (admins only) and shown under Activity > System.
 
+- **Detach before drop: a drizzle full-row select is a hidden column read.** `select({ subtask: schema.projectSubtasks })`
+  names every column in `schema.ts`, so a column is only safe to drop once its field is gone from `schema.ts` in an
+  earlier code PR. Prove it by running the `DROP` ad hoc in a test (`subtask-assignee-column-dropped.test.ts` in
+  the app and background workers) and driving every path over HTTP: any `no such column` is a 500 there, not in
+  production.
+
 ## DOM tests must not depend on in-file order (#389)
 
 - **Replay an order failure with the seed.** Run the DOM suite shuffled:

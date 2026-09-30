@@ -154,8 +154,6 @@ export const externalChecklistItemSchema = z.object({
   title: z.string(),
   done: z.boolean(),
   position: z.number().int(),
-  /** The first named assignee (kept until #368's PR8); `assignees` is the list. */
-  assignee: externalPersonSchema.nullable(),
   /** Assignees on the Project's team; everyone else is only counted in `otherAssigneeCount`. */
   assignees: z.array(externalPersonSchema),
   otherAssigneeCount: z.number().int().nonnegative(),
@@ -234,7 +232,7 @@ export const externalStageListResponseSchema = z.object({
   stages: z.array(z.object({ key: z.string(), label: z.string(), displayOrder: z.number().int(), active: z.boolean() }).strict()),
 }).strict();
 
-export const externalSubtaskAssigneeOptionsResponseSchema = z.object({ candidates: z.array(externalPersonSchema), multiAssignee: z.boolean() }).strict();
+export const externalSubtaskAssigneeOptionsResponseSchema = z.object({ candidates: z.array(externalPersonSchema) }).strict();
 
 export type ExternalApiSurface =
   | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"

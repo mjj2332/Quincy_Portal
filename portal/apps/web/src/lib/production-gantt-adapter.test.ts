@@ -72,7 +72,6 @@ function makeTask(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklist
     title: `Task ${taskSeq}`,
     done: false,
     position: taskSeq,
-    assignee: null,
     assignees: [],
     otherAssigneeCount: 0,
     assignmentVersion: 0,

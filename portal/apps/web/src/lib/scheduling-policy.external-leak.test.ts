@@ -17,7 +17,6 @@ describe("an External Editor's schedule save never reveals a hidden assignee (#3
   const schedule = oneDaySchedule(dateAt, 4);
   const body = (over: object) => ({
     id: "33333333-3333-4333-8333-333333333333", title: "Select hero images", done: false, position: 1024,
-    assignee: admin, // the legacy scalar is the first assignee, unrestricted
     assignees: [team], otherAssigneeCount: 1,
     assignmentVersion: 2, dueDate: "2026-08-20", schedule,
     createdBy: team, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-20T00:00:00.000Z", ...over,
@@ -31,6 +30,6 @@ describe("an External Editor's schedule save never reveals a hidden assignee (#3
     expect(wire).not.toContain("Zelda");
     expect(next.assignees.map((person) => person.name)).toEqual(["Maya Editor"]);
     expect(next.otherAssigneeCount).toBe(1);
-    expect(next.assignee?.id).toBe(TEAM_ID);
+    expect(next.assignees.map((person) => person.id)).toEqual([TEAM_ID]);
   });
 });

@@ -28,8 +28,6 @@ import { serializeSubtaskSchedule } from "./subtask-schedule";
 import {
   externalAddEligible,
   hydrateSubtaskAssignees,
-  mirrorRecompute,
-  multiAssigneeEnabled,
   relationDeleteMany,
   relationInsertMany,
   type HydratedAssignee,
@@ -41,16 +39,14 @@ import { publishOutboxDetached } from "../lib/server-timing";
 export const POSITION_STEP = 1024;
 
 export type CreateItemInput = { title: string; assigneeIds: string[] };
-/** `assigneeId` is the pre-#368 single-assignee field (open old tabs until #373); `assignees` is the delta. */
-export type ItemPatch = { title?: string; done?: boolean; assigneeId?: string | null; assignees?: SubtaskAssigneeDelta };
+/** `assignees` is the delta. */
+export type ItemPatch = { title?: string; done?: boolean; assignees?: SubtaskAssigneeDelta };
 
 export type ProjectSubtaskDto = {
   id: string;
   title: string;
   done: boolean;
   position: number;
-  /** `assignees[0]`, kept for old tabs. Removed in #373. */
-  assignee: { id: string; name: string } | null;
   assignees: CalendarPerson[];
   assignmentVersion: number;
   dueDate: string | null;
@@ -134,7 +130,6 @@ export function serializeProjectSubtask(row: SubtaskRow, assignees: HydratedAssi
     title: row.subtask.title,
     done: row.subtask.done,
     position: row.subtask.position,
-    assignee: assignees[0] ? { id: assignees[0].id, name: assignees[0].name } : null,
     assignees: assignees.map(assigneePerson),
     assignmentVersion: row.subtask.assignmentVersion,
     dueDate: row.subtask.dueDate,
@@ -265,7 +260,6 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (assigneeIds.length) {
       const eligible = await eligibleToAdd(env, principal, projectId, assigneeIds);
       if (!assigneeIds.every((id) => eligible.has(id))) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
-      if (assigneeIds.length > 1 && !await multiAssigneeEnabled(env.DB)) return invalidRequest("subtask_multi_assignee_disabled", "Assigning more than one person is not available yet.");
     }
     const normalized = normalizeChecklistSchedule(requested, 1);
     if (!normalized.ok) return invalidRequest(normalized.error.code, normalized.error.message, normalized.error.endpoint ? { endpoint: normalized.error.endpoint, ...(normalized.error.choices ? { choices: normalized.error.choices } : {}) } : undefined);
@@ -275,13 +269,13 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const activity = activityFor(id, projectId, principal.id, now, operation.item.title, "created");
     const bundle = buildProjectActivityStatements({ db: env.DB, intent: activity, winnerAuditId: auditId, createdAt: now });
     const canonicalSchedule = normalized.value;
-    const insert = env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeIds[0] ?? null, assigneeIds.length ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, principal.id, now, now);
+    const insert = env.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, projectId, operation.item.title, (last?.position ?? 0) + POSITION_STEP, assigneeIds.length ? 1 : 0, canonicalSchedule.dueDate, canonicalSchedule.scheduleStartKind, canonicalSchedule.scheduleStartCivil, canonicalSchedule.scheduleStartAt, canonicalSchedule.scheduleStartUtcOffsetMinutes, canonicalSchedule.scheduleStartFold, canonicalSchedule.scheduleEndKind, canonicalSchedule.scheduleEndAt, canonicalSchedule.scheduleEndUtcOffsetMinutes, canonicalSchedule.scheduleEndFold, canonicalSchedule.scheduleZone, canonicalSchedule.scheduleVersion, principal.id, now, now);
     const results = await env.DB.batch([
       insert,
       env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project_subtask.create', 'project_subtask', ?, ?, ? WHERE changes() = 1").bind(auditId, principal.id, id, auditMeta(principal, { scheduleState: canonicalSchedule.state, scheduleVersion: canonicalSchedule.scheduleVersion }), now),
       ...bundle.statements,
-      // Last, so the positional reads above stay valid (#364). The relation is authoritative; the recompute sets the column to its first row.
-      ...(assigneeIds.length ? [relationInsertMany(env.DB, id, JSON.stringify(assigneeIds), 1, now, auditId), mirrorRecompute(env.DB, id, auditId)] : []),
+      // Last, so the positional reads above stay valid (#364).
+      ...(assigneeIds.length ? [relationInsertMany(env.DB, id, JSON.stringify(assigneeIds), 1, now, auditId)] : []),
     ]);
     const item = await subtaskQuery(db, projectId, id).get();
     if (!item) throw new Error("Subtask could not be created");
@@ -334,19 +328,7 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   const titleChanged = patch.title !== undefined && patch.title !== existing.subtask.title;
   const doneChanged = patch.done !== undefined && patch.done !== existing.subtask.done;
 
-  // The assignee delta: native (`assignees`) or translated from the legacy single field (`assigneeId`, open old tabs until #373).
-  let delta: SubtaskAssigneeDelta | null = patch.assignees ?? null;
-  let translated = false;
-  if (!delta && Object.prototype.hasOwnProperty.call(patch, "assigneeId")) {
-    // A stale tab knows one assignee; with two or more it cannot say what to keep, so it is a conflict and nothing is written.
-    if (currentAssignees.length >= 2) return { outcome: "item_conflict", current: currentDto, currentSubtask: serializeProjectSubtask(existing, currentAssignees) };
-    const current = currentAssignees[0]?.id ?? null;
-    const next = patch.assigneeId ?? null;
-    const add = next && next !== current ? [next] : [];
-    const remove = current && current !== next ? [current] : [];
-    // An empty delta is "no assignee change": the noop a repeated PATCH always was.
-    if (add.length + remove.length > 0) { delta = { expectedVersion: existing.subtask.assignmentVersion, add, remove }; translated = true; }
-  }
+  const delta: SubtaskAssigneeDelta | null = patch.assignees ?? null;
   if (delta) {
     if (delta.expectedVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(existing, currentAssignees) };
     const currentIds = new Set(currentAssignees.map((assignee) => assignee.id));
@@ -357,7 +339,6 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     if (delta.add.length) {
       const eligible = await eligibleToAdd(env, principal, projectId, delta.add);
       if (!delta.add.every((id) => eligible.has(id))) return invalidRequest("subtask_assignee_ineligible", "Assignee is not an active project participant.");
-      if (currentIds.size + delta.add.length - delta.remove.length > 1 && !await multiAssigneeEnabled(env.DB)) return invalidRequest("subtask_multi_assignee_disabled", "Assigning more than one person is not available yet.");
     }
   }
   const assignmentChanged = delta !== null;
@@ -372,7 +353,6 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
   const bindings: unknown[] = [];
   if (titleChanged) { setParts.push("title = ?"); bindings.push(patch.title); }
   if (doneChanged) { setParts.push("done = ?"); bindings.push(patch.done ? 1 : 0); }
-  // No `assignee_id = ?`: the column is a mirror, recomputed from the relation in the same batch.
   if (assignmentChanged) setParts.push("assignment_version = assignment_version + 1");
   if (normalized && scheduleChanged) {
     setParts.push("due_date = ?", "schedule_start_kind = ?", "schedule_start_civil = ?", "schedule_start_at = ?", "schedule_start_utc_offset_minutes = ?", "schedule_start_fold = ?", "schedule_end_kind = ?", "schedule_end_at = ?", "schedule_end_utc_offset_minutes = ?", "schedule_end_fold = ?", "schedule_zone = ?", "schedule_version = ?");
@@ -401,7 +381,6 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     // Appended last so every positional read stays valid (#364). The new people take the Subtask's new version; survivors keep theirs.
     if (delta.remove.length) statements.push(relationDeleteMany(env.DB, operation.subtaskId, JSON.stringify(delta.remove), auditId));
     if (delta.add.length) statements.push(relationInsertMany(env.DB, operation.subtaskId, JSON.stringify(delta.add), existing.subtask.assignmentVersion + 1, now, auditId));
-    statements.push(mirrorRecompute(env.DB, operation.subtaskId, auditId));
   }
   const results = await env.DB.batch(statements);
   const winner = rowsFromD1<{ id: string; assignmentVersion: number }>(results[0])[0];
@@ -409,13 +388,13 @@ export async function saveProjectSubtask(input: SaveProjectSubtaskInput): Promis
     const current = await subtaskQuery(db, projectId, operation.subtaskId).get();
     if (!current) return { outcome: "not_found", target: "subtask" };
     const authoritativeAssignees = await hydrateSubtaskAssignees(env.DB, operation.subtaskId);
-    // A native delta whose version moved lost to another assignee change. A translated legacy write keeps today's behaviour below.
-    if (delta && !translated && current.subtask.assignmentVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
+    // A delta whose version moved lost to another assignee change.
+    if (delta && current.subtask.assignmentVersion !== existing.subtask.assignmentVersion) return { outcome: "assignment_conflict", currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
     const authoritativeStorage = scheduleStorage(current.subtask);
     const authoritativeSchedule = serializeSubtaskSchedule(current.subtask.id, authoritativeStorage);
     if (scheduleBearing && (!rawScheduleEqual(authoritativeStorage, existingStorage) || authoritativeStorage.scheduleVersion !== existingStorage.scheduleVersion)) return { outcome: "schedule_conflict", current: authoritativeSchedule, ...(operation.itemPatch ? { currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) } : {}) };
-    // A native delta that lost to any other concurrent edit must not report success it did not have. A translated legacy write keeps today's 200 no-op.
-    if (scheduleBearing || (delta && !translated)) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
+    // A delta that lost to any other concurrent edit must not report success it did not have.
+    if (scheduleBearing || delta) return { outcome: "item_conflict", current: authoritativeSchedule, currentSubtask: serializeProjectSubtask(current, authoritativeAssignees) };
     return { outcome: "noop", item: serializeProjectSubtask(current, authoritativeAssignees), broadPublicationIds: [], assignmentNotices: [] };
   }
   const item = await subtaskQuery(db, projectId, operation.subtaskId).get();

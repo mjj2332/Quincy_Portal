@@ -60,7 +60,6 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
   const draftRef = useRef<string[]>([]);
   const baselineRef = useRef<AssigneePickerBaseline>({ ids: [], version: undefined });
   const options = useSubtaskAssigneeOptions(projectId, role, open || hasOpened);
-  const multiAssignee = options.data?.multiAssignee ?? false;
 
   // Selected first, then everyone else; a selected person no longer among the candidates (deactivated) stays listed so they can be removed.
   const byId = new Map<string, Option>();
@@ -101,9 +100,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
 
   function handleValueChange(next: Option[]) {
     const nextIds = next.map((option) => option.id);
-    const added = nextIds.filter((id) => !draftRef.current.includes(id));
-    const resolved = !multiAssignee && added.length ? [added[added.length - 1]!] : nextIds;
-    draftRef.current = resolved; setDraft(resolved);
+    draftRef.current = nextIds; setDraft(nextIds);
   }
 
   const shownNames = (open ? draftOptions : shownPeople).map((person) => person.name.trim()).filter(Boolean);

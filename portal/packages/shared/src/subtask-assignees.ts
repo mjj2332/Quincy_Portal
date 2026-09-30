@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-/** `feature_flags.key` gating more than one assignee per Subtask (#358). A missing row means off. */
-export const SUBTASK_MULTI_ASSIGNEE_FLAG = "subtask_multi_assignee";
 /** Per-request input bound on each side of a delta. It is not a cap on the assignee set. */
 export const SUBTASK_ASSIGNEE_DELTA_MAX = 100;
 /** Ids carried in an activity payload (the 4 KB payload budget); the counts carry the rest. */
@@ -19,6 +17,5 @@ export type SubtaskAssigneeDelta = z.infer<typeof subtaskAssigneeDeltaSchema>;
 
 export const subtaskAssigneeOptionsResponseSchema = z.object({
   candidates: z.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }).strict()),
-  multiAssignee: z.boolean(),
 }).strict();
 export type SubtaskAssigneeOptionsResponse = z.infer<typeof subtaskAssigneeOptionsResponseSchema>;

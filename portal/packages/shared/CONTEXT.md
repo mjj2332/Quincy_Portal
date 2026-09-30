@@ -82,7 +82,8 @@ _Avoid_: Checklist item, task, to-do
 
 **Subtask assignee**:
 A person responsible for a Subtask. A Subtask may have none, one or several; each is reminded
-of its due, and only a newly added one is told they were assigned.
+of its due, and only a newly added one is told they were assigned. Assignees live in
+`project_subtask_assignees` only; the single assignee field and column are retired (#373).
 _Avoid_: Owner, responsible
 
 **Per-person assignment version**:

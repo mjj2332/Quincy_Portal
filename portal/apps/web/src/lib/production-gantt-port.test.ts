@@ -14,7 +14,6 @@ function row(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklistRowDt
     title: "Edit",
     done: false,
     position: 0,
-    assignee: person(1),
     assignees: [person(1)],
     otherAssigneeCount: 0,
     assignmentVersion: 2,
@@ -25,14 +24,13 @@ function row(overrides: Partial<GanttChecklistRowDto> = {}): GanttChecklistRowDt
 }
 
 function result(overrides: Partial<ChecklistMutationResult> = {}): ChecklistMutationResult {
-  return { id: row().id, title: "Edit", done: false, assignee: person(1), assignees: [person(1)], position: 0, schedule: schedule(4), scheduleVersion: 4, ...overrides };
+  return { id: row().id, title: "Edit", done: false, assignees: [person(1)], position: 0, schedule: schedule(4), scheduleVersion: 4, ...overrides };
 }
 
 describe("adoptGanttChecklistRow — assignees (#372)", () => {
-  it("adopts the list, first assignee, hidden count and version when the result's assignmentVersion is higher", () => {
-    const next = adoptGanttChecklistRow(row(), result({ assignees: [person(2), person(3)], assignee: person(2), otherAssigneeCount: 1, assignmentVersion: 3 }));
+  it("adopts the list, hidden count and version when the result's assignmentVersion is higher", () => {
+    const next = adoptGanttChecklistRow(row(), result({ assignees: [person(2), person(3)], otherAssigneeCount: 1, assignmentVersion: 3 }));
     expect(next.assignees.map((p) => p.id)).toEqual([person(2).id, person(3).id]);
-    expect(next.assignee?.id).toBe(person(2).id);
     expect(next.otherAssigneeCount).toBe(1);
     expect(next.assignmentVersion).toBe(3);
     // The schedule rule is independent: the schedule version did not move, so the schedule is untouched.
@@ -99,10 +97,9 @@ describe("adoptGanttChildRows — later-page rows (#372)", () => {
     const other = row({ id: "44444444-4444-4444-8444-444444444444" });
     const otherProject = state([row()]);
     const current = { [PROJECT]: state([row(), other]), "other-project": otherProject };
-    const next = adoptGanttChildRows(current, PROJECT, result({ assignees: [person(2), person(3)], assignee: person(2), otherAssigneeCount: 1, assignmentVersion: 3 }));
+    const next = adoptGanttChildRows(current, PROJECT, result({ assignees: [person(2), person(3)], otherAssigneeCount: 1, assignmentVersion: 3 }));
     const adopted = next[PROJECT]!.rows[0]!;
     expect(adopted.assignees.map((p) => p.id)).toEqual([person(2).id, person(3).id]);
-    expect(adopted.assignee?.id).toBe(person(2).id);
     expect(adopted.otherAssigneeCount).toBe(1);
     expect(adopted.assignmentVersion).toBe(3);
     expect(next[PROJECT]!.rows[1]).toBe(other);

@@ -243,8 +243,6 @@ export type GanttChecklistRowDto = {
   title: string;
   done: boolean;
   position: number;
-  /** The first assignee (an External Editor: the first one they may see). Kept until #373's PR 8; read `assignees`. */
-  assignee: CalendarPerson | null;
   /** Every assignee the viewer may see, in assignment order (an External Editor: team members only). */
   assignees: CalendarPerson[];
   /** Assignees the viewer may not see, counted but never named. */
@@ -312,7 +310,6 @@ function ganttChecklistRowSchema(): z.ZodType<GanttChecklistRowDto> {
     title: z.string().max(500),
     done: z.boolean(),
     position: z.number().int(),
-    assignee: calendarPersonZodSchema.nullable(),
     assignees: z.array(calendarPersonZodSchema),
     otherAssigneeCount: z.number().int().nonnegative(),
     assignmentVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),

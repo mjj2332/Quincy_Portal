@@ -53,7 +53,7 @@ function rangeEvent(start: string, end: string, version = 4): ChecklistCalendarE
   const startEndpoint = timedEndpoint(start);
   const endEndpoint = timedEndpoint(end);
   return {
-    id: calendarChecklistEntityId(subtaskId), kind: "checklist", title: "Select hero images", project, assignee: person, assignees: [person], otherAssigneeCount: 0,
+    id: calendarChecklistEntityId(subtaskId), kind: "checklist", title: "Select hero images", project, assignees: [person], otherAssigneeCount: 0,
     timing: { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },
@@ -79,7 +79,7 @@ function mutationBody(event: ChecklistCalendarEventDto, schedule: ChecklistSched
   // `adoptChecklistResult`'s re-mint (`calendarChecklistEntityId`) shows up as a broken test
   // rather than a fixture that was never honest about the wire shape.
   const bareId = subtaskIdFromCalendarEntityId(event.id) ?? event.id;
-  return { id: bareId, title: event.title, done: false, assignee: { id: person.id, name: person.name }, position: 1, schedule };
+  return { id: bareId, title: event.title, done: false, position: 1, schedule };
 }
 
 function response(range: { events: ProductionCalendarRangeResponse["events"] }): ProductionCalendarRangeResponse {

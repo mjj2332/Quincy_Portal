@@ -17,8 +17,6 @@ export type ProjectDetail = {
 };
 export type ProjectSubtask = {
   id: string; title: string; done: boolean; position: number;
-  /** The first assignee (an External Editor: the first named one). Kept until #368's PR8; read `assignees`. */
-  assignee: { id: string; name: string } | null;
   /** Every assignee, in order. An External Editor gets team members only. */
   assignees: CalendarPerson[];
   /** External responses only: assignees the viewer is not allowed to see, counted but never named. */
@@ -241,9 +239,9 @@ export function useProjectSubtasksQuery(projectId: string, enabled: boolean, spe
   return query;
 }
 
-export type SubtaskAssigneeOptions = { candidates: Array<{ id: string; name: string }>; multiAssignee: boolean };
+export type SubtaskAssigneeOptions = { candidates: Array<{ id: string; name: string }> };
 
-/** Who can be assigned to a Subtask of this Project, and whether more than one may be (#368). Fetched only once `enabled`. */
+/** Who can be assigned to a Subtask of this Project (#368). Fetched only once `enabled`. */
 export function useSubtaskAssigneeOptions(projectId: string, role: Role, enabled: boolean): UseQueryResult<SubtaskAssigneeOptions, Error> {
   const contextClient = useContext(QueryClientContext);
   const [fallbackClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
@@ -254,11 +252,11 @@ export function useSubtaskAssigneeOptions(projectId: string, role: Role, enabled
     queryKey: projectDataKeys.subtaskAssigneeOptions(projectId), enabled: enabled && !runtime?.isProjectRemoved(projectId) && !runtime?.principalTerminal, staleTime: 60_000,
     queryFn: async ({ signal, client }: QueryFunctionContext): Promise<SubtaskAssigneeOptions> => {
       const generation = projectCollaborationDataGeneration(client, projectId);
-      const response: { candidates: Array<{ id: string; name: string }>; multiAssignee: boolean } = role === "external_editor"
-        ? await externalApiGet("subtask-assignee-options", path, signal) as { candidates: Array<{ id: string; name: string }>; multiAssignee: boolean }
+      const response: { candidates: Array<{ id: string; name: string }> } = role === "external_editor"
+        ? await externalApiGet("subtask-assignee-options", path, signal) as { candidates: Array<{ id: string; name: string }> }
         : subtaskAssigneeOptionsResponseSchema.parse(await apiGet<unknown>(path, { signal }));
       if (signal.aborted || projectCollaborationDataGeneration(client, projectId) !== generation) throw new DOMException("The operation was aborted.", "AbortError");
-      return { candidates: response.candidates.map(({ id, name }) => ({ id, name })), multiAssignee: response.multiAssignee };
+      return { candidates: response.candidates.map(({ id, name }) => ({ id, name })) };
     },
     retry: projectQueryRetry,
   }, queryClient) as UseQueryResult<SubtaskAssigneeOptions, Error>;
