@@ -88,10 +88,14 @@ export type RailedShellProps = {
   user: { name?: string | null; email?: string | null };
   /** Forwarded to `NavigationRail`/`ShellSearch` — see `NavigationRailProps.principalId`. */
   principalId?: string;
+  /** #366: a modal Project sheet is open over the shell. ⌘K would open the rail sheet — the PARENT
+   * dialog Root — underneath it, so the shortcut stands down. ⌘B is left alone (it only toggles
+   * the dimmed rail). */
+  shortcutsSuspended?: boolean;
   children: ReactNode;
 };
 
-export function RailedShell({ navigation, user, principalId, children }: RailedShellProps) {
+export function RailedShell({ navigation, user, principalId, shortcutsSuspended = false, children }: RailedShellProps) {
   const [preference, setPreference] = useState<RailPreference>(() => {
     const storage = safeLocalStorage();
     return storage ? readRailPreference(storage) : "expanded";
@@ -130,6 +134,7 @@ export function RailedShell({ navigation, user, principalId, children }: RailedS
   // Enter are what navigate, not the shortcut itself. Unlike ⌘B, this stays live while
   // `mode === "sheet"` (#217 fix round 1, item 6) — see this file's own docblock.
   useEffect(() => {
+    if (shortcutsSuspended) return;
     function handleKeyDown(event: KeyboardEvent) {
       if (
         !isSearchShortcut({
@@ -156,7 +161,7 @@ export function RailedShell({ navigation, user, principalId, children }: RailedS
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mode, sheetOpen]);
+  }, [mode, sheetOpen, shortcutsSuspended]);
 
   // Base UI's own `initialFocus` mechanism (`RailSheet` -> `SheetContent` -> `Dialog.Popup`),
   // called once per open — one-shot, not a `useEffect`. Per `@base-ui/react/dialog`'s own

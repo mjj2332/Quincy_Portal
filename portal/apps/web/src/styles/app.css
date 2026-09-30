@@ -309,6 +309,11 @@ button { font-family: var(--font-sans); }
 .worktools .prog { font: var(--type-label); font-size: 13px; color: var(--text-secondary); }
 .worktools .prog b { color: var(--text-primary); font-weight: 400; }
 .workgrid { padding: var(--space-6); }
+/* #366: the Project sheet portals to <body>, outside .app and [data-rail-mode]; re-declare what they
+   supply. `--shell-header-height` is 0 here (the sheet's own scroller has no shell header above it)
+   so `.worktools` sticks to the top of the sheet body. */
+.project-sheet__body { --shell-header-height: 0px; --toast-inset-inline-start: max(var(--space-5), env(safe-area-inset-left)); }
+[data-testid="project-sheet"][data-impersonating] .viewer { inset: 42px 0 0; }
 
 /* selection action bar */
 

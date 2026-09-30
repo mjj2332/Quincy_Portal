@@ -4448,3 +4448,24 @@ remove the legacy readers) still applies.
   `lib/project-data.dom.test.tsx`. Then "in the cache after an `act`" means the component has
   committed it. Alternatively, wait on something the component rendered. More ticks or a longer
   poll only move the race.
+
+## The Project sheet: four traps (#366, 2026-09-30)
+
+- **A nested `Dialog.Root` renders no backdrop unless `forceRender` is set.** `RailedShell` wraps the
+  whole content column in its own `<Sheet>` Root, so the Project sheet's Root is nested, and
+  `dialog/backdrop/DialogBackdrop.js` is `enabled: forceRender || !nested`. No scrim means an inset
+  press does nothing. `ProjectSheet` passes `overlayProps={{ forceRender: true }}`; the rail sheet is
+  not nested and needs nothing.
+- **A body portal drops the shell's custom properties.** A modal Base UI portal renders into `body`,
+  outside `.app` and `[data-rail-mode]`, so `--shell-header-height` is undefined there, and an
+  undefined `top: var(--shell-header-height)` makes `.worktools` stop sticking. `.project-sheet__body`
+  re-declares it (as `0px`) and `--toast-inset-inline-start` in `app.css`.
+- **Base UI's dialog Esc `stopPropagation()`s on `document`, which starves a `window` keydown
+  listener (the Lightbox), and it calls `onOpenChange` more than once per Escape.**
+  `details.allowPropagation()` (with `details.cancel()`) is the opt-out. Decide "is an inner layer
+  open?" at window-capture, before any handler runs, and READ that snapshot in `onOpenChange` — do
+  not consume it: the second call would then close the sheet.
+- **A selector like `[role="dialog"] a[href^="/projects/<id>"]` now also matches inside the Project
+  sheet** (it is itself a `role="dialog"` holding the `/edit` link). Address rows by their own test id.
+- **Keyboard activation of an in-app link is intercepted too** (see the entry above on `InternalLink`
+  and `detail`); `detail: 1` in a DOM test is realism, not a requirement.

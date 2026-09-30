@@ -23,7 +23,11 @@ vi.mock("./lib/auth", () => ({ useSession: () => sessionState.value, stopImperso
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("./components/quincy/RailedShell", () => ({ RailedShell: ({ children }: { children: ReactNode }) => <><header />{children}</> }));
 vi.mock("./lib/query-client", () => ({ QuincyQueryProvider: ({ children }: { children: ReactNode }) => children }));
-vi.mock("./screens/Dashboard", () => ({ Dashboard: () => <main>DASHBOARD SCREEN</main> }));
+const dashboardMounts = vi.hoisted(() => ({ count: 0 }));
+vi.mock("./screens/Dashboard", async () => {
+  const { useEffect } = await import("react");
+  return { Dashboard: () => { useEffect(() => { dashboardMounts.count += 1; }, []); return <main>DASHBOARD SCREEN</main>; } };
+});
 vi.mock("./screens/ProjectWorkspace", () => ({ ProjectWorkspace: ({ projectId }: { projectId: string }) => <main>PROJECT SCREEN {projectId}</main> }));
 vi.mock("./screens/Admin", () => ({ Admin: ({ currentUserId }: { currentUserId: string }) => <main>ADMIN SCREEN {currentUserId}</main> }));
 vi.mock("./screens/CreateProject", () => ({ CreateProject: () => <main>CREATE SCREEN</main> }));
@@ -65,7 +69,6 @@ describe("every route kind resolves to its screen through the router", () => {
     ["/?view=list", "DASHBOARD SCREEN"],
     ["/?view=kanban", "DASHBOARD SCREEN"],
     ["/projects/new", "CREATE SCREEN"],
-    [`/projects/${projectId}`, `PROJECT SCREEN ${projectId}`],
     [`/projects/${projectId}/edit`, `EDIT SCREEN ${projectId}`],
     ["/admin", "ADMIN SCREEN u1"],
     ["/notices", "NOTICES SCREEN u1"],
@@ -74,6 +77,33 @@ describe("every route kind resolves to its screen through the router", () => {
   ])("%s mounts %s", async (path, expected) => {
     const host = await renderAt(path);
     expect(host.textContent).toContain(expected);
+  });
+
+  // #366: `/projects/<id>` is a sheet, portalled to <body>, over the Dashboard, which stays in `host`.
+  it("/projects/<id> mounts the Project screen in the sheet, over the Dashboard", async () => {
+    const host = await renderAt(`/projects/${projectId}`);
+    expect(document.querySelector('[data-testid="project-sheet"]')?.textContent).toContain(`PROJECT SCREEN ${projectId}`);
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+    expect(host.textContent).not.toContain("PROJECT SCREEN");
+  });
+
+  it("#366: the Dashboard layer is one persistent match; /projects/new and /projects/<id>/edit are root children outside it", async () => {
+    dashboardMounts.count = 0;
+    const host = await renderAt("/");
+    await act(async () => { locationStore().push(`/projects/${projectId}`); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="project-sheet"]')).not.toBeNull();
+    await act(async () => { locationStore().push("/"); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="project-sheet"]')).toBeNull();
+    // The Dashboard mounted once, through `/` -> project -> `/`.
+    expect(dashboardMounts.count).toBe(1);
+    // Root children replace the layer: the Dashboard is gone at the full-page routes.
+    await act(async () => { locationStore().push("/projects/new"); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("CREATE SCREEN");
+    expect(host.textContent).not.toContain("DASHBOARD SCREEN");
+    await act(async () => { locationStore().push(`/projects/${projectId}/edit`); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain(`EDIT SCREEN ${projectId}`);
+    expect(host.textContent).not.toContain("DASHBOARD SCREEN");
+    expect(document.querySelector('[data-testid="project-sheet"]')).toBeNull();
   });
 });
 
