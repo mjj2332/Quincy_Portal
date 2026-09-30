@@ -15,6 +15,12 @@ const floating = vi.hoisted(() => ({ modalValues: [] as Array<boolean | undefine
 // capability-derived branches keep the coverage they had. A test needing a role sets one here.
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
 vi.mock("../lib/confirm", () => ({ confirm: confirmMock }));
+// Records the latest `onDragEnd` (delegating to the real DndContext) so a test can drop one row onto another without layout (#377).
+const dnd = vi.hoisted(() => ({ onDragEnd: null as null | ((event: unknown) => void) }));
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/core")>();
+  return { ...actual, DndContext: (props: Parameters<typeof actual.DndContext>[0]) => { dnd.onDragEnd = props.onDragEnd as (event: unknown) => void; return createElement(actual.DndContext, props); } };
+});
 vi.mock("@floating-ui/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@floating-ui/react")>();
   return {
@@ -71,8 +77,8 @@ afterEach(async () => { await act(async () => root?.unmount()); root = null; doc
 
 describe("SubtaskChecklist", () => {
   it("preserves accordion/progress, literal schedule badges, and compact title edit/Escape behavior", async () => {
-    const host = mount(); await render(); const toggle = [...host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((button) => button.textContent?.includes("Checklist"))!;
-    expect(toggle.textContent).toContain("0 of 2 complete · 0%"); expect(toggle.querySelector("progress")?.max).toBe(2); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("30 May");
+    const host = mount(); await render(); const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"]')!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true"); expect(host.querySelector('[data-testid="subtask-checklist-count"]')!.textContent).toContain("0 / 2"); expect(host.querySelector('[role="progressbar"]')?.getAttribute("aria-valuemax")).toBe("2"); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("30 May");
     expect(host.querySelector("select")).toBeNull(); expect([...host.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Move "))).toBe(false);
     const title = item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!; await click(title); const input = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(input, "Discarded"); const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }); await act(async () => input.dispatchEvent(escape));
     expect(escape.defaultPrevented).toBe(true); expect(apiPatchMock).not.toHaveBeenCalled(); const reopened = item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!; reopened.focus(); await keydown(reopened, " "); const saveInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(saveInput, "Saved title"); await keydown(saveInput, "Enter"); expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Saved title" });
@@ -205,7 +211,9 @@ describe("SubtaskChecklist", () => {
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const conflict = portal("subtask-popover-task-1-schedule");
     expect(conflict.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`); expect(conflict.textContent).toContain("Authoritative title"); expect(conflict.textContent).toContain("Complete"); expect(conflict.textContent).toContain("Ada Smith"); expect(conflict.textContent).toContain("Use latest item (discard draft)"); expect(conflict.textContent).toContain("Save reapplies your retained schedule draft; Cancel discards it.");
-    await click([...conflict.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Use latest item (discard draft)")!); expect(item(host, "Authoritative title")).not.toBeNull();
+    await click([...conflict.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Use latest item (discard draft)")!);
+    // The authoritative item is done, so it now sits in the collapsed "Completed" group (#377).
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("))!); expect(item(host, "Authoritative title")).not.toBeNull();
   });
 
   it("keeps a retained schedule conflict draft when an unrelated Done update succeeds", async () => {
@@ -216,7 +224,10 @@ describe("SubtaskChecklist", () => {
     const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
-    await click(item(host, "Call client").querySelector<HTMLInputElement>('input[type="checkbox"]')!); await flush();
+    // An unrelated write landing (a rename). A Done tick used to be the unrelated write, but it now moves the row into the
+    // "Completed" group, which remounts it and discards the popover draft by design (#377).
+    await click(item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!); const renameInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(renameInput, "Renamed item"); await keydown(renameInput, "Enter"); await flush();
+    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Renamed item" });
     expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2");
     expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
   });
@@ -533,5 +544,101 @@ describe("formatSchedule", () => {
   it("keeps a multi-day range as two full endpoints", () => {
     expect(formatSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-10")))).toBe("8 Oct 2026 → 10 Oct 2026");
     expect(formatSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-09T09:00")))).toBe("8 Oct 2026 · 13:00 → 9 Oct 2026 · 09:00");
+  });
+});
+
+describe("SubtaskChecklist as a rail (#377)", () => {
+  const row = (id: string, title: string, position: number, done = false) => ({ ...second, id, title, position, done, dueDate: null, schedule: rangeOf(`${year}-06-01`) });
+  const A = row("row-a", "Alpha", 1024); const B = row("row-b", "Bravo", 2048, true); const C = row("row-c", "Charlie", 3072); const D = row("row-d", "Delta", 4096);
+  const serve = (rows: Array<ReturnType<typeof row>>) => {
+    apiGetMock.mockImplementation((path) => path.includes("subtask-assignee-options") ? Promise.resolve(optionsResponse) : Promise.resolve({ subtasks: rows }));
+    apiPatchMock.mockImplementation((path, body) => Promise.resolve({ ...rows.find((candidate) => path.endsWith(`/${candidate.id}`))!, ...(body as object) }));
+  };
+  const count = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="subtask-checklist-count"]')!;
+  const completedTrigger = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Completed ("));
+  const visibleRows = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>("article")].filter((article) => !article.closest("[hidden]")).map((article) => article.querySelector('[data-testid="subtask-checklist-title"]')?.textContent);
+  const checkbox = (host: HTMLElement, title: string) => item(host, title).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+
+  it("shows a small count and a real progressbar, outside any button", async () => {
+    serve([A, B, C, { ...D, done: true }]);
+    const host = mount(); await render();
+    expect(count(host).textContent).toContain("2 / 4");
+    expect(count(host).className).not.toContain("type-h3");
+    const bar = host.querySelector<HTMLElement>('[role="progressbar"]')!;
+    expect(bar.getAttribute("aria-valuenow")).toBe("2"); expect(bar.getAttribute("aria-valuemax")).toBe("4"); expect(bar.getAttribute("aria-valuetext")).toBe("2 of 4 complete");
+    expect(bar.closest("button")).toBeNull();
+    expect(host.querySelector("progress")).toBeNull();
+    expect(host.querySelector("h3")!.textContent).toBe("Checklist");
+  });
+
+  it("collapses to the count and keeps the progress bar visible", async () => {
+    serve([A, C]);
+    const host = mount(); await render();
+    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"]')!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await click(toggle);
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Expand checklist"]')!.getAttribute("aria-expanded")).toBe("false");
+    expect(visibleRows(host)).toEqual([]);
+    expect(host.querySelector('[role="progressbar"]')!.closest("[hidden]")).toBeNull();
+    expect(count(host).closest("[hidden]")).toBeNull();
+  });
+
+  it("groups done rows under a collapsed 'Completed (n)' with no grip, and ticking moves rows between groups", async () => {
+    const open = { ...B, done: false };
+    serve([{ ...A, done: true }, open, C, { ...D, done: true }]);
+    const host = mount(); await render();
+    expect(visibleRows(host)).toEqual(["Bravo", "Charlie"]);
+    const trigger = completedTrigger(host)!; expect(trigger.textContent).toBe("Completed (2)"); expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    await click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(visibleRows(host)).toEqual(["Bravo", "Charlie", "Alpha", "Delta"]);
+    expect(item(host, "Alpha").querySelector('[aria-label^="Reorder"]')).toBeNull();
+    expect(item(host, "Bravo").querySelector('[aria-label="Reorder Bravo"]')).not.toBeNull();
+    await click(checkbox(host, "Bravo")); await flush();
+    expect(count(host).textContent).toContain("3 / 4"); expect(completedTrigger(host)!.textContent).toBe("Completed (3)");
+    await click(checkbox(host, "Alpha")); await flush();
+    expect(count(host).textContent).toContain("2 / 4"); expect(completedTrigger(host)!.textContent).toBe("Completed (2)");
+  });
+
+  it("has no Completed group when nothing is done", async () => {
+    serve([A, C]);
+    const host = mount(); await render();
+    expect(completedTrigger(host)).toBeUndefined();
+  });
+
+  it("reorders against the FULL list: dropping Delta on Charlie past a hidden completed Bravo sends adjacent neighbours", async () => {
+    serve([A, B, C, D]);
+    const host = mount(); await render();
+    apiPostMock.mockResolvedValueOnce({ position: 3500 });
+    await act(async () => { dnd.onDragEnd!({ active: { id: "row-d" }, over: { id: "row-c" } }); await Promise.resolve(); await Promise.resolve(); });
+    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/row-d/reorder`, { beforeId: "row-b", afterId: "row-c" });
+  });
+
+  it("focus follows a completed row to the next open checkbox, then to the Completed trigger when none is left", async () => {
+    serve([A, C]);
+    const host = mount(); await render();
+    const first = checkbox(host, "Alpha"); await act(async () => { first.focus(); });
+    await click(first);
+    await waitFor(() => expect(document.activeElement).toBe(checkbox(host, "Charlie")));
+    await click(checkbox(host, "Charlie"));
+    await waitFor(() => expect(document.activeElement).toBe(completedTrigger(host)));
+  });
+
+  it("deleting the last open row with done rows present leaves focus on a surviving control, never the body", async () => {
+    serve([{ ...A, done: true }, C]);
+    const host = mount(); await render();
+    await click(item(host, "Charlie").querySelector<HTMLButtonElement>('[aria-label="Actions for Charlie"]')!);
+    await click(portal("subtask-popover-row-c-actions").querySelector("button")!); await flush();
+    expect(apiDeleteMock).toHaveBeenCalledWith(`/api/projects/${projectId}/subtasks/row-c`);
+    await waitFor(() => { expect(document.activeElement).not.toBe(document.body); expect(host.contains(document.activeElement)).toBe(true); expect(document.activeElement!.closest("[hidden]")).toBeNull(); });
+  });
+
+  it("empty: '+ Add an item' with one quiet hint, no title, count 0 / 0", async () => {
+    serve([]);
+    const host = mount(); await render();
+    expect(host.textContent).not.toContain("No subtasks yet.");
+    expect(host.querySelector(`#subtask-add-${projectId}`)).not.toBeNull();
+    expect(host.textContent).toContain("Break the shoot into steps anyone on the project can tick off.");
+    expect(count(host).textContent).toContain("0 / 0");
   });
 });

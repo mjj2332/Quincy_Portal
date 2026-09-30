@@ -12,6 +12,10 @@ import { createProjectDataInvalidationMessage, getProjectQueryRuntime } from "..
 import { projectAssetsQueryOptions, projectDataKeys } from "../lib/project-data";
 import { dashboardProjectsKey } from "../lib/dashboard-projects";
 import type { Role } from "@quincy/shared";
+import { stubRailMedia } from "../testing/rail-media";
+
+// jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
+stubRailMedia(true);
 
 const authState = vi.hoisted(() => ({ role: "editor" }));
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
