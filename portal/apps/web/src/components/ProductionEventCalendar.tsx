@@ -74,7 +74,15 @@ import { useMediaQuery } from "../lib/use-media-query";
 import { productionCalendarZoneLabel } from "../lib/sydney-time-labels";
 import { cn } from "@/lib/utils";
 import { EventCalendar } from "./reui/event-calendar/event-calendar";
-import { EventCalendarNav } from "./reui/event-calendar/event-calendar-nav";
+import {
+  EventCalendarNav,
+  EventCalendarNavNext,
+  EventCalendarNavPrev,
+  EventCalendarNavToday,
+  EventCalendarTitle,
+  EventCalendarViewSwitcher,
+} from "./reui/event-calendar/event-calendar-nav";
+import { TooltipProvider } from "./reui/tooltip";
 import { EventCalendarContent } from "./reui/event-calendar/event-calendar-content";
 import { Button } from "./reui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
@@ -404,7 +412,36 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           <div className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")} data-testid="event-calendar-body">
             {!narrow && rail}
             <div className="flex min-h-0 min-w-0 flex-col">
-              <div className="flex min-w-0 items-center gap-[var(--space-2)]">
+              {phoneViewport ? (
+                // #385: at phone width the title gets its own row (full period, wrapping rather than
+                // truncating) with the zone label, and the controls sit on a second row. Composed from
+                // the vendored nav's children API and exported parts; no vendored file is edited. The
+                // default nav composes Today / switcher / arrows / title itself, so a part the vendor
+                // adds there will not appear on phones until it is added here.
+                <EventCalendarNav className="min-w-0 shrink-0 gap-y-[var(--space-1)] px-0">
+                  {/* The default nav's shared provider, which custom children bypass: first tooltip
+                      waits, moving between buttons is instant (the vendor's 600 / 0 / 300 ms). */}
+                  <TooltipProvider delay={600} closeDelay={0} timeout={300}>
+                    <div className="flex min-w-0 basis-full flex-wrap items-baseline gap-x-[var(--space-2)] gap-y-[var(--space-1)]" data-testid="event-calendar-period">
+                      <EventCalendarTitle className="overflow-visible whitespace-normal text-clip" />
+                      <Eyebrow className="shrink-0 whitespace-nowrap text-muted-foreground" data-testid="event-calendar-zone">{zoneLabel}</Eyebrow>
+                      {empty && (
+                        <p className="m-0 min-w-0 text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
+                      )}
+                    </div>
+                    <div className="flex min-w-0 basis-full flex-wrap items-center gap-[var(--space-1)]" data-testid="event-calendar-controls">
+                      <Button type="button" variant="outline" size="sm" className="min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
+                        Filters
+                      </Button>
+                      <EventCalendarNavToday className="min-h-[44px]" />
+                      <EventCalendarViewSwitcher className="min-h-[44px]" />
+                      <EventCalendarNavPrev className="min-h-[44px] min-w-[44px]" />
+                      <EventCalendarNavNext className="min-h-[44px] min-w-[44px]" />
+                    </div>
+                  </TooltipProvider>
+                </EventCalendarNav>
+              ) : (
+              <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)]">
                 {narrow && (
                   <Button type="button" variant="outline" size="sm" className="ms-[var(--space-2)] max-[721px]:min-h-[44px]" data-testid="event-calendar-rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen(true)}>
                     Filters
@@ -417,6 +454,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                   <p className="m-0 me-[var(--space-2)] min-w-0 shrink truncate text-[length:var(--text-xs)] text-muted-foreground" role="status" data-testid="event-calendar-empty">No scheduled work in this range.</p>
                 )}
               </div>
+              )}
               {selected && (
                 <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)] border-b border-border px-[var(--space-2)] py-[var(--space-2)] text-[length:var(--text-xs)]" data-testid="event-calendar-selected">
                   <span className="min-w-0 flex-1 truncate text-foreground">

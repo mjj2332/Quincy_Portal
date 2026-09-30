@@ -84,8 +84,11 @@ function suppressesOutline(className: string) {
 }
 
 let root: Root | null = null;
-let queryClient: QueryClient;
-let runtime: ProjectQueryRuntime;
+let queryClient: QueryClient | null = null;
+let runtime: ProjectQueryRuntime | null = null;
+// Set by mount(); a test that reads either before mounting fails loudly (#389).
+function mountedQueryClient(): QueryClient { if (!queryClient) throw new Error("mount() first"); return queryClient; }
+function mountedRuntime(): ProjectQueryRuntime { if (!runtime) throw new Error("mount() first"); return runtime; }
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
@@ -99,17 +102,19 @@ function toggle(host: HTMLElement, label: string) {
 
 async function mount(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const host = document.createElement("div"); document.body.appendChild(host);
-  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  runtime = new ProjectQueryRuntime(queryClient);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const projectRuntime = new ProjectQueryRuntime(client);
+  queryClient = client;
+  runtime = projectRuntime;
   root = createRoot(host);
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={projectRuntime}><QueryClientProvider client={client}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
   return host;
 }
 
 async function rerenderSchedule(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
 }
 
 async function setInput(input: HTMLInputElement, value: string) {
@@ -125,7 +130,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
-  runtime.dispose(); queryClient.clear(); root = null; document.body.replaceChildren();
+  runtime?.dispose(); queryClient?.clear(); runtime = null; queryClient = null; root = null; document.body.replaceChildren();
 });
 
 describe("ProjectDeadlineControl", () => {
@@ -264,9 +269,9 @@ describe("ProjectDeadlineControl", () => {
 
   it("keeps the combined editor draft and sends the dedicated versioned route", async () => {
     const host = await mount(emptySchedule);
-    queryClient.setQueryData(projectDataKeys.detail(projectId), { id: projectId });
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const publish = vi.spyOn(runtime, "publish");
+    mountedQueryClient().setQueryData(projectDataKeys.detail(projectId), { id: projectId });
+    const invalidate = vi.spyOn(mountedQueryClient(), "invalidateQueries");
+    const publish = vi.spyOn(mountedRuntime(), "publish");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline date"]')!, "2027-01-15");
     await setInput(host.querySelector<HTMLInputElement>('input[aria-label="Deadline time"]')!, "09:00");
     await act(async () => { toggle(host, "1 day").click(); await Promise.resolve(); });
@@ -372,15 +377,15 @@ describe("ProjectDeadlineControl", () => {
     expect(toggle(host, "4 hours").getAttribute("aria-pressed")).toBe("false");
     expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["Clear", "Save"]));
     expect(host.textContent).not.toContain("Edit Deadline");
-    expect(runtime.isOwned(projectDataKeys.detail(projectId))).toBe(true);
+    expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(true);
     await act(async () => { root!.unmount(); await Promise.resolve(); });
-    expect(runtime.isOwned(projectDataKeys.detail(projectId))).toBe(false);
+    expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
     root = null;
 
     const viewer = await mount(activeSchedule, false);
     expect(viewer.querySelector('input[aria-label="Deadline date"]')).toBeNull();
     expect(viewer.querySelectorAll("button")).toHaveLength(0);
-    expect(runtime.isOwned(projectDataKeys.detail(projectId))).toBe(false);
+    expect(mountedRuntime().isOwned(projectDataKeys.detail(projectId))).toBe(false);
   });
 
   it("adds a custom reminder as a pressed chip through + custom, and pressing that chip off removes it (#213)", async () => {

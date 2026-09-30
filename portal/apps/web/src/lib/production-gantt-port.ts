@@ -22,6 +22,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
   subtaskIdFromCalendarEntityId,
   type ChecklistCalendarEventDto,
+  type ChecklistScheduleDto,
   type GanttChecklistRowDto,
   type GanttProjectRowDto,
   type ProductionCalendarFilters,
@@ -242,4 +243,28 @@ export function useGanttSchedulingPort({ identity, projects, query, purgeChildre
     },
     ...(openDeadlineConfirm ? { confirmDeadline: openDeadlineConfirm } : {}),
   };
+}
+
+/**
+ * #372: a schedule-only conflict body (`409 { current }`, no `currentSubtask`) carries a bare schedule, never a full
+ * item. Adopted version-wins into the row's `schedule` alone: `done`, the title and the assignees are not in that body,
+ * so none of them is touched (unlike `adoptGanttChecklistRow`, which couples `done` to a result). Returns the row itself
+ * when the schedule is not strictly newer.
+ */
+export function adoptGanttChecklistSchedule(row: GanttChecklistRowDto, schedule: ChecklistScheduleDto): GanttChecklistRowDto {
+  return schedule.version > row.schedule.version ? { ...row, schedule } : row;
+}
+
+/** `adoptGanttChecklistSchedule` over a Project's continuation rows (the settle refetch never returns them). */
+export function adoptGanttChildSchedule<State extends { rows: GanttChecklistRowDto[] }>(current: Record<string, State>, projectId: string, subtaskId: string, schedule: ChecklistScheduleDto): Record<string, State> {
+  const state = current[projectId];
+  if (!state) return current;
+  let changed = false;
+  const rows = state.rows.map((row) => {
+    if (row.id !== subtaskId) return row;
+    const next = adoptGanttChecklistSchedule(row, schedule);
+    if (next !== row) changed = true;
+    return next;
+  });
+  return changed ? { ...current, [projectId]: { ...state, rows } } : current;
 }

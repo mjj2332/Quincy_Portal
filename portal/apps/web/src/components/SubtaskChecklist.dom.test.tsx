@@ -274,13 +274,15 @@ describe("SubtaskChecklist", () => {
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
     const editor = portal("subtask-popover-task-1-schedule"); await typeInto(editor.querySelector<HTMLInputElement>('input[type="date"]')!, `${year}-06-20`); await click(saveButton(editor)); await flush();
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')!);
-    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    await waitFor(() => expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`));
     // An unrelated write landing (a rename). A Done tick used to be the unrelated write, but it now moves the row into the
     // "Completed" group, which remounts it and discards the popover draft by design (#377).
     await click(item(host, "Call client").querySelector<HTMLButtonElement>('[data-testid="subtask-checklist-title"]')!); const renameInput = item(host, "Call client").querySelector<HTMLInputElement>('[aria-label="Subtask title"]')!; await typeInto(renameInput, "Renamed item"); await keydown(renameInput, "Enter"); await flush();
-    expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Renamed item" });
-    expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2");
-    expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`);
+    // Each post-action assertion waits for its rendered result rather than trusting a fixed number of microtask flushes,
+    // which is a load-timing flake under a busy full-suite run.
+    await waitFor(() => expect(apiPatchMock).toHaveBeenLastCalledWith(`/api/projects/${projectId}/subtasks/task-1`, { title: "Renamed item" }));
+    await waitFor(() => expect(portal("subtask-popover-task-1-schedule").textContent).toContain("Latest schedule · v2"));
+    await waitFor(() => expect(portal("subtask-popover-task-1-schedule").querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe(`${year}-06-20`));
   });
 
 

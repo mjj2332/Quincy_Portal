@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarPerson, GanttChecklistRowDto, GanttProjectRowDto } from "@quincy/shared";
-import { adoptGanttChecklist, adoptGanttChecklistRow, adoptGanttChildRows } from "./production-gantt-port";
+import { adoptGanttChecklist, adoptGanttChecklistRow, adoptGanttChecklistSchedule, adoptGanttChildRows, adoptGanttChildSchedule } from "./production-gantt-port";
 import type { ChecklistMutationResult } from "./scheduling-types";
 
 const person = (n: number): CalendarPerson => ({ id: `33333333-3333-4333-8333-00000000000${n}`, name: `Person ${n}`, roleLabel: "Editor", isExternal: false, active: true });
@@ -113,5 +113,36 @@ describe("adoptGanttChildRows — later-page rows (#372)", () => {
     expect(adoptGanttChildRows(current, PROJECT, result({ assignees: [person(2)], assignmentVersion: 4 }))).toBe(current);
     expect(adoptGanttChildRows(current, "unknown", result({ assignees: [person(2)], assignmentVersion: 9 }))).toBe(current);
     expect(adoptGanttChildRows(current, PROJECT, result({ id: "55555555-5555-4555-8555-555555555555", assignees: [person(2)], assignmentVersion: 9 }))).toBe(current);
+  });
+});
+
+describe("adoptGanttChecklistSchedule — a schedule-only conflict body (#372)", () => {
+  it("adopts a strictly newer schedule and changes no title, Done or assignee metadata", () => {
+    const current = row({ done: true, title: "Keep me" });
+    const next = adoptGanttChecklistSchedule(current, schedule(5, "2026-06-12"));
+    expect(next.schedule.version).toBe(5);
+    expect(next.schedule.end.localCivil).toBe("2026-06-12");
+    expect(next.done).toBe(true);
+    expect(next.title).toBe("Keep me");
+    expect(next.assignees).toBe(current.assignees);
+    expect(next.assignmentVersion).toBe(current.assignmentVersion);
+  });
+
+  it("ignores an equal or older schedule and returns the row itself", () => {
+    const current = row();
+    expect(adoptGanttChecklistSchedule(current, schedule(4, "2026-06-12"))).toBe(current);
+    expect(adoptGanttChecklistSchedule(current, schedule(3, "2026-06-12"))).toBe(current);
+  });
+
+  it("adoptGanttChildSchedule patches only the named row in a continuation page, and is a no-op for anything not newer", () => {
+    const other = row({ id: "22222222-2222-4222-8222-999999999999", title: "Other" });
+    const state = { rows: [row(), other], keep: "seed" };
+    const next = adoptGanttChildSchedule({ p1: state }, "p1", row().id, schedule(6, "2026-06-13"));
+    expect(next.p1!.rows[0]!.schedule.version).toBe(6);
+    expect(next.p1!.rows[1]).toBe(other);
+    expect(next.p1!.keep).toBe("seed");
+    const untouched = { p1: state };
+    expect(adoptGanttChildSchedule(untouched, "p1", row().id, schedule(4))).toBe(untouched);
+    expect(adoptGanttChildSchedule(untouched, "missing", row().id, schedule(9))).toBe(untouched);
   });
 });

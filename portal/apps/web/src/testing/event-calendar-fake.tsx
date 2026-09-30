@@ -114,5 +114,21 @@ function FakeEventCalendar(props: FakeCalendarProps) {
 }
 
 export const eventCalendarModule = { EventCalendar: FakeEventCalendar };
-export const eventCalendarNavModule = { EventCalendarNav: () => <div data-testid="event-calendar-fake-nav" /> };
+type FakeNavPartProps = { className?: string };
+function fakeNavPart(testId: string, label: string) {
+  return function FakeNavPart({ className }: FakeNavPartProps) {
+    return <span data-testid={testId} className={className}>{label}</span>;
+  };
+}
+/** The composed phone toolbar (#385) passes children to the nav and mounts the vendor's parts itself,
+ *  so each part is stubbed under a Quincy test id that forwards `className`. With no children the nav
+ *  renders exactly what it always did. */
+export const eventCalendarNavModule = {
+  EventCalendarNav: ({ children, className }: { children?: ReactNode; className?: string }) => <div data-testid="event-calendar-fake-nav" className={className}>{children}</div>,
+  EventCalendarTitle: fakeNavPart("event-calendar-fake-title", "Title"),
+  EventCalendarNavToday: fakeNavPart("event-calendar-fake-today", "Today"),
+  EventCalendarViewSwitcher: fakeNavPart("event-calendar-fake-view-switcher", "View"),
+  EventCalendarNavPrev: fakeNavPart("event-calendar-fake-prev", "Prev"),
+  EventCalendarNavNext: fakeNavPart("event-calendar-fake-next", "Next"),
+};
 export const eventCalendarContentModule = { EventCalendarContent: () => <div data-testid="event-calendar-fake-content" /> };

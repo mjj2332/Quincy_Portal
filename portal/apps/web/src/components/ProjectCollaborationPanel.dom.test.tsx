@@ -76,19 +76,25 @@ function mockCommentRefetchAfter(posted: any) {
 const project = { id: projectId, street: "72 Collaboration Lane", suburb: null, postcode: null, agencyName: null, agentName: null, agentEmail: null, agentPhone: null, shootDate: null, timeWindow: null, orderNo: null, orderId: null, invoiceAmount: null, paymentStatus: null, notes: null, rawFolderLink: null, rawFolderPath: null, archivedAt: null, collections: [], members: [] };
 
 let root: Root | null = null;
+// Every root `mount()` creates, so a test that mounts twice without unmounting the first (#389)
+// cannot leave a live root behind for the next test.
+const liveRoots = new Set<Root>();
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function mount() {
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
+  liveRoots.add(root);
   return host;
 }
 async function render(value: ReactNode) {
   await act(async () => { root!.render(<QuincyQueryProvider principalId="user-me" role="photographer">{value}</QuincyQueryProvider>); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
 }
 async function unmount() {
-  if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
+  const roots = [...liveRoots];
+  liveRoots.clear();
+  if (roots.length > 0) await act(async () => { for (const each of roots) each.unmount(); await Promise.resolve(); });
   root = null;
 }
 async function click(element: Element) {
