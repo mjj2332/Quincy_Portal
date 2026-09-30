@@ -9,6 +9,7 @@ import {
   formatAbsoluteTime,
   formatCivilSchedule,
   formatDayGroupedTime,
+  formatDueCivil,
   formatRelativeTime,
   groupByDay,
   sydneyDayKey,
@@ -127,5 +128,15 @@ describe("formatCivilSchedule", () => {
     expect(formatCivilSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-08T14:00")))).toBe("8 Oct 2026 · 13:00 → 14:00");
     expect(formatCivilSchedule(dto(ep("date", "2026-10-08"), ep("date", "2026-10-10")))).toBe("8 Oct 2026 → 10 Oct 2026");
     expect(formatCivilSchedule(dto(ep("timed", "2026-10-08T13:00"), ep("timed", "2026-10-09T09:00")))).toBe("8 Oct 2026 · 13:00 → 9 Oct 2026 · 09:00");
+  });
+});
+
+describe("formatDueCivil (#372)", () => {
+  it("names a date end as 'Fri 2 Oct' and a timed end with its Sydney wall time, whatever the machine zone", () => {
+    expect(formatDueCivil("2026-10-02")).toBe("Fri 2 Oct");
+    expect(formatDueCivil("2026-10-02T17:00")).toBe("Fri 2 Oct · 17:00");
+    // The weekday is the civil date's own, not a device-zone reinterpretation of midnight.
+    expect(formatDueCivil("2026-10-04")).toBe("Sun 4 Oct");
+    expect(formatDueCivil("2026-12-31T00:05")).toBe("Thu 31 Dec · 00:05");
   });
 });
