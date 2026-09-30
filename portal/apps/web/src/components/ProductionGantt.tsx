@@ -91,7 +91,7 @@
  * (`invalidateProjectSurfaces` without `producer`); the PATCH result (or a 409's `currentSubtask`) is
  * adopted version-wins into the row (`adoptGanttChecklistRow`) and into page-2+ rows via `patchChildRow`.
  * An External Editor's row carries team assignees plus a hidden count, exactly as the Checklist does.
- * Reuse ledger: picker — `quincy/SubtaskAssigneePicker` `compact` (`reui/combobox` `multiple` + `reui/item` +
+ * Reuse ledger: picker — `quincy/SubtaskAssigneePicker`, borderless like the Project row's People trigger (`reui/combobox` `multiple` + `reui/item` +
  * `reui/avatar`); read-only stack — `quincy/AvatarStack` (`reui/avatar`); conflict / gate notices —
  * `pushToast`; on a phone (<= 720px) the People column is not rendered, so a Subtask's assignees are edited from the Checklist the row link opens; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
  * `stopPropagation`, the pattern `GanttChildLoadErrorBadge` and the Deadline action already use (no new
@@ -389,7 +389,6 @@ function GanttSubtaskAssigneesCell({
           <GestureAwareCell live={live}>
             {(disabled) => (
               <SubtaskAssigneePicker
-                compact
                 projectId={cell.projectId}
                 role={role}
                 label={`Assignees for ${row.title}`}
