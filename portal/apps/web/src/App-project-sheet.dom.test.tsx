@@ -357,6 +357,21 @@ describe("open from each Dashboard view (#366)", () => {
     expect(host.querySelector('[aria-label="Projects list"]')).toBe(list);
     expect(list.scrollTop).toBe(300);
   });
+
+  // #415: the Gantt must not remount (which would re-land it) or lose its scroll when a sheet closes.
+  it("keeps the Gantt surface node, and its scroll, across open and close", async () => {
+    const host = await renderDashboardAt("gantt");
+    const surface = host.querySelector<HTMLElement>('[data-testid="dashboard-gantt-surface"]')!;
+    expect(surface).not.toBeNull();
+    surface.scrollTop = 300;
+    await click(host.querySelector('[data-testid="gantt-project-link"]')!);
+    const closeGo = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    expect(closeGo).toHaveBeenCalledWith(-1);
+    await traverseTo("/?view=gantt&q=smith", null);
+    expect(host.querySelector('[data-testid="dashboard-gantt-surface"]')).toBe(surface);
+    expect(surface.scrollTop).toBe(300);
+  });
 });
 
 describe("closing returns to the same view (#366)", () => {

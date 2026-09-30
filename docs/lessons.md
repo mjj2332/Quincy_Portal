@@ -4577,3 +4577,29 @@ remove the legacy readers) still applies.
   `workers/background/src/tonomo/process.ts`: a NEW order (no Project, no tombstone, no address link) with a
   canonical shoot date before it is ignored the same way. Null and non-canonical dates still create. Updates
   and address links are not affected. Move the constant, not the logic.
+
+## Gantt landing row (#414, #415): no `scrollIntoView`, and pagination decides the landing
+
+- **Place the row by writing `scrollTop`, never `scrollIntoView`.** `scrollGanttRowToTop`
+  (`ProductionGantt.tsx`) reads the timeline row's rect against the viewport and the sticky timeline
+  header, then writes the same `scrollTop` to both pane viewports (as the vendor wheel handler does).
+  `scrollIntoView` scrolls every ancestor (the page itself on a phone, the hazard in the earlier Gantt
+  horizontal-displacement lesson) and `block: "start"` parks the row under the sticky header. `scrollLeft`
+  is never written, so the vendor's centre-on-now survives. Do not clamp against `scrollHeight`: browsers
+  clamp natively and happy-dom reports 0.
+- **The landing needs the page walk.** The API returns 100 Projects oldest-first, so when every loaded row
+  is in the past the current Project is on a later page. `ganttLandingProject` returns `undecided` until a
+  match, a loaded row starting after today, or a complete walk; the request stays armed and fetches the next
+  page through the scroll-paging latch (bounded by the draw cap, which counts as complete).
+- **Wait for the drawn rows, not just the loaded pages.** The chart draws the scheduling controller's
+  accepted rows, which can trail `query.data` by a commit. Deciding when `hasNextPage` flipped but the drawn
+  rows still lacked the new page picked the old last row. The effect returns until every loaded Project id
+  is in `displayProjects`.
+- **One request per mount, plus Today.** The request lives in a ref outside the conditionally rendered chart.
+  A refetch, pagination append, filter change or Project sheet close only changes deps and exits at the null
+  check. `GanttNavToday` spreads `{...props}` after its own `onClick={today}`, so a consumer `onClick` would
+  REPLACE the horizontal re-centre: `ProductionGanttNav` calls `useGanttNavigation().today()` itself, then
+  re-arms the request.
+- **Test seam.** happy-dom lays nothing out: stub `clientHeight` and a scroll-following
+  `getBoundingClientRect` (a static rect makes "refetch leaves scrollTop alone" vacuous), and identify the
+  vendor viewport by a `dataset.slot` read rather than a `[data-slot]` selector (test-seam guard F).
