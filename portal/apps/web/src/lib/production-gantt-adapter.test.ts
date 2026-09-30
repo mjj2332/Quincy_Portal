@@ -18,7 +18,7 @@ import type {
   GanttProjectRowDto,
 } from "@quincy/shared";
 import { PRODUCTION_GANTT_DRAW_CAP } from "@quincy/shared";
-import { buildProductionGanttModel, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
+import { buildProductionGanttModel, ganttLandingProject, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
 import { STAGE_HATCH_CLASS } from "./stage-colors";
 
 // ---------------------------------------------------------------------------
@@ -402,7 +402,7 @@ describe("S5: merge-order independence", () => {
     expect(resourceSignature(modelPaged.resources)).toEqual(resourceSignature(modelAllAtOnce.resources));
     expect(eventSignatures(modelPaged)).toEqual(eventSignatures(modelAllAtOnce));
     expect(attentionSignatures(modelPaged)).toEqual(attentionSignatures(modelAllAtOnce));
-    // Deterministic order: by position, ascending — same ids, same order, regardless of arrival order.
+    // Deterministic order: by range start, then position — same ids, same order, regardless of arrival order.
     expect(modelAllAtOnce.resources[0]?.children?.map((child) => child.id)).toEqual([
       `task:${tasks[1]!.id}`,
       `task:${tasks[2]!.id}`,
@@ -711,5 +711,181 @@ describe("#257: stage pattern class", () => {
     expect(STAGE_HATCH_CLASS.split(" ")).toEqual(
       expect.arrayContaining(["data-completed:bg-none", "data-milestone:bg-none"]),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #414 — Subtask order
+// ---------------------------------------------------------------------------
+
+describe("#414: Subtask child order", () => {
+  function childIds(tasks: GanttChecklistRowDto[]): string[] {
+    const project = makeProject({
+      shootDateCivil: "2026-01-15",
+      children: { rows: tasks, total: tasks.length, returned: tasks.length, truncated: false, nextCursor: null },
+    });
+    const model = buildProductionGanttModel([project], { now: NOW });
+    return (model.resources[0]?.children ?? []).map((child) => child.id.replace("task:", ""));
+  }
+
+  it("range start beats position", () => {
+    const late = makeTask({ position: 1, schedule: oneDayRange("2026-03-09") });
+    const early = makeTask({ position: 9, schedule: oneDayRange("2026-03-02") });
+    expect(childIds([late, early])).toEqual([early.id, late.id]);
+  });
+
+  it("the same start orders by the earlier end", () => {
+    const long = makeTask({ position: 1, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-06")) });
+    const short = makeTask({ position: 2, schedule: rangeSchedule(dateEndpoint("2026-03-02"), dateEndpoint("2026-03-03")) });
+    expect(childIds([long, short])).toEqual([short.id, long.id]);
+  });
+
+  it("an identical range falls back to position, then id", () => {
+    const b = makeTask({ id: "b-task", position: 2, schedule: oneDayRange("2026-03-02") });
+    const a = makeTask({ id: "a-task", position: 2, schedule: oneDayRange("2026-03-02") });
+    const first = makeTask({ id: "z-task", position: 1, schedule: oneDayRange("2026-03-02") });
+    expect(childIds([b, a, first])).toEqual(["z-task", "a-task", "b-task"]);
+  });
+
+  it("compares resolved instants across endpoint kinds", () => {
+    // Sydney AEDT (+11) on 2026-03-02: 09:00 local = 2026-03-01T22:00Z.
+    const dateDay = makeTask({ position: 2, schedule: oneDayRange("2026-03-02") });
+    const timed = makeTask({
+      position: 1,
+      schedule: rangeSchedule(
+        timedEndpoint("2026-03-02T09:00", "2026-03-01T22:00:00.000Z", 660, 0),
+        timedEndpoint("2026-03-02T15:00", "2026-03-02T04:00:00.000Z", 660, 0),
+      ),
+    });
+    // date start = midnight (before 09:00), so the date row comes first despite its later position.
+    expect(childIds([timed, dateDay])).toEqual([dateDay.id, timed.id]);
+    // same start instant: the timed 15:00 end is before the date row's exclusive next-day midnight.
+    const sameStartDate = makeTask({ position: 1, schedule: oneDayRange("2026-03-02") });
+    const sameStartTimed = makeTask({
+      position: 2,
+      schedule: rangeSchedule(
+        timedEndpoint("2026-03-02T00:00", "2026-03-01T13:00:00.000Z", 660, 0),
+        timedEndpoint("2026-03-02T15:00", "2026-03-02T04:00:00.000Z", 660, 0),
+      ),
+    });
+    expect(childIds([sameStartDate, sameStartTimed])).toEqual([sameStartTimed.id, sameStartDate.id]);
+  });
+
+  it("an unresolvable endpoint sorts after every resolved one", () => {
+    const broken = makeTask({
+      position: 1,
+      schedule: rangeSchedule(timedEndpoint("2026-03-01T09:00", null as unknown as string, 660, 0), dateEndpoint("2026-03-09")),
+    });
+    const ok = makeTask({ position: 5, schedule: oneDayRange("2026-06-30") });
+    expect(childIds([broken, ok])).toEqual([ok.id, broken.id]);
+  });
+
+  it("does not mutate the input array and leaves Project order alone", () => {
+    const t1 = makeTask({ position: 1, schedule: oneDayRange("2026-03-09") });
+    const t2 = makeTask({ position: 2, schedule: oneDayRange("2026-03-02") });
+    const rows = [t1, t2];
+    const p1 = makeProject({ shootDateCivil: "2026-01-20", children: { rows, total: 2, returned: 2, truncated: false, nextCursor: null } });
+    const p2 = makeProject({ shootDateCivil: "2026-01-10" });
+    const model = buildProductionGanttModel([p1, p2], { now: NOW });
+    expect(rows).toEqual([t1, t2]);
+    expect(model.resources.map((r) => r.id)).toEqual([`project:${p1.id}`, `project:${p2.id}`]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #415 — landing Project
+// ---------------------------------------------------------------------------
+
+describe("#415: ganttLandingProject", () => {
+  // NOW = 2026-06-15T00:00Z = 10:00 AEST on 2026-06-15.
+  const done = { complete: true };
+  const dl = (at: string) => makeDeadline({ at });
+
+  it("covers-now: the first of two covering rows wins", () => {
+    const a = makeProject({ shootDateCivil: "2026-06-10", barStartDate: "2026-06-10", deadline: dl("2026-06-20T00:00:00.000Z") });
+    const b = makeProject({ shootDateCivil: "2026-06-12", barStartDate: "2026-06-12", deadline: dl("2026-06-25T00:00:00.000Z") });
+    expect(ganttLandingProject([a, b], NOW, done)).toEqual({ status: "found", projectId: a.id, rule: "covers_now" });
+  });
+
+  it("the Deadline instant is inclusive", () => {
+    const a = makeProject({ shootDateCivil: "2026-06-10", barStartDate: "2026-06-10", deadline: dl(NOW.toISOString()) });
+    expect(ganttLandingProject([a], NOW, done)).toMatchObject({ projectId: a.id, rule: "covers_now" });
+  });
+
+  it("no Deadline: covers only its shoot day", () => {
+    const today = makeProject({ shootDateCivil: "2026-06-15", barStartDate: "2026-06-15", deadline: null });
+    expect(ganttLandingProject([today], NOW, done)).toMatchObject({ projectId: today.id, rule: "covers_now" });
+    const yesterday = makeProject({ shootDateCivil: "2026-06-14", barStartDate: "2026-06-14", deadline: null });
+    const tomorrow = makeProject({ shootDateCivil: "2026-06-16", barStartDate: "2026-06-16", deadline: null });
+    expect(ganttLandingProject([yesterday, tomorrow], NOW, done)).toMatchObject({ projectId: tomorrow.id, rule: "upcoming" });
+  });
+
+  it("no shoot date: the creation instant starts the bar", () => {
+    const a = makeProject({
+      shootDateCivil: null,
+      createdAt: "2026-06-01T00:00:00.000Z",
+      barStartDate: "2026-06-01",
+      deadline: dl("2026-06-30T00:00:00.000Z"),
+    });
+    expect(ganttLandingProject([a], NOW, done)).toMatchObject({ projectId: a.id, rule: "covers_now" });
+  });
+
+  it("no shoot date and no Deadline: the Sydney creation day is its shoot day", () => {
+    // created 2026-06-14T15:00Z = 01:00 AEST 15 June.
+    const a = makeProject({ shootDateCivil: null, createdAt: "2026-06-14T15:00:00.000Z", barStartDate: "2026-06-14", deadline: null });
+    expect(ganttLandingProject([a], NOW, done)).toMatchObject({ projectId: a.id, rule: "covers_now" });
+  });
+
+  it("an inverted Deadline never covers now", () => {
+    const inverted = makeProject({ shootDateCivil: "2026-06-20", barStartDate: "2026-06-20", deadline: dl("2026-06-10T00:00:00.000Z") });
+    expect(ganttLandingProject([inverted], NOW, done)).toMatchObject({ projectId: inverted.id, rule: "upcoming" });
+  });
+
+  it("all-future lands on the first row; all-past on the last when complete", () => {
+    const f1 = makeProject({ shootDateCivil: "2026-07-01", barStartDate: "2026-07-01" });
+    const f2 = makeProject({ shootDateCivil: "2026-08-01", barStartDate: "2026-08-01" });
+    expect(ganttLandingProject([f1, f2], NOW, done)).toMatchObject({ projectId: f1.id, rule: "upcoming" });
+    const p1 = makeProject({ shootDateCivil: "2026-01-01", barStartDate: "2026-01-01" });
+    const p2 = makeProject({ shootDateCivil: "2026-02-01", barStartDate: "2026-02-01" });
+    expect(ganttLandingProject([p1, p2], NOW, done)).toEqual({ status: "found", projectId: p2.id, rule: "last_row" });
+  });
+
+  it("all-past is undecided while a later page may exist", () => {
+    const p1 = makeProject({ shootDateCivil: "2026-01-01", barStartDate: "2026-01-01" });
+    expect(ganttLandingProject([p1], NOW, { complete: false })).toEqual({ status: "undecided" });
+  });
+
+  it("empty: empty when complete, undecided otherwise", () => {
+    expect(ganttLandingProject([], NOW, done)).toEqual({ status: "empty" });
+    expect(ganttLandingProject([], NOW, { complete: false })).toEqual({ status: "undecided" });
+  });
+
+  it("a loaded row starting after today decides even when incomplete; one starting today does not", () => {
+    const past = makeProject({ shootDateCivil: "2026-01-01", barStartDate: "2026-01-01" });
+    const future = makeProject({ shootDateCivil: "2026-07-01", barStartDate: "2026-07-01" });
+    expect(ganttLandingProject([past, future], NOW, { complete: false })).toMatchObject({ projectId: future.id, rule: "upcoming" });
+    const todayRow = makeProject({ shootDateCivil: "2026-06-15", barStartDate: "2026-06-15", deadline: dl("2026-06-15T01:00:00.000Z") });
+    const todayNotCovering = makeProject({ shootDateCivil: "2026-06-15", barStartDate: "2026-06-15", deadline: dl("2026-06-14T00:00:00.000Z") });
+    expect(ganttLandingProject([past, todayNotCovering], NOW, { complete: false })).toEqual({ status: "undecided" });
+    expect(ganttLandingProject([past, todayRow], NOW, { complete: false })).toMatchObject({ rule: "covers_now" });
+  });
+
+  it("Sydney boundary: 00:30 AEST on 1 Oct is already the 1 Oct shoot day", () => {
+    const boundary = new Date("2026-09-30T14:30:00.000Z");
+    const a = makeProject({ shootDateCivil: "2026-10-01", barStartDate: "2026-10-01", deadline: null });
+    expect(ganttLandingProject([a], boundary, done)).toMatchObject({ projectId: a.id, rule: "covers_now" });
+  });
+
+  it("returns only Project ids, never a Subtask id", () => {
+    const task = makeTask({ schedule: oneDayRange("2026-06-15") });
+    const a = makeProject({
+      shootDateCivil: "2026-06-15",
+      barStartDate: "2026-06-15",
+      deadline: null,
+      children: { rows: [task], total: 1, returned: 1, truncated: false, nextCursor: null },
+    });
+    const landing = ganttLandingProject([a], NOW, done);
+    expect(landing).toMatchObject({ projectId: a.id });
+    expect(landing).not.toMatchObject({ projectId: task.id });
   });
 });

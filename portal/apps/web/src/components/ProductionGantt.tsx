@@ -154,10 +154,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckIcon } from "lucide-react";
 import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type Role } from "@quincy/shared";
-import { Gantt, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
+import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
 import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { toZoned } from "@/components/reui/gantt/gantt-lib";
-import { GanttNav, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
+import { GanttNav, GanttNavNext, GanttNavPrev, GanttNavToday, GanttScaleSwitcher, GanttTitle, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
+import { TooltipProvider } from "@/components/reui/tooltip";
 import { GanttView } from "@/components/reui/gantt/gantt-view";
 import type { GanttProposedUpdate, GanttResource, GanttScale, GanttUpdateResult } from "@/components/reui/gantt/gantt-types";
 import { cn } from "@/lib/utils";
@@ -193,6 +194,7 @@ import {
   type ProductionGanttFilters,
 } from "../lib/production-gantt-query";
 import {
+  ganttLandingProject,
   type ProductionGanttAttention,
   type ProductionGanttAttentionReason,
   type ProductionGanttModel,
@@ -287,6 +289,60 @@ const NEAR_BOTTOM_THRESHOLD_PX = 240;
 
 /** A real 44px hit area on coarse pointers and phones, compact on desktop. */
 const COARSE_TAP_TARGET = "pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px] max-[720px]:min-w-[44px]";
+
+const NO_LOADED_PROJECTS: readonly GanttProjectRowDto[] = [];
+
+/**
+ * #415: scroll the Gantt so the given Project row sits directly under the sticky timeline header.
+ * Both panes' viewports get the same `scrollTop` (the vendor wheel handler mirrors them the same
+ * way); `scrollLeft` is never touched, so the horizontal centre-on-now survives. Deliberately NOT
+ * `scrollIntoView`: that scrolls every ancestor (the page on a phone — `docs/lessons.md`) and its
+ * `block: "start"` would park the row under the sticky header. The row's position is read from
+ * rects, not `offsetTop`, so variable row heights and create rows are accounted for. No clamping
+ * against `scrollHeight`: the browser clamps a `scrollTop` write natively.
+ */
+export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | "unmeasured" | "missing" {
+  const timeline = root.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+  if (!timeline) return "missing";
+  const row = Array.from(timeline.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).find((el) => el.getAttribute("data-gantt-row-id") === rowId);
+  if (!row) return "missing";
+  if (timeline.clientHeight === 0) return "unmeasured";
+  const header = timeline.querySelector<HTMLElement>('[data-slot="gantt-timeline-header"]');
+  const headerHeight = header?.getBoundingClientRect().height ?? 0;
+  const next = Math.max(0, timeline.scrollTop + row.getBoundingClientRect().top - timeline.getBoundingClientRect().top - headerHeight);
+  timeline.scrollTop = next;
+  const tree = root.querySelector<HTMLElement>('[data-slot="gantt-tree-pane"] [data-slot="scroll-area-viewport"]');
+  if (tree) tree.scrollTop = next;
+  return "done";
+}
+
+/**
+ * #415: the default `GanttNav` composition, re-composed so Today can also re-arm the vertical
+ * landing. `GanttNavToday` spreads its props after its own `onClick={today}`, so a consumer
+ * `onClick` would REPLACE the horizontal re-centre; this wrapper therefore calls `today()` itself.
+ */
+function ProductionGanttNav({ onToday }: { onToday: () => void }) {
+  const { today } = useGanttNavigation();
+  return (
+    <GanttNav>
+      <TooltipProvider delay={600} closeDelay={0} timeout={300}>
+        <GanttNavToday
+          onClick={() => {
+            today();
+            onToday();
+          }}
+        />
+        <GanttScaleSwitcher />
+        <div className="flex items-center">
+          <GanttNavPrev />
+          <GanttNavNext />
+        </div>
+        <GanttTitle />
+        <div className="grow" />
+      </TooltipProvider>
+    </GanttNav>
+  );
+}
 
 /**
  * fix-220-sol1 #3: the pure decision behind the panel's scroll-driven project pagination, exported
@@ -1520,6 +1576,62 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return () => container.removeEventListener("scroll", handleScroll, true);
   }, [tooManyToDraw, hasNextPage, fetchNextPage]);
 
+  // #415: land on the current Project once per mount, and again on Today. The request lives in a
+  // ref, outside the conditionally rendered chart; a refetch, a pagination append, a filter change
+  // or a sheet close only changes the deps and exits at the null check. It stays armed while the
+  // chart has no rows, while the landing is `undecided` (a later page could change it — the next
+  // page is fetched through the same latch as scroll-paging, bounded by the draw cap), and while the
+  // viewport is unmeasured.
+  const landingRequestRef = useRef<"open" | "today" | null>("open");
+  const [landingTick, setLandingTick] = useState(0);
+  const armLanding = useCallback(() => {
+    landingRequestRef.current = "today";
+    setLandingTick((tick) => tick + 1);
+  }, []);
+  const loadedProjects = query.data?.projects ?? NO_LOADED_PROJECTS;
+  const queryPending = query.isPending;
+  const queryErrored = query.isError;
+  useLayoutEffect(() => {
+    const request = landingRequestRef.current;
+    const container = containerRef.current;
+    if (request === null || !container || queryPending || queryErrored) return;
+    // The chart draws the controller's accepted rows, which can trail the loaded pages by a commit:
+    // deciding on a stale prefix would pair a `complete` flag with rows the next page has yet to join.
+    const displayedIds = new Set(displayProjects.map((project) => project.id));
+    if (loadedProjects.some((project) => !displayedIds.has(project.id))) return;
+    const drawn = displayProjects.filter((project) => baseModel.includedProjectIds.has(project.id));
+    const landing = ganttLandingProject(drawn, new Date(), { complete: !hasNextPage || tooManyToDraw });
+    if (landing.status === "empty") return;
+    if (landing.status === "undecided") {
+      if (!fetchingNextPageRef.current) {
+        fetchingNextPageRef.current = true;
+        void fetchNextPage().finally(() => {
+          fetchingNextPageRef.current = false;
+        });
+      }
+      return;
+    }
+    const timeline = container.querySelector<HTMLElement>('[data-slot="gantt-timeline-pane"] [data-slot="scroll-area-viewport"]');
+    // Someone already scrolled while pages were loading: leave their position alone.
+    if (request === "open" && timeline && timeline.scrollTop > 0) {
+      landingRequestRef.current = null;
+      return;
+    }
+    const result = scrollGanttRowToTop(container, `project:${landing.projectId}`);
+    if (result === "done") {
+      landingRequestRef.current = null;
+      return;
+    }
+    if (result === "unmeasured" && timeline && typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        setLandingTick((tick) => tick + 1);
+      });
+      observer.observe(timeline);
+      return () => observer.disconnect();
+    }
+  }, [displayProjects, loadedProjects, baseModel, hasNextPage, tooManyToDraw, fetchNextPage, landingTick, queryPending, queryErrored]);
+
   const [date, setDate] = useState<Date>(() => new Date());
   const [scale, setScale] = useState<GanttScale>("month");
 
@@ -1775,7 +1887,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             renderEvent={renderEvent}
             className="min-h-0 flex-1"
           >
-            <GanttNav />
+            <ProductionGanttNav onToday={armLanding} />
             <GanttToolbar />
             <GanttView />
           </Gantt>

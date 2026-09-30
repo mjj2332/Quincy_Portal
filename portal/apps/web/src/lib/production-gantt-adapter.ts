@@ -43,6 +43,7 @@ import {
   type GanttChecklistRowDto,
   type GanttProjectRowDto,
 } from "@quincy/shared";
+import { sydneyDayKey } from "./date-format";
 import { STAGE_HATCH_CLASS, stageColorFor, stagePatternFor } from "./stage-colors";
 
 // ---------------------------------------------------------------------------
@@ -163,8 +164,23 @@ function taskInteraction(row: GanttChecklistRowDto): Pick<ProductionGanttEvent, 
   return { readOnly: !(canDrag || canResize), draggable: canDrag, resizable: canResize };
 }
 
+/**
+ * A Subtask's drawn span as resolved instants: a date endpoint is Sydney midnight (the end is the
+ * exclusive next-day midnight), a timed endpoint is its stored instant. Shared by the bar builder
+ * and the #414 child-row order, so the order is exactly what is drawn.
+ */
+function resolveTaskSpan(row: GanttChecklistRowDto): { ok: true; start: Date; end: Date } | { ok: false } {
+  const { start, end } = row.schedule;
+  const startResolved =
+    start.kind === "date" ? resolveCivilDayStart(start.localCivil) : resolveStoredInstant(start.instant);
+  if (!startResolved.ok) return { ok: false };
+  const endResolved =
+    end.kind === "date" ? resolveExclusiveEndOfDay(end.localCivil) : resolveStoredInstant(end.instant);
+  if (!endResolved.ok) return { ok: false };
+  return { ok: true, start: startResolved.date, end: endResolved.date };
+}
+
 function buildTaskResult(row: GanttChecklistRowDto, color: string, className: string | undefined, interactive: boolean): RowBuildResult {
-  const schedule = row.schedule;
   const resourceId = `task:${row.id}`;
   const attentionFor = (reason: ProductionGanttAttentionReason): ProductionGanttAttention => ({
     kind: "task",
@@ -177,20 +193,15 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
 
   // Every Subtask is a range (ADR 0011): start/end share a kind. A one-day date range resolves to
   // [day 00:00, next day 00:00), a positive-width bar with both resize grips.
-  const { start, end } = schedule;
-  const startResolved =
-    start.kind === "date" ? resolveCivilDayStart(start.localCivil) : resolveStoredInstant(start.instant);
-  if (!startResolved.ok) return { event: null, attention: attentionFor("resolution_failed") };
-  const endResolved =
-    end.kind === "date" ? resolveExclusiveEndOfDay(end.localCivil) : resolveStoredInstant(end.instant);
-  if (!endResolved.ok) return { event: null, attention: attentionFor("resolution_failed") };
+  const span = resolveTaskSpan(row);
+  if (!span.ok) return { event: null, attention: attentionFor("resolution_failed") };
   return {
     event: {
       id: resourceId,
       title: row.title,
-      start: startResolved.date,
-      end: endResolved.date,
-      allDay: start.kind === "date",
+      start: span.start,
+      end: span.end,
+      allDay: row.schedule.start.kind === "date",
       color,
       ...(className ? { className } : {}),
       readOnly: true,
@@ -323,10 +334,108 @@ function buildProjectBar(project: GanttProjectRowDto, color: string, className: 
   };
 }
 
-/** Deterministic child order, independent of page-arrival order: `position`, then `id` as a tiebreak. */
-function compareChecklistRows(a: GanttChecklistRowDto, b: GanttChecklistRowDto): number {
-  if (a.position !== b.position) return a.position - b.position;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+interface SubtaskSortKey {
+  row: GanttChecklistRowDto;
+  resolved: boolean;
+  startMs: number;
+  endMs: number;
+}
+
+function subtaskSortKey(row: GanttChecklistRowDto): SubtaskSortKey {
+  const span = resolveTaskSpan(row);
+  return span.ok
+    ? { row, resolved: true, startMs: span.start.getTime(), endMs: span.end.getTime() }
+    : { row, resolved: false, startMs: 0, endMs: 0 };
+}
+
+/**
+ * #414: deterministic child order, independent of page-arrival order — resolved range start, then
+ * resolved range end, then Collaboration `position`, then `id`. Unresolved spans sort after every
+ * resolved one. `<`/`>` only: a subtraction would turn a non-finite key into `NaN`.
+ */
+function compareSubtaskKeys(a: SubtaskSortKey, b: SubtaskSortKey): number {
+  if (a.resolved !== b.resolved) return a.resolved ? -1 : 1;
+  if (a.resolved) {
+    if (a.startMs !== b.startMs) return a.startMs < b.startMs ? -1 : 1;
+    if (a.endMs !== b.endMs) return a.endMs < b.endMs ? -1 : 1;
+  }
+  if (a.row.position !== b.row.position) return a.row.position < b.row.position ? -1 : 1;
+  return a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0;
+}
+
+/** Keys are computed once per row, never inside the comparator. */
+function sortSubtasksByRange(rows: readonly GanttChecklistRowDto[]): GanttChecklistRowDto[] {
+  return rows
+    .map(subtaskSortKey)
+    .sort(compareSubtaskKeys)
+    .map((key) => key.row);
+}
+
+// ---------------------------------------------------------------------------
+// #415: which Project row the Gantt lands on
+// ---------------------------------------------------------------------------
+
+export type GanttLanding =
+  | { status: "found"; projectId: string; rule: "covers_now" | "upcoming" | "last_row" }
+  /** A page not yet loaded could still change the answer. */
+  | { status: "undecided" }
+  | { status: "empty" };
+
+/**
+ * The Project row the Gantt opens on, over the DRAWN Project rows in display order (never a
+ * Subtask). Rule 1: the first Project whose span [bar start, Deadline] contains `now` (no Deadline:
+ * only its shoot day; no shoot date: the Sydney creation day, matching the bar start). Rule 2: the
+ * first whose shoot day is today or later. Rule 3: the last row. `complete` says no further page
+ * can arrive; while incomplete the answer may be `undecided`.
+ */
+export function ganttLandingProject(
+  projects: readonly GanttProjectRowDto[],
+  now: Date,
+  opts: { complete: boolean },
+): GanttLanding {
+  if (projects.length === 0) return opts.complete ? { status: "empty" } : { status: "undecided" };
+  const today = sydneyDayKey(now);
+  const nowMs = now.getTime();
+
+  const startDayOf = (project: GanttProjectRowDto): string | null => {
+    if (project.shootDateCivil) return project.shootDateCivil;
+    const created = new Date(project.createdAt);
+    return Number.isNaN(created.getTime()) ? null : sydneyDayKey(created);
+  };
+  /** The bar start instant, exactly as `buildProjectBar` derives it. */
+  const startInstantOf = (project: GanttProjectRowDto): Date | null => {
+    if (project.shootDateCivil) {
+      const resolved = resolveCivilDayStart(project.shootDateCivil);
+      return resolved.ok ? resolved.date : null;
+    }
+    const created = new Date(project.createdAt);
+    return Number.isNaN(created.getTime()) ? null : created;
+  };
+  const coversNow = (project: GanttProjectRowDto): boolean => {
+    if (project.deadline) {
+      const start = startInstantOf(project);
+      const end = new Date(project.deadline.at);
+      if (!start || Number.isNaN(end.getTime())) return false;
+      return start.getTime() <= nowMs && nowMs <= end.getTime() && start.getTime() <= end.getTime();
+    }
+    return startDayOf(project) === today;
+  };
+
+  const covering = projects.find(coversNow);
+  if (covering) return { status: "found", projectId: covering.id, rule: "covers_now" };
+
+  // Loaded rows are a prefix of the display order. A row starting strictly after today means every
+  // unloaded row starts after now too (`barStartDate === today` does not decide: a later row could
+  // still cover now). A no-shoot-date row's `barStartDate` is a UTC date, never after the Sydney one.
+  const decided = opts.complete || projects.some((project) => project.barStartDate > today);
+  if (!decided) return { status: "undecided" };
+
+  const upcoming = projects.find((project) => {
+    const day = startDayOf(project);
+    return day !== null && day >= today;
+  });
+  if (upcoming) return { status: "found", projectId: upcoming.id, rule: "upcoming" };
+  return { status: "found", projectId: projects[projects.length - 1]!.id, rule: "last_row" };
 }
 
 // ---------------------------------------------------------------------------
@@ -335,9 +444,10 @@ function compareChecklistRows(a: GanttChecklistRowDto, b: GanttChecklistRowDto):
 
 /**
  * `now` is accepted (not `Date.now()` read internally) for determinism/testability, matching this
- * codebase's other builders — nothing in this pass's contract is `now`-relative (no "today"
+ * codebase's other builders — nothing in this builder's contract is `now`-relative (no "today"
  * marker, no client-side overdue recompute: `GanttProjectDeadlineDto.overdue` is already
- * server-computed), so it is intentionally unused today. Kept for signature stability into pass B.
+ * server-computed), so it is intentionally unused here. The landing row is `ganttLandingProject`,
+ * which takes its own `now`.
  *
  * `interactive` (#221, default false) adds the per-event drag/resize vetoes the writable Gantt
  * needs; when false the output is exactly what it was before the option existed.
@@ -368,7 +478,7 @@ export function buildProductionGanttModel(
   let tooManyToDraw = false;
 
   for (const project of projects) {
-    const sortedChildren = [...project.children.rows].sort(compareChecklistRows);
+    const sortedChildren = sortSubtasksByRange(project.children.rows);
     const exempt = opts.budgetExemptRowIds;
     const rowCount = 1 + (exempt && exempt.size > 0 ? sortedChildren.filter((row) => !exempt.has(row.id)).length : sortedChildren.length);
     if (rowBudget + rowCount > PRODUCTION_GANTT_DRAW_CAP) {
