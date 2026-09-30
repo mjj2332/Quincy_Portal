@@ -77,6 +77,27 @@ loses or misreads assignees.
 
 `docs/adr/0012-subtask-assignees-are-a-relation.md` has the reasoning.
 
+#### Multi-assignee rollout flag
+
+The `feature_flags` row `subtask_multi_assignee` (seeded **off** by migration 0049, missing row = off)
+gates *growth*: while it is off the API refuses to save a Subtask with more than one assignee
+(`subtask_multi_assignee_disabled`, HTTP 400) on create and on any update that adds a person and leaves
+more than one. Removing assignees and replacing one person with another always work. The server, not the
+UI, enforces it, and `GET /api/projects/:projectId/subtask-assignee-options` reports it as `multiAssignee`.
+
+Turn it on only when the reader PRs are all deployed and checked in production: due reminders (#369),
+per-person team removal (#371), Calendar (#370) and Gantt (#372), plus the Checklist UI (#368). Until
+then a second assignee would get no due reminder and would be missing from Calendar, Gantt and team counts.
+
+```sh
+# from portal/workers/app; verify with the SELECT afterwards
+npx wrangler d1 execute DB --remote --command "UPDATE feature_flags SET enabled = 1, updated_at = CAST(unixepoch('now') AS INTEGER) * 1000 WHERE key = 'subtask_multi_assignee' AND enabled = 0"
+npx wrangler d1 execute DB --remote --command "SELECT enabled FROM feature_flags WHERE key = 'subtask_multi_assignee'"
+```
+
+Turning it back off (`enabled = 0`) is safe: it only blocks adding people beyond one and never
+touches existing assignees. A migration must never re-assert the row (`docs/lessons.md`, #160).
+
 ### Calendar (since #224)
 
 The ReUI event calendar is the Dashboard's only Calendar renderer. FullCalendar and its per-browser

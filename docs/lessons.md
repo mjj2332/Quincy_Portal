@@ -4446,3 +4446,25 @@ remove the legacy readers) still applies.
   `lib/project-data.dom.test.tsx`. Then "in the cache after an `act`" means the component has
   committed it. Alternatively, wait on something the component rendered. More ticks or a longer
   poll only move the race.
+
+## Every reader of a relation-backed assignment moves together (2026-09-30, #368)
+
+- **Every reader of a relation-backed assignment must move in the PR that makes a second assignee
+  possible. The channel admission SQL (`notification-delivery.ts`, staff `legacyAdmission` and the
+  external `project.subtask.*` arm) is a reader too.** A notice is only deliverable while its
+  recipient still has a `project_subtask_assignees` row at the version the payload carries. The
+  resolver is checked first, so a reader missed in the admission SQL passes every resolver test and
+  only fails in the race between the in-app and email channels: test it with a `batch` wrapper that
+  deletes the relation row after the second batch (`notification-delivery.integration.test.ts`).
+- **The per-person version is `assignment_version` at the moment the person was added, not the
+  Subtask's current one.** A retained person keeps theirs, so adding or removing someone else never
+  suppresses their pending notice, and remove-then-re-add gets a new value. Under the write gate the
+  sole assignee's row version equals the Subtask's, which is why pre-#368 pending rows still deliver.
+
+- **A native assignee delta that loses the compare-and-swap to any concurrent edit is a 409
+  `subtask_item_conflict`, not a 200 no-op (#368, deliberate deviation from the PR2 spec).** The UPDATE
+  is guarded by every column the request read, so a concurrent title or completion edit makes the delta
+  match no row. Returning the `noop` there reports success for an assignee change that was never
+  applied and the user silently loses it. The client refetches from the conflict body instead. A
+  translated legacy `assigneeId` write keeps the old 200 no-op (an open old tab cannot act on a
+  conflict); test in `project-subtask-command.test.ts` by gating both `batch` calls on a barrier.

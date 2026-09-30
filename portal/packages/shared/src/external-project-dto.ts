@@ -230,11 +230,13 @@ export const externalStageListResponseSchema = z.object({
   stages: z.array(z.object({ key: z.string(), label: z.string(), displayOrder: z.number().int(), active: z.boolean() }).strict()),
 }).strict();
 
+export const externalSubtaskAssigneeOptionsResponseSchema = z.object({ candidates: z.array(externalPersonSchema), multiAssignee: z.boolean() }).strict();
+
 export type ExternalApiSurface =
   | "me" | "notification-preferences" | "project-list" | "project-detail" | "asset-list" | "annotation-list"
   | "annotation-mutation" | "collection-links" | "ingest-status" | "stages" | "collaboration" | "checklist" | "comment-list"
   | "comment-mutation" | "comment-read-state" | "mentionable" | "notifications" | "notification-mutation"
-  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export";
+  | "review-mutation" | "external-upload" | "external-upload-complete" | "access-snapshot" | "activity" | "calendar" | "gantt" | "export" | "subtask-assignee-options";
 
 export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, z.ZodTypeAny>> = {
   me: externalMeResponseSchema,
@@ -263,6 +265,7 @@ export const EXTERNAL_API_RESPONSE_SCHEMAS: Readonly<Record<ExternalApiSurface, 
   calendar: externalCalendarRangeSchema,
   gantt: externalProductionGanttSchema,
   export: externalProjectExportSchema,
+  "subtask-assignee-options": externalSubtaskAssigneeOptionsResponseSchema,
 };
 
 export function externalRoleLabel(): string {

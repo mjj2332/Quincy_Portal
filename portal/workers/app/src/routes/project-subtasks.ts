@@ -9,8 +9,13 @@ import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
 import { newId } from "../lib/ids";
 import { serializeSubtaskSchedule } from "../lib/subtask-schedule";
-import { externalChecklistItemSchema, externalChecklistListResponseSchema, ROLE_LABELS, projectActivityDeepLink, type ChecklistScheduleStorage, type ProjectActivityIntent } from "@quincy/shared";
+import {
+  externalChecklistItemSchema, externalChecklistListResponseSchema, externalPersonSchema, externalSubtaskAssigneeOptionsResponseSchema, ROLE_LABELS, projectActivityDeepLink,
+  SUBTASK_ASSIGNEE_DELTA_MAX, subtaskAssigneeDeltaSchema, subtaskAssigneeOptionsResponseSchema, type ChecklistScheduleStorage, type ProjectActivityIntent,
+} from "@quincy/shared";
 import { hasProjectCollaborationAccess } from "../middleware/capability";
+import { projectMentionableUsers } from "../lib/project-collaboration";
+import { hydrateProjectAssignees, hydrateSubtaskAssignees, multiAssigneeEnabled, type HydratedAssignee } from "../lib/subtask-assignees";
 import { resolveVisibleProject, visibleProjectWhere } from "../lib/visible-project-scope";
 import { jsonInput } from "./helpers";
 import { publishOutboxDetached } from "../lib/server-timing";
@@ -33,13 +38,18 @@ const endpointInput = z.discriminatedUnion("kind", [
 // A Subtask is always a range (ADR 0011): unscheduled and due-only payloads are rejected here, before any read.
 const scheduleInput = z.object({ state: z.literal("range"), start: endpointInput, end: endpointInput }).strict();
 const scheduleRequestInput = z.object({ expectedVersion: z.number().int().nonnegative().refine(Number.isSafeInteger), schedule: scheduleInput }).strict();
-const createInput = z.object({ title: titleInput, assigneeId: idParam.optional(), schedule: scheduleInput.optional() }).strict();
+const uniqueIds = (ids: string[]) => new Set(ids).size === ids.length;
+const createInput = z.object({
+  title: titleInput, assigneeId: idParam.optional(), assigneeIds: z.array(idParam).max(SUBTASK_ASSIGNEE_DELTA_MAX).refine(uniqueIds, "Assignee ids must be unique").optional(), schedule: scheduleInput.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.assigneeId !== undefined && value.assigneeIds !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Send assigneeId or assigneeIds, not both" });
+});
 const updateInput = z.object({
-  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), schedule: scheduleRequestInput.optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
+  title: titleInput.optional(), done: z.boolean().optional(), assigneeId: idParam.nullable().optional(), assignees: subtaskAssigneeDeltaSchema.optional(), schedule: scheduleRequestInput.optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required").superRefine((value, ctx) => {
+  if (value.assigneeId !== undefined && value.assignees !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Send assigneeId or assignees, not both" });
+});
 const reorderInput = z.object({ beforeId: idParam.nullable(), afterId: idParam.nullable() }).strict().refine((value) => value.beforeId !== value.afterId || value.beforeId === null, "Neighbors must be distinct");
-
-type SubtaskRow = { subtask: typeof schema.projectSubtasks.$inferSelect; assigneeId: string | null; assigneeName: string | null };
 
 function rowsFromD1<T>(result: unknown): T[] {
   return ((result as { results?: T[] } | undefined)?.results ?? []);
@@ -53,13 +63,12 @@ async function ensureProjectAccessAndExists(c: Parameters<typeof hasProjectColla
 }
 
 function subtaskQuery(db: ReturnType<typeof createDb>, projectId: string, subtaskId?: string) {
-  return db.select({ subtask: schema.projectSubtasks, assigneeId: schema.user.id, assigneeName: schema.user.name })
-    .from(schema.projectSubtasks).leftJoin(schema.user, eq(schema.projectSubtasks.assigneeId, schema.user.id))
+  return db.select({ subtask: schema.projectSubtasks })
+    .from(schema.projectSubtasks)
     .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined));
 }
 
 function externalSubtaskQuery(db: ReturnType<typeof createDb>, projectId: string, userId: string, subtaskId?: string) {
-  const assignee = alias(schema.user, "external_assignee");
   const creator = alias(schema.user, "external_creator");
   return db.select({
     id: schema.projectSubtasks.id, title: schema.projectSubtasks.title, done: schema.projectSubtasks.done, position: schema.projectSubtasks.position,
@@ -69,17 +78,20 @@ function externalSubtaskQuery(db: ReturnType<typeof createDb>, projectId: string
     scheduleEndKind: schema.projectSubtasks.scheduleEndKind, scheduleEndAt: schema.projectSubtasks.scheduleEndAt, scheduleEndUtcOffsetMinutes: schema.projectSubtasks.scheduleEndUtcOffsetMinutes,
     scheduleEndFold: schema.projectSubtasks.scheduleEndFold, scheduleZone: schema.projectSubtasks.scheduleZone, scheduleVersion: schema.projectSubtasks.scheduleVersion,
     createdAt: schema.projectSubtasks.createdAt, updatedAt: schema.projectSubtasks.updatedAt,
-    assigneeId: assignee.id, assigneeName: assignee.name, assigneeRole: assignee.role, assigneeActive: assignee.active,
     creatorId: creator.id, creatorName: creator.name, creatorRole: creator.role, creatorActive: creator.active,
   }).from(schema.projectSubtasks)
     .innerJoin(schema.projects, eq(schema.projectSubtasks.projectId, schema.projects.id))
     .leftJoin(schema.projectMembers, and(eq(schema.projectMembers.projectId, schema.projects.id), eq(schema.projectMembers.userId, userId)))
-    .leftJoin(assignee, eq(schema.projectSubtasks.assigneeId, assignee.id))
     .innerJoin(creator, eq(schema.projectSubtasks.createdBy, creator.id))
     .where(and(eq(schema.projectSubtasks.projectId, projectId), subtaskId ? eq(schema.projectSubtasks.id, subtaskId) : undefined, visibleProjectWhere({ id: userId, role: "external_editor", active: true })));
 }
 
-function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number]) {
+/**
+ * The external Checklist DTO still carries one `assignee` in this PR: the first assignee, exactly what the mirrored column
+ * held. The visibility rule (named only if on the team) and the assignee list arrive with the DTO change in #368's next PR.
+ */
+function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>>[number], assignees: HydratedAssignee[]) {
+  const assignee = assignees[0];
   const storage: ChecklistScheduleStorage = {
     dueDate: row.dueDate, scheduleStartKind: row.scheduleStartKind, scheduleStartCivil: row.scheduleStartCivil, scheduleStartAt: row.scheduleStartAt,
     scheduleStartUtcOffsetMinutes: row.scheduleStartUtcOffsetMinutes, scheduleStartFold: row.scheduleStartFold, scheduleEndKind: row.scheduleEndKind,
@@ -88,7 +100,7 @@ function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>
   };
   return externalChecklistItemSchema.parse({
     id: row.id, title: row.title, done: Boolean(row.done), position: row.position,
-    assignee: row.assigneeId && row.assigneeName && row.assigneeRole ? { id: row.assigneeId, name: row.assigneeName, roleLabel: ROLE_LABELS[row.assigneeRole], isExternal: row.assigneeRole === "external_editor", active: Boolean(row.assigneeActive) } : null,
+    assignee: assignee ? { id: assignee.id, name: assignee.name, roleLabel: ROLE_LABELS[assignee.role], isExternal: assignee.role === "external_editor", active: assignee.active } : null,
     assignmentVersion: row.assignmentVersion, dueDate: row.dueDate, schedule: serializeSubtaskSchedule(row.id, storage),
     createdBy: row.creatorId && row.creatorName && row.creatorRole ? { id: row.creatorId, name: row.creatorName, roleLabel: ROLE_LABELS[row.creatorRole], isExternal: row.creatorRole === "external_editor", active: Boolean(row.creatorActive) } : { id: "00000000-0000-4000-8000-000000000000", name: "", roleLabel: "", isExternal: false, active: false },
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
@@ -97,6 +109,13 @@ function externalSubtaskDto(row: Awaited<ReturnType<typeof externalSubtaskQuery>
 
 function hasField(value: object, key: string): boolean { return Object.prototype.hasOwnProperty.call(value, key); }
 
+/** A conflict body's `currentSubtask` for the caller: an External Editor gets the external DTO, never the staff one (which now lists every assignee). */
+async function conflictSubtask(c: Context<AppEnv>, projectId: string, current: { id: string }) {
+  if (c.get("user").role !== "external_editor") return current;
+  const row = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id, current.id).get();
+  return row ? externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, current.id)) : null;
+}
+
 async function commandResponse(c: Context<AppEnv>, projectId: string, result: Awaited<ReturnType<typeof saveProjectSubtask>>, status: 200 | 201 = 200) {
   switch (result.outcome) {
     case "created":
@@ -104,15 +123,27 @@ async function commandResponse(c: Context<AppEnv>, projectId: string, result: Aw
     case "noop": {
       if (c.get("user").role === "external_editor") {
         const row = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id, result.item.id).get();
-        return row ? c.json(externalSubtaskDto(row), status) : c.json({ error: "Subtask not found" }, 404);
+        return row ? c.json(externalSubtaskDto(row, await hydrateSubtaskAssignees(c.env.DB, result.item.id)), status) : c.json({ error: "Subtask not found" }, 404);
       }
       return c.json(result.item, status);
     }
     case "invalid_request": return c.json({ error: result.message, code: result.code, ...(result.details ? { details: result.details } : {}) }, result.status);
     case "forbidden": return c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
     case "not_found": return c.json({ error: result.target === "project" ? "Project not found" : "Subtask not found" }, 404);
-    case "schedule_conflict": return c.json({ error: "Checklist schedule changed; review the latest schedule before saving.", code: "subtask_schedule_version_conflict", current: result.current, ...(result.currentSubtask ? { currentSubtask: result.currentSubtask } : {}) }, 409);
-    case "item_conflict": return c.json({ error: "Checklist item changed; review the latest item before saving.", code: "subtask_item_conflict", current: result.current, currentSubtask: result.currentSubtask }, 409);
+    case "schedule_conflict": {
+      const currentSubtask = result.currentSubtask ? await conflictSubtask(c, projectId, result.currentSubtask) : undefined;
+      return c.json({ error: "Checklist schedule changed; review the latest schedule before saving.", code: "subtask_schedule_version_conflict", current: result.current, ...(currentSubtask ? { currentSubtask } : {}) }, 409);
+    }
+    case "item_conflict": {
+      const currentSubtask = await conflictSubtask(c, projectId, result.currentSubtask);
+      if (!currentSubtask) return c.json({ error: "Subtask not found" }, 404);
+      return c.json({ error: "Checklist item changed; review the latest item before saving.", code: "subtask_item_conflict", current: result.current, currentSubtask }, 409);
+    }
+    case "assignment_conflict": {
+      const currentSubtask = await conflictSubtask(c, projectId, result.currentSubtask);
+      if (!currentSubtask) return c.json({ error: "Subtask not found" }, 404);
+      return c.json({ error: "Assignees changed; review the latest before saving.", code: "subtask_assignment_version_conflict", currentSubtask }, 409);
+    }
   }
 }
 
@@ -123,11 +154,31 @@ projectSubtasksRoutes.get("/projects/:projectId/subtasks", terminalRoute("/proje
   if (c.get("user").role === "external_editor") {
     if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
     const rows = await externalSubtaskQuery(createDb(c.env.DB), projectId, c.get("user").id).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
-    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map(externalSubtaskDto) }));
+    const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
+    return c.json(externalChecklistListResponseSchema.parse({ subtasks: rows.map((row) => externalSubtaskDto(row, assignees.get(row.id) ?? [])) }));
   }
   const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
   const rows = await subtaskQuery(createDb(c.env.DB), projectId).orderBy(asc(schema.projectSubtasks.position), asc(schema.projectSubtasks.id)).all();
-  return c.json({ subtasks: rows.map(serializeSubtask) });
+  const assignees = await hydrateProjectAssignees(c.env.DB, projectId);
+  return c.json({ subtasks: rows.map((row) => serializeSubtask(row, assignees.get(row.subtask.id) ?? [])) });
+}));
+
+projectSubtasksRoutes.get("/projects/:projectId/subtask-assignee-options", terminalRoute("/projects/:projectId/subtask-assignee-options", async (c) => {
+  const projectId = c.req.param("projectId"); if (!idParam.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
+  if (c.get("user").role === "external_editor") {
+    if (!await resolveVisibleProject(c.env, c.get("user"), projectId)) return c.json({ error: "Project not found" }, 404);
+    // Team members only: an External Editor is never offered a person hidden from them.
+    const { results } = await c.env.DB.prepare(`
+      SELECT DISTINCT u.id, u.name, u.role FROM user u JOIN project_members pm ON pm.user_id = u.id
+      WHERE pm.project_id = ? AND u.active = 1 ORDER BY u.name, u.id
+    `).bind(projectId).all<{ id: string; name: string; role: keyof typeof ROLE_LABELS }>();
+    return c.json(externalSubtaskAssigneeOptionsResponseSchema.parse({
+      candidates: results.map((row) => externalPersonSchema.parse({ id: row.id, name: row.name, roleLabel: ROLE_LABELS[row.role], isExternal: row.role === "external_editor", active: true })),
+      multiAssignee: await multiAssigneeEnabled(c.env.DB),
+    }));
+  }
+  const project = await ensureProjectAccessAndExists(c, projectId); if (project === "forbidden") return c.json({ error: "Forbidden: you are not assigned to this project" }, 403); if (!project) return c.json({ error: "Project not found" }, 404);
+  return c.json(subtaskAssigneeOptionsResponseSchema.parse({ candidates: await projectMentionableUsers(c.env, projectId), multiAssignee: await multiAssigneeEnabled(c.env.DB) }));
 }));
 
 projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/projects/:projectId/subtasks", async (c) => {
@@ -138,7 +189,7 @@ projectSubtasksRoutes.post("/projects/:projectId/subtasks", terminalRoute("/proj
     env: c.env,
     projectId,
     principal: c.get("user"),
-    operation: { kind: "create", item: { title: data.title, assigneeId: data.assigneeId ?? null }, schedule: data.schedule },
+    operation: { kind: "create", item: { title: data.title, assigneeIds: data.assigneeIds ?? (data.assigneeId ? [data.assigneeId] : []) }, schedule: data.schedule },
   });
   await finalizeProjectSubtaskCommandResult({ env: c.env, executionCtx: c.executionCtx, result });
   return await commandResponse(c, projectId, result, result.outcome === "created" ? 201 : 200);
@@ -154,6 +205,7 @@ projectSubtasksRoutes.patch("/projects/:projectId/subtasks/:subtaskId", terminal
   if (hasField(data, "title")) itemPatch.title = data.title;
   if (hasField(data, "done")) itemPatch.done = data.done;
   if (hasField(data, "assigneeId")) itemPatch.assigneeId = data.assigneeId;
+  if (hasField(data, "assignees")) itemPatch.assignees = data.assignees;
   const result = await saveProjectSubtask({
     env: c.env,
     projectId,

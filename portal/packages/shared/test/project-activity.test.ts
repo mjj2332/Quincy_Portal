@@ -269,3 +269,26 @@ describe("TB4C project activity registry", () => {
     expect(PROJECT_ASSIGNMENT_ELIGIBLE_ROLES.editor).toEqual(["editor", "external_editor", "admin"]);
   });
 });
+
+describe("checklist assignee activity payload (#368)", () => {
+  const schema = PROJECT_ACTIVITY_REGISTRY["project.checklist.item_updated"].payloadSchema;
+  const base = { itemId: "item-1", checklistTitle: "Review images", changes: ["assignee"] };
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+
+  it("still parses a historic payload without the assignee keys", () => {
+    expect(schema.safeParse(base).success).toBe(true);
+    expect(schema.safeParse({ ...base, changes: ["completion"] }).success).toBe(true);
+  });
+
+  it("accepts bounded added/removed ids with their counts", () => {
+    expect(schema.safeParse({ ...base, assigneesAdded: ids(2), assigneesRemoved: ids(1), assigneesAddedCount: 2, assigneesRemovedCount: 1 }).success).toBe(true);
+    expect(schema.safeParse({ ...base, assigneesAdded: ids(25), assigneesAddedCount: 100 }).success).toBe(true);
+  });
+
+  it("rejects 26 ids and counts above 100", () => {
+    expect(schema.safeParse({ ...base, assigneesAdded: ids(26) }).success).toBe(false);
+    expect(schema.safeParse({ ...base, assigneesRemoved: ids(26) }).success).toBe(false);
+    expect(schema.safeParse({ ...base, assigneesAddedCount: 101 }).success).toBe(false);
+    expect(schema.safeParse({ ...base, assigneesRemovedCount: -1 }).success).toBe(false);
+  });
+});
