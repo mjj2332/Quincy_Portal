@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useSession } from "./lib/auth";
+import { markSessionResolved } from "./lib/boot-timing";
 import { SignIn } from "./screens/SignIn";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { PrincipalFreshnessBoundary } from "./components/PrincipalFreshnessBoundary";
@@ -17,6 +19,9 @@ import { ShellIdentityProvider, StaffRouter, type SessionUser } from "./lib/app-
  */
 export default function App() {
   const session = useSession();
+  // #361: "Loading the studio…" is gone. An effect, not render, so StrictMode and re-renders mark once.
+  const sessionPending = session.isPending;
+  useEffect(() => { if (!sessionPending) markSessionResolved(); }, [sessionPending]);
   const pathname = typeof window === "undefined" ? "/" : `${window.location.pathname}${window.location.search}`;
   if (session.isPending) return <div className="boot">Loading the studio…</div>;
   if (!session.data) return <SignIn pathname={pathname} />;

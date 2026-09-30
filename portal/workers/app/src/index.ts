@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { terminalRoute } from "./lib/terminal-route";
 import { cors } from "hono/cors";
 import { externalMeResponseSchema, ROLE_CAPABILITIES } from "@quincy/shared";
-import type { AppEnv } from "./env";
+import type { AppEnv, Env } from "./env";
+import { fetchWithServerTiming } from "./lib/server-timing";
+import { bootTimingRoutes } from "./routes/boot-timing";
 import { getAuth } from "./auth";
 import { requireSession } from "./middleware/session";
 import { requireCapability } from "./middleware/capability";
@@ -67,7 +69,7 @@ app.all("/api/auth/*", terminalRoute("/api/auth/*", (c) => getAuth(c.env).handle
 const api = new Hono<AppEnv>();
 api.use("/*", requireSession);
 api.get("/me", terminalRoute("/me", (c) => { const user = c.get("user"); const response = { user, capabilities: [...(ROLE_CAPABILITIES[user.role] ?? [])] }; return c.json(user.role === "external_editor" ? externalMeResponseSchema.parse(response) : response); }));
-api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes);
+api.route("/", usersRoutes).route("/", projectsRoutes).route("/", projectDeadlineRoutes).route("/", notificationPreferencesRoutes).route("/", externalUploadsRoutes).route("/", uploadsRoutes).route("/", collectionsRoutes).route("/", integrationsRoutes).route("/", reviewRoutes).route("/", annotationsRoutes).route("/", stagesRoutes).route("/", adminRoutes).route("/", noticeBoardRoutes).route("/", mentionableUsersRoutes).route("/", projectCommentsRoutes).route("/", projectSubtasksRoutes).route("/", notificationsRoutes).route("/", assetsRoutes).route("/", projectAccessSnapshotRoutes).route("/", productionCalendarRoutes).route("/", productionGanttRoutes).route("/", projectActivityRoutes).route("/", bootTimingRoutes);
 app.route("/api", api);
 app.all("/api", terminalRoute("/api", (c) => c.json({ error: "Not found" }, 404)));
 app.all("/api/*", terminalRoute("/api/*", (c) => c.json({ error: "Not found" }, 404)));
@@ -101,4 +103,4 @@ app.get("/__transform-source/*", terminalRoute("/__transform-source/*", async (c
 app.all("/d", terminalRoute("/d", (c) => c.notFound()));
 app.all("/d/*", terminalRoute("/d/*", (c) => c.notFound()));
 app.all("*", terminalRoute("*", (c) => c.env.ASSETS.fetch(c.req.raw)));
-export default { fetch: app.fetch };
+export default { fetch: (request: Request, env: Env, ctx: ExecutionContext) => fetchWithServerTiming(app.fetch, request, env, ctx) };

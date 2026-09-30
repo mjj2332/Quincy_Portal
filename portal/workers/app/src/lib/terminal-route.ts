@@ -125,6 +125,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/api/integrations", class: "withheld" },
   { method: "POST", path: "/api/jobs/:id/retry", class: "withheld" },
   { method: "GET", path: "/api/me", class: "global-self" },
+  { method: "POST", path: "/api/boot-timing", class: "global-self" },
   { method: "GET", path: "/api/project-access-snapshot", class: "global-self" },
   { method: "GET", path: "/api/mentionable-users", class: "scoped" },
   { method: "DELETE", path: "/api/notice-board/posts/:id", class: "withheld" },

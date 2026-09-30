@@ -37,6 +37,7 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 - `/api/auth/get-session` answers 200, and an authenticated route such as
   `/api/production-gantt?scope=active` answers 401 to a signed-out request: the route mounts and
   doesn't crash. Whether the signed-in pages work is the owner's check in their browser.
+- To see where load time goes after a deploy, follow `Load-Time-Measurement.md`.
 
 ## When the job fails
 
