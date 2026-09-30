@@ -85,6 +85,13 @@ A person responsible for a Subtask. A Subtask may have none, one or several; eac
 of its due, and only a newly added one is told they were assigned.
 _Avoid_: Owner, responsible
 
+**Per-person assignment version**:
+The Subtask's assignment version at the moment a person was added as a Subtask assignee, stored on
+that person's `project_subtask_assignees` row. It is the identity notification re-validation uses:
+removing and re-adding someone yields a new value, and an unrelated add or remove leaves everyone
+else's unchanged.
+_Avoid_: Assignment token, assignee revision
+
 **Subtask range**:
 The span a Subtask is scheduled across, from start to end; every Subtask has one, and one
 day is the shortest. A Subtask's "due" is simply the end of its range. When none is given, it

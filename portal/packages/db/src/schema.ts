@@ -411,6 +411,18 @@ export const projectSubtasks = sqliteTable(
   ],
 );
 
+/** One row per Subtask assignee (#364). `assignmentVersion` is the Subtask's version when this person was added. */
+export const projectSubtaskAssignees = sqliteTable("project_subtask_assignees", {
+  subtaskId: text("subtask_id").notNull().references(() => projectSubtasks.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  assignmentVersion: integer("assignment_version").notNull(),
+  addedAt: integer("added_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.subtaskId, t.userId] }),
+  index("project_subtask_assignees_user_idx").on(t.userId, t.subtaskId),
+  check("project_subtask_assignees_version_check", sql`typeof(${t.assignmentVersion}) = 'integer' AND ${t.assignmentVersion} >= 0`),
+]);
+
 /** Short-lived, user-scoped handoff from a selection POST to a streamed ZIP GET. */
 export const downloadSelectionTickets = sqliteTable(
   "download_selection_tickets",

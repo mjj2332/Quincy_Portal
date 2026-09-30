@@ -268,6 +268,10 @@ describe("project subtasks API", () => {
     const initialPhotographer = await database.DB.prepare("SELECT id FROM project_members WHERE project_id = ? AND user_id = ? AND role_on_project = 'photographer'").bind(isolatedProject, photographerId).first<{ id: string }>();
     expect(initialPhotographer).toBeDefined();
     const finalTask = await (await request(`/api/projects/${isolatedProject}/subtasks`, "subtasks-admin-token", "POST", { title: "Final role", assigneeId: photographerId })).json() as { id: string };
+    const relationOf = (subtaskId: string) => database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ? ORDER BY user_id").bind(subtaskId).all<{ user_id: string; assignment_version: number }>().then((result) => result.results);
+    expect(await relationOf(finalTask.id)).toEqual([{ user_id: photographerId, assignment_version: 1 }]);
+    // Another Project's assignment of the same person is not touched by this removal (#364).
+    const otherProjectTask = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Other project", assigneeId: photographerId })).json() as { id: string };
     const unconfirmed = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: initialPhotographer!.id, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
     expect(unconfirmed.status).toBe(422);
     expect(await unconfirmed.json()).toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 1 });
@@ -275,6 +279,8 @@ describe("project subtasks API", () => {
     expect(confirmed.status).toBe(200);
     expect(await confirmed.json()).toMatchObject({ outcome: "removed", removed: { membershipCycle: initialPhotographer!.id, userId: photographerId, roleOnProject: "photographer" }, subtaskAssignmentsCleared: 1 });
     expect(await database.DB.prepare("SELECT assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(finalTask.id).first()).toEqual({ assignee_id: null, assignment_version: 2 });
+    expect(await relationOf(finalTask.id)).toEqual([]);
+    expect(await relationOf(otherProjectTask.id)).toEqual([{ user_id: photographerId, assignment_version: 1 }]);
     const audit = await database.DB.prepare("SELECT action, meta_json FROM audit_log WHERE action = 'project.member.remove' AND target_id = ? ORDER BY created_at DESC LIMIT 1").bind(initialPhotographer!.id).first<{ action: string; meta_json: string }>();
     expect(audit?.action).toBe("project.member.remove");
     expect(JSON.parse(audit!.meta_json)).toMatchObject({ projectId: isolatedProject, userId: photographerId, roleOnProject: "photographer", membershipCycle: initialPhotographer!.id });
@@ -285,6 +291,7 @@ describe("project subtasks API", () => {
     expect(retainedRemoval.status).toBe(200);
     expect(await retainedRemoval.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
     expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(retained.id).first()).toEqual({ assignee_id: editorId });
+    expect(await relationOf(retained.id)).toEqual([{ user_id: editorId, assignment_version: 1 }]);
 
     const adminPhotographer = await addMember(adminId, "photographer");
     const adminTask = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Admin persists", assigneeId: adminId })).json() as { id: string };
@@ -292,6 +299,7 @@ describe("project subtasks API", () => {
     expect(adminRemoval.status).toBe(200);
     expect(await adminRemoval.json()).toMatchObject({ outcome: "removed", subtaskAssignmentsCleared: 0 });
     expect(await database.DB.prepare("SELECT assignee_id FROM project_subtasks WHERE id = ?").bind(adminTask.id).first()).toEqual({ assignee_id: adminId });
+    expect(await relationOf(adminTask.id)).toEqual([{ user_id: adminId, assignment_version: 1 }]);
     const transferredPhotographer = await addMember(outsiderId, "photographer");
     const transferred = await (await request(`/api/projects/${projectId}/subtasks`, "subtasks-admin-token", "POST", { title: "Transferred role", assigneeId: outsiderId })).json() as { id: string };
     const editorRole = await request(`/api/projects/${projectId}/editors/${outsiderId}`, "subtasks-admin-token", "PUT", {});
@@ -529,5 +537,84 @@ describe("ranges only (#340)", () => {
     expect(moved.status).toBe(200);
     expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(item.id).first()).toEqual({ due_reminder_sent_at: null });
     expect(await scanDueSubtasks(reminderEnv, Date.UTC(2026, 10, 8, 21))).toBe(1); // 2026-11-09 08:00
+  });
+});
+
+describe("assignee relation dual-write (#364)", () => {
+  const relationProject = crypto.randomUUID();
+  const base = () => `/api/projects/${relationProject}/subtasks`;
+  const create = async (body: Record<string, unknown>) => (await (await request(base(), "subtasks-editor-token", "POST", { title: "Relation", ...body })).json()) as { id: string };
+  const patch = (id: string, body: Record<string, unknown>) => request(`${base()}/${id}`, "subtasks-editor-token", "PATCH", body);
+  const relationRows = async (subtaskId: string) => (await database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ? ORDER BY user_id").bind(subtaskId).all<{ user_id: string; assignment_version: number }>()).results;
+  const column = (subtaskId: string) => database.DB.prepare("SELECT assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(subtaskId).first<{ assignee_id: string | null; assignment_version: number }>();
+  /** The invariant scripts/subtask-assignees-verify.sql checks (migration-0048.test.ts runs that file itself: the Workers runtime cannot read it), scoped to this Project because other suites seed the column directly. */
+  const scopedVerify = () => database.DB.prepare(`SELECT
+    (SELECT COUNT(*) FROM project_subtasks s WHERE s.project_id = ?1 AND s.assignee_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = s.id AND a.user_id = s.assignee_id AND a.assignment_version = s.assignment_version))
+  + (SELECT COUNT(*) FROM project_subtask_assignees a WHERE a.subtask_id IN (SELECT id FROM project_subtasks WHERE project_id = ?1) AND NOT EXISTS (
+       SELECT 1 FROM project_subtasks s WHERE s.id = a.subtask_id AND s.assignee_id = a.user_id AND s.assignment_version = a.assignment_version))
+  AS mismatches`).bind(relationProject).first<{ mismatches: number }>();
+
+  beforeAll(async () => {
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Relation Street', 'editing_autohdr', 0, ?, ?)").bind(relationProject, now, now).run();
+    for (const [userId, role] of [[editorId, "editor"], [photographerId, "photographer"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), relationProject, userId, role, now).run();
+  });
+
+  it("create with an assignee writes one relation row at version 1, without one writes none", async () => {
+    const assigned = await create({ assigneeId: editorId });
+    expect(await relationRows(assigned.id)).toEqual([{ user_id: editorId, assignment_version: 1 }]);
+    const unassigned = await create({});
+    expect(await relationRows(unassigned.id)).toEqual([]);
+  });
+
+  it("reassigning replaces the row, clearing removes it, and unrelated edits leave it alone", async () => {
+    const item = await create({ assigneeId: editorId });
+    expect((await patch(item.id, { assigneeId: photographerId })).status).toBe(200);
+    expect(await relationRows(item.id)).toEqual([{ user_id: photographerId, assignment_version: 2 }]);
+    expect(await column(item.id)).toEqual({ assignee_id: photographerId, assignment_version: 2 });
+    expect((await patch(item.id, { title: "Renamed", done: true })).status).toBe(200);
+    expect(await relationRows(item.id)).toEqual([{ user_id: photographerId, assignment_version: 2 }]);
+    expect((await patch(item.id, { assigneeId: null })).status).toBe(200);
+    expect(await relationRows(item.id)).toEqual([]);
+    expect(await column(item.id)).toEqual({ assignee_id: null, assignment_version: 3 });
+    expect((await patch(item.id, { assigneeId: editorId })).status).toBe(200);
+    expect(await relationRows(item.id)).toEqual([{ user_id: editorId, assignment_version: 4 }]);
+  });
+
+  it("two concurrent reassignments leave exactly one row, equal to the column and version", async () => {
+    const item = await create({ assigneeId: editorId });
+    // Both requests read the same initial state (editor, version 1). The handler's contract has no expected-version token for an assignee: its UPDATE is guarded by the state it read, so the loser matches no row and returns the winner's current Subtask as a 200 no-op, not a conflict.
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+    const responses = await Promise.all([patch(item.id, { assigneeId: photographerId }), patch(item.id, { assigneeId: adminId })]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const bodies = (await Promise.all(responses.map((response) => response.json()))) as Array<{ assignee: { id: string } | null; assignmentVersion: number }>;
+    const stored = await column(item.id);
+    // Reassignment happened: the editor is gone and the version advanced past the shared starting point.
+    expect([photographerId, adminId]).toContain(stored!.assignee_id);
+    expect(stored!.assignment_version).toBeGreaterThan(1);
+    // Every response reports an assignee that the requests asked for, never the stale editor.
+    for (const body of bodies) expect([photographerId, adminId]).toContain(body.assignee?.id);
+    // A single winner means the version advanced exactly once; the loser's write did not touch the relation.
+    if (stored!.assignment_version === 2) for (const body of bodies) expect(body).toMatchObject({ assignee: { id: stored!.assignee_id }, assignmentVersion: 2 });
+    expect(await relationRows(item.id)).toEqual([{ user_id: stored!.assignee_id, assignment_version: stored!.assignment_version }]);
+  });
+
+  it("replace-one: a reassignment touches only the person the column knew, never other rows", async () => {
+    const item = await create({ assigneeId: editorId });
+    await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 99, ?)").bind(item.id, adminId, Date.now()).run();
+    expect((await patch(item.id, { assigneeId: photographerId })).status).toBe(200);
+    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 99 }, { user_id: photographerId, assignment_version: 2 }]);
+    expect((await patch(item.id, { assigneeId: null })).status).toBe(200);
+    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 99 }]);
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ?").bind(item.id).run();
+  });
+
+  it("deleting a Subtask removes its rows, and the column and relation stay equal across all of the above", async () => {
+    const doomed = await create({ assigneeId: photographerId });
+    expect(await relationRows(doomed.id)).toHaveLength(1);
+    expect((await request(`${base()}/${doomed.id}`, "subtasks-editor-token", "DELETE")).status).toBe(200);
+    expect(await relationRows(doomed.id)).toEqual([]);
+    expect(await scopedVerify()).toEqual({ mismatches: 0 });
   });
 });

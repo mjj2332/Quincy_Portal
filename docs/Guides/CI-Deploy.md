@@ -22,7 +22,12 @@ CI never applies migrations. Merging such a PR turns the deploy job red at the m
 with nothing deployed and production still on the previous version. Then, with the owner's
 go-ahead (a production schema migration is high-stakes work, AGENTS.md):
 
-1. Apply it: `npx wrangler d1 migrations apply DB --remote` in `portal/workers/app`.
+0. Capture a Time Travel bookmark first: `npx wrangler d1 time-travel info DB` in `portal/workers/app`,
+   and record the bookmark id in the PR thread. `npx wrangler d1 time-travel restore DB
+   --bookmark=<id>` restores the schema and data to it, and loses every write since the bookmark, so
+   it is the last resort.
+1. Apply it: `npx wrangler d1 migrations apply DB --remote` in `portal/workers/app`. It must list
+   only that PR's migration, and if it lists two, stop: the previous migration PR was never applied.
 2. Re-run the job: `gh run rerun <run-id> --failed`.
 
 The code ships after the schema, never before it.
@@ -56,6 +61,21 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 `npx wrangler rollback <version-id>` in that Worker's folder, or Cloudflare dashboard → Workers &
 Pages → the Worker → **Deployments**. A rollback holds only until the next deploy (a merge to
 `main` that touches `portal/`, or a manual **Run workflow**), so follow it with a revert PR or a fix.
+
+### Multi-assignee Subtasks (#358)
+
+The Worker rollback target depends on how far the series has shipped. Rolling back below the floor
+loses or misreads assignees.
+
+| Live code | Safe rollback target | Why |
+|---|---|---|
+| #364 (relation and dual-write) | anything | old code ignores the table, and drift is healed by the next migration (0049) |
+| #368-#372, flag off | #364 or later, never below it once 0049 is applied | #364 dual-writes and nothing re-syncs after 0049 |
+| any, flag on | #368 or later (#364 is degraded: it sees the first assignee only and keeps the rest) | #364's writes are replace-one and never delete unknown assignees |
+| #373 detach | the previous PR (never below #368 once multi-assignee data exists) | earlier readers still read the mirror, which is stale once the detach writes without it |
+| #373 drop | the detach PR or later only | the column is gone, and restoring it means Time Travel, which loses writes |
+
+`docs/adr/0012-subtask-assignees-are-a-relation.md` has the reasoning.
 
 ### Calendar (since #224)
 
