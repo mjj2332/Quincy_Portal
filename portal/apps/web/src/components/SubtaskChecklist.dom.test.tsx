@@ -359,6 +359,25 @@ describe("SubtaskChecklist assignees (#368)", () => {
   const withAssignees = (people: typeof nora[], version = 1) => ({ ...task, assignee: people[0] ?? null, assignees: people, assignmentVersion: version });
   const patchUrl = `/api/projects/${projectId}/subtasks/task-1`;
 
+  it("returns focus to the trigger after Escape commits a changed selection, while the save is in flight and after it settles (#368)", async () => {
+    const host = mount(); await render();
+    let settle!: (value: unknown) => void;
+    apiPatchMock.mockReturnValueOnce(new Promise((resolve) => { settle = resolve; }));
+    const trigger = assigneeTrigger(host);
+    await act(async () => { trigger.focus(); });
+    await openAssignees(trigger);
+    await pickAssignee("Ada Smith");
+    await closeAssignees();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    expect(assigneeTrigger(host)).toBe(trigger);
+    expect(trigger.disabled).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+    await act(async () => { settle(withAssignees([nora, ada], 2)); await Promise.resolve(); });
+    await flush();
+    expect(assigneeTrigger(host)).toBe(trigger);
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("picks four people and commits one PATCH on close; the trigger then shows three avatars and +1", async () => {
     const host = mount(); await render();
     apiPatchMock.mockResolvedValueOnce(withAssignees([nora, ada, ben, cy, dee], 2));

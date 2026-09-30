@@ -25,6 +25,8 @@ export type SubtaskAssigneePickerProps = {
   /** People the viewer may not see (External Editors): counted on the trigger, never listed. */
   hiddenCount?: number;
   disabled?: boolean;
+  /** A write for this row is in flight: the trigger stays mounted, enabled and focusable (Base UI hands focus back to it on close) but will not open. Use this, not `disabled`, for transient busy state. */
+  busy?: boolean;
   /** The composer's bordered arm of the trigger. */
   compact?: boolean;
   /** Called once when the list closes with a different set: the final ids, and those people (id and name) for a caller that keeps the selection itself. */
@@ -46,7 +48,7 @@ function sameSet(a: string[], b: string[]) {
  * Picking only edits a local draft; the one write happens on close, so a burst of picks is a single versioned request
  * rather than several that would race their own `expectedVersion`.
  */
-export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, compact = false, onCommit }: SubtaskAssigneePickerProps) {
+export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, busy = false, compact = false, onCommit }: SubtaskAssigneePickerProps) {
   const [open, setOpen] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
@@ -71,7 +73,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
   useEffect(() => { if (committing && sameSet(committing, selected.map((person) => person.id))) setCommitting(null); }, [committing, selected]);
 
   function handleOpenChange(next: boolean) {
-    if (disabled && next) return;
+    if ((disabled || busy) && next) return;
     if (next) {
       const current = selected.map((person) => person.id);
       baselineRef.current = { ids: current, version };
@@ -108,7 +110,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     itemToStringValue={(item: Option) => item.id}
     disabled={disabled}
   >
-    <ComboboxTrigger aria-label={label} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
+    <ComboboxTrigger aria-label={label} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
       <AvatarStack people={open ? draftOptions : shownPeople} hiddenCount={open ? 0 : hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" />
     </ComboboxTrigger>
     <ComboboxContent className="min-w-[max(var(--anchor-width),260px)] max-w-[calc(100vw-2*var(--space-4))]">
