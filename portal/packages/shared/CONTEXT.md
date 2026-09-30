@@ -27,9 +27,30 @@ _Avoid_: Comments panel, chat
 
 **Workspace tab**:
 One selectable view of a Project's workspace: each Collection, plus Project collaboration.
-Project collaboration is the tab a Project opens on, unless a Notification's arrival names
-another Workspace tab (`?tab=<collection>`; Collaboration's own arrival is `?collaboration=open`).
+Project collaboration is the tab a Project opens on, unless its link names another Workspace
+tab (`?tab=<collection>`; Collaboration's own is `?collaboration=open`). A Project's link always
+names the tab being viewed, so a copied link reopens that tab.
 _Avoid_: Collection (for the Collaboration tab)
+
+**Project workspace**:
+Everything about one Project in one place: its header, its Workspace tabs and their content.
+Every Project has its own link that opens its workspace directly.
+_Avoid_: Project page, project detail
+
+**Dashboard**:
+The staff home: every Project the viewer can see, shown through one Dashboard view at a time.
+_Avoid_: Home page, production desk
+
+**Dashboard view**:
+One way of laying out the Dashboard's Projects: List, Kanban, Gantt or Calendar. The viewer's
+last choice is remembered.
+_Avoid_: Mode, layout, tab
+
+**Project sheet**:
+The Project workspace presented floating over the Dashboard, covering the whole window.
+Dismissing it returns to the same Dashboard view underneath. A Project's own link opens the
+sheet over the viewer's last Dashboard view.
+_Avoid_: Modal, drawer, project page
 
 **Notice board**:
 The studio-wide staff bulletin, not tied to any Project. Has a page of its own, not a
@@ -54,9 +75,15 @@ The civil-time commitment for a Project's delivery, held in the studio's timezon
 _Avoid_: Due date, ETA
 
 **Subtask**:
-One unit of work inside a Project's collaboration, with an optional assignee and a Subtask
-range. The screen's "Add task" label is kept; the concept is Subtask.
+One unit of work inside a Project's collaboration, with any number of Subtask assignees and a
+Subtask range. Completion is shared: whoever ticks it off completes it for everyone. The
+screen's "Add task" label is kept; the concept is Subtask.
 _Avoid_: Checklist item, task, to-do
+
+**Subtask assignee**:
+A person responsible for a Subtask. A Subtask may have none, one or several; each is reminded
+of its due, and only a newly added one is told they were assigned.
+_Avoid_: Owner, responsible
 
 **Subtask range**:
 The span a Subtask is scheduled across, from start to end; every Subtask has one, and one
