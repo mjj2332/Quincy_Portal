@@ -67,6 +67,19 @@ button { font-family: var(--font-sans); }
 /* #112's `ShellHeader`: sticky stacking and impersonation banner offset. */
 .shell-header { z-index: 75; }
 .app--impersonating .shell-header { top: 42px; }
+/* #363: a page that fills the viewport and scrolls inside itself (the Dashboard's `page--fill`).
+   Keyed on the page being MOUNTED, not on the route, so the Project sheet (#366) that floats over a
+   live Dashboard keeps it. Unlayered like the rest of this block: `.app`'s min-height, the vendored
+   `min-h-svh` on `app__shell` and `.page`'s padding all beat a Tailwind utility, so a `pb-0`/`h-dvh`
+   utility would be a silent no-op. `:has()` takes its argument's specificity, so the shell rule is
+   0,3,0 and beats `.app--impersonating .app__shell` (0,2,0); border-box sizing takes the impersonation
+   banner's 42px padding out of the 100dvh. No `overflow` here on purpose: a viewport too short for the
+   chrome falls back to window scroll instead of clipping (lessons.md, hidden containers still scroll). */
+.app:has(.page--fill) { height: 100dvh; min-height: 0; }
+.app:has(.page--fill) .app__shell { min-height: 0; }
+.app:has(.page--fill) .shell-header { flex-shrink: 0; }
+.page--fill { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.page.page--fill { padding-bottom: 0; }
 /* #112. `data-rail-mode` (set by `RailedShell` from `lib/shell-rail.ts`'s `SHELL_NARROW_QUERY`,
    771px) is the only breakpoint signal CSS keys off, with no `@media` of its own
    (`styles/shell-breakpoint.guard.test.ts`). `--app-rail-inline-size` only feeds the toast surface

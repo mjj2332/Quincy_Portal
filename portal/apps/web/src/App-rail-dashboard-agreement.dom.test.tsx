@@ -647,6 +647,13 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     expect(host.textContent).not.toContain("Archived projects");
   });
 
+  it("the Dashboard's main is the shell content column's direct child (#363 fill chain)", async () => {
+    const host = await renderAppFirstCommit("/?view=list");
+    // `page--fill` relies on `.app:has(.page--fill)` sizing a chain with no wrapper between the
+    // shell's content column and <main>; happy-dom cannot see a broken link, so pin it structurally.
+    expect(host.querySelector("main")!.parentElement!.hasAttribute("data-rail-mode")).toBe(true);
+  });
+
   it("clears the published view on a root unmount", async () => {
     await renderApp("/?view=kanban");
     expect(readDashboardView()).toBe("kanban");

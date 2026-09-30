@@ -17,6 +17,7 @@ import { Eyebrow } from "../components/quincy/Eyebrow";
 import { Select, type SelectOption } from "../components/quincy/Select";
 import { SEGMENT_GROUP, SEGMENT_BUTTON } from "../components/quincy/segment";
 import { Skeleton } from "../components/reui/skeleton";
+import { ScrollArea } from "../components/reui/scroll-area";
 import { Badge } from "../components/reui/badge";
 import { XIcon } from "lucide-react";
 import { EmptyState } from "../components/quincy/EmptyState";
@@ -77,8 +78,8 @@ import {
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { ganttFiltersFromRoute, ganttRouteFor, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 
-/** The Calendar's loading / empty state box (was `production-calendar-classes.ts`, retired in #224). */
-const CALENDAR_STATE_BOX = "min-h-[180px] grid place-content-center gap-[4px]";
+/** A lazy Dashboard view's loading box (#363): fills the view region instead of a fixed floor. */
+const VIEW_STATE_BOX = "min-h-0 flex-1 grid place-content-center gap-[4px]";
 
 export { adjacentBoardGap, adjacentBoardPlacement, cardDropPlacement, sortKanbanProjects } from "../lib/kanban-interaction";
 export type { ProjectSummary } from "../lib/kanban-interaction";
@@ -1423,17 +1424,11 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   }
 
   return (
-    <main className="page page--full [overflow-x:clip]">
-      <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-6)] gap-y-[var(--space-5)]">
-        <div>
-          <Eyebrow className="mb-[var(--space-3)]">Quincy Portal · production desk</Eyebrow>
-          <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)] max-[721px]:[font:var(--type-h2)]">Projects</h1>
-        </div>
-        <hr className="basis-full m-0 mb-[var(--space-5)] border-0 [border-top-style:solid] border-t-[length:var(--border-width-rule)] border-t-primary" />
-      </div>
+    <main className="page page--full page--fill [overflow-x:clip]">
+      <h1 className="sr-only">Projects</h1>
 
       <div data-testid="dashboard-toolbar" tabIndex={-1} className={cn(
-        "flex flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
+        "flex shrink-0 flex-wrap items-center gap-x-[var(--space-6)] gap-y-[var(--space-3)] " +
         "mb-[var(--space-4)]")}>
         <div className="flex items-center gap-[var(--space-3)] flex-wrap max-[721px]:basis-full">
           {canCreateProject && <InternalLink className={buttonClasses()} to="/projects/new">New shoot</InternalLink>}
@@ -1484,7 +1479,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           (three rows at 1280, even after two rounds of shrinking the echo). The chip now renders in
           its own row below the toolbar instead, reading toolbar -> active search -> results. */}
       {searchActive && (
-        <div data-testid="dashboard-search-summary" role="group" aria-label="Active search" className="flex min-w-0 items-center mb-[var(--space-4)]">
+        <div data-testid="dashboard-search-summary" role="group" aria-label="Active search" className="flex min-w-0 shrink-0 items-center mb-[var(--space-4)]">
           <Badge data-testid="dashboard-search-chip" variant="secondary" size="sm" className="gap-[var(--space-2)] max-w-full min-w-0">
             <span className="shrink-0">
               {searchCountsQuery.data && (
@@ -1529,116 +1524,118 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       )}
 
       {boardUnavailableMessage && !viewingArchived && !isCalendarView && !isGanttView && (
-        <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
+        <Notice tone="caution" role="status" data-testid="board-unavailable-notice" className="flex shrink-0 items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Board'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">{boardUnavailableMessage}</Notice>
       )}
 
-      {/* #292: a boundary around each lazy view, outside its Suspense, so a stale chunk after a
-          deploy stays inside the view region instead of replacing the whole shell. */}
-      {isCalendarView && (
-        <ViewLoadBoundary viewLabel="calendar">
-          <Suspense fallback={<div className={cn("empty", CALENDAR_STATE_BOX)} role="status">Loading calendar…</div>}>
-            <ProductionEventCalendar
-              identity={identity}
-              calendar={calendarState && { ...calendarState, search: committedQuery }}
-              onNavigate={(next) => navigateCalendar(next)}
-              onAppliedFilters={reconcileAppliedCalendarFilters}
-              onAcceptGateChange={setCalendarInteractionBlocked}
-              onSettleStateChange={setCalendarSettle}
-              onAccessLoss={handleCalendarAccessLoss}
-              onShownProjectsChange={setViewShownProjects}
-              projectHrefFor={projectHrefFor}
-              onOpenProject={openCalendarProject}
-            />
-          </Suspense>
-        </ViewLoadBoundary>
-      )}
+      <div data-testid="dashboard-view-region" className="flex min-h-[20rem] min-w-0 flex-1 flex-col">
+        {/* #292: a boundary around each lazy view, outside its Suspense, so a stale chunk after a
+            deploy stays inside the view region instead of replacing the whole shell. */}
+        {isCalendarView && (
+          <ViewLoadBoundary viewLabel="calendar">
+            <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading calendar…</div>}>
+              <ProductionEventCalendar
+                identity={identity}
+                calendar={calendarState && { ...calendarState, search: committedQuery }}
+                onNavigate={(next) => navigateCalendar(next)}
+                onAppliedFilters={reconcileAppliedCalendarFilters}
+                onAcceptGateChange={setCalendarInteractionBlocked}
+                onSettleStateChange={setCalendarSettle}
+                onAccessLoss={handleCalendarAccessLoss}
+                onShownProjectsChange={setViewShownProjects}
+                projectHrefFor={projectHrefFor}
+                onOpenProject={openCalendarProject}
+              />
+            </Suspense>
+          </ViewLoadBoundary>
+        )}
 
-      {/* #221 PR B2: the Gantt writes checklist schedules through the shared scheduling
-          controller, so it wires the same accept/settle gate and access-loss path as the
-          Calendar. The Calendar and the Gantt are never mounted together, so they share the
-          Dashboard's one scheduling gate. */}
-      {isGanttView && (
-        <ViewLoadBoundary viewLabel="Gantt">
-          <Suspense fallback={<div className="empty" role="status">Loading gantt…</div>}>
-            <ProductionGantt
-              identity={identity}
-              q={committedQuery}
-              filters={ganttFilters}
-              onFiltersChange={navigateGantt}
-              onAcceptGateChange={setCalendarInteractionBlocked}
-              onSettleStateChange={setCalendarSettle}
-              onAccessLoss={handleCalendarAccessLoss}
-              onShownProjectsChange={setViewShownProjects}
-            />
-          </Suspense>
-        </ViewLoadBoundary>
-      )}
+        {/* #221 PR B2: the Gantt writes checklist schedules through the shared scheduling
+            controller, so it wires the same accept/settle gate and access-loss path as the
+            Calendar. The Calendar and the Gantt are never mounted together, so they share the
+            Dashboard's one scheduling gate. */}
+        {isGanttView && (
+          <ViewLoadBoundary viewLabel="Gantt">
+            <Suspense fallback={<div className={cn("empty", VIEW_STATE_BOX)} role="status">Loading gantt…</div>}>
+              <ProductionGantt
+                identity={identity}
+                q={committedQuery}
+                filters={ganttFilters}
+                onFiltersChange={navigateGantt}
+                onAcceptGateChange={setCalendarInteractionBlocked}
+                onSettleStateChange={setCalendarSettle}
+                onAccessLoss={handleCalendarAccessLoss}
+                onShownProjectsChange={setViewShownProjects}
+              />
+            </Suspense>
+          </ViewLoadBoundary>
+        )}
 
-      {!isCalendarView && !isGanttView && isLoading && (
-        <div role="status" className="relative border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
-          <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${viewingArchived ? "archived " : ""}projects. Preparing the production desk.`}</span>
-          {[0, 1, 2, 3, 4].map((row) => (
-            <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
-              <Skeleton className="h-[var(--space-7)]" />
-              <Skeleton className="h-[10px] w-2/5" />
-              <Skeleton className="h-[10px]" />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!isCalendarView && !isGanttView && !isLoading && error && (
-        <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
-          {error}
-          <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
-        </EmptyState>
-      )}
-
-      {!isCalendarView && !isGanttView && !isLoading && !error && projects.length === 0 && (
-        <EmptyState title={searchActive ? "No matches." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
-          {searchActive ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
-          {!searchActive && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
-        </EmptyState>
-      )}
-
-      {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "list") && (
-        <div className="border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
-          <div className={cn(PROW_GRID, "bg-secondary cursor-default")}>
-            <div />
-            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary">Address</div>
-            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Client</div>
-            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Shoot date</div>
-            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
-            <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
+        {!isCalendarView && !isGanttView && isLoading && (
+          <div role="status" className="relative flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
+            <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${viewingArchived ? "archived " : ""}projects. Preparing the production desk.`}</span>
+            {[0, 1, 2, 3, 4].map((row) => (
+              <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
+                <Skeleton className="h-[var(--space-7)]" />
+                <Skeleton className="h-[10px] w-2/5" />
+                <Skeleton className="h-[10px]" />
+              </div>
+            ))}
           </div>
-          {projects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}
-        </div>
-      )}
+        )}
 
-      {!isCalendarView && !isGanttView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "kanban" && (
-        <ProjectKanbanBoard2
-          projects={projects}
-          activeStages={activeStages}
-          canMoveStages={canMoveStages}
-          canPrioritize={canPrioritize && hasAuthorizedBoardMap}
-          role={role}
-          boardMutationEnabled={boardMutationEnabled}
-          movementDisabled={movementSettlePending || !boardMutationEnabled || searchActive}
-          sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board" && !searchActive}
-          effectiveKanbanSort={effectiveKanbanSort}
-          pendingMoves={pendingMoves}
-          pendingOrdering={pendingOrdering}
-          terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
-          onBoardMove={onBoardMove}
-          onBoardPosition={moveProjectPosition}
-          onPriorityChange={setProjectPriority}
-          onMoveStage={onMoveToStage}
-          onMoveToProposalChange={(proposal) => setBoardInteraction((current) => ({ activeId: current.activeId, proposal }))}
-          onInteractionStateChange={setBoardInteraction}
-          onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
-          projectHrefFor={(project) => projectHrefFor(project.id)}
-        />
-      )}
+        {!isCalendarView && !isGanttView && !isLoading && error && (
+          <EmptyState tone="error" role="alert" title={`${viewingArchived ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
+            {error}
+            <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
+          </EmptyState>
+        )}
+
+        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length === 0 && (
+          <EmptyState title={searchActive ? "No matches." : viewingArchived ? "No archived projects." : "No shoots yet — create the first one."} className="max-[721px]:px-[var(--space-4)] max-[721px]:py-[var(--space-7)] [&>strong]:max-w-[34ch] [&>strong]:mx-auto">
+            {searchActive ? "No projects match this search." : viewingArchived ? "Archived projects remain here until they are restored or permanently deleted." : "Start the production desk with the property, client, and team details."}
+            {!searchActive && !viewingArchived && canCreateProject && <div><InternalLink className={buttonClasses("primary", { className: "mt-[var(--space-4)]" })} to="/projects/new">New shoot</InternalLink></div>}
+          </EmptyState>
+        )}
+
+        {!isCalendarView && !isGanttView && !isLoading && !error && projects.length > 0 && (viewingArchived || view === "list") && (
+          <div className="flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card" aria-label="Projects list">
+            <div data-testid="project-list-header" className={cn(PROW_GRID, "shrink-0 bg-secondary cursor-default")}>
+              <div />
+              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary">Address</div>
+              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Client</div>
+              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Shoot date</div>
+              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary max-[721px]:hidden">Status</div>
+              <div className="[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-foreground-secondary text-right">RAW received</div>
+            </div>
+            <ScrollArea className="min-h-0 flex-1">{projects.map((project) => <ProjectListRow key={project.id} project={project} projectHref={projectHrefFor(project.id)} />)}</ScrollArea>
+          </div>
+        )}
+
+        {!isCalendarView && !isGanttView && !isLoading && !error && !viewingArchived && projects.length > 0 && view === "kanban" && (
+          <ProjectKanbanBoard2
+            projects={projects}
+            activeStages={activeStages}
+            canMoveStages={canMoveStages}
+            canPrioritize={canPrioritize && hasAuthorizedBoardMap}
+            role={role}
+            boardMutationEnabled={boardMutationEnabled}
+            movementDisabled={movementSettlePending || !boardMutationEnabled || searchActive}
+            sameStageReorderEnabled={boardMutationEnabled && canPrioritize && hasAuthorizedBoardMap && effectiveKanbanSort === "board" && !searchActive}
+            effectiveKanbanSort={effectiveKanbanSort}
+            pendingMoves={pendingMoves}
+            pendingOrdering={pendingOrdering}
+            terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
+            onBoardMove={onBoardMove}
+            onBoardPosition={moveProjectPosition}
+            onPriorityChange={setProjectPriority}
+            onMoveStage={onMoveToStage}
+            onMoveToProposalChange={(proposal) => setBoardInteraction((current) => ({ activeId: current.activeId, proposal }))}
+            onInteractionStateChange={setBoardInteraction}
+            onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
+            projectHrefFor={(project) => projectHrefFor(project.id)}
+          />
+        )}
+      </div>
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
       <ToastViewport testId="dashboard-toast-viewport" toastTestId="dashboard-toast" />
     </main>
