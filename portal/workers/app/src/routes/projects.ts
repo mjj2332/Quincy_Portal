@@ -158,7 +158,7 @@ async function details(db: ReturnType<typeof createDb>, d1: D1Database, projectI
     coverMaps(db, [projectId], viewerSeesRawOnly),
     db.select().from(schema.collections).where(eq(schema.collections.projectId, projectId)).all(),
     db.select({ id: schema.projectMembers.id, userId: schema.projectMembers.userId, roleOnProject: schema.projectMembers.roleOnProject, name: schema.user.name, email: schema.user.email, globalRole: schema.user.role, active: schema.user.active }).from(schema.projectMembers).innerJoin(schema.user, eq(schema.projectMembers.userId, schema.user.id)).where(eq(schema.projectMembers.projectId, projectId)).all(),
-    db.select({ userId: schema.projectSubtasks.assigneeId, assignedSubtaskCount: sql<number>`count(*)` }).from(schema.projectSubtasks).where(and(eq(schema.projectSubtasks.projectId, projectId), isNotNull(schema.projectSubtasks.assigneeId))).groupBy(schema.projectSubtasks.assigneeId).all(),
+    db.select({ userId: schema.projectSubtaskAssignees.userId, assignedSubtaskCount: sql<number>`count(*)` }).from(schema.projectSubtaskAssignees).innerJoin(schema.projectSubtasks, eq(schema.projectSubtasks.id, schema.projectSubtaskAssignees.subtaskId)).where(eq(schema.projectSubtasks.projectId, projectId)).groupBy(schema.projectSubtaskAssignees.userId).all(),
   ]);
   const counts = new Map(assignedCounts.map((row) => [row.userId, Number(row.assignedSubtaskCount ?? 0)]));
   const memberDtos: ProjectMembershipDto[] = members.map((member) => ({ ...member, active: Boolean(member.active), assignedSubtaskCount: counts.get(member.userId) ?? 0 }));

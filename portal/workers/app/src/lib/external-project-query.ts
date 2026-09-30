@@ -135,12 +135,13 @@ async function membersFor(db: Db, projectId: string): Promise<MemberRow[]> {
 
 export async function assignedSubtaskCounts(db: Db, projectId: string): Promise<Map<string, number>> {
   const rows = await db.select({
-    userId: schema.projectSubtasks.assigneeId,
+    userId: schema.projectSubtaskAssignees.userId,
     count: sql<number>`count(*)`,
-  }).from(schema.projectSubtasks)
-    .where(and(eq(schema.projectSubtasks.projectId, projectId), sql`${schema.projectSubtasks.assigneeId} IS NOT NULL`))
-    .groupBy(schema.projectSubtasks.assigneeId).all();
-  return new Map(rows.flatMap((row) => row.userId ? [[row.userId, Number(row.count)]] as const : []));
+  }).from(schema.projectSubtaskAssignees)
+    .innerJoin(schema.projectSubtasks, eq(schema.projectSubtasks.id, schema.projectSubtaskAssignees.subtaskId))
+    .where(eq(schema.projectSubtasks.projectId, projectId))
+    .groupBy(schema.projectSubtaskAssignees.userId).all();
+  return new Map(rows.map((row) => [row.userId, Number(row.count)] as const));
 }
 
 function canonicalExternalBoardOrder(groups: Iterable<{ project: ProjectRow }>): Partial<Record<"awaiting_raw" | "raw_review" | "editing" | "edited_review" | "delivered", string[]>> {

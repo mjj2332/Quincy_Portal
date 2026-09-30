@@ -131,3 +131,22 @@ export function relationDeleteForRemovedMember(
       AND NOT EXISTS (SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1)
   `).bind(input.userId, input.projectId, input.auditId, ...input.remainingAfterDelete.bindings, input.userId);
 }
+
+/**
+ * The one shape of a per-person Subtask count (#371): how many Subtasks on a Project a person is an assignee of, read
+ * from the relation and never the mirrored column. Both arguments are SQL expressions (a column or a `?` placeholder).
+ */
+export function assignedSubtaskCountSql(projectIdSql: string, userIdSql: string): string {
+  return `(SELECT COUNT(*) FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ${projectIdSql} AND sa.user_id = ${userIdSql})`;
+}
+
+/**
+ * Team removal, mirror repair (removed with the column in PR 8 of the multi-assignee series): after the relation rows go, point the
+ * legacy column at the first remaining assignee (or NULL) on Subtasks that mirrored the removed person.
+ */
+export function mirrorRepairForRemovedMember(db: D1Database, input: { projectId: string; userId: string; auditId: string }): D1PreparedStatement {
+  return db.prepare(`
+    UPDATE project_subtasks SET assignee_id = (SELECT sa.user_id FROM project_subtask_assignees sa WHERE sa.subtask_id = project_subtasks.id ORDER BY sa.assignment_version ASC, sa.added_at ASC, sa.user_id ASC LIMIT 1)
+    WHERE project_id = ? AND assignee_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+  `).bind(input.projectId, input.userId, input.auditId);
+}
