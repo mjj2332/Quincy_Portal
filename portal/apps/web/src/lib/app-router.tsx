@@ -308,11 +308,17 @@ function ShellRoute() {
   // lack of `q` is not authoritative (an Enter on the rail must still navigate with whatever text
   // is showing, `ShellSearch.tsx`'s own off-Dashboard Enter path) -- this only calls the store when
   // `route.kind === "dashboard"`, never unconditionally.
+  // #366: keyed on the layer's location STRING, never the parsed `layerRoute` object -- opening a
+  // sheet swaps `layerRoute` between separately parsed objects for the SAME Dashboard location, and
+  // re-running the sync then would cancel the pending debounce and restore the old URL query.
+  const layerRouteRef = useRef(layerRoute);
+  layerRouteRef.current = layerRoute;
   useLayoutEffect(() => {
     // #366: under a sheet the Dashboard's location is the backdrop, so its search is too.
-    if (layerRoute.kind !== "dashboard") return;
-    syncDashboardSearchDraftFromLocation(dashboardSearchOf(layerRoute), user.id);
-  }, [layerLocation, layerRoute, user.id]);
+    const current = layerRouteRef.current;
+    if (current.kind !== "dashboard") return;
+    syncDashboardSearchDraftFromLocation(dashboardSearchOf(current), user.id);
+  }, [layerLocation, user.id]);
 
   // #217 fix round 5, item 5 (Sol re-review, SHOULD-FIX). Calendar itself stays inaccessible
   // either way, but the redirect used to drop straight to "/", discarding whatever `q` the blocked

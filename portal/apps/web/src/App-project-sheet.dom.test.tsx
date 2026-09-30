@@ -514,3 +514,30 @@ describe("exactly one toast viewport per route (#366)", () => {
     expect(sheet()!.contains(toasts[0]!)).toBe(true);
   });
 });
+
+describe("a search typed just before the sheet opens survives it (#366)", () => {
+  it("type, open a List project inside the 300ms debounce, close: the typed search is still there and reaches the URL", async () => {
+    const host = await renderDashboardAt("list");
+    const input = () => host.querySelector<HTMLInputElement>('[data-testid="shell-search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input(), "jones");
+      input().dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    // Still inside the debounce: open the project straight away.
+    await click(host.querySelector('[data-testid="project-list-row"]')!);
+    expect(sheet()).not.toBeNull();
+
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    expect(go).toHaveBeenCalledWith(-1);
+    await traverseTo("/?view=list&q=smith", null);
+    expect(sheet()).toBeNull();
+
+    expect(input().value).toBe("jones");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await settle();
+    expect(input().value).toBe("jones");
+    expect(currentUrl()).toBe("/?view=list&q=jones");
+  });
+});

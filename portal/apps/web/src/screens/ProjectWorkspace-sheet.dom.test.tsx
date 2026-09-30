@@ -68,6 +68,25 @@ const escape = (target: EventTarget) => act(async () => { target.dispatchEvent(n
 const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[data-testid="project-overview-tab"]')].find((item) => item.textContent?.trim().startsWith(name));
 const lightbox = () => document.querySelector('[role="dialog"][aria-label="Photo viewer"]');
 
+/**
+ * A keyboard Tab as a browser performs it: dispatch the keydown, and unless something prevented it,
+ * move focus to the next/previous tabbable in document order (focus guards included, which is how
+ * Floating UI's modal manager wraps focus). happy-dom does not move focus on Tab by itself.
+ */
+const pressTab = (shift = false) => act(async () => {
+  const from = (document.activeElement ?? document.body) as HTMLElement;
+  const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey: shift, bubbles: true, cancelable: true });
+  from.dispatchEvent(event);
+  if (!event.defaultPrevented) {
+    const order = [...document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1");
+    const at = order.indexOf(from);
+    const next = order[(at + (shift ? -1 : 1) + order.length) % order.length];
+    next?.focus();
+  }
+  await Promise.resolve();
+});
+const confirmFocusables = (modal: HTMLElement) => [...modal.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')].filter((el) => el.getAttribute("tabindex") !== "-1" && !el.hasAttribute("data-floating-ui-focus-guard"));
+
 const onRequestClose = vi.fn();
 
 async function renderSheet(props: { arrivalTab?: "raw" | "collaboration"; arrivalSignal?: number } = {}) {
@@ -151,9 +170,26 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     const modal = document.querySelector<HTMLElement>('[data-testid="confirm-modal"]')!;
     expect(modal.contains(document.activeElement)).toBe(true);
 
+    // Real traversal: Tab from the last focusable wraps to the first; Shift+Tab from the first wraps to the last.
+    const focusables = confirmFocusables(modal);
+    expect(focusables.length).toBeGreaterThanOrEqual(2);
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+    await act(async () => { last.focus(); await Promise.resolve(); });
+    await pressTab();
+    await flush(3);
+    expect(document.activeElement).toBe(first);
+    await pressTab(true);
+    await flush(3);
+    expect(document.activeElement).toBe(last);
+    // Focus never reached the sheet body beneath the confirm.
+    expect(document.querySelector('[data-testid="project-sheet"]')!.contains(document.activeElement)).toBe(false);
+
     await escape(modal);
     await flushUntil(() => document.querySelector('[data-testid="confirm-modal"]') === null, "the confirm to close");
     expect(answer).toBe(false);
+    // Focus returns to the control that raised the confirm.
+    expect(document.activeElement).toBe(inner);
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="project-sheet"]')).not.toBeNull();
   });
