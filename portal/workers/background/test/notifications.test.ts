@@ -436,6 +436,32 @@ describe("notification fanout and stalled scan", () => {
       });
     });
 
+    it("gives a staff assignee removed while an earlier email is in flight neither a notification nor an email", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const a = staff(); const b = staff();
+        const fixture = await seedDueSubtask(now, "2026-08-18", { assignees: [a, b] });
+        await onlyThese(fixture);
+        const emails = new Map([[a.id, `${a.id}@example.test`], [b.id, `${b.id}@example.test`]]);
+        const sent: string[] = [];
+        const send = vi.fn(async (message: { to: string }) => {
+          sent.push(message.to);
+          if (sent.length === 1) {
+            // Suspended mid-send for the first recipient: the other assignee is removed meanwhile.
+            const removed = message.to === emails.get(a.id) ? b.id : a.id;
+            await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, removed).run();
+          }
+          return { messageId: "due-race" };
+        });
+        const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, dueDate: fixture.dueDate };
+        expect(await processDueSubtaskCandidate(notificationEnv(send as unknown as ReturnType<typeof vi.fn>), candidate, now, "2026-08-18")).toEqual({ claimed: true, emitted: 1 });
+        const kept = (await database.DB.prepare("SELECT user_id FROM project_subtask_assignees WHERE subtask_id = ?").bind(fixture.subtaskId).all<{ user_id: string }>()).results.map((row) => row.user_id);
+        expect(kept).toHaveLength(1);
+        expect(await noticeUsers(sourceKey(fixture))).toEqual(kept);
+        expect(sent).toEqual([emails.get(kept[0]!)]);
+      });
+    });
+
     it("emits nothing but keeps the claim when every assignee is removed between claim and read", async () => {
       await withActiveAdminsSuppressed(async () => {
         const now = sydneyEightAm(2026, 8, 18);

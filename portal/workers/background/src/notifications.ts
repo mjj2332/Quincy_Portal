@@ -1,6 +1,6 @@
 import {
   emitExternalSafeLegacyNotification,
-  emitExternalSubtaskNotification,
+  emitExternalSubtaskNotifications,
   emitNotifications,
   notificationCopy,
   projectNotificationRecipients,
@@ -129,22 +129,22 @@ export async function processDueSubtaskCandidate(
       link,
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
+      requireSubtaskAssignee: { subtaskId: row.subtaskId, versions: Object.fromEntries(assignees.map((assignee) => [assignee.userId, assignee.assignmentVersion])) },
     });
-    const externalIds: string[] = [];
-    for (const assignee of assignees) {
-      externalIds.push(...await emitExternalSubtaskNotification(env.DB, {
-        projectId: row.projectId,
-        actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
-        assigneeId: assignee.userId,
-        subtaskId: row.subtaskId,
-        assignmentVersion: assignee.assignmentVersion,
-        sourceKey: `subtask-due:${row.subtaskId}:${row.dueDate}`,
-        kind: "due_today",
-        dueDate: row.dueDate,
-        claimAt: now,
-        now,
-      }));
-    }
+    // One batch for every External assignee: all commit or none, so a released claim never leaves
+    // some recipients' rows stamped with a claim the retry no longer holds.
+    const externalIds = (await emitExternalSubtaskNotifications(env.DB, assignees.map((assignee) => ({
+      projectId: row.projectId,
+      actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+      assigneeId: assignee.userId,
+      subtaskId: row.subtaskId,
+      assignmentVersion: assignee.assignmentVersion,
+      sourceKey: `subtask-due:${row.subtaskId}:${row.dueDate}`,
+      kind: "due_today" as const,
+      dueDate: row.dueDate,
+      claimAt: now,
+      now,
+    })))).flat();
     if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds, now);
     console.log("Claimed due subtask notification", { subtaskId: row.subtaskId, projectId: row.projectId, recipients: assignees.length, emitted });
     return { claimed: true, emitted };

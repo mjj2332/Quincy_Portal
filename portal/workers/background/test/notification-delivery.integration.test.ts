@@ -1098,4 +1098,34 @@ describe("#369 due reminders deliver per external assignee", () => {
     expect(await noticeCount(fixture.sourceKey, fixture.aId)).toBe(1);
     expect(await noticeCount(fixture.sourceKey, fixture.bId)).toBe(0);
   });
+
+  it("delivers BOTH external assignees after the second outbox insert fails and the retry claims at a later time", async () => {
+    const fixture = await seedTwoExternalDue();
+    let outboxInserts = 0;
+    const failingDb = new Proxy(database.DB, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("INSERT INTO notification_outbox") && ++outboxInserts === 2) throw new Error("forced second external insert failure");
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as D1Database;
+    expect(await scanDueSubtasks({ ...fixture.env, DB: failingDb } as Env, now)).toBe(0);
+    expect(await database.DB.prepare("SELECT due_reminder_sent_at AS at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ at: null });
+    // The retry claims at a different timestamp than the failed attempt did.
+    await scanDueSubtasks(fixture.env, now + 1);
+    const a = (await outboxRow(fixture.sourceKey, fixture.aId))!; const b = (await outboxRow(fixture.sourceKey, fixture.bId))!;
+    expect(JSON.parse(a.payload).assignment).toMatchObject({ claimAt: now + 1 });
+    expect(JSON.parse(b.payload).assignment).toMatchObject({ claimAt: now + 1 });
+    await processNotificationMessage(fixture.env, message(a.id));
+    await processNotificationMessage(fixture.env, message(b.id));
+    expect((await outboxRow(fixture.sourceKey, fixture.aId))!.status).toBe("completed");
+    expect((await outboxRow(fixture.sourceKey, fixture.bId))!.status).toBe("completed");
+    expect(await noticeCount(fixture.sourceKey, fixture.aId)).toBe(1);
+    expect(await noticeCount(fixture.sourceKey, fixture.bId)).toBe(1);
+  });
 });
