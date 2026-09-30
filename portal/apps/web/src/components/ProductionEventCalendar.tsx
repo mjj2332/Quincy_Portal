@@ -340,19 +340,19 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   const zoneLabel = useMemo(() => productionCalendarZoneLabel(deriveProductionCalendarWindow(calendar.date, calendar.subview)), [calendar.date, calendar.subview]);
 
   return (
-    <section className="min-w-0" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-testid="event-calendar-screen">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Production Calendar" tabIndex={-1} data-focus-key="calendar-safe-fallback" data-testid="event-calendar-screen">
       {commands.settle.recoveryReason && (
-        <Notice tone="caution" role="alert" className="mb-[var(--space-4)] flex items-center justify-between gap-[var(--space-4)]" data-testid="calendar-recovery-notice">
+        <Notice tone="caution" role="alert" className="mb-[var(--space-4)] flex shrink-0 items-center justify-between gap-[var(--space-4)]" data-testid="calendar-recovery-notice">
           <span>{commands.settle.recoveryReason}</span>
           <Button type="button" variant="outline" className="max-[721px]:min-h-[44px]" data-focus-key="calendar-recovery" onClick={() => void commands.refreshRecovery()}>Refresh</Button>
         </Notice>
       )}
 
       {loading && !everLoaded && (
-        <div className="grid gap-[var(--space-3)] py-[var(--space-4)]" role="status" data-testid="event-calendar-loading">
+        <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)] pt-[var(--space-4)]" role="status" data-testid="event-calendar-loading">
           <span className="sr-only">Loading calendar…</span>
-          <Skeleton className="h-8 w-1/3" />
-          <Skeleton className="h-[480px] w-full" />
+          <Skeleton className="h-8 w-1/3 shrink-0" />
+          <Skeleton className="min-h-0 w-full flex-1" />
         </div>
       )}
 
@@ -365,7 +365,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
 
       {showGrid && (
         <EventCalendar<ProductionEventCalendarData>
-          className="min-h-0"
+          className="min-h-0 flex-1"
           events={events}
           view={subviewToCalendarView(calendar.subview)}
           date={date}
@@ -381,11 +381,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data)}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
         >
-          {/* One definite height for rail + grid, and a `minmax(0,1fr)` row: an `auto` row grows to
-              the rail's content (a long Up next list → thousands of px), which stretched the month rows and
-              kept the rail's ScrollArea from ever scrolling. Bounded, the rail scrolls inside its
-              column and the content fills the rest of the column. */}
-          <div className={cn("grid h-[min(760px,calc(100svh-220px))] min-h-[480px] grid-rows-[minmax(0,1fr)] items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")} data-testid="event-calendar-body">
+          {/* The body is a flexed item of a definite-height column (#363), so its `minmax(0,1fr)` row is
+              bounded by the page, not a viewport offset. An `auto` row would grow to the rail's content
+              (a long Up next list becomes thousands of px) and stretch the month rows. Bounded, the rail
+              scrolls inside its column and the content fills the rest. */}
+          <div className={cn("grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] items-stretch", narrow ? "grid-cols-1" : "grid-cols-[minmax(240px,280px)_minmax(0,1fr)]")} data-testid="event-calendar-body">
             {!narrow && rail}
             <div className="flex min-h-0 min-w-0 flex-col">
               <div className="flex min-w-0 items-center gap-[var(--space-2)]">

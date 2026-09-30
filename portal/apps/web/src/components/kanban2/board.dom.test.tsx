@@ -295,6 +295,29 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     for (const column of columns) expect([...column.classList]).toContain("border-border");
   });
 
+  it("each column scrolls on its own with its Stage heading pinned (#363)", async () => {
+    await renderBoard();
+    const root = host.querySelector('[data-focus-key="board"]')!;
+    const gridClasses = [...root.classList];
+    for (const token of ["h-full", "grid-rows-[minmax(0,1fr)]"]) expect(gridClasses).toContain(token);
+    expect(gridClasses).not.toContain("pb-[var(--space-2)]");
+    expect(gridClasses.filter((token) => token.startsWith("overflow"))).toEqual([]);
+    const boardViewport = host.querySelector<HTMLElement>('[data-testid="kanban2-scroll-viewport"]')!;
+    for (const token of ["flex-1", "min-h-0"]) expect([...boardViewport.classList]).toContain(token);
+    const columns = [...host.querySelectorAll<HTMLElement>('[data-testid="kanban2-column"]')];
+    expect(columns.length, "no columns rendered — the per-column assertions would be vacuous").toBeGreaterThan(0);
+    for (const column of columns) {
+      expect([...column.classList]).toContain("min-h-0");
+      const viewports = column.querySelectorAll<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      expect(viewports).toHaveLength(1);
+      const viewport = viewports[0]!;
+      for (const card of column.querySelectorAll("[data-flip-id]")) expect(viewport.contains(card)).toBe(true);
+      const heading = column.querySelector('[data-focus-key^="stage-heading:"]');
+      expect(heading, "no Stage heading").not.toBeNull();
+      expect(viewport.contains(heading)).toBe(false);
+    }
+  });
+
   // happy-dom has no layout, so Base UI sees no overflow and never mounts the bar (it is not
   // `keepMounted`, deliberately: a wide screen with nothing to scroll gets no empty track). Stub the
   // Viewport's metrics to overflow sideways and fire `scroll`, which re-runs Base UI's measurement.

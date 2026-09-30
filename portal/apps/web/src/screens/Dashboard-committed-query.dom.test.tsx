@@ -26,6 +26,12 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// #363: the List body now sits in Base UI's ScrollArea, which calls `getAnimations()` on a timer
+// after mount; happy-dom lacks it. The no-op stub means "no active animations".
+if (!Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => [];
+}
+
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const authState = vi.hoisted(() => ({ role: "admin" as "admin" | "photographer" | "editor" | "external_editor" }));
 // `can` is independent of the real `roleHasCapability` `Dashboard.tsx` uses for
