@@ -88,6 +88,11 @@ export function projectExternalActivityPayload<T extends ProjectActivityType>(ty
     const fields = (parsed.data as { changedFields: string[] }).changedFields;
     if (!fields.some((field) => (SAFE_PROJECT_FIELDS as readonly string[]).includes(field))) return null;
   }
+  if (type === "project.checklist.item_updated") {
+    // Who was added or removed is staff-only: an external must never learn a person hidden from them.
+    const { assigneesAdded: _added, assigneesRemoved: _removed, assigneesAddedCount: _addedCount, assigneesRemovedCount: _removedCount, ...visible } = parsed.data as Record<string, unknown>;
+    return { type, payload: visible as unknown as ProjectActivityPayloadFor<T> };
+  }
   return { type, payload: parsed.data as ProjectActivityPayloadFor<T> };
 }
 

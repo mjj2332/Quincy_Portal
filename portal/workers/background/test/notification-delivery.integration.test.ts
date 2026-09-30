@@ -765,6 +765,7 @@ describe("#141 staff subtask assignment through the durable consumer", () => {
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Subtask Assigner Street', 'editing', ?, ?)").bind(projectId, now, now),
       ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
       database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, assigneeId, now),
     ]);
     const sourceKey = `subtask-assignment:${subtaskId}:1`;
     const occurrence = { projectId, actorId, assigneeId, subtaskId, assignmentVersion: 1, sourceKey };
@@ -807,7 +808,7 @@ describe("#141 staff subtask assignment through the durable consumer", () => {
 
   it("suppresses the occurrence when the subtask is reassigned before delivery", async () => {
     const fixture = await seedStaffSubtaskAssignment();
-    await database.DB.prepare("UPDATE project_subtasks SET assignment_version = 2 WHERE id = ?").bind(fixture.subtaskId).run();
+    await database.DB.prepare("UPDATE project_subtask_assignees SET assignment_version = 2 WHERE subtask_id = ?").bind(fixture.subtaskId).run();
     const send = vi.fn().mockResolvedValue({ messageId: "unused" });
     await processNotificationMessage(deliveryEnv(send), message(fixture.outboxIds[0]!));
     const found = await delivered(fixture);
@@ -867,6 +868,7 @@ describe("#319 external-editor durable notifications reach the consumer's strict
       database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'External Delivery Street', 'editing', ?, ?)").bind(projectId, now, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, editorId, now),
       database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, editorId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, editorId, now),
     ]);
     return { projectId, actorId, editorId, subtaskId };
   }
@@ -902,5 +904,118 @@ describe("#319 external-editor durable notifications reach the consumer's strict
     expect(found.outbox).toEqual({ status: "completed", lastError: null });
     expect(found.rows).toHaveLength(1);
     expect(found.rows[0]!.type).toBe("raw_ready");
+  });
+});
+
+describe("#368 per-person subtask assignment delivery (the relation is authoritative)", () => {
+  beforeAll(async () => {
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  /** Subtask assigned to staff A (added at version 1), then person B added at version 2. */
+  async function seedTwoAssignees(second: "editor" | "external_editor") {
+    const now = Date.now();
+    const projectId = crypto.randomUUID(); const actorId = crypto.randomUUID(); const firstId = crypto.randomUUID(); const secondId = crypto.randomUUID(); const subtaskId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Actor', ?, 1, 'editor', 1, ?, ?), (?, 'First', ?, 1, 'editor', 1, ?, ?), (?, 'Second', ?, 1, ?, 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, firstId, `${firstId}@example.test`, now, now, secondId, `${secondId}@example.test`, second, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Two Assignee Street', 'editing', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, firstId, now, crypto.randomUUID(), projectId, secondId, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two people', 0, 0, ?, 2, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, firstId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?), (?, ?, 2, ?)").bind(subtaskId, firstId, now, subtaskId, secondId, now + 1),
+    ]);
+    const emit = (assigneeId: string, assignmentVersion: number, role: "editor" | "external_editor") => {
+      const occurrence = { projectId, actorId, assigneeId, subtaskId, assignmentVersion, sourceKey: `subtask-assignment:${subtaskId}:${assignmentVersion}` };
+      return role === "external_editor" ? emitExternalSubtaskNotification(database.DB, { ...occurrence, kind: "assigned" }) : emitStaffSubtaskAssignedNotification(database.DB, occurrence);
+    };
+    return { projectId, actorId, firstId, secondId, subtaskId, emit, sourceKey: (version: number) => `subtask-assignment:${subtaskId}:${version}` };
+  }
+  const outboxState = (sourceKey: string, recipientId: string) => database.DB.prepare("SELECT status, last_error AS lastError FROM notification_outbox WHERE source_key = ? AND recipient_id = ?").bind(sourceKey, recipientId).first<{ status: string; lastError: string | null }>();
+  const noticeCount = async (sourceKey: string, userId: string) => (await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE source_key = ? AND user_id = ?").bind(sourceKey, userId).first<{ count: number }>())!.count;
+
+  it("delivers a staff assignee who is not the first, and suppresses it as subtask_changed once they are removed", async () => {
+    const fixture = await seedTwoAssignees("editor");
+    const [delivered] = await fixture.emit(fixture.secondId, 2, "editor");
+    const send = vi.fn().mockResolvedValue({ messageId: "second-staff" });
+    await processNotificationMessage(deliveryEnv(send), message(delivered!));
+    expect(await outboxState(fixture.sourceKey(2), fixture.secondId)).toEqual({ status: "completed", lastError: null });
+    expect(await noticeCount(fixture.sourceKey(2), fixture.secondId)).toBe(1);
+
+    const other = await seedTwoAssignees("editor");
+    const [pending] = await other.emit(other.secondId, 2, "editor");
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(other.subtaskId, other.secondId).run();
+    const suppressedSend = vi.fn().mockResolvedValue({ messageId: "unused" });
+    await processNotificationMessage(deliveryEnv(suppressedSend), message(pending!));
+    expect(await outboxState(other.sourceKey(2), other.secondId)).toEqual({ status: "suppressed", lastError: "subtask_changed" });
+    expect(suppressedSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps A's pending notice deliverable when B is added afterwards, and an old-shape row (Subtask-wide version, single assignee) still delivers", async () => {
+    const fixture = await seedTwoAssignees("editor");
+    // A's notice was written at version 1 before B joined at version 2: A's own relation row is still version 1.
+    const [forFirst] = await fixture.emit(fixture.firstId, 1, "editor");
+    expect(forFirst).toBeTruthy();
+    const send = vi.fn().mockResolvedValue({ messageId: "first-staff" });
+    await processNotificationMessage(deliveryEnv(send), message(forFirst!));
+    expect(await outboxState(fixture.sourceKey(1), fixture.firstId)).toEqual({ status: "completed", lastError: null });
+    expect(await noticeCount(fixture.sourceKey(1), fixture.firstId)).toBe(1);
+  });
+
+  it("delivers an external editor who is not the first assignee; after removal it is suppressed at the resolver", async () => {
+    const fixture = await seedTwoAssignees("external_editor");
+    const [delivered] = await fixture.emit(fixture.secondId, 2, "external_editor");
+    const send = vi.fn().mockResolvedValue({ messageId: "second-external" });
+    await processNotificationMessage(deliveryEnv(send), message(delivered!));
+    expect(await outboxState(fixture.sourceKey(2), fixture.secondId)).toEqual({ status: "completed", lastError: null });
+    expect(await noticeCount(fixture.sourceKey(2), fixture.secondId)).toBe(1);
+
+    const other = await seedTwoAssignees("external_editor");
+    const [pending] = await other.emit(other.secondId, 2, "external_editor");
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(other.subtaskId, other.secondId).run();
+    const suppressedSend = vi.fn().mockResolvedValue({ messageId: "unused" });
+    await processNotificationMessage(deliveryEnv(suppressedSend), message(pending!));
+    expect(await outboxState(other.sourceKey(2), other.secondId)).toMatchObject({ status: "suppressed" });
+    expect(await noticeCount(other.sourceKey(2), other.secondId)).toBe(0);
+    expect(suppressedSend).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the email channel at admission when an external assignee is removed between in-app and email", async () => {
+    const fixture = await seedTwoAssignees("external_editor");
+    const [pending] = await fixture.emit(fixture.secondId, 2, "external_editor");
+    let batches = 0;
+    const raceDb = {
+      prepare: database.DB.prepare.bind(database.DB),
+      batch: async (statements: D1PreparedStatement[]) => {
+        const result = await database.DB.batch(statements);
+        batches += 1;
+        if (batches === 2) await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, fixture.secondId).run();
+        return result;
+      },
+    } as unknown as D1Database;
+    const send = vi.fn().mockResolvedValue({ messageId: "should-not-send" });
+    await processNotificationMessage(deliveryEnv(send, raceDb), message(pending!));
+    expect(send).not.toHaveBeenCalled();
+    expect(await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(pending!).all()).toMatchObject({ results: [{ channel: "email", status: "suppressed" }, { channel: "in_app", status: "sent" }] });
+  });
+
+  it("suppresses the staff email at admission when the assignee is removed between in-app and email", async () => {
+    const fixture = await seedTwoAssignees("editor");
+    const [pending] = await fixture.emit(fixture.secondId, 2, "editor");
+    let batches = 0;
+    const raceDb = {
+      prepare: database.DB.prepare.bind(database.DB),
+      batch: async (statements: D1PreparedStatement[]) => {
+        const result = await database.DB.batch(statements);
+        batches += 1;
+        if (batches === 2) await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, fixture.secondId).run();
+        return result;
+      },
+    } as unknown as D1Database;
+    const send = vi.fn().mockResolvedValue({ messageId: "should-not-send" });
+    await processNotificationMessage(deliveryEnv(send, raceDb), message(pending!));
+    expect(send).not.toHaveBeenCalled();
+    const ledgers = (await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(pending!).all<{ channel: string; status: string }>()).results;
+    expect(ledgers.find((row) => row.channel === "in_app")?.status).toBe("sent");
+    expect(ledgers.find((row) => row.channel === "email")?.status).toBe("suppressed");
   });
 });

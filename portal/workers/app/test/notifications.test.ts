@@ -1,7 +1,7 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { emitStaffSubtaskAssignedNotification, notificationCopy } from "@quincy/db";
+import { emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification, notificationCopy } from "@quincy/db";
 import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, conformsToNotificationEnrichment, encodeNotificationCursor, externalNotificationListResponseSchema, staffNotificationListResponseSchema } from "@quincy/shared";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
@@ -185,6 +185,7 @@ describe("notifications API and recipient selection", () => {
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, actorId, now),
       ...(member ? [database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assigneeId, now)] : []),
       database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Retouch the hero shot', 0, 0, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, assigneeId, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, assigneeId, now),
     ]);
     return { projectId, actorId, assigneeId, subtaskId };
   }
@@ -411,6 +412,33 @@ describe("notification list per-row project street and cover", () => {
     expect(body.unreadCount).toBe(body.notifications.filter((row) => row.readAt === null).length);
   });
 
+  it("shows an external editor who is not the first assignee their subtask_assigned notice, and drops it once they are removed (#368)", async () => {
+    const { projectId } = await makeProject("External Second Assignee Street", "editing");
+    const now = Date.now();
+    const membershipId = crypto.randomUUID();
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(membershipId, projectId, externalEditor, now).run();
+    const subtaskId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Second assignee task', 0, 0, ?, 2, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, userB, admin, now, now),
+      // userB was added first (version 1); the external editor joined later at version 2.
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?), (?, ?, 2, ?)").bind(subtaskId, userB, now, subtaskId, externalEditor, now + 1),
+    ]);
+    const sourceKey = `subtask-assignment:${subtaskId}:2`;
+    const [outboxId] = await emitExternalSubtaskNotification(database.DB, { projectId, actorId: userA, assigneeId: externalEditor, subtaskId, assignmentVersion: 2, sourceKey, kind: "assigned" });
+    expect(outboxId).toBeDefined();
+    const notificationId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO notifications (id, user_id, project_id, type, title, body, source_key, created_at) VALUES (?, ?, ?, 'subtask_assigned', 'Checklist item assigned', 'Body', ?, ?)").bind(notificationId, externalEditor, projectId, sourceKey, now),
+      // What the consumer does on in-app delivery: the emit already wrote the pending ledger row.
+      database.DB.prepare("UPDATE notification_delivery_ledger SET status = 'sent', notification_id = ? WHERE outbox_id = ? AND channel = 'in_app'").bind(notificationId, outboxId),
+    ]);
+    expect((await externalList()).notifications.some((row) => row.id === notificationId)).toBe(true);
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(subtaskId, externalEditor).run();
+    const after = await externalList();
+    expect(after.notifications.some((row) => row.id === notificationId)).toBe(false);
+    expect(after.unreadCount).toBe(after.notifications.filter((row) => row.readAt === null).length);
+  });
+
   it("drops the row and its count once the project is archived", async () => {
     const { projectId, title } = await seedExternalDirectNotification("Archived Street");
     expect(notificationRow(await externalList(), title)).toBeDefined();
@@ -494,6 +522,7 @@ describe("notification read-model enrichment", () => {
     const now = Date.now();
     await database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, ?, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)")
       .bind(subtaskId, projectId, title, assigneeId, assignmentVersion, admin, now, now).run();
+    if (assigneeId) await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, ?, ?)").bind(subtaskId, assigneeId, assignmentVersion, now).run();
     return subtaskId;
   }
 

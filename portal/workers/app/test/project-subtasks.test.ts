@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
 import { scanDueSubtasks } from "../../background/src/notifications";
+import { externalSubtaskAssigneeOptionsResponseSchema, subtaskAssigneeOptionsResponseSchema } from "@quincy/shared";
 
 const database = env as unknown as { DB: D1Database };
 const baseEnv = env as unknown as Env;
@@ -337,6 +338,8 @@ describe("project subtasks API", () => {
     await database.DB.batch([
       database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'One', 0, 1024, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskOne, isolatedProject, photographerId, editorId, now, now),
       database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two', 0, 2048, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskTwo, isolatedProject, photographerId, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(taskOne, photographerId, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(taskTwo, photographerId, now),
     ]);
     const body = { membershipCycle: cycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 };
     const first = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", body);
@@ -344,6 +347,7 @@ describe("project subtasks API", () => {
     const firstPayload = await first.json() as { assignmentCount: number };
     expect(firstPayload.assignmentCount).toBe(2);
     await database.DB.prepare("UPDATE project_subtasks SET assignee_id = NULL, assignment_version = assignment_version + 1 WHERE id = ?").bind(taskTwo).run();
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ?").bind(taskTwo).run();
     const retry = await request(`/api/projects/${isolatedProject}/photographers/${photographerId}`, "subtasks-admin-token", "DELETE", { membershipCycle: cycle, clearSubtaskAssignments: true, confirmedAssignmentCount: firstPayload.assignmentCount });
     expect(retry.status).toBe(422);
     await expect(retry.json()).resolves.toMatchObject({ code: "subtask_assignment_confirmation_required", assignmentCount: 1 });
@@ -358,6 +362,7 @@ describe("project subtasks API", () => {
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(photographerCycle, isolatedProject, editorId, now),
       database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(editorCycle, isolatedProject, editorId, now),
       database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Drifted assignment', 0, 1024, ?, 1, '2099-12-31', 'date', '2099-12-31', 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(taskId, isolatedProject, editorId, editorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(taskId, editorId, now),
     ]);
     try {
       await database.DB.prepare("UPDATE user SET role = 'photographer' WHERE id = ?").bind(editorId).run();
@@ -600,14 +605,17 @@ describe("assignee relation dual-write (#364)", () => {
     expect(await relationRows(item.id)).toEqual([{ user_id: stored!.assignee_id, assignment_version: stored!.assignment_version }]);
   });
 
-  it("replace-one: a reassignment touches only the person the column knew, never other rows", async () => {
+  it("a legacy single-assignee write never replaces one row of a larger set (#368 supersedes replace-one): it is refused and nothing changes", async () => {
     const item = await create({ assigneeId: editorId });
     await database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 99, ?)").bind(item.id, adminId, Date.now()).run();
-    expect((await patch(item.id, { assigneeId: photographerId })).status).toBe(200);
-    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 99 }, { user_id: photographerId, assignment_version: 2 }]);
-    expect((await patch(item.id, { assigneeId: null })).status).toBe(200);
-    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 99 }]);
-    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ?").bind(item.id).run();
+    const refused = await patch(item.id, { assigneeId: photographerId });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "subtask_item_conflict" });
+    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 99 }, { user_id: editorId, assignment_version: 1 }]);
+    expect((await patch(item.id, { assigneeId: null })).status).toBe(409);
+    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 99 }, { user_id: editorId, assignment_version: 1 }]);
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(item.id, adminId).run();
   });
 
   it("deleting a Subtask removes its rows, and the column and relation stay equal across all of the above", async () => {
@@ -616,5 +624,334 @@ describe("assignee relation dual-write (#364)", () => {
     expect((await request(`${base()}/${doomed.id}`, "subtasks-editor-token", "DELETE")).status).toBe(200);
     expect(await relationRows(doomed.id)).toEqual([]);
     expect(await scopedVerify()).toEqual({ mismatches: 0 });
+  });
+});
+
+describe("multi-assignee writes (#368)", () => {
+  const multiProject = crypto.randomUUID();
+  const externalId = "75555555-5555-4555-8555-555555555555";
+  const retiredId = "76666666-6666-4666-8666-666666666666";
+  const base = () => `/api/projects/${multiProject}/subtasks`;
+  const setMultiAssignee = (on: boolean) => database.DB.prepare("UPDATE feature_flags SET enabled = ?, updated_at = ? WHERE key = 'subtask_multi_assignee'").bind(on ? 1 : 0, Date.now()).run();
+  const create = async (body: Record<string, unknown> = {}, token = "subtasks-editor-token") => request(base(), token, "POST", { title: "Multi", ...body });
+  const createItem = async (body: Record<string, unknown> = {}) => (await (await create(body)).json()) as Dto;
+  const patch = (id: string, body: Record<string, unknown>, token = "subtasks-editor-token") => request(`${base()}/${id}`, token, "PATCH", body);
+  const delta = (id: string, expectedVersion: number, add: string[], remove: string[] = [], token = "subtasks-editor-token") => patch(id, { assignees: { expectedVersion, add, remove } }, token);
+  const relationRows = async (subtaskId: string) => (await database.DB.prepare("SELECT user_id, assignment_version FROM project_subtask_assignees WHERE subtask_id = ? ORDER BY user_id").bind(subtaskId).all<{ user_id: string; assignment_version: number }>()).results;
+  const column = (subtaskId: string) => database.DB.prepare("SELECT assignee_id, assignment_version FROM project_subtasks WHERE id = ?").bind(subtaskId).first<{ assignee_id: string | null; assignment_version: number }>();
+  const assignedOutbox = async (subtaskId: string) => (await database.DB.prepare("SELECT source_key, recipient_id, json_extract(payload_json, '$.assignment.assignmentVersion') AS version FROM notification_outbox WHERE event_type = 'project.subtask.assigned' AND json_extract(payload_json, '$.assignment.subtaskId') = ? ORDER BY recipient_id").bind(subtaskId).all<{ source_key: string; recipient_id: string; version: number }>()).results;
+  type Dto = { id: string; assignee: { id: string; name: string } | null; assignees: Array<{ id: string; name: string; roleLabel: string; isExternal: boolean; active: boolean }>; assignmentVersion: number };
+
+  beforeAll(async () => {
+    const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, street, stage_key, board_position, created_at, updated_at) VALUES (?, 'Multi Assignee Street', 'editing_autohdr', 0, ?, ?)").bind(multiProject, now, now).run();
+    for (const [id, role] of [[externalId, "external_editor"], [retiredId, "photographer"]] as const) await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, authorization_epoch, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, 0, ?, ?)").bind(id, `${role} ${id.slice(0, 4)}`, `${id}@example.test`, role, now, now).run();
+    await database.DB.prepare("INSERT INTO session (id, expires_at, token, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind("subtasks-external", now + 3_600_000, "subtasks-external-token", externalId, now, now).run();
+    for (const [userId, role] of [[editorId, "editor"], [photographerId, "photographer"], [externalId, "editor"], [retiredId, "photographer"]] as const) await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), multiProject, userId, role, now).run();
+    await setMultiAssignee(true);
+  });
+
+  it("the gate row ships closed: a fresh database has subtask_multi_assignee disabled", async () => {
+    const fresh = await database.DB.prepare("SELECT key FROM feature_flags WHERE key = 'subtask_multi_assignee'").first();
+    expect(fresh).toEqual({ key: "subtask_multi_assignee" });
+    await setMultiAssignee(false);
+    try {
+      expect(await database.DB.prepare("SELECT enabled FROM feature_flags WHERE key = 'subtask_multi_assignee'").first()).toEqual({ enabled: 0 });
+    } finally { await setMultiAssignee(true); }
+  });
+
+  it("adds several assignees in one delta: ordered DTO, first assignee mirrored, one version, one row each", async () => {
+    const item = await createItem();
+    const response = await delta(item.id, 0, [photographerId, adminId, editorId]);
+    expect(response.status).toBe(200);
+    const body = await response.json() as Dto;
+    // Same version and added_at: the order falls back to user id (admin 71.., editor 72.., photographer 73..).
+    expect(body.assignees.map((person) => person.id)).toEqual([adminId, editorId, photographerId]);
+    expect(body.assignees[0]).toEqual({ id: adminId, name: expect.any(String), roleLabel: expect.any(String), isExternal: false, active: true });
+    expect(body.assignee).toEqual({ id: adminId, name: body.assignees[0]!.name });
+    expect(body.assignmentVersion).toBe(1);
+    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 1 }, { user_id: editorId, assignment_version: 1 }, { user_id: photographerId, assignment_version: 1 }]);
+    expect(await column(item.id)).toEqual({ assignee_id: adminId, assignment_version: 1 });
+
+    const removed = await delta(item.id, 1, [], [adminId]);
+    expect(removed.status).toBe(200);
+    const after = await removed.json() as Dto;
+    expect(after.assignmentVersion).toBe(2);
+    expect(after.assignees.map((person) => person.id)).toEqual([editorId, photographerId]);
+    expect(after.assignee?.id).toBe(editorId);
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 2 });
+    // Survivors keep the version they were added at.
+    expect(await relationRows(item.id)).toEqual([{ user_id: editorId, assignment_version: 1 }, { user_id: photographerId, assignment_version: 1 }]);
+
+    const listed = await (await request(base(), "subtasks-editor-token")).json() as { subtasks: Dto[] };
+    expect(listed.subtasks.find((row) => row.id === item.id)?.assignees.map((person) => person.id)).toEqual([editorId, photographerId]);
+  });
+
+  it("creates with assigneeIds, and refuses assigneeId together with assigneeIds", async () => {
+    const created = await create({ assigneeIds: [editorId, photographerId] });
+    expect(created.status).toBe(201);
+    const body = await created.json() as Dto;
+    expect(body.assignmentVersion).toBe(1);
+    expect(body.assignees.map((person) => person.id).sort()).toEqual([editorId, photographerId]);
+    expect(await relationRows(body.id)).toEqual([{ user_id: editorId, assignment_version: 1 }, { user_id: photographerId, assignment_version: 1 }]);
+    expect(await column(body.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+    expect((await create({ assigneeId: editorId, assigneeIds: [photographerId] })).status).toBe(400);
+    expect((await create({ assigneeIds: [editorId, editorId] })).status).toBe(400);
+    const item = await createItem();
+    expect((await patch(item.id, { assigneeId: editorId, assignees: { expectedVersion: 0, add: [photographerId], remove: [] } })).status).toBe(400);
+  });
+
+  it("refuses an ineligible add without writing, and a deactivated kept assignee does not block removing someone else", async () => {
+    const item = await createItem({ assigneeIds: [editorId, retiredId] });
+    const before = await relationRows(item.id);
+    const refused = await delta(item.id, 1, [outsiderId]);
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ code: "subtask_assignee_ineligible" });
+    expect((await create({ assigneeIds: [outsiderId] })).status).toBe(400);
+    expect(await relationRows(item.id)).toEqual(before);
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+
+    await database.DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(retiredId).run();
+    try {
+      const removed = await delta(item.id, 1, [], [editorId]);
+      expect(removed.status).toBe(200);
+      // The since-deactivated assignee still reads as an assignee, flagged inactive.
+      const remaining = (await removed.json() as Dto).assignees;
+      expect(remaining.map((person) => person.id)).toEqual([retiredId]);
+      expect(remaining[0]).toMatchObject({ active: false });
+    } finally { await database.DB.prepare("UPDATE user SET active = 1 WHERE id = ?").bind(retiredId).run(); }
+  });
+
+  it("rejects an invalid delta: adding a current assignee, removing a non-assignee, or the same id on both sides", async () => {
+    const item = await createItem({ assigneeIds: [editorId] });
+    const addExisting = await delta(item.id, 1, [editorId]);
+    expect(addExisting.status).toBe(400); expect(await addExisting.json()).toMatchObject({ code: "subtask_assignee_invalid_delta" });
+    const removeAbsent = await delta(item.id, 1, [], [photographerId]);
+    expect(removeAbsent.status).toBe(400); expect(await removeAbsent.json()).toMatchObject({ code: "subtask_assignee_invalid_delta" });
+    expect((await delta(item.id, 1, [photographerId], [photographerId])).status).toBe(400);
+    expect((await patch(item.id, { assignees: { expectedVersion: 1, add: [], remove: [] } })).status).toBe(400);
+    expect(await relationRows(item.id)).toEqual([{ user_id: editorId, assignment_version: 1 }]);
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+  });
+
+  it("guards every assignee change with the Subtask-wide version", async () => {
+    const item = await createItem({ assigneeIds: [editorId, photographerId] });
+    const stale = await delta(item.id, 0, [adminId]);
+    expect(stale.status).toBe(409);
+    const conflict = await stale.json() as { code: string; currentSubtask: Dto };
+    expect(conflict.code).toBe("subtask_assignment_version_conflict");
+    expect(conflict.currentSubtask).toMatchObject({ id: item.id, assignmentVersion: 1 });
+    expect(conflict.currentSubtask.assignees.map((person) => person.id).sort()).toEqual([editorId, photographerId]);
+    expect(await relationRows(item.id)).toEqual([{ user_id: editorId, assignment_version: 1 }, { user_id: photographerId, assignment_version: 1 }]);
+    // A stale change that would not have moved the mirrored first assignee is still a conflict.
+    expect((await delta(item.id, 0, [], [photographerId])).status).toBe(409);
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+  });
+
+  it("two concurrent deltas with the same expectedVersion: exactly one wins, the other gets a 409", async () => {
+    const item = await createItem({ assigneeIds: [editorId] });
+    const responses = await Promise.all([delta(item.id, 1, [photographerId]), delta(item.id, 1, [adminId])]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const loser = responses.find((response) => response.status === 409)!;
+    expect(await loser.json()).toMatchObject({ code: "subtask_assignment_version_conflict" });
+    const stored = await column(item.id);
+    expect(stored!.assignment_version).toBe(2);
+    const rows = await relationRows(item.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.user_id === editorId)).toEqual({ user_id: editorId, assignment_version: 1 });
+    expect(rows.filter((row) => row.assignment_version === 2)).toHaveLength(1);
+    expect(stored!.assignee_id).toBe(editorId);
+  });
+
+  it("gate closed: more than one assignee is refused, replacing and removing still work", async () => {
+    await setMultiAssignee(false);
+    try {
+      const two = await create({ assigneeIds: [editorId, photographerId] });
+      expect(two.status).toBe(400); expect(await two.json()).toMatchObject({ code: "subtask_multi_assignee_disabled" });
+      expect((await create({ assigneeIds: [editorId] })).status).toBe(201);
+      const single = await createItem({ assigneeIds: [editorId] });
+      const grow = await delta(single.id, 1, [photographerId]);
+      expect(grow.status).toBe(400); expect(await grow.json()).toMatchObject({ code: "subtask_multi_assignee_disabled" });
+      expect((await delta(single.id, 1, [adminId], [editorId])).status).toBe(200);
+      expect(await relationRows(single.id)).toEqual([{ user_id: adminId, assignment_version: 2 }]);
+      // From none to one is not growth beyond one.
+      const empty = await createItem();
+      expect((await delta(empty.id, 0, [editorId])).status).toBe(200);
+      expect((await delta(empty.id, 1, [], [editorId])).status).toBe(200);
+      expect(await relationRows(empty.id)).toEqual([]);
+    } finally { await setMultiAssignee(true); }
+  });
+
+  it("gate closed with an existing multi-assignee set: removing passes, adding does not, and a missing row reads as closed", async () => {
+    const item = await createItem({ assigneeIds: [adminId, editorId, photographerId] });
+    await setMultiAssignee(false);
+    try {
+      expect((await delta(item.id, 1, [retiredId])).status).toBe(400);
+      const removed = await delta(item.id, 1, [], [photographerId]);
+      expect(removed.status).toBe(200);
+      expect((await removed.json() as Dto).assignees.map((person) => person.id)).toEqual([adminId, editorId]);
+      // Still two: a remove-and-add that ends at two people is growth-free but adds while over one.
+      expect((await delta(item.id, 2, [photographerId], [editorId])).status).toBe(400);
+    } finally { await setMultiAssignee(true); }
+    const saved = await database.DB.prepare("SELECT key, enabled, updated_by, updated_at FROM feature_flags WHERE key = 'subtask_multi_assignee'").first<{ key: string; enabled: number; updated_by: string | null; updated_at: number }>();
+    await database.DB.prepare("DELETE FROM feature_flags WHERE key = 'subtask_multi_assignee'").run();
+    try {
+      const gone = await create({ assigneeIds: [editorId, photographerId] });
+      expect(gone.status).toBe(400); expect(await gone.json()).toMatchObject({ code: "subtask_multi_assignee_disabled" });
+    } finally {
+      await database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES (?, 1, ?, ?)").bind(saved!.key, saved!.updated_by, saved!.updated_at).run();
+    }
+  });
+
+  it("a legacy assigneeId write on a 2-person Subtask is a 409 item conflict that writes nothing", async () => {
+    const item = await createItem({ assigneeIds: [editorId, photographerId] });
+    const response = await patch(item.id, { assigneeId: adminId });
+    expect(response.status).toBe(409);
+    const body = await response.json() as { code: string; currentSubtask: Dto; current: unknown };
+    expect(body.code).toBe("subtask_item_conflict");
+    expect(body.current).toBeTruthy();
+    expect(body.currentSubtask.assignees).toHaveLength(2);
+    expect(await relationRows(item.id)).toEqual([{ user_id: editorId, assignment_version: 1 }, { user_id: photographerId, assignment_version: 1 }]);
+    expect(await column(item.id)).toEqual({ assignee_id: editorId, assignment_version: 1 });
+    // On a single-assignee Subtask the legacy field behaves as it always did.
+    const single = await createItem({ assigneeId: editorId });
+    const moved = await patch(single.id, { assigneeId: photographerId });
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toMatchObject({ assignee: { id: photographerId }, assignmentVersion: 2 });
+    expect(await relationRows(single.id)).toEqual([{ user_id: photographerId, assignment_version: 2 }]);
+  });
+
+  it("notifies only the newly added person, with that person's own version", async () => {
+    const item = await createItem({ assigneeIds: [adminId] });
+    // Created by the editor with the admin assigned: one notice, version 1.
+    expect(await assignedOutbox(item.id)).toEqual([{ source_key: `subtask-assignment:${item.id}:1`, recipient_id: adminId, version: 1 }]);
+    expect((await delta(item.id, 1, [photographerId])).status).toBe(200);
+    expect(await assignedOutbox(item.id)).toEqual([
+      { source_key: `subtask-assignment:${item.id}:1`, recipient_id: adminId, version: 1 },
+      { source_key: `subtask-assignment:${item.id}:2`, recipient_id: photographerId, version: 2 },
+    ]);
+    expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 1 }, { user_id: photographerId, assignment_version: 2 }]);
+    // Adding yourself, or removing anyone, notifies nobody.
+    expect((await delta(item.id, 2, [editorId])).status).toBe(200);
+    expect((await delta(item.id, 3, [], [adminId])).status).toBe(200);
+    expect(await assignedOutbox(item.id)).toHaveLength(2);
+  });
+
+  it("two people added at once are two notices with one source key and different recipients", async () => {
+    const item = await createItem();
+    expect((await delta(item.id, 0, [adminId, photographerId])).status).toBe(200);
+    expect(await assignedOutbox(item.id)).toEqual([
+      { source_key: `subtask-assignment:${item.id}:1`, recipient_id: adminId, version: 1 },
+      { source_key: `subtask-assignment:${item.id}:1`, recipient_id: photographerId, version: 1 },
+    ]);
+  });
+
+  it("records who was added and removed in the activity payload and the audit details", async () => {
+    const item = await createItem({ assigneeIds: [adminId] });
+    expect((await delta(item.id, 1, [photographerId, editorId], [adminId])).status).toBe(200);
+    const events = (await database.DB.prepare("SELECT safe_payload_json FROM project_activity_events WHERE event_type = 'project.checklist.item_updated' AND source_id = ? ORDER BY occurred_at, id").bind(item.id).all<{ safe_payload_json: string }>()).results.map((row) => JSON.parse(row.safe_payload_json));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ itemId: item.id, changes: ["assignee"], assigneesAddedCount: 2, assigneesRemovedCount: 1, assigneesRemoved: [adminId] });
+    expect((events[0].assigneesAdded as string[]).sort()).toEqual([editorId, photographerId]);
+    const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project_subtask.update' AND target_id = ? ORDER BY created_at DESC LIMIT 1").bind(item.id).first<{ meta_json: string }>();
+    const meta = JSON.parse(audit!.meta_json) as Record<string, unknown>;
+    expect(meta).toMatchObject({ assigneesRemoved: [adminId] });
+    expect((meta.assigneesAdded as string[]).sort()).toEqual([editorId, photographerId]);
+  });
+
+  it("caps activity ids at 25 while the counts carry the total", async () => {
+    const item = await createItem();
+    const now = Date.now();
+    const bulk = Array.from({ length: 30 }, (_, index) => `77000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    for (const id of bulk) {
+      await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, 'photographer', 1, ?, ?)").bind(id, `bulk ${id.slice(-4)}`, `${id}@example.test`, now, now).run();
+      await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), multiProject, id, now).run();
+    }
+    expect((await delta(item.id, 0, bulk)).status).toBe(200);
+    const event = await database.DB.prepare("SELECT safe_payload_json FROM project_activity_events WHERE event_type = 'project.checklist.item_updated' AND source_id = ?").bind(item.id).first<{ safe_payload_json: string }>();
+    const payload = JSON.parse(event!.safe_payload_json) as { assigneesAdded: string[]; assigneesAddedCount: number };
+    expect(payload.assigneesAdded).toHaveLength(25); expect(payload.assigneesAddedCount).toBe(30);
+    expect(await relationRows(item.id)).toHaveLength(30);
+  });
+
+  describe("as an External Editor", () => {
+    const externalPatch = (id: string, body: Record<string, unknown>) => patch(id, body, "subtasks-external-token");
+
+    it("may remove a team-member assignee, but never touches a person hidden from them", async () => {
+      const item = await createItem({ assigneeIds: [photographerId, adminId] });
+      const removed = await externalPatch(item.id, { assignees: { expectedVersion: 1, add: [], remove: [photographerId] } });
+      expect(removed.status).toBe(200);
+      expect(Object.keys(await removed.json() as object)).not.toContain("assignees");
+      expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 1 }]);
+      // The non-team admin is hidden from an external: removing them is refused and changes nothing.
+      const hidden = await externalPatch(item.id, { assignees: { expectedVersion: 2, add: [], remove: [adminId] } });
+      expect(hidden.status).toBe(400); expect(await hidden.json()).toMatchObject({ code: "subtask_assignee_invalid_delta" });
+      expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 1 }]);
+    });
+
+    it("may add only active users on the Project's team", async () => {
+      const item = await createItem();
+      const refused = await externalPatch(item.id, { assignees: { expectedVersion: 0, add: [adminId], remove: [] } });
+      expect(refused.status).toBe(400);
+      expect(await relationRows(item.id)).toEqual([]);
+      const allowed = await externalPatch(item.id, { assignees: { expectedVersion: 0, add: [photographerId], remove: [] } });
+      expect(allowed.status).toBe(200);
+      expect(await relationRows(item.id)).toEqual([{ user_id: photographerId, assignment_version: 1 }]);
+    });
+
+    it("gets the external DTO in every conflict body, never the staff DTO", async () => {
+      const item = await createItem({ assigneeIds: [photographerId] });
+      const stale = await externalPatch(item.id, { assignees: { expectedVersion: 0, add: [editorId], remove: [] } });
+      expect(stale.status).toBe(409);
+      const body = await stale.json() as { code: string; currentSubtask: Record<string, unknown> };
+      expect(body.code).toBe("subtask_assignment_version_conflict");
+      expect(body.currentSubtask).toMatchObject({ id: item.id, assignmentVersion: 1 });
+      expect(body.currentSubtask).not.toHaveProperty("assignees");
+      const schedule = await externalPatch(item.id, { title: "Renamed", schedule: { expectedVersion: 9, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } });
+      expect(schedule.status).toBe(409);
+      expect((await schedule.json() as { currentSubtask: Record<string, unknown> }).currentSubtask).not.toHaveProperty("assignees");
+    });
+  });
+
+  describe("GET /projects/:projectId/subtask-assignee-options", () => {
+    const options = (token: string, project = multiProject) => request(`/api/projects/${project}/subtask-assignee-options`, token);
+
+    it("staff get every eligible person uncapped, with the gate", async () => {
+      const bulkRows = 25;
+      const now = Date.now();
+      for (let index = 0; index < bulkRows; index += 1) {
+        const id = `78000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+        await database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, 'photographer', 1, ?, ?)").bind(id, `option ${index}`, `${id}@example.test`, now, now).run();
+        await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)").bind(crypto.randomUUID(), multiProject, id, now).run();
+      }
+      const response = await options("subtasks-editor-token");
+      expect(response.status).toBe(200);
+      const body = subtaskAssigneeOptionsResponseSchema.parse(await response.json());
+      expect(body.candidates.length).toBeGreaterThan(20);
+      const ids = body.candidates.map((person) => person.id);
+      expect(ids).toEqual(expect.arrayContaining([adminId, editorId, photographerId, externalId]));
+      expect(ids).not.toContain(outsiderId);
+      expect(body.multiAssignee).toBe(true);
+      await setMultiAssignee(false);
+      try { expect(((await (await options("subtasks-admin-token")).json()) as { multiAssignee: boolean }).multiAssignee).toBe(false); } finally { await setMultiAssignee(true); }
+    });
+
+    it("externals get team members only, in the external person shape", async () => {
+      const response = await options("subtasks-external-token");
+      expect(response.status).toBe(200);
+      const body = externalSubtaskAssigneeOptionsResponseSchema.parse(await response.json());
+      const ids = body.candidates.map((person) => person.id);
+      expect(ids).toEqual(expect.arrayContaining([editorId, photographerId, externalId]));
+      expect(ids).not.toContain(adminId);
+      expect(body.candidates.find((person) => person.id === externalId)).toMatchObject({ isExternal: true, active: true });
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("a non-member is refused, and an external sees a generic 404 for a project it cannot see", async () => {
+      expect((await options("subtasks-outsider-token")).status).toBe(403);
+      expect((await options("subtasks-external-token", projectId)).status).toBe(404);
+      expect((await options("subtasks-admin-token", crypto.randomUUID())).status).toBe(404);
+      expect((await options("subtasks-admin-token", "not-a-uuid")).status).toBe(400);
+    });
   });
 });

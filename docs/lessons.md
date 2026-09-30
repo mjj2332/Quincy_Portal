@@ -4427,3 +4427,17 @@ remove the legacy readers) still applies.
 - **Also found:** the Workers test runtime cannot read the host filesystem, so a worker test cannot
   load a `scripts/*.sql` file. Prove the script in a `packages/db` node test and inline the
   invariant in the worker test.
+
+## Every reader of a relation-backed assignment moves together (2026-09-30, #368)
+
+- **Every reader of a relation-backed assignment must move in the PR that makes a second assignee
+  possible. The channel admission SQL (`notification-delivery.ts`, staff `legacyAdmission` and the
+  external `project.subtask.*` arm) is a reader too.** A notice is only deliverable while its
+  recipient still has a `project_subtask_assignees` row at the version the payload carries. The
+  resolver is checked first, so a reader missed in the admission SQL passes every resolver test and
+  only fails in the race between the in-app and email channels: test it with a `batch` wrapper that
+  deletes the relation row after the second batch (`notification-delivery.integration.test.ts`).
+- **The per-person version is `assignment_version` at the moment the person was added, not the
+  Subtask's current one.** A retained person keeps theirs, so adding or removing someone else never
+  suppresses their pending notice, and remove-then-re-add gets a new value. Under the write gate the
+  sole assignee's row version equals the Subtask's, which is why pre-#368 pending rows still deliver.

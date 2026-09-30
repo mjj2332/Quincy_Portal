@@ -83,7 +83,7 @@ const payloadSchemas = {
   "project.archived": emptyPayload,
   "project.restored": emptyPayload,
   "project.checklist.item_created": z.object({ itemId: identifier, checklistTitle }).strict(),
-  "project.checklist.item_updated": z.object({ itemId: identifier, checklistTitle, changes: z.array(z.enum(["title", "completion", "assignee"])).min(1).max(3).refine((changes) => new Set(changes).size === changes.length, "Checklist changes must be unique") }).strict(),
+  "project.checklist.item_updated": z.object({ itemId: identifier, checklistTitle, changes: z.array(z.enum(["title", "completion", "assignee"])).min(1).max(3).refine((changes) => new Set(changes).size === changes.length, "Checklist changes must be unique"), assigneesAdded: z.array(identifier).max(25).optional(), assigneesRemoved: z.array(identifier).max(25).optional(), assigneesAddedCount: z.number().int().min(0).max(100).optional(), assigneesRemovedCount: z.number().int().min(0).max(100).optional() }).strict(),
   "project.checklist.item_deleted": z.object({ itemId: identifier, checklistTitle }).strict(),
   // Historic rows (pre ADR 0011) may carry unscheduled/due_only; the enum stays for reading them. Writers only emit "range".
   "project.checklist.schedule_changed": z.object({ itemId: identifier, checklistTitle, scheduleState: z.enum(["unscheduled", "due_only", "range"]), version: z.number().int().min(1) }).strict(),

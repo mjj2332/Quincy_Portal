@@ -111,7 +111,7 @@ describe("saveProjectSubtask finalizer boundary", () => {
         outcome: "updated",
         item,
         broadPublicationIds: ["outbox-1", "outbox-2"],
-        assignmentNotice: { projectId: "project", actorId: "actor", assigneeId: "assignee", subtaskId: "item", assignmentVersion: 2 },
+        assignmentNotices: [{ projectId: "project", actorId: "actor", assigneeId: "assignee", subtaskId: "item", assignmentVersion: 2 }],
       },
     });
     expect(pending).toHaveLength(1);
