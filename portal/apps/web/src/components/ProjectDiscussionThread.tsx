@@ -16,6 +16,7 @@ import {
   type CommentResponse,
 } from "../lib/project-comments";
 import { classifyProjectAccessError, projectCollaborationDataGeneration, useProjectAccessTermination } from "../lib/project-data";
+import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
 import { RichTextEditor } from "./RichTextEditor";
 import type { MentionableUser } from "./MentionAutocomplete";
@@ -73,7 +74,7 @@ export function ProjectDiscussionThread({
   const queryClient = useQueryClient();
   const terminateOnUnauthorized = useProjectAccessTermination();
   const currentUserId = providedCurrentUserId ?? session.data?.user.id;
-  const [content, setContent] = useState<RichTextDoc>(emptyDoc);
+  const [content, setContent, clearDraftIfSubmitted] = useProjectCommentDraft(projectId);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
   const [mutationError, setMutationError] = useState<string>();
@@ -151,9 +152,13 @@ export function ProjectDiscussionThread({
   async function submit() {
     if (saving || postingOverBytes) return;
     const mutationProjectId = projectId;
+    const submitted = content;
     setSaving(true); setMutationError(undefined);
     try {
-      const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content });
+      const comment = await apiPost<Comment, { content: RichTextDoc }>(`/api/projects/${encodeURIComponent(projectId)}/comments`, { content: submitted });
+      // D3: a posted comment is no longer a draft even if the sheet closed mid-post (the isCurrent
+      // guard below would otherwise leave it stored and restore it, to be posted twice).
+      clearDraftIfSubmitted(submitted);
       if (!presentation.isCurrent(mutationProjectId)) return;
       prependProjectComment(queryClient, projectId, comment);
       setContent(emptyDoc());
