@@ -140,6 +140,14 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     expect(document.activeElement).toBe(tab("RAW"));
   });
 
+  it("the header carries no second 'Dashboard' leave control: the sheet's close button is the way out", async () => {
+    await renderSheet();
+    const header = document.querySelector('[data-testid="project-header"]')!;
+    expect(header).not.toBeNull();
+    expect([...header.querySelectorAll("a")].some((link) => link.textContent?.includes("Dashboard"))).toBe(false);
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).not.toBeNull();
+  });
+
   it("Escape with the Lightbox open closes only the Lightbox; the next Escape asks the sheet to close", async () => {
     await renderSheet();
     await click(tab("RAW")!);

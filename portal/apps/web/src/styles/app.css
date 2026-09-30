@@ -313,7 +313,9 @@ button { font-family: var(--font-sans); }
    supply. `--shell-header-height` is 0 here (the sheet's own scroller has no shell header above it)
    so `.worktools` sticks to the top of the sheet body. */
 .project-sheet__body { --shell-header-height: 0px; --toast-inset-inline-start: max(var(--space-5), env(safe-area-inset-left)); }
-[data-testid="project-sheet"][data-impersonating] .viewer { inset: 42px 0 0; }
+[data-testid="project-sheet"][data-impersonating] .viewer { inset: var(--impersonation-banner-height) 0 0; }
+/* Reserve the sheet's close button (right space-4 + 44px + space-2 gap) on the pinned bar. */
+.project-sheet__body .worktools { padding-inline-end: calc(var(--space-4) + 44px + var(--space-2)); }
 
 /* selection action bar */
 

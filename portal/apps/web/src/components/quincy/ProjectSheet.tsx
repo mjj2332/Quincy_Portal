@@ -49,6 +49,9 @@ const ProjectSheetContext = createContext<ProjectSheetContextValue | null>(null)
  * on the backdrop the sheet floats over); outside one it is the plain `/` link it always was. A
  * modified click still opens natively (`shouldInterceptInternalLink`).
  */
+/** True inside a Project sheet, where the sheet's own close button is the way out. */
+export function useInProjectSheet(): boolean { return useContext(ProjectSheetContext) !== null; }
+
 export function useDashboardReturnLink(): { to: string; onClick?: (event: MouseEvent<HTMLAnchorElement>) => void } {
   const sheet = useContext(ProjectSheetContext);
   if (!sheet) return { to: "/" };
@@ -108,7 +111,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         ref={popupRef}
         initialFocus={() => popupRef.current ?? true}
         finalFocus={finalFocus}
-        className="z-[var(--z-dialog)] gap-0 p-0 bg-background data-[side=right]:inset-[var(--space-5)] data-[side=right]:h-auto data-[side=right]:w-auto data-[side=right]:max-w-none data-[side=right]:sm:max-w-none data-[side=right]:border data-[impersonating]:data-[side=right]:top-[calc(42px+var(--space-5))] max-[721px]:data-[side=right]:inset-0 max-[721px]:data-[side=right]:border-0 max-[721px]:data-[impersonating]:data-[side=right]:top-[42px] data-ending-style:duration-0"
+        className="z-[var(--z-dialog)] gap-0 p-0 bg-background data-[side=right]:inset-[var(--space-5)] data-[side=right]:h-auto data-[side=right]:w-auto data-[side=right]:max-w-none data-[side=right]:sm:max-w-none data-[side=right]:border data-[impersonating]:data-[side=right]:top-[calc(var(--impersonation-banner-height)+var(--space-5))] max-[721px]:data-[side=right]:inset-0 max-[721px]:data-[side=right]:border-0 max-[721px]:data-[impersonating]:data-[side=right]:top-[var(--impersonation-banner-height)] data-ending-style:duration-0"
         overlayProps={{
           forceRender: true,
           "data-testid": "project-sheet-scrim",
@@ -120,11 +123,11 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         <SheetClose
           data-testid="project-sheet-close"
           aria-label="Close project"
-          render={<Button variant="ghost" size="icon" className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[30] min-h-[44px] min-w-[44px]" />}
+          render={<Button variant="ghost" size="icon" className="absolute top-[var(--space-4)] right-[var(--space-4)] max-[721px]:top-[var(--space-3)] z-[30] min-h-[44px] min-w-[44px]" />}
         >
           <XIcon aria-hidden />
         </SheetClose>
-        <div key={sheetKey} data-testid="project-sheet-body" className="project-sheet__body min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div key={sheetKey} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <ProjectSheetContext.Provider value={context}>
             <OverlayContainerContext.Provider value={slot}>{children}</OverlayContainerContext.Provider>
           </ProjectSheetContext.Provider>
