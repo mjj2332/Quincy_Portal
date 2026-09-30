@@ -55,6 +55,9 @@ import { ProjectKanbanBoard2 } from "../components/kanban2/board";
 // `ALLOWED_VENDOR_SCHEDULING_CONSUMERS`); this literal `import(...)` — not a variable, not a
 // template string — is what lets that guard's dynamic-import detector keep pinning this exact
 // site as the vendored tree's one production entry point.
+// #359: `lib/dashboard-view-preload.ts` ALSO imports this chunk at boot (from `main.tsx`), so the
+// download starts in parallel with the session check; the browser's module map dedupes it with this
+// `lazy()`.
 const ProductionGantt = lazy(() => import("../components/ProductionGantt").then((module) => ({ default: module.ProductionGantt })));
 // #222: the Calendar (the ReUI event calendar; #224 deleted FullCalendar and the per-browser opt-out
 // to it). It loads only when a capable principal opens the Calendar view, never on the sign-in
