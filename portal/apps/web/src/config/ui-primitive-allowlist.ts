@@ -36,7 +36,7 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProjectHeaderDropbox.tsx": { count: 1, ledger: "baseline (#262)" },
   "components/ProjectTeamCombobox.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/RichTextEditor.tsx": { count: 3, ledger: "baseline (#262)" },
-  "components/SubtaskChecklist.tsx": { count: 16, ledger: "baseline (#262)" },
+  "components/SubtaskChecklist.tsx": { count: 12, ledger: "baseline (#262)" },
   "components/UploadDropzone.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/kanban2/board.tsx": { count: 2, ledger: "baseline (#262)" },
   "components/kanban2/card.tsx": { count: 2, ledger: "baseline (#262)" },

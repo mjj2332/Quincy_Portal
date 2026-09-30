@@ -1155,7 +1155,7 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(meta.querySelector('[aria-label*="more Editor"]')).toBeNull();
   });
 
-  it("renders three Editor avatars plus a '+2' overflow named '2 more Editors' for five Editors", async () => {
+  it("renders two Editor avatars plus a '+3' overflow named '3 more Editors' for five Editors", async () => {
     const editors = [
       { id: "e1", name: "Jane Doe" },
       { id: "e2", name: "Ana Maria Lopes" },
@@ -1169,10 +1169,10 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     // distinguished by its accessible name instead.
     const allImgs = [...meta.querySelectorAll('[role="img"]')];
     const shown = allImgs.filter((element) => !(element.getAttribute("aria-label") ?? "").includes("more Editor"));
-    expect(shown).toHaveLength(3);
-    const overflow = meta.querySelector('[role="img"][aria-label="2 more Editors"]')!;
+    expect(shown).toHaveLength(2);
+    const overflow = meta.querySelector('[role="img"][aria-label="3 more Editors"]')!;
     expect(overflow).not.toBeNull();
-    expect(overflow.querySelector('[aria-hidden="true"]')?.textContent).toBe("+2");
+    expect(overflow.querySelector('[aria-hidden="true"]')?.textContent).toBe("+3");
   });
 
   it("renders no overflow indicator for a single Editor", async () => {
