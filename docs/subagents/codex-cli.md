@@ -1,12 +1,12 @@
 # Codex CLI mechanics (Sol / Terra / Luna / Astra)
 
-Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-28.
+Loaded on demand from `Subagent-Orchestration.md` §3. Updated 2026-09-30.
 
 `codex exec` runs the real Codex CLI as an OS subprocess via `Bash` — OpenAI's model, its own
 sandbox, output read back from a file. It is not the `Agent` tool.
 
 ```bash
-codex exec --sandbox read-only -m gpt-6-sol -c model_reasoning_effort=high "..."
+codex exec --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort=high "..."
 ```
 
 
@@ -31,7 +31,7 @@ them into the pipe rather than interpolating any of them into a quoted argument:
 
 ```bash
 { cat "$SCRATCH/wp-x-prompt.md"; cat "$SCRATCH/wp-x-reference-a.md"; cat "$SCRATCH/wp-x-reference-b.md"; } \
-  | codex exec --sandbox read-only -m gpt-6-sol -c model_reasoning_effort=high \
+  | codex exec --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort=high \
     --output-last-message "$SCRATCH/wp-x-report.md" \
   > "$SCRATCH/wp-x-run.log" 2>&1
 ```
