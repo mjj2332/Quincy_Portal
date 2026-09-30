@@ -70,8 +70,8 @@
  * child page. Reuse ledger: see the PR (installed vendored create row + `reui/input`, `pushToast`).
  *
  * ## #365 — People / Due columns
- * Each Project row gets two vendor tree `columns` (`id`s `people`, `due`; #372 later fills the same
- * cells for Subtask rows): the Team avatar stack and the Deadline, both editable in place by an
+ * Each Project row gets two vendor tree `columns` (`id`s `people`, `due`; #372 fills the People cell
+ * for Subtask rows): the Team avatar stack and the Deadline, both editable in place by an
  * Admin (`ProductionGanttProjectCells.tsx`, popovers over the Project page's own pickers, fed from
  * the Project detail loaded on open), plain values for everyone else. The street is a link to the
  * Project (`ProjectCalendarAnchor` -> the Dashboard's `openCalendarProject`).
@@ -84,7 +84,7 @@
  * `<time>` on tokens.
  *
  * ## #372 — Subtask assignees (the assignee half; the row's range end is a later change)
- * A Subtask row's name cell ends with its assignees: an editable stack for a viewer with
+ * A Subtask row's People cell (the column a Project row uses for its Team) holds its assignees: an editable stack for a viewer with
  * `permissions.canEditAssignees` (the Checklist's own picker, commit on close, one versioned
  * `PATCH /subtasks/:id { assignees: { expectedVersion, add, remove } }`), a plain stack otherwise. The
  * write is not a scheduling command, so it bypasses the controller and refreshes this tab's Gantt too
@@ -93,7 +93,7 @@
  * An External Editor's row carries team assignees plus a hidden count, exactly as the Checklist does.
  * Reuse ledger: picker — `quincy/SubtaskAssigneePicker` `compact` (`reui/combobox` `multiple` + `reui/item` +
  * `reui/avatar`); read-only stack — `quincy/AvatarStack` (`reui/avatar`); conflict / gate notices —
- * `pushToast`; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
+ * `pushToast`; on a phone (<= 720px) the People column is not rendered, so a Subtask's assignees are edited from the Checklist the row link opens; the wrapper that keeps a press or key off the row is a plain `<span>` carrying
  * `stopPropagation`, the pattern `GanttChildLoadErrorBadge` and the Deadline action already use (no new
  * primitive: it has no role and no state of its own).
  *
@@ -363,6 +363,53 @@ type GanttAssigneeCell = { projectId: string; row: GanttChecklistRowDto };
 /** Keeps a click, press or key on the assignee cell from also selecting or dragging the row it sits in (same reason as the Deadline action). */
 const stopRowGesture = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
+/**
+ * #372: a Subtask row's assignees, rendered in the People column. The wrapper keeps a press or key off the row it sits in;
+ * the editable picker's own border is offset by `-ml-1`, as the Project row's People trigger is, so the two stacks line up.
+ */
+function GanttSubtaskAssigneesCell({
+  cell,
+  role,
+  live,
+  busy,
+  onCommit,
+}: {
+  cell: GanttAssigneeCell;
+  role: Role;
+  /** False while a gesture, a settle refetch or a lost access has the chart frozen: the picker will not open. */
+  live: boolean;
+  busy: boolean;
+  onCommit: (cell: GanttAssigneeCell, ids: string[], baseline: AssigneePickerBaseline) => Promise<void>;
+}) {
+  const { row } = cell;
+  return (
+    <span data-testid="gantt-subtask-assignees" className="inline-flex min-w-0 items-center" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
+      {row.permissions.canEditAssignees ? (
+        <span className="-ml-1 inline-flex">
+          <GestureAwareCell live={live}>
+            {(disabled) => (
+              <SubtaskAssigneePicker
+                compact
+                projectId={cell.projectId}
+                role={role}
+                label={`Assignees for ${row.title}`}
+                selected={row.assignees}
+                version={row.assignmentVersion}
+                hiddenCount={row.otherAssigneeCount}
+                disabled={disabled}
+                busy={busy}
+                onCommit={(ids, _people, baseline) => onCommit(cell, ids, baseline)}
+              />
+            )}
+          </GestureAwareCell>
+        </span>
+      ) : (
+        <AvatarStack people={row.assignees} hiddenCount={row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" />
+      )}
+    </span>
+  );
+}
+
 /** #221 PR C: a project row's Deadline action ("Set deadline" / "Fix deadline"), rendered in the Due cell (#365). */
 type GanttDeadlineAction = { label: "Set deadline" | "Fix deadline"; disabled: boolean; onAction: () => void };
 
@@ -373,11 +420,6 @@ function GanttResourceLabel({
   hideAttentionBadgeFor,
   projectHrefFor,
   onOpenProject,
-  assigneeCellByChecklistResourceId,
-  role,
-  live,
-  assigneeBusyIds,
-  onCommitAssignees,
 }: {
   resource: GanttResource;
   attentionByResourceId: Map<string, ProductionGanttAttention>;
@@ -386,16 +428,8 @@ function GanttResourceLabel({
   hideAttentionBadgeFor: Set<string>;
   projectHrefFor?: (projectId: string) => string;
   onOpenProject?: (projectId: string) => void;
-  /** #372: a Subtask row's assignees, keyed by its `task:<id>` resource id. */
-  assigneeCellByChecklistResourceId: Map<string, GanttAssigneeCell>;
-  role: Role;
-  /** False while a gesture, a settle refetch or a lost access has the chart frozen: the picker will not open. */
-  live: boolean;
-  assigneeBusyIds: ReadonlySet<string>;
-  onCommitAssignees: (cell: GanttAssigneeCell, ids: string[], baseline: AssigneePickerBaseline) => Promise<void>;
 }) {
   const attention = attentionByResourceId.get(resource.id);
-  const assigneeCell = assigneeCellByChecklistResourceId.get(resource.id);
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
@@ -411,30 +445,6 @@ function GanttResourceLabel({
           >{resource.title}</ProjectCalendarAnchor>
         ) : resource.title}
       </span>
-      {assigneeCell && (
-        <span className="shrink-0" onClick={stopRowGesture} onPointerDown={stopRowGesture} onMouseDown={stopRowGesture} onKeyDown={stopRowGesture}>
-          {assigneeCell.row.permissions.canEditAssignees ? (
-            <GestureAwareCell live={live}>
-              {(disabled) => (
-                <SubtaskAssigneePicker
-                  compact
-                  projectId={assigneeCell.projectId}
-                  role={role}
-                  label={`Assignees for ${assigneeCell.row.title}`}
-                  selected={assigneeCell.row.assignees}
-                  version={assigneeCell.row.assignmentVersion}
-                  hiddenCount={assigneeCell.row.otherAssigneeCount}
-                  disabled={disabled}
-                  busy={assigneeBusyIds.has(assigneeCell.row.id)}
-                  onCommit={(ids, _people, baseline) => onCommitAssignees(assigneeCell, ids, baseline)}
-                />
-              )}
-            </GestureAwareCell>
-          ) : (
-            <AvatarStack people={assigneeCell.row.assignees} hiddenCount={assigneeCell.row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" />
-          )}
-        </span>
-      )}
       {attention && !hideAttentionBadgeFor.has(resource.id) && <GanttRowAttentionBadge reason={attention.reason} />}
       {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
     </span>
@@ -1359,14 +1369,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         hideAttentionBadgeFor={hideAttentionBadgeFor}
         projectHrefFor={projectHrefFor}
         onOpenProject={onOpenProject}
-        assigneeCellByChecklistResourceId={assigneeCellByChecklistResourceId}
-        role={identity.role}
-        live={live}
-        assigneeBusyIds={assigneeBusyIds}
-        onCommitAssignees={commitAssignees}
       />
     ),
-    [attentionByResourceId, childLoadRetryByProjectResourceId, hideAttentionBadgeFor, projectHrefFor, onOpenProject, assigneeCellByChecklistResourceId, identity.role, live, assigneeBusyIds, commitAssignees],
+    [attentionByResourceId, childLoadRetryByProjectResourceId, hideAttentionBadgeFor, projectHrefFor, onOpenProject],
   );
 
   // #365: the People and Due columns. `displayProjects` (the accept-gate baseline, the same source
@@ -1384,6 +1389,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         title: "People",
         width: 88,
         render: ({ resource }) => {
+          const assigneeCell = assigneeCellByChecklistResourceId.get(resource.id);
+          if (assigneeCell) return <GanttSubtaskAssigneesCell cell={assigneeCell} role={identity.role} live={live} busy={assigneeBusyIds.has(assigneeCell.row.id)} onCommit={commitAssignees} />;
           const project = projectFor(resource);
           return project ? <GestureAwareCell live={live}>{(disabled) => <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
         },
@@ -1402,7 +1409,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         },
       },
     ];
-  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId]);
+  }, [projectById, live, identity.role, narrowTree, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees]);
 
   // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
   // own header for why the distinction is load-bearing here.

@@ -196,6 +196,43 @@ describe("ProductionGantt — Subtask assignees (#372)", () => {
     await waitFor(() => expect(triggerTitle("Row one")).toBe("Ben Ortiz, Cy Young"));
   });
 
+  it("layout contract: a Subtask's assignee control sits in the People cell, never in the name cell, so the title keeps the whole name cell", async () => {
+    await mount();
+    const nameCellFor = (title: string) => [...host.querySelectorAll<HTMLElement>('[data-testid="gantt-tree-name-cell"]')].find((cell) => cell.textContent?.includes(title))!;
+    for (const title of ["Row one", "Row two"]) {
+      const nameCell = nameCellFor(title);
+      expect(nameCell).toBeDefined();
+      expect(nameCell.querySelector('[data-testid="gantt-subtask-assignees"]')).toBeNull();
+      expect(nameCell.querySelector(`[aria-label="Assignees for ${title}"]`)).toBeNull();
+      expect(nameCell.querySelector('[role="img"]')).toBeNull();
+    }
+    // Editable row: the picker is inside the row, inside the assignee cell, and not inside the name cell.
+    const rowOne = nameCellFor("Row one").closest<HTMLElement>("[data-gantt-row-id]")!;
+    const cellOne = trigger("Row one")!.closest<HTMLElement>('[data-testid="gantt-subtask-assignees"]');
+    expect(cellOne).not.toBeNull();
+    expect(rowOne.contains(cellOne)).toBe(true);
+    expect(nameCellFor("Row one").contains(cellOne)).toBe(false);
+    // Read-only row: the plain stack is likewise in the assignee cell only.
+    const rowTwo = nameCellFor("Row two").closest<HTMLElement>("[data-gantt-row-id]")!;
+    const cellTwo = rowTwo.querySelector<HTMLElement>('[data-testid="gantt-subtask-assignees"]');
+    expect(cellTwo?.querySelector('[role="img"]')).not.toBeNull();
+    // A Project row keeps its Team there, not a Subtask control.
+    const projectRow = [...host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")].find((element) => element.getAttribute("data-gantt-row-id")?.startsWith("project:"))!;
+    expect(projectRow.querySelector('[data-testid="gantt-subtask-assignees"]')).toBeNull();
+  });
+
+  it("on a phone the People column is not rendered, so no Subtask assignee control is either", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query === "(max-width: 720px)", media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+    try {
+      await mount();
+      expect(host.textContent).toContain("Row one");
+      expect(trigger("Row one")).toBeNull();
+      expect(host.querySelector('[data-testid="gantt-subtask-assignees"]')).toBeNull();
+      expect(host.querySelectorAll('button[aria-label^="Assignees for"]')).toHaveLength(0);
+    } finally { window.matchMedia = original; }
+  });
+
   it("refreshes the Gantt, Calendar, Checklist and Activity after a commit, and does not suppress this tab's own Gantt refetch", async () => {
     apiPatchMock.mockImplementation(() => { server[0] = { ...server[0]!, assignees: [ada], assignmentVersion: 4 }; return Promise.resolve(dto(server[0]!)); });
     await mount();
