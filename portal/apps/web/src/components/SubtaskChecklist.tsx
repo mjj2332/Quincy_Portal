@@ -169,7 +169,7 @@ function ActionsControl({ owner, title, open, setOpen, busy, onDelete }: { owner
   </>;
 }
 
-function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, popover, setPopover, scheduleError, onUpdate, onCommitAssignees, onUseLatest, onUseLatestItem, onRemove, onBeginEditing, onEndEditing, titleInputRef, itemRef, gripRef, sortable }: { sortable: boolean; item: Subtask; projectId: string; role: Role; busy: boolean; editing: boolean; draftTitle: string; popover: ActivePopover; setPopover: (value: ActivePopover) => void; scheduleError?: ScheduleError; onUpdate: (body: Record<string, unknown>, action: string) => void; onCommitAssignees: (ids: string[], baseline: { ids: string[]; version: number | undefined }) => Promise<void>; onUseLatest: (schedule: ChecklistScheduleDto) => void; onUseLatestItem: (item: Subtask) => void; onRemove: () => void; onBeginEditing: () => void; onEndEditing: () => void; titleInputRef: (element: HTMLInputElement | null) => void; itemRef: (element: HTMLElement | null) => void; gripRef: (element: HTMLButtonElement | null) => void }) {
+function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, popover, setPopover, scheduleError, onUpdate, onCommitAssignees, onUseLatest, onUseLatestItem, onRemove, onBeginEditing, onEndEditing, titleInputRef, itemRef, gripRef, sortable, twoLine }: { twoLine: boolean; sortable: boolean; item: Subtask; projectId: string; role: Role; busy: boolean; editing: boolean; draftTitle: string; popover: ActivePopover; setPopover: (value: ActivePopover) => void; scheduleError?: ScheduleError; onUpdate: (body: Record<string, unknown>, action: string) => void; onCommitAssignees: (ids: string[], baseline: { ids: string[]; version: number | undefined }) => Promise<void>; onUseLatest: (schedule: ChecklistScheduleDto) => void; onUseLatestItem: (item: Subtask) => void; onRemove: () => void; onBeginEditing: () => void; onEndEditing: () => void; titleInputRef: (element: HTMLInputElement | null) => void; itemRef: (element: HTMLElement | null) => void; gripRef: (element: HTMLButtonElement | null) => void }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: busy || !sortable });
   const activeKind = popover?.owner === item.id ? popover.kind : null;
   const setKind = (kind: PopoverKind, open: boolean) => setPopover(open ? { owner: item.id, kind } : null);
@@ -180,6 +180,7 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
   return <article
     ref={combinedNodeRef}
     style={style}
+    data-row-layout={twoLine ? "two-line" : undefined}
     data-done={item.done ? "true" : undefined}
     data-dragging={isDragging ? "true" : undefined}
     data-popover-open={activeKind ? "true" : undefined}
@@ -198,9 +199,10 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
     }}>
     <div className={cn(
       "min-w-0",
-      "max-[721px]:grid", sortable ? "max-[721px]:grid-cols-[auto_auto_minmax(0,1fr)]" : "max-[721px]:grid-cols-[auto_minmax(0,1fr)]",
-      "max-[721px]:items-center max-[721px]:gap-[var(--space-2)]",
-      "min-[721px]:flex min-[721px]:items-center min-[721px]:gap-[var(--space-2)]",
+      // The rail (360px) is as narrow as a phone, so it takes the phone row's two-line arrangement at any viewport (#377).
+      twoLine
+        ? cn("grid items-center gap-[var(--space-2)]", sortable ? "grid-cols-[auto_auto_minmax(0,1fr)]" : "grid-cols-[auto_minmax(0,1fr)]")
+        : cn("max-[721px]:grid", sortable ? "max-[721px]:grid-cols-[auto_auto_minmax(0,1fr)]" : "max-[721px]:grid-cols-[auto_minmax(0,1fr)]", "max-[721px]:items-center max-[721px]:gap-[var(--space-2)]", "min-[721px]:flex min-[721px]:items-center min-[721px]:gap-[var(--space-2)]"),
     )}>
       {sortable && <IconButton ref={combinedGripRef} aria-label={`Reorder ${item.title}`} className="cursor-grab active:cursor-grabbing" {...dragProps}>⠿</IconButton>}
       <label className="grid place-items-center min-h-[28px] max-[721px]:min-h-[44px] max-[721px]:min-w-[44px] cursor-pointer"><Checkbox checked={item.done} disabled={busy} onChange={(event) => onUpdate({ done: event.target.checked }, "done")} /><span className="sr-only">Mark {item.title} complete</span></label>
@@ -223,11 +225,11 @@ function SortableSubtaskRow({ item, projectId, role, busy, editing, draftTitle, 
         onClick={onBeginEditing}
         onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onBeginEditing(); } }}
       >{item.title}</button>}
-      <div className={cn(
+      <div data-testid="subtask-checklist-meta" className={cn(
         "min-w-0",
-        "max-[721px]:col-span-full max-[721px]:flex max-[721px]:items-center",
-        "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)]",
-        "min-[721px]:contents",
+        twoLine
+          ? "col-span-full flex items-center gap-[var(--space-1)] pt-[var(--space-1)]"
+          : cn("max-[721px]:col-span-full max-[721px]:flex max-[721px]:items-center", "max-[721px]:gap-[var(--space-1)] max-[721px]:pt-[var(--space-1)]", "min-[721px]:contents"),
       )}>
         <ScheduleControl owner={item.id} label={`Schedule for ${item.title}`} value={item.schedule} error={scheduleError} open={activeKind === "schedule"} setOpen={(open) => setKind("schedule", open)} onSave={(schedule) => onUpdate({ schedule }, "schedule")} onUseLatest={onUseLatest} onUseLatestItem={onUseLatestItem} busy={busy} />
         <SubtaskAssigneePicker projectId={projectId} role={role} label={`Assignees for ${item.title}`} selected={item.assignees} version={item.assignmentVersion} hiddenCount={item.otherAssigneeCount ?? 0} busy={busy} onCommit={(ids, _people, baseline) => onCommitAssignees(ids, baseline)} />
@@ -300,7 +302,7 @@ export function SubtaskChecklist({ projectId, onAccessFailure, layout = "rail" }
   async function onDragEnd(event: DragEndEvent) { const activeId = String(event.active.id); const neighbors = reorderNeighbors(subtasks.map((item) => item.id), activeId, event.over ? String(event.over.id) : null); setDragging(false); if (!neighbors) return; const formerIndex = openItems.findIndex((item) => item.id === activeId); const key = `${activeId}:reorder`; setAction(key, true); setNotice(""); let reload = false; try { await apiPost<{ position: number }, { beforeId: string | null; afterId: string | null }>(`/api/projects/${encodeURIComponent(projectId)}/subtasks/${encodeURIComponent(activeId)}/reorder`, { beforeId: neighbors.beforeId, afterId: neighbors.afterId }); const refreshed = await subtasksQuery.refetch(); if (refreshed.data) setSubtasks(refreshed.data); reload = !refreshed.error; } catch (error) { terminateOnUnauthorized(error); if (error instanceof ApiError && error.status === 409) { setNotice("Subtask order changed; reload and try again"); const refreshed = await subtasksQuery.refetch(); if (refreshed.data) setSubtasks(refreshed.data); reload = !refreshed.error; } else setNotice(message(error, "Subtask could not be reordered.")); } finally { setAction(key, false); if (reload) scheduleReorderFocus(gripRefs.current, activeId, formerIndex, composerOpen, composerInputRef.current, projectId, () => busyRef.current.has(key)); } }
   const doneCount = doneItems.length; const total = subtasks.length;
   const loading = subtasksQuery.isPending && !subtasks.length;
-  const rowFor = (item: Subtask, sortable: boolean) => <SortableSubtaskRow key={item.id} sortable={sortable} item={item} projectId={projectId} role={role} busy={itemIsBusy(item.id)} editing={editingId === item.id} draftTitle={draftTitles[item.id] ?? item.title} popover={activePopover} setPopover={setActivePopover} scheduleError={scheduleErrors[item.id]} onUpdate={(body, action) => action === "draft" || action === "title" ? titleAction(item, body) : void update(item, body, action)} onCommitAssignees={(ids, baseline) => commitAssignees(item, ids, baseline)} onUseLatest={(schedule) => useLatestSchedule(item, schedule)} onUseLatestItem={useLatestItem} onRemove={() => void remove(item)} onBeginEditing={() => beginEditing(item)} onEndEditing={() => { if (editingId === item.id) setEditingId(null); }} titleInputRef={titleInputRef(item.id)} itemRef={itemRef(item.id)} gripRef={sortable ? gripRef(item.id) : () => undefined} />;
+  const rowFor = (item: Subtask, sortable: boolean) => <SortableSubtaskRow key={item.id} twoLine={layout === "rail"} sortable={sortable} item={item} projectId={projectId} role={role} busy={itemIsBusy(item.id)} editing={editingId === item.id} draftTitle={draftTitles[item.id] ?? item.title} popover={activePopover} setPopover={setActivePopover} scheduleError={scheduleErrors[item.id]} onUpdate={(body, action) => action === "draft" || action === "title" ? titleAction(item, body) : void update(item, body, action)} onCommitAssignees={(ids, baseline) => commitAssignees(item, ids, baseline)} onUseLatest={(schedule) => useLatestSchedule(item, schedule)} onUseLatestItem={useLatestItem} onRemove={() => void remove(item)} onBeginEditing={() => beginEditing(item)} onEndEditing={() => { if (editingId === item.id) setEditingId(null); }} titleInputRef={titleInputRef(item.id)} itemRef={itemRef(item.id)} gripRef={sortable ? gripRef(item.id) : () => undefined} />;
   return <section ref={sectionRef} className={cn("grid gap-[var(--space-3)]", layout === "rail" ? "ps-[var(--space-5)] [border-left-style:solid] border-l-[length:var(--border-width-hair)] border-l-border" : "pb-[var(--space-4)] [border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border")} aria-label="Project checklist">
     <Collapsible open={open} onOpenChange={setOpen} className="grid gap-[var(--space-3)]">
       <header className="flex items-center gap-[var(--space-3)] min-w-0">

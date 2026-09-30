@@ -76,6 +76,20 @@ beforeEach(() => { optionsResponse = { candidates: [{ id: "20000000-0000-4000-80
 afterEach(async () => { await act(async () => root?.unmount()); root = null; document.body.replaceChildren(); });
 
 describe("SubtaskChecklist", () => {
+  it("in the rail layout puts each row's title and its meta controls on separate lines (#377)", async () => {
+    const host = mount(); await render(); const first = item(host, "Call client");
+    expect(first.getAttribute("data-row-layout")).toBe("two-line");
+    const title = first.querySelector<HTMLElement>('[data-testid="subtask-checklist-title"]')!; const meta = first.querySelector<HTMLElement>('[data-testid="subtask-checklist-meta"]')!;
+    expect(meta.contains(title)).toBe(false);
+    for (const label of ["Schedule for Call client", "Assignees for Call client", "Actions for Call client"]) expect(meta.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
+    expect(title.parentElement).toBe(meta.parentElement);
+  });
+  it("in the stacked layout keeps the single-line desktop row (no two-line marker)", async () => {
+    const host = mount(); await act(async () => { root!.render(<SubtaskChecklist projectId={projectId} layout="stacked" />); await Promise.resolve(); });
+    await act(async () => { const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Expand checklist"]'); toggle?.click(); await Promise.resolve(); });
+    for (let attempt = 0; attempt < 50 && document.body.textContent?.includes("Loading checklist…"); attempt += 1) await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 5)); });
+    const first = item(host, "Call client"); expect(first.getAttribute("data-row-layout")).toBeNull();
+  });
   it("preserves accordion/progress, literal schedule badges, and compact title edit/Escape behavior", async () => {
     const host = mount(); await render(); const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"]')!;
     expect(toggle.getAttribute("aria-expanded")).toBe("true"); expect(host.querySelector('[data-testid="subtask-checklist-count"]')!.textContent).toContain("0 / 2"); expect(host.querySelector('[role="progressbar"]')?.getAttribute("aria-valuemax")).toBe("2"); expect(item(host, "Call client").querySelector<HTMLButtonElement>('[aria-label="Schedule for Call client"]')?.textContent).toContain("30 May");
