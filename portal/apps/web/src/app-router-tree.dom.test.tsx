@@ -69,7 +69,6 @@ describe("every route kind resolves to its screen through the router", () => {
     ["/?view=list", "DASHBOARD SCREEN"],
     ["/?view=kanban", "DASHBOARD SCREEN"],
     ["/projects/new", "CREATE SCREEN"],
-    [`/projects/${projectId}/edit`, `EDIT SCREEN ${projectId}`],
     ["/admin", "ADMIN SCREEN u1"],
     ["/notices", "NOTICES SCREEN u1"],
     ["/settings/notifications", "NOTIFICATIONS LIST SCREEN"],
@@ -87,7 +86,15 @@ describe("every route kind resolves to its screen through the router", () => {
     expect(host.textContent).not.toContain("PROJECT SCREEN");
   });
 
-  it("#366: the Dashboard layer is one persistent match; /projects/new and /projects/<id>/edit are root children outside it", async () => {
+  // #374: the edit form is a sheet child, portalled to <body>, over the Dashboard.
+  it("/projects/<id>/edit mounts the edit screen in the sheet (dashboard-layer), over the Dashboard", async () => {
+    const host = await renderAt(`/projects/${projectId}/edit`);
+    expect(document.querySelector('[data-testid="project-sheet"]')?.textContent).toContain(`EDIT SCREEN ${projectId}`);
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+    expect(host.textContent).not.toContain("EDIT SCREEN");
+  });
+
+  it("#366/#374: the Dashboard layer is one persistent match across project and edit; /projects/new is a root child outside it", async () => {
     dashboardMounts.count = 0;
     const host = await renderAt("/");
     await act(async () => { locationStore().push(`/projects/${projectId}`); await Promise.resolve(); await Promise.resolve(); });
@@ -100,10 +107,14 @@ describe("every route kind resolves to its screen through the router", () => {
     await act(async () => { locationStore().push("/projects/new"); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("CREATE SCREEN");
     expect(host.textContent).not.toContain("DASHBOARD SCREEN");
+    // The layer persists project -> edit: the Dashboard does not remount, only the sheet's child changes.
+    await act(async () => { locationStore().push("/"); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { locationStore().push(`/projects/${projectId}`); await Promise.resolve(); await Promise.resolve(); });
+    dashboardMounts.count = 0;
     await act(async () => { locationStore().push(`/projects/${projectId}/edit`); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toContain(`EDIT SCREEN ${projectId}`);
-    expect(host.textContent).not.toContain("DASHBOARD SCREEN");
-    expect(document.querySelector('[data-testid="project-sheet"]')).toBeNull();
+    expect(document.querySelector('[data-testid="project-sheet"]')?.textContent).toContain(`EDIT SCREEN ${projectId}`);
+    expect(host.textContent).toContain("DASHBOARD SCREEN");
+    expect(dashboardMounts.count).toBe(0);
   });
 });
 

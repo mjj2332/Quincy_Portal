@@ -274,12 +274,13 @@ describe("Project sheet entry state (#366)", () => {
     expect(isSheetLocation(project)).toBe(true);
     expect(isSheetLocation(`${project}?tab=raw`)).toBe(true);
     expect(isSheetLocation("/")).toBe(false);
-    expect(isSheetLocation(`${project}/edit`)).toBe(false);
+    expect(isSheetLocation(`${project}/edit`)).toBe(true);
     expect(isSheetLocation("/projects/new")).toBe(false);
     expect(isDashboardLayerLocation("/?view=list")).toBe(true);
     expect(isDashboardLayerLocation(project)).toBe(true);
     expect(isDashboardLayerLocation("/admin")).toBe(false);
-    expect(isDashboardLayerLocation(`${project}/edit`)).toBe(false);
+    expect(isDashboardLayerLocation(`${project}/edit`)).toBe(true);
+    expect(isDashboardLayerLocation("/projects/new")).toBe(false);
   });
 
   it("computes the state a push writes", () => {
@@ -287,6 +288,9 @@ describe("Project sheet entry state (#366)", () => {
     expect(nextPushState("/?view=list&q=a", null, project)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=list&q=a", depth: 1, prev: "/?view=list&q=a" } });
     // sheet (with state) -> sheet
     expect(nextPushState(project, valid(), otherProject)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 2, prev: project } });
+    // project -> edit (#374): depth + 1, prev is the project URL; and edit with no state stays stateless
+    expect(nextPushState(project, valid(), `${project}/edit`)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 2, prev: project } });
+    expect(nextPushState(project, null, `${project}/edit`)).toBeNull();
     // cold sheet (no state) -> sheet: nothing provable
     expect(nextPushState(project, null, otherProject)).toBeNull();
     expect(nextPushState(project, valid({ depth: 0 }), otherProject)).toBeNull();
