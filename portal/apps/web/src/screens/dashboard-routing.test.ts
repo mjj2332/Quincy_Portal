@@ -49,14 +49,16 @@ describe("TB6 Slice 0 dashboard routing characterization", () => {
     expect(writes).toHaveLength(2);
   });
 
-  it("keeps modified-click and keyboard detail=0 clicks native", () => {
+  it("intercepts keyboard detail=0 clicks (#366) but keeps modified clicks native", () => {
     const click = (overrides: Partial<Parameters<typeof shouldInterceptInternalLink>[0]> = {}) => ({
       button: 0, detail: 1, defaultPrevented: false, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
       currentTarget: { href: "https://portal.test/projects/123e4567-e89b-42d3-a456-426614174000", target: "", download: "" },
       ...overrides,
     });
     expect(shouldInterceptInternalLink(click(), "https://portal.test")).toBe(true);
-    expect(shouldInterceptInternalLink(click({ detail: 0 }), "https://portal.test")).toBe(false);
+    expect(shouldInterceptInternalLink(click({ detail: 0 }), "https://portal.test")).toBe(true);
+    expect(shouldInterceptInternalLink(click({ detail: 0, ctrlKey: true }), "https://portal.test")).toBe(false);
+    expect(shouldInterceptInternalLink(click({ detail: 0, shiftKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ metaKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ ctrlKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ shiftKey: true }), "https://portal.test")).toBe(false);

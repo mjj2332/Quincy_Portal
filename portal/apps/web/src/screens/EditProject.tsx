@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
 import { FIELD_GRID_PROPERTY, ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
+import { shouldInterceptInternalLink } from "../lib/router";
 import { invalidateProjectSurfaces, projectDataKeys, removeProjectData, useOptionalProjectQueryClient } from "../lib/project-data";
 import { confirm } from "../lib/confirm";
 import { Eyebrow } from "@/components/quincy/Eyebrow";
@@ -46,7 +47,12 @@ export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
   };
 }
 
-export function EditProject({ projectId, onNavigate }: { projectId: string; onNavigate: (path: string, notice?: string, replace?: boolean) => void }) {
+/**
+ * #374: the edit form is a child of the Project sheet. It never navigates by path: the shell decides
+ * how to get back to the workspace (a traversal when the workspace entry is directly below, else a
+ * replace) and how to leave a deleted project, so both are callbacks.
+ */
+export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { projectId: string; onReturnToWorkspace: (message?: string) => void; onDeleted: (message: string) => void }) {
   const queryClient = useOptionalProjectQueryClient();
   const { can } = useCapabilities();
   const canEditProject = can("editProject");
@@ -87,7 +93,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
         queryClient.setQueryData(projectDataKeys.detail(projectId), response);
         await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true });
       }
-      onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Shoot details saved.");
+      onReturnToWorkspace("Shoot details saved.");
     } catch (reason) {
       setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
     }
@@ -97,7 +103,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   async function archiveProject() {
     if (!await confirm({ title: "Archive project?", message: "Archive this project? It will be hidden from the dashboard and can be restored later.", confirmLabel: "Archive" })) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project archived."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/archive`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onReturnToWorkspace("Project archived."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be archived."); }
     finally { setIsDangerAction(false); }
   }
@@ -105,7 +111,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
   async function restoreProject() {
     if (!await confirm({ title: "Restore project?", message: "Restore this project to the dashboard?", confirmLabel: "Restore" })) return;
     setDangerError(undefined); setIsDangerAction(true);
-    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onNavigate(`/projects/${encodeURIComponent(projectId)}`, "Project restored."); }
+    try { await apiPost<{ ok: true }, Record<string, never>>(`/api/projects/${projectId}/restore`, {}); if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }); onReturnToWorkspace("Project restored."); }
     catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be restored."); }
     finally { setIsDangerAction(false); }
   }
@@ -118,10 +124,17 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       const payload = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
       if (!response.ok) throw new Error(typeof payload?.error === "string" ? payload.error : "The project could not be deleted.");
       if (queryClient) await removeProjectData(queryClient, projectId);
-      onNavigate("/", "Project permanently deleted.", true);
+      onDeleted("Project permanently deleted.");
     } catch (reason) { setDangerError(reason instanceof Error ? reason.message : "The project could not be deleted."); setIsDangerAction(false); }
   }
 
+  // Cancel keeps its `href` (middle-click, copy link) and steps back to the workspace on a plain click.
+  const cancelProps = {
+    to: `/projects/${encodeURIComponent(projectId)}`,
+    onClick(event: MouseEvent<HTMLAnchorElement>) {
+      if (shouldInterceptInternalLink(event, window.location.origin)) { event.preventDefault(); onReturnToWorkspace(); }
+    },
+  };
   const archived = Boolean(project?.archivedAt);
   const deleteMatchesStreet = deleteConfirmation.trim().toLocaleLowerCase() === project?.street.trim().toLocaleLowerCase();
 
@@ -129,10 +142,10 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
     <header className="flex flex-wrap items-end justify-between gap-[var(--space-6)] mb-[var(--space-6)]">
       <div>
         <Eyebrow className="block mb-[var(--space-3)]">Production desk</Eyebrow>
-        <h1 className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Edit shoot</h1>
+        <h1 tabIndex={-1} data-sheet-initial-focus className="[font:var(--type-h1)] tracking-[var(--tracking-tight)]">Edit shoot</h1>
         {archived && <StatusPill tone="caution" role="status" className="mt-[var(--space-3)]">Archived — hidden from the dashboard</StatusPill>}
       </div>
-      <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`}>Cancel</InternalLink>
+      <InternalLink className={buttonClasses("secondary", {})} {...cancelProps}>Cancel</InternalLink>
     </header>
     {canEditProject && (project ? <form data-testid="edit-project-form" className="flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
       {submitError && <Notice role="alert">{submitError}</Notice>}
@@ -146,7 +159,7 @@ export function EditProject({ projectId, onNavigate }: { projectId: string; onNa
       </section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={() => {}} />
       <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
-        <InternalLink className={buttonClasses("secondary", {})} to={`/projects/${encodeURIComponent(projectId)}`} aria-disabled={isSubmitting}>Cancel</InternalLink>
+        <InternalLink className={buttonClasses("secondary", {})} {...cancelProps} aria-disabled={isSubmitting}>Cancel</InternalLink>
         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>
       </div>
     </form> : <EmptyState role={loadError ? "alert" : "status"} tone={loadError ? "error" : "empty"} title={loadError ? "Project details unavailable." : "Loading shoot details."}>{loadError ?? "Preparing the form."}</EmptyState>)}

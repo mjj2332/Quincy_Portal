@@ -33,13 +33,13 @@ const chips = () => [...h.host.querySelectorAll<HTMLElement>('[data-testid="even
 const avatars = (chip: HTMLElement) => [...chip.querySelectorAll<HTMLElement>('[role="img"]')];
 
 describe("ProductionEventCalendar assignee stack", () => {
-  it("draws one event for a four-person Subtask: three avatars and a +1", async () => {
+  it("draws one event for a four-person Subtask: two avatars and a +2", async () => {
     const event = oneDayEvent(dated("2026-08-12"), { assignees: ["Ada", "Bo", "Cy", "Di"].map(person) });
     await mount([event]);
     expect(chips()).toHaveLength(1);
     const labels = avatars(chips()[0]!).map((node) => node.getAttribute("aria-label"));
-    expect(labels).toEqual(["Ada", "Bo", "Cy", "1 more Assignee"]);
-    expect(chips()[0]!.textContent).toContain("+1");
+    expect(labels).toEqual(["Ada", "Bo", "2 more Assignees"]);
+    expect(chips()[0]!.textContent).toContain("+2");
   });
 
   it("counts assignees an External Editor cannot see as +N", async () => {
@@ -48,8 +48,8 @@ describe("ProductionEventCalendar assignee stack", () => {
     const event = { ...admin, project: { ...admin.project, stageKey: "editing" } } as CalendarEventDto;
     await mount([event], "external_editor");
     expect(chips()).toHaveLength(1);
-    expect(avatars(chips()[0]!).map((node) => node.getAttribute("aria-label"))).toEqual(["Ada", "2 more Assignees"]);
-    expect(chips()[0]!.textContent).toContain("+2");
+    expect(avatars(chips()[0]!).map((node) => node.getAttribute("aria-label"))).toEqual(["Ada", "2 others not shown"]);
+    expect(chips()[0]!.textContent).toContain("+2 others");
   });
 
   it("draws no avatar, and no empty glyph, when nobody is assigned", async () => {

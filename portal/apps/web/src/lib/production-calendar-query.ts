@@ -145,8 +145,9 @@ export function decodeChecklistMutationResponse(role: Role, value: unknown): Che
       title: parsed.title,
       done: parsed.done,
       assignee: parsed.assignee,
-      // The external item carries one `assignee` until #368's UI PR adds the visible list: unknown, not empty.
-      assignees: null,
+      // The server's team-filtered list and hidden count (#368): never derived from the scalar `assignee`.
+      assignees: parsed.assignees,
+      otherAssigneeCount: parsed.otherAssigneeCount,
       position: parsed.position,
       schedule: parsed.schedule,
       scheduleVersion: parsed.schedule.version,

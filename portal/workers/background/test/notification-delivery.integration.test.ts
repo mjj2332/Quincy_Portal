@@ -1099,14 +1099,16 @@ describe("#369 due reminders deliver per external assignee", () => {
     expect(await noticeCount(fixture.sourceKey, fixture.bId)).toBe(0);
   });
 
-  it("delivers BOTH external assignees after the second outbox insert fails and the retry claims at a later time", async () => {
+  it("rolls the whole batch back when the second outbox insert fails at execution, then the retry delivers to both", async () => {
     const fixture = await seedTwoExternalDue();
     let outboxInserts = 0;
     const failingDb = new Proxy(database.DB, {
       get(target, property) {
         if (property === "prepare") {
           return (sql: string) => {
-            if (sql.includes("INSERT INTO notification_outbox") && ++outboxInserts === 2) throw new Error("forced second external insert failure");
+            // Preparing succeeds; the SECOND recipient's outbox insert is swapped for a real statement that violates
+            // NOT NULL constraints, so it fails when the batch EXECUTES it, after the first recipient's rows were written.
+            if (sql.includes("INSERT INTO notification_outbox") && ++outboxInserts === 2) return target.prepare("INSERT INTO notification_outbox (id) VALUES ('forced-second-insert-failure')");
             return target.prepare(sql);
           };
         }
@@ -1115,6 +1117,11 @@ describe("#369 due reminders deliver per external assignee", () => {
       },
     }) as unknown as D1Database;
     expect(await scanDueSubtasks({ ...fixture.env, DB: failingDb } as Env, now)).toBe(0);
+    expect(outboxInserts).toBe(2);
+    // Neither recipient keeps an outbox or ledger row: the first insert executed, then rolled back with the batch.
+    expect(await outboxRow(fixture.sourceKey, fixture.aId)).toBeNull();
+    expect(await outboxRow(fixture.sourceKey, fixture.bId)).toBeNull();
+    expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE source_key = ?").bind(fixture.sourceKey).first()).toEqual({ count: 0 });
     expect(await database.DB.prepare("SELECT due_reminder_sent_at AS at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ at: null });
     // The retry claims at a different timestamp than the failed attempt did.
     await scanDueSubtasks(fixture.env, now + 1);

@@ -414,6 +414,20 @@ describe("NotificationBell panel (Popover)", () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
+  it("#366: keyboard activation (detail 0) of a project row SPA-pushes and still marks it read", async () => {
+    apiGetMock.mockResolvedValue({ notifications: [notification({ id: "row-k", projectId: "11111111-1111-4111-8111-111111111111", title: "Row K", createdAt: "2026-08-17T00:00:00.000Z" })], unreadCount: 1 });
+    const trigger = await renderPanel();
+    const pushStateSpy = vi.spyOn(window.history, "pushState");
+    await click(trigger);
+    const link = document.querySelector<HTMLAnchorElement>('[data-testid="rail-notification-item"][data-notification-route="project"]')!;
+    const keyboardClick = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 0 });
+    await act(async () => { link.dispatchEvent(keyboardClick); await Promise.resolve(); await Promise.resolve(); });
+    expect(keyboardClick.defaultPrevented).toBe(true);
+    expect(pushStateSpy).toHaveBeenCalled();
+    expect(apiPostMock).toHaveBeenCalledWith("/api/notifications/row-k/read", {});
+    pushStateSpy.mockRestore();
+  });
+
   it("preserves native modified-click behavior and read semantics on ctrl, meta and middle click", async () => {
     // three distinct unread rows, one per modifier: a middle click reusing the
     // row a Ctrl-click already marked read would prove nothing about auxclick's own no-op case.

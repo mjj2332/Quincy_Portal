@@ -35,10 +35,12 @@
  * components keep navigating through `locationStore()`. The adapter subscription in
  * `staff-history.ts` is how the router hears about the writes they make.
  */
-import { createContext, use, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { dashboardSearchOf, roleHasCapability, type DashboardCalendarState, type Role, type WorkspaceTab } from "@quincy/shared";
-import { locationStore, parseStaffLocation, staffPathFor, type StaffRoute } from "./router";
+import { pushToast } from "./toast-store";
+import { isDashboardLayerLocation, isSheetLocation, locationStore, parseStaffLocation, readSheetEntryState, staffPathFor, type StaffRoute } from "./router";
+import { createDashboardBackdropSource, DashboardLocationContext, type DashboardBackdropSource } from "./dashboard-location";
 import { createStaffRouterHistory, parseStaffSearch, stringifyStaffSearch } from "./staff-history";
 import { useCapabilities } from "./capabilities";
 import { buildStaffNavigation, type StaffNavigation, type StaffNavigationItem } from "./staff-navigation";
@@ -48,6 +50,7 @@ import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch, syncD
 import { consumeSignInDestination } from "./auth";
 import { cn } from "./utils";
 import { RailedShell } from "../components/quincy/RailedShell";
+import { ProjectSheet } from "../components/quincy/ProjectSheet";
 import { InternalLink } from "../components/InternalLink";
 import { Dashboard } from "../screens/Dashboard";
 import { ProjectWorkspace } from "../screens/ProjectWorkspace";
@@ -87,6 +90,17 @@ type ShellState = {
   arrivalIntent: ArrivalIntent | null;
   acknowledgeArrivalSignal: (projectId: string, signal: number) => void;
   syncProjectTab: (projectId: string, tab: WorkspaceTab) => void;
+  impersonating: boolean;
+  /** #366: the Project route renders as a sheet floating over the live Dashboard. */
+  isSheetRoute: boolean;
+  /** The Dashboard location the sheet floats over (the remembered one), and its parse. */
+  backdropLocation: string;
+  backdropSource: DashboardBackdropSource;
+  closeProjectSheet: () => void;
+  /** #374: Save / Cancel / Archive / Restore from the edit form. Returns by traversal (see the impl). */
+  returnToWorkspace: (projectId: string, message?: string) => void;
+  /** #374: the project was permanently deleted from the edit form. */
+  leaveDeletedProject: (projectId: string, message: string) => void;
 };
 
 const ShellStateContext = createContext<ShellState | null>(null);
@@ -130,8 +144,8 @@ const DASHBOARD_CHILD_VIEW: Record<string, "list" | "kanban" | "calendar"> = {
  * List/Kanban map the search onto `q` directly, through `staffPathFor`. Calendar does too now
  * (#217 fix round 4, item 1, BLOCKER): the bare intent became a legal spelling for `q`
  * (`staff-routes.ts`'s `DashboardCalendarIntentRoute`) specifically because a native navigation —
- * keyboard Enter (`InternalLink`'s own `shouldInterceptInternalLink` only claims a genuine
- * left-click), cmd/middle-click, "open in new tab", a reload — loads `href` as a fresh document
+ * cmd/middle-click (`InternalLink`'s own `shouldInterceptInternalLink` only claims an unmodified
+ * primary activation), "open in new tab", a reload — loads `href` as a fresh document
  * with a COLD, empty search store, and the old bare-intent href lost the search on every one of
  * those paths. When `dashboardCalendar` is non-null (the CURRENT route is already a calendar facet
  * with known date/subview/filters), the href stays the full facet URL, mapping the search onto its
@@ -190,6 +204,8 @@ function ShellRoute() {
   const { user, impersonating } = identity;
 
   const history = locationStore();
+  // #366: what the Dashboard reads and writes through while the Project sheet floats over it.
+  const [backdropSource] = useState(() => createDashboardBackdropSource(history, () => window.history.state));
   // Raw location, deliberately not `router.state.location` — see the module comment.
   const completeLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const pathname = completeLocation.split("?", 1)[0]!;
@@ -216,6 +232,20 @@ function ShellRoute() {
   const wantsCalendar = route.kind === "dashboard"
     && ("calendar" in route || ("dashboardView" in route && route.dashboardView === "calendar"));
   const calendarBlocked = wantsCalendar && !roleHasCapability(user.role, "viewProductionCalendar");
+  // #366: at a Project URL the Dashboard underneath is the remembered one. `backdropLocation` is
+  // sanitised the same way the real route is: a Calendar backdrop the role may not see falls back
+  // to the default view (a reloaded `history.state` is only validated as "a Dashboard location").
+  const isSheetRoute = route.kind === "project" || route.kind === "edit-project";
+  const rememberedBackdrop = useSyncExternalStore(backdropSource.subscribe, backdropSource.getLocation, () => "/");
+  const rememberedRoute = useMemo(() => parseStaffLocation(rememberedBackdrop), [rememberedBackdrop]);
+  const backdropCalendarBlocked = rememberedRoute.kind === "dashboard"
+    && ("calendar" in rememberedRoute || ("dashboardView" in rememberedRoute && rememberedRoute.dashboardView === "calendar"))
+    && !roleHasCapability(user.role, "viewProductionCalendar");
+  const backdropLocation = backdropCalendarBlocked ? "/" : rememberedBackdrop;
+  const backdropRoute = useMemo(() => parseStaffLocation(backdropLocation), [backdropLocation]);
+  // The Dashboard's own view of the world: the backdrop while a sheet is open, else the real route.
+  const layerRoute = isSheetRoute ? backdropRoute : route;
+  const layerLocation = isSheetRoute ? backdropLocation : completeLocation;
 
   useEffect(() => {
     if (restored.current) return;
@@ -283,10 +313,17 @@ function ShellRoute() {
   // lack of `q` is not authoritative (an Enter on the rail must still navigate with whatever text
   // is showing, `ShellSearch.tsx`'s own off-Dashboard Enter path) -- this only calls the store when
   // `route.kind === "dashboard"`, never unconditionally.
+  // #366: keyed on the layer's location STRING, never the parsed `layerRoute` object -- opening a
+  // sheet swaps `layerRoute` between separately parsed objects for the SAME Dashboard location, and
+  // re-running the sync then would cancel the pending debounce and restore the old URL query.
+  const layerRouteRef = useRef(layerRoute);
+  layerRouteRef.current = layerRoute;
   useLayoutEffect(() => {
-    if (route.kind !== "dashboard") return;
-    syncDashboardSearchDraftFromLocation(dashboardSearchOf(route), user.id);
-  }, [completeLocation, route, user.id]);
+    // #366: under a sheet the Dashboard's location is the backdrop, so its search is too.
+    const current = layerRouteRef.current;
+    if (current.kind !== "dashboard") return;
+    syncDashboardSearchDraftFromLocation(dashboardSearchOf(current), user.id);
+  }, [layerLocation, user.id]);
 
   // #217 fix round 5, item 5 (Sol re-review, SHOULD-FIX). Calendar itself stays inaccessible
   // either way, but the redirect used to drop straight to "/", discarding whatever `q` the blocked
@@ -313,7 +350,7 @@ function ShellRoute() {
   // must not come back. The remembered preference remains the pre-mount fallback, for the single
   // frame before any Dashboard instance has published.
   const publishedDashboardView = useSyncExternalStore(subscribeDashboardView, readDashboardView, () => null);
-  const dashboardCalendar = route.kind === "dashboard" && "calendar" in route && !calendarBlocked ? route.calendar : null;
+  const dashboardCalendar = layerRoute.kind === "dashboard" && "calendar" in layerRoute && !calendarBlocked && !backdropCalendarBlocked ? layerRoute.calendar : null;
   // #217 fix round 3, item 1: the rail's own Dashboard child links, read here (not inside
   // `staff-navigation.ts`, which stays pure) so a rail click carries the live search the same way
   // the in-Dashboard view switcher already does. `ShellSearch` reads the identical store, so the
@@ -328,15 +365,76 @@ function ShellRoute() {
     () => getDashboardSearchSnapshotForPrincipal(user.id),
   ).draft;
   const navigation = useMemo(() => withLiveDashboardSearch(buildStaffNavigation(
-    route,
+    layerRoute,
     readRememberedDashboardView({ read: () => window.localStorage.getItem(DASHBOARD_VIEW_KEY) }),
     { adminBackend: canAccessAdmin, viewProductionCalendar: roleHasCapability(user.role, "viewProductionCalendar"), viewNoticeBoard: canViewNoticeBoard },
     publishedDashboardView,
-  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, canViewNoticeBoard, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, route, user.role]);
+  ), dashboardSearchDraft, dashboardCalendar), [canAccessAdmin, canViewNoticeBoard, dashboardCalendar, dashboardSearchDraft, publishedDashboardView, layerRoute, user.role]);
+  // #366: close = walk back over the entries the sheet's own pushes made, else replace with the
+  // backdrop (a cold direct link has nothing provably ours beneath it). One-shot per location so a
+  // double Esc before the popstate lands cannot walk back twice.
+  const closingRef = useRef(false);
+  const pendingBackdropRef = useRef<string | null>(null);
+  useEffect(() => { closingRef.current = false; }, [completeLocation]);
+  const closeImplRef = useRef<() => void>(() => undefined);
+  closeImplRef.current = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    const entry = readSheetEntryState(window.history.state);
+    if (entry) {
+      // The Dashboard rewrote its own location in memory while it was a backdrop (never the URL):
+      // land on the entry below, then carry that rewrite across with one replace.
+      if (backdropSource.backdropRewritten()) pendingBackdropRef.current = backdropSource.backdrop();
+      history.go(-entry.depth);
+    } else {
+      history.replace(backdropSource.backdrop());
+    }
+  };
+  const closeProjectSheet = useCallback(() => closeImplRef.current(), []);
+  useEffect(() => {
+    if (route.kind !== "dashboard" || pendingBackdropRef.current === null) return;
+    const pending = pendingBackdropRef.current;
+    pendingBackdropRef.current = null;
+    backdropSource.resetRewritten();
+    if (pending !== completeLocation) history.replace(pending);
+  }, [route, completeLocation, history, backdropSource]);
+
+  // #374 (E2/E3). The edit form is a sheet child pushed on top of the workspace, so returning is a
+  // traversal: when the entry below is this project's workspace, step back onto it (Back afterwards
+  // closes the sheet, and the workspace re-lands the tab its URL named). Otherwise there is no
+  // provable workspace entry below (a cold edit link, a stale state): replace with it.
+  // Both read the CURRENT location at call time: a save that resolves after the sheet was closed
+  // must not reopen it or walk history from the Dashboard (E3) — it only toasts.
+  function stillEditing(projectId: string): boolean {
+    const now = parseStaffLocation(history.getLocation());
+    return now.kind === "edit-project" && now.projectId === projectId;
+  }
+  // One shared pending-departure guard (closingRef, set synchronously before ANY traversal from
+  // close, cancel, save, archive, restore or delete; cleared when the location changes): a
+  // completion that resolves after a departure was requested but before its popstate lands only
+  // toasts — it never traverses a second time and overshoots past the Dashboard.
+  function returnToWorkspace(projectId: string, message?: string) {
+    if (closingRef.current || !stillEditing(projectId)) { if (message) pushToast(message); return; }
+    closingRef.current = true;
+    const workspace = `/projects/${encodeURIComponent(projectId)}`;
+    const prev = readSheetEntryState(window.history.state)?.prev;
+    const below = prev === undefined ? null : parseStaffLocation(prev);
+    setNotice(message ? { path: workspace, message } : null);
+    if (below?.kind === "project" && below.projectId === projectId) history.go(-1);
+    else history.replace(workspace);
+  }
+  function leaveDeletedProject(projectId: string, message: string) {
+    pushToast(message);
+    if (closingRef.current || !stillEditing(projectId)) return;
+    closeProjectSheet();
+  }
+
   const shell: ShellState = {
     user, route, pathname, notice, navigate,
     clearNotice: () => setNotice(null),
     dashboardCalendar, arrivalIntent: currentArrivalIntent, acknowledgeArrivalSignal, syncProjectTab,
+    impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet,
+    returnToWorkspace, leaveDeletedProject,
   };
 
   const routedContent = blocked
@@ -345,21 +443,85 @@ function ShellRoute() {
 
   return (
     <div className={cn("app", impersonating && "app--impersonating", "app--railed")}>
-      <RailedShell navigation={navigation} user={user} principalId={user.id}>{routedContent}</RailedShell>
+      <RailedShell navigation={navigation} user={user} principalId={user.id} shortcutsSuspended={isSheetRoute}>{routedContent}</RailedShell>
     </div>
   );
 }
 
 const rootRoute = createRootRoute({ component: ShellRoute, notFoundComponent: NotAvailable });
 
-// `/` — the dashboard, plus every non-canonical query spelling that lands on the same pathname.
+/**
+ * #366: the pathless layout route that owns `/` and `/projects/$projectId`. It renders the
+ * Dashboard ONCE and, at a Project URL, a `ProjectSheet` around the `<Outlet />` — so a layout
+ * match persists across Dashboard <-> Project and the Dashboard stays mounted, live, under the
+ * sheet. (Sibling leaves would unmount each other.) `/projects/new` and `/projects/$id/edit` stay
+ * root children: full pages, as today (#374 moves edit into the sheet).
+ *
+ * Fixed sibling positions below keep every element's identity across those changes.
+ */
+function DashboardLayer() {
+  const { route, user, dashboardCalendar, impersonating, isSheetRoute, backdropLocation, backdropSource, closeProjectSheet } = useShell();
+  const showDashboard = route.kind === "dashboard" || isSheetRoute;
+
+  // The opener, captured the moment the location goes Dashboard -> sheet: the adapter notifies
+  // synchronously inside the activated link's click, so `document.activeElement` is still that link.
+  const openerRef = useRef<HTMLElement | null>(null);
+  const projectIdRef = useRef<string | null>(null);
+  if (route.kind === "project" || route.kind === "edit-project") projectIdRef.current = route.projectId;
+  useEffect(() => {
+    const adapter = locationStore();
+    let wasSheet = isSheetLocation(adapter.getLocation());
+    return adapter.subscribe(() => {
+      const isSheet = isSheetLocation(adapter.getLocation());
+      if (isSheet && !wasSheet) {
+        const active = document.activeElement;
+        openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+      }
+      wasSheet = isSheet;
+    });
+  }, []);
+  const finalFocus = useCallback((): HTMLElement | true => {
+    const opener = openerRef.current;
+    if (opener?.isConnected) return opener;
+    // Safari does not focus a clicked link: fall back to the opener's row in the Dashboard.
+    const id = projectIdRef.current;
+    const row = id ? document.querySelector<HTMLElement>(`main a[href^="/projects/${id}"]`) : null;
+    return row ?? true;
+  }, []);
+
+  return (
+    <DashboardLocationContext value={backdropSource}>
+      {showDashboard ? <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={dashboardCalendar} /> : null}
+      {showDashboard ? (
+        <ProjectSheet
+          open={isSheetRoute}
+          kind={route.kind === "edit-project" ? "edit" : "project"}
+          sheetKey={isSheetRoute && (route.kind === "project" || route.kind === "edit-project") ? `${route.kind}:${route.projectId}` : "closed"}
+          backdropHref={backdropLocation}
+          onRequestClose={closeProjectSheet}
+          impersonating={impersonating}
+          finalFocus={finalFocus}
+        >
+          {isSheetRoute ? <Outlet /> : null}
+        </ProjectSheet>
+      ) : null}
+      {isSheetRoute ? null : <Outlet />}
+    </DashboardLocationContext>
+  );
+}
+
+const dashboardLayerRoute = createRoute({ getParentRoute: () => rootRoute, id: "dashboard-layer", component: DashboardLayer });
+
+// `/` — the dashboard, plus every non-canonical query spelling that lands on the same pathname. The
+// Dashboard itself now renders in the layer above (it must outlive the Project sheet), so this leaf
+// renders nothing for a real Dashboard location.
 const dashboardRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => dashboardLayerRoute,
   path: "/",
   component: function DashboardLeaf() {
-    const { route, user, dashboardCalendar } = useShell();
+    const { route } = useShell();
     if (route.kind !== "dashboard") return <NotAvailable />;
-    return <Dashboard currentUserId={user.id} role={user.role} authorizationEpoch={user.authorizationEpoch} calendar={dashboardCalendar} />;
+    return null;
   },
 });
 
@@ -374,7 +536,7 @@ const createProjectRoute = createRoute({
 });
 
 const projectRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => dashboardLayerRoute,
   path: "/projects/$projectId",
   component: function ProjectLeaf() {
     const { route, notice, pathname, clearNotice, arrivalIntent, acknowledgeArrivalSignal, syncProjectTab } = useShell();
@@ -394,12 +556,12 @@ const projectRoute = createRoute({
 });
 
 const editProjectRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => dashboardLayerRoute,
   path: "/projects/$projectId/edit",
   component: function EditProjectLeaf() {
-    const { route, navigate } = useShell();
+    const { route, returnToWorkspace, leaveDeletedProject } = useShell();
     if (route.kind !== "edit-project") return <NotAvailable />;
-    return <EditProject key={route.projectId} projectId={route.projectId} onNavigate={navigate} />;
+    return <EditProject key={route.projectId} projectId={route.projectId} onReturnToWorkspace={(message) => returnToWorkspace(route.projectId, message)} onDeleted={(message) => leaveDeletedProject(route.projectId, message)} />;
   },
 });
 
@@ -452,7 +614,8 @@ const notificationPreferencesRoute = createRoute({
 // removed: deleting it changed no test, because the root already renders the same view inside the
 // same chrome. A route that cannot be observed to do anything is decoration, not defence.
 const routeTree = rootRoute.addChildren([
-  dashboardRoute, createProjectRoute, projectRoute, editProjectRoute, adminRoute, noticesRoute, notificationsRoute,
+  dashboardLayerRoute.addChildren([dashboardRoute, projectRoute, editProjectRoute]),
+  createProjectRoute, adminRoute, noticesRoute, notificationsRoute,
   notificationPreferencesRoute,
 ]);
 
@@ -472,7 +635,9 @@ export function createStaffRouter(adapter: ReturnType<typeof locationStore>) {
   // the history sets it instead — a query-only change keeps the scroll position, a new pathname
   // lands at the top. `_scroll` is internal: `app-router-scroll.dom.test.tsx` pins it across upgrades.
   const { history, connect } = createStaffRouterHistory(adapter, {
-    beforeNotify: ({ pathnameChanged }) => { router._scroll.next = pathnameChanged; },
+    // #366: Dashboard <-> Project is a sheet opening or closing over a Dashboard that never
+    // unmounts, so its scroll must survive; every other pathname change still lands at the top.
+    beforeNotify: ({ pathnameChanged, from, to }) => { router._scroll.next = pathnameChanged && !(isDashboardLayerLocation(from) && isDashboardLayerLocation(to)); },
   });
   const router = createRouter({
     routeTree,

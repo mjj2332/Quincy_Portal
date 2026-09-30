@@ -186,6 +186,8 @@ export function checklistSourceFromResponse(response: ProductionCalendarRangeRes
 }
 
 export function checklistAssigneeForResult(source: ChecklistSource, result: ChecklistMutationResult): CalendarPerson | null {
+  // A list-carrying result (an External Editor's is team-filtered) names the viewer-visible first assignee; the legacy scalar is never trusted then.
+  if (result.assignees !== null) return checklistAssigneesForResult(source, result)[0] ?? null;
   if (source.assignee && result.assignee && source.assignee.id === result.assignee.id) return source.assignee;
   return result.assignee;
 }
@@ -212,7 +214,7 @@ export function canonicalChecklistEvent(source: ChecklistSource, result: Checkli
     project: { ...source.project, checklist: { ...source.project.checklist } },
     assignee: checklistAssigneeForResult(source, result),
     assignees: checklistAssigneesForResult(source, result),
-    otherAssigneeCount: source.otherAssigneeCount,
+    otherAssigneeCount: result.otherAssigneeCount ?? source.otherAssigneeCount,
     timing,
     status: { ...source.status, completed: result.done },
     schedule,

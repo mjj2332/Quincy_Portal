@@ -67,7 +67,8 @@ const ProductionGantt = lazy(() => import("../components/ProductionGantt").then(
 // `ProductionEventCalendar.tsx` is the ONLY app file allowed to import
 // `components/reui/event-calendar/`, and this lazy import is that tree's one production entry.
 const ProductionEventCalendar = lazy(() => import("../components/ProductionEventCalendar").then((module) => ({ default: module.ProductionEventCalendar })));
-import { locationStore, parseStaffLocation, staffPathFor } from "../lib/router";
+import { parseStaffLocation, staffPathFor } from "../lib/router";
+import { useDashboardLocationSource } from "../lib/dashboard-location";
 import {
   clearDashboardSearch,
   getDashboardSearchSnapshotForPrincipal,
@@ -234,7 +235,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canPrioritize = can("prioritizeProjects");
   const canViewArchived = can("adminBackend");
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
-  const history = locationStore();
+  // #366: through the location lens — the live store by default, the remembered Dashboard location
+  // while the Project sheet floats over this Dashboard (`lib/dashboard-location.ts`).
+  const history = useDashboardLocationSource();
+  const isBackdrop = useSyncExternalStore(history.subscribe, history.isBackdrop, () => false);
   const currentLocation = useSyncExternalStore(history.subscribe, history.getLocation, () => "/");
   const parsedRoute = useMemo(() => parseStaffLocation(currentLocation), [currentLocation]);
   const currentDashboardRoute = parsedRoute.kind === "dashboard" ? parsedRoute : null;
@@ -1644,7 +1648,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         )}
       </div>
       <div className="sr-only" data-testid="dashboard-live-region" aria-live="polite" aria-atomic="true">{announcement}</div>
-      <ToastViewport testId="dashboard-toast-viewport" toastTestId="dashboard-toast" />
+      {/* #366: exactly one live viewport per route. Under the Project sheet the modal dialog
+          aria-hides this subtree, so a viewport here would paint but never announce — the
+          Workspace's own viewport, inside the sheet, takes over. */}
+      {isBackdrop ? null : <ToastViewport testId="dashboard-toast-viewport" toastTestId="dashboard-toast" />}
     </main>
   );
 }

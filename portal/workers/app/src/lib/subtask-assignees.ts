@@ -5,7 +5,7 @@
  * not-yet-migrated readers, and every write that changes the set appends these statements to the same D1 batch. Each is fenced by the winning audit row, so a lost
  * compare-and-swap writes nothing. There are no triggers (the worker test harness splits migration SQL on `;`).
  */
-import type { CalendarPerson, Role } from "@quincy/shared";
+import type { CalendarPerson, ExternalPersonDto, Role } from "@quincy/shared";
 import { ROLE_LABELS, SUBTASK_MULTI_ASSIGNEE_FLAG } from "@quincy/shared";
 
 /** Order of a Subtask's assignees: the first is the one the legacy column mirrors. */
@@ -30,6 +30,18 @@ export type HydratedAssignee = {
   /** Has a `project_members` row on the Subtask's Project (any role): the visibility rule for externals. */
   onTeam: boolean;
 };
+
+/**
+ * What an External Editor may see of a Subtask's assignees: named only if on the Project's team (`onTeam`), order preserved;
+ * everyone else is counted, never identified.
+ */
+export function externalAssigneeProjection(list: HydratedAssignee[]): { assignees: ExternalPersonDto[]; otherAssigneeCount: number } {
+  const named = list.filter((person) => person.onTeam);
+  return {
+    assignees: named.map((person) => ({ id: person.id, name: person.name, roleLabel: ROLE_LABELS[person.role], isExternal: person.role === "external_editor", active: person.active })),
+    otherAssigneeCount: list.length - named.length,
+  };
+}
 
 /** Whether more than one assignee may be saved (#358). A missing row means off. */
 export async function multiAssigneeEnabled(db: D1Database): Promise<boolean> {

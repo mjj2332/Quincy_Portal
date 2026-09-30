@@ -125,7 +125,7 @@ describe("ToastViewport", () => {
     expect(second.querySelectorAll('[data-testid="toast"]')).toHaveLength(0);
   });
 
-  it("is rendered by exactly Dashboard.tsx, Admin.tsx and ProjectWorkspace.tsx, once each, and nowhere else", () => {
+  it("is rendered by exactly Dashboard.tsx, Admin.tsx, ProjectWorkspace.tsx and ProjectSheet.tsx (edit kind only), once each, and nowhere else", () => {
     const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const counts: Record<string, number> = {};
     const walk = (dir: string) => {
@@ -151,6 +151,7 @@ describe("ToastViewport", () => {
       "screens/Dashboard.tsx": 1,
       "screens/Admin.tsx": 1,
       "screens/ProjectWorkspace.tsx": 1,
+      "components/quincy/ProjectSheet.tsx": 1,
     });
   });
 

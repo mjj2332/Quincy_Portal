@@ -187,14 +187,9 @@ async function resizeTo(width: number) {
 async function click(element: Element) {
   await act(async () => {
     (element as HTMLElement).focus?.();
-    // `detail: 1` matters, not just realism: `InternalLink`'s `shouldInterceptInternalLink`
-    // (`lib/router.ts`) treats `event.detail === 0` as a synthetic/keyboard-issued click and
-    // deliberately does NOT call `preventDefault()` for one, so the SPA push through
-    // `locationStore().push()` never runs — without this, happy-dom instead performs its OWN
-    // real (but asynchronous, and popstate-free) anchor navigation on the unprevented click,
-    // which changes `window.location` by a completely different path than the one under test and
-    // never calls the router's own `notify()`, so anything subscribed to `locationStore()` (like
-    // `RailedShell`'s close-on-location effect) never sees it.
+    // `detail: 1` is realism (a pointer click), not a requirement: since #366
+    // `shouldInterceptInternalLink` (`lib/router.ts`) intercepts keyboard activation
+    // (`detail: 0`) too, so the SPA push through `locationStore().push()` runs either way.
     element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
     await Promise.resolve();
     await Promise.resolve();

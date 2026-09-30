@@ -142,6 +142,8 @@ describe("checklist mutation response domains", () => {
       done: false,
       position: 1024,
       assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true },
+      assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }],
+      otherAssigneeCount: 0,
       assignmentVersion: 2,
       dueDate: "2026-08-20",
       schedule,
@@ -158,9 +160,10 @@ describe("checklist mutation response domains", () => {
     expect(staff.assignees?.[1]).toMatchObject({ name: "Bo", roleLabel: "Admin", active: false });
     const old = decodeChecklistMutationResponse("editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor" }, schedule });
     expect(old.assignees).toBeNull();
-    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, assignmentVersion: 1, dueDate: null, schedule, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
-    // The external item carries no list yet (#368 UI PR): unknown, so a schedule edit keeps the list on screen.
-    expect(external.assignees).toBeNull();
+    const external = decodeChecklistMutationResponse("external_editor", { id: itemId, title: "t", done: false, position: 1, assignee: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, assignees: [{ id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 2, assignmentVersion: 1, dueDate: null, schedule, createdBy: { id: personId, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }, createdAt: "x", updatedAt: "y" });
+    // The external item carries the team-filtered list and the hidden count (#368); the scalar is never the list.
+    expect(external.assignees?.map((person) => person.id)).toEqual([personId]);
+    expect(external.otherAssigneeCount).toBe(2);
   });
 
   it("accepts an additive internal Worker field but rejects a cross-fed internal shape", () => {

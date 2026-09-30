@@ -81,10 +81,28 @@ describe("router scroll reset (#266)", () => {
   it("still lands at the top when the pathname changes", async () => {
     await renderAt("/?view=gantt&stages=raw_review");
     scrollTo.mockReset();
-    await write("push", `/projects/${projectId}`);
+    // #366: `/projects/<id>` is a sheet over the Dashboard, no longer a "new screen" — /admin is.
+    await write("push", "/admin");
     expect(resetsToTop()).toBe(1);
     scrollTo.mockReset();
     await write("push", "/?view=gantt");
+    expect(resetsToTop()).toBe(1);
+  });
+
+  it("#366: opening and closing the Project sheet, and moving between two Projects, never reset the scroll", async () => {
+    const other = "223e4567-e89b-42d3-a456-426614174000";
+    await renderAt("/?view=list");
+    scrollTo.mockReset();
+    await write("push", `/projects/${projectId}`);
+    await write("push", `/projects/${other}`);
+    await write("push", "/?view=list");
+    expect(resetsToTop()).toBe(0);
+  });
+
+  it("#366: leaving the Project sheet for another screen still lands at the top", async () => {
+    await renderAt(`/projects/${projectId}`);
+    scrollTo.mockReset();
+    await write("push", "/admin");
     expect(resetsToTop()).toBe(1);
   });
 

@@ -879,7 +879,8 @@ describe("multi-assignee writes (#368)", () => {
       const item = await createItem({ assigneeIds: [photographerId, adminId] });
       const removed = await externalPatch(item.id, { assignees: { expectedVersion: 1, add: [], remove: [photographerId] } });
       expect(removed.status).toBe(200);
-      expect(Object.keys(await removed.json() as object)).not.toContain("assignees");
+      // Only the hidden admin remains: the external sees no name, an empty list and a count of one.
+      expect(await removed.json()).toMatchObject({ assignee: null, assignees: [], otherAssigneeCount: 1 });
       expect(await relationRows(item.id)).toEqual([{ user_id: adminId, assignment_version: 1 }]);
       // The non-team admin is hidden from an external: removing them is refused and changes nothing.
       const hidden = await externalPatch(item.id, { assignees: { expectedVersion: 2, add: [], remove: [adminId] } });
@@ -904,10 +905,41 @@ describe("multi-assignee writes (#368)", () => {
       const body = await stale.json() as { code: string; currentSubtask: Record<string, unknown> };
       expect(body.code).toBe("subtask_assignment_version_conflict");
       expect(body.currentSubtask).toMatchObject({ id: item.id, assignmentVersion: 1 });
-      expect(body.currentSubtask).not.toHaveProperty("assignees");
+      expect(body.currentSubtask).toMatchObject({ assignee: { id: photographerId }, assignees: [{ id: photographerId }], otherAssigneeCount: 0 });
       const schedule = await externalPatch(item.id, { title: "Renamed", schedule: { expectedVersion: 9, schedule: { state: "range", start: { kind: "date", localCivil: "2026-09-01" }, end: { kind: "date", localCivil: "2026-09-02" } } } });
       expect(schedule.status).toBe(409);
-      expect((await schedule.json() as { currentSubtask: Record<string, unknown> }).currentSubtask).not.toHaveProperty("assignees");
+      expect((await schedule.json() as { currentSubtask: Record<string, unknown> }).currentSubtask).toMatchObject({ assignees: [{ id: photographerId }], otherAssigneeCount: 0 });
+    });
+
+    it("names only team assignees on GET and counts the rest, never leaking a hidden id or name", async () => {
+      const item = await createItem({ assigneeIds: [photographerId, adminId] });
+      const adminName = (await database.DB.prepare("SELECT name FROM user WHERE id = ?").bind(adminId).first<{ name: string }>())!.name;
+      const list = await request(base(), "subtasks-external-token");
+      expect(list.status).toBe(200);
+      const text = await list.text();
+      const found = (JSON.parse(text) as { subtasks: Array<Record<string, unknown> & { id: string }> }).subtasks.find((row) => row.id === item.id)!;
+      expect(found).toMatchObject({ assignees: [{ id: photographerId }], otherAssigneeCount: 1, assignee: { id: photographerId } });
+      const own = JSON.stringify(found);
+      expect(own).not.toContain(adminId); expect(own).not.toContain(adminName);
+      const staff = await (await request(base(), "subtasks-editor-token")).json() as { subtasks: Array<{ id: string; assignees: Array<{ id: string }> }> };
+      expect(staff.subtasks.find((row) => row.id === item.id)!.assignees.map((person) => person.id).sort()).toEqual([adminId, photographerId].sort());
+    });
+
+    it("a sole non-team assignee is not named: empty list, one other, no assignee", async () => {
+      const item = await createItem({ assigneeIds: [adminId] });
+      const list = await (await request(base(), "subtasks-external-token")).json() as { subtasks: Array<Record<string, unknown> & { id: string }> };
+      const found = list.subtasks.find((row) => row.id === item.id)!;
+      expect(found).toMatchObject({ assignees: [], otherAssigneeCount: 1, assignee: null });
+      expect(JSON.stringify(found)).not.toContain(adminId);
+    });
+
+    it("an external PATCH success uses the same projection", async () => {
+      const item = await createItem({ assigneeIds: [adminId] });
+      const response = await externalPatch(item.id, { assignees: { expectedVersion: 1, add: [photographerId], remove: [] } });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(JSON.parse(text)).toMatchObject({ assignees: [{ id: photographerId }], otherAssigneeCount: 1, assignee: { id: photographerId } });
+      expect(text).not.toContain(adminId);
     });
   });
 

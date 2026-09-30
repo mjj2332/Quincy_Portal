@@ -227,3 +227,22 @@ describe("staff router history — lifecycle", () => {
     expect(seen).toEqual(["/admin"]);
   });
 });
+
+describe("staff router history — beforeNotify (#366)", () => {
+  it("hands the full previous and next raw locations alongside pathnameChanged", () => {
+    const browser = fakeBrowser("/?view=list");
+    const adapter = createHistoryAdapter(browser.source);
+    const changes: Array<{ pathnameChanged: boolean; from: string; to: string }> = [];
+    const { connect } = createStaffRouterHistory(adapter, { beforeNotify: (change) => { changes.push(change); } });
+    const disconnect = connect();
+    adapter.push("/?view=list&q=smith");
+    adapter.push(`/projects/${projectId}`);
+    browser.travelTo("/?view=list&q=smith");
+    disconnect();
+    expect(changes).toEqual([
+      { pathnameChanged: false, from: "/?view=list", to: "/?view=list&q=smith" },
+      { pathnameChanged: true, from: "/?view=list&q=smith", to: `/projects/${projectId}` },
+      { pathnameChanged: true, from: `/projects/${projectId}`, to: "/?view=list&q=smith" },
+    ]);
+  });
+});

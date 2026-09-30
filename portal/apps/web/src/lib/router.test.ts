@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHistoryAdapter, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, shouldInterceptInternalLink, stripDashboardSearchFromLocation } from "./router";
+import { createHistoryAdapter, isDashboardLayerLocation, isSheetLocation, nextPushState, readSheetEntryState, parseStaffLocation, parseStaffPathname, projectNotificationRoute, safeStaffDestination, staffPathFor, shouldInterceptInternalLink, stripDashboardSearchFromLocation } from "./router";
 import { beginSignIn, consumeSignInDestinationFrom } from "./auth";
 
 const projectId = "123e4567-e89b-42d3-a456-426614174000";
@@ -204,7 +204,9 @@ describe("internal-link interception", () => {
 
   it("only intercepts unmodified primary mouse navigation to a staff route", () => {
     expect(shouldInterceptInternalLink(click(), "https://portal.test")).toBe(true);
-    expect(shouldInterceptInternalLink(click({ detail: 0 }), "https://portal.test")).toBe(false);
+    expect(shouldInterceptInternalLink(click({ detail: 0 }), "https://portal.test")).toBe(true);
+    expect(shouldInterceptInternalLink(click({ detail: 0, ctrlKey: true }), "https://portal.test")).toBe(false);
+    expect(shouldInterceptInternalLink(click({ detail: 0, shiftKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ metaKey: true }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ button: 1 }), "https://portal.test")).toBe(false);
     expect(shouldInterceptInternalLink(click({ currentTarget: { href: `https://portal.test/projects/${projectId}`, target: "_blank", download: "" } }), "https://portal.test")).toBe(false);
@@ -250,5 +252,100 @@ describe("one-time OAuth return fallback", () => {
     const saved = memoryStorage();
     await expect(beginSignIn(`/projects/${projectId}`, { signIn: { social: async () => ({ error: { message: "Nope" } }) } }, saved)).rejects.toThrow("Nope");
     expect(saved.value()).toBeNull();
+  });
+});
+
+describe("Project sheet entry state (#366)", () => {
+  const project = `/projects/${projectId}`;
+  const otherProject = "/projects/223e4567-e89b-42d3-a456-426614174000";
+  const valid = (overrides: Record<string, unknown> = {}) => ({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 1, prev: "/?view=kanban&q=smith", ...overrides } });
+
+  it("reads a valid state and rejects every tampered or malformed shape", () => {
+    expect(readSheetEntryState(valid())).toEqual({ v: 1, backdrop: "/?view=kanban&q=smith", depth: 1, prev: "/?view=kanban&q=smith" });
+    for (const bad of [
+      null, undefined, "x", 3, {}, { quincySheet: null }, { quincySheet: "x" },
+      valid({ v: 2 }), valid({ depth: 0 }), valid({ depth: -1 }), valid({ depth: 1.5 }), valid({ depth: "1" }),
+      valid({ backdrop: "/admin" }), valid({ backdrop: "//evil" }), valid({ backdrop: "https://evil.test/" }), valid({ backdrop: project }), valid({ backdrop: 5 }),
+      valid({ prev: "//evil" }), valid({ prev: 7 }),
+    ]) expect(readSheetEntryState(bad)).toBeNull();
+  });
+
+  it("classifies sheet and dashboard-layer locations", () => {
+    expect(isSheetLocation(project)).toBe(true);
+    expect(isSheetLocation(`${project}?tab=raw`)).toBe(true);
+    expect(isSheetLocation("/")).toBe(false);
+    expect(isSheetLocation(`${project}/edit`)).toBe(true);
+    expect(isSheetLocation("/projects/new")).toBe(false);
+    expect(isDashboardLayerLocation("/?view=list")).toBe(true);
+    expect(isDashboardLayerLocation(project)).toBe(true);
+    expect(isDashboardLayerLocation("/admin")).toBe(false);
+    expect(isDashboardLayerLocation(`${project}/edit`)).toBe(true);
+    expect(isDashboardLayerLocation("/projects/new")).toBe(false);
+  });
+
+  it("computes the state a push writes", () => {
+    // dashboard -> sheet
+    expect(nextPushState("/?view=list&q=a", null, project)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=list&q=a", depth: 1, prev: "/?view=list&q=a" } });
+    // sheet (with state) -> sheet
+    expect(nextPushState(project, valid(), otherProject)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 2, prev: project } });
+    // project -> edit (#374): depth + 1, prev is the project URL; and edit with no state stays stateless
+    expect(nextPushState(project, valid(), `${project}/edit`)).toEqual({ quincySheet: { v: 1, backdrop: "/?view=kanban&q=smith", depth: 2, prev: project } });
+    expect(nextPushState(project, null, `${project}/edit`)).toBeNull();
+    // cold sheet (no state) -> sheet: nothing provable
+    expect(nextPushState(project, null, otherProject)).toBeNull();
+    expect(nextPushState(project, valid({ depth: 0 }), otherProject)).toBeNull();
+    // destination not a sheet
+    expect(nextPushState("/", null, "/admin")).toBeNull();
+    expect(nextPushState(project, valid(), "/")).toBeNull();
+    // current is neither dashboard nor sheet
+    expect(nextPushState("/admin", null, project)).toBeNull();
+  });
+
+  function fakeHistory(initialState: unknown, initial = "/") {
+    let pathname = initial.split("?")[0]!; let search = initial.includes("?") ? `?${initial.split("?")[1]}` : "";
+    let state = initialState;
+    const writes: Array<{ kind: string; state: unknown; path: string }> = [];
+    const gos: number[] = [];
+    const set = (kind: string, s: unknown, path: unknown) => {
+      const [a, b] = String(path).split("?"); pathname = a!; search = b ? `?${b}` : ""; state = s; writes.push({ kind, state: s, path: String(path) });
+    };
+    const adapter = createHistoryAdapter({
+      location: { get pathname() { return pathname; }, get search() { return search; } } as Location,
+      history: {
+        get state() { return state; },
+        pushState: (s: unknown, _t: unknown, path: unknown) => set("push", s, path),
+        replaceState: (s: unknown, _t: unknown, path: unknown) => set("replace", s, path),
+        go: (n: number) => { gos.push(n); },
+      } as unknown as History,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    return { adapter, writes, gos };
+  }
+
+  it("push writes the sheet state; replace keeps it only sheet-to-sheet; go delegates", () => {
+    const { adapter, writes, gos } = fakeHistory(null, "/?view=list");
+    adapter.push(project);
+    expect(writes[0]).toEqual({ kind: "push", path: project, state: { quincySheet: { v: 1, backdrop: "/?view=list", depth: 1, prev: "/?view=list" } } });
+    // a tab write (replace, sheet -> sheet) keeps the bookkeeping
+    adapter.replace(`${project}?tab=raw`);
+    expect(writes[1]!.state).toEqual(writes[0]!.state);
+    // replace to a non-sheet location drops it
+    adapter.replace("/");
+    expect(writes[2]!.state).toBeNull();
+    // replace from a non-sheet location into a sheet does not conjure state
+    adapter.replace(project);
+    expect(writes[3]!.state).toBeNull();
+    adapter.go(-2);
+    expect(gos).toEqual([-2]);
+  });
+
+  it("stacked sheet pushes count depth; a non-sheet push carries no state", () => {
+    const { adapter, writes } = fakeHistory(null, "/");
+    adapter.push(project);
+    adapter.push("/projects/223e4567-e89b-42d3-a456-426614174000");
+    expect(writes[1]!.state).toEqual({ quincySheet: { v: 1, backdrop: "/", depth: 2, prev: project } });
+    adapter.push("/admin");
+    expect(writes[2]!.state).toBeNull();
   });
 });

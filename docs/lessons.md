@@ -4368,6 +4368,8 @@ remove the legacy readers) still applies.
 - **Also found:** `InternalLink` only intercepts a pointer click (`event.detail !== 0`); a
   programmatic `.click()` in a DOM test falls through to happy-dom's own navigation, which changes
   `location` without notifying `locationStore`. Dispatch a `MouseEvent` with `detail: 1`.
+  **#366: keyboard activation is intercepted too** (the `detail === 0` exclusion is gone); `detail: 1`
+  in tests is now realism, not a requirement. Ctrl/Meta/Shift/Alt+Enter still open natively.
 - **Also found:** a ref callback created fresh on every render, handed to a Base UI `TabsTrigger`,
   loops (Base UI re-registers the trigger with a state update on each ref change). Keep per-item
   ref callbacks stable (`ProjectHeader.tsx`'s `tabRefCallbacks`).
@@ -4468,3 +4470,24 @@ remove the legacy readers) still applies.
   applied and the user silently loses it. The client refetches from the conflict body instead. A
   translated legacy `assigneeId` write keeps the old 200 no-op (an open old tab cannot act on a
   conflict); test in `project-subtask-command.test.ts` by gating both `batch` calls on a barrier.
+
+## The Project sheet: four traps (#366, 2026-09-30)
+
+- **A nested `Dialog.Root` renders no backdrop unless `forceRender` is set.** `RailedShell` wraps the
+  whole content column in its own `<Sheet>` Root, so the Project sheet's Root is nested, and
+  `dialog/backdrop/DialogBackdrop.js` is `enabled: forceRender || !nested`. No scrim means an inset
+  press does nothing. `ProjectSheet` passes `overlayProps={{ forceRender: true }}`; the rail sheet is
+  not nested and needs nothing.
+- **A body portal drops the shell's custom properties.** A modal Base UI portal renders into `body`,
+  outside `.app` and `[data-rail-mode]`, so `--shell-header-height` is undefined there, and an
+  undefined `top: var(--shell-header-height)` makes `.worktools` stop sticking. `.project-sheet__body`
+  re-declares it (as `0px`) and `--toast-inset-inline-start` in `app.css`.
+- **Base UI's dialog Esc `stopPropagation()`s on `document`, which starves a `window` keydown
+  listener (the Lightbox), and it calls `onOpenChange` more than once per Escape.**
+  `details.allowPropagation()` (with `details.cancel()`) is the opt-out. Decide "is an inner layer
+  open?" at window-capture, before any handler runs, and READ that snapshot in `onOpenChange` — do
+  not consume it: the second call would then close the sheet.
+- **A selector like `[role="dialog"] a[href^="/projects/<id>"]` now also matches inside the Project
+  sheet** (it is itself a `role="dialog"` holding the `/edit` link). Address rows by their own test id.
+- **Keyboard activation of an in-app link is intercepted too** (see the entry above on `InternalLink`
+  and `detail`); `detail: 1` in a DOM test is realism, not a requirement.
