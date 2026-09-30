@@ -473,7 +473,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   );
   return <div className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     {field ? <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
-      <InputGroupAddon align="block-start" role="toolbar" aria-label="Formatting" className="flex-wrap max-[721px]:flex-nowrap max-[721px]:overflow-x-auto max-[721px]:items-center gap-[var(--space-2)] p-[var(--space-1)] cursor-default">{toolbarGroups}</InputGroupAddon>
+      <InputGroupAddon align="block-start" role="toolbar" aria-label="Formatting" className="flex-wrap max-[721px]:flex-nowrap max-[721px]:overflow-x-auto max-[721px]:[scrollbar-width:none] max-[721px]:[mask-image:linear-gradient(to_right,black_85%,transparent)] max-[721px]:items-center gap-[var(--space-2)] p-[var(--space-1)] cursor-default">{toolbarGroups}</InputGroupAddon>
       {modal}
       <EditorContent editor={editor} className="w-full min-w-0" />
     </InputGroup> : <>

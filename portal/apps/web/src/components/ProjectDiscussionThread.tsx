@@ -293,7 +293,7 @@ export function ProjectDiscussionThread({
     }
   }
 
-  const composer = <form data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+  const composer = <form data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)] mb-[var(--space-5)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
     <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
       <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
