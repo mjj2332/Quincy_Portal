@@ -33,7 +33,7 @@ function CoverMedia({
   onFailedChange?: (failed: boolean) => void;
 }) {
   if (project.coverAssetId) {
-    return <LazyImage className="size-full object-cover" preload="background" assetId={project.coverAssetId} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
+    return <LazyImage className="size-full object-cover" src={`/media/asset/${encodeURIComponent(project.coverAssetId)}/thumb`} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
   }
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
   return <div className="project-cover-placeholder size-full" aria-hidden="true">{content}</div>;
