@@ -69,16 +69,19 @@ vi.mock("./screens/Admin", () => ({ Admin: () => <main data-testid="admin-stub">
 // (so a Save is visible after the return remounts it), focuses its tab trigger on an arrival (as the
 // real Workspace's #337 does) and turns the shell `notice` into a toast (as the real one does).
 vi.mock("./screens/ProjectWorkspace", async () => {
-  const { useEffect, useRef, useState } = await import("react");
+  const { useEffect, useRef } = await import("react");
   const { ToastViewport } = await import("./components/quincy/ToastViewport");
   const { InternalLink } = await import("./components/InternalLink");
-  const { apiGet } = await import("./lib/api");
+  const { useQuery } = await import("@tanstack/react-query");
+  const { projectDetailQueryOptions } = await import("./lib/project-data");
   const { pushToast } = await import("./lib/toast-store");
   return {
     ProjectWorkspace: ({ projectId, arrivalTab, arrivalSignal, notice, onNoticeShown }: { projectId: string; arrivalTab?: string; arrivalSignal?: number; notice?: string | null; onNoticeShown?: () => void }) => {
-      const [street, setStreet] = useState("");
+      // Reads through the REAL project-detail query (the key the real ProjectWorkspace and the edit
+      // form's setQueryData publish to), never the mocked server directly (#374).
+      const detail = useQuery({ ...projectDetailQueryOptions(projectId), staleTime: 60_000 });
+      const street = (detail.data as { street?: string } | undefined)?.street ?? "";
       const trigger = useRef<HTMLButtonElement | null>(null);
-      useEffect(() => { void apiGet<{ street: string }>(`/api/projects/${projectId}`).then((response) => setStreet(response.street)).catch(() => undefined); }, [projectId]);
       useEffect(() => { if (arrivalTab !== undefined) trigger.current?.focus(); }, [arrivalTab, arrivalSignal]);
       useEffect(() => { if (notice) { pushToast(notice); onNoticeShown?.(); } }, [notice, onNoticeShown]);
       return (
@@ -106,6 +109,9 @@ if (!Element.prototype.getAnimations) {
 
 let root: Root | null = null;
 
+/** When set, the project-detail GET never answers, so a street shown after Save can only have come
+ *  from the edit form's query-cache publication (the invalidation refetch is stuck). */
+const detailReadsHang = { value: false };
 const PROJECT_ID = "10000000-0000-4000-8000-000000000001";
 const PROJECT_PATH = `/projects/${PROJECT_ID}`;
 const EDIT_PATH = `${PROJECT_PATH}/edit`;
@@ -210,6 +216,7 @@ beforeEach(async () => {
   setViewportWidth(1024);
   apiGetMock.mockReset();
   apiPatchMock.mockReset();
+  detailReadsHang.value = false;
   serverProject.value = freshServerProject();
   apiPatchMock.mockImplementation((_path, body) => {
     serverProject.value = { ...serverProject.value!, ...(body as Record<string, unknown>) };
@@ -217,7 +224,7 @@ beforeEach(async () => {
   });
   calendarEventFixture.enabled = false;
   apiGetMock.mockImplementation((path: string) => {
-    if (path === `/api/projects/${PROJECT_ID}`) return Promise.resolve({ ...serverProject.value });
+    if (path === `/api/projects/${PROJECT_ID}`) return detailReadsHang.value ? new Promise(() => undefined) : Promise.resolve({ ...serverProject.value });
     if (path.startsWith("/api/notifications")) return Promise.resolve({ notifications: [], unreadCount: 0 });
     if (path.startsWith("/api/stages")) return Promise.resolve({ stages: STAGES });
     if (path.startsWith("/api/production-calendar")) return Promise.resolve(calendarRangeResponse(path));
@@ -637,6 +644,7 @@ describe("Save and Cancel return by traversal (#374)", () => {
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     const push = vi.spyOn(window.history, "pushState");
     await editStreet("2 Changed Street");
+    detailReadsHang.value = true;
     await submitForm();
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
     expect(apiPatchMock.mock.calls[0]![1]).toMatchObject({ street: "2 Changed Street" });
@@ -776,6 +784,48 @@ describe("a save that completes after the sheet was closed (#374, E3)", () => {
     expect(currentUrl()).toBe(from);
     const inDashboard = host.querySelector('[data-testid="dashboard-toast-viewport"]');
     expect(inDashboard?.textContent).toContain("Shoot details saved.");
+  });
+});
+
+describe("a completion that lands after a departure was requested never traverses twice (#374)", () => {
+  async function pendingSave() {
+    const opened = await openEditFromList();
+    let resolvePatch!: (value: unknown) => void;
+    apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { resolvePatch = resolve; }));
+    await editStreet("4 Racing Street");
+    await submitForm();
+    expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    return { ...opened, finishSave: async () => { await act(async () => { resolvePatch({ ...serverProject.value, street: "4 Racing Street" }); await Promise.resolve(); await Promise.resolve(); }); await settle(); } };
+  }
+
+  it("Close, then the PATCH resolves BEFORE popstate: exactly one traversal (go(-2)), and the toast", async () => {
+    const { host, from, finishSave } = await pendingSave();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    await click(document.querySelector('[data-testid="project-sheet-close"]')!);
+    await finishSave();
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(-2);
+    expect(back).not.toHaveBeenCalled();
+    await traverseTo(from, null);
+    expect(sheet()).toBeNull();
+    expect(host.querySelector('[data-testid="dashboard-toast-viewport"]')?.textContent).toContain("Shoot details saved.");
+  });
+
+  it("Cancel, then the PATCH resolves BEFORE popstate: exactly one traversal (go(-1)), and the toast", async () => {
+    const { from, finishSave } = await pendingSave();
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    await click(cancelLink());
+    await finishSave();
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledWith(-1);
+    expect(back).not.toHaveBeenCalled();
+    // The late save only toasts (the sheet's viewport is still mounted until the traversal lands).
+    expect(sheet()!.textContent).toContain("Shoot details saved.");
+    await traverseTo(PROJECT_PATH, { quincySheet: { v: 1, backdrop: from, depth: 1, prev: from } });
+    expect(editForm()).toBeNull();
+    expect(go).toHaveBeenCalledTimes(1);
   });
 });
 

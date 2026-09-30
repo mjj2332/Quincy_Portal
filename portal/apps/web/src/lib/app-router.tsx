@@ -409,8 +409,13 @@ function ShellRoute() {
     const now = parseStaffLocation(history.getLocation());
     return now.kind === "edit-project" && now.projectId === projectId;
   }
+  // One shared pending-departure guard (closingRef, set synchronously before ANY traversal from
+  // close, cancel, save, archive, restore or delete; cleared when the location changes): a
+  // completion that resolves after a departure was requested but before its popstate lands only
+  // toasts — it never traverses a second time and overshoots past the Dashboard.
   function returnToWorkspace(projectId: string, message?: string) {
-    if (!stillEditing(projectId)) { if (message) pushToast(message); return; }
+    if (closingRef.current || !stillEditing(projectId)) { if (message) pushToast(message); return; }
+    closingRef.current = true;
     const workspace = `/projects/${encodeURIComponent(projectId)}`;
     const prev = readSheetEntryState(window.history.state)?.prev;
     const below = prev === undefined ? null : parseStaffLocation(prev);
@@ -419,8 +424,8 @@ function ShellRoute() {
     else history.replace(workspace);
   }
   function leaveDeletedProject(projectId: string, message: string) {
-    if (!stillEditing(projectId)) { pushToast(message); return; }
     pushToast(message);
+    if (closingRef.current || !stillEditing(projectId)) return;
     closeProjectSheet();
   }
 
