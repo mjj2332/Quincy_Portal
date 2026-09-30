@@ -14,6 +14,7 @@ import { enqueueAutoHdrScaffold } from "../autohdr/scaffold";
 import { notifyProject } from "../notifications";
 import { requireBoardSchemaReady } from "../lib/board-schema";
 import { commitAutomaticStage } from "../lib/automatic-stage";
+import { enqueueEditorReconcile } from "../editor-folders/queue";
 import { getEditorFolderMapping, type EditorFolderMapping, EDITOR_MAPPING_NOT_MOVING_SQL } from "../editor-folders/mapping";
 
 // Each downloaded file costs ~9-10 subrequests (2 Dropbox content calls, an R2 put, a
@@ -564,6 +565,11 @@ export async function syncProjectRawFolder(
           alreadyAtDestination: { allowed: true, effect: { kind: "none" } },
         legacyWorkflowNotification: "raw_ready",
       });
+      // The Shoot date fill is a date change like any other: the Editor folder tree follows the new date.
+      if (outcome.kind === "winner" && outcome.shootDateFilled) {
+        await enqueueEditorReconcile(env, projectId).catch((error) =>
+          console.error("Editor reconcile enqueue after Shoot date fill failed", { projectId, error }));
+      }
       if (outcome.kind === "winner" && outcome.finalizer.legacyWorkflowNotification === "raw_ready") {
         try {
           await notifyProject(env, projectId, "raw_ready");

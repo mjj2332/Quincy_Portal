@@ -7,6 +7,7 @@ import { hasProjectAccess } from "../middleware/capability";
 import { saveProjectDeadlineSchedule, ProjectDeadlineError } from "../lib/project-deadline";
 import { jsonInput } from "./helpers";
 import { publishOutboxDetached } from "../lib/server-timing";
+import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 
 const requestSchema = z.union([
   z.object({ expectedVersion: z.number().int().nonnegative(), deadline: z.null() }).strict(),
@@ -31,8 +32,10 @@ projectDeadlineRoutes.put("/projects/:id/deadline", terminalRoute("/projects/:id
   if (request instanceof Response) return request;
   try {
     const result = await saveProjectDeadlineSchedule(c.env.DB, { projectId, principal, request });
-    if (result.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.publicationIds));
-    return c.json(result);
+    const { shootDateFilled, ...body } = result;
+    if (body.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, body.publicationIds));
+    if (shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, projectId));
+    return c.json(body);
   } catch (error) {
     if (!(error instanceof ProjectDeadlineError)) throw error;
     return c.json({ error: error.message, code: error.code, ...(error.details ?? {}) }, error.status);

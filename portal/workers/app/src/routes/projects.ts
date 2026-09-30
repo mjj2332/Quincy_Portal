@@ -27,6 +27,7 @@ import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/p
 import { chunked, coverMaps } from "../lib/project-covers";
 import { matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
 import { publishOutboxDetached } from "../lib/server-timing";
+import { queueProjectShootDateFollowUps } from "../lib/project-shoot-date";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -615,7 +616,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
-  if (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(id).catch((error) => console.error("Editor scaffold trigger failed", { projectId: id, error })));
+  c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, id));
   return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
 }));
 
@@ -1216,6 +1217,7 @@ const stageHandler = async (c: Context<AppEnv>) => {
   const result = await moveProjectStage({ env: c.env, principal: c.get("user"), projectId: id, request: parsed.data as MoveProjectStageRequest });
   if (result.kind === "moved") {
     if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
+    if (result.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, id));
     return c.json(result.response);
   }
   if (result.kind === "no_change") return c.json(result.response);
@@ -1233,7 +1235,10 @@ const stageHandler = async (c: Context<AppEnv>) => {
     },
     current: result.current,
   }, 409);
-  if (result.kind === "conflict") return c.json({ error: "Project stage changed; reload and try again.", code: "project_stage_conflict", current: result.current }, 409);
+  if (result.kind === "conflict") {
+    if (result.shootDateFilled) c.executionCtx.waitUntil(queueProjectShootDateFollowUps(c.env, id));
+    return c.json({ error: "Project stage changed; reload and try again.", code: "project_stage_conflict", current: result.current }, 409);
+  }
   if (result.kind === "disabled") return boardContractDisabled(c);
   if (result.kind === "schema_maintenance") return boardSchemaMaintenance(c);
   return c.json({ error: "Stage move failed" }, 500);

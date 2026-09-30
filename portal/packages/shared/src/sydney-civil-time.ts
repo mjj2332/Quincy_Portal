@@ -72,6 +72,22 @@ export function sydneyCivilParts(date: Date): SydneyCivilParts {
   return { year: Number(values.year), month: Number(values.month), day: Number(values.day), hour: Number(values.hour), minute: Number(values.minute) };
 }
 
+/**
+ * The Australia/Sydney calendar day (`YYYY-MM-DD`) of an instant. The one rule behind the
+ * Shoot date fill (stage moves and Deadline saves) and the hourly Awaiting RAW reconcile, so the
+ * server and the background worker never disagree about which day "today" is.
+ */
+export function sydneyBusinessDate(instant: Date | number): string {
+  const values = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SYDNEY_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const parts = new Map(values.map((part) => [part.type, part.value]));
+  return `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}`;
+}
+
 function offsetAt(epochMs: number): number {
   const projected = partsFor(new Date(epochMs));
   const projectedEpoch = epochFromCivil(Number(projected.year), Number(projected.month), Number(projected.day), Number(projected.hour), Number(projected.minute));
