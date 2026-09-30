@@ -59,7 +59,7 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenC
         );
       })}
       {(overflow > 0 || hiddenCount > 0) && (
-        <AvatarGroupCount role="img" aria-label={countLabel} className={cn(avatarClassName, hiddenCount > 0 && "w-auto group-has-data-[size=sm]/avatar-group:w-auto min-w-6 px-[var(--space-2)] whitespace-nowrap text-xs")}>
+        <AvatarGroupCount role="img" aria-label={countLabel} className={cn(avatarClassName, hiddenCount > 0 && "w-auto group-has-data-[size=sm]/avatar-group:w-auto min-w-6 px-[var(--space-2)] whitespace-nowrap", hiddenCount > 0 && !avatarClassName && "text-xs")}>
           <span aria-hidden="true">{hiddenCount > 0 ? `+${overflow + hiddenCount} others` : `+${overflow}`}</span>
         </AvatarGroupCount>
       )}

@@ -115,7 +115,9 @@ const CALENDAR_VIEWS = ["month", "week", "day", "days", "agenda"] as const;
 const TIME_GRID_SUBVIEWS = new Set(["week", "day", "days"]);
 const OVERLAP = "Overlaps another task";
 // A denser AvatarStack for the chip: 16px avatars (the size the single initials avatar had), 2xs initials and `+N`.
-const CHIP_AVATAR = "size-4 data-[size=sm]:size-4 group-has-data-[size=sm]/avatar-group:size-4 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)] text-[length:var(--text-2xs)]";
+const CHIP_AVATAR = "size-4 data-[size=sm]:size-4 group-has-data-[size=sm]/avatar-group:size-4 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)] text-[length:var(--text-2xs)] ring-1 ring-[var(--bg-surface)]";
+// Chip density: 2px overlap, 1px ring in the chip's surface colour (the group default is a 2px page-cream ring).
+const CHIP_STACK = "shrink-0 -space-x-0.5 *:data-[slot=avatar]:ring-1 *:data-[slot=avatar]:ring-[var(--bg-surface)]";
 
 type PendingRange = { eventId: string; start: Date; end: Date; allDay: boolean };
 
@@ -152,7 +154,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   const overlap = dto?.kind === "checklist" && dto.status.sameAssigneeOverlap === true;
   return (
     // `data-event-id` is the controller's focus-return hook (it focuses the vendor chip button around it).
-    <span className="flex w-full min-w-0 items-center gap-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
+    <span className="flex w-full min-w-0 items-center gap-[var(--space-1)] pe-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {overlap && <span className="sr-only">{OVERLAP}</span>}
       {assignees.length + otherAssigneeCount > 0 && (
@@ -162,7 +164,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
           limit={3}
           personNoun="Assignee"
           emptyLabel="No assignee"
-          className="shrink-0 -space-x-1"
+          className={CHIP_STACK}
           avatarClassName={CHIP_AVATAR}
         />
       )}

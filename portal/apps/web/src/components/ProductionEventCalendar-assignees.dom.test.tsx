@@ -57,4 +57,15 @@ describe("ProductionEventCalendar assignee stack", () => {
     expect(chips()).toHaveLength(1);
     expect(avatars(chips()[0]!)).toHaveLength(0);
   });
+  it("keeps every avatar's initials in the DOM and folds overflow and hidden people into one labelled count", async () => {
+    // Density (2px overlap, 1px ring, 2xs text) is class-level and verified in the browser pass, not asserted here.
+    const admin = oneDayEvent(dated("2026-08-12"), { assignees: ["Ada Lovelace", "Bo Peep", "Cy Twombly", "Di Prince"].map(person), otherAssigneeCount: 1 });
+    const event = { ...admin, project: { ...admin.project, stageKey: "editing" } } as CalendarEventDto;
+    await mount([event], "external_editor");
+    const nodes = avatars(chips()[0]!);
+    expect(nodes.map((node) => node.getAttribute("aria-label"))).toEqual(["Ada Lovelace", "Bo Peep", "2 more Assignees and 1 other not shown"]);
+    expect(nodes[0]!.textContent).toBe("AL");
+    expect(nodes[1]!.textContent).toBe("BP");
+    expect(nodes[2]!.textContent).toBe("+3 others");
+  });
 });
