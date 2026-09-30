@@ -3,7 +3,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { buildProjectActivityStatements, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, computeInsertPosition, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import { externalCollectionLinkListResponseSchema, externalCollectionLinkSchema, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
+import { externalCollectionLinkListResponseSchema, externalCollectionLinkSchema, projectActivityDeepLink, roleHasCapability, type CollectionKind, type ProjectActivityIntent } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess } from "../middleware/capability";
@@ -12,6 +12,7 @@ import { newId, safeFilename } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign } from "../lib/r2s3";
 import { jsonInput } from "./helpers";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
+import { publishOutboxDetached } from "../lib/server-timing";
 
 const collectionKinds = ["video", "floorplan", "copy"] as const;
 const fileInput = z.object({ filename: z.string().trim().min(1).max(255), bytes: z.number().int().positive(), contentType: z.string() });
@@ -204,7 +205,7 @@ collectionsRoutes.post("/projects/:id/links", terminalRoute("/projects/:id/links
   if (!saved) return c.json({ error: "Could not save collection link" }, 409);
   if (activityBundle && ((results[0]?.results?.length ?? 0) === 1)) {
     const publicationIds = ((results[3 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   return c.json({ id: saved.id, url: saved.url, label: saved.label, source: saved.source, position: saved.position, createdAt: saved.createdAt }, saved.id === id ? 201 : 200);
 }));
@@ -252,7 +253,7 @@ collectionsRoutes.patch("/projects/:id/links/:linkId", terminalRoute("/projects/
   }
   if ((results[0]?.meta.changes ?? 0) > 0) {
     const publicationIds = ((results[2 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
     return c.json({ id: link.id, url: data.url, label: updatedLabel, source: "manual", position: link.position, createdAt: link.createdAt });
   }
 
@@ -316,7 +317,7 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", terminalRoute("/pr
       return c.json({ error: "Link order changed; reload and try again" }, 409);
     }
     const publicationIds = ((results[2 + reorderActivityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
     return c.json({ position: (desired.findIndex((item) => item.id === linkId) + 1) * 1024 });
   }
 
@@ -338,7 +339,7 @@ collectionsRoutes.post("/projects/:id/links/:linkId/reorder", terminalRoute("/pr
     return c.json({ error: "Link order changed; reload and try again" }, 409);
   }
   const publicationIds = ((results[2 + reorderActivityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
-  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json({ position });
 }));
 
@@ -365,7 +366,7 @@ collectionsRoutes.delete("/projects/:id/links/:linkId", terminalRoute("/projects
   if (!((results[0]?.results?.length ?? 0) > 0)) return c.json({ error: "Link not found" }, 404);
   if (activityBundle) {
     const publicationIds = ((results[3 + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   return c.body(null, 204);
 }));
@@ -523,7 +524,7 @@ collectionsRoutes.post("/projects/:id/documents/complete", terminalRoute("/proje
   // broad IDs returned by the same batch; no per-PDF/preview event is emitted.
   const activityStart = statements.length - activityBundle.statements.length;
   const publicationIds = ((completionResults![activityStart + activityBundle.broadOutboxIndex]?.results ?? []) as Array<{ id?: string }>).flatMap((row) => row.id ? [row.id] : []);
-  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json(responseFor(completed), 201);
 }));
 

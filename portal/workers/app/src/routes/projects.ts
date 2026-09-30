@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildDeadlineSuppressionBundle, buildProjectActivityStatements, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { capDashboardSearchText, COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, publishNotificationOutbox, roleHasCapability, stripUnsafeText, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { capDashboardSearchText, COLLECTION_KINDS, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchemaForProject, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -26,6 +26,7 @@ import { compareBoardOrder, moveProjectBoardOrder } from "../lib/project-board-o
 import { classifyProjectArchiveLoser, type ProjectArchiveSource } from "../lib/project-archive";
 import { chunked, coverMaps } from "../lib/project-covers";
 import { matchingProjectIds, normalizeProjectSearch } from "../lib/project-search";
+import { publishOutboxDetached } from "../lib/server-timing";
 
 const nullable = <T extends z.ZodTypeAny>(item: T) => item.nullable().optional();
 const baseProjectFields = z.object({ street: z.string().min(1), suburb: nullable(z.string()), postcode: nullable(z.string()), agencyName: nullable(z.string()), agentName: nullable(z.string()), agentEmail: nullable(z.string().email()), agentPhone: nullable(z.string()), agencyId: nullable(z.string().uuid()), agentId: nullable(z.string().uuid()), shootDate: nullable(z.string()), timeWindow: nullable(z.string()), orderNo: nullable(z.string()), orderId: nullable(z.string()), invoiceAmount: nullable(z.number()), paymentStatus: nullable(z.string()), notes: nullable(z.string()), productionNotes: nullable(z.string()), rawFolderLink: nullable(z.string().url()), rawFolderPath: nullable(z.string()), orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional() });
@@ -363,7 +364,7 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
   const outboxIds = memberTuples.outboxResultOffsets.map((offset) => firstD1<{ id: string }>(result[memberStatementStart + offset])?.id).filter((id): id is string => Boolean(id));
   const broadIds = memberTuples.broadResultOffsets.flatMap((offset) => rowsFromD1<{ id: string }>(result[memberStatementStart + offset]).map((row) => row.id));
   const publicationIds = [...outboxIds, ...broadIds];
-  if (publicationIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
+  if (publicationIds.length) c.executionCtx.waitUntil(Promise.resolve().then(() => publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds)).catch((error) => console.error("Project assignment outbox publication failed", { projectId, error })));
   if (data.rawFolderPath !== undefined) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(projectId).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId, error })));
   if (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(projectId).catch((error) => console.error("Editor scaffold trigger failed", { projectId, error })));
   const collectionsForResponse = collectionRecords.map((collection) => ({ id: collection.id, projectId, kind: collection.kind, status: "empty", expectedCount: null, receivedCount: 0 }));
@@ -507,7 +508,7 @@ projectsRoutes.post("/projects/:id/priority", terminalRoute("/projects/:id/prior
     return c.json({ error: "Project changed while priority was being updated", code: "project_priority_conflict" }, 409);
   }
   const publicationIds = rowsFromD1<{ id: string }>(result[2 + activityStatements.broadOutboxIndex]).map((row) => row.id);
-  if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+  if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   return c.json(updated);
 }));
 
@@ -521,7 +522,7 @@ projectsRoutes.post("/projects/:id/board-position", terminalRoute("/projects/:id
   if (result.kind === "not_found") return c.json({ error: "Project not found" }, 404);
   if (result.kind === "conflict") return c.json({ error: "Project changed while board position was being updated", code: "project_stage_conflict", current: result.current }, 409);
   if (result.kind === "moved") {
-    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
+    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
     return c.json(result.response);
   }
   return c.json(result.response);
@@ -611,7 +612,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   }
   if (activityBundle) {
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + serviceStatements.length + activityBundle.broadOutboxIndex]).map((row) => row.id);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   if (projectUpdates.rawFolderPath !== undefined && projectUpdates.rawFolderPath !== existingProject.rawFolderPath) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureAutoHdrScaffold(id).catch((error) => console.error("AutoHDR scaffold trigger failed", { projectId: id, error })));
   if (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(id).catch((error) => console.error("Editor scaffold trigger failed", { projectId: id, error })));
@@ -644,7 +645,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
     if (method === "put") {
       try {
         const result = await addProjectMemberWithAssignmentIntent(c.env.DB, { projectId, userId, roleOnProject, actorId: principal.id, auditPrincipal: principal });
-        if (result.created && result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+        if (result.created && result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
         if (roleOnProject === "photographer" && (c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === "1" || c.env.DROPBOX_EDITOR_AUTOMATION_ENABLED === true)) c.executionCtx.waitUntil(c.env.BACKGROUND.ensureEditorFolder(projectId).catch((error) => console.error("Editor scaffold trigger failed", { projectId, error })));
         return c.json({ outcome: result.created ? "created" : "unchanged", membership: result.membership }, result.created ? 201 : 200);
       } catch (error) {
@@ -656,7 +657,7 @@ function projectMembershipRoute(roleOnProject: ProjectMemberRole, method: "put" 
     const result = await removeProjectMemberCycle(c.env.DB, { projectId, userId, roleOnProject, membershipCycle: body!.membershipCycle, clearSubtaskAssignments: body!.clearSubtaskAssignments, confirmedAssignmentCount: body!.confirmedAssignmentCount, confirmAccessLoss: body!.confirmAccessLoss, actorId: principal.id, auditPrincipal: principal });
     if (result.outcome === "stale") return c.json({ error: "Project membership changed; refreshed current assignment", code: "membership_cycle_changed", requestedMembershipCycle: body!.membershipCycle, currentMembership: result.currentMembership }, 409);
     if (result.outcome === "confirmation_required") return c.json({ error: "Project access will be lost immediately; confirm final-role removal again", code: "subtask_assignment_confirmation_required", assignmentCount: result.assignmentCount, accessWillBeLost: result.accessWillBeLost, message: `Project access will be lost immediately. ${result.assignmentCount} checklist assignments will be cleared.`, currentMembership: result.currentMembership }, 422);
-    if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
+    if (result.notificationOutboxIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
     return c.json({ outcome: "removed", removed: { membershipCycle: body!.membershipCycle, userId, roleOnProject }, subtaskAssignmentsCleared: result.subtaskAssignmentsCleared }, 200);
   }));
 }
@@ -1118,7 +1119,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       return classifyLoser(source);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[archiveStatementStart + archiveActivityStatements.broadOutboxIndex]).map((row) => row.id);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   } else {
     const restoreAuditId = newId(); const restoreActivityId = newId();
     const restoreActivity: ProjectActivityIntent = {
@@ -1141,7 +1142,7 @@ for (const [path, archived] of [["/projects/:id/archive", true], ["/projects/:id
       return classifyLoser(source);
     }
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + restoreActivityStatements.broadOutboxIndex]).map((row) => row.id);
-    if (publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
+    if (publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, publicationIds));
   }
   return c.json({ ok: true });
 }));
@@ -1209,7 +1210,7 @@ const stageHandler = async (c: Context<AppEnv>) => {
   if (!parsed.success) return c.json({ error: "Invalid input", details: parsed.error.flatten() }, 400);
   const result = await moveProjectStage({ env: c.env, principal: c.get("user"), projectId: id, request: parsed.data as MoveProjectStageRequest });
   if (result.kind === "moved") {
-    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
+    if (result.finalizer.publicationIds.length) c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.finalizer.publicationIds));
     return c.json(result.response);
   }
   if (result.kind === "no_change") return c.json(result.response);

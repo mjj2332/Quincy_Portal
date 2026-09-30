@@ -3,7 +3,7 @@ import { makeSignature } from "better-auth/crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { authInstanceBuildCount, createAuth } from "../src/auth";
 import type { Env } from "../src/env";
-import { derivedEnv, formatServerTiming, meteredD1, newRequestTiming, normalizeRoute, timingStorage, type RequestTiming } from "../src/lib/server-timing";
+import { derivedEnv, formatServerTiming, publishOutboxDetached, meteredD1, newRequestTiming, normalizeRoute, timingStorage, type RequestTiming } from "../src/lib/server-timing";
 
 // Own file: a fresh isolate, so the auth build counter starts at 0 (#360) and the header is
 // exercised end to end through SELF (#361).
@@ -29,7 +29,7 @@ beforeAll(async () => {
   cookie = `${context.authCookies.sessionToken.name}=${token}.${await makeSignature(token, authSecret)}`;
 });
 
-const ALLOWED_METRICS = new Set(["auth", "principal", "handler", "d1", "d1-queries", "d1-meta", "d1-rows", "d1-region"]);
+const ALLOWED_METRICS = new Set(["total", "auth", "principal", "handler", "d1", "d1-queries", "d1-meta", "d1-rows", "d1-region"]);
 const REGIONS = new Set(["WNAM", "ENAM", "WEUR", "EEUR", "APAC", "OC"]);
 
 /** Parses `name;param=value, ...` and asserts the strict grammar while doing so. */
@@ -99,6 +99,20 @@ describe("Server-Timing on /api and /media (#361)", () => {
     expect(metrics.has("auth")).toBe(true);
     expect(metrics.has("principal")).toBe(false);
     expect(metrics.has("handler")).toBe(false);
+  });
+
+  it("/api/health, a CORS preflight and an origin-rejected request carry a total-only fallback", async () => {
+    const health = await SELF.fetch("https://portal.test/api/health");
+    expect(health.status).toBe(200);
+    const preflight = await SELF.fetch("https://portal.test/api/projects", { method: "OPTIONS", headers: { origin: baseEnv.APP_ORIGIN, "access-control-request-method": "POST" } });
+    expect(preflight.status).toBeLessThan(300);
+    const rejected = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { origin: "https://evil.test", "content-type": "application/json" }, body: "{}" });
+    expect(rejected.status).toBe(403);
+    for (const response of [health, preflight, rejected]) {
+      const header = response.headers.get("server-timing");
+      expect([...parseServerTiming(header).keys()]).toEqual(["total"]);
+      expect(header).toMatch(/^total;dur=\d+\.\d$/);
+    }
   });
 
   it("non-API paths get no header and the raw env", async () => {
@@ -195,6 +209,21 @@ describe("D1 metering", () => {
     await metered.prepare("x").all();
     const store = await inScope(async () => { await metered.prepare("x").all(); });
     expect(store.d1.region).toBeUndefined();
+  });
+
+  it("D1 work started by a detached background task is not counted, even when it overlaps the foreground", async () => {
+    const { db } = fakeDb({ run: { meta: { rows_read: 1, served_by_region: "OC" } } });
+    const metered = meteredD1(db);
+    const sent: string[] = [];
+    const queue = { send: async (message: { outboxId: string }) => { sent.push(message.outboxId); } };
+    let background: Promise<void> | undefined;
+    const store = await inScope(async () => {
+      background = publishOutboxDetached(queue as never, metered as never, ["outbox-1"]);
+      await metered.prepare("SELECT 1").first(); // foreground D1 that runs alongside the background UPDATE
+      await background;
+    });
+    expect(sent).toEqual(["outbox-1"]);
+    expect(store.d1).toMatchObject({ count: 1, metaCount: 0, rowsRead: 0 });
   });
 
   it("the metered DB and derived env are memoised (stable identity per isolate)", () => {

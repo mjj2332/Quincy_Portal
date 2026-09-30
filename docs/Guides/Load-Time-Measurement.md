@@ -57,7 +57,10 @@ query. Without read replication (none is configured) the region is constant: the
   a segment is I/O wait, and pure computation reads as roughly 0.
 - **`d1` overlaps** `auth`, `principal` and `handler`: it is a component of them, not an addition.
 - The header measures up to the handler's `return`. Bytes streamed afterwards (zip downloads) and
-  work in `ctx.waitUntil` are outside it.
+  work in `ctx.waitUntil` are outside it (notification publishing runs detached from the timing
+  scope, so its D1 time is never added to a response).
+- `/api/health`, CORS preflights and origin-rejected requests never reach the session middleware and
+  carry `total;dur=` only.
 - Production responses also carry Cloudflare's own `cfL4` / `cfExtPri` Server-Timing entries. Ignore them.
 
 ## Reading one request: DevTools
@@ -121,7 +124,8 @@ the command is marked experimental).
 - **High `d1Rows`, or high `handler`, on `/api/projects`** -> cover-query restructuring or trimming
   the Dashboard's project list.
 - **`dashboardMs - sessionMs` dominated by the `/api/projects` `handler` p95** -> the server fixes
-  above. **Dominated instead by the gap between that and `total`** (chunk download, parse) -> the
-  bundle work from #359, not a server change.
+  above. Compare the browser Dashboard leg against the Worker `total` for the same request. The
+  Worker's `total - handler` gap is auth + principal + middleware, not chunk download or parse;
+  chunk cost comes from browser resource timing (the #359 bundle work), not from Server-Timing.
 - **`sessionMs` itself large while `auth` is small** -> the time is the `index.html` and JS load
   before the app can even ask, again #359 territory.

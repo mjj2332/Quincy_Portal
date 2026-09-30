@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { terminalRoute } from "../lib/terminal-route";
 import { boardSchemaVariant, createDb, schema } from "@quincy/db";
 import { and, asc, desc, eq, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { enqueueRenditionSafely, parseTonomoOrder, publishNotificationOutbox, renditionsEnabled, roleHasCapability } from "@quincy/shared";
+import { enqueueRenditionSafely, parseTonomoOrder, renditionsEnabled, roleHasCapability } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { audit, auditMeta } from "../lib/audit";
@@ -11,6 +11,7 @@ import { jsonInput } from "./helpers";
 import { ensurePipelineStages, listPipelineStages } from "./stages";
 import { boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 import { listEditorFolderAttention, readProvisioningFreeze } from "../lib/attention";
+import { publishOutboxDetached } from "../lib/server-timing";
 
 const agencyCreate = z.object({ name: z.string().trim().min(1), notes: z.string().trim().nullable().optional() });
 const agencyPatch = agencyCreate.partial();
@@ -304,7 +305,7 @@ adminRoutes.post("/admin/notification-deliveries/:outboxId/replay", terminalRout
     `).bind(newId(), c.get("user").id, outboxId, auditMeta(c.get("user"), { channels, acknowledgeDuplicateEmail: acknowledgement }), now),
   ]);
   if ((results[0]?.meta.changes ?? 0) === 0 || (results[1]?.meta.changes ?? 0) === 0) return c.json({ error: "Notification delivery is no longer replayable", code: "delivery_changed" }, 409);
-  c.executionCtx.waitUntil(publishNotificationOutbox(c.env.NOTIFICATION_QUEUE, c.env.DB, [outboxId]));
+  c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, [outboxId]));
   return c.json({ item: await loadNotificationDeliveryRow(c, outboxId) });
 }));
 

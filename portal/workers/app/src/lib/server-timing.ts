@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { publishNotificationOutbox } from "@quincy/shared";
 import type { Env } from "../env";
 
 /**
@@ -172,9 +173,11 @@ export async function fetchWithServerTiming(fetcher: Fetcher, request: Request, 
   const response = await timingStorage.run(store, async () => fetcher(request, derivedEnv(env), ctx));
   const totalMs = performance.now() - startedAt;
   if (isAuthRoute) { store.auth = totalMs; store.handler = undefined; store.principal = undefined; }
-  const header = formatServerTiming(store, { authRoute: isAuthRoute });
+  // Health checks, preflights and origin rejections never reach the session middleware: they get
+  // the total only, which names no route, id or query shape.
+  const header = formatServerTiming(store, { authRoute: isAuthRoute }) || `total;dur=${round(totalMs)}`;
   logServerTiming(url, request.method, response.status, store, totalMs);
-  return header ? withHeader(response, header) : response;
+  return withHeader(response, header);
 }
 
 function logServerTiming(url: URL, method: string, status: number, t: RequestTiming, totalMs: number): void {
@@ -187,3 +190,11 @@ function logServerTiming(url: URL, method: string, status: number, t: RequestTim
     d1Ms: ms(t.d1.durMs), d1Queries: t.d1.count, d1Rows: t.d1.metaCount > 0 ? t.d1.rowsRead : null, d1Meta: t.d1.metaCount, region: t.d1.region ?? null,
   }));
 }
+
+/**
+ * Background work (`ctx.waitUntil`) must not inherit the request's timing store: its D1 time would
+ * leak into the response totals whenever it overlaps the foreground. A promise starts in the
+ * context of whoever created it, so the detaching has to happen where the work is created, not
+ * inside `waitUntil`. Running with an undefined store (Workers' ALS has no typed `exit`) leaves `getStore()` empty for the whole async chain the callback starts.
+ */
+export const publishOutboxDetached: typeof publishNotificationOutbox = (...args) => timingStorage.run(undefined as unknown as RequestTiming, () => publishNotificationOutbox(...args));
