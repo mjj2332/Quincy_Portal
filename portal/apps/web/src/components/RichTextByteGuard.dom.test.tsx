@@ -15,6 +15,7 @@ vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "photogr
 import { NoticeBoard } from "./NoticeBoard";
 import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
 import { QuincyQueryProvider } from "../lib/query-client";
+import { chooseCommentAction } from "../testing/comment-menu";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const ownPost = { id: "post-own", authorId: "user-me", authorName: "Me", body: "Existing", content: accepted, createdAt: "2026-08-20T00:00:00.000Z", editedAt: null };
@@ -47,9 +48,9 @@ describe("rich-text serialized-width submit guards", () => {
   it("disables and re-enables both project-comment submit buttons at the 280/270 task-item boundary", async () => {
     mocks.apiGet.mockImplementation((path) => Promise.resolve(path.includes("subtasks") ? { subtasks: [] } : { project: { id: projectId, street: "Guard Street" }, comments: [ownComment] }));
     mocks.apiPost.mockResolvedValue({ ...ownComment, id: "comment-new", content: accepted }); const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await click(button(host, "Use oversized formatting")); expect(button(host, "Post comment").disabled).toBe(true);
-    await click(button(host, "Use accepted formatting")); expect(button(host, "Post comment").disabled).toBe(false); await click(button(host, "Post comment")); expect(mocks.apiPost).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: accepted });
-    await click(button(host, "Edit")); const article = host.querySelector("article")!;
+    await click(button(host, "Use oversized formatting")); expect(button(host, "Post").disabled).toBe(true);
+    await click(button(host, "Use accepted formatting")); expect(button(host, "Post").disabled).toBe(false); await click(button(host, "Post")); expect(mocks.apiPost).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: accepted });
+    await chooseCommentAction(host, "Me", "Edit"); const article = host.querySelector("article")!;
     await click(button(article as HTMLElement, "Use oversized formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(true);
     await click(button(article as HTMLElement, "Use accepted formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(false); await click(button(article as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: accepted });

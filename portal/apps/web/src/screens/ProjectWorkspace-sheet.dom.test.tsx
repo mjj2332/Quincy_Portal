@@ -2,6 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { focusManager } from "@tanstack/react-query";
+import { nearestScrollContainer } from "../lib/scroll-container";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { ProjectSheet } from "../components/quincy/ProjectSheet";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
@@ -23,9 +25,10 @@ vi.mock("../lib/auth", () => ({
 }));
 
 const apiGetMock = vi.fn<(path: string, init?: unknown) => Promise<unknown>>();
+const apiPatchMock = vi.fn<(path: string, body?: unknown) => Promise<unknown>>();
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();
-  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: vi.fn(() => Promise.resolve({})), apiPatch: vi.fn(() => Promise.resolve({})), apiDelete: vi.fn(() => Promise.resolve({})) };
+  return { ...actual, apiGet: (path: string, init?: unknown) => apiGetMock(path, init), apiPost: vi.fn(() => Promise.resolve({})), apiPatch: (path: string, body?: unknown) => apiPatchMock(path, body), apiDelete: vi.fn(() => Promise.resolve({})) };
 });
 
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
@@ -110,6 +113,7 @@ beforeEach(() => {
   authState.role = "editor";
   onRequestClose.mockReset();
   apiGetMock.mockReset();
+  apiPatchMock.mockReset().mockResolvedValue({});
   apiGetMock.mockImplementation((path: string) => {
     if (path === "/api/projects/p1") return Promise.resolve(projectFixture());
     if (path.includes("/assets?collection=raw")) return Promise.resolve({ assets: [workspaceAsset("raw-1"), workspaceAsset("raw-2")] });
@@ -213,5 +217,55 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     });
     await flush();
     expect(onRequestClose).not.toHaveBeenCalled();
+  });
+
+  // #376 — the Discussion's read anchor must be judged against the sheet body's own scroll box:
+  // scrolling the body never fires a window scroll, and an anchor scrolled above the body but still
+  // inside the window would otherwise count as visible.
+  it("marks the newest comment read only while its anchor is inside the sheet body's scroll box", async () => {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previousObserver = globals.IntersectionObserver;
+    Reflect.deleteProperty(globals, "IntersectionObserver");
+    const previousFocused = focusManager.isFocused(); focusManager.setFocused(true);
+    const previousVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const style = document.createElement("style");
+    style.textContent = "[data-testid=project-sheet-body]{overflow-y:auto}";
+    document.head.append(style);
+    const rect = (top: number, bottom: number) => ({ left: 0, right: 800, top, bottom, width: 800, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    let anchorRect = rect(40, 41);
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.testid === "project-sheet-body") return rect(100, 500);
+      if (this.dataset.testid === "discussion-read-anchor") return anchorRect;
+      return original.call(this);
+    });
+    try {
+      const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }] };
+      const head = { id: "head", author: { id: "user-2", name: "Other" }, body: "Hello", content: doc, createdAt: "2026-08-25T00:00:00.000Z", editedAt: null };
+      const previous = apiGetMock.getMockImplementation()!;
+      apiGetMock.mockImplementation((path, init) => path.includes("comment-read-marker") || !path.includes("/comments") ? previous(path, init) : Promise.resolve({ project: { id: "p1", street: "12 Example St" }, comments: [head] }));
+      apiPatchMock.mockResolvedValue({ projectId: "p1", marker: { throughCommentId: "head", throughCreatedAt: head.createdAt, updatedAt: head.createdAt }, latest: { commentId: "head", createdAt: head.createdAt }, unreadCount: 0 });
+      await renderSheet({ arrivalTab: "collaboration", arrivalSignal: 1 });
+      await flushUntil(() => document.querySelector('[data-testid="discussion-read-anchor"]') !== null, "the discussion read anchor");
+      const body = document.querySelector<HTMLElement>('[data-testid="project-sheet-body"]')!;
+      const section = document.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+      // Guards the harness itself: happy-dom must honour the injected rule, or this test proves nothing.
+      expect(nearestScrollContainer(section)).toBe(body);
+
+      body.dispatchEvent(new Event("scroll")); await flush(10);
+      expect(apiPatchMock).not.toHaveBeenCalled();
+
+      anchorRect = rect(200, 201);
+      body.dispatchEvent(new Event("scroll")); await flush(20);
+      expect(apiPatchMock).toHaveBeenCalledTimes(1);
+      expect(apiPatchMock).toHaveBeenCalledWith("/api/projects/p1/comment-read-marker", { throughCommentId: "head" });
+    } finally {
+      style.remove();
+      if (previousVisibility) Object.defineProperty(document, "visibilityState", previousVisibility); else Reflect.deleteProperty(document, "visibilityState");
+      focusManager.setFocused(previousFocused);
+      if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver"); else globals.IntersectionObserver = previousObserver;
+      rectSpy.mockRestore();
+    }
   });
 });

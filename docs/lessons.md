@@ -4491,3 +4491,27 @@ remove the legacy readers) still applies.
   sheet** (it is itself a `role="dialog"` holding the `/edit` link). Address rows by their own test id.
 - **Keyboard activation of an in-app link is intercepted too** (see the entry above on `InternalLink`
   and `detail`); `detail: 1` in a DOM test is realism, not a requirement.
+
+## Discussion restyle: three traps (#376, 2026-09-30)
+
+- **`InputGroup`'s `has-disabled:bg-surface-sunken` is a deep `:has(:disabled)`, not "the input is
+  disabled".** The rich-text field puts the toolbar inside the group, and Undo/Redo are disabled on
+  every empty editor, so the whole field paints sunken. `RichTextEditor variant="field"` overrides
+  it with `has-disabled:bg-card` and re-keys the sunken ground to the wrapper's own `data-disabled`
+  (`data-[disabled]:bg-surface-sunken!` — important, because the `:has()` rule has higher
+  specificity). Disabled toolbar buttons go transparent through `cn()` so tailwind-merge drops the
+  base's `disabled:bg-surface-sunken`; a plain string append would leave two conflicting utilities.
+  Assert class **tokens**, not substrings: `aria-disabled:bg-surface-sunken` contains the other.
+- **The read anchor needs the real scroll container, and the ref callback that wires it must be
+  stable.** Inside the Project sheet the scroller is the sheet body, which fires no window scroll,
+  and `geometryVisible()` clips only by the window unless a root is set, so an anchor scrolled above
+  the body (but inside the window) counted as visible. The panel resolves
+  `nearestScrollContainer(section)` and hands it to the presentation. An inline ref callback is
+  called with `null` then the node on every render and each call sets state in the presentation: a
+  render loop. Keep it in a `useCallback` over a latest-ref. And the panel `<section>` must not be
+  an `overflow-auto` box itself, or the walk returns the section.
+- **A guard that pins "the file contains `<time dateTime=`" pins the file, not the behaviour.**
+  Moving the element into a shared component (`quincy/CollaborationTimestamp`) broke
+  `tb8-07-regressions`; the assertion moved with it. Likewise the DOM test seam bans class and
+  vendor-`data-slot` selectors, so new hooks (`initials-avatar`, `rich-text-field`,
+  `collaboration-timestamp-absolute`) are `data-testid`s on Quincy-owned elements.

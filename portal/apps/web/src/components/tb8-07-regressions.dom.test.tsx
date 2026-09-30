@@ -126,8 +126,12 @@ describe("TB8-07 — ARIA that was deliberately NOT changed", () => {
 
   it("keeps <time dateTime> as a real time element in both ledgers", () => {
     // `<Eyebrow>` is hard-coded to a `<span>`; substituting it would have dropped `dateTime`.
+    // #376: both ledgers now render their timestamps through `quincy/CollaborationTimestamp`, which
+    // owns the one `<time dateTime>` (as the tooltip trigger), so the element is asserted there and
+    // each ledger is asserted to go through it.
+    expect(read("./quincy/CollaborationTimestamp.tsx")).toMatch(/<time[^>]*dateTime=/);
     for (const file of ["./ProjectDiscussionThread.tsx", "./ProjectActivityView.tsx"]) {
-      expect(read(file)).toMatch(/<time[^>]*dateTime=/);
+      expect(read(file)).toContain("<CollaborationTimestamp");
     }
   });
 });

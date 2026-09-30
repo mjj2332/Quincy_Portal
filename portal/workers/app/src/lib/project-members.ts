@@ -10,7 +10,7 @@ import { buildProjectActivityStatements } from "@quincy/db";
 import { projectActivityDeepLink, type ProjectActivityIntent } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { newId } from "./ids";
-import { relationDeleteForRemovedMember } from "./subtask-assignees";
+import { assignedSubtaskCountSql, mirrorRepairForRemovedMember, relationDeleteForRemovedMember } from "./subtask-assignees";
 
 export type { ProjectMemberRole } from "@quincy/shared";
 
@@ -83,12 +83,10 @@ function memberDiagnostic(db: D1Database, projectId: string, userId: string, rol
     SELECT
       pm.id, pm.user_id AS userId, pm.role_on_project AS roleOnProject,
       u.name, u.email, u.role AS globalRole, u.active,
-      COUNT(st.id) AS assignedSubtaskCount
+      ${assignedSubtaskCountSql("pm.project_id", "pm.user_id")} AS assignedSubtaskCount
     FROM project_members pm
     JOIN user u ON u.id = pm.user_id
-    LEFT JOIN project_subtasks st ON st.project_id = pm.project_id AND st.assignee_id = pm.user_id
     WHERE pm.project_id = ? AND pm.user_id = ? AND pm.role_on_project = ?
-    GROUP BY pm.id, pm.user_id, pm.role_on_project, u.name, u.email, u.role, u.active
     ORDER BY pm.id
   `).bind(projectId, userId, roleOnProject);
 }
@@ -132,14 +130,12 @@ export async function addProjectMemberWithAssignmentIntent(
   `).bind(membershipCycle, input.projectId, input.userId, input.roleOnProject, now, input.userId, ...eligibleRoles);
   const diagnostic = db.prepare(`
     SELECT pm.id, pm.user_id AS userId, pm.role_on_project AS roleOnProject,
-      u.name, u.email, u.role AS globalRole, u.active, COUNT(st.id) AS assignedSubtaskCount,
+      u.name, u.email, u.role AS globalRole, u.active, ${assignedSubtaskCountSql("?", "u.id")} AS assignedSubtaskCount,
       u.id AS targetUserId, u.active AS targetActive, u.role AS targetRole
     FROM user u
     LEFT JOIN project_members pm ON pm.project_id = ? AND pm.user_id = u.id AND pm.role_on_project = ?
-    LEFT JOIN project_subtasks st ON st.project_id = ? AND st.assignee_id = u.id
     WHERE u.id = ?
-    GROUP BY pm.id, pm.user_id, pm.role_on_project, u.name, u.email, u.role, u.active, u.id
-  `).bind(input.projectId, input.roleOnProject, input.projectId, input.userId);
+  `).bind(input.projectId, input.projectId, input.roleOnProject, input.userId);
   const audit = db.prepare(`
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project.member.add', 'project_member', ?, ?, ?
@@ -211,24 +207,23 @@ export async function removeProjectMemberCycle(
   const remainingAfterDelete = eligibleRemainingRoleSql(input.projectId, input.userId);
   const exact = db.prepare("SELECT id FROM project_members WHERE id = ? AND project_id = ? AND user_id = ? AND role_on_project = ?").bind(input.membershipCycle, input.projectId, input.userId, input.roleOnProject);
   const current = db.prepare(`
-    SELECT pm.id, pm.user_id AS userId, pm.role_on_project AS roleOnProject, u.name, u.email, u.role AS globalRole, u.active, COUNT(st.id) AS assignedSubtaskCount
+    SELECT pm.id, pm.user_id AS userId, pm.role_on_project AS roleOnProject, u.name, u.email, u.role AS globalRole, u.active, ${assignedSubtaskCountSql("pm.project_id", "pm.user_id")} AS assignedSubtaskCount
     FROM project_members pm JOIN user u ON u.id = pm.user_id
-    LEFT JOIN project_subtasks st ON st.project_id = pm.project_id AND st.assignee_id = pm.user_id
     WHERE pm.project_id = ? AND pm.user_id = ? AND pm.role_on_project = ?
-    GROUP BY pm.id, pm.user_id, pm.role_on_project, u.name, u.email, u.role, u.active ORDER BY pm.id
+    ORDER BY pm.id
   `).bind(input.projectId, input.userId, input.roleOnProject);
   // These diagnostics are intentionally unread: they provide batch-serialization evidence while the DELETE WHERE is authoritative.
   const compatible = db.prepare(`SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql} LIMIT 1`).bind(...remaining.bindings);
   const activeAdmin = db.prepare("SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1").bind(input.userId);
-  const assignmentCount = db.prepare("SELECT COUNT(*) AS assignmentCount FROM project_subtasks WHERE project_id = ? AND assignee_id = ?").bind(input.projectId, input.userId);
+  const assignmentCount = db.prepare("SELECT COUNT(*) AS assignmentCount FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ? AND sa.user_id = ?").bind(input.projectId, input.userId);
   const deletion = db.prepare(`
     DELETE FROM project_members
     WHERE id = ? AND project_id = ? AND user_id = ? AND role_on_project = ?
       AND (
         EXISTS (SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1)
         OR EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remaining.sql})
-        OR (? = 0 AND NOT EXISTS (SELECT 1 FROM project_subtasks WHERE project_id = ? AND assignee_id = ?))
-        OR (? = 1 AND (SELECT COUNT(*) FROM project_subtasks WHERE project_id = ? AND assignee_id = ?) = ?)
+        OR (? = 0 AND NOT EXISTS (SELECT 1 FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ? AND sa.user_id = ?))
+        OR (? = 1 AND (SELECT COUNT(*) FROM project_subtask_assignees sa INNER JOIN project_subtasks st ON st.id = sa.subtask_id WHERE st.project_id = ? AND sa.user_id = ?) = ?)
       )
       AND (
         ? = 1 OR NOT (
@@ -247,8 +242,10 @@ export async function removeProjectMemberCycle(
   `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, input.membershipCycle,
     auditMeta(input.auditPrincipal, { projectId: input.projectId, userId: input.userId, roleOnProject: input.roleOnProject, membershipCycle: input.membershipCycle }), now);
   const clear = db.prepare(`
-    UPDATE project_subtasks SET assignee_id = NULL, assignment_version = assignment_version + 1, updated_at = ?
-    WHERE project_id = ? AND assignee_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
+    UPDATE project_subtasks SET assignment_version = assignment_version + 1, updated_at = ?
+    WHERE project_id = ?
+      AND EXISTS (SELECT 1 FROM project_subtask_assignees sa WHERE sa.subtask_id = project_subtasks.id AND sa.user_id = ?)
+      AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)
       AND NOT EXISTS (SELECT 1 FROM project_members remaining JOIN user target ON target.id = remaining.user_id WHERE ${remainingAfterDelete.sql})
       AND NOT EXISTS (SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND active = 1)
     RETURNING id
@@ -260,7 +257,7 @@ export async function removeProjectMemberCycle(
     winnerAuditId: auditId,
     createdAt: now,
   });
-  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements, relationDeleteForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId, remainingAfterDelete })]);
+  const result = await db.batch([exact, current, compatible, activeAdmin, assignmentCount, deletion, audit, clear, timestamp, ...activityStatements.statements, relationDeleteForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId, remainingAfterDelete }), mirrorRepairForRemovedMember(db, { projectId: input.projectId, userId: input.userId, auditId })]);
   const exactRow = first<{ id: string }>(result[0] as D1Rows<{ id: string }>);
   const currentRow = first<MemberDtoRow>(result[1] as D1Rows<MemberDtoRow>);
   const currentMembership = currentRow ? memberDto(currentRow) : null;
