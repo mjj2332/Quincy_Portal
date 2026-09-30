@@ -84,8 +84,8 @@ function suppressesOutline(className: string) {
 }
 
 let root: Root | null = null;
-let queryClient: QueryClient;
-let runtime: ProjectQueryRuntime;
+let queryClient: QueryClient | null = null;
+let runtime: ProjectQueryRuntime | null = null;
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
@@ -99,17 +99,19 @@ function toggle(host: HTMLElement, label: string) {
 
 async function mount(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const host = document.createElement("div"); document.body.appendChild(host);
-  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  runtime = new ProjectQueryRuntime(queryClient);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const projectRuntime = new ProjectQueryRuntime(client);
+  queryClient = client;
+  runtime = projectRuntime;
   root = createRoot(host);
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={projectRuntime}><QueryClientProvider client={client}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
   return host;
 }
 
 async function rerenderSchedule(schedule: ProjectDeadlineSchedule, canEdit = true) {
   const { ProjectDeadlineControl } = await import("./ProjectDeadlineControl");
-  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
+  await act(async () => { root!.render(<ProjectQueryRuntimeProvider runtime={runtime!}><QueryClientProvider client={queryClient!}><ProjectDeadlineControl projectId={projectId} schedule={schedule} canEdit={canEdit} onSaved={onSaved} /></QueryClientProvider></ProjectQueryRuntimeProvider>); await Promise.resolve(); });
 }
 
 async function setInput(input: HTMLInputElement, value: string) {
@@ -125,7 +127,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); await Promise.resolve(); });
-  runtime.dispose(); queryClient.clear(); root = null; document.body.replaceChildren();
+  runtime?.dispose(); queryClient?.clear(); runtime = null; queryClient = null; root = null; document.body.replaceChildren();
 });
 
 describe("ProjectDeadlineControl", () => {

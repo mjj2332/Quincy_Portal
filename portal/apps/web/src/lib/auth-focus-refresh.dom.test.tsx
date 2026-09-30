@@ -93,9 +93,10 @@ describe("session refresh on focus / reconnect (#360)", () => {
   });
 
   it("returning to a hidden tab produces exactly one session request", async () => {
+    // The "first mount fetches the session" baseline is order-dependent (better-auth fetches the
+    // initial session once per module), so it lives in auth-initial-session.dom.test.tsx (#389).
     await mount(true);
     const baseline = sessionCalls();
-    expect(baseline).toBeGreaterThan(0);
     await returnToTab();
     expect(sessionCalls() - baseline).toBe(1);
   });
