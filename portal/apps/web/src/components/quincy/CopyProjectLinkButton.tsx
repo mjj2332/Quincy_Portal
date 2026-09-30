@@ -14,7 +14,7 @@ const COPIED_MS = 2000;
  * The link is built from the `tab` prop, not `window.location`, so it is right even before the
  * URL's own `replace` has landed. The outcome is announced through the shared toast live region.
  */
-export function CopyProjectLinkButton({ projectId, tab }: { projectId: string; tab: WorkspaceTab }) {
+export function CopyProjectLinkButton({ projectId, tab, className }: { projectId: string; tab: WorkspaceTab; className?: string }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
@@ -34,8 +34,8 @@ export function CopyProjectLinkButton({ projectId, tab }: { projectId: string; t
   }
 
   return (
-    <Button type="button" variant="ghost" data-testid="copy-project-link" onClick={copy}>
-      {copied ? <CheckIcon aria-hidden="true" data-icon="inline-start" /> : <CopyIcon aria-hidden="true" data-icon="inline-start" />}
+    <Button type="button" variant="ghost" data-testid="copy-project-link" className={className} onClick={copy}>
+      {copied ? <CheckIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" /> : <CopyIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />}
       {copied ? "Copied" : "Copy link"}
     </Button>
   );
