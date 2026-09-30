@@ -53,6 +53,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
   const [hasOpened, setHasOpened] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
   const [committing, setCommitting] = useState<string[] | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const draftRef = useRef<string[]>([]);
   const baselineRef = useRef<AssigneePickerBaseline>({ ids: [], version: undefined });
   const options = useSubtaskAssigneeOptions(projectId, role, open || hasOpened);
@@ -80,6 +81,12 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
       draftRef.current = current; setDraft(current); setHasOpened(true); setOpen(true);
       return;
     }
+    // Focus is in the popup's search input, which unmounts with the popup. Base UI hands focus back to the trigger only AFTER
+    // that, so focus would fall to <body> first; a modal ancestor's focus manager (the Project sheet) claims it and re-focuses
+    // itself on the next frame, stealing it from the trigger. Put focus on the trigger before anything unmounts, on every close path.
+    const trigger = triggerRef.current;
+    const active = document.activeElement;
+    if (trigger && active && active !== trigger && active.closest('[data-slot="combobox-content"]')) trigger.focus({ preventScroll: true });
     setOpen(false);
     const final = draftRef.current;
     const baseline = baselineRef.current;
@@ -110,7 +117,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     itemToStringValue={(item: Option) => item.id}
     disabled={disabled}
   >
-    <ComboboxTrigger aria-label={label} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
+    <ComboboxTrigger ref={triggerRef} aria-label={label} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
       <AvatarStack people={open ? draftOptions : shownPeople} hiddenCount={open ? 0 : hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" />
     </ComboboxTrigger>
     <ComboboxContent className="min-w-[max(var(--anchor-width),260px)] max-w-[calc(100vw-2*var(--space-4))]">

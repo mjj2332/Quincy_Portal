@@ -206,6 +206,19 @@ describe("SubtaskAssigneePicker", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger()));
   });
 
+  it("hands focus to the trigger before the search input unmounts (asserted at commit time, while the popup is still mounted), so a modal focus manager never sees focus fall to <body> (#368)", async () => {
+    await mount();
+    await open();
+    await waitFor(() => expect(options().length).toBe(4));
+    let activeAtCommit: Element | null = null;
+    onCommit.mockImplementation(() => { activeAtCommit = document.activeElement; });
+    await pick("Ada Smith");
+    await closeWithEscape();
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(activeAtCommit).toBe(trigger());
+    expect(document.activeElement).toBe(trigger());
+  });
+
   it("when the gate is closed a new pick replaces the selection, and unpicking clears it", async () => {
     apiGetMock.mockResolvedValue({ candidates, multiAssignee: false });
     await mount({ selected: [person("nora", "Nora Jones")] });
