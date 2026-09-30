@@ -141,6 +141,22 @@ describe("ProjectDiscussionThread", () => {
     expect(invalidateMock).toHaveBeenCalledWith(client, projectId, ["comments", "comment-read-marker", "activity"]);
   });
 
+  it("disables Edit in the comment menu while that comment is being edited, so a re-open cannot discard the draft", async () => {
+    render(); await flush();
+    await chooseCommentAction(host, "Me", "Edit");
+    const editor = () => state.editors.find((candidate) => candidate.id === undefined)!;
+    await act(async () => { editor().onChange(doc("Unsaved change")); await Promise.resolve(); });
+    const trigger = host.querySelector<HTMLElement>('[aria-label="Actions for comment by Me"]')!;
+    await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const edit = items.find((item) => item.textContent === "Edit");
+    expect(edit).toBeDefined();
+    expect(edit!.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => { edit!.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(editor().value).toEqual(doc("Unsaved change"));
+    expect(host.querySelector('[data-testid="editor-value-composer"]')?.textContent).toContain("Unsaved change");
+  });
+
   it("keeps a draft through a background comments refresh and blocks over-byte content", async () => {
     render(); await flush();
     const composer = state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
