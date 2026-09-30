@@ -61,6 +61,9 @@ export type GanttSubtaskDueCellProps = {
   onCancel: () => void;
 };
 
+// Tone: a Subtask date is always neutral. The Gantt never marks Subtask rows overdue (production-gantt-scheduling.ts sets
+// `overdue: false`; only the Project deadline carries a server-computed `overdue`), so this cell does not either.
+// Frozen state: `focusableWhenDisabled` renders `aria-disabled`, not `disabled`, so the dimming keys on aria-disabled.
 export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained, onOpen, onSubmit, onCancel }: GanttSubtaskDueCellProps) {
   const end = row.schedule.end;
   const text = formatDueCivil(end.localCivil);
@@ -103,7 +106,7 @@ export function GanttSubtaskDueCell({ row, editorOpen, disabled, error, retained
             type="button"
             size="xs"
             variant="ghost"
-            className={cn(CELL_TRIGGER, "text-foreground")}
+            className={cn(CELL_TRIGGER, "text-foreground aria-disabled:cursor-not-allowed aria-disabled:opacity-50")}
             data-testid="gantt-subtask-due-trigger"
             aria-label={`Due for ${row.title}: ${text}`}
             disabled={triggerDisabled}
