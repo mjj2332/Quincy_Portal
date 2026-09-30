@@ -11,6 +11,10 @@ import { confirm, confirmStore } from "../lib/confirm";
 import { QuincyQueryProvider } from "../lib/query-client";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import type { Role } from "@quincy/shared";
+import { stubRailMedia } from "../testing/rail-media";
+
+// jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
+stubRailMedia(true);
 
 /**
  * #366 — the REAL Workspace inside a `ProjectSheet`, with the layers that share Escape and outside
@@ -267,5 +271,15 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
       if (previousObserver === undefined) Reflect.deleteProperty(globals, "IntersectionObserver"); else globals.IntersectionObserver = previousObserver;
       rectSpy.mockRestore();
     }
+  });
+
+  // #377 — the checklist is a sibling of the sub-tab strip, so it sits in the sheet body and outside every tabpanel.
+  it("renders the Collaboration checklist rail inside the sheet body and outside the Discussion tabpanel", async () => {
+    await renderSheet({ arrivalTab: "collaboration", arrivalSignal: 1 });
+    await flushUntil(() => document.querySelector('[aria-label="Project checklist"]') !== null, "the checklist");
+    const checklist = document.querySelector<HTMLElement>('[aria-label="Project checklist"]')!;
+    expect(document.querySelector('[data-testid="project-sheet-body"]')!.contains(checklist)).toBe(true);
+    expect(checklist.closest('[id$="-discussion-panel"], [id$="-activity-panel"]')).toBeNull();
+    expect(document.querySelector('[data-testid="project-collaboration-panel"]')!.getAttribute("data-checklist-layout")).toBe("rail");
   });
 });

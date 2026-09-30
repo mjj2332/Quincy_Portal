@@ -19,6 +19,13 @@ export type AvatarStackProps = {
   /** Hide the stack from assistive tech, for use inside a control that already names its people. */
   decorative?: boolean;
   className?: string;
+  /** Extra classes for every avatar and the `+N` count (a denser stack, e.g. inside a Calendar chip). */
+  avatarClassName?: string;
+  /**
+   * Show one initial per avatar. Two 11px initials are wider than the visible part of an overlapped 16px avatar, so a
+   * dense stack clips the second letter (#370); the full name stays in the avatar's label.
+   */
+  singleInitial?: boolean;
 };
 
 /**
@@ -27,7 +34,7 @@ export type AvatarStackProps = {
  * avatar is load-bearing: `aria-label` on a roleless `<span>` is dropped by every major screen
  * reader. The avatars are static; the 44px touch-target contract belongs to whatever wraps them.
  */
-export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className }: AvatarStackProps) {
+export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false }: AvatarStackProps) {
   const hidden = decorative ? { "aria-hidden": true as const } : {};
   if (people.length === 0 && hiddenCount <= 0) {
     return (
@@ -51,13 +58,13 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenC
         const empty = name === "";
         const label = (empty ? `${personNoun} (name unavailable)` : name) + (person.inactive ? " (inactive)" : "");
         return (
-          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={person.inactive ? "opacity-60" : undefined}>
-            <AvatarFallback aria-hidden="true">{empty ? "?" : initials(person.name)}</AvatarFallback>
+          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={cn(person.inactive && "opacity-60", avatarClassName)}>
+            <AvatarFallback aria-hidden="true">{empty ? "?" : singleInitial ? [...initials(person.name)].slice(0, 1).join("") : initials(person.name)}</AvatarFallback>
           </Avatar>
         );
       })}
       {(overflow > 0 || hiddenCount > 0) && (
-        <AvatarGroupCount role="img" aria-label={countLabel} className={hiddenCount > 0 ? "w-auto group-has-data-[size=sm]/avatar-group:w-auto min-w-6 px-[var(--space-2)] whitespace-nowrap text-xs" : undefined}>
+        <AvatarGroupCount role="img" aria-label={countLabel} className={cn(avatarClassName, hiddenCount > 0 && "w-auto group-has-data-[size=sm]/avatar-group:w-auto min-w-6 px-[var(--space-2)] whitespace-nowrap", hiddenCount > 0 && !avatarClassName && "text-xs")}>
           <span aria-hidden="true">{hiddenCount > 0 ? `+${overflow + hiddenCount} others` : `+${overflow}`}</span>
         </AvatarGroupCount>
       )}

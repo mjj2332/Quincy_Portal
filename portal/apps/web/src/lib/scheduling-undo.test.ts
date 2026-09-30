@@ -20,6 +20,8 @@ function checklistEvent(version: number, start: string, end: string): ChecklistC
     title: "Select hero images",
     project: project(),
     assignee: person,
+    assignees: [person],
+    otherAssigneeCount: 0,
     timing: { allDay: true, start, end },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule,
@@ -45,7 +47,7 @@ function deadlineEvent(version: number, deadlineLocalCivil: string, reminderOffs
 describe("buildChecklistUndoTicket", () => {
   it("builds a checklist ticket at the returned version restoring the prior schedule, with the BARE subtask uuid (not the checklist: entity id)", () => {
     const before = checklistEvent(4, "2026-08-27", "2026-08-27");
-    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, position: 0, schedule: { ...before.schedule, version: 5, start: dateEndpoint("2026-08-29"), end: dateEndpoint("2026-08-29"), due: "2026-08-29" }, scheduleVersion: 5 });
+    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, assignees: null, position: 0, schedule: { ...before.schedule, version: 5, start: dateEndpoint("2026-08-29"), end: dateEndpoint("2026-08-29"), due: "2026-08-29" }, scheduleVersion: 5 });
     expect(ticket).toEqual({
       kind: "checklist",
       projectId: PROJECT_ID,
@@ -57,7 +59,7 @@ describe("buildChecklistUndoTicket", () => {
 
   it("returns null when the forward edit changed nothing", () => {
     const before = checklistEvent(4, "2026-08-27", "2026-08-27");
-    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, position: 0, schedule: before.schedule, scheduleVersion: 4 });
+    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, assignees: null, position: 0, schedule: before.schedule, scheduleVersion: 4 });
     expect(ticket).toBeNull();
   });
 
@@ -66,7 +68,7 @@ describe("buildChecklistUndoTicket", () => {
   // worth building — no PATCH should ever be attempted with a garbage subtask id.
   it("returns null when before.id is not a checklist: entity id (cannot build a ticket)", () => {
     const before = { ...checklistEvent(4, "2026-08-27", "2026-08-27"), id: PERSON_ID };
-    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, position: 0, schedule: { ...before.schedule, version: 5 }, scheduleVersion: 5 });
+    const ticket = buildChecklistUndoTicket(before, { id: before.id, title: before.title, done: false, assignee: person, assignees: null, position: 0, schedule: { ...before.schedule, version: 5 }, scheduleVersion: 5 });
     expect(ticket).toBeNull();
   });
 });

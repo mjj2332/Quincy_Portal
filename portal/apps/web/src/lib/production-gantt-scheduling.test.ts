@@ -131,6 +131,8 @@ describe("ganttChecklistSource", () => {
       title: "Edit photos",
       project: { id: PROJECT_ID, street: "1 Test St", stageKey: "awaiting_raw", checklist: { completed: 1, total: 4 }, delivered: true },
       assignee: row.assignee,
+      assignees: [row.assignee],
+      otherAssigneeCount: 0,
       timing: { allDay: false, start: "2026-06-09T23:00:00.000Z", end: "2026-06-10T01:00:00.000Z" },
       status: { overdue: false, delivered: true, completed: true, sameAssigneeOverlap: false },
       schedule: row.schedule,

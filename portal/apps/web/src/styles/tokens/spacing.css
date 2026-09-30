@@ -52,6 +52,7 @@
   /* ---- Layout -------------------------------------------------------- */
   --container-sm:  640px;
   --container-md:  860px;
+  --collab-rail-width: 360px;  /* @kind other */ /* Collaboration checklist rail column (#377) */
   --container-lg: 1100px;
   --container-xl: 1320px;
   --container-page: 1480px;

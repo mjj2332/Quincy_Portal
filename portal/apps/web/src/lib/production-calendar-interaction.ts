@@ -45,6 +45,7 @@ export function cloneSource<TEvent extends CalendarInteractionSource>(event: TEv
     ...event,
     project,
     assignee: event.assignee ? { ...event.assignee } : null,
+    assignees: event.assignees.map((person) => ({ ...person })),
     permissions: { ...event.permissions },
     ...timingFields,
     schedule: cloneChecklistSchedule(event.schedule),
@@ -250,7 +251,7 @@ export function calendarAnnouncement(kind: CalendarAnnouncementKind, ctx: Calend
   const street = ctx.street ? ` for ${ctx.street}` : "";
   if (ctx.entity === "checklist") {
     switch (kind) {
-      case "picked-up": return `Picked up the checklist schedule${street}. Current time: ${civil(ctx.oldCivil)}.${ctx.overlap ? " This item overlaps another task for the same assignee." : ""}`;
+      case "picked-up": return `Picked up the checklist schedule${street}. Current time: ${civil(ctx.oldCivil)}.${ctx.assignee ? ` Assigned to ${ctx.assignee}.` : ""}${ctx.overlap ? " This item overlaps another task for the same assignee." : ""}`;
       case "confirm-required": return `Save the checklist schedule${street} from ${civil(ctx.oldCivil)} to ${civil(ctx.newCivil)}. Confirmation required.`;
       case "cancelled": return "Cancelled scheduling the checklist item.";
       case "saving": return `Saving the checklist schedule${street}.`;

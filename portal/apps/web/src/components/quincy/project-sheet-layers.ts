@@ -11,11 +11,22 @@
  *
  * Pure over the nodes it is handed, so it can be tested without the sheet.
  *
- * This PR ships the modal arms. #375 adds the popover / menu / mention arms at the marked point.
+ * Arms: in-place and global modals (#366); floating popups and the mention list (#375). A layer
+ * counts only while open, so the gate never blocks a close on something already closing.
  */
 const MODAL_DIALOG = '[role="dialog"][aria-modal="true"]';
+/**
+ * Floating popups: a POSITIVE role list, not "anything with `data-open`" — tooltips carry
+ * `data-open` too and must never block a close. Base UI's Popover popup is a non-modal
+ * `role="dialog"`, menus are `role="menu"`, select/combobox lists `role="listbox"`; Quincy's own
+ * `AnchoredPopover` may render without a role, so it opts in with `data-quincy-layer`.
+ */
+const OPEN_POPUP = '[data-open]:is([role="dialog"]:not([aria-modal="true"]), [role="menu"], [role="listbox"], [data-quincy-layer])';
+const OPEN_LIST_HOST = '[data-open]:has([role="listbox"], [role="menu"])';
+/** The rich-text editor's mention list is open while its combobox reports `aria-expanded`. */
+const OPEN_MENTION_LIST = '[role="combobox"][aria-expanded="true"]';
 
-export function hasOpenInnerLayer(popup: HTMLElement | null, _slot: HTMLElement | null, doc: Document): boolean {
+export function hasOpenInnerLayer(popup: HTMLElement | null, slot: HTMLElement | null, doc: Document): boolean {
   if (!popup) return false;
   // In-place modal: the Lightbox lives inside the popup DOM. `querySelector` searches
   // descendants only, so the popup's own dialog role never counts.
@@ -26,6 +37,13 @@ export function hasOpenInnerLayer(popup: HTMLElement | null, _slot: HTMLElement 
     if (modal === popup || modal.contains(popup) || popup.contains(modal)) continue;
     return true;
   }
-  // EXTENSION POINT (#375): open popover / menu / mention layers inside `_slot` join here.
+  // Floating popups portal into the overlay slot (or stay inside the popup); the slot is a sibling
+  // of the popup's body, so both roots are searched.
+  if (slot?.querySelector(OPEN_POPUP) || popup.querySelector(OPEN_POPUP)) return true;
+  // Select / Combobox: `data-open` sits on the Positioner and Popup (`role="presentation"`), while
+  // the `role="listbox"` inside carries none — so an open popup that CONTAINS a list counts too.
+  // Scoped to the overlay slot: the sheet's own popup is `data-open` and contains everything.
+  if (slot?.querySelector(OPEN_LIST_HOST)) return true;
+  if (popup.querySelector(OPEN_MENTION_LIST)) return true;
   return false;
 }

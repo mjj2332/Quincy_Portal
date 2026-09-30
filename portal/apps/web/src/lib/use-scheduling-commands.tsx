@@ -52,6 +52,7 @@ import {
   type SchedulingWarning,
 } from "./scheduling-policy";
 import { scheduleWarningText, scheduleWindowWarnings } from "./schedule-bounds";
+import { formatAssigneeNames } from "./subtask-assignees";
 import { applyUndo, type UndoOutcome, type UndoTicket } from "./scheduling-undo";
 import {
   beginCalendarInteraction,
@@ -1220,7 +1221,7 @@ export function useSchedulingController<TBaseline>(input: SchedulingControllerIn
     announceChecklistLifecycle("picked-up", {
       street: source.project.street,
       oldCivil: "timing" in source ? checklistCurrentCivil(source) : "Not scheduled",
-      ...("timing" in source && source.assignee?.name ? { assignee: source.assignee.name } : {}),
+      ...("timing" in source && formatAssigneeNames(source.assignees, source.otherAssigneeCount) ? { assignee: formatAssigneeNames(source.assignees, source.otherAssigneeCount) } : {}),
       ...("timing" in source && source.status.sameAssigneeOverlap === true ? { overlap: true } : {}),
     });
     setScheduleEditor({ source, snapshot, ...(initialSchedule ? { initialSchedule } : {}) });

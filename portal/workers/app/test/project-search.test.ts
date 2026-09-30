@@ -23,17 +23,18 @@ function sha256(value: string): string {
 // the byte-for-byte match with the pre-refactor project-search extraction (#193) no longer applies,
 // and the `project-search` SQL helpers themselves are covered by the tests above.
 // (Re-pinned again in the #342 review round for a SQL comment reword; no logic change.)
+// (2026-09-30) #370: assignee relation replaces assignee_id — the Calendar reads `project_subtask_assignees`, so every digest changed.
 const PRE_REFACTOR_RANGE_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "cc10e642b05ba43754d323668fb5b92daf848b4ff4630b5ca949ac92fad3aa93",
-  editor: "92cc7cb58dfe62f5aa47172d8b1f40d975837c24e9aaef324aa0fa3e168a85bc",
-  photographer: "92cc7cb58dfe62f5aa47172d8b1f40d975837c24e9aaef324aa0fa3e168a85bc",
-  external_editor: "49b7e0718c755674c8ddea27930e5a42dbb38319e450118d41aa93a73851c2db",
+  admin: "c9edc6c3859b0ee81f60f60e9d1fb7acaf4e996fb3ca743ae1bce2e7ec23b95c",
+  editor: "8960d5ac091869669e0184ed4a3c822857d1f2840ac47a9aea5bf615d804349e",
+  photographer: "8960d5ac091869669e0184ed4a3c822857d1f2840ac47a9aea5bf615d804349e",
+  external_editor: "2a636d93d211b26fe157191cd5f1299b0b65c1f7df331e1a7d5d3f99b59e681c",
 };
 const PRE_REFACTOR_FACETS_SQL_SHA256: Record<(typeof ROLES)[number], string> = {
-  admin: "8a66c033f1bede508c077c260215f73eb9f18c2c420b8e84ee6eab5f58605275",
-  editor: "153336b81e8af5ec8f0cdee1e17f6e8f99ac2e4eceec6417188ce981e364097c",
-  photographer: "153336b81e8af5ec8f0cdee1e17f6e8f99ac2e4eceec6417188ce981e364097c",
-  external_editor: "ca9e2eaf142f98855bd5fd8e86b0c97b614df98ad52fc1967d94c27d1cb94402",
+  admin: "d7285b728fa6c8acc968f35ceec2a54d143c1f1cb17b6b59f20d5517572fc72a",
+  editor: "3940fc7b8a95dd92ad6a5cf674ee4ff7a519c6e515a5cfc1d8901b83c6a3e345",
+  photographer: "3940fc7b8a95dd92ad6a5cf674ee4ff7a519c6e515a5cfc1d8901b83c6a3e345",
+  external_editor: "db901ee20d06dd500a47739b6883b5371783b35a81b5b4e66d6857990a74f1a1",
 };
 
 describe("project-search", () => {

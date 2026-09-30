@@ -287,7 +287,12 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
   const linkSelection = useRef<{ from: number; to: number } | undefined>(undefined);
   const linkWasActive = useRef(false);
   const returnFocusToLinkTrigger = useRef(false);
-  const [query, setQuery] = useState<string | null>(null);
+  const [rawQuery, setQuery] = useState<string | null>(null);
+  // #375: Esc / an outside press closes the mention list and it stays closed until the content
+  // actually changes; the sheet's layer gate reads the list as open through `aria-expanded`.
+  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const query = mentionDismissed ? null : rawQuery;
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [mentionA11y, setMentionA11y] = useState<{ listboxId: string; activeId?: string; expanded: boolean } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkHref, setLinkHref] = useState("");
@@ -328,12 +333,32 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       // clobber a concurrent external reset (e.g. the composer clearing after a successful post)
       // that lands between this event and the next render.
       if (serialised === valueRef.current) return;
-      valueRef.current = serialised; onChangeRef.current(doc); setNestingBlocked(false); setQuery(mentionQuery(next));
+      valueRef.current = serialised; onChangeRef.current(doc); setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionQuery(next));
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionQuery(next)),
   });
 
   useEffect(() => { if (editor) editor.setEditable(!disabled); }, [disabled, editor]);
+  useEffect(() => {
+    if (query === null) return;
+    // Bubble phase on purpose: the Project sheet snapshots "is a layer open" at window-capture,
+    // which must still see this list open for the very press that dismisses it.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && wrapperRef.current?.contains(event.target)) return;
+      setMentionDismissed(true);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [query]);
+  // Esc is only seen by the editor's key handler, so a list left open behind a Tab would hold the
+  // sheet's layer gate shut for good: close it when focus leaves the editor.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const onBlur = () => setMentionDismissed(true);
+    dom.addEventListener("blur", onBlur);
+    return () => dom.removeEventListener("blur", onBlur);
+  }, [editor]);
   useEffect(() => {
     if (!editor) return;
     const announce = () => setNestingBlocked(true);
@@ -471,7 +496,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       {linkError && <p id={linkErrorId} className={FIELD_ERROR} role="alert">{linkError}</p>}
     </Modal>
   );
-  return <div className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
+  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
     {field ? <InputGroup data-testid="rich-text-field" className={FIELD_GROUP} data-disabled={disabled || undefined}>
       <InputGroupAddon align="block-start" role="toolbar" aria-label="Formatting" className="flex-wrap max-[721px]:flex-nowrap max-[721px]:overflow-x-auto max-[721px]:[scrollbar-width:none] max-[721px]:[mask-image:linear-gradient(to_right,black_85%,transparent)] max-[721px]:items-center gap-[var(--space-2)] p-[var(--space-1)] cursor-default">{toolbarGroups}</InputGroupAddon>
       {modal}
@@ -481,7 +506,7 @@ export function RichTextEditor({ value, onChange, limit, disabled = false, loadM
       {modal}
       <EditorContent editor={editor} />
     </>}
-    <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onAccessibilityChange={setMentionA11y} />
+    <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />
     {plainText.length >= limit * COUNTER_THRESHOLD && <div data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className="min-h-[1.2em] [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" aria-live="polite">{overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : ""}</div>
   </div>;
