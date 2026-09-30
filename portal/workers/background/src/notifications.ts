@@ -81,10 +81,10 @@ function sydneyDateTime(now: number) {
   return { date: `${value("year")}-${value("month")}-${value("day")}`, hour: Number(value("hour")) };
 }
 
-export type DueSubtaskCandidate = { subtaskId: string; projectId: string; assigneeId: string; assignmentVersion: number; dueDate: string };
+export type DueSubtaskCandidate = { subtaskId: string; projectId: string; dueDate: string };
 export type DueSubtaskCandidateResult = { claimed: boolean; emitted: number };
 
-/** Claims one eligible due subtask before resolving its current assignee or emitting its one-shot alert. */
+/** Claims one eligible due subtask before resolving its current assignees or emitting its one-shot alerts. */
 export async function processDueSubtaskCandidate(
   env: Env,
   row: DueSubtaskCandidate,
@@ -94,9 +94,10 @@ export async function processDueSubtaskCandidate(
   const claim = await env.DB.prepare(
     "UPDATE project_subtasks SET due_reminder_sent_at = ?, updated_at = ? " +
     "WHERE id = ? AND project_id = ? AND due_reminder_sent_at IS NULL AND done = 0 " +
-    "AND due_date = ? AND substr(due_date, 1, 10) <= ? AND assignee_id = ? " +
+    "AND due_date = ? AND substr(due_date, 1, 10) <= ? " +
+    "AND EXISTS (SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = project_subtasks.id) " +
     "AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_subtasks.project_id AND p.archived_at IS NULL)",
-  ).bind(now, now, row.subtaskId, row.projectId, row.dueDate, todaySydney, row.assigneeId).run();
+  ).bind(now, now, row.subtaskId, row.projectId, row.dueDate, todaySydney).run();
   if ((claim.meta.changes ?? 0) !== 1) {
     await logDueSubtaskClaimSkip(env, row, todaySydney);
     return { claimed: false, emitted: 0 };
@@ -104,7 +105,16 @@ export async function processDueSubtaskCandidate(
 
   try {
     const db = dbFor(env);
-    const recipients = (await projectNotificationRecipients(db, row.projectId)).filter((recipient) => recipient.userId === row.assigneeId);
+    const assignees = (await env.DB.prepare(
+      "SELECT user_id AS userId, assignment_version AS assignmentVersion FROM project_subtask_assignees " +
+      "WHERE subtask_id = ? ORDER BY assignment_version ASC, added_at ASC, user_id ASC",
+    ).bind(row.subtaskId).all<{ userId: string; assignmentVersion: number }>()).results;
+    if (!assignees.length) {
+      console.log("Claimed due subtask notification", { subtaskId: row.subtaskId, projectId: row.projectId, recipients: 0, emitted: 0 });
+      return { claimed: true, emitted: 0 };
+    }
+    const assigneeIds = new Set(assignees.map((assignee) => assignee.userId));
+    const recipients = (await projectNotificationRecipients(db, row.projectId)).filter((recipient) => assigneeIds.has(recipient.userId));
     const project = await db.select({ street: projects.street }).from(projects).where(eq(projects.id, row.projectId)).get();
     const copy = notificationCopy("subtask_due_today", project?.street || "Project");
     const route = projectNotificationRoute(row.projectId, "subtask_due_today");
@@ -120,20 +130,23 @@ export async function processDueSubtaskCandidate(
       email: env.EMAIL,
       fromAddress: env.NOTIFICATIONS_FROM_ADDRESS,
     });
-    const externalIds = await emitExternalSubtaskNotification(env.DB, {
-      projectId: row.projectId,
-      actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
-      assigneeId: row.assigneeId,
-      subtaskId: row.subtaskId,
-      assignmentVersion: row.assignmentVersion,
-      sourceKey: `subtask-due:${row.subtaskId}:${row.dueDate}`,
-      kind: "due_today",
-      dueDate: row.dueDate,
-      claimAt: now,
-      now,
-    });
+    const externalIds: string[] = [];
+    for (const assignee of assignees) {
+      externalIds.push(...await emitExternalSubtaskNotification(env.DB, {
+        projectId: row.projectId,
+        actorId: PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID,
+        assigneeId: assignee.userId,
+        subtaskId: row.subtaskId,
+        assignmentVersion: assignee.assignmentVersion,
+        sourceKey: `subtask-due:${row.subtaskId}:${row.dueDate}`,
+        kind: "due_today",
+        dueDate: row.dueDate,
+        claimAt: now,
+        now,
+      }));
+    }
     if (externalIds.length) await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, externalIds, now);
-    console.log("Claimed due subtask notification", { subtaskId: row.subtaskId, projectId: row.projectId, emitted });
+    console.log("Claimed due subtask notification", { subtaskId: row.subtaskId, projectId: row.projectId, recipients: assignees.length, emitted });
     return { claimed: true, emitted };
   } catch (error) {
     console.error("Due subtask notification emission failed", { subtaskId: row.subtaskId, projectId: row.projectId, error });
@@ -153,12 +166,11 @@ export async function scanDueSubtasks(env: Env, now = Date.now()): Promise<numbe
   const { date: todaySydney, hour } = sydneyDateTime(now);
   if (hour !== 8) return 0;
   const rows = await env.DB.prepare(
-    // Bridge until the due reminder fans out per assignee (#369): the first assignee, at their own per-person version.
-    "SELECT s.id AS subtaskId, s.project_id AS projectId, s.assignee_id AS assigneeId, a.assignment_version AS assignmentVersion, s.due_date AS dueDate " +
+    "SELECT s.id AS subtaskId, s.project_id AS projectId, s.due_date AS dueDate " +
     "FROM project_subtasks s INNER JOIN projects p ON p.id = s.project_id " +
-    "INNER JOIN project_subtask_assignees a ON a.subtask_id = s.id AND a.user_id = s.assignee_id " +
     "WHERE s.done = 0 AND s.due_date IS NOT NULL AND substr(s.due_date, 1, 10) <= ? " +
-    "AND s.due_reminder_sent_at IS NULL AND s.assignee_id IS NOT NULL AND p.archived_at IS NULL",
+    "AND s.due_reminder_sent_at IS NULL AND p.archived_at IS NULL " +
+    "AND EXISTS (SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = s.id)",
   ).bind(todaySydney).all<DueSubtaskCandidate>();
   let emitted = 0;
   for (const row of rows.results) emitted += (await processDueSubtaskCandidate(env, row, now, todaySydney)).emitted;
@@ -169,7 +181,7 @@ async function logDueSubtaskClaimSkip(env: Env, row: DueSubtaskCandidate, todayS
   try {
     const status = await env.DB.prepare(
       "SELECT due_reminder_sent_at AS dueReminderSentAt, " +
-      "done = 0 AND due_date IS NOT NULL AND substr(due_date, 1, 10) <= ? AND assignee_id IS NOT NULL " +
+      "done = 0 AND due_date IS NOT NULL AND substr(due_date, 1, 10) <= ? AND EXISTS (SELECT 1 FROM project_subtask_assignees a WHERE a.subtask_id = project_subtasks.id) " +
       "AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_subtasks.project_id AND p.archived_at IS NULL) AS eligible " +
       "FROM project_subtasks WHERE id = ?",
     ).bind(todaySydney, row.subtaskId).first<{ dueReminderSentAt: number | null; eligible: number }>();

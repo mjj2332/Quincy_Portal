@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { NOTIFICATION_OUTBOX_EVENT_TYPE, NOTIFICATION_OUTBOX_EVENT_TYPES, type NotificationOutboxMessage } from "@quincy/shared";
 import { emitExternalSafeLegacyNotification, emitExternalSubtaskNotification, emitStaffSubtaskAssignedNotification } from "@quincy/db";
 import QuincyBackground from "../src";
+import { scanDueSubtasks } from "../src/notifications";
 import type { Env } from "../src/env";
 import {
   NOTIFICATION_DELIVERY_LEASE_MS,
@@ -1042,5 +1043,59 @@ describe("#368 per-person subtask assignment delivery (the relation is authorita
     const ledgers = (await database.DB.prepare("SELECT channel, status FROM notification_delivery_ledger WHERE outbox_id = ? ORDER BY channel").bind(pending!).all<{ channel: string; status: string }>()).results;
     expect(ledgers.find((row) => row.channel === "in_app")?.status).toBe("sent");
     expect(ledgers.find((row) => row.channel === "email")?.status).toBe("suppressed");
+  });
+});
+
+describe("#369 due reminders deliver per external assignee", () => {
+  beforeAll(async () => {
+    const applied = await database.DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notification_outbox'").first();
+    if (!applied) await executeSql(__PORTAL_MIGRATION_SQL__);
+  }, 60_000);
+
+  const now = Date.UTC(2026, 7, 17, 22);
+  const dueDate = "2026-08-18";
+
+  /** A Subtask due today with two external editors: A added at version 1, B at version 2. */
+  async function seedTwoExternalDue() {
+    const projectId = crypto.randomUUID(); const actorId = crypto.randomUUID(); const aId = crypto.randomUUID(); const bId = crypto.randomUUID(); const subtaskId = crypto.randomUUID();
+    await database.DB.batch([
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Actor', ?, 1, 'editor', 1, ?, ?), (?, 'Ext A', ?, 1, 'external_editor', 1, ?, ?), (?, 'Ext B', ?, 1, 'external_editor', 1, ?, ?)").bind(actorId, `${actorId}@example.test`, now, now, aId, `${aId}@example.test`, now, now, bId, `${bId}@example.test`, now, now),
+      database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Due Delivery Street', 'editing', ?, ?)").bind(projectId, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?), (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, aId, now, crypto.randomUUID(), projectId, bId, now),
+      database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_end_kind, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Two external', 0, 0, ?, 2, ?, 'date', ?, 'date', 'Australia/Sydney', 1, ?, ?, ?)").bind(subtaskId, projectId, aId, dueDate, dueDate, actorId, now, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?), (?, ?, 2, ?)").bind(subtaskId, aId, now, subtaskId, bId, now + 1),
+    ]);
+    const sourceKey = `subtask-due:${subtaskId}:${dueDate}`;
+    const env = { ...deliveryEnv(vi.fn().mockResolvedValue({ messageId: "due-ext" })), NOTIFICATION_QUEUE: { send: vi.fn().mockResolvedValue(undefined) } } as unknown as Env;
+    return { projectId, aId, bId, subtaskId, sourceKey, env };
+  }
+  const outboxRow = (sourceKey: string, recipientId: string) => database.DB.prepare("SELECT id, status, payload_json AS payload FROM notification_outbox WHERE source_key = ? AND recipient_id = ?").bind(sourceKey, recipientId).first<{ id: string; status: string; payload: string }>();
+  const noticeCount = async (sourceKey: string, userId: string) => (await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE source_key = ? AND user_id = ?").bind(sourceKey, userId).first<{ count: number }>())!.count;
+
+  it("carries each retained person's own relation version in their due payload, and both deliver", async () => {
+    const fixture = await seedTwoExternalDue();
+    await scanDueSubtasks(fixture.env, now);
+    const a = (await outboxRow(fixture.sourceKey, fixture.aId))!; const b = (await outboxRow(fixture.sourceKey, fixture.bId))!;
+    expect(JSON.parse(a.payload).assignment).toMatchObject({ assigneeId: fixture.aId, assignmentVersion: 1 });
+    expect(JSON.parse(b.payload).assignment).toMatchObject({ assigneeId: fixture.bId, assignmentVersion: 2 });
+    await processNotificationMessage(fixture.env, message(a.id));
+    await processNotificationMessage(fixture.env, message(b.id));
+    expect((await outboxRow(fixture.sourceKey, fixture.aId))!.status).toBe("completed");
+    expect((await outboxRow(fixture.sourceKey, fixture.bId))!.status).toBe("completed");
+    expect(await noticeCount(fixture.sourceKey, fixture.aId)).toBe(1);
+    expect(await noticeCount(fixture.sourceKey, fixture.bId)).toBe(1);
+  });
+
+  it("suppresses only the removed assignee's due reminder before delivery", async () => {
+    const fixture = await seedTwoExternalDue();
+    await scanDueSubtasks(fixture.env, now);
+    const a = (await outboxRow(fixture.sourceKey, fixture.aId))!; const b = (await outboxRow(fixture.sourceKey, fixture.bId))!;
+    await database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, fixture.bId).run();
+    await processNotificationMessage(fixture.env, message(a.id));
+    await processNotificationMessage(fixture.env, message(b.id));
+    expect((await outboxRow(fixture.sourceKey, fixture.aId))!.status).toBe("completed");
+    expect((await outboxRow(fixture.sourceKey, fixture.bId))!.status).toBe("suppressed");
+    expect(await noticeCount(fixture.sourceKey, fixture.aId)).toBe(1);
+    expect(await noticeCount(fixture.sourceKey, fixture.bId)).toBe(0);
   });
 });

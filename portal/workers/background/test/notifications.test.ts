@@ -58,7 +58,7 @@ async function seedStalledHandoff(now: number, options: { withMember?: boolean }
   return { projectId, userId, handoffId };
 }
 
-async function seedDueSubtask(now: number, dueDate: string, options: { assigned?: boolean; done?: boolean } = {}) {
+async function seedDueSubtask(now: number, dueDate: string, options: { assigned?: boolean; done?: boolean; assignees?: Array<{ id: string; role: "editor" | "external_editor"; version?: number }> } = {}) {
   const projectId = crypto.randomUUID();
   const userId = crypto.randomUUID();
   const subtaskId = crypto.randomUUID();
@@ -70,6 +70,12 @@ async function seedDueSubtask(now: number, dueDate: string, options: { assigned?
     database.DB.prepare(`INSERT INTO project_subtasks (id, project_id, title, done, position, assignee_id, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Due task', ?, 1024, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Australia/Sydney', 1, ?, ?, ?)`).bind(subtaskId, projectId, options.done ? 1 : 0, options.assigned === false ? null : userId, dueDate, ...(dueDate.includes("T") ? ["timed", `${dueDate.slice(0, 10)}T00:00`, 1, 600, 0, "timed", 2, 600, 0] : ["date", dueDate, null, null, null, "date", null, null, null]), userId, now, now),
     // The relation is authoritative (#368); the column stays seeded until it is removed.
     ...(options.assigned === false ? [] : [database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 1, ?)").bind(subtaskId, userId, now)]),
+    // Extra relation-backed assignees (#369): each is an active user with an editor membership on the Project.
+    ...(options.assignees ?? []).flatMap((assignee) => [
+      database.DB.prepare("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, 1, ?, ?)").bind(assignee.id, `Assignee ${assignee.id.slice(0, 4)}`, `${assignee.id}@example.test`, assignee.role, now, now),
+      database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), projectId, assignee.id, now),
+      database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, ?, ?)").bind(subtaskId, assignee.id, assignee.version ?? 1, now),
+    ]),
   ]);
   return { projectId, userId, subtaskId, dueDate };
 }
@@ -305,7 +311,7 @@ describe("notification fanout and stalled scan", () => {
     await withActiveAdminsSuppressed(async () => {
       const now = sydneyEightAm(2026, 8, 18);
       const fixture = await seedDueSubtask(now, "2026-08-18T14:30");
-      const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, assigneeId: fixture.userId, assignmentVersion: 1, dueDate: fixture.dueDate };
+      const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, dueDate: fixture.dueDate };
       const env = notificationEnv(vi.fn().mockResolvedValue({ messageId: "due-race" }));
       expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: true, emitted: 1 });
       expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: false, emitted: 0 });
@@ -323,6 +329,137 @@ describe("notification fanout and stalled scan", () => {
       expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
       expect(await scanDueSubtasks(notificationEnv(send), now + 1)).toBe(1);
       expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("#369 due reminders reach every assignee", () => {
+    const staff = () => ({ id: crypto.randomUUID(), role: "editor" as const });
+    const external = (version = 1) => ({ id: crypto.randomUUID(), role: "external_editor" as const, version });
+    const sourceKey = (fixture: { subtaskId: string; dueDate: string }) => `subtask-due:${fixture.subtaskId}:${fixture.dueDate}`;
+    const noticeUsers = async (key: string) => (await database.DB.prepare("SELECT user_id FROM notifications WHERE source_key = ? ORDER BY user_id").bind(key).all<{ user_id: string }>()).results.map((row) => row.user_id).sort();
+    /** Drops the default single assignee so the relation holds exactly the fixture's `assignees`. */
+    const onlyThese = (fixture: { subtaskId: string; userId: string }) => database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, fixture.userId).run();
+
+    it("sends one reminder per assignee under a single claim", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const people = [staff(), staff(), staff()];
+        const fixture = await seedDueSubtask(now, "2026-08-18", { assignees: people });
+        await onlyThese(fixture);
+        const send = vi.fn().mockResolvedValue({ messageId: "due-three" });
+        const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        try {
+          expect(await scanDueSubtasks(notificationEnv(send), now)).toBe(3);
+          expect(log.mock.calls.filter(([message, detail]) => message === "Claimed due subtask notification" && (detail as { subtaskId: string }).subtaskId === fixture.subtaskId)).toHaveLength(1);
+        } finally { log.mockRestore(); }
+        expect(await noticeUsers(sourceKey(fixture))).toEqual(people.map((person) => person.id).sort());
+        expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: now });
+        expect(await scanDueSubtasks(notificationEnv(send), now)).toBe(0);
+        expect(send).toHaveBeenCalledTimes(3);
+      });
+    });
+
+    it("scans a Subtask once however many assignees it has, and skips one with none", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const multi = await seedDueSubtask(now, "2026-08-18", { assignees: [staff(), staff()] });
+        const none = await seedDueSubtask(now, "2026-08-18", { assigned: false });
+        const send = vi.fn().mockResolvedValue({ messageId: "due-scan" });
+        await scanDueSubtasks(notificationEnv(send), now);
+        expect((await noticeUsers(sourceKey(multi))).length).toBe(3);
+        expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(none.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
+      });
+    });
+
+    it("sends staff assignees a notification and an external editor an outbox row carrying their own version", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const s1 = staff(); const s2 = staff(); const ext = external(3);
+        const fixture = await seedDueSubtask(now, "2026-08-18", { assignees: [s1, s2, ext] });
+        await onlyThese(fixture);
+        const env = { ...notificationEnv(vi.fn().mockResolvedValue({ messageId: "due-mixed" })), NOTIFICATION_QUEUE: { send: vi.fn().mockResolvedValue(undefined) } } as unknown as Env;
+        await scanDueSubtasks(env, now);
+        expect(await noticeUsers(sourceKey(fixture))).toEqual([s1.id, s2.id].sort());
+        const outbox = (await database.DB.prepare("SELECT recipient_id, event_type, payload_json FROM notification_outbox WHERE source_key = ?").bind(sourceKey(fixture)).all<{ recipient_id: string; event_type: string; payload_json: string }>()).results;
+        expect(outbox).toHaveLength(1);
+        expect(outbox[0]).toMatchObject({ recipient_id: ext.id, event_type: "project.subtask.due_today" });
+        expect(JSON.parse(outbox[0]!.payload_json).assignment).toMatchObject({ assigneeId: ext.id, assignmentVersion: 3 });
+      });
+    });
+
+    it("does not remind anyone twice after a remove and re-add on the same day", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const a = staff(); const b = staff();
+        const fixture = await seedDueSubtask(now, "2026-08-18", { assignees: [a, b] });
+        const send = vi.fn().mockResolvedValue({ messageId: "due-readd" });
+        const env = notificationEnv(send);
+        const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, dueDate: fixture.dueDate };
+        expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: true, emitted: 3 });
+        await database.DB.batch([
+          database.DB.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ? AND user_id = ?").bind(fixture.subtaskId, b.id),
+          database.DB.prepare("INSERT INTO project_subtask_assignees (subtask_id, user_id, assignment_version, added_at) VALUES (?, ?, 5, ?)").bind(fixture.subtaskId, b.id, now + 1),
+        ]);
+        expect(await scanDueSubtasks(env, now)).toBe(0);
+        expect(await processDueSubtaskCandidate(env, candidate, now, "2026-08-18")).toEqual({ claimed: false, emitted: 0 });
+        expect(await noticeUsers(sourceKey(fixture))).toEqual([fixture.userId, a.id, b.id].sort());
+        expect(send).toHaveBeenCalledTimes(3);
+      });
+    });
+
+    it("releases the claim after a partial failure and the retry leaves exactly one reminder each", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const s1 = staff(); const ext = external(2);
+        const fixture = await seedDueSubtask(now, "2026-08-18", { assignees: [s1, ext] });
+        const send = vi.fn().mockResolvedValue({ messageId: "due-partial" });
+        const env = { ...notificationEnv(send), NOTIFICATION_QUEUE: { send: vi.fn().mockResolvedValue(undefined) } } as unknown as Env;
+        // Staff emission has already inserted; the external emission then fails once.
+        const failingDb = new Proxy(database.DB, {
+          get(target, property) {
+            if (property === "prepare") {
+              return (sql: string) => {
+                if (sql.includes("INSERT INTO notification_outbox") && !failingDb.__failed) { failingDb.__failed = true; throw new Error("forced external emission failure"); }
+                return target.prepare(sql);
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        }) as unknown as D1Database & { __failed?: boolean };
+        expect(await scanDueSubtasks({ ...env, DB: failingDb } as Env, now)).toBe(0);
+        expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: null });
+        await scanDueSubtasks(env, now + 1);
+        expect(await noticeUsers(sourceKey(fixture))).toEqual([fixture.userId, s1.id].sort());
+        const outbox = await database.DB.prepare("SELECT recipient_id FROM notification_outbox WHERE source_key = ?").bind(sourceKey(fixture)).all<{ recipient_id: string }>();
+        expect(outbox.results.map((row) => row.recipient_id)).toEqual([ext.id]);
+      });
+    });
+
+    it("emits nothing but keeps the claim when every assignee is removed between claim and read", async () => {
+      await withActiveAdminsSuppressed(async () => {
+        const now = sydneyEightAm(2026, 8, 18);
+        const fixture = await seedDueSubtask(now, "2026-08-18");
+        const send = vi.fn().mockResolvedValue({ messageId: "due-empty" });
+        const candidate = { subtaskId: fixture.subtaskId, projectId: fixture.projectId, dueDate: fixture.dueDate };
+        const racing = new Proxy(database.DB, {
+          get(target, property) {
+            if (property === "prepare") {
+              return (sql: string) => {
+                if (sql.includes("assignment_version AS assignmentVersion FROM project_subtask_assignees")) {
+                  return { bind: () => ({ all: async () => { await target.prepare("DELETE FROM project_subtask_assignees WHERE subtask_id = ?").bind(fixture.subtaskId).run(); return target.prepare(sql).bind(fixture.subtaskId).all(); } }) };
+                }
+                return target.prepare(sql);
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        }) as unknown as D1Database;
+        expect(await processDueSubtaskCandidate({ ...notificationEnv(send), DB: racing } as Env, candidate, now, "2026-08-18")).toEqual({ claimed: true, emitted: 0 });
+        expect(await database.DB.prepare("SELECT due_reminder_sent_at FROM project_subtasks WHERE id = ?").bind(fixture.subtaskId).first()).toEqual({ due_reminder_sent_at: now });
+        expect(send).not.toHaveBeenCalled();
+      });
     });
   });
 
