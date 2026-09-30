@@ -117,6 +117,27 @@ describe("shared staff route contract", () => {
     }
   });
 
+  it("#367: every Workspace tab location round-trips through parse and serialise", () => {
+    for (const location of [
+      `/projects/${projectId}?collaboration=open`,
+      `/projects/${projectId}?tab=raw`,
+      `/projects/${projectId}?tab=edited`,
+      `/projects/${projectId}?tab=video`,
+      `/projects/${projectId}?tab=floorplan`,
+      `/projects/${projectId}?tab=copy`,
+    ]) {
+      const route = parseStaffLocation(location);
+      expect(route.kind, location).toBe("project");
+      expect(staffPathFor(route), location).toBe(location);
+      expect(safeStaffDestination(location), location).toBe(location);
+    }
+    expect(parseStaffLocation(`/projects/${projectId}?tab=collaboration`).kind).toBe("not-found");
+    expect(safeStaffDestination(`/projects/${projectId}?tab=collaboration`)).toBeNull();
+    for (const location of [`/projects/${projectId}?collaboration=1`, `/projects/${projectId}?tab=RAW`]) {
+      expect(parseStaffLocation(location).kind, location).toBe("not-found");
+    }
+  });
+
   it("#337: a project notification links to its mapped Workspace tab", () => {
     // Independent expectation matrix written from #337's table (not read from the implementation map).
     const expected: Record<NotificationType, string> = {

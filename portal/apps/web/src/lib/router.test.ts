@@ -172,6 +172,30 @@ describe("History adapter", () => {
   });
 });
 
+describe("history adapter navigation epoch (#367)", () => {
+  it("bumps on push and popstate, never on replace, even for an identical URL", () => {
+    let popstate: (() => void) | undefined;
+    const location = { pathname: `/projects/${projectId}`, search: "?tab=raw" };
+    const history = createHistoryAdapter({
+      location: location as Location,
+      history: { pushState: () => undefined, replaceState: () => undefined } as unknown as History,
+      addEventListener: (_type, listener) => { popstate = listener; },
+      removeEventListener: () => { popstate = undefined; },
+    });
+    const unsubscribe = history.subscribe(() => undefined);
+    expect(history.getNavigationEpoch()).toBe(0);
+    history.replace(`/projects/${projectId}?tab=raw`);
+    expect(history.getNavigationEpoch()).toBe(0);
+    history.push(`/projects/${projectId}?tab=raw`);
+    expect(history.getNavigationEpoch()).toBe(1);
+    popstate?.();
+    expect(history.getNavigationEpoch()).toBe(2);
+    history.replace(`/projects/${projectId}?tab=edited`);
+    expect(history.getNavigationEpoch()).toBe(2);
+    unsubscribe();
+  });
+});
+
 describe("internal-link interception", () => {
   const click = (overrides: Partial<Parameters<typeof shouldInterceptInternalLink>[0]> = {}) => ({
     button: 0, detail: 1, defaultPrevented: false, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
