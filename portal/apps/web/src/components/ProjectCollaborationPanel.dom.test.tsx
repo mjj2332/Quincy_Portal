@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { focusManager, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
+import { CHECKLIST_RAIL_QUERY, ProjectCollaborationPanel } from "./ProjectCollaborationPanel";
 import { chooseCommentAction } from "../testing/comment-menu";
 import { formatAbsoluteTime, formatRelativeTime } from "../lib/date-format";
 import { EditProject } from "../screens/EditProject";
@@ -11,6 +11,7 @@ import { QuincyQueryProvider } from "../lib/query-client";
 import { ApiError } from "../lib/api";
 import { getProjectQueryRuntime } from "../lib/project-query-sync";
 import { projectDataKeys } from "../lib/project-data";
+import { RAIL_QUERY, stubRailMedia } from "../testing/rail-media";
 import { purgeProjectCollaborationData, useProjectCommentPresentation, useProjectCommentReadStateQuery, useProjectCommentsCacheQuery, useProjectCommentsQuery } from "../lib/project-comments";
 
 const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
@@ -123,6 +124,7 @@ async function selectText(editor: HTMLElement, node: Node, start: number, end: n
     await Promise.resolve(); await Promise.resolve();
   });
 }
+async function typeInto(element: HTMLInputElement, value: string) { const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!; await act(async () => { setter.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true })); await Promise.resolve(); }); }
 async function selectOption(select: HTMLSelectElement, value: string) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
@@ -173,7 +175,9 @@ function PassiveCommentsObserver() {
   return null;
 }
 
+let rail: ReturnType<typeof stubRailMedia>;
 beforeEach(() => {
+  rail = stubRailMedia(true);
   capabilities = new Set(["collaborateOnProject"]);
   apiGetMock.mockReset().mockImplementation((path: string) => path.includes("comment-read-marker") ? Promise.resolve(readState()) : path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : Promise.resolve(comments()));
   apiPostMock.mockReset().mockResolvedValue({ ...ownComment, id: "comment-new", body: "Posted comment", content: doc("Posted comment") });
@@ -1176,6 +1180,80 @@ describe("Discussion restyle (#376)", () => {
     expect(composer.querySelector('[data-testid="rich-text-field"]')).not.toBeNull();
     expect(composer.textContent).toContain("Use @ to mention project participants");
     expect(composer.querySelector('[data-testid="rich-text-counter"]')).toBeNull();
+  });
+});
+
+describe("ProjectCollaborationPanel checklist rail (#377)", () => {
+  const checklistOf = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Project checklist"]')!;
+  const panelOf = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-testid="project-collaboration-panel"]')!;
+  const collapseControl = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('button[aria-label="Collapse checklist"], button[aria-label="Expand checklist"]')!;
+  const tab = (host: HTMLElement, name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.startsWith(name))!;
+  const emptyChecklistApi = () => apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("subtask-assignee-options") ? Promise.resolve({ candidates: [], multiAssignee: false }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(comments()));
+
+  it("uses the one breakpoint the stub answers for", () => {
+    expect(CHECKLIST_RAIL_QUERY).toBe(RAIL_QUERY);
+  });
+
+  it("renders the checklist once, outside both tabpanels, and keeps it (and its draft) across the sub-tab switch", async () => {
+    emptyChecklistApi();
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    expect(host.querySelectorAll('[aria-label="Project checklist"]').length).toBe(1);
+    expect(checklistOf(host).closest('[role="tabpanel"]')).toBeNull();
+    await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Draft item");
+    await click(tab(host, "Activity"));
+    expect(host.querySelectorAll('[aria-label="Project checklist"]').length).toBe(1);
+    expect(checklistOf(host).closest('[role="tabpanel"]')).toBeNull();
+    expect(checklistOf(host).closest("[hidden]")).toBeNull();
+    await click(tab(host, "Discussion"));
+    expect(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!.value).toBe("Draft item");
+  });
+
+  it("wide viewport: layout attribute rail, checklist expanded", async () => {
+    emptyChecklistApi();
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    expect(panelOf(host).getAttribute("data-checklist-layout")).toBe("rail");
+    expect(collapseControl(host).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("narrow viewport: stacked, collapsed to its count, checklist before the tab strip; the media change flips the layout and the default", async () => {
+    emptyChecklistApi();
+    rail.set(false);
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    expect(panelOf(host).getAttribute("data-checklist-layout")).toBe("stacked");
+    expect(collapseControl(host).getAttribute("aria-expanded")).toBe("false");
+    expect(checklistOf(host).textContent).toContain("0 / 0");
+    const tablist = host.querySelector('[role="tablist"]')!;
+    expect(checklistOf(host).compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => { rail.set(true); await Promise.resolve(); });
+    expect(panelOf(host).getAttribute("data-checklist-layout")).toBe("rail");
+    expect(collapseControl(host).getAttribute("aria-expanded")).toBe("true");
+    await act(async () => { rail.set(false); await Promise.resolve(); });
+    expect(panelOf(host).getAttribute("data-checklist-layout")).toBe("stacked");
+    expect(collapseControl(host).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("an open composer keeps the checklist expanded when the layout flips to stacked", async () => {
+    emptyChecklistApi();
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    await click(host.querySelector<HTMLButtonElement>(`#subtask-add-${projectId}`)!);
+    await typeInto(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!, "Keep me");
+    await act(async () => { rail.set(false); await Promise.resolve(); });
+    expect(panelOf(host).getAttribute("data-checklist-layout")).toBe("stacked");
+    expect(collapseControl(host).getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLInputElement>(`#subtask-composer-${projectId}`)!.value).toBe("Keep me");
+  });
+
+  it("the panel section never scrolls (a sticky rail needs that) and the checklist cell carries the rail-only sticky utilities", async () => {
+    emptyChecklistApi();
+    const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
+    const section = panelOf(host);
+    expect(section.className).not.toMatch(/overflow-(y-)?auto/);
+    const cell = host.querySelector<HTMLElement>('[data-testid="project-collaboration-rail"]')!;
+    expect(cell.contains(checklistOf(host))).toBe(true);
+    expect(cell.className).toContain("group-data-[checklist-layout=rail]/collab:sticky");
+    expect(cell.className).toContain("group-data-[checklist-layout=rail]/collab:overflow-y-auto");
+    expect(cell.className).not.toContain("min-[1100px]");
   });
 });
 function article_text(article: HTMLElement) { return article.textContent ?? ""; }

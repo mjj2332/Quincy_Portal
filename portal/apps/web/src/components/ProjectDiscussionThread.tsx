@@ -42,7 +42,6 @@ export type ProjectDiscussionThreadProps = {
   consumeDiscussion403?: boolean;
   onAccessFailure?: (error: unknown, resource: ProjectDiscussionAccessFailureResource) => void;
   onUnreadCountChange?: (count: number) => void;
-  beforeAnchor?: ReactNode;
   children?: (discussion: {
     content: ReactNode;
     project: CommentResponse["project"] | undefined;
@@ -146,7 +145,6 @@ export function ProjectDiscussionThread({
   consumeDiscussion403 = true,
   onAccessFailure,
   onUnreadCountChange,
-  beforeAnchor,
   children,
 }: ProjectDiscussionThreadProps) {
   const session = useSession();
@@ -310,7 +308,6 @@ export function ProjectDiscussionThread({
   const contentMarkup = <>
     {listError && !discussionDenied && <Notice tone="critical" role="alert">{errorMessage(listError, "Comments could not be loaded.")}</Notice>}
     {mutationError && !discussionDenied && <Notice tone="critical" role="alert">{mutationError}</Notice>}
-    {beforeAnchor}
     {!discussionDenied && !listLoading && composer}
     <div ref={presentation.anchorRef} data-testid="discussion-read-anchor" className="w-px h-px m-0 overflow-hidden" aria-hidden="true" />
     {discussionDenied ? <EmptyState role="status" size="compact" title="No discussion access." /> : listLoading ? <EmptyState role="status" size="compact" title="Loading comments…" /> : <>

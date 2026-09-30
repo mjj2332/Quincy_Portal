@@ -43,6 +43,10 @@ import { EXTERNAL_EDITOR_CAPABILITIES, ROLE_CAPABILITIES, type Role } from "@qui
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import type { WorkspaceAsset } from "../components/PhotoGrid";
 import { QuincyQueryProvider } from "../lib/query-client";
+import { stubRailMedia } from "../testing/rail-media";
+
+// jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
+stubRailMedia(true);
 
 const authState = vi.hoisted(() => ({ role: "admin" }));
 vi.mock("../lib/auth", () => ({
@@ -634,18 +638,22 @@ const FROZEN_EXTERNAL_EDITOR = {
       "discussion-composer": 1,
       "discussion-read-anchor": 1,
       "project-collaboration-panel": 1,
+      "project-collaboration-rail": 1,
       "project-deadline-trigger": 1,
       "project-header": 1,
       "project-overview-tab": 6,
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
+      "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
       "combobox",
       "group",
+      "presentation",
+      "progressbar",
       "status",
       "tab",
       "tablist",
@@ -658,8 +666,8 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Bold",
       "Bullet list",
       "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Collaboration",
+      "Collapse checklist",
       "Copy link",
       "Copy0",
       "Deadline: Set deadline",
@@ -915,6 +923,7 @@ const FROZEN_ADMIN = {
       "discussion-composer": 1,
       "discussion-read-anchor": 1,
       "project-collaboration-panel": 1,
+      "project-collaboration-rail": 1,
       "project-deadline-trigger": 1,
       "project-dropbox-trigger": 1,
       "project-header": 1,
@@ -922,12 +931,15 @@ const FROZEN_ADMIN = {
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
+      "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
       "combobox",
       "group",
+      "presentation",
+      "progressbar",
       "status",
       "tab",
       "tablist",
@@ -941,8 +953,8 @@ const FROZEN_ADMIN = {
       "Bold",
       "Bullet list",
       "Checklist",
-      "Checklist0 of 0 complete \u00b7 0%\u2212",
       "Collaboration",
+      "Collapse checklist",
       "Copy link",
       "Copy0",
       "Deadline: Set deadline",

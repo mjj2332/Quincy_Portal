@@ -3990,6 +3990,12 @@ The Gantt's `gantt-view` wrapper measured 145–445px wider in `scrollWidth` tha
 - **`overflow-hidden` clips but still scrolls programmatically.** `scrollIntoView`, find-in-page and
   focus can all move it. Use `overflow-clip` for a box that must never scroll, after checking that no
   `position: sticky` descendant anchors to it (sticky binds to the nearest scroll container).
+- **The Collaboration checklist rail (#377) sticks only because #376 removed the panel section's
+  `overflow-auto`**, which never scrolled but still captured `position: sticky`. Keep that class off
+  the section. The rail's own `overflow-y-auto` is what keeps a checklist taller than the sheet
+  reachable, and its sticky offset (`--collab-rail-top`, set on `.project-sheet__body`) must clear the
+  sheet's absolutely positioned close button: 44px at `top`/`right` space-4, `.worktools` gives it the
+  same clearance.
 - **A registry class like `data-horizontal:flex-col` is dead under Base UI 1.7.0**, which emits
   `data-orientation="horizontal|vertical"`, never a bare `data-horizontal`. `reui/tabs.tsx` hit this
   in #202; `reui/scroll-area.tsx` shipped it too, so the horizontal thumb's `flex-1` beat its inline
