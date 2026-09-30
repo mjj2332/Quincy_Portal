@@ -418,7 +418,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                 // the vendored nav's children API and exported parts; no vendored file is edited. The
                 // default nav composes Today / switcher / arrows / title itself, so a part the vendor
                 // adds there will not appear on phones until it is added here.
-                <EventCalendarNav className="min-w-0 flex-1 gap-y-[var(--space-1)]">
+                <EventCalendarNav className="min-w-0 shrink-0 gap-y-[var(--space-1)]">
                   {/* The default nav's shared provider, which custom children bypass: first tooltip
                       waits, moving between buttons is instant (the vendor's 600 / 0 / 300 ms). */}
                   <TooltipProvider delay={600} closeDelay={0} timeout={300}>
