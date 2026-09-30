@@ -100,7 +100,7 @@ function CommentItem({ comment, isOwn, now, saving, editing, editingOverBytes, l
       {comment.editedAt && <span className={cn(META_TEXT, "!normal-case")}>· Edited</span>}
     </header>
     {isOwn ? <Menu triggerLabel={`Actions for comment by ${comment.author.name}`} label="Comment actions" triggerClassName={ICON_BUTTON} triggerTestId="comment-actions" trigger={<span aria-hidden="true">⋯</span>}>
-      <MenuPrimitive.Item className={MENU_ITEM} onClick={() => onEditStart(comment)}>Edit</MenuPrimitive.Item>
+      <MenuPrimitive.Item className={MENU_ITEM} disabled={isEditing || saving} onClick={() => onEditStart(comment)}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={saving} onClick={() => { void onDelete(comment).finally(focusActions); }}>Delete</MenuPrimitive.Item>
     </Menu> : <span aria-hidden="true" />}
     <div className="col-start-2 col-span-2 grid gap-[var(--space-2)] min-w-0">
