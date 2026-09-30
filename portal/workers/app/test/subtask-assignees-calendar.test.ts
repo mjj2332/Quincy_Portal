@@ -8,7 +8,6 @@ describe("subtaskAssigneesJsonSql", () => {
     const sql = subtaskAssigneesJsonSql("s");
     expect(sql).toContain("s.id");
     expect(sql).toContain("project_subtask_assignees");
-    expect(sql).not.toContain("assignee_id");
   });
 });
 

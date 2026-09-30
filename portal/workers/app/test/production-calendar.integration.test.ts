@@ -705,10 +705,9 @@ describe("#370 Calendar reads the assignee relation", () => {
     expect(staff?.kind === "checklist" && staff.assignees.map((person) => person.id)).toEqual([externalId, adminId]);
   });
 
-  it("keeps the Calendar SQL off the legacy assignee column, with matching UNION arms, for every role", () => {
+  it("keeps the Calendar SQL off the per-row assignee columns, with matching UNION arms, for every role", () => {
     for (const role of ["admin", "editor", "external_editor"] as const) {
-      expect(productionCalendarRangeSql(role), role).not.toMatch(/assignee_id|assignee_name|assignee_role|assignee_active/u);
-      expect(productionCalendarFacetsSql(role), role).not.toMatch(/assignee_id/u);
+      expect(productionCalendarRangeSql(role), role).not.toMatch(/assignee_name|assignee_role|assignee_active/u);
     }
   });
 });

@@ -281,7 +281,7 @@ unit tests in `packages/shared/src/checklist-schedule.ts`'s own test file, not b
 
 ## No fixture users (v1)
 
-Every fixture subtask is unassigned (`assignee_id NULL`, `assignment_version 0`); `created_by` is
+Every fixture subtask is unassigned (no `project_subtask_assignees` rows, `assignment_version 0`); `created_by` is
 always the existing bootstrap admin, which the fixture never inserts, updates, or deletes. This
 means the Editor filter and assignee chips are not exercised by this fixture — that is deferred
 scope, not an oversight.

@@ -6,7 +6,8 @@ status: accepted
 
 > **Status note.** Gate retired and single field removed in #373 part 1: no code reads or writes
 > `project_subtasks.assignee_id`, and the `subtask_multi_assignee` gate code is gone (its `feature_flags` row
-> stays until part 2). The column and its index are dropped in #373 part 2.
+> stays until part 2). **Contract done in #373 part 2:** migration 0050 drops the column and its index and deletes
+> the `feature_flags` row.
 
 A Subtask had one nullable `assignee_id`. The multi-assignee work (PRD #358) needs any number of
 people per Subtask, so assignees move into `project_subtask_assignees`: one row per Subtask assignee,

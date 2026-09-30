@@ -187,7 +187,7 @@ function collectionInsertStatement(collection: QaFixtureDataset["collections"][n
 }
 
 const SUBTASK_COLUMNS = [
-  "id", "project_id", "title", "done", "position", "assignee_id", "assignment_version", "due_date",
+  "id", "project_id", "title", "done", "position", "assignment_version", "due_date",
   "schedule_start_kind", "schedule_start_civil", "schedule_start_at", "schedule_start_utc_offset_minutes", "schedule_start_fold",
   "schedule_end_kind", "schedule_end_at", "schedule_end_utc_offset_minutes", "schedule_end_fold", "schedule_zone", "schedule_version",
   "created_by", "created_at", "updated_at",
@@ -198,7 +198,7 @@ function subtaskInsertStatement(subtask: QaFixtureDataset["subtasks"][number], c
   const values = [
     sqlId(subtask.id, "subtask id"), sqlId(subtask.projectId, "subtask project id"), sqlText(subtask.title, "subtask title"),
     sqlBool(subtask.done), sqlInt((subtask.index + 1) * 1024, "subtask position"),
-    "NULL", "0",
+    "0",
     sqlNullableText(s.dueDate, "due date"),
     s.scheduleStartKind ? sqlText(s.scheduleStartKind, "schedule start kind") : "NULL",
     sqlNullableText(s.scheduleStartCivil, "schedule start civil"),
@@ -313,7 +313,7 @@ function subtaskFingerprintRow(subtask: QaFixtureDataset["subtasks"][number], cr
   const s = subtask.storage;
   return {
     id: subtask.id, project_id: subtask.projectId, title: subtask.title, done: subtask.done ? 1 : 0, position: (subtask.index + 1) * 1024,
-    assignee_id: null, assignment_version: 0, due_date: s.dueDate, due_reminder_sent_at: null,
+    assignment_version: 0, due_date: s.dueDate, due_reminder_sent_at: null,
     schedule_start_kind: s.scheduleStartKind, schedule_start_civil: s.scheduleStartCivil, schedule_start_at: s.scheduleStartAt,
     schedule_start_utc_offset_minutes: s.scheduleStartUtcOffsetMinutes, schedule_start_fold: s.scheduleStartFold,
     schedule_end_kind: s.scheduleEndKind, schedule_end_at: s.scheduleEndAt, schedule_end_utc_offset_minutes: s.scheduleEndUtcOffsetMinutes,

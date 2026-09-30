@@ -14,7 +14,7 @@ function event(start: string, end: string, startChoice?: "earlier" | "later", en
   const startEndpoint = endpoint(start, startChoice);
   const endEndpoint = endpoint(end, endChoice);
   return {
-    id: "checklist:one", kind: "checklist", title: "Select hero images", project, assignee: null,
+    id: "checklist:one", kind: "checklist", title: "Select hero images", project, assignees: [], otherAssigneeCount: 0,
     timing: startEndpoint.kind === "date" ? { allDay: true, start, end: end } : { allDay: false, start: startEndpoint.instant, end: endEndpoint.instant },
     status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false },
     schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startEndpoint, end: endEndpoint, due: end },

@@ -79,8 +79,8 @@ loses or misreads assignees.
 
 #### Multi-assignee rollout flag
 
-> **Retired in #373 part 1.** No code reads the flag any more, so the row is inert. It stays in D1 until #373
-> part 2's migration deletes it, and PR 1 code (which still enforces it) must not be rolled back to. The
+> **Retired in #373 part 1; row deleted by migration 0050 (#373 part 2).** No code reads the flag and the
+> row no longer exists. Code older than #403 (which still enforces it) must not be rolled back to. The
 > rest of this section is history.
 
 The `feature_flags` row `subtask_multi_assignee` (seeded **off** by migration 0049, missing row = off)
@@ -101,6 +101,18 @@ npx wrangler d1 execute DB --remote --command "SELECT enabled FROM feature_flags
 
 Turning it back off (`enabled = 0`) is safe: it only blocks adding people beyond one and never
 touches existing assignees. A migration must never re-assert the row (`docs/lessons.md`, #160).
+
+#### #373 part 2 (0050): drop `project_subtasks.assignee_id`
+
+Migration 0050 drops the index and the column and deletes the `subtask_multi_assignee` row. Apply checklist
+(from `portal/workers/app`, `--remote`):
+
+1. Read-only pre-flight (D1 refuses `sqlite_version()`, code 7500, so skip it): `SELECT type,name,tbl_name FROM sqlite_master WHERE sql LIKE '%assignee_id%' OR type IN ('view','trigger')` must return exactly the table and the index; record the row counts of `project_subtasks` and `project_subtask_assignees`.
+2. Record the #403 Worker version ids: the rollback floor. Older Workers cannot run against this schema.
+3. Take a D1 bookmark (Time Travel) so the apply can be restored.
+4. Apply migrations; the pending list must show only 0050.
+5. Post-verify: column and index gone, both row counts unchanged, `PRAGMA foreign_key_check` empty, flag row gone.
+6. Re-run the deploy.
 
 ### Calendar (since #224)
 

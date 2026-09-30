@@ -155,10 +155,10 @@ describe("#372 Gantt Subtask rows carry their assignees", () => {
     expect(after.rows.find((row) => row.id === noneId)?.assignees.map((person) => person.id)).toEqual([externalId]);
   });
 
-  it("keeps the Gantt child SQL off the legacy assignee column, for every role", () => {
+  it("keeps the Gantt child SQL off the per-row assignee columns, for every role", () => {
     for (const role of ["admin", "editor", "external_editor"] as const) {
-      expect(productionGanttChildrenForPageSql(role), role).not.toMatch(/assignee_id|assignee_name|assignee_role|assignee_active/u);
-      expect(productionGanttChildPageSql(role), role).not.toMatch(/assignee_id|assignee_name|assignee_role|assignee_active/u);
+      expect(productionGanttChildrenForPageSql(role), role).not.toMatch(/assignee_name|assignee_role|assignee_active/u);
+      expect(productionGanttChildPageSql(role), role).not.toMatch(/assignee_name|assignee_role|assignee_active/u);
     }
   });
 });
