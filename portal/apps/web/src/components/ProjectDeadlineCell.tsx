@@ -27,7 +27,7 @@ import { cn } from "../lib/utils";
 export const CELL_TRIGGER = "h-auto min-h-6 max-w-full justify-start -ml-1 px-1 normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] max-[720px]:min-h-[44px] max-[720px]:min-w-[44px]";
 
 /** The Deadline as a surface sees it: the instant, the studio wall-clock civil string, and overdue. */
-export type ProjectDeadlineView = NonNullable<GanttProjectRowDto["deadline"]>;
+export type ProjectDeadlineView = Pick<NonNullable<GanttProjectRowDto["deadline"]>, "at" | "localCivil" | "overdue">;
 
 /**
  * Loads the Project detail behind a popover. Children render only once data exists: the Deadline
