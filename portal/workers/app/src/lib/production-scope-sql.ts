@@ -1,4 +1,4 @@
-import type { Role } from "@quincy/shared";
+import { PHOTOGRAPHER_VISIBLE_STAGES, type Role } from "@quincy/shared";
 
 /**
  * Shared SQL fragments for the two "authorized-projects" surfaces (Calendar, Gantt) that read
@@ -60,6 +60,89 @@ export function priorityFilterSql(priorityColumn: string): string {
   return `(NOT EXISTS (SELECT 1 FROM request_priorities) OR EXISTS (SELECT 1 FROM request_priorities rp WHERE rp.priority = COALESCE(CAST(${priorityColumn} AS TEXT), 'none')))`;
 }
 
+/**
+ * #429: the Project's stored shoot date is a real Sydney calendar day. `GLOB` alone only checks the
+ * `YYYY-MM-DD` shape (a Tonomo free-text `2026-02-30` passes it); `date(x) = x` is SQLite's own
+ * calendar-validity check, since `date()` rolls an impossible day forward. This is the ONE spelling:
+ * the Gantt's sort key (`BAR_START_DATE_EXPR`) and the Shoot date range both use it, so a value the
+ * Gantt draws as "no shoot date" can never match a range.
+ */
+export function validShootDateSql(column = "p.shoot_date"): string {
+  return `${column} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(${column}) = ${column}`;
+}
+
+/**
+ * #429: the Shoot date range predicate. `fromRef` / `toRef` are bound text references holding the
+ * inclusive Sydney civil days (`''` = no range). An unparsed (free-text) shoot date never matches.
+ */
+export function shootRangeSql(column: string, fromRef: string, toRef: string): string {
+  return `(${fromRef} = '' OR (${validShootDateSql(column)} AND ${column} BETWEEN ${fromRef} AND ${toRef}))`;
+}
+
+/**
+ * #429: the Deadline range predicate over the Sydney local civil day of the Deadline (the first ten
+ * characters of `deadline_local_civil`, so a DST day is one day, not 23 or 25 hours). A Project with no
+ * Deadline never matches a range.
+ */
+export function deadlineRangeSql(atColumn: string, civilColumn: string, fromRef: string, toRef: string): string {
+  return `(${fromRef} = '' OR (${atColumn} IS NOT NULL AND substr(${civilColumn}, 1, 10) BETWEEN ${fromRef} AND ${toRef}))`;
+}
+
+/**
+ * #429: "Overdue", the ONE server rule (`shared/project-deadline.ts`): the Deadline is set and past,
+ * the Project is not Delivered, and not archived. `columns` names the three facts in whatever shape
+ * the caller's relation has them; `nowRef` is a bound epoch-ms reference.
+ */
+export function deadlineOverdueSql(columns: { deadlineAt: string; notDelivered: string; notArchived: string }, nowRef: string): string {
+  return `(${columns.deadlineAt} IS NOT NULL AND ${columns.deadlineAt} < ${nowRef} AND ${columns.notDelivered} AND ${columns.notArchived})`;
+}
+
+/** `deadlineOverdueSql` over a row of `projects` itself. */
+export function projectDeadlineOverdueSql(alias: string, nowRef: string): string {
+  return deadlineOverdueSql({ deadlineAt: `${alias}.deadline_at`, notDelivered: `${alias}.stage_key <> 'delivered'`, notArchived: `${alias}.archived_at IS NULL` }, nowRef);
+}
+
+/**
+ * #429: the People field's universe — `dashboard_people` (`person_id, person_name, person_role,
+ * person_active`): every Editor of an authorised Project plus every assignee of one of its Subtasks, under
+ * the request's Archived mode and nothing else (never search, date or any other facet, so a chosen person
+ * cannot drop out of the options, and an id outside it is "unknown", dropped before it can widen a
+ * result). Inactive people are included (the UI labels them): an assignment to someone since
+ * deactivated still reads. An External Editor's universe is their own Projects, and an assignee is named
+ * only if on that Project's team (the same rule `assigneesForViewer` applies to every other surface).
+ * A photographer's is the Projects the Table lists for them. Assumes the caller's `WITH` chain defines
+ * `request` (an `r` row) and binds `?1` as the principal, as every statement built on this module does;
+ * `archivedModeRef` is `"r.archived_mode"`-shaped.
+ */
+export function dashboardPeopleCte(role: Role, archivedModeRef: string): string {
+  const branch = productionRoleSql(role);
+  const scope = role === "photographer"
+    ? `INNER JOIN project_members photographer_scope ON photographer_scope.project_id = p.id AND photographer_scope.user_id = ?1 AND p.stage_key IN (${PHOTOGRAPHER_VISIBLE_STAGES.map((stage) => `'${stage}'`).join(", ")})`
+    : "";
+  const projects = `FROM projects p
+  ${branch.from}
+  ${scope}
+  CROSS JOIN request r`;
+  const external = role === "external_editor"
+    ? "AND EXISTS (SELECT 1 FROM project_members tm WHERE tm.project_id = p.id AND tm.user_id = sa.user_id)"
+    : "";
+  return `dashboard_people AS (
+  SELECT DISTINCT u.id AS person_id, u.name AS person_name, u.role AS person_role, u.active AS person_active
+  ${projects}
+  INNER JOIN project_members pm ON pm.project_id = p.id AND pm.role_on_project = 'editor'
+  INNER JOIN user u ON u.id = pm.user_id
+  WHERE ${archivedModeSql("p.archived_at", archivedModeRef)}
+  UNION
+  SELECT DISTINCT u.id, u.name, u.role, u.active
+  ${projects}
+  INNER JOIN project_subtasks s ON s.project_id = p.id
+  INNER JOIN project_subtask_assignees sa ON sa.subtask_id = s.id
+  INNER JOIN user u ON u.id = sa.user_id
+  WHERE ${archivedModeSql("p.archived_at", archivedModeRef)}
+    ${external}
+)`;
+}
+
 export type AuthorizedProjectsBaseOptions = {
   /**
    * Extra `SELECT` columns appended after `can_collaborate`, already valid SQL text (e.g.
@@ -79,6 +162,11 @@ export type AuthorizedProjectsBaseOptions = {
    * clause (built with `projectSearchSql`, optionally wrapped with a caller-specific bypass).
    */
   searchPredicate: string;
+  /**
+   * #429: further complete, already-parenthesized predicates to `AND` onto the `WHERE` clause (the
+   * Calendar's Shoot date and Deadline ranges). Omit for none.
+   */
+  extraPredicates?: string[];
 };
 
 /**
@@ -110,6 +198,6 @@ export function authorizedProjectsBaseCte(role: Role, options: AuthorizedProject
     AND (${options.includeDeliveredColumn} = 1 OR p.stage_key <> 'delivered')
     AND (NOT EXISTS (SELECT 1 FROM request_stages) OR EXISTS (SELECT 1 FROM request_stages rs WHERE rs.stage_key = p.stage_key))
     AND ${priorityFilterSql("p.priority")}
-    AND ${options.searchPredicate}
+    AND ${options.searchPredicate}${(options.extraPredicates ?? []).map((predicate) => `\n    AND ${predicate}`).join("")}
 )`;
 }

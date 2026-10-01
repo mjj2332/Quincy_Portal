@@ -9,6 +9,7 @@ import { visibleProjectWhere } from "./visible-project-scope";
 import { editorFolderAvailability } from "./editor-folders";
 import { readEditorFolderAttention } from "./attention";
 import { matchingProjectIds } from "./project-search";
+import { projectsMatchingRelationFilter } from "./project-relation-filter";
 
 type Db = ReturnType<typeof createDb>;
 
@@ -180,7 +181,7 @@ function externalProjectMatchesSearch(project: ExternalProjectSummaryDto, needle
   return haystacks.some((value) => (value ?? "").toLowerCase().includes(needle));
 }
 
-export async function listExternalProjects(env: Env, userId: string, role: Role, search = "", filter?: Pick<DashboardFilter, "stageKeys">): Promise<ExternalProjectListResponse> {
+export async function listExternalProjects(env: Env, userId: string, role: Role, search = "", filter?: Pick<DashboardFilter, "stageKeys" | "archived" | "editorIds" | "includeUnassigned" | "myTasks" | "overdueOnly" | "shootRange" | "deadlineRange">): Promise<ExternalProjectListResponse> {
   const variant = await boardSchemaVariant(env.DB);
   const db = createDb(env.DB);
   const rows = await projectRows(db, userId, role, variant);
@@ -218,8 +219,14 @@ export async function listExternalProjects(env: Env, userId: string, role: Role,
   // presentation key already (`editing`). Priority is not offered to this role (the DTO withholds
   // it), and the route refuses it before this point.
   const stageKeys: ReadonlySet<string> = new Set(filter?.stageKeys ?? []);
+  // #429: People, Unassigned, My tasks, Overdue and the date ranges, as the internal list's one id-set
+  // question over the same authorised group. An assignee counts only if on the Project's team; an id
+  // outside the viewer's own People universe is dropped. An External Editor is never Admin, so Archived
+  // is always Hide here.
+  const relationIds = filter === undefined ? null : await projectsMatchingRelationFilter(env.DB, { id: userId, role }, [...grouped.keys()], filter, Date.now());
   const searched = search === "" ? allProjects : allProjects.filter((project) => externalProjectMatchesSearch(project, needle) || checklistMatchingIds.has(project.id));
-  const projects = stageKeys.size === 0 ? searched : searched.filter((project) => stageKeys.has(project.stageKey));
+  const staged = stageKeys.size === 0 ? searched : searched.filter((project) => stageKeys.has(project.stageKey));
+  const projects = relationIds === null ? staged : staged.filter((project) => relationIds.has(project.id));
   return externalProjectListResponseSchema.parse({
     projects,
     board: {
@@ -228,7 +235,7 @@ export async function listExternalProjects(env: Env, userId: string, role: Role,
       // rank-within-the-filtered-set. Mirrors the internal path's own `orderedRows`/`matchedRows` split.
       orderedProjectIdsByStage: variant === "tb5a_0037" ? canonicalExternalBoardOrder(grouped.values()) : {},
     },
-    ...(search === "" && stageKeys.size === 0 ? {} : { search: { query: search, matching: projects.length, total: allProjects.length } }),
+    ...(search === "" && stageKeys.size === 0 && relationIds === null ? {} : { search: { query: search, matching: projects.length, total: allProjects.length } }),
   });
 }
 
