@@ -155,7 +155,7 @@ describe("Dashboard's committed query is derived from the route, not adopted int
 
     expect(apiGetMock.mock.calls.map(([path]) => path).some((path) => path.startsWith("/api/projects") && path.includes("q=smith"))).toBe(true);
     expect(searchShown()).toBe(true);
-    expect(searchSummary()).toContain("1 of 2 active Project");
+    expect(searchSummary()).toContain("1 of 2 active project");
 
     // Movement gating: switch to Kanban (the search must survive the switch) and confirm every
     // Move-to trigger the mocked board renders is disabled -- the last-line-of-defence guard

@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
-import { checkedSortLabel, chooseSort, displayMenu, displayTrigger, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
+import { checkedSortLabel, chooseSort, closeDisplay, displayMenu, displayTrigger, openDisplay, sortRadioLabels, sortRadios } from "./dashboard-display-test-helpers";
 
 // happy-dom lacks `Element.getAnimations()`, which Base UI's ScrollArea (the Board's horizontal
 // scroll, `kanban2/board.tsx`) calls on a timer after mount. The no-op stub means "no active
@@ -77,11 +77,56 @@ describe("Dashboard Kanban sort control", () => {
     const priority = document.querySelector('[aria-label="Priority for 1 Test Street"]');
     expect(priority).not.toBeNull();
 
-    await chooseSort("Shoot date ↑");
+    await chooseSort("Shoot date, earliest first");
 
     expect(document.querySelector('[aria-label="Move 1 Test Street up"]')).toBeNull();
     expect(document.querySelector('[aria-label="Move 1 Test Street down"]')).toBeNull();
     expect(document.querySelector('[aria-label="Priority for 1 Test Street"]')).toBe(priority);
+  });
+
+  it("S2: a stored Priority sort without the Board map falls back to Board order in the menu AND on the cards", async () => {
+    const mk = (id: string, street: string, priority: number, boardPosition: number) => ({
+      id, street, suburb: null, postcode: null, agencyName: null, agentName: null,
+      stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 0,
+      expectedCount: null, priority, boardPosition, deadlineAt: null, deadlineLocalCivil: null, deadlineZone: null, boardRevision: 0,
+    });
+    // No `board` map in the response: an authorized principal, but Priority is not available.
+    apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve({ projects: [mk("a", "1 Alpha Street", 1, 1), mk("b", "2 Bravo Street", 5, 0)] }) : Promise.resolve({ stages: [] }));
+    window.localStorage.setItem("quincy:dashboard:kanbanSort", "priority");
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
+    const order = () => [...document.querySelectorAll('[data-testid="kanban2-card"]')].map((card) => card.textContent?.includes("Alpha") ? "alpha" : "bravo");
+    await openDisplay();
+    const menuSort = checkedSortLabel();
+    await closeDisplay();
+    // Priority would put Bravo (priority 5) first; Board order keeps the response order.
+    expect(menuSort).toBe("Board order");
+    expect(order()).toEqual(["alpha", "bravo"]);
+  });
+
+  async function tabRefocusedByRestore(focusVisible: boolean) {
+    // The restore path: the tab is the active element when the first projects land (accepting them
+    // records the active element's `data-focus-key`, and the layout effect focuses it again).
+    await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
+    const tab = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')].find((node) => node.textContent === "Table")!;
+    const realMatches = Element.prototype.matches;
+    const matches = vi.spyOn(Element.prototype, "matches").mockImplementation(function (this: Element, selector: string) { return selector === ":focus-visible" ? focusVisible : realMatches.call(this, selector); });
+    tab.focus();
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="kanban2-card"]')).not.toBeNull());
+    const refocused = focusSpy.mock.contexts.some((el) => (el as HTMLElement).getAttribute?.("data-focus-key") === "dashboard-view-table");
+    focusSpy.mockRestore();
+    matches.mockRestore();
+    return refocused;
+  }
+
+  it("D6: a pointer-focused view tab is not re-focused by the focus-restore path", async () => {
+    expect(await tabRefocusedByRestore(false)).toBe(false);
+  });
+
+  it("D6: a keyboard-focused view tab keeps its focus restored", async () => {
+    expect(await tabRefocusedByRestore(true)).toBe(true);
   });
 
   it("renders the Sydney deadline and exposes RAW on the Kanban card", async () => {
@@ -117,7 +162,7 @@ describe("Dashboard Kanban sort control", () => {
     // The tabs stay (until #428 moves the scope switch); an archived scope shows Table.
     const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
     expect(tabs.find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent).toBe("Table");
-    expect(displayTrigger()).toBeNull();
+    expect(displayTrigger()?.disabled).toBe(true);
   });
 
   // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking
@@ -144,10 +189,10 @@ describe("Dashboard Kanban sort control", () => {
     it("2. the menu is a labelled group of radio items, one checked (the current sort)", async () => {
       await renderBoard();
       await openDisplay();
-      expect(sortRadioLabels()).toEqual(["Board order", "Priority", "Shoot date ↑", "Shoot date ↓"]);
+      expect(sortRadioLabels()).toEqual(["Board order", "Priority", "Shoot date, earliest first", "Shoot date, latest first"]);
       expect(sortRadios().filter((radio) => radio.getAttribute("aria-checked") === "true")).toHaveLength(1);
       expect(checkedSortLabel()).toBe("Board order");
-      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sort Board");
+      expect(document.querySelector('[role="menu"]')!.textContent).toContain("Sort");
     });
 
     it("3. ArrowDown on the focused trigger opens the menu", async () => {
@@ -159,10 +204,10 @@ describe("Dashboard Kanban sort control", () => {
 
     it("4. choosing an option commits it and checks it", async () => {
       await renderBoard();
-      await chooseSort("Shoot date ↓");
+      await chooseSort("Shoot date, latest first");
       expect(window.localStorage.getItem("quincy:dashboard:kanbanSort")).toBe("shootDate-desc");
       await openDisplay();
-      expect(checkedSortLabel()).toBe("Shoot date ↓");
+      expect(checkedSortLabel()).toBe("Shoot date, latest first");
     });
 
     it("5. Escape closes the menu without selecting a new value", async () => {
@@ -213,12 +258,16 @@ describe("Dashboard Kanban sort control", () => {
       // Full popup-within-viewport geometry needs a real layout engine: the Agy real-browser pass.
     });
 
-    it("11. only the Board tab offers Display", async () => {
+    it("11. Display stays rendered on every view (the search never moves) but only the Board enables it", async () => {
       await renderBoard();
       expect(displayTrigger()).not.toBeNull();
+      expect(displayTrigger()!.disabled).toBe(false);
       const tabs = [...document.querySelectorAll<HTMLElement>('[aria-label="Dashboard view"] [role="tab"]')];
       await act(async () => { tabs.find((tab) => tab.textContent === "Table")!.click(); await Promise.resolve(); await Promise.resolve(); });
-      expect(displayTrigger()).toBeNull();
+      expect(displayTrigger()).not.toBeNull();
+      expect(displayTrigger()!.disabled).toBe(true);
+      const reason = document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "");
+      expect(reason?.textContent).toContain("arrive with #431");
     });
 
     it("12. the radio items are exactly the sort modes the Board understands", async () => {

@@ -511,6 +511,40 @@ describe("Dashboard Calendar routing", () => {
     expect(host.textContent).toContain("Archived projects");
   });
 
+  const tabByName = (name: string) => [...host.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent === name)!;
+  const pressArchived = () => act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Archived")?.click(); await Promise.resolve(); });
+
+  it("the Calendar tab leaves Archived for the Calendar, carrying a committed search (S1)", async () => {
+    await render();
+    await typeSearch("smith");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    await pressArchived();
+    expect(host.textContent).toContain("Archived projects");
+    await act(async () => { tabByName("Calendar").click(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(window.location.search).toContain("view=calendar");
+    expect(window.location.search).toContain("q=smith");
+    expect(host.textContent).not.toContain("Archived projects");
+    expect(host.querySelector('[data-testid="event-calendar-body"]')).not.toBeNull();
+  });
+
+  it("the Timeline tab leaves Archived for the Timeline (S1)", async () => {
+    await render();
+    await pressArchived();
+    await act(async () => { tabByName("Timeline").click(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(window.location.search).toContain("view=timeline");
+    expect(host.textContent).not.toContain("Archived projects");
+  });
+
+  it("every view tab points at the tabpanel with aria-controls (S3)", async () => {
+    await render();
+    const panel = host.querySelector('[role="tabpanel"]')!;
+    const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')];
+    expect(tabs.length).toBe(4);
+    for (const tab of tabs) expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+  });
+
   it("enters Archived from Kanban by selecting and recording List", async () => {
     await render();
     await act(async () => { [...host.querySelectorAll("button")].find((button) => button.textContent === "Board")?.click(); await Promise.resolve(); });

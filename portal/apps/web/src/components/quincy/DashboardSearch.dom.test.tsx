@@ -102,10 +102,13 @@ describe("DashboardSearch — the field", () => {
     expect(host.querySelector('[data-testid="dashboard-search-field"]')!.contains(field)).toBe(true);
   });
 
-  it("renders no ⌘K hint, no rail trigger and no popover", async () => {
+  it("shows a ⌘K hint while the field is empty (and only then), with no rail trigger and no popover", async () => {
     await renderSearch();
+    const hint = () => [...host.querySelectorAll("kbd")].find((node) => node.textContent === "⌘K");
+    expect(hint()).toBeDefined();
+    await type(input(), "smith");
+    expect(hint()).toBeUndefined();
     expect(host.querySelector('[data-testid="shell-search-trigger"]')).toBeNull();
-    expect(host.querySelector('[data-testid="shell-search-shortcut"]')).toBeNull();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 

@@ -697,7 +697,7 @@ describe("Dashboard Stage interactions", () => {
     // The drag-cancel above legitimately queues exactly one post-interaction reconcile refetch
     // (scenario 2). The sort change itself must add none: capture the count first, then switch.
     const fetchesBeforeSecondSort = projectFetches;
-    await chooseSort(host, "Shoot date ↑");
+    await chooseSort(host, "Shoot date, earliest first");
     await flush();
     expect(projectFetches).toBe(fetchesBeforeSecondSort);
     expect(order()).toEqual(["Date First", "Board First", "Priority First"]);
@@ -727,7 +727,7 @@ describe("Dashboard Stage interactions", () => {
     await act(async () => { root.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); });
     await flush();
     if (sortMode !== "board") {
-      await chooseSort(host, sortMode === "priority" ? "Priority" : "Shoot date ↑");
+      await chooseSort(host, sortMode === "priority" ? "Priority" : "Shoot date, earliest first");
       await flush();
     }
     await dndStart("source");

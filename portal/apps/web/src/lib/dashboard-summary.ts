@@ -33,11 +33,11 @@ export function isOverdueProject(project: DashboardSummaryProject, now: number):
 export function dashboardSummary(input: DashboardSummaryInput): DashboardSummary | null {
   const { projects, archived, searchActive, searchTotal, shown, now } = input;
   if (projects === null) return null;
-  if (archived) return { text: plural(projects.length, "archived Project"), overdue: 0 };
+  if (archived) return { text: plural(projects.length, "archived project"), overdue: 0 };
   const overdue = projects.filter((project) => isOverdueProject(project, now)).length;
-  if (!searchActive) return { text: plural(projects.length, "active Project"), overdue };
+  if (!searchActive) return { text: plural(projects.length, "active project"), overdue };
   const of = searchTotal === null ? "" : ` of ${searchTotal}`;
-  const base = `${projects.length}${of} active ${projects.length === 1 && searchTotal === null ? "Project" : searchTotal === 1 ? "Project" : "Projects"}`;
+  const base = `${projects.length}${of} active ${projects.length === 1 && searchTotal === null ? "project" : searchTotal === 1 ? "project" : "projects"}`;
   const hidden = shown !== null && shown < projects.length;
   return { text: hidden ? `${base} · ${shown} shown` : base, overdue };
 }

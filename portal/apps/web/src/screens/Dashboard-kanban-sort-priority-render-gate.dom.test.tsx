@@ -78,6 +78,6 @@ describe("Dashboard Kanban sort control — Priority gate (render-gate absence h
     const labels = sortRadioLabels();
     expect(labels.length).toBeGreaterThan(0);
     expect(labels.includes("Priority")).toBe(false);
-    expect(labels).toEqual(["Board order", "Shoot date ↑", "Shoot date ↓"]);
+    expect(labels).toEqual(["Board order", "Shoot date, earliest first", "Shoot date, latest first"]);
   });
 });

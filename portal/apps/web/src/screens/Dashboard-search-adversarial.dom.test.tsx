@@ -141,8 +141,10 @@ function assertHeaderBarSeparation(host: HTMLDivElement) {
 /** Every descendant's tag, testid, focus key and label, in document order -- used to prove the page chrome's shape does not change with the query. The in-field Clear button (and the addon wrapping it) exists only while the field holds text, so it is the one element left out. */
 function chromeShape(container: Element): string[] {
   return [...container.querySelectorAll("*")]
-    .filter((node) => node.closest('[aria-label="Clear search"]') === null
-      && !(node.querySelector('[aria-label="Clear search"]') !== null && node.querySelector("input") === null))
+    // The field's in-field end adornment is the one part that legitimately depends on the query: the
+    // ⌘K hint while empty, the Clear button once it holds text.
+    .filter((node) => node.closest('[aria-label="Clear search"]') === null && node.closest("kbd") === null
+      && !((node.querySelector('[aria-label="Clear search"]') !== null || node.querySelector("kbd") !== null) && node.querySelector("input") === null))
     .map((node) => [
       node.tagName,
       node.getAttribute("data-testid") ?? "",
@@ -162,7 +164,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     });
 
     expect(host.querySelector('[aria-label="Project summary"]')).toBeNull();
-    expect(summaryText(host)).toContain("1 of 3 active Projects");
+    expect(summaryText(host)).toContain("1 of 3 active projects");
   });
 
   it("shows a plain count when an older response has no search counts", async () => {
@@ -172,7 +174,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
     });
 
     const text = summaryText(host);
-    expect(text).toContain("1 active Project");
+    expect(text).toContain("1 active project");
     expect(text).not.toContain(" of ");
   });
 
@@ -183,7 +185,7 @@ describe("Dashboard search presentation and navigation adversarial probes (#217)
       search: { query: "smith", matching: 1, total: 1 },
     });
 
-    expect(summaryText(host)).toContain("1 of 1 active Project");
+    expect(summaryText(host)).toContain("1 of 1 active project");
     expect(summaryText(host)).not.toContain("Projects");
   });
 

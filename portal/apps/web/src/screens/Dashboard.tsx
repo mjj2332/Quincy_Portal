@@ -491,7 +491,10 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const projects = useMemo(() => applyPriorityOverlay(baseProjects, priorityOverlay), [baseProjects, priorityOverlay]);
   const boardContractEnabled = projects.some((project) => project.boardContractEnabled === true);
   const hasAuthorizedBoardMap = projects.some((project) => project.boardMapPresent === true || project.boardRank !== undefined || project.authorizedBoardOrder?.[project.stageKey] !== undefined);
-  const effectiveBoardSort: KanbanSortMode = !canPrioritize && boardSort === "priority" ? "board" : boardSort;
+  // ONE effective sort for the Display menu AND the cards: Priority needs the permission AND an
+  // authorized Board map in the response; without either it falls back to Board order.
+  const canSortByPriority = canPrioritize && hasAuthorizedBoardMap;
+  const effectiveBoardSort: KanbanSortMode = boardSort === "priority" && !canSortByPriority ? "board" : boardSort;
   const boardContractDisabled = projects.some((project) => project.boardContractEnabled === false);
   const boardUnavailableMessage = recoveryReason ?? boardUnavailableReason ?? (boardContractDisabled ? "Board interactions are temporarily unavailable while the Board contract is disabled." : null);
   const boardMutationEnabled = boardContractEnabled && !boardUnavailableMessage;
@@ -560,8 +563,15 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const captureFocusForRefresh = useCallback((fallbackStageKey?: StageKey, descriptor?: FocusDescriptor) => {
     if (focusRestoreRef.current) return;
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const activeKey = active?.getAttribute("data-focus-key") ?? null;
+    // A view tab the pointer focused is not restored: re-focusing it from script would paint the
+    // global focus ring on a mouse click. Only a keyboard-focused tab (`:focus-visible`) is.
+    let pointerFocusedTab = false;
+    if (activeKey?.startsWith("dashboard-view-")) {
+      try { pointerFocusedTab = !active!.matches(":focus-visible"); } catch { /* No :focus-visible support: restore as before. */ }
+    }
     focusRestoreRef.current = {
-      key: descriptor ? focusKeyForControl(descriptor.control, descriptor.projectId) : active?.getAttribute("data-focus-key") ?? null,
+      key: descriptor ? focusKeyForControl(descriptor.control, descriptor.projectId) : pointerFocusedTab ? null : activeKey,
       x: window.scrollX,
       y: window.scrollY,
       fallbackStageKey: descriptor?.sourceStageKey ?? fallbackStageKey,
@@ -1030,8 +1040,13 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   function selectView(next: DashboardView) {
     if (movementInteractionActive || calendarInteractionBlocked) return;
+    // The Calendar and Timeline tabs stay enabled in Archived scope: choosing one LEAVES archived
+    // (the reconcile effect reads the explicit location as that, too) rather than doing nothing.
+    const leavingArchived = viewingArchived && (next === "calendar" || next === "timeline");
+    if (leavingArchived && !canViewProductionCalendar) return;
+    if (leavingArchived) setProjectScope("active");
     if (next === "calendar") {
-      if (!canViewProductionCalendar || viewingArchived) return;
+      if (!canViewProductionCalendar) return;
       const nextCalendar = calendarState ?? initializeDashboardCalendarState({ kind: "dashboard" }, calendarStorage, { now: Date.now(), isPhone: window.matchMedia?.("(max-width: 720px)").matches ?? false });
       calendarFallbackLocationRef.current = false;
       setView("calendar");
@@ -1045,6 +1060,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
       // stale text instead of carrying the in-progress one. `navigateCalendar` already flushes and
       // reads the current draft itself; `search` here is inert (overwritten there unconditionally)
       // but keeps `nextCalendar`'s own shape.
+      if (leavingArchived) {
+        // `navigateCalendar` closes over the still-archived scope and would no-op: write the same
+        // flush-and-carry URL here instead.
+        const withCurrentSearch: DashboardCalendarState = { ...nextCalendar, view: "calendar", search: takeDashboardSearchForNavigation(currentUserId) };
+        setCalendarState(withCurrentSearch);
+        history.push(staffPathFor({ kind: "dashboard", calendar: withCurrentSearch }));
+        return;
+      }
       navigateCalendar({ ...nextCalendar, view: "calendar" });
       return;
     }
@@ -1445,9 +1468,6 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     now,
   });
   const searchFocusRequest = useMemo(() => (searchFocusSignal === null ? null : { signal: searchFocusSignal }), [searchFocusSignal]);
-  // Priority is offered (and accepted) only for an authorized, prioritising principal.
-  const canSortByPriority = canPrioritize && hasAuthorizedBoardMap;
-  const displayedBoardSort: KanbanSortMode = effectiveBoardSort === "priority" && !canSortByPriority ? "board" : effectiveBoardSort;
 
   return (
     <main className="page page--full page--fill [overflow-x:clip]">
@@ -1476,7 +1496,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
         searchFocusRequest={searchFocusRequest}
         onSearchFocusHandled={handleSearchFocusHandled}
         showDisplay={renderedView === "board"}
-        sort={displayedBoardSort}
+        sort={effectiveBoardSort}
         canSortByPriority={canSortByPriority}
         onSortChange={selectBoardSort}
       />

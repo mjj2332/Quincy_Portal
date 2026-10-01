@@ -238,19 +238,19 @@ describe("Dashboard Gantt routing", () => {
 
     it("names both counts when the Timeline's filters hide a match", async () => {
       await renderAt("/?view=timeline&stages=raw_review&completed=1&q=Schedule");
-      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).toContain("2 of 31 active projects");
       expect(summary()).not.toContain("shown");
       await reportShown(1);
-      expect(summary()).toContain("2 of 31 active Projects · 1 shown");
+      expect(summary()).toContain("2 of 31 active projects · 1 shown");
     });
 
     it("stays the plain search count when the Timeline shows every match, or has not reported", async () => {
       await renderAt("/?view=timeline&q=Schedule");
       await reportShown(2);
-      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).toContain("2 of 31 active projects");
       expect(summary()).not.toContain("shown");
       await reportShown(null);
-      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).toContain("2 of 31 active projects");
       expect(summary()).not.toContain("shown");
     });
 
@@ -259,7 +259,7 @@ describe("Dashboard Gantt routing", () => {
       await reportShown(1);
       await act(async () => { switcherButton("Table")!.click(); await Promise.resolve(); });
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-      expect(summary()).toContain("2 of 31 active Projects");
+      expect(summary()).toContain("2 of 31 active projects");
       expect(summary()).not.toContain("shown");
     });
   });

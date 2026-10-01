@@ -4651,3 +4651,10 @@ remove the legacy readers) still applies.
   with the authorised board map, so a stored `priority` falls back to Board order otherwise.
 - **The Active/Archived row stays until #428**, so the view bar follows the heading directly or follows that
   row (admin only); layout tests accept exactly those two shapes.
+- **Review round (#427).** One effective Board sort (`canPrioritize && hasAuthorizedBoardMap`, else Board
+  order) feeds the menu and the cards. The Calendar/Timeline tabs in Archived scope leave Archived (a
+  Calendar push bypasses `navigateCalendar`, whose closure still sees the archived scope). The tab row's
+  rule is the view bar's own border: tabs stretch to it with `-mb-px` and `after:bottom-[-1px]`, and below
+  722px the controls go above the tabs (`flex-col-reverse`) so the tabs stay on the rule. Display renders
+  on every view, disabled off Board, so the search never moves. A pointer-focused tab is not re-focused by
+  the focus-restore path (only a `:focus-visible` one is), or the global ring paints on a mouse click.

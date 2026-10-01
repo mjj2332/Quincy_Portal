@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Search, X } from "lucide-react";
 import { capDashboardSearchText, stripUnsafeText } from "@quincy/shared";
+import { Kbd } from "@/components/reui/kbd";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/reui/input-group";
 import {
   cancelPendingDashboardSearchWrite,
@@ -34,7 +35,7 @@ import {
  * location and principal, #367's arrival-intent shape). The field takes focus in a layout effect and
  * acknowledges the request, so a stale request can never refocus it later.
  *
- * An in-field clear button (`InputGroupButton`, "Clear search") replaces the old search chip: it
+ * A ⌘K hint (`reui/kbd`) shows while the field is empty. An in-field clear button (`InputGroupButton`, "Clear search") replaces the old search chip: it
  * empties the draft AND keeps focus in the input, so there is nothing for focus to fall out of.
  */
 /**
@@ -196,6 +197,13 @@ export function DashboardSearch({ principalId = "", focusRequest = null, onFocus
         onCompositionEnd={handleCompositionEnd}
         placeholder="Search address, suburb, client…"
       />
+      {search.draft === "" && (
+        // The ⌘K hint (the old rail search carried one). Decorative: the shortcut is a window
+        // listener in `RailedShell`, and the field's own label already names it. Hidden on phones.
+        <InputGroupAddon align="inline-end" className="max-[721px]:hidden">
+          <Kbd aria-hidden="true">⌘K</Kbd>
+        </InputGroupAddon>
+      )}
       {search.draft !== "" && (
         <InputGroupAddon align="inline-end">
           <InputGroupButton size="icon-xs" aria-label="Clear search" data-testid="dashboard-search-clear" onClick={handleClear}>

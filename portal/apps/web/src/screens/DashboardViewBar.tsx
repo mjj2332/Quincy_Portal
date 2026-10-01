@@ -30,8 +30,15 @@ import type { DashboardView, KanbanSortMode } from "./dashboard-helpers";
  * into the URL (`selectView` decides whether a push is needed). Enter/Space reach it as a click.
  * Calendar and Timeline are rendered only for a role that may view the production calendar.
  *
+ * ## Layout
+ * The rule sits on the outer row and the tab row stretches to it (`-mb-px` lets the active
+ * underline cover the rule). At <=721px the controls go ABOVE the tabs so the tabs stay directly on
+ * the rule, and the tab row scrolls sideways inside its own wrapper like `ProjectHeader`'s
+ * (`styles/app.css`, `.project-header__tabs`) instead of spilling out.
+ *
  * ## Display
- * Board-only in #427: the Board's sort order. "Priority" is offered only when the caller says it
+ * Rendered on every view so the search never moves; enabled only on Board in #427 (the Board's sort
+ * order), disabled with an accessible reason elsewhere. "Priority" is offered only when the caller says it
  * is authorized (`canSortByPriority`).
  */
 
@@ -45,11 +52,17 @@ const TABS: { view: DashboardView; label: string; Icon: LucideIcon; gated: boole
   { view: "timeline", label: "Timeline", Icon: GanttChart, gated: true },
 ];
 
+/** Search and Display share one fixed height — Quincy's control contract (`BUTTON_HEIGHT_CLASS`):
+ * 38px, 44px at <=721px — so a content-sized input can never make one a pixel taller. */
+const CONTROL_HEIGHT = "h-[38px] max-[721px]:h-[44px]";
+const DISPLAY_UNAVAILABLE = "Display options for this view arrive with #431";
+const DISPLAY_HINT_ID = "dashboard-display-unavailable";
+
 const SORT_LABELS: Record<KanbanSortMode, string> = {
   board: "Board order",
   priority: "Priority",
-  "shootDate-asc": "Shoot date ↑",
-  "shootDate-desc": "Shoot date ↓",
+  "shootDate-asc": "Shoot date, earliest first",
+  "shootDate-desc": "Shoot date, latest first",
 };
 
 export type DashboardViewBarProps = {
@@ -62,7 +75,7 @@ export type DashboardViewBarProps = {
   principalId: string;
   searchFocusRequest: DashboardSearchFocusRequest | null;
   onSearchFocusHandled: (signal: number) => void;
-  /** Show the Display menu (the Board tab only in #427). */
+  /** Enable the Display menu (the Board tab only in #427); it stays visible, disabled, elsewhere. */
   showDisplay: boolean;
   sort: KanbanSortMode;
   canSortByPriority: boolean;
@@ -87,53 +100,66 @@ export function DashboardViewBar({
     <div
       data-testid="dashboard-view-bar"
       className={cn(
-        "flex shrink-0 flex-wrap items-center justify-between gap-x-[var(--space-6)] gap-y-[var(--space-3)] mb-[var(--space-4)]",
+        "flex shrink-0 flex-wrap items-stretch justify-between gap-x-[var(--space-6)] gap-y-[var(--space-3)] mb-[var(--space-4)]",
+        "max-[721px]:flex-col-reverse max-[721px]:flex-nowrap",
         "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
       )}
     >
-      <Tabs value={renderedView === "none" ? null : renderedView} className="min-w-0">
-        <TabsList variant="line" activateOnFocus={false} aria-label="Dashboard view" className="gap-[var(--space-3)]">
-          {TABS.filter((tab) => !tab.gated || canViewProductionCalendar).map(({ view, label, Icon }) => (
-            <TabsTrigger
-              key={view}
-              value={view}
-              id={VIEW_TAB_ID(view)}
-              data-focus-key={`dashboard-view-${view}`}
-              disabled={disabled}
-              onClick={() => onSelectView(view)}
-              className="max-[721px]:min-h-[44px]"
-            >
-              <Icon aria-hidden="true" />
-              {label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-      <div className="flex items-center gap-[var(--space-3)] pb-[var(--space-2)] max-[721px]:order-last max-[721px]:basis-full max-[721px]:flex-wrap">
+      <div className="-mb-px flex min-w-0 max-w-full overflow-x-auto">
+        <Tabs value={renderedView === "none" ? null : renderedView} className="min-w-0 gap-0 data-[orientation=horizontal]:flex-row">
+          <TabsList
+            variant="line"
+            activateOnFocus={false}
+            aria-label="Dashboard view"
+            className="h-auto gap-[var(--space-3)] self-stretch p-0 group-data-[orientation=horizontal]/tabs:h-auto"
+          >
+            {TABS.filter((tab) => !tab.gated || canViewProductionCalendar).map(({ view, label, Icon }) => (
+              <TabsTrigger
+                key={view}
+                value={view}
+                id={VIEW_TAB_ID(view)}
+                aria-controls={VIEW_PANEL_ID}
+                data-focus-key={`dashboard-view-${view}`}
+                disabled={disabled}
+                onClick={() => onSelectView(view)}
+                className="h-auto flex-none self-stretch rounded-none px-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-1px] max-[721px]:min-h-[44px]"
+              >
+                <Icon aria-hidden="true" />
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+      <div className="flex items-center gap-[var(--space-3)] py-[var(--space-2)] max-[721px]:w-full">
         <DashboardSearch
           principalId={principalId}
           focusRequest={searchFocusRequest}
           onFocusRequestHandled={onSearchFocusHandled}
-          className="w-[20rem] max-w-full max-[721px]:w-full max-[721px]:basis-full"
+          className={cn("w-[20rem] max-w-full max-[721px]:min-w-0 max-[721px]:flex-1 max-[721px]:w-auto", CONTROL_HEIGHT)}
         />
-        {showDisplay && (
-          <DropdownMenu>
-            <DropdownMenuTrigger disabled={disabled} className={buttonClasses("secondary", { className: "max-[721px]:min-h-[44px]" })}>
-              <SlidersHorizontal aria-hidden="true" />
-              Display
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-auto min-w-48">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Sort Board</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={sort} onValueChange={(next) => onSortChange(next as KanbanSortMode)}>
-                  {sortOptions.map((mode) => (
-                    <DropdownMenuRadioItem key={mode} value={mode}>{SORT_LABELS[mode]}</DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={disabled || !showDisplay}
+            title={showDisplay ? undefined : DISPLAY_UNAVAILABLE}
+            aria-describedby={showDisplay ? undefined : DISPLAY_HINT_ID}
+            className={buttonClasses("secondary", { className: cn("shrink-0", CONTROL_HEIGHT) })}
+          >
+            <SlidersHorizontal aria-hidden="true" />
+            Display
+          </DropdownMenuTrigger>
+          {!showDisplay && <span id={DISPLAY_HINT_ID} className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{DISPLAY_UNAVAILABLE}</span>}
+          <DropdownMenuContent align="end" className="w-auto min-w-48">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Sort</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={sort} onValueChange={(next) => onSortChange(next as KanbanSortMode)}>
+                {sortOptions.map((mode) => (
+                  <DropdownMenuRadioItem key={mode} value={mode}>{SORT_LABELS[mode]}</DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
