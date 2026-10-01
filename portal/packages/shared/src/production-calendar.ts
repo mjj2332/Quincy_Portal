@@ -26,6 +26,13 @@ import {
   type StageTransportKey,
 } from "./stage-move";
 import { STAGE_KEYS, type StageKey } from "./stages";
+import {
+  canonicalDashboardPriorities,
+  DASHBOARD_ARCHIVED_MODES,
+  DASHBOARD_PRIORITY_FILTER_VALUES,
+  type DashboardArchivedMode,
+  type DashboardPriorityFilterValue,
+} from "./dashboard-filter";
 
 export const PRODUCTION_CALENDAR_ZONE = SYDNEY_TIME_ZONE;
 /**
@@ -49,6 +56,9 @@ export type ProductionCalendarFilters = {
   editorIds: string[];
   includeUnassigned: boolean;
   stageKeys: StagePresentationKey[];
+  /** #428: the shared Filter's Project priority (any-of; `none` = unset) and Archived mode. */
+  priorities: DashboardPriorityFilterValue[];
+  archived: DashboardArchivedMode;
   showCompletedChecklist: boolean;
   showDeliveredProjects: boolean;
   overdueOnly: boolean;
@@ -61,6 +71,8 @@ export type ProductionCalendarFiltersInput = {
   editorIds?: string[];
   includeUnassigned?: boolean;
   stageKeys?: StagePresentationKey[];
+  priorities?: DashboardPriorityFilterValue[];
+  archived?: DashboardArchivedMode;
   showCompletedChecklist?: boolean;
   showDeliveredProjects?: boolean;
   overdueOnly?: boolean;
@@ -100,6 +112,8 @@ const productionCalendarFiltersInputSchema = z.object({
   editorIds: z.array(lowercaseUuidSchema).optional(),
   includeUnassigned: z.boolean().optional(),
   stageKeys: stageKeysInputSchema.optional(),
+  priorities: z.array(z.enum(DASHBOARD_PRIORITY_FILTER_VALUES)).optional(),
+  archived: z.enum(DASHBOARD_ARCHIVED_MODES).optional(),
   showCompletedChecklist: z.boolean().optional(),
   showDeliveredProjects: z.boolean().optional(),
   overdueOnly: z.boolean().optional(),
@@ -128,6 +142,8 @@ function normalizeFilters(input: ProductionCalendarFiltersInput): ProductionCale
     editorIds: [...new Set(input.editorIds ?? [])].sort(),
     includeUnassigned: input.includeUnassigned ?? false,
     stageKeys: canonicalize(input.stageKeys, STAGE_PRESENTATION_KEYS),
+    priorities: canonicalDashboardPriorities(input.priorities ?? []),
+    archived: input.archived ?? "hide",
     showCompletedChecklist: input.showCompletedChecklist ?? false,
     showDeliveredProjects: input.showDeliveredProjects ?? false,
     overdueOnly: input.overdueOnly ?? false,
@@ -338,6 +354,8 @@ export type CalendarProjectContext<TStage extends StageTransportKey = StageTrans
   stageKey: TStage;
   checklist: { completed: number; total: number };
   delivered: boolean;
+  /** #428: an archived Project (Archived: Include/Only). Always `false` for an external viewer. */
+  archived: boolean;
 };
 
 export type CalendarPerson = {
@@ -462,7 +480,7 @@ function calendarProjectContextSchema<TStage extends StageTransportKey>(stageSch
   return z.object({
     id: z.string().uuid(), street: z.string().max(500), stageKey: stageSchema,
     checklist: z.object({ completed: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).strict(),
-    delivered: z.boolean(),
+    delivered: z.boolean(), archived: z.boolean(),
   }).strict() as z.ZodType<CalendarProjectContext<TStage>>;
 }
 
@@ -503,7 +521,8 @@ export function calendarEventSchemaFor<TStage extends StageTransportKey>(stageSc
 
 const dtoFiltersSchema: z.ZodType<ProductionCalendarFilters> = z.object({
   layers: z.array(z.enum(PRODUCTION_CALENDAR_LAYERS)).min(1), editorIds: z.array(z.string().uuid()), includeUnassigned: z.boolean(),
-  stageKeys: z.array(z.enum(STAGE_PRESENTATION_KEYS)), showCompletedChecklist: z.boolean(), showDeliveredProjects: z.boolean(),
+  stageKeys: z.array(z.enum(STAGE_PRESENTATION_KEYS)), priorities: z.array(z.enum(DASHBOARD_PRIORITY_FILTER_VALUES)), archived: z.enum(DASHBOARD_ARCHIVED_MODES),
+  showCompletedChecklist: z.boolean(), showDeliveredProjects: z.boolean(),
   overdueOnly: z.boolean(), search: z.string().max(200), myTasks: z.boolean(),
 }).strict();
 

@@ -19,6 +19,8 @@ function calendar(search = ""): DashboardCalendarState {
     editorIds: [editorId],
     includeUnassigned: false,
     stageKeys: [],
+    priorities: [],
+    archived: "hide",
     showCompletedChecklist: false,
     showDeliveredProjects: false,
     overdueOnly: false,
